@@ -548,20 +548,19 @@ def _diagnostic(value: object) -> str:
         if isinstance(value, float):
             return float.__repr__(float.__float__(value))
         if isinstance(value, str):
-            text = str.__str__(value)
-            if len(text) <= _DIAGNOSTIC_TEXT_LIMIT:
-                return repr(text)
-            prefix = text[:_DIAGNOSTIC_TEXT_LIMIT]
-            return f"{prefix!r}… <{len(text)} characters>"
+            return _bounded_repr(str.__str__(value), "characters")
         if isinstance(value, bytes):
-            octets = bytes.__bytes__(value)
-            if len(octets) <= _DIAGNOSTIC_TEXT_LIMIT:
-                return bytes.__repr__(octets)
-            prefix = octets[:_DIAGNOSTIC_TEXT_LIMIT]
-            return f"{prefix!r}… <{len(octets)} bytes>"
+            return _bounded_repr(bytes.__bytes__(value), "bytes")
         return f"<{type(value).__name__}>"
     except Exception:
         return "<unrenderable value>"
+
+
+def _bounded_repr(content: str | bytes, unit: str) -> str:
+    """``content``'s repr, cut at the diagnostic limit with its full length in ``unit``."""
+    if len(content) <= _DIAGNOSTIC_TEXT_LIMIT:
+        return repr(content)
+    return f"{content[:_DIAGNOSTIC_TEXT_LIMIT]!r}… <{len(content)} {unit}>"
 
 
 def _fail(

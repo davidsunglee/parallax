@@ -29,6 +29,7 @@ from parallax.core.metamodel import (
 from parallax.core.object_query._validated import (
     ContinuationCoordinate,
     Paging,
+    ValidatedSeek,
 )
 from parallax.core.predicate import Narrow, Or
 from parallax.core.predicate._validated import DeferredKeySet, ValidatedPredicate
@@ -79,6 +80,7 @@ from parallax.core.storage_layout import DirectColumn as _DirectColumn
 from parallax.core.storage_layout import DocumentPath as _DocumentPath
 from parallax.core.storage_layout import EntityLayoutView as _EntityLayoutView
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
+from parallax.core.storage_layout import TableLayout as _TableLayout
 from parallax.core.storage_layout import view as _storage_view
 from parallax.core.temporal_read import ranked_axes as _ranked_axes
 from parallax.core.temporal_read import view as _temporal_view
@@ -518,40 +520,23 @@ def compile_read(
     already present on ``query``; ``lock`` is the caller-derived effective read lock.
     """
 
-    compiled = _compile_read_arm(
-        query, model, dialect, result_form=result_form, lock=lock, null_tail=False
-    )
-    seek = None if query.paging is None else query.paging.seek
-    if seek is None or query.limit is None:
-        return compiled
     storage = _storage_view(model)
-    if not seek.terms:  # pragma: no cover - validated continuations always order by a term
-        return compiled
-    placements = tuple(
-        placement
-        for layout in storage.tables
-        if (placement := layout.placement(seek.terms[0].identity)) is not None
-    )
-    leading_resident = not placements or not all(
-        isinstance(placement, _DirectColumn) for placement in placements
-    )
-    if not _emits_null_tail(seek, dialect, leading_resident=leading_resident):
-        return compiled
-    outer_lock = lock == "locking" and dialect.name == "postgres"
-    if outer_lock:
-        compiled = _compile_read_arm(
-            query, model, dialect, result_form=result_form, lock=None, null_tail=False
-        )
-    null_tail = _compile_read_arm(
-        query,
-        model,
-        dialect,
-        result_form=result_form,
-        lock=None if outer_lock else lock,
-        null_tail=True,
-    )
     terms = _lowered_terms(query.order_by, _reserved_result_keys(model, storage))
-    statement_ctx = StatementBuilder(model, _inheritance_view(model), storage, dialect)
+    seek = None if query.paging is None else query.paging.seek
+    if seek is None or query.limit is None or not _needs_null_tail(seek, storage, dialect):
+        return _compile_read_arm(
+            query, model, dialect, terms, result_form=result_form, lock=lock, null_tail=False
+        )
+    outer_lock = lock == "locking" and dialect.name == "postgres"
+    arm_lock = None if outer_lock else lock
+    compiled = _compile_read_arm(
+        query, model, dialect, terms, result_form=result_form, lock=arm_lock, null_tail=False
+    )
+    null_tail = _compile_read_arm(
+        query, model, dialect, terms, result_form=result_form, lock=arm_lock, null_tail=True
+    )
+    facet = _inheritance_view(model)
+    statement_ctx = StatementBuilder(model, facet, storage, dialect)
     statement_ctx.append_fragment(compiled.statement)
     statement_ctx.append_fragment(null_tail.statement)
     outer_alias = "u"
@@ -578,36 +563,14 @@ def compile_read(
     source = f"(({compiled.statement.sql}) union all ({null_tail.statement.sql})) {outer_alias}"
     lock_suffix = ""
     if outer_lock:
-        layout = _table_layout(storage, _inheritance_view(model), query.entity.identity)
-        contracts = {
-            contract.attribute.identity: contract
-            for identity in compiled.resolvable
-            for contract in compiled.attribute_reads(identity)
-        }
-        base_alias = "t0"
-        join_terms: list[str] = []
-        for slot in layout.physical_primary_key:
-            if not isinstance(slot.contributor, AttributeIdentity):  # pragma: no cover
-                raise SqlGenError("a physical primary-key column must be Attribute-owned")
-            contract = contracts.get(slot.contributor)
-            if contract is None:  # pragma: no cover - every physical key is projected
-                raise SqlGenError(
-                    f"physical key column {slot.column.name!r} is absent from the read projection"
-                )
-            base_expression, base_binds = dialect.project(
-                base_alias,
-                slot.column.name,
-                contract.attribute.type,
-                result_key=contract.result_key,
-            )
-            if contract.encoded:
-                base_expression = base_expression.removesuffix(f" {contract.result_key}")
-            statement_ctx.bind_structural_all(base_binds)
-            join_terms.append(
-                f"{dialect.qualified(outer_alias, contract.result_key)} = {base_expression}"
-            )
-        source += f" join {layout.table.name} {base_alias} on " + " and ".join(join_terms)
-        lock_suffix = f" {dialect.read_lock_suffix(base_alias)}"
+        base_join, lock_suffix = _locking_base_join(
+            statement_ctx,
+            compiled,
+            _table_layout(storage, facet, query.entity.identity),
+            dialect,
+            outer_alias,
+        )
+        source += base_join
     statement_ctx.bind_structural(query.limit)
     statement = statement_ctx.finish(
         f"select {projection} from {source} order by {ordering} "
@@ -616,22 +579,81 @@ def compile_read(
     return replace(compiled, statement=_normalize(statement))
 
 
+def _needs_null_tail(seek: ValidatedSeek, storage: _StorageLayoutFacet, dialect: Dialect) -> bool:
+    """Whether a continuing page needs a NULL-tail arm, with the leading term
+    counted as document-resident unless every Table placing it gives it a Column."""
+    if not seek.terms:  # pragma: no cover - validated continuations always order by a term
+        return False
+    placements = tuple(
+        placement
+        for layout in storage.tables
+        if (placement := layout.placement(seek.terms[0].identity)) is not None
+    )
+    leading_resident = not placements or not all(
+        isinstance(placement, _DirectColumn) for placement in placements
+    )
+    return _emits_null_tail(seek, dialect, leading_resident=leading_resident)
+
+
+def _locking_base_join(
+    ctx: StatementBuilder,
+    compiled: CompiledRead,
+    layout: _TableLayout,
+    dialect: Dialect,
+    outer_alias: str,
+) -> tuple[str, str]:
+    """The join from a wrapped union back to the target's base Table, matched on
+    every physical key Column, and the lock suffix naming that Table; the key
+    cells' binds are appended to ``ctx`` in join order."""
+    contracts = {
+        contract.attribute.identity: contract
+        for identity in compiled.resolvable
+        for contract in compiled.attribute_reads(identity)
+    }
+    base_alias = "t0"
+    join_terms: list[str] = []
+    for slot in layout.physical_primary_key:
+        if not isinstance(slot.contributor, AttributeIdentity):  # pragma: no cover
+            raise SqlGenError("a physical primary-key column must be Attribute-owned")
+        contract = contracts.get(slot.contributor)
+        if contract is None:  # pragma: no cover - every physical key is projected
+            raise SqlGenError(
+                f"physical key column {slot.column.name!r} is absent from the read projection"
+            )
+        base_expression, base_binds = dialect.project(
+            base_alias,
+            slot.column.name,
+            contract.attribute.type,
+            result_key=contract.result_key,
+        )
+        if contract.encoded:
+            base_expression = base_expression.removesuffix(f" {contract.result_key}")
+        ctx.bind_structural_all(base_binds)
+        join_terms.append(
+            f"{dialect.qualified(outer_alias, contract.result_key)} = {base_expression}"
+        )
+    return (
+        f" join {layout.table.name} {base_alias} on " + " and ".join(join_terms),
+        f" {dialect.read_lock_suffix(base_alias)}",
+    )
+
+
 def _compile_read_arm(
     query: ValidatedEntityQuery,
     model: Metamodel,
     dialect: Dialect,
+    terms: tuple[_LoweredTerm, ...],
     *,
     result_form: _ResultForm,
     lock: LockMode | None,
     null_tail: bool,
 ) -> CompiledRead:
-    """Compile one ordinary or NULL-tail arm of a read."""
+    """Compile one ordinary or NULL-tail arm of a read ordered by ``terms``."""
 
     target = query.entity
     facet = _inheritance_view(model)
     storage = _storage_view(model)
     predicate = query.validated_predicate
-    terms = _lowered_terms(query.order_by, _reserved_result_keys(model, storage))
     paging = query.paging
     limit = query.limit
     narrow_to = query.narrow_to

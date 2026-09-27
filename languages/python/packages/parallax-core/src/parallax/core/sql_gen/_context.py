@@ -353,9 +353,23 @@ class StatementBuilder:
             )
             for row in rows
         )
+        self._append_row_spans(start, width, signatures)
+
+    def _append_row_spans(
+        self,
+        start: int,
+        width: int,
+        signatures: tuple[tuple[_TypedBindSlot | None, ...], ...],
+    ) -> None:
+        """Record the typed spans of rows bound contiguously from ``start``.
+
+        Consecutive rows with one signature form a group, and each run of equal
+        non-null slots in that signature becomes one span: a repeated span across
+        a group of several rows, or a plain span for a group of one.
+        """
         group_start = 0
-        for group_stop in range(1, len(rows) + 1):
-            if group_stop < len(rows) and signatures[group_stop] == signatures[group_start]:
+        for group_stop in range(1, len(signatures) + 1):
+            if group_stop < len(signatures) and signatures[group_stop] == signatures[group_start]:
                 continue
             signature = signatures[group_start]
             run_start: int | None = None
