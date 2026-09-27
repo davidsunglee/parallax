@@ -417,16 +417,23 @@ def _values_equal(observed: object, expected: object, key: _Key, path: str) -> b
                     zip(observed_items, expected_items, strict=True)
                 )
             )
-        remaining = list(expected_items)
-        for item in observed_items:
-            for index, candidate in enumerate(remaining):
-                if _values_equal(item, candidate, element, path):
-                    del remaining[index]
-                    break
-            else:
-                return False
-        return True
+        return _unordered_equal(observed_items, expected_items, element, path)
     return _scalar_equal(observed, expected)
+
+
+def _unordered_equal(
+    observed: list[object], expected: list[object], element: _Key, path: str
+) -> bool:
+    """Whether each observed element pairs off with a distinct expected one."""
+    remaining = list(expected)
+    for item in observed:
+        for index, candidate in enumerate(remaining):
+            if _values_equal(item, candidate, element, path):
+                del remaining[index]
+                break
+        else:
+            return False
+    return True
 
 
 def _root_key(kinds: CollectionKinds) -> _Key:

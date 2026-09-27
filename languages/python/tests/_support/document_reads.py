@@ -22,25 +22,23 @@ def fold_mapping_document_reads(
     managed: MappingRow = {}
     source = iter(row.items())
     for ordinal in range(width):
-        if ordinal in documents:
-            try:
-                name, value = next(source)
-            except StopIteration as exc:
-                raise ValueError("a fake row does not match its document-read projection") from exc
-            if value is None:
-                managed[name] = SQL_NULL
-            elif isinstance(value, (SqlNull, PresentDocument)):
-                managed[name] = value
-            elif is_document_value(value):
-                managed[name] = PresentDocument(value)
-            else:
-                raise ValueError("a fake document cell is not a portable document value")
-        elif ordinal not in presences:
-            try:
-                name, value = next(source)
-            except StopIteration as exc:
-                raise ValueError("a fake row does not match its document-read projection") from exc
+        document = ordinal in documents
+        if not document and ordinal in presences:
+            continue
+        try:
+            name, value = next(source)
+        except StopIteration as exc:
+            raise ValueError("a fake row does not match its document-read projection") from exc
+        if not document:
             managed[name] = value
+        elif value is None:
+            managed[name] = SQL_NULL
+        elif isinstance(value, (SqlNull, PresentDocument)):
+            managed[name] = value
+        elif is_document_value(value):
+            managed[name] = PresentDocument(value)
+        else:
+            raise ValueError("a fake document cell is not a portable document value")
     try:
         next(source)
     except StopIteration:
@@ -89,17 +87,7 @@ _IDENTIFIER = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*$")
 
 def _projection(sql: str) -> tuple[tuple[str, str | None], ...]:
     start = len("select ")
-    depth = 0
-    end = -1
-    for index in range(start, len(sql)):
-        char = sql[index]
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-        elif depth == 0 and sql[index : index + 6].lower() == " from ":
-            end = index
-            break
+    end = _select_list_end(sql, start)
     if end < 0:
         return ()
 
@@ -133,6 +121,20 @@ def _projection(sql: str) -> tuple[tuple[str, str | None], ...]:
         source = expression.rsplit(".", 1)[-1].strip('`"')
         projection.append((result_key, source if _IDENTIFIER.fullmatch(source) else None))
     return tuple(projection)
+
+
+def _select_list_end(sql: str, start: int) -> int:
+    """Where the top-level ``from`` ending the select list begins, or ``-1``."""
+    depth = 0
+    for index in range(start, len(sql)):
+        char = sql[index]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif depth == 0 and sql[index : index + 6].lower() == " from ":
+            return index
+    return -1
 
 
 def _nested_projection(sql: str) -> dict[str | None, str | None]:

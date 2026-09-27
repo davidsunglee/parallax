@@ -422,82 +422,103 @@ def test_encoding_erases_private_and_programmatic_scalar_subclasses() -> None:
     assert type(member) is str
 
 
-def test_encoding_reads_immutable_carrier_payloads_without_subclass_hooks() -> None:
-    class Integer(int):
-        def __int__(self) -> int:
-            return 99
+class _HookedInteger(int):
+    def __int__(self) -> int:
+        return 99
 
-    class Text(str):
-        def __str__(self) -> str:
-            return "changed"
 
-        def encode(self, *_args: object, **_kwargs: object) -> bytes:
-            return b"changed"
-
-    class BinaryFloat(float):
-        def __format__(self, _format_spec: str) -> str:
-            return "99"
-
-        def __float__(self) -> float:
-            return 99.0
-
-    class FixedDecimal(decimal.Decimal):
-        def as_tuple(self) -> decimal.DecimalTuple:
-            return decimal.Decimal("9").as_tuple()
-
-    class Octets(bytes):
-        def hex(self, *_args: object, **_kwargs: object) -> str:
-            return "changed"
-
-    class CalendarDate(dt.date):
-        def isoformat(self) -> str:
-            return "changed"
-
-    class WallTime(dt.time):
-        def isoformat(self, *_args: object, **_kwargs: object) -> str:
-            return "changed"
-
-    class Instant(dt.datetime):
-        def astimezone(self, tz: dt.tzinfo | None = None) -> dt.datetime:
-            return dt.datetime(1999, 1, 1, tzinfo=dt.UTC)
-
-        def strftime(self, format: str) -> str:
-            return "changed"
-
-    def uuid_int_getter(_value: uuid.UUID) -> int:
-        return 1
-
-    def uuid_int_setter(value: uuid.UUID, integer: int) -> None:
-        vars(uuid.UUID)["int"].__set__(value, integer)
-
-    def uuid_text(_value: uuid.UUID) -> str:
+class _HookedText(str):
+    def __str__(self) -> str:
         return "changed"
 
-    token_type = cast(
-        "type[uuid.UUID]",
-        type(
-            "Token",
-            (uuid.UUID,),
-            {
-                "__str__": uuid_text,
-                "hex": property(uuid_text),
-                "int": property(uuid_int_getter, uuid_int_setter),
-            },
-        ),
-    )
+    def encode(self, *_args: object, **_kwargs: object) -> bytes:
+        return b"changed"
 
-    assert wire.encode_wire(INT64, Integer(1)) == 1
-    assert wire.encode_wire(STRING, Text("value")) == "value"
-    assert wire.encode_wire(FLOAT64, BinaryFloat(2.0)) == 2.0
-    assert wire.encode_wire(Decimal(1, 0), FixedDecimal("1")) == "1"
-    assert wire.encode_wire(BYTES, Octets(b"a")) == "61"
-    assert wire.encode_wire(DATE, CalendarDate(2026, 1, 1)) == "2026-01-01"
-    assert wire.encode_wire(TIME, WallTime(1)) == "01:00:00"
-    assert (
-        wire.encode_wire(TIMESTAMP, Instant(2026, 1, 1, tzinfo=dt.UTC))
-        == "2026-01-01T00:00:00.000000Z"
-    )
-    assert wire.encode_wire(UUID, token_type(int=0)) == "00000000-0000-0000-0000-000000000000"
+
+class _HookedFloat(float):
+    def __format__(self, _format_spec: str) -> str:
+        return "99"
+
+    def __float__(self) -> float:
+        return 99.0
+
+
+class _HookedDecimal(decimal.Decimal):
+    def as_tuple(self) -> decimal.DecimalTuple:
+        return decimal.Decimal("9").as_tuple()
+
+
+class _HookedOctets(bytes):
+    def hex(self, *_args: object, **_kwargs: object) -> str:
+        return "changed"
+
+
+class _HookedDate(dt.date):
+    def isoformat(self) -> str:
+        return "changed"
+
+
+class _HookedTime(dt.time):
+    def isoformat(self, *_args: object, **_kwargs: object) -> str:
+        return "changed"
+
+
+class _HookedInstant(dt.datetime):
+    def astimezone(self, tz: dt.tzinfo | None = None) -> dt.datetime:
+        return dt.datetime(1999, 1, 1, tzinfo=dt.UTC)
+
+    def strftime(self, format: str) -> str:
+        return "changed"
+
+
+def _hooked_uuid_int(_value: uuid.UUID) -> int:
+    return 1
+
+
+def _store_hooked_uuid_int(value: uuid.UUID, integer: int) -> None:
+    vars(uuid.UUID)["int"].__set__(value, integer)
+
+
+def _hooked_uuid_text(_value: uuid.UUID) -> str:
+    return "changed"
+
+
+_HookedToken = cast(
+    "type[uuid.UUID]",
+    type(
+        "Token",
+        (uuid.UUID,),
+        {
+            "__str__": _hooked_uuid_text,
+            "hex": property(_hooked_uuid_text),
+            "int": property(_hooked_uuid_int, _store_hooked_uuid_int),
+        },
+    ),
+)
+
+
+_HOOKED_CARRIERS: tuple[tuple[NeutralType, ManagedValue, wire.WireValue], ...] = (
+    (INT64, _HookedInteger(1), 1),
+    (STRING, _HookedText("value"), "value"),
+    (FLOAT64, _HookedFloat(2.0), 2.0),
+    (Decimal(1, 0), _HookedDecimal("1"), "1"),
+    (BYTES, _HookedOctets(b"a"), "61"),
+    (DATE, _HookedDate(2026, 1, 1), "2026-01-01"),
+    (TIME, _HookedTime(1), "01:00:00"),
+    (TIMESTAMP, _HookedInstant(2026, 1, 1, tzinfo=dt.UTC), "2026-01-01T00:00:00.000000Z"),
+    (UUID, _HookedToken(int=0), "00000000-0000-0000-0000-000000000000"),
+)
+
+
+@pytest.mark.parametrize(
+    ("neutral_type", "value", "canonical"),
+    _HOOKED_CARRIERS,
+    ids=[str(row[0]) for row in _HOOKED_CARRIERS],
+)
+def test_encoding_reads_immutable_carrier_payloads_without_subclass_hooks(
+    neutral_type: NeutralType, value: ManagedValue, canonical: wire.WireValue
+) -> None:
+    assert wire.encode_wire(neutral_type, value) == canonical
 
 
 def test_encoding_rejects_exclusions_before_extracting_builtin_carriers() -> None:
