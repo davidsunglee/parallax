@@ -374,7 +374,7 @@ def nearest_float_at_width(
         projected = float(magnitude)
         if not _math.isfinite(projected):
             return None
-        return -projected if negative else projected
+        return -projected if negative and projected else projected
 
     adjusted = magnitude.adjusted()
     if adjusted > 38:
