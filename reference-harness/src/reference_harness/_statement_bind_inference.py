@@ -294,46 +294,73 @@ def _expression_target(
     if len(columns) != 1:
         return None
     slot = _column_slot(case, tree, columns[0])
-    if slot is None or not isinstance(slot.contributor, ValueObjectContributor):
-        return None
     path = _extraction_path(expression, binds)
-    if not path:
+    if slot is None or not path:
         return None
-    owner = case.model.entity(slot.contributor.owner)
-    occurrence = next(
+    if isinstance(slot.contributor, ValueObjectContributor):
+        neutral_type = _value_object_leaf_type(
+            case, slot.contributor.owner, slot.contributor.name, path
+        )
+    elif isinstance(slot.contributor, RelationalDocument) and isinstance(expression, exp.Cast):
+        # Only a casting extraction binds a declared-type value; a text-compared one
+        # binds the stored text as it stands, which a corrupted Continuation Order
+        # coordinate may hold (m-sql *Continuation coordinates*).
+        neutral_type = _document_leaf_type(case, _document_members(case, slot, guarded), path)
+    else:
+        return None
+    return None if neutral_type is None else LiteralBindTarget(neutral_type)
+
+
+def _document_leaf_type(
+    case: Case, members: Sequence[DocumentMember], path: tuple[str, ...]
+) -> str | None:
+    for member in members:
+        if path[: len(member.path)] != member.path:
+            continue
+        inner = path[len(member.path) :]
+        if member.type_spelling is not None:
+            return None if inner else member.type_spelling
+        if inner:
+            return _value_object_leaf_type(
+                case, member.address.owner, member.address.path[0], inner
+            )
+    return None
+
+
+def _value_object_leaf_type(
+    case: Case, owner: str, occurrence_name: str, path: tuple[str, ...]
+) -> str | None:
+    current = next(
         (
             candidate
-            for candidate in owner.value_objects
-            if candidate.get("name") == slot.contributor.name
+            for candidate in case.model.entity(owner).value_objects
+            if candidate.get("name") == occurrence_name
         ),
         None,
     )
-    if occurrence is None:
-        return None
-    current = occurrence
     for segment in path[:-1]:
-        nested = current.get("valueObjects", [])
+        if current is None:
+            return None
         current = next(
             (
                 candidate
-                for candidate in nested
+                for candidate in current.get("valueObjects", [])
                 if isinstance(candidate, Mapping) and candidate.get("name") == segment
             ),
             None,
         )
-        if current is None:
-            return None
-    attributes = current.get("attributes", [])
+    if current is None:
+        return None
     attribute = next(
         (
             candidate
-            for candidate in attributes
+            for candidate in current.get("attributes", [])
             if isinstance(candidate, Mapping) and candidate.get("name") == path[-1]
         ),
         None,
     )
     neutral_type = None if attribute is None else attribute.get("type")
-    return LiteralBindTarget(neutral_type) if isinstance(neutral_type, str) else None
+    return neutral_type if isinstance(neutral_type, str) else None
 
 
 def _extraction_path(expression: Expr, binds: Sequence[object]) -> tuple[str, ...]:

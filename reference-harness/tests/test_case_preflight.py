@@ -647,6 +647,73 @@ def test_preflight_types_every_write_sequence_path_value_of_a_nested_mutation(
         preflight_case_literals(case)
 
 
+_NODE_EXTRACTIONS = {
+    "postgres": "cast(jsonb_extract_path_text(t0.payload, {paths}) as {cast})",
+    "mariadb": "cast(json_value(t0.payload, ?) as {cast})",
+}
+_NODE_FLOAT_CASTS = {
+    "postgres": {"float32": "real", "float64": "double precision"},
+    "mariadb": {"float32": "float", "float64": "double"},
+}
+
+
+def _node_extraction_comparison(
+    dialect: str, path: tuple[str, ...], declared: str, value: object
+) -> Case:
+    model = load_model(_COMPATIBILITY_ROOT, "models/materialization-stress-document.yaml")
+    extraction = _NODE_EXTRACTIONS[dialect].format(
+        paths=", ".join("?" for _segment in path), cast=_NODE_FLOAT_CASTS[dialect][declared]
+    )
+    path_binds: list[object] = list(path) if dialect == "postgres" else ["$." + ".".join(path)]
+    statement = {
+        "sql": {dialect: f"select t0.id from materialization_node t0 where {extraction} = ?"},
+        "binds": {dialect: [*path_binds, value]},
+    }
+    return Case(
+        Path("synthetic-node-extraction-comparison.yaml"),
+        {"shape": "read", "when": {}, "then": {"statements": [statement]}},
+        model,
+    )
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+@pytest.mark.parametrize(
+    ("path", "declared", "value"),
+    [
+        (("ratio",), "float32", -0.0),
+        (("ratio",), "float32", -1e-50),
+        (("measure",), "float64", -0.0),
+        (("primaryTag", "ratio"), "float32", -0.0),
+    ],
+)
+def test_preflight_refuses_a_negative_float_zero_compared_with_a_document_extraction(
+    dialect: str, path: tuple[str, ...], declared: str, value: float
+) -> None:
+    preflight_case_literals(_node_extraction_comparison(dialect, path, declared, 0.0))
+    value_index = len(path) if dialect == "postgres" else 1
+    with pytest.raises(
+        CaseFailure,
+        match=rf"then\.statements\[0\]\.binds\.{dialect}\[{value_index}\]: .* not canonical",
+    ):
+        preflight_case_literals(_node_extraction_comparison(dialect, path, declared, value))
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_preflight_types_the_extraction_comparison_of_a_corpus_document_predicate(
+    dialect: str,
+) -> None:
+    case = _damaged("m-storage-layout-020-document-layout-path-predicate-ordering")
+    case.then["statements"][0]["binds"][dialect][1] = "5"
+    with pytest.raises(
+        CaseFailure, match=rf"binds\.{dialect}\[1\]: '5' is type-mismatch for int64"
+    ):
+        preflight_case_literals(case)
+
+
+def test_preflight_leaves_a_text_compared_corrupt_coordinate_untyped() -> None:
+    preflight_case_literals(_corpus_case("m-snapshot-read-047-stream-corrupt-sort-key-coordinate"))
+
+
 class _RecordingExecutor:
     def __init__(self, dialect: str) -> None:
         self.dialect = dialect
