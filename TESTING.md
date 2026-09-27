@@ -41,7 +41,9 @@ reviewed like code:
 
 - A `# noqa: C901` covers one declaration, and only where decomposing it would
   obscure an exhaustive dispatcher, state machine, protocol, or similarly
-  cohesive unit. Say why beside it unless the shape makes that evident.
+  cohesive unit, or where every decomposition would add work to a per-row or
+  per-value loop the cost instruments measure. Say why beside it unless the
+  shape makes that evident; a cost-based exception always names its loop.
 - A duplication ignore covers only generated or vendored code, or a repetition
   reviewed as required. A clone below the threshold is code review's to judge.
 - A deptry exception names one package, gives a durable reason — a dynamic
