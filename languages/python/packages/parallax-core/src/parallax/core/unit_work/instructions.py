@@ -1177,11 +1177,7 @@ def _attribute_validity(
 
 
 def _coerce_typed_leaf(neutral_type: NeutralType, value: object, path: str) -> tuple[object, bool]:
-    managed = (
-        value
-        if matches_neutral_type(value, neutral_type)
-        else coerce_neutral_input(value, neutral_type)
-    )
+    managed = coerce_neutral_input(value, neutral_type)
     return freeze_retained_value(managed), matches_neutral_type(managed, neutral_type)
 
 
