@@ -862,3 +862,48 @@ def test_preflight_types_a_sibling_reused_document_path_by_the_statement_tag(
         match=rf"binds\.{dialect}\[{value_index}\]{location}: .* for {declared}",
     ):
         preflight_case_literals(write(dialect, kind, damaged))
+
+
+def _payment_detail_read(dialect: str, where: str, binds: list[object]) -> Case:
+    extraction = {
+        "postgres": "cast(jsonb_extract_path_text(p.payload, ?) as numeric)",
+        "mariadb": "cast(json_value(p.payload, ?) as decimal(18, 2))",
+    }[dialect]
+    path = {"postgres": "detail", "mariadb": "$.detail"}[dialect]
+    sql = (
+        "select p.id from payment_document p join payment_document q on q.id = p.id where "
+        + where.format(detail=f"{extraction} = ?")
+    )
+    return _payment_write(dialect, sql, [path if bind == "<path>" else bind for bind in binds])
+
+
+_NESTED_KIND = "exists (select 1 from payment_document r where r.kind = ?)"
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_preflight_types_a_shared_document_by_the_tag_its_own_scope_pins(dialect: str) -> None:
+    where = f"p.kind = ? and {{detail}} and {_NESTED_KIND}"
+    preflight_case_literals(
+        _payment_detail_read(dialect, where, ["cash", "<path>", "12.50", "card"])
+    )
+    with pytest.raises(CaseFailure, match=rf"binds\.{dialect}\[2\]: .* for decimal\(18,2\)"):
+        preflight_case_literals(
+            _payment_detail_read(dialect, where, ["cash", "<path>", -0.0, "card"])
+        )
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+@pytest.mark.parametrize(
+    ("where", "binds"),
+    [
+        pytest.param(
+            f"{{detail}} and {_NESTED_KIND}", ["<path>", "visa-4242", "cash"], id="nested"
+        ),
+        pytest.param("p.kind = ? or {detail}", ["cash", "<path>", "visa-4242"], id="disjunct"),
+        pytest.param("q.kind = ? and {detail}", ["cash", "<path>", "visa-4242"], id="other-table"),
+    ],
+)
+def test_preflight_leaves_a_shared_document_untyped_by_a_tag_that_pins_another_row(
+    dialect: str, where: str, binds: list[object]
+) -> None:
+    preflight_case_literals(_payment_detail_read(dialect, where, binds))

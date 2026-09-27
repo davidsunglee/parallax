@@ -225,20 +225,34 @@ def _document_members(
     )
 
 
-def _guarded_values(scopes: Sequence[Expr], binds: Sequence[object]) -> dict[str, object]:
+def _guarded_values(
+    table: exp.Table, scopes: Sequence[Expr], binds: Sequence[object]
+) -> dict[str, object]:
     guards: dict[str, list[object]] = {}
     for scope in scopes:
         where = scope.args.get("where")
         if where is None:
             continue
-        for comparison in where.find_all(exp.EQ):
+        for comparison in _conjuncts(where.this):
+            if not isinstance(comparison, exp.EQ):
+                continue
             for guarded, operand in (
                 (comparison.this, comparison.expression),
                 (comparison.expression, comparison.this),
             ):
-                if isinstance(guarded, exp.Column):
+                if isinstance(guarded, exp.Column) and _column_table(guarded) is table:
                     guards.setdefault(guarded.name, []).append(_operand_value(operand, binds))
     return {column: values[0] for column, values in guards.items() if len(values) == 1}
+
+
+def _conjuncts(condition: Expr) -> Iterator[Expr]:
+    while isinstance(condition, exp.Paren):
+        condition = condition.this
+    if isinstance(condition, exp.And):
+        yield from _conjuncts(condition.this)
+        yield from _conjuncts(condition.expression)
+    else:
+        yield condition
 
 
 def _operand_value(expression: Expr | None, binds: Sequence[object]) -> object:
@@ -380,9 +394,36 @@ def _column_slot(
 ) -> tuple[ColumnSlot | None, dict[str, object]]:
     """The slot ``column`` reads and the column values its row is guarded to.
 
+    A row is guarded only by a top-level ``and`` equality of its table's own
+    scope, or of a ``select *`` derived table it passes through, whose column
+    reads that same table; a nested query or a disjunct pins some other row.
+    """
+    source = _column_source(column)
+    if source is None:
+        matches = tuple(
+            slot
+            for layout in case.model.storage_layout.tables
+            if (slot := layout.column(column.name)) is not None
+        )
+        return (matches[0] if len(matches) == 1 else None), {}
+    table, scopes = source
+    layout = None if table is None else case.model.storage_layout.table(table.name)
+    if table is None or layout is None:
+        return None, {}
+    return layout.column(column.name), _guarded_values(table, scopes, binds)
+
+
+def _column_table(column: exp.Column) -> exp.Table | None:
+    source = _column_source(column)
+    return None if source is None else source[0]
+
+
+def _column_source(column: exp.Column) -> tuple[exp.Table | None, tuple[Expr, ...]] | None:
+    """The table ``column`` reads and the scopes that filter its rows.
+
     A qualifier resolves in the column's own query scope and then its enclosing
     ones, so ``union all`` branches may reuse an alias. A ``select *`` derived table
-    passes through to its one source, and its filter guards the same row.
+    passes through to its one source; any other derived table reads no table.
     """
     scope: Expr | None = _query_scope(column)
     while scope is not None:
@@ -392,36 +433,24 @@ def _column_slot(
         else:
             source = sources[0] if len(sources) == 1 else None
         if source is not None:
-            return _source_slot(case, source, column.name, (scope,), binds)
+            return _passed_through(source, (scope,))
         scope = _query_scope(scope.parent) if column.table and scope.parent else None
-    matches = tuple(
-        slot
-        for layout in case.model.storage_layout.tables
-        if (slot := layout.column(column.name)) is not None
-    )
-    guarded = _guarded_values((_query_scope(column),), binds)
-    return (matches[0] if len(matches) == 1 else None), guarded
+    return None
 
 
-def _source_slot(
-    case: Case,
-    source: exp.Table | exp.Subquery,
-    name: str,
-    scopes: tuple[Expr, ...],
-    binds: Sequence[object],
-) -> tuple[ColumnSlot | None, dict[str, object]]:
+def _passed_through(
+    source: exp.Table | exp.Subquery, scopes: tuple[Expr, ...]
+) -> tuple[exp.Table | None, tuple[Expr, ...]]:
     while isinstance(source, exp.Subquery):
         inner = source.this
         if not isinstance(inner, exp.Select) or not inner.is_star:
-            return None, {}
+            return None, scopes
         sources = _scope_sources(inner)
         if len(sources) != 1:
-            return None, {}
+            return None, scopes
         scopes = (*scopes, inner)
         source = sources[0]
-    layout = case.model.storage_layout.table(source.name)
-    slot = None if layout is None else layout.column(name)
-    return slot, _guarded_values(scopes, binds)
+    return source, scopes
 
 
 def _query_scope(node: Expr) -> Expr:
