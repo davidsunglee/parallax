@@ -238,7 +238,7 @@ Within a uniquely owned group, the declaration stream is the one
 `m-inheritance` fixes: a standalone Entity's own declarations, a
 table-per-concrete-subtype concrete Entity's root-to-concrete ancestry, and a
 table-per-hierarchy family's complete family declaration stream
-(`m-inheritance` "The family declaration stream"), rowless participants
+(`m-inheritance` "The family declaration stream"), dormant participants
 included. Each Entity's local Attributes and top-level Value Objects retain
 their respective declaration orders. A contributor already encountered through
 another applicable concrete is retained once and accumulates that concrete's

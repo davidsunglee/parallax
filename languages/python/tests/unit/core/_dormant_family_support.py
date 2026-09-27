@@ -1,7 +1,7 @@
-"""A family whose nested rowless branch contributes to its declaration stream.
+"""A family whose nested dormant branch contributes to its declaration stream.
 
 ``ZDormant`` and its abstract child ``ADormantChild`` reach no concrete, so both
-are rowless, and the child's identity sorts first: the canonical suffix places
+are dormant, and the child's identity sorts first: the canonical suffix places
 it before its parent. The child declares its Attributes out of alphabetical
 order, so local declaration order stays distinguishable from any sort. Every
 participant declares Attributes and a top-level Value Object whose shape holds
@@ -35,7 +35,7 @@ from parallax.core.metamodel import (
 )
 from tests.unit._metamodel_support import Declaration, Source, attribute, identity, key, source
 
-__all__ = ["DORMANT", "DORMANT_CHILD", "LIVE", "ROOT", "rowless_family"]
+__all__ = ["DORMANT", "DORMANT_CHILD", "LIVE", "ROOT", "dormant_family"]
 
 ROOT: Final = identity("Record")
 LIVE: Final = identity("Live")
@@ -54,7 +54,7 @@ def _occurrence(name: str) -> ValueObjectOccurrenceDeclaration:
     )
 
 
-def rowless_family(
+def dormant_family(
     strategy: Literal["tph", "tpcs"], *, layout: StorageLayout | None = None
 ) -> Source:
     """The family under ``strategy``, its root declaring ``layout``."""

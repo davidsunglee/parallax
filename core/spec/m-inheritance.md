@@ -250,7 +250,7 @@ the optional root-owned
 TPH tag, remaining Attributes, then top-level Value Objects. Within an Attribute
 or Value Object pass, a concrete-table group visits root-to-concrete ancestry,
 and a shared-table group visits its family's contributors in the family
-declaration stream order (*The family declaration stream*), rowless participants
+declaration stream order (*The family declaration stream*), dormant participants
 included; a candidate family with no concrete subtype visits its root first,
 then its other participants in canonical Entity Identity order. Every local
 category retains declaration order, and a declaration reached through several
@@ -755,19 +755,19 @@ participant contributes its declared Attributes and top-level Value Objects.
 
 1. The root's projection over its effective concrete-subtype set, exactly as
    `superset_attributes` and `superset_value_objects` order it above.
-2. Then every **rowless participant** — a participant whose effective
-   concrete-subtype set is empty — contributes in canonical Entity Identity
-   order. A rowless participant sorting before its rowless parent therefore
-   contributes before it.
+2. Then every **dormant participant** — an abstract participant whose
+   effective concrete-subtype set is empty — contributes in canonical Entity
+   Identity order. A dormant participant sorting before its dormant parent
+   therefore contributes before it.
 
 Each participant contributes exactly once, its own members in declaration
 order, so every Attribute and Value Object appears exactly once with its
 declaring identity preserved. An abstract participant with a concrete
-descendant is never rowless and contributes through step 1; in an accepted
-model the root is never rowless, and a rowless participant is never an
+descendant is never dormant and contributes through step 1; in an accepted
+model the root is never dormant, and a dormant participant is never an
 ancestor of a concrete one. The root's superset sequences are therefore
 prefixes of the corresponding complete streams, equal to them whenever the
-family has no rowless participant, while each rowless participant's own
+family has no dormant participant, while each dormant participant's own
 superset sequences stay empty. A standalone Entity's stream is its own
 declared members.
 

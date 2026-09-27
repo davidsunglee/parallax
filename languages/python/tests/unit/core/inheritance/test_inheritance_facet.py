@@ -54,17 +54,17 @@ from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from tests._support import fake_metamodel as fake
 from tests.unit._metamodel_support import Declaration, identity, key, source
-from tests.unit.core._family_owner_support import (
-    DescendantsFirst,
-    family_roots,
-    record_root_derivations,
-)
-from tests.unit.core._rowless_family_support import (
+from tests.unit.core._dormant_family_support import (
     DORMANT,
     DORMANT_CHILD,
     LIVE,
     ROOT,
-    rowless_family,
+    dormant_family,
+)
+from tests.unit.core._family_owner_support import (
+    DescendantsFirst,
+    family_roots,
+    record_root_derivations,
 )
 
 _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
@@ -647,7 +647,7 @@ def test_a_superset_collects_value_objects_down_the_same_contribution_order() ->
 # Family declaration streams.
 # --------------------------------------------------------------------------
 
-_ROWLESS_ATTRIBUTES: Final = [
+_DORMANT_ATTRIBUTES: Final = [
     (ROOT, "id"),
     (ROOT, "title"),
     (LIVE, "liveValue"),
@@ -655,7 +655,7 @@ _ROWLESS_ATTRIBUTES: Final = [
     (DORMANT_CHILD, "childAlpha"),
     (DORMANT, "dormantValue"),
 ]
-_ROWLESS_VALUE_OBJECTS: Final = [
+_DORMANT_VALUE_OBJECTS: Final = [
     (ROOT, "summary"),
     (LIVE, "liveDetail"),
     (DORMANT_CHILD, "childDetail"),
@@ -686,16 +686,16 @@ def _value_object_owners(
 
 
 @pytest.mark.parametrize("strategy", ["tph", "tpcs"])
-def test_a_family_stream_appends_rowless_participants_child_before_parent(
+def test_a_family_stream_appends_dormant_participants_child_before_parent(
     strategy: Literal["tph", "tpcs"],
 ) -> None:
-    family = _family(inheritance.view(form_metamodel(rowless_family(strategy))), ROOT)
-    assert _attribute_owners(family.attributes) == _ROWLESS_ATTRIBUTES
-    assert _value_object_owners(family.value_objects) == _ROWLESS_VALUE_OBJECTS
+    family = _family(inheritance.view(form_metamodel(dormant_family(strategy))), ROOT)
+    assert _attribute_owners(family.attributes) == _DORMANT_ATTRIBUTES
+    assert _value_object_owners(family.value_objects) == _DORMANT_VALUE_OBJECTS
 
 
 def test_a_root_projection_is_the_prefix_of_its_family_stream() -> None:
-    facet = inheritance.view(form_metamodel(rowless_family("tph")))
+    facet = inheritance.view(form_metamodel(dormant_family("tph")))
     family = _family(facet, ROOT)
     root = _entity(facet, ROOT)
     for stream, prefix in (
@@ -706,20 +706,20 @@ def test_a_root_projection_is_the_prefix_of_its_family_stream() -> None:
         assert all(member is stream[index] for index, member in enumerate(prefix))
 
 
-def test_rowless_participants_keep_empty_projections() -> None:
-    facet = inheritance.view(form_metamodel(rowless_family("tph")))
-    for rowless in (DORMANT, DORMANT_CHILD):
-        view = _entity(facet, rowless)
-        projected = facet.position([rowless])
+def test_dormant_participants_keep_empty_projections() -> None:
+    facet = inheritance.view(form_metamodel(dormant_family("tph")))
+    for dormant in (DORMANT, DORMANT_CHILD):
+        view = _entity(facet, dormant)
+        projected = facet.position([dormant])
         assert projected is not None
         for answer in (view, projected):
-            assert tuple(answer.concrete_subtypes) == (), rowless
-            assert tuple(answer.superset_attributes) == (), rowless
-            assert tuple(answer.superset_value_objects) == (), rowless
+            assert tuple(answer.concrete_subtypes) == (), dormant
+            assert tuple(answer.superset_attributes) == (), dormant
+            assert tuple(answer.superset_value_objects) == (), dormant
 
 
 def test_every_family_participant_contributes_its_accepted_members_once() -> None:
-    model = form_metamodel(rowless_family("tph"))
+    model = form_metamodel(dormant_family("tph"))
     family = _family(inheritance.view(model), ROOT)
     identities = [member.identity for member in (*family.attributes, *family.value_objects)]
     assert len(identities) == len(set(identities))
@@ -734,7 +734,7 @@ def test_every_family_participant_contributes_its_accepted_members_once() -> Non
 
 
 def test_a_family_listed_descendants_first_compiles_the_same_stream() -> None:
-    model = form_metamodel(rowless_family("tph"))
+    model = form_metamodel(dormant_family("tph"))
     metadata = DescendantsFirst(model)
     listed = [entity.identity for entity in metadata.entities]
     assert listed.index(DORMANT_CHILD) < listed.index(DORMANT) < listed.index(ROOT)
@@ -748,12 +748,12 @@ def test_a_family_listed_descendants_first_compiles_the_same_stream() -> None:
         assert all(left is right for left, right in zip(stream, reference, strict=True))
 
 
-def test_a_family_stream_with_a_rowless_suffix_is_a_complete_sequence() -> None:
-    facet = inheritance.view(form_metamodel(rowless_family("tph")))
+def test_a_family_stream_with_a_dormant_suffix_is_a_complete_sequence() -> None:
+    facet = inheritance.view(form_metamodel(dormant_family("tph")))
     attributes = _family(facet, ROOT).attributes
     boundary = len(_entity(facet, ROOT).superset_attributes)
     expected = tuple(attributes)
-    assert _attribute_owners(expected) == _ROWLESS_ATTRIBUTES
+    assert _attribute_owners(expected) == _DORMANT_ATTRIBUTES
     assert len(attributes) == len(expected)
     assert all(attributes[index] is member for index, member in enumerate(expected))
     for index in (boundary - 1, boundary, -1, -len(expected)):
@@ -791,7 +791,7 @@ def test_a_family_stream_with_a_rowless_suffix_is_a_complete_sequence() -> None:
         ),
     ],
 )
-def test_a_family_without_rowless_participants_streams_its_root_supersets(
+def test_a_family_without_dormant_participants_streams_its_root_supersets(
     stem: str, root_name: str, attribute_names: list[str], value_object_names: list[str]
 ) -> None:
     facet = _corpus(stem)
@@ -827,9 +827,9 @@ def test_a_family_stream_is_absent_for_every_identity_but_a_root() -> None:
     assert animal.family(EntityIdentity("elsewhere", "Animal")) is None
     assert animal.family(_corpus_entity("Pet")) is None
     assert animal.family(_corpus_entity("Dog")) is None
-    rowless = inheritance.view(form_metamodel(rowless_family("tph")))
-    assert rowless.family(DORMANT) is None
-    assert rowless.family(LIVE) is None
+    dormant_facet = inheritance.view(form_metamodel(dormant_family("tph")))
+    assert dormant_facet.family(DORMANT) is None
+    assert dormant_facet.family(LIVE) is None
 
 
 # --------------------------------------------------------------------------
