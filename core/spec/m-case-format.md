@@ -347,6 +347,16 @@ control binds such as `infinity`, path segments, and JSON mutation text are not
 typed literal positions unless the statement metadata identifies them as modeled
 values.
 
+A bind or write value graded against a canonical expectation — a statement
+bind, a document-valued bind, or a value derived from a case's neutral write
+input — compares by `m-wire`'s variant-aware canonical comparison for its
+resolved declaration. At a declared `float32` or `float64` position, including a
+Value Object leaf, that comparison observes zero sign, so `-0.0` never equals the
+canonical `0.0`. A Json position — an opaque Json value, or a document key its
+declaration does not name — compares by JSON-value equality. Row comparison
+(*The layered assertion model*, layer 2) is a separate rule: its numerics compare
+in decimal space under any authored `tolerance`.
+
 #### Field table
 
 | Field | Group | Required | Meaning |
