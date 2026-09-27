@@ -136,7 +136,9 @@ def encode_managed_wire(neutral_type: NeutralType, value: ManagedValue) -> WireV
     return _canonical_spelling(neutral_type, _base_managed_carrier(value, neutral_type))
 
 
-def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue:
+# One arm per Neutral Type variant. It runs per value on every Wire encode, so the arms
+# stay inline rather than behind a per-variant call.
+def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue:  # noqa: C901
     """The canonical spelling of a value already known to be a managed member."""
     match neutral_type:
         case Boolean():
@@ -174,7 +176,9 @@ def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue
             assert_never(unreachable)
 
 
-def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLiteral:
+# One arm per Neutral Type variant, dispatched once per value on every Wire decode;
+# splitting the dispatch would add a call to that per-value path.
+def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLiteral:  # noqa: C901
     if _is_unrecognized_exclusion(value):
         _fail("type-mismatch", value, neutral_type)
     match neutral_type:
@@ -494,7 +498,9 @@ def _normalize_json(
         raise _JsonFailure(reason, str(exc)) from exc
 
 
-def _normalize_json_scalar(value: object) -> WireValue:
+# One arm per JSON scalar kind. It runs per scalar inside every Json value on Wire encode
+# and decode, so the arms stay inline rather than behind a per-kind call.
+def _normalize_json_scalar(value: object) -> WireValue:  # noqa: C901
     if _is_unrecognized_exclusion(value):
         raise _JsonFailure(
             "type-mismatch",
@@ -575,7 +581,9 @@ def _fail(
     )
 
 
-def _base_managed_carrier(value: object, neutral_type: NeutralType) -> object:
+# One arm per Neutral Type variant. It runs per value on every Wire encode, so the arms
+# stay inline rather than behind a per-variant call.
+def _base_managed_carrier(value: object, neutral_type: NeutralType) -> object:  # noqa: C901
     if isinstance(value, ManagedValueExclusion):
         return value
     match neutral_type:

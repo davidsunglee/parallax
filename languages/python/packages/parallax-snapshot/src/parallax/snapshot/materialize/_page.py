@@ -797,7 +797,9 @@ def _packed(parts: Sequence[str]) -> str:
     return "".join(f"{len(part)}:{part}" for part in parts)
 
 
-def exact_stored_equal(left: object, right: object) -> bool:
+# One arm per stored value kind. It runs per witness comparison and again per nested
+# value, so the arms stay inline rather than behind a per-kind call.
+def exact_stored_equal(left: object, right: object) -> bool:  # noqa: C901
     """Type-sensitive structural equality for provider-normalized stored values."""
     if type(left) is not type(right):
         return False

@@ -344,7 +344,10 @@ class RootView:
                 if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
                     carried_views[root_view_slot] = value
 
-    def _allocate_claimed(
+    # Called once per root row by the constructor's per-root allocation loop, which the
+    # Snapshot materialization instruments measure; every split, including sharing the
+    # view-carry loop with `_allocate_distinct`, adds a call to that loop.
+    def _allocate_claimed(  # noqa: C901
         self,
         rows: PageRows,
         reachable: tuple[int, ...],

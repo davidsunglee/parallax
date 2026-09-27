@@ -451,7 +451,9 @@ def lower_predicate(product: ValidatedPredicate, scope: ResolutionScope) -> str:
             return _lower_entity_predicate(op, product, scope)
 
 
-def _lower_entity_predicate(
+# An exhaustive dispatcher over the closed entity predicate node union: one arm per node
+# kind, each lowering in place or through that kind's own lowering.
+def _lower_entity_predicate(  # noqa: C901
     op: _EntityNode, product: ValidatedPredicate, scope: EntityScope
 ) -> str:
     match op:
