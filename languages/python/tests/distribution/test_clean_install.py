@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 from tests._support.distributions import Wheelhouse
@@ -21,7 +22,13 @@ from tests._support.repo import REPO_ROOT
 
 
 def _make_venv(root: Path) -> Path:
-    subprocess.run(["uv", "venv", str(root)], check=True, capture_output=True, text=True)
+    # The interpreter under test, because the adapter's wheel is built for it alone.
+    subprocess.run(
+        ["uv", "venv", "--python", sys.executable, str(root)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     layouts = (root / "bin" / "python", root / "Scripts" / "python.exe")
     python = next((path for path in layouts if path.exists()), layouts[0])
     assert python.exists(), python
@@ -190,6 +197,13 @@ def test_core_snapshot_and_postgres(tmp_path: Path, wheelhouse: Wheelhouse) -> N
     assert _import_ok(python, "parallax.snapshot")
     assert _import_ok(python, "parallax.postgres")
     assert _dist_installed(python, "psycopg")
+    # Importing the adapter selects its compiled loaders for the psycopg build
+    # the manifest installs, straight out of the installed platform wheel.
+    selected = (
+        "from parallax.postgres._connection import _TEXT_LOADERS\n"
+        "print(_TEXT_LOADERS.float4.__module__)"
+    )
+    assert _run(python, selected).strip() == "parallax.postgres._cloaders_binary"
     # The optional Descriptor Frontend, the evolution wheel, the dev-only
     # conformance tooling, and the container tooling all stay out.
     assert not _import_ok(python, "parallax.descriptor")

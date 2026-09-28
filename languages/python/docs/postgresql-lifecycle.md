@@ -638,6 +638,16 @@ not a fault.
 
 ## Session settings
 
+### Driver build
+
+The adapter decodes `real` and `timestamptz` cells with compiled loaders that
+psycopg's C row decoding calls directly. They run under psycopg's `binary`
+build, which the adapter installs, or under its `c` build, compiled against a
+system `libpq`. Under psycopg's pure-Python implementation — selected, for
+example, with `PSYCOPG_IMPL=python` — importing `parallax.postgres` raises
+`ImportError` naming that implementation, before any connection exists. There
+is no slower fallback to run instead.
+
 ### Execution authority and session affinity
 
 Each runtime authenticates every physical connection as the login named by its

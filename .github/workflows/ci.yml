@@ -311,3 +311,28 @@ jobs:
         run: uv sync --frozen
       - name: just python-test-pydantic-floor
         run: just python-test-pydantic-floor
+
+  # The compiled loaders under psycopg's C build. The adapter compiles one loader
+  # body against each psycopg build and imports the one psycopg selected, so the
+  # build the lock does not install is graded here: psycopg-c is compiled against
+  # the runner's system libpq and the differential tests run with it selected.
+  # A focused selector like the floor above, and for the same reason no
+  # aggregate's dependency.
+  python-test-psycopg-c:
+    runs-on: ubuntu-latest
+    env:
+      UV_FROZEN: "1"
+      PARALLAX_REQUIRE_DB: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      - name: Install libpq headers and pg_config
+        run: sudo apt-get update && sudo apt-get install -y libpq-dev
+      - name: Sync Python workspace (frozen)
+        working-directory: languages/python
+        run: uv sync --frozen
+      - name: just python-test-psycopg-c
+        run: just python-test-psycopg-c

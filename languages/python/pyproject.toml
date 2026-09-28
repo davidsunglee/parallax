@@ -24,6 +24,10 @@ dependencies = [
 
 [tool.uv]
 package = false
+# setuptools installs a src-layout package editable through an import hook by
+# default, which static analysis cannot follow; compat mode adds `src` to the
+# path the way every hatchling member's editable install does.
+config-settings-package = { parallax-postgres = { editable_mode = "compat" } }
 
 [tool.uv.workspace]
 members = ["packages/*"]

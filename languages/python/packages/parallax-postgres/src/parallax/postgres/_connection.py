@@ -9,10 +9,9 @@ import psycopg
 from psycopg.abc import AdaptContext, Buffer
 from psycopg.rows import RowMaker, TupleRow, tuple_row
 from psycopg.sql import SQL, Literal
-from psycopg.types.datetime import TimestamptzLoader
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 
-from parallax.core.base import INFINITY, FrozenMap, frozen_map_json_backing
+from parallax.core.base import FrozenMap, frozen_map_json_backing
 from parallax.core.db_error import DatabaseError, classify_error
 from parallax.core.db_port import (
     BeginFailed,
@@ -34,6 +33,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.wire._json import prepared_loads
+from parallax.postgres._compiled_loaders import compiled_loaders
 from parallax.postgres._isolation import isolation_spelling
 
 __all__ = [
@@ -50,6 +50,11 @@ _REVOKED = (
 )
 
 _CREDENTIAL_REFUSAL = "the credential source could not produce a password"
+
+# Resolved once, as the adapter is imported: psycopg fixes its implementation
+# when it is imported, so an implementation the loaders cannot run under is
+# refused before any connection exists.
+_TEXT_LOADERS = compiled_loaders(psycopg.pq.__impl__)
 
 
 class _DocumentJsonbLoader(JsonbLoader):
@@ -71,24 +76,6 @@ class _DocumentJsonbBinaryLoader(JsonbBinaryLoader):
             return super().load(data)
         value = data[1:]
         return self._decode(value if isinstance(value, bytes) else bytes(value))
-
-
-class _InfinityTimestamptzLoader(TimestamptzLoader):  # pragma: no cover - Docker read lane
-    """Read a ``timestamptz`` back, mapping native ``infinity`` to the neutral sentinel.
-
-    A temporal interval's open upper bound reads back as Postgres native
-    ``infinity``, which is outside ``datetime``'s range — psycopg's default loader
-    raises *timestamp too large*. The port normalizes it to the ``m-core``
-    :data:`~parallax.core.base.INFINITY` (``TemporalBound``) so no driver-specific
-    sentinel and no out-of-range value crosses the port boundary (``m-db-port``
-    normalize-at-boundary); the grader renders it back to the canonical ``infinity``
-    literal. A finite instant delegates to the default loader.
-    """
-
-    def load(self, data: object) -> object:  # type: ignore[override] - psycopg loader hook is typed Buffer; the port widens to object
-        if bytes(data) == b"infinity":  # type: ignore[arg-type] - psycopg hands the loader a raw buffer at runtime
-            return INFINITY
-        return super().load(data)  # type: ignore[arg-type] - psycopg hands the loader a raw buffer at runtime
 
 
 class IncompatibleSessionError(Exception):
@@ -298,19 +285,21 @@ def initialize_connection(connection: psycopg.Connection[TupleRow]) -> None:
     """Prepare one newly created physical connection, or refuse it.
 
     Called once per connection, before anything may use it, and for every way
-    one comes into existence. It installs the three loaders the read path
-    depends on and then checks the two effective session settings those loaders
-    cannot work without — the client encoding and the date style — reading both
-    off the established connection's own parameters rather than by running SQL,
-    so the check costs no round trip on any creation path.
+    one comes into existence. It installs the loaders the read path depends on
+    and then checks the two effective session settings those loaders cannot
+    work without that a connection reports — the client encoding and the date
+    style — reading both off the established connection's own parameters
+    rather than by running SQL, so the check costs no round trip on any
+    creation path.
 
     A refusal here is a refusal of the CONNECTION, not of a statement: nothing
     modeled has run, and what would run next would decode wrongly.
     """
-    # Normalize native `timestamptz` infinity at the port boundary (m-db-port):
-    # a temporal interval's open upper bound reads back as the neutral m-core
-    # infinity sentinel rather than raising psycopg's out-of-range error.
-    connection.adapters.register_loader("timestamptz", _InfinityTimestamptzLoader)
+    # A `real` decodes to the exact binary32 value it spells, and native
+    # `timestamptz` infinity normalizes at the port boundary (m-db-port) to the
+    # neutral m-core sentinel rather than raising psycopg's out-of-range error.
+    connection.adapters.register_loader("float4", _TEXT_LOADERS.float4)
+    connection.adapters.register_loader("timestamptz", _TEXT_LOADERS.timestamptz)
     connection.adapters.register_loader("jsonb", _DocumentJsonbLoader)
     connection.adapters.register_loader("jsonb", _DocumentJsonbBinaryLoader)
     _require_supported_session(connection)

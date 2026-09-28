@@ -9,6 +9,7 @@ import pkgutil
 import subprocess
 import sys
 
+import psycopg
 import pytest
 
 import parallax.conformance
@@ -103,6 +104,19 @@ def test_top_package_public_surfaces() -> None:
     assert parallax.conformance.__all__ == []
 
 
+def _needs_an_absent_driver_build(module: str) -> bool:
+    """Whether ``module`` is a compiled loader variant whose psycopg build is not installed.
+
+    Each variant extends one psycopg build's C loader, so it imports only beside
+    that build; the adapter imports the one psycopg selected.
+    """
+    prefix = "parallax.postgres._cloaders_"
+    return (
+        module.startswith(prefix)
+        and importlib.util.find_spec(f"psycopg_{module.removeprefix(prefix)}") is None
+    )
+
+
 def test_every_scope_submodule_imports() -> None:
     """Every enforcement-scope skeleton under the five packages imports cleanly."""
     imported: list[str] = []
@@ -112,6 +126,8 @@ def test_every_scope_submodule_imports() -> None:
         assert spec.submodule_search_locations is not None
         search_path = list(spec.submodule_search_locations)
         for info in pkgutil.walk_packages(search_path, prefix=f"{name}."):
+            if _needs_an_absent_driver_build(info.name):
+                continue
             importlib.import_module(info.name)
             imported.append(info.name)
     # Sanity: the core spine skeleton alone contributes many scopes.
@@ -120,6 +136,7 @@ def test_every_scope_submodule_imports() -> None:
     assert "parallax.descriptor._ingest" in imported
     assert "parallax.snapshot.materialize" in imported
     assert "parallax.postgres.adapter" in imported
+    assert f"parallax.postgres._cloaders_{psycopg.pq.__impl__}" in imported
     assert "parallax.conformance.cli" in imported
 
 

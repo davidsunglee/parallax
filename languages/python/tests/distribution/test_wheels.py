@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.machinery
 import subprocess
+import sys
 import tarfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from tests._support.distributions import PRODUCTION_PACKAGES, TOP_PACKAGE_DIR, Wheelhouse
 from tests._support.repo import PY_ROOT, REPO_ROOT
@@ -195,6 +197,68 @@ def test_descriptor_wheel_ships_the_privatized_frontend(wheelhouse: Wheelhouse) 
     }
 
 
+def test_postgres_wheel_ships_compiled_loaders_for_this_interpreter(
+    wheelhouse: Wheelhouse,
+) -> None:
+    # The adapter's loaders are compiled, so its wheel is the one platform wheel
+    # in the workspace: tagged for the interpreter and platform that built it,
+    # carrying both compiled variants and their stub, and none of the Cython
+    # sources, which only a source build needs. Everything else it ships is
+    # Python, and the checks above already grade that.
+    names = _names(wheelhouse, "parallax-postgres")
+    with zipfile.ZipFile(wheelhouse.wheels["parallax-postgres"]) as archive:
+        wheel = archive.read(next(n for n in names if n.endswith(".dist-info/WHEEL"))).decode()
+    interpreter = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    assert "Root-Is-Purelib: false" in wheel
+    assert all(
+        line.startswith(f"Tag: {interpreter}-{interpreter}-")
+        for line in wheel.splitlines()
+        if line.startswith("Tag:")
+    ), wheel
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    assert {
+        name for name in names if name.startswith("parallax/postgres/") and not name.endswith(".py")
+    } == {
+        "parallax/postgres/py.typed",
+        "parallax/postgres/_cloaders_binary.pyi",
+        "parallax/postgres/_cloaders_c.pyi",
+        f"parallax/postgres/_cloaders_binary{suffix}",
+        f"parallax/postgres/_cloaders_c{suffix}",
+    }
+
+
+def test_postgres_sdist_builds_the_compiled_loaders_from_source(tmp_path: Path) -> None:
+    # A platform without a published wheel installs from the sdist, so it must
+    # carry every Cython source the build compiles. Building the wheel from the
+    # sdist rather than from the checkout is what proves it does: a source the
+    # sdist dropped fails the compile here and nowhere else.
+    subprocess.run(
+        [
+            "uv",
+            "build",
+            "--package",
+            "parallax-postgres",
+            "--python",
+            sys.executable,
+            "--out-dir",
+            str(tmp_path),
+        ],
+        cwd=PY_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (sdist,) = tmp_path.glob("parallax_postgres-*.tar.gz")
+    (wheel,) = tmp_path.glob("parallax_postgres-*.whl")
+    with tarfile.open(sdist) as archive:
+        packaged = {PurePosixPath(name).name for name in archive.getnames()}
+    assert {"setup.py", "_cloaders.pxi", "_cloaders_binary.pyx", "_cloaders_c.pyx"} <= packaged
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    with zipfile.ZipFile(wheel) as archive:
+        assert f"parallax/postgres/_cloaders_binary{suffix}" in archive.namelist()
+        assert f"parallax/postgres/_cloaders_c{suffix}" in archive.namelist()
+
+
 def test_descriptor_wheel_schema_matches_the_authoritative_source(wheelhouse: Wheelhouse) -> None:
     # `core/schemas/metamodel.schema.json` stays authoritative and the wheel
     # embeds a byte-for-byte copy, so drift between them is the only failure this
@@ -263,7 +327,7 @@ def test_the_aws_wheel_declares_the_credential_chain_and_nothing_else(
     assert unconditional == {"parallax-core", "botocore>=1.43.99"}
     assert {line.partition(";")[0].strip() for line in gated} == {
         "parallax-postgres",
-        "psycopg>=3.3.5",
+        "psycopg<3.4,>=3.3.6",
     }
     assert all('extra == "postgres"' in line.replace("'", '"') for line in gated), gated
     assert "Provides-Extra: postgres" in declared
