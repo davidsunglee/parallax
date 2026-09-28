@@ -133,9 +133,6 @@ def encode_managed_wire(neutral_type: NeutralType, value: ManagedValue) -> WireV
         case Float64():
             float_value = float(cast("float", value))
             return 0.0 if float_value == 0.0 else float_value
-        case Float32():
-            float_value = float(cast("float", value))
-            return _shortest_float(0.0 if float_value == 0.0 else float_value)
         case _:
             pass
     return _canonical_spelling(neutral_type, _base_managed_carrier(value, neutral_type))
