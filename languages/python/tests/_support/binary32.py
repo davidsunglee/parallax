@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import functools
 import math
+import random
 import struct
 from fractions import Fraction
 
 _MOST_DIGITS = 9
+_RANDOM_WITNESSES = 1_000
 
 
 def narrowed(value: float) -> float:
@@ -37,3 +40,34 @@ def shortest_spelling(value: float) -> str:
         if rounded_once(spelling) == value:
             return spelling
     raise AssertionError(f"no spelling of {value!r} within {_MOST_DIGITS} digits")
+
+
+@functools.cache
+def rounding_witnesses() -> tuple[str, ...]:
+    """Decimal spellings that grade a rule rounding text once to binary32.
+
+    Each names a finite binary32 value: spellings whose binary64 parse lands
+    exactly on a binary32 midpoint, in the normal and the subnormal range, the
+    ends of both ranges and both zeros, and the shortest spellings of seeded
+    random finite values.
+    """
+    generator = random.Random(188)
+    random_values: list[float] = []
+    while len(random_values) < _RANDOM_WITNESSES:
+        (value,) = struct.unpack("<f", generator.getrandbits(32).to_bytes(4, "little"))
+        if math.isfinite(value):
+            random_values.append(value)
+    edges = (math.ldexp(1, -149), math.ldexp(1, -126) - math.ldexp(1, -149), math.ldexp(1, -126))
+    largest = math.ldexp(2**24 - 1, 104)
+    return (
+        "7.038531e-26",
+        "-7.038531e-26",
+        "7.0064923216240854e-46",
+        "-7.0064923216240854e-46",
+        "0",
+        "-0",
+        "0.0",
+        "-0.0",
+        *(shortest_spelling(sign * value) for value in (*edges, largest) for sign in (1, -1)),
+        *(shortest_spelling(value) for value in random_values),
+    )

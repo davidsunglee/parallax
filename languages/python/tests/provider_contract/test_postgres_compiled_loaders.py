@@ -29,7 +29,7 @@ from psycopg.rows import TupleRow
 from parallax.conformance._postgres_control import PostgresControl
 from parallax.core.base import INFINITY
 from parallax.postgres._compiled_loaders import compiled_loaders
-from tests._support.binary32 import narrowed, rounded_once
+from tests._support.binary32 import narrowed, rounded_once, rounding_witnesses
 
 type Session = psycopg.Connection[TupleRow]
 
@@ -93,14 +93,14 @@ def _stored(session: Session, values: list[float]) -> tuple[list[float], list[st
 def _counting_fallbacks(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     """Record every call the Float32 loader makes to its exact converter."""
     module = sys.modules[_LOADERS.float4.__module__]
-    exact = cast("Callable[..., object]", module.nearest_float_at_width)
+    exact = cast("Callable[[str], object]", module.nearest_binary32_of_spelling)
     calls: list[object] = []
 
-    def counted(*arguments: object) -> object:
-        calls.append(arguments[0])
-        return exact(*arguments)
+    def counted(spelling: str) -> object:
+        calls.append(spelling)
+        return exact(spelling)
 
-    monkeypatch.setattr(module, "nearest_float_at_width", counted)
+    monkeypatch.setattr(module, "nearest_binary32_of_spelling", counted)
     return calls
 
 
@@ -158,6 +158,17 @@ def test_a_spelling_that_parses_onto_a_subnormal_midpoint_rounds_by_its_exact_de
     assert _bits(loaded) == _bits(rounded_once(spelling))
     assert _bits(loaded) == _bits(math.copysign(math.ldexp(1, -149), sign))
     assert len(fallbacks) == 1
+
+
+def test_the_float32_loader_rounds_each_witness_spelling_once() -> None:
+    loader = _LOADERS.float4(_FLOAT4_OID)
+    witnesses = rounding_witnesses()
+
+    loaded = [cast("float", loader.load(spelling.encode())) for spelling in witnesses]
+
+    assert [_bits(value) for value in loaded] == [
+        _bits(rounded_once(spelling)) for spelling in witnesses
+    ]
 
 
 @pytest.mark.parametrize("spelling", ["NaN", "Infinity", "-Infinity"])
