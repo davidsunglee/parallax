@@ -26,6 +26,7 @@ from parallax.core.base import (
     Timestamp,
     Uuid,
     matches_neutral_type,
+    nearest_binary32_of_spelling,
     nearest_float_at_width,
 )
 from parallax.core.base._neutral import (
@@ -152,7 +153,7 @@ def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue
         case Float32():
             float_value = cast("float", managed)
             float_value = 0.0 if float_value == 0.0 else float_value
-            return _shortest_float(float_value, neutral_type)
+            return _shortest_float(float_value)
         case Float64():
             float_value = cast("float", managed)
             return 0.0 if float_value == 0.0 else float_value
@@ -271,7 +272,10 @@ def _decode_float32(value: object, neutral_type: Float32) -> _DecodedWireLiteral
         _fail("type-mismatch", value, neutral_type)
     token = authored_token(value)
     if token is not None:
-        return _decode_float(value, decimal.Decimal(token), neutral_type)
+        managed = nearest_binary32_of_spelling(token)
+        if managed is None:
+            _fail("out-of-space", value, neutral_type)
+        return _DecodedWireLiteral(managed, managed == 0.0 and _spells_negative_zero(token))
     if isinstance(value, int):
         return _decode_float(value, decimal.Decimal(int.__int__(value)), neutral_type)
     base_value = float.__float__(value)
@@ -282,6 +286,13 @@ def _decode_float32(value: object, neutral_type: Float32) -> _DecodedWireLiteral
         managed,
         base_value == 0.0 and math.copysign(1.0, base_value) < 0.0,
     )
+
+
+def _spells_negative_zero(token: str) -> bool:
+    """Whether the number ``token`` spells is zero and negative: an underflowing
+    spelling such as ``-1e-400`` names a nonzero number, whatever it parses to."""
+    significand = token.lower().partition("e")[0]
+    return significand.startswith("-") and not significand.strip("-+0.")
 
 
 def _decode_float(
@@ -482,17 +493,16 @@ def _exact_decimal(value: decimal.Decimal, scale: int) -> str:
     return f"-{body}" if sign else body
 
 
-def _shortest_float(value: float, neutral_type: Float32) -> float:
-    """The fewest-digit number that names ``value`` at binary32 width.
+def _shortest_float(value: float) -> float:
+    """The fewest-digit number that names the binary32 ``value``.
 
-    Only a ``float32`` has one to search for. A number is accepted here when it
-    names ``value`` at the declared width, and at binary64 a number that names
-    ``value`` IS ``value`` — so the search would hand back what it was given,
-    and a ``float64``'s canonical Wire Value is the value itself.
+    Only a ``float32`` has one to search for: at binary64 a number that names
+    ``value`` IS ``value``, so the search would hand back what it was given, and
+    a ``float64``'s canonical Wire Value is the value itself.
     """
     for precision in range(1, _MAX_FLOAT_DIGITS + 1):
         spelling = f"{value:.{precision}g}"
-        if nearest_float_at_width(decimal.Decimal(spelling), neutral_type) == value:
+        if nearest_binary32_of_spelling(spelling) == value:
             return float(spelling)
     return value
 

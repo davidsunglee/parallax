@@ -51,6 +51,7 @@ __all__ = [
     "host_float_binary32",
     "host_float_number",
     "matches_neutral_type",
+    "nearest_binary32_of_spelling",
     "nearest_float_at_width",
     "normalize_json_carrier",
     "utc_instant",
@@ -197,7 +198,8 @@ _INT64_BOUNDS: Final[tuple[int, int]] = (-(2**63), 2**63 - 1)
 # number rounds past it to an infinity: half an ulp above it, `2**128 - 2**103`.
 _BINARY32_MAX_BITS: Final[int] = 0x7F7FFFFF
 _BINARY32_OVERFLOW: Final[_Fraction] = _Fraction(2) ** 128 - _Fraction(2) ** 103
-_BINARY32_CARRIER: Final[_struct.Struct] = _struct.Struct("<f")
+_pack_binary32: Final = _struct.Struct("<f").pack
+_unpack_binary32: Final = _struct.Struct("<f").unpack
 
 
 class ManagedValueExclusion:
@@ -272,12 +274,16 @@ def matches_neutral_type(value: object, declared: NeutralType) -> bool:  # noqa:
         case Int64():
             return _is_integer(value) and _INT64_BOUNDS[0] <= int.__int__(value) <= _INT64_BOUNDS[1]
         case Float32():
-            return (
-                isinstance(value, float)
-                and _math.isfinite(float.__float__(value))
-                and nearest_float_at_width(float.__float__(value), declared)
-                == float.__float__(value)
-            )
+            if not isinstance(value, float):
+                return False
+            base_value = float.__float__(value)
+            try:
+                return (
+                    _math.isfinite(base_value)
+                    and _unpack_binary32(_pack_binary32(base_value))[0] == base_value
+                )
+            except OverflowError:
+                return False
         case Float64():
             return isinstance(value, float) and _math.isfinite(float.__float__(value))
         case Decimal(precision, scale):
@@ -390,12 +396,46 @@ def host_float_binary32(value: float) -> float | None:
     of a midpoint only when the float is that midpoint; only there is the
     spelling read.
     """
+    # Narrowed inline rather than through `_narrowed_binary32`: this runs per
+    # value on Typed ingress, where the extra call is a measurable share.
     try:
-        (narrowed,) = _BINARY32_CARRIER.unpack(_BINARY32_CARRIER.pack(value))
+        (narrowed,) = _unpack_binary32(_pack_binary32(value))
     except OverflowError:
         narrowed = _math.inf
     if narrowed != value and _is_binary32_midpoint(value):
-        return nearest_float_at_width(host_float_number(value), FLOAT32)
+        return nearest_binary32_of_spelling(float.__repr__(value))
+    if not _math.isfinite(narrowed):
+        return None
+    return 0.0 if narrowed == 0.0 else narrowed
+
+
+def nearest_binary32_of_spelling(spelling: str) -> float | None:
+    """The binary32 value, widened, that the decimal ``spelling`` names: its
+    exact number rounded once to nearest, ties to even, with either signed zero
+    as positive zero. ``None`` when that number is not finite or overflows
+    binary32. ``spelling`` is a decimal number in any form :class:`float`
+    accepts; one it refuses raises :class:`ValueError`.
+
+    Parsing to binary64 and narrowing rounds twice, which differs from rounding
+    once only where the parse lands exactly on a binary32 midpoint; only there
+    is the exact decimal read.
+    """
+    parsed = float(spelling)
+    narrowed = _narrowed_binary32(parsed)
+    if narrowed != parsed and _is_binary32_midpoint(parsed):
+        return nearest_float_at_width(_decimal.Decimal(spelling), FLOAT32)
+    return narrowed
+
+
+def _narrowed_binary32(value: float) -> float | None:
+    """The binary32 nearest the binary64 ``value``, widened, with either signed
+    zero as positive zero; ``None`` when ``value`` is not finite or rounds past
+    the largest binary32. Narrowing a binary64 rounds once, exactly, and a
+    packing that rounds to an infinity raises instead."""
+    try:
+        (narrowed,) = _unpack_binary32(_pack_binary32(value))
+    except OverflowError:
+        return None
     if not _math.isfinite(narrowed):
         return None
     return 0.0 if narrowed == 0.0 else narrowed
@@ -422,6 +462,8 @@ def nearest_float_at_width(
     """
     if isinstance(declared, Float64):
         return _nearest_binary64(value, declared)
+    if isinstance(value, float) and not isinstance(value, ManagedValueExclusion):
+        return _narrowed_binary32(float.__float__(value))
     exact = _exact_number(value, declared)
     if exact is None:
         return None

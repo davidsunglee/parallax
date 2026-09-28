@@ -134,11 +134,11 @@ def test_float_encoding_falls_back_when_no_shorter_spelling_round_trips(
 ) -> None:
     monkeypatch.setattr(
         wire_codec,
-        "nearest_float_at_width",
-        lambda _value, _type: None,  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
+        "nearest_binary32_of_spelling",
+        lambda _spelling: None,  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
     )
 
-    assert wire.encode_wire(FLOAT64, 1.25) == 1.25
+    assert wire.encode_wire(FLOAT32, 1.25) == 1.25
 
 
 def test_wire_diagnostics_bound_an_unrenderable_runtime_type(
@@ -312,6 +312,20 @@ def test_float_zero_normalizes_positive_and_canonical_decoding_observes_source_s
         with pytest.raises(wire.WireDecodingError) as exc_info:
             wire.decode_canonical_wire(neutral_type, wire.loads("-0.0"))
         assert exc_info.value.reason == "noncanonical"
+
+
+def test_a_negative_zero_integer_token_is_a_noncanonical_float32() -> None:
+    authored = wire.loads("-0")
+    decoded = wire.decode_wire(FLOAT32, authored)
+    assert repr(decoded) == "0.0"
+    with pytest.raises(wire.WireDecodingError) as exc_info:
+        wire.decode_canonical_wire(FLOAT32, authored)
+    assert exc_info.value.reason == "noncanonical"
+
+
+@pytest.mark.parametrize("written", ["-1e-50", "-1.0E-400", "1e-400"])
+def test_a_token_rounding_to_zero_decodes_to_positive_zero_at_float32(written: str) -> None:
+    assert repr(wire.decode_wire(FLOAT32, wire.loads(written))) == "0.0"
 
 
 def test_integral_number_forms_decode_from_their_exact_authored_value() -> None:

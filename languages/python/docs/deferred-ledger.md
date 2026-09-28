@@ -838,45 +838,9 @@ owns along with deleting `_root_pin`; and `CompiledRead`'s
 projection accessor, whose own docstring already says no consumer should
 re-project a family superset, which is an unrelated obligation.
 
-### D-97 — Finding a `float32`'s canonical number costs a rounding search per admitted value, and only a rounding change can make it cheaper
-
-*Low — one Neutral Type's admission is slower than the other twelve; every
-verdict is correct.* Relates to
-`languages/python/packages/parallax-core/src/parallax/core/wire/_codec.py`,
-`languages/python/packages/parallax-core/src/parallax/core/base/_neutral.py`,
-`core/spec/m-wire.md`. Owner: this target.
-
-**What.** Admitting a stored `float32` asks whether the written number is already
-the canonical one, and answering needs the canonical one: the fewest-digit number
-that names the value at binary32 width. `_shortest_float` finds it by trying digit
-counts in turn, and each try rounds a decimal to binary32 through
-`nearest_float_at_width`, which builds an exact ratio and searches. Measured over
-the materialization report's conforming batch, that search is 21% to 24% of the
-profiled batch and 18% to 21% of the untraced one on both storage layouts and both
-supported minors — over the 10% bar that report set for a material codec
-contributor, COR-137 itself setting no percentage — and now the largest single
-contributor left inside canonical decoding.
-
-**Why it is deferred rather than fixed.** Nothing about it is redundant, which is
-what COR-137's codec clause licensed removing. A `float32`'s canonical Wire Value
-is a different number from the value it names, and no earlier step of the decode
-has computed it. The one shortcut available is to round the candidate decimal to
-binary32 through a host double instead of exactly — and `m-wire` spends a whole
-rule (*Rounding happens once, from the digits*) stating that binary64-then-binary32
-is not one rounding and names the value where the two disagree. Taking it means a
-guarded fast path inside `m-core`'s membership predicate, which every declared
-`float32` in the system reads, on evidence from one workload that declares every
-Neutral Type once and so over-represents floats. That is a numeric-semantics
-change with its own correctness argument, not the redundancy removal this claim
-carried.
-
-**When.** With a claim that measures `float32` admission against a workload whose
-float share is representative, and that can carry an exactness argument for a
-guarded double-rounding fast path — or a proof that the midpoint case a guard
-would exclude is decidable from the candidate's bits alone.
-
 ## Forwarding pointers
 
+- **D-97** → fixed. `parallax.core.base.nearest_binary32_of_spelling` rounds a decimal to binary32 once by parsing to binary64 and narrowing, reading the exact decimal only when the parse is exactly a binary32 midpoint — the only place the two roundings can differ — so `_shortest_float`'s candidates and Float32 membership no longer build an exact ratio.
 - **D-98** → closed by the COR-142 owner decision. The unsupported 10% attribution gate is withdrawn rather than replaced; Phase 2 totals and counts remain before evidence, and the same single-implementation report supplies Phase 6's clean whole-lane after deltas without paired adapters or builder-exclusive attribution.
 - **D-96** → closed. The Snapshot delivery portfolio takes each materialization-stress memory cell in a child interpreter of its own (`tools/snapshot_delivery_reading.py`), as a collected window delta with no timed batch run before the reading, so the retained and transient cells are differences rather than levels; the retired reader's mixed-order matrix survives only as dated evidence in `docs/snapshot-materialization-baseline.md`.
 - **D-80** → fixed. Duplicate projections are compared before decode by their exact, type-sensitive positional Payload Witness. Equal witnesses share one Page-owned Entity State; unequal witnesses in one Root View raise `SnapshotConsistencyError`, so no first-projection-wins premise remains.
@@ -934,3 +898,4 @@ carry at all — needs the entry it stood for:
 - `.humanlayer/tasks/cor-110-logging-lifecycle-diet/08-deferred-ledger.md` — D-79.
 - `.humanlayer/tasks/cor-155-implement-the-redesigned-snapshot-delivery-contract-and-nrsu2x/10-deferred-ledger.md` — D-96.
 - `.humanlayer/tasks/cor-142-measure-and-remove-per-row-document-shape-derivation-in-the-flpf4g/review-loop/phase-2/round-01/remediation.md` — D-98.
+- `.humanlayer/tasks/cor-188-float32-hot-paths/deferred-ledger.md` — D-97.

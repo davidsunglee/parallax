@@ -5,15 +5,22 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 import math
+import random
 import struct
 from collections.abc import Iterator, Mapping
+from fractions import Fraction
 from types import MappingProxyType
 from typing import cast
 
 import pytest
 
 from parallax.core import base
-from parallax.core.base._neutral import host_float_binary32, host_float_number
+from parallax.core.base._neutral import (
+    ManagedValueExclusion,
+    host_float_binary32,
+    host_float_number,
+)
+from tests._support.binary32 import rounded_once, rounding_witnesses
 
 
 class _MutableTuple(tuple[object, ...]):
@@ -364,3 +371,132 @@ def _around_binary32_midpoints() -> list[float]:
 def test_a_bare_float_names_at_float32_its_spelled_number_rounded_once(value: float) -> None:
     rounded_once = base.nearest_float_at_width(host_float_number(value), base.FLOAT32)
     assert repr(host_float_binary32(value)) == repr(rounded_once)
+
+
+_BINARY32_OVERFLOW = 2**128 - 2**103
+_LARGEST_BINARY32 = 3.4028234663852886e38
+
+
+def _is_positive_zero_or_nonzero(value: float) -> bool:
+    return value != 0.0 or math.copysign(1.0, value) == 1.0
+
+
+def test_a_spelling_names_the_binary32_its_exact_decimal_rounds_to_once() -> None:
+    witnesses = rounding_witnesses()
+    named = [base.nearest_binary32_of_spelling(spelling) for spelling in witnesses]
+
+    assert named == [rounded_once(spelling) for spelling in witnesses]
+    assert all(value is not None and _is_positive_zero_or_nonzero(value) for value in named)
+
+
+@pytest.mark.parametrize(
+    ("spelling", "expected"),
+    [
+        (str(_BINARY32_OVERFLOW - 1), _LARGEST_BINARY32),
+        (f"-{_BINARY32_OVERFLOW - 1}", -_LARGEST_BINARY32),
+        (str(_BINARY32_OVERFLOW), None),
+        (f"-{_BINARY32_OVERFLOW}", None),
+        ("3.4028236e38", None),
+        ("1e39", None),
+        ("1e400", None),
+        ("-1e400", None),
+        ("inf", None),
+        ("-Infinity", None),
+        ("nan", None),
+    ],
+)
+def test_a_spelling_past_the_largest_binary32_or_not_finite_names_none(
+    spelling: str, expected: float | None
+) -> None:
+    assert base.nearest_binary32_of_spelling(spelling) == expected
+
+
+@pytest.mark.parametrize("spelling", ["0", "-0", "-0.0", "-1e-46", "-1e-50", "-1e-400", "1e-400"])
+def test_a_spelling_naming_a_binary32_zero_names_positive_zero(spelling: str) -> None:
+    assert repr(base.nearest_binary32_of_spelling(spelling)) == "0.0"
+
+
+def _binary64_at(bits: int) -> float:
+    (value,) = struct.unpack("<d", struct.pack("<Q", bits))
+    return value
+
+
+def _float_rounding_witnesses() -> list[float]:
+    generator = random.Random(188)
+    # Binary64 exponents from below the binary32 subnormals to past its overflow.
+    near_binary32 = [
+        _binary64_at(
+            generator.getrandbits(1) << 63
+            | (872 + generator.randrange(310)) << 52
+            | generator.getrandbits(52)
+        )
+        for _ in range(1_000)
+    ]
+    anywhere = [_binary64_at(generator.getrandbits(64)) for _ in range(200)]
+    corpus = [float(spelling) for spelling in rounding_witnesses()]
+    return [
+        *corpus,
+        *near_binary32,
+        *(value for value in anywhere if math.isfinite(value)),
+        *_around_binary32_midpoints(),
+    ]
+
+
+def _exactly_rounded(value: float) -> float | None:
+    if abs(Fraction(value)) >= _BINARY32_OVERFLOW:
+        return None
+    return rounded_once(str(decimal.Decimal(value)))
+
+
+def test_a_host_float_rounds_once_to_the_nearest_binary32() -> None:
+    values = _float_rounding_witnesses()
+    rounded = [base.nearest_float_at_width(value, base.FLOAT32) for value in values]
+
+    assert rounded == [_exactly_rounded(value) for value in values]
+    assert all(value is None or _is_positive_zero_or_nonzero(value) for value in rounded)
+
+
+@pytest.mark.parametrize("value", [math.inf, -math.inf, math.nan])
+def test_a_nonfinite_host_float_has_no_nearest_binary32(value: float) -> None:
+    assert base.nearest_float_at_width(value, base.FLOAT32) is None
+
+
+def test_an_excluded_host_float_has_no_nearest_float() -> None:
+    class ExcludedFloat(float, ManagedValueExclusion):
+        pass
+
+    for declared in (base.FLOAT32, base.FLOAT64):
+        assert base.nearest_float_at_width(ExcludedFloat(1.5), declared) is None
+
+
+def test_float32_membership_admits_exactly_the_finite_binary32_values() -> None:
+    members = [rounded_once(spelling) for spelling in rounding_witnesses()]
+    neighbours = [
+        math.nextafter(member, direction)
+        for member in members
+        for direction in (-math.inf, math.inf)
+    ]
+
+    assert all(base.matches_neutral_type(member, base.FLOAT32) for member in members)
+    assert not any(base.matches_neutral_type(value, base.FLOAT32) for value in neighbours)
+
+
+@pytest.mark.parametrize(
+    ("value", "member"),
+    [
+        (-0.0, True),
+        (_LARGEST_BINARY32, True),
+        (-_LARGEST_BINARY32, True),
+        (float(_BINARY32_OVERFLOW), False),
+        (-float(_BINARY32_OVERFLOW), False),
+        (1e39, False),
+        (1.7976931348623157e308, False),
+        (math.inf, False),
+        (-math.inf, False),
+        (math.nan, False),
+    ],
+)
+def test_float32_membership_refuses_every_value_past_the_finite_binary32_range(
+    value: float, member: bool
+) -> None:
+    assert base.matches_neutral_type(value, base.FLOAT32) is member

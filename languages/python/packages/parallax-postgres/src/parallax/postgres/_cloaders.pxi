@@ -9,11 +9,9 @@ from libc.math cimport floor, fmod, frexp, ldexp
 from libc.stdint cimport uint64_t
 from libc.string cimport memcmp, memcpy
 
-from decimal import Decimal
-
 from psycopg.pq import Format
 
-from parallax.core.base import FLOAT32, INFINITY, nearest_float_at_width
+from parallax.core.base import INFINITY, nearest_binary32_of_spelling
 
 
 cdef extern from "Python.h":
@@ -23,7 +21,6 @@ cdef extern from "Python.h":
 
 
 cdef object _INFINITY = INFINITY
-cdef object _FLOAT32 = FLOAT32
 
 
 cdef inline bint _is_binary32_midpoint(double value) noexcept:
@@ -64,9 +61,7 @@ cdef class ExactFloat4Loader(CLoader):
         if <double>narrowed == parsed:
             return parsed
         if _is_binary32_midpoint(parsed):
-            return nearest_float_at_width(
-                Decimal(data[:length].decode("ascii")), _FLOAT32
-            )
+            return nearest_binary32_of_spelling(data[:length].decode("ascii"))
         return <double>narrowed
 
 

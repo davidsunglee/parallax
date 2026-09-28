@@ -38,6 +38,7 @@ from parallax.core.base._neutral import (
     Uuid,
     coerce_neutral_input,
     matches_neutral_type,
+    nearest_binary32_of_spelling,
     nearest_float_at_width,
     utc_instant,
 )
@@ -91,6 +92,7 @@ __all__ = [
     "infer_neutral_type",
     "is_document_value",
     "matches_neutral_type",
+    "nearest_binary32_of_spelling",
     "nearest_float_at_width",
     "normalize_instant",
     "retain_document_value",
