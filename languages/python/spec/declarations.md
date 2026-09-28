@@ -105,6 +105,12 @@ value. Fractional float input may round to binary32; integer input cannot lose
 precision. Direct construction runs application Pydantic validators. Database
 materialization does not run those validators or authored constructors.
 
+At a float member, a Wire number held as a Python `float` names the number its
+shortest round-trip spelling (`repr`) names, which is the number JSON
+serialization writes for it. A Float32 member rounds that number once, so a
+published Float32 value decodes back to itself. A number parsed from JSON text
+keeps its authored digits instead.
+
 ## Editing, presence, and serialization
 
 `edit(**changes)` is the copying operation for Entity and Value Object values.

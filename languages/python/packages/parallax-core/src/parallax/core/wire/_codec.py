@@ -188,8 +188,12 @@ def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLi
             return _decode_boolean(value, neutral_type)
         case Int32() | Int64():
             return _decode_integer(value, neutral_type)
-        case Float32() | Float64():
-            return _decode_float(value, neutral_type)
+        case Float32():
+            return _decode_float(value, _spelled_number(value), neutral_type)
+        case Float64():
+            # A host float names the number its shortest spelling names; at binary64
+            # that number and the float's exact value both round to the float itself.
+            return _decode_float(value, _source_decimal(value), neutral_type)
         case Decimal(precision, scale):
             return _decode_decimal(value, neutral_type, precision, scale)
         case String():
@@ -261,9 +265,9 @@ def _decode_integer(
 
 def _decode_float(
     value: object,
+    number: decimal.Decimal | None,
     neutral_type: Float32 | Float64,
 ) -> _DecodedWireLiteral:
-    number = _source_decimal(value)
     if number is None or not number.is_finite():
         _fail("type-mismatch", value, neutral_type)
     managed = nearest_float_at_width(number, neutral_type)

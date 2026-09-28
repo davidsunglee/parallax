@@ -645,21 +645,21 @@ def test_an_empty_plain_scalar_is_null() -> None:
 def test_a_number_carries_the_digits_it_was_authored_with() -> None:
     # Which float a number names depends on the declared width. The observable
     # proof is direct-from-token decoding, never the private provenance carrier.
-    loaded = cast("dict[str, object]", case_format.safe_load_yaml("ratio: 1.0000000596046448\n"))
+    loaded = cast("dict[str, object]", case_format.safe_load_yaml("ratio: 1.00000005960464477\n"))
     authored = cast("WireValue", loaded["ratio"])
-    assert authored == float("1.0000000596046448")
-    assert decode_wire(FLOAT32, authored) == 1.0 + 2.0**-23
+    assert authored == float("1.00000005960464477")
+    assert decode_wire(FLOAT32, authored) == 1.0
 
 
 def test_a_float32_rounds_from_the_authored_digits_not_from_the_carrier() -> None:
-    # `1.0000000596046448` lies ABOVE the midpoint between binary32 `1.0` and its
-    # successor, so one rounding at binary32 names the successor. Its nearest binary64
-    # IS that midpoint, so a consumer that narrows the carrier ties to even and answers
-    # `1.0` — two roundings, both round-to-nearest-even, and a different value.
-    loaded = cast("dict[str, object]", case_format.safe_load_yaml("ratio: 1.0000000596046448\n"))
+    # `1.00000005960464477` lies BELOW the midpoint between binary32 `1.0` and its
+    # successor, so one rounding at binary32 names `1.0`. Its nearest binary64 IS that
+    # midpoint, whose shortest spelling `1.0000000596046448` lies above it, so a
+    # consumer reading the carrier names the successor.
+    loaded = cast("dict[str, object]", case_format.safe_load_yaml("ratio: 1.00000005960464477\n"))
     authored = cast("WireValue", loaded["ratio"])
-    assert decode_wire(FLOAT32, authored) == 1.0 + 2.0**-23
-    assert decode_wire(FLOAT32, float(cast("float", authored))) == 1.0
+    assert decode_wire(FLOAT32, authored) == 1.0
+    assert decode_wire(FLOAT32, float(cast("float", authored))) == 1.0 + 2.0**-23
     assert decode_wire(FLOAT64, authored) == float("1.0000000596046448")
 
 
