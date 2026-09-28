@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+import math
+import struct
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 from typing import cast
@@ -11,6 +13,7 @@ from typing import cast
 import pytest
 
 from parallax.core import base
+from parallax.core.base._neutral import host_float_binary32, host_float_number
 
 
 class _MutableTuple(tuple[object, ...]):
@@ -317,3 +320,47 @@ def test_normalize_instant_rejects_a_datetime_naming_no_instant(unusable: dt.dat
     # `timestamp` verdicts rather than arithmetic accidents reaching the caller.
     with pytest.raises(base.InstantError):
         base.normalize_instant(unusable)
+
+
+def _binary32_at(bits: int) -> float:
+    (value,) = struct.unpack("<f", struct.pack("<I", bits))
+    return value
+
+
+def _around_binary32_midpoints() -> list[float]:
+    midpoints = [
+        (_binary32_at(bits) + _binary32_at(bits + 1)) / 2
+        for bits in (0x00000000, 0x00000002, 0x007FFFFF, 0x15AE43FD, 0x3F7FFFFF, 0x3F800000)
+    ]
+    midpoints.append(2.0**128 - 2.0**103)
+    around: list[float] = []
+    for midpoint in midpoints:
+        below = above = midpoint
+        for _ in range(2):
+            below = math.nextafter(below, -math.inf)
+            above = math.nextafter(above, math.inf)
+            around += [below, above]
+        around.append(midpoint)
+    return around + [-value for value in around]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        7.038531e-26,
+        -7.038531e-26,
+        1.0000000596046448,
+        1.000000059604644775390625,
+        0.0,
+        -0.0,
+        3.4028234663852886e38,
+        -3.4028234663852886e38,
+        3.4028235677973366e38,
+        1.7976931348623157e308,
+        -1.7976931348623157e308,
+        *_around_binary32_midpoints(),
+    ],
+)
+def test_a_bare_float_names_at_float32_its_spelled_number_rounded_once(value: float) -> None:
+    rounded_once = base.nearest_float_at_width(host_float_number(value), base.FLOAT32)
+    assert repr(host_float_binary32(value)) == repr(rounded_once)

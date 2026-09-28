@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable, Mapping
 from typing import Self, cast
 
-from parallax.core.base._neutral import FLOAT32, ManagedValueExclusion, host_float_number
+from parallax.core.base._neutral import ManagedValueExclusion, host_float_number
 from parallax.core.wire._types import WireValue
 
 _MAX_UNAMBIGUOUS_TOKEN_LENGTH = 16
@@ -57,8 +57,7 @@ class _AuthoredFloat(float, _ImmutableAuthoredNumber):
         # decimals name the same binary64, so an exact one is also that float32 number.
         authored = decimal.Decimal(token)
         if authored == decimal.Decimal.from_float(value) and (
-            len(token) <= _MAX_UNAMBIGUOUS_TOKEN_LENGTH
-            or authored == host_float_number(value, FLOAT32)
+            len(token) <= _MAX_UNAMBIGUOUS_TOKEN_LENGTH or authored == host_float_number(value)
         ):
             return value
         number = super().__new__(cls, value)
