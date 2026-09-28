@@ -32,11 +32,13 @@ from parallax.core.base import (
     Decimal,
     ManagedValue,
     NeutralType,
+    coerce_neutral_input,
     matches_neutral_type,
     nearest_float_at_width,
 )
 from parallax.core.base import _neutral as neutral_carriers
 from parallax.core.base._neutral import ManagedValueExclusion
+from tests._support.binary32 import rounded_once
 
 _TOKEN = uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
 _INSTANT = dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC)
@@ -318,6 +320,7 @@ def test_integral_number_forms_decode_from_their_exact_authored_value() -> None:
     assert wire.decode_wire(INT32, wire.loads("1e0")) == 1
     assert wire.decode_wire(INT64, wire.loads("9007199254740993.0")) == 9007199254740993
     assert wire.decode_canonical_wire(INT64, wire.loads("9007199254740993.0")) == 9007199254740993
+    assert wire.decode_wire(INT64, 2.0**60) == 2**60
 
 
 # The only binary32 values whose canonical spelling parses onto the binary64 midpoint
@@ -336,6 +339,16 @@ def test_a_published_float32_decodes_back_to_itself(published: float, managed: f
     assert narrowed != managed
     assert wire.decode_wire(FLOAT32, published) == managed
     assert wire.decode_canonical_wire(FLOAT32, published) == managed
+
+
+@pytest.mark.parametrize(
+    "value",
+    [1.0000000596046448, 7.038531e-26, -7.038531e-26, 0.1, -0.0, 1e-45, 3.4028235e38],
+)
+def test_typed_input_and_a_wire_host_float_name_the_same_float32(value: float) -> None:
+    expected = rounded_once(repr(value)) + 0.0
+    typed = coerce_neutral_input(value, FLOAT32)
+    assert repr(typed) == repr(wire.decode_wire(FLOAT32, value)) == repr(expected)
 
 
 @pytest.mark.parametrize(
