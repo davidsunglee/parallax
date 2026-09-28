@@ -39,9 +39,9 @@ from parallax.core import (
     rel,
 )
 from parallax.core import wire as wire_codec
+from parallax.core.base import ManagedValue
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
-from parallax.core.predicate import Scalar
 from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate
 from parallax.snapshot import connect
 from parallax.snapshot.handle import ExecutionFailure, ScopedDatabase, SnapshotStream, Transaction
@@ -641,7 +641,7 @@ def test_rendering_an_include_page_calls_no_wire_codec(
         if event == "call" and frame.f_code.co_filename.startswith(_WIRE_PACKAGE):
             wire_calls.append(frame.f_code.co_qualname)
 
-    def spied_render(template: CompiledTemplate, keys: list[Scalar]) -> CompiledRead:
+    def spied_render(template: CompiledTemplate, keys: list[ManagedValue]) -> CompiledRead:
         nonlocal renders
         renders += 1
         previous = sys.getprofile()

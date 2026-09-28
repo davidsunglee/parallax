@@ -25,6 +25,7 @@ import pytest
 from parallax.core import deep_fetch, inheritance, relationship, storage_layout, temporal_read
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
+from parallax.core.base import ManagedValue
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.inheritance import _compile as inheritance_compile
@@ -558,7 +559,7 @@ def test_postgres_child_template_keeps_one_array_bind_for_every_key_count() -> N
 
 def test_postgres_child_template_binds_the_gathered_list_under_the_template_metadata() -> None:
     template = _child_template(POSTGRES)
-    keys: list[oa.Scalar] = [1, 42]
+    keys: list[ManagedValue] = [1, 42]
 
     rendered = template.render(keys).statement
 
