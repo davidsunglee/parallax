@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import decimal
 import json
 import weakref
@@ -10,6 +11,7 @@ import pytest
 from parallax.core.base._neutral import host_float_number
 from parallax.core.wire._json import (
     _MAX_UNAMBIGUOUS_TOKEN_LENGTH,  # pyright: ignore[reportPrivateUsage]
+    authored_number,
     authored_token,
     loads,
     prepared_loads,
@@ -78,3 +80,16 @@ def test_an_exact_token_past_the_length_bound_keeps_its_digits_only_for_another_
     value = cast("float", loads(token))
     assert (authored_token(value) == token) is kept
     assert (host_float_number(float(value)) != decimal.Decimal(token)) is kept
+
+
+@pytest.mark.parametrize("token", ["0.1", "-1e-400", "1e309", "-0"])
+def test_an_authored_number_is_its_own_copy_and_keeps_its_token(token: str) -> None:
+    value = authored_number(token)
+    assert authored_token(value) == token
+    assert copy.copy(value) is value
+    assert copy.deepcopy(value) is value
+
+
+@pytest.mark.parametrize("token", ["0.1", "1e309"])
+def test_an_authored_float_keeps_its_token_without_an_instance_dictionary(token: str) -> None:
+    assert not hasattr(authored_number(token), "__dict__")
