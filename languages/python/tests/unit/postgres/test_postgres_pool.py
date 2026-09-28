@@ -435,7 +435,7 @@ def test_a_probe_that_reads_a_float_back_inexactly_names_what_rounds_it(
         open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
 
     assert failed.value.phase == "probe"
-    reason = str(failed.value.__cause__)
+    reason = str(failed.value)
     assert "extra_float_digits is at or below zero" in reason
     assert ("Float32 loader is not installed" in reason) is names_the_loader
 
@@ -1060,6 +1060,23 @@ def test_a_probe_that_answers_more_than_one_row_fails_startup(
         open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
 
     assert failed.value.phase == "probe"
+    assert str(failed.value) == "the startup probe returned 2 rows rather than one"
+
+
+def test_a_probe_that_cannot_run_fails_startup_with_the_failure_as_its_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failure = RuntimeError("the statement failed")
+    _opened(monkeypatch, _pool(_FakeConnection(execute_error=failure)))
+
+    with pytest.raises(DatabaseStartupError) as failed:
+        open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
+
+    assert failed.value.phase == "probe"
+    assert str(failed.value) == (
+        "the database runtime's startup probe did not return what it asked for"
+    )
+    assert failed.value.__cause__ is failure
 
 
 def test_a_control_flow_exception_in_the_probe_keeps_its_own_propagation(

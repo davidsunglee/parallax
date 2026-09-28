@@ -77,6 +77,10 @@ _ROUNDED_FLOATS = (
 _CLOSED = "this Database is closed, so it opens no new database connection"
 
 
+class _ProbeMismatch(Exception):
+    """The probe ran but read back something other than what it asked for."""
+
+
 class PostgresRuntime:
     """One independent running Postgres resource, owned by one connected handle.
 
@@ -412,7 +416,9 @@ def _probe(runtime: PostgresRuntime, deadline: float) -> str:
             # startup error it might handle.
             raise
         raise DatabaseStartupError(
-            "the database runtime's startup probe did not return what it asked for",
+            str(exc)
+            if isinstance(exc, _ProbeMismatch)
+            else "the database runtime's startup probe did not return what it asked for",
             phase="probe",
             cleanup_result=resource.cleanup_result,
         ) from exc
@@ -431,28 +437,28 @@ def _probe(runtime: PostgresRuntime, deadline: float) -> str:
 
 def _check_probe(rows: list[Row]) -> str:
     if len(rows) != 1:
-        raise ValueError(f"the startup probe returned {len(rows)} rows rather than one")
+        raise _ProbeMismatch(f"the startup probe returned {len(rows)} rows rather than one")
     (row,) = rows
     if len(row) != 6:
-        raise ValueError(f"the startup probe returned {len(row)} columns rather than six")
+        raise _ProbeMismatch(f"the startup probe returned {len(row)} columns rather than six")
     if row[0] != 1:
-        raise ValueError("the startup probe did not read its integer back")
+        raise _ProbeMismatch("the startup probe did not read its integer back")
     if row[1] is not INFINITY:
-        raise ValueError("the startup probe did not read an unbounded instant back")
+        raise _ProbeMismatch("the startup probe did not read an unbounded instant back")
     if row[2] != {"ready": True}:
-        raise ValueError("the startup probe did not read its structured document back")
+        raise _ProbeMismatch("the startup probe did not read its structured document back")
     if row[4] != _FLOAT64_WITNESS:
-        raise ValueError(
+        raise _ProbeMismatch(
             f"the startup probe did not read its Float64 back exactly: {_ROUNDED_FLOATS}"
         )
     if row[3] != _FLOAT32_WITNESS:
-        raise ValueError(
+        raise _ProbeMismatch(
             f"the startup probe did not read its Float32 back exactly: either the adapter's "
             f"Float32 loader is not installed, or {_ROUNDED_FLOATS}"
         )
     login = row[5]
     if not isinstance(login, str) or not login:
-        raise ValueError("the startup probe did not read a nonempty session_user")
+        raise _ProbeMismatch("the startup probe did not read a nonempty session_user")
     return login
 
 
