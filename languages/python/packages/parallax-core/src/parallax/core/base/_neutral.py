@@ -48,6 +48,7 @@ __all__ = [
     "base_uuid_carrier",
     "coerce_neutral_input",
     "exceeds_json_int_value_space",
+    "host_float_binary32",
     "host_float_number",
     "matches_neutral_type",
     "nearest_float_at_width",
@@ -196,6 +197,7 @@ _INT64_BOUNDS: Final[tuple[int, int]] = (-(2**63), 2**63 - 1)
 # number rounds past it to an infinity: half an ulp above it, `2**128 - 2**103`.
 _BINARY32_MAX_BITS: Final[int] = 0x7F7FFFFF
 _BINARY32_OVERFLOW: Final[_Fraction] = _Fraction(2) ** 128 - _Fraction(2) ** 103
+_BINARY32_CARRIER: Final[_struct.Struct] = _struct.Struct("<f")
 
 
 class ManagedValueExclusion:
@@ -308,8 +310,8 @@ def coerce_neutral_input(value: object, declared: NeutralType) -> object:
     literal, so only the input policy's own typed conversions apply: an
     :class:`int` for a :class:`Decimal`, a lossless :class:`int` for a float,
     and a canonical UUID string. A host float is
-    projected immediately to the declared width from the number
-    :func:`host_float_number` says it names there, negative zero normalizes to
+    projected immediately to the declared width, at Float32 to the value
+    :func:`host_float_binary32` says it names, negative zero normalizes to
     positive zero, and an aware Timestamp normalizes to UTC.
 
     A caller chose an integer carrier, so an integer no float of the width
@@ -321,14 +323,9 @@ def coerce_neutral_input(value: object, declared: NeutralType) -> object:
     match declared:
         case Decimal() if _is_integer(value):
             return _decimal.Decimal(int.__int__(value))
-        case Float32() if isinstance(value, float):
+        case Float32() | Float64() if isinstance(value, float):
             base_value = float.__float__(value)
-            projected = nearest_float_at_width(host_float_number(base_value, declared), declared)
-            return base_value if projected is None else projected
-        case Float64() if isinstance(value, float):
-            # A host float is already a binary64 value, which is what it names here.
-            base_value = float.__float__(value)
-            projected = nearest_float_at_width(base_value, declared)
+            projected = _host_float_at_width(base_value, declared)
             return base_value if projected is None else projected
         case Float32() | Float64() if _is_integer(value):
             base_value = int.__int__(value)
@@ -356,15 +353,21 @@ def _canonical_uuid_input(value: str) -> object:
     return decoded if str(decoded) == base_value else base_value
 
 
-def host_float_number(value: float, declared: NeutralType) -> _decimal.Decimal:
-    """The number a bare host float names at a member of ``declared``.
+def _host_float_at_width(value: float, declared: Float32 | Float64) -> float | None:
+    # One coercion arm serves both widths and dispatches here, as
+    # `nearest_float_at_width` does: a separate Float32 arm would add a class
+    # pattern to the coercion of every type matched after it.
+    if isinstance(declared, Float64):
+        return _nearest_binary64(value, declared)
+    return host_float_binary32(value)
+
+
+def host_float_number(value: float) -> _decimal.Decimal:
+    """The number a bare host float names at a Float32 member.
 
     A bare float is one no authored digits accompany, and it stands for two
     numbers: its exact binary64 value, and the number its shortest round-trip
     spelling (``repr``) names, which is what JSON serialization writes for it.
-    The two round to different binary32 values only where the float is a
-    binary32 midpoint.
-
     A Float32 member reads the spelled number, whichever API the float arrives
     through, so Typed and Wire input store the same value and a published
     Float32 value names itself again. Every other member reads the exact value:
@@ -372,9 +375,38 @@ def host_float_number(value: float, declared: NeutralType) -> _decimal.Decimal:
     ``1.152921504606847e+18``), and at Float64 both numbers name the float
     itself. A non-finite float names a non-finite number.
     """
-    if isinstance(declared, Float32):
-        return _decimal.Decimal(float.__repr__(value))
-    return _decimal.Decimal.from_float(value)
+    return _decimal.Decimal(float.__repr__(value))
+
+
+def host_float_binary32(value: float) -> float | None:
+    """The binary32 value, widened, that a bare host float names at a Float32
+    member: :func:`host_float_number` rounded once to nearest, ties to even,
+    with either signed zero as positive zero. ``None`` when that number is not
+    finite or overflows binary32.
+
+    The exact value and the spelled number round alike except on a binary32
+    midpoint. A midpoint is itself a binary64 value and the spelled number lies
+    within half a binary64 ulp of the float, so they can fall on different sides
+    of a midpoint only when the float is that midpoint; only there is the
+    spelling read.
+    """
+    try:
+        (narrowed,) = _BINARY32_CARRIER.unpack(_BINARY32_CARRIER.pack(value))
+    except OverflowError:
+        narrowed = _math.inf
+    if narrowed != value and _is_binary32_midpoint(value):
+        return nearest_float_at_width(host_float_number(value), FLOAT32)
+    if not _math.isfinite(narrowed):
+        return None
+    return 0.0 if narrowed == 0.0 else narrowed
+
+
+def _is_binary32_midpoint(value: float) -> bool:
+    """Whether ``value`` lies halfway between adjacent binary32 magnitudes: an
+    odd multiple of half the binary32 spacing at its magnitude."""
+    mantissa, exponent = _math.frexp(value)
+    halves = _math.ldexp(mantissa, 25) if exponent > -125 else _math.ldexp(value, 150)
+    return halves.is_integer() and halves % 2.0 == 1.0
 
 
 def nearest_float_at_width(

@@ -35,7 +35,7 @@ from parallax.core.base._neutral import (
     base_time_carrier,
     base_uuid_carrier,
     exceeds_json_int_value_space,
-    host_float_number,
+    host_float_binary32,
     normalize_json_carrier,
 )
 from parallax.core.wire._json import (
@@ -189,8 +189,12 @@ def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLi
             return _decode_boolean(value, neutral_type)
         case Int32() | Int64():
             return _decode_integer(value, neutral_type)
-        case Float32() | Float64():
-            return _decode_float(value, _named_number(value, neutral_type), neutral_type)
+        case Float32():
+            return _decode_float32(value, neutral_type)
+        case Float64():
+            # A host float names the number its shortest spelling names; at binary64
+            # that number and the float's exact value both round to the float itself.
+            return _decode_float(value, _source_decimal(value), neutral_type)
         case Decimal(precision, scale):
             return _decode_decimal(value, neutral_type, precision, scale)
         case String():
@@ -230,9 +234,7 @@ def _decode_string(value: object, neutral_type: String) -> _DecodedWireLiteral:
     return _DecodedWireLiteral(managed)
 
 
-def _named_number(value: object, neutral_type: NeutralType) -> decimal.Decimal | None:
-    """The number a Wire number names at a member of ``neutral_type``: the digits
-    a parser kept, or else what the bare host number names."""
+def _source_decimal(value: object) -> decimal.Decimal | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     token = authored_token(value)
@@ -240,14 +242,17 @@ def _named_number(value: object, neutral_type: NeutralType) -> decimal.Decimal |
         return decimal.Decimal(token)
     if isinstance(value, int):
         return decimal.Decimal(int.__int__(value))
-    return host_float_number(float.__float__(value), neutral_type)
+    base_value = float.__float__(value)
+    if not math.isfinite(base_value):
+        return None
+    return decimal.Decimal.from_float(base_value)
 
 
 def _decode_integer(
     value: object,
     neutral_type: Int32 | Int64,
 ) -> _DecodedWireLiteral:
-    number = _named_number(value, neutral_type)
+    number = _source_decimal(value)
     if number is None or not number.is_finite():
         _fail("type-mismatch", value, neutral_type)
     integral = number.to_integral_value()
@@ -257,6 +262,26 @@ def _decode_integer(
     if not matches_neutral_type(managed, neutral_type):
         _fail("out-of-space", value, neutral_type)
     return _DecodedWireLiteral(managed, number.is_zero() and number.is_signed())
+
+
+def _decode_float32(value: object, neutral_type: Float32) -> _DecodedWireLiteral:
+    """Round the number ``value`` is written as once to binary32: the digits a
+    parser kept, an integer's own value, or the number a bare host float names."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        _fail("type-mismatch", value, neutral_type)
+    token = authored_token(value)
+    if token is not None:
+        return _decode_float(value, decimal.Decimal(token), neutral_type)
+    if isinstance(value, int):
+        return _decode_float(value, decimal.Decimal(int.__int__(value)), neutral_type)
+    base_value = float.__float__(value)
+    managed = host_float_binary32(base_value)
+    if managed is None:
+        _fail("out-of-space" if math.isfinite(base_value) else "type-mismatch", value, neutral_type)
+    return _DecodedWireLiteral(
+        managed,
+        base_value == 0.0 and math.copysign(1.0, base_value) < 0.0,
+    )
 
 
 def _decode_float(
@@ -430,9 +455,6 @@ def _is_canonical_output(
 
 
 def _spelled_number(value: object) -> decimal.Decimal | None:
-    """The number ``value`` is written as: the digits a parser kept, or else the
-    ones serialization writes for a bare host number. Canonical output compares
-    spellings, so unlike :func:`_named_number` the member plays no part."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     token = authored_token(value)

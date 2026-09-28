@@ -7,7 +7,6 @@ from typing import cast
 
 import pytest
 
-from parallax.core.base import FLOAT32, FLOAT64, INT64
 from parallax.core.base._neutral import host_float_number
 from parallax.core.wire._json import (
     _MAX_UNAMBIGUOUS_TOKEN_LENGTH,  # pyright: ignore[reportPrivateUsage]
@@ -61,8 +60,7 @@ def test_an_exact_token_at_the_length_bound_leaves_a_float_every_member_reads_it
     assert len(token) == _MAX_UNAMBIGUOUS_TOKEN_LENGTH
     value = loads(token)
     assert type(value) is float
-    for member in (FLOAT32, FLOAT64, INT64):
-        assert host_float_number(value, member) == decimal.Decimal(token)
+    assert host_float_number(value) == decimal.Decimal.from_float(value) == decimal.Decimal(token)
 
 
 @pytest.mark.parametrize(
@@ -79,4 +77,4 @@ def test_an_exact_token_past_the_length_bound_keeps_its_digits_only_for_another_
     assert len(token) > _MAX_UNAMBIGUOUS_TOKEN_LENGTH
     value = cast("float", loads(token))
     assert (authored_token(value) == token) is kept
-    assert (host_float_number(float(value), FLOAT32) != decimal.Decimal(token)) is kept
+    assert (host_float_number(float(value)) != decimal.Decimal(token)) is kept

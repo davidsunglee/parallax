@@ -4,8 +4,9 @@ Each replaces a module attribute of the Wire codec, so every caller resolving it
 at call time sees the fault. ``_canonical_spelling`` spells a document leaf's
 driver value (through ``encode_leaf``) and every reported Wire bind alike;
 ``nearest_float_at_width`` is how ``_decode_float`` projects an authored Wire
-number onto its declared width, so its fault reaches a scalar driver bind while
-the reported bind, re-encoded, still reads ``0.0``.
+number onto its declared width, and ``host_float_binary32`` how a bare float
+reaches a Float32 member, so their fault reaches a scalar driver bind while the
+reported bind, re-encoded, still reads ``0.0``.
 
 Exported names carry no leading underscore: privacy is this module's.
 """
@@ -18,6 +19,7 @@ import pytest
 
 import parallax.core.wire._codec as wire_codec
 from parallax.core.base import Float32, Float64, NeutralType, nearest_float_at_width
+from parallax.core.base._neutral import host_float_binary32
 from parallax.core.wire import WireValue
 
 __all__ = ["project_float_zero_negative", "spell_float_zero_negative"]
@@ -41,4 +43,9 @@ def project_float_zero_negative(monkeypatch: pytest.MonkeyPatch) -> None:
         projected = nearest_float_at_width(number, neutral_type)
         return -0.0 if projected == 0.0 else projected
 
+    def binary32(value: float) -> float | None:
+        projected = host_float_binary32(value)
+        return -0.0 if projected == 0.0 else projected
+
     monkeypatch.setattr(wire_codec, "nearest_float_at_width", nearest)
+    monkeypatch.setattr(wire_codec, "host_float_binary32", binary32)
