@@ -432,10 +432,12 @@ python-report-cost:
 # diff-cover derives its line inventory from git, so an untracked production
 # module scores zero changed lines and `--fail-under 100` passes vacuously over
 # whatever was tracked.
+# The Cython sources are the one declared exemption, named in the configuration
+# this reads, and `python-check-native-sources` is what keeps that list exact.
 [metadata("runtime:slow")]
 [doc("Every changed line is covered by database-free proof.")]
-python-coverage-diff: python-test-dbfree python-check-untracked-sources
-    cd {{python}} && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100
+python-coverage-diff: python-test-dbfree python-check-untracked-sources python-check-native-sources
+    cd {{python}} && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100 --config-file pyproject.toml
 
 [metadata("runtime:fast")]
 [doc("Python formatting is deterministic and already applied.")]
@@ -443,9 +445,9 @@ python-format-check:
     cd {{python}} && uv run ruff format --check .
 
 [metadata("runtime:fast")]
-[doc("Ruff lint rules over the Python workspace.")]
+[doc("Ruff lint rules over the Python workspace, and cython-lint over its Cython sources.")]
 python-lint:
-    cd {{python}} && uv run ruff check .
+    cd {{python}} && uv run ruff check . && uv run cython-lint packages
 
 [metadata("runtime:fast")]
 [doc("Duplicated-code scan over the Python distributions' sources and tools.")]
@@ -460,10 +462,12 @@ python-typecheck:
 # `check_scope_ownership.py` is a prerequisite rather than a neighbour, because
 # lint-imports can only judge the files a declared scope covers: a production
 # module outside every §7 scope passes it by never being examined. `check_dag_sync.py`
-# generates the contracts lint-imports reads.
+# generates the contracts lint-imports reads. lint-imports cannot parse a Cython
+# source at all, so `check_native_sources.py` confines every one to the adapter
+# scope that owns the compiled loaders.
 [metadata("runtime:fast")]
 [doc("Every production import stays inside the generated dependency closure.")]
-python-check-imports: python-check-dag-sync python-check-scope-ownership
+python-check-imports: python-check-dag-sync python-check-scope-ownership python-check-native-sources
     cd {{python}} && uv run lint-imports
 
 [metadata("runtime:fast")]
@@ -475,6 +479,11 @@ python-check-dag-sync:
 [doc("Every production file resolves to exactly one most-specific §7 scope.")]
 python-check-scope-ownership:
     cd {{python}} && uv run python tools/check_scope_ownership.py
+
+[metadata("runtime:fast")]
+[doc("Every Cython source stays in the adapter package and is a named diff-coverage exemption.")]
+python-check-native-sources:
+    cd {{python}} && uv run python tools/check_native_sources.py
 
 [metadata("runtime:fast")]
 [doc("No production or test source exists on disk but outside git.")]
