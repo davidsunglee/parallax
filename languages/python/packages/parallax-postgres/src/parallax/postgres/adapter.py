@@ -181,8 +181,9 @@ class PostgresAdapter:
         """Open one independent ready runtime, or raise having released what it took.
 
         Ready means proved: the pool exists, a real connection was acquired,
-        initialized, and made to decode an integer, an unbounded instant, and a
-        structured document, and it was given back. A failure at any of those
+        initialized, and made to decode an integer, an unbounded instant, a
+        structured document, and a Float32 and a Float64 exactly, and it was
+        given back. A failure at any of those
         raises :class:`~parallax.core.db_port.DatabaseStartupError` naming the
         phase, and publishes no runtime: the pool is closed and a startup
         connection already acquired goes through the ordinary cleanup path,

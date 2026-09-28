@@ -46,18 +46,33 @@ PROBE_SQL: Final = """SELECT
     1 AS ready,
     'infinity'::timestamptz AS temporal_bound,
     '{"ready": true}'::jsonb AS document,
+    '7.038530691851209e-26'::float8::real AS float32_witness,
+    0.30000000000000004::float8 AS float64_witness,
     session_user AS login_identity"""
 """The one statement a runtime runs before it is usable.
 
-It proves the three decodings the read path cannot work without and that a bare
+It proves the decodings the read path cannot work without and that a bare
 connectivity check does not exercise: an ordinary integer, the neutral sentinel a
-temporal interval's open upper bound reads back as, and a structured document
-decoded to a mapping. It also captures the authenticated ``session_user`` that
-database-login execution projects as its identity. It reads no model, opens no
-explicit transaction, and registers nothing — the connection it runs on was
-already initialized like every other. It is a smoke probe, not a substitute for
-the codec suites.
+temporal interval's open upper bound reads back as, a structured document
+decoded to a mapping, and two floats that come back exactly only when the server
+spells floats without rounding them. It also captures the authenticated
+``session_user`` that database-login execution projects as its identity. It
+reads no model, opens no explicit transaction, and registers nothing — the
+connection it runs on was already initialized like every other. It is a smoke
+probe, not a substitute for the codec suites.
+
+The Float64 witness needs all 17 significant digits. The Float32 witness is one
+whose shortest spelling, parsed to the nearest binary64 and then narrowed, lands
+on the adjacent binary32 value, so it also reads back exactly only through the
+adapter's own Float32 loader.
 """
+
+_FLOAT32_WITNESS: Final = 7.038530691851209e-26
+_FLOAT64_WITNESS: Final = 0.30000000000000004
+_ROUNDED_FLOATS = (
+    "the session's extra_float_digits is at or below zero, so the server rounds float "
+    "output, which no loader can recover; set it to 1 or more"
+)
 
 _CLOSED = "this Database is closed, so it opens no new database connection"
 
@@ -418,15 +433,24 @@ def _check_probe(rows: list[Row]) -> str:
     if len(rows) != 1:
         raise ValueError(f"the startup probe returned {len(rows)} rows rather than one")
     (row,) = rows
-    if len(row) != 4:
-        raise ValueError(f"the startup probe returned {len(row)} columns rather than four")
+    if len(row) != 6:
+        raise ValueError(f"the startup probe returned {len(row)} columns rather than six")
     if row[0] != 1:
         raise ValueError("the startup probe did not read its integer back")
     if row[1] is not INFINITY:
         raise ValueError("the startup probe did not read an unbounded instant back")
     if row[2] != {"ready": True}:
         raise ValueError("the startup probe did not read its structured document back")
-    login = row[3]
+    if row[4] != _FLOAT64_WITNESS:
+        raise ValueError(
+            f"the startup probe did not read its Float64 back exactly: {_ROUNDED_FLOATS}"
+        )
+    if row[3] != _FLOAT32_WITNESS:
+        raise ValueError(
+            f"the startup probe did not read its Float32 back exactly: either the adapter's "
+            f"Float32 loader is not installed, or {_ROUNDED_FLOATS}"
+        )
+    login = row[5]
     if not isinstance(login, str) or not login:
         raise ValueError("the startup probe did not read a nonempty session_user")
     return login
