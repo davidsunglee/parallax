@@ -57,43 +57,6 @@ with cross-language reach, so neither belongs in an incidental fix.
 `lock == "locking"`, matching the append site's own check, and an ordered or
 limited union wraps as a derived table: `m-inheritance-134` / `-135`.)*
 
-### D-67 — A CHILD-level result node is authored per projection while one Root View publishes one logical node
-
-*Medium — a corpus-versus-production divergence with no defect on either side.*
-Relates to `core/spec/m-case-format.md` *Read targeting*,
-`parallax.snapshot.materialize`, and the reference harness deep-fetch grader.
-
-**What.** Eleven `then.graph` cases author a child node separately for each
-projection: `m-inheritance-065` / `-066` / `-067` / `-068` / `-073` /
-`-074` / `-075` / `-076` / `-077` / `-078` and
-`m-snapshot-read-012`. A production Root View instead allocates one node per
-logical key reached by that root, narrows it to its resolved concrete Entity,
-and lets every route in that root reference the same node. Separate result roots
-still construct separate nodes, even when their Page borrows one exactly equal
-Entity State for both.
-
-The remaining mismatches are consequently about the authored result shape, not
-a removed merge stage: a multi-concrete projection carries sibling-null padding;
-`familyVariant` is authored by the view that reached the node; and a logical row
-reached through two views may be authored twice with projection-specific values.
-Production publishes the concrete node shape and its concrete variant spelling
-through every route in that Root View.
-
-**Why it is deferred rather than fixed.** `m-case-format` deliberately scopes
-its per-variant convention to a read case's own top-level `then.graph` leaves and
-leaves CHILD-level reconciliation open. Changing it moves the corpus and the
-reference harness oracle together, while changing production would contradict
-`m-snapshot-read` root-local identity. The Python run sweep therefore continues
-to grade SQL, binds, and round trips while withholding only the known result-
-shape comparison for these cases. The two multi-subtype path-root-guard cases
-(`m-inheritance-073` and `-077`) still have no typed authoring spelling, so their
-result shape cannot be covered by an API story until that separate authoring
-limit changes.
-
-**When.** With the cross-language case-format decision that chooses whether
-CHILD-level expected nodes describe projection shapes or root-local published
-nodes, updating the oracle and all eleven cases in the same change.
-
 ### D-69 — A hand-written skip-reason bucket states a cause untrue of some member, once per review round
 
 *Should-fix — misleading to a reader; no grade and no coverage partition moves.*
@@ -111,14 +74,13 @@ boundary review — five rounds, five findings:
   causes differ;
 - round 4 (S8) — one further bucket did, and the sweep found a fifth case the
   bucket's clause was false of;
-- round 5 (S8) — **open.** `_INHERITANCE_AUDIT_TERMINATE_REASON`
-  (`api_suite.py:687`) and `_INHERITANCE_BITEMPORAL_TERMINATE_REASON` (`:699`)
-  both say the family composition adds "table routing plus the shared-table tag
-  guard", and each is assigned to table-per-concrete-subtype cases that have no
-  tag guard: `m-inheritance-091` (`:1359`), `-095` (`:1361`), `-097` (`:1363`),
-  whose case headers state that a TPCS termination targets the subtype's own
-  table "with NO tag guard". A table-per-hierarchy property is stated as common
-  to every member.
+- round 5 (S8) — **open.** `_INHERITANCE_AUDIT_TERMINATE_REASON` and
+  `_INHERITANCE_BITEMPORAL_TERMINATE_REASON` (`api_suite.py`) both say the
+  family composition adds "table routing plus the shared-table tag guard", and
+  `CASE_SKIP_REASONS` assigns each to table-per-concrete-subtype cases that have
+  no tag guard: `m-inheritance-091`, `-095`, and `-097`, whose case headers
+  state that a TPCS termination targets the subtype's own table "with NO tag
+  guard". A table-per-hierarchy property is stated as common to every member.
 
 **The cause,** diagnosed in round 4: a bucket keyed on case **shape** rather than
 **cause**. A shape-keyed bucket — inheritance × temporal × termination answers
@@ -211,7 +173,7 @@ invalid rows refuse, are skipped, or become explicit per-row write results.
 *Medium — shipped behavior proven at one interface instead of two.* **Owned by
 the compatibility corpus, not this target**, and kept here because Python work
 surfaced it and nothing else tracks it. Relates to `core/compatibility/models`,
-`tests/unit/_mixed_strategy_model.py`.
+`tests/unit/snapshot/handle/_mixed_strategy_model.py`.
 
 **What.** An Effective Concurrency Strategy is a property of the target Entity,
 so one `optimistic` preference over one connected model resolves per Entity: a
@@ -257,33 +219,36 @@ permanent.
 
 ### D-77 — The interleaved-`uow`-group runner refuses a step stating relationship contents, though its own find interpreter already holds what would answer one
 
-*Low — a refusal on a shape no case authors.* Relates to
-`parallax.conformance._lanes.interleaved.run_interleaved_scenario_case`.
+*Medium — one authored case has the reference harness as its only grader.*
+Relates to `parallax.conformance._lanes.interleaved.run_interleaved_scenario_case`,
+`tests/compatibility/test_run_sweep.py`.
 
 **What.** `expectGraph`'s READ placement is legal on any include-bearing read step
 (`core/spec/m-case-format.md` *Relationship contents at a step*), and three of
 this target's four find interpreters answer it: the ungrouped standalone find,
 `_run_uow_group`'s own step loop, and the snapshot lane's find each publish a
-`stepGraphs` entry through `_read_step_graph`. The fourth —
-`run_interleaved_scenario_case`, the two-group optimistic-lock race entry point —
-refuses such a step by name before either worker thread starts, because its
-return is a four-tuple (emissions, round trips, the conflict's `actual`, every
-find's own rows) carrying no `stepGraphs` channel at all. Nothing about the
-interleaved shape conflicts with the observable: `_run_interleaved_group` drives
-the SAME `_run_group_step` interpreter the contiguous runner does and already
-holds each find's own published output, which is exactly what `_read_step_graph`
-takes. The reference harness grades the same authored `expectGraph` on an
-interleaved read step today, so the limit is this target's rather than the case
-format's — the shape is unwired here, not mis-authored.
+`stepGraphs` entry through `read_step_graph`. The fourth —
+`run_interleaved_scenario_case`, the entry point for the interleaved races (the
+optimistic-lock race and the Isolation Level scenarios) — refuses such a step by
+name before either worker thread starts, because its return is a four-tuple
+(emissions, round trips, the conflict's `actual`, every find's own rows) carrying
+no `stepGraphs` channel at all. Nothing about the interleaved shape conflicts
+with the observable: `_run_interleaved_group` drives the SAME `run_group_step`
+interpreter the contiguous runner does and already holds each find's own
+published output, which is exactly what `read_step_graph` takes. The limit is
+this target's rather than the case format's — the shape is unwired here, not
+mis-authored.
 
-**Why it is deferred rather than fixed.** No corpus case pairs an interleaved race
-with an include-bearing read, so the channel would ship unexercised — a coverage
-cost for a shape nothing asks for. Reaching it also costs more than the call
-site: this entry point's tuple would widen to five across the run sweep and its
-unit drivers, repeating the width `run_scenario_case` already retired into
-`ScenarioRun`. The moment a case authors the combination, the repair is the
-channel, a value object for the return, and its own DB-free driver; until then
-the honest state is the refusal, which names precisely what it lacks.
+`m-unit-work-033` now authors the combination: two interleaved deep-fetch steps,
+each stating `expectGraph`. The run sweep leaves it out of the interleaved lane
+for exactly this refusal, so the reference harness grades it alone.
+
+**Why it is still open.** The deferral waited for a case to author the
+combination, and one has. What remains is the repair's own size: this entry
+point's tuple would widen to five across the run sweep and its unit drivers,
+repeating the width `run_scenario_case` already retired into `ScenarioRun`, so
+the repair is the channel, a value object for the return, and its own DB-free
+driver, after which `m-unit-work-033` joins the interleaved lane.
 
 ### D-78 — Two conformance write lanes run DML no Handle opened, so their work reaches no Execution Lifecycle
 
@@ -328,10 +293,11 @@ opens no Handle at all and says so.
 `parallax.core.entity._instance_state._PresentedState`.
 
 A published value's serialization cost is an accepted part of the Interface:
-`_instance_state`'s module docstring and `spec/python.md` §2 both state that a
-published `model_dump` runs roughly twice an ordinary one because the presentation
-is built per read. This entry is the optimization path for that stated cost, held
-here so the accepted fact and what is known about reducing it cannot drift apart.
+`_DeclaredState`'s docstring states that a published value's presentation is
+built per read and paid twice per dump, so a published `model_dump` runs roughly
+twice an ordinary one. This entry is the optimization path for that stated cost,
+held here so the accepted fact and what is known about reducing it cannot drift
+apart.
 
 **What.** The two `__dict__` reads per instance per dump are both in
 pydantic-core's `ModelSerializer`, and the first one's value is discarded.
@@ -403,9 +369,9 @@ at 1k / 5k / 20k nodes today and 624 / 544 / 480 B for the memo arm, and
 `gc.get_referents(node)` names zero `dict` referents on every node in every arm.
 The memo holds one `(instance, mapping)` pair in one module-level slot, never a
 node's own storage, so no node acquires an instance dictionary. A pass taking it
-must also reword the prohibition: `_DeclaredState`'s docstring and `spec/python.md`
-§2 forbid memoizing the presentation *on the value*, and a reader will apply that
-sentence to this memo unless it is restated as the per-node rule it means.
+must also reword the prohibition: `_DeclaredState`'s docstring forbids
+memoizing the presentation *on the value*, and a reader will apply that sentence
+to this memo unless it is restated as the per-node rule it means.
 
 **Hazards, each concrete and each to be carried forward whole.**
 
@@ -467,7 +433,7 @@ only behind an explicit decision on silent evaporation.
 
 **Why it is deferred rather than fixed.** The cost it removes is stated at the
 seam as a settled trade, so taking it is a revision of the Interface's own
-performance statement in two documents and not only an implementation change.
+performance statement and not only an implementation change.
 Two of the three ingredients need a decision that outlives them — pinning every
 published class in a strong dict, and what a one-entry process-lifetime memo may
 hold after a run — and the memo needs an interpreter nobody here has run it on.
@@ -586,17 +552,17 @@ after the one that landed. Splitting them was deliberate: bundling both into one
 phase is the shape that was rejected when these obligations were first weighed,
 three decisions wearing one name.
 
-**When.** Was scheduled for
+**When.** As a claim of its own; nothing schedules it.
 [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory)
-Phase 7 and is **not closed there**: scoping it against the shape Phase 7 built
-put it above what that phase could take, and it is raised rather than
-half-landed. Phase 4a's groundwork holds — both executors drive a delivery page
-by page inside a scenario step's own unit of work, so the hook has one loop to
-hang on in each — and the plumbing on top of it is small: the harness's
-`object_query_oracle.stream.deliver_stream` page loop and the engine's delivery
-loop each gain one call site, and the page oracle needs no change at all,
-because it derives the page partition and the seek from the rows the delivery
-actually returned.
+scheduled it for Phase 7 and closed without it: scoping it against the shape
+Phase 7 built put it above what that phase could take, and it was raised rather
+than half-landed. Phase 4a's groundwork holds — both executors drive a delivery
+page by page inside a scenario step's own unit of work, so the hook has one loop
+to hang on in each — and the plumbing on top of it is small: the harness's
+`object_query_oracle.stream.deliver_stream` page loop and the conformance
+adapter's streamed-step loop (`_lanes.scenario.run_group_step`) each gain one
+call site, and the page oracle needs no change at all, because it derives the
+page partition and the seek from the rows the delivery actually returned.
 
 **What Phase 7 established about the remaining cost, so it is not re-derived.**
 The plumbing is not the work; two normative sub-decisions are, and each is a
@@ -698,7 +664,7 @@ dropped. That is a specification change before it is an adapter change: it
 reaches `m-case-format`, `compatibility-case.schema.json`, the harness loader
 (which matches corruptions at fixture load, where a milestone's identity is the
 fixture row it came from), and the Python engine's `where` clause. Nothing needs
-it today — the five corrupting cases in the corpus all address non-temporal
+it today — the six corrupting cases in the corpus all address non-temporal
 Entities — so the restriction was taken instead of the locator, deliberately and
 with the refusal graded on both sides.
 
@@ -736,16 +702,20 @@ yet.
 
 *Low — a refusal standing over a case its own producer already settles.* Relates
 to `parallax.snapshot.handle._predicate_writes.buffer_predicate_instruction`,
-`parallax.core.unit_work.instructions.non_temporal_milestone_refusal`.
+`parallax.core.unit_work.instructions.non_temporal_milestone_refusal`,
+`parallax.snapshot.handle._write_inputs.reject_temporal_delete`.
 
 **What.** The seam settles target/verb applicability from a two-arm quadrant: a
 temporal target is asked for the `delete_where` refusal, a non-temporal one for
-the milestone-verb refusal. Only the first arm is reachable. The seam takes an
-ALREADY-PREPARED instruction, and prepared-write production judges exactly the
-converse half — a milestone verb aimed at a target deriving no As-Of Axis — so
-no instruction that reaches this seam can still be carrying that mistake. The
-temporal arm is the live one and is covered
-(`tests/unit/snapshot/handle/test_transaction_predicate_writes.py::test_the_buffering_seam_refuses_a_temporal_delete_handed_straight_to_it`).
+the milestone-verb refusal. The non-temporal arm is reachable by no producible
+instruction. The seam takes an ALREADY-PREPARED instruction, and prepared-write
+production judges exactly the converse half — a milestone verb aimed at a target
+deriving no As-Of Axis — so no instruction that reaches this seam can still be
+carrying that mistake. The temporal arm is producible but reached by no
+production caller: both `_where` ingresses (`_predicate_writes.buffer_predicate`,
+`_wire_writes.wire_predicate_write`) call `reject_temporal_delete` before the seam,
+and the only other entry, `_transaction.buffer_prepared_predicate_write`, is a
+benchmark seam. No test drives either arm.
 
 **Why it is deferred rather than fixed.** The arm is cheap and states the
 seam's own contract, which the surrounding docstring rests on: this entry point
@@ -759,11 +729,11 @@ of its callers, and it is the same question D-90 raises one module over.
 
 ### D-92 — ADR 0057 limits Read Origins to Wire-read results, and the node a Wire insert answers carries one too
 
-*Low — a decision record's enumeration lags the second door the code has.*
-Relates to
+*Low — the one document naming where a Read Origin comes from omits the second
+door the code has.* Relates to
 `docs/adr/0057-typed-and-wire-are-peer-interfaces-over-one-transaction.md`,
-`parallax.snapshot.handle._wire_writes.wire_insert`. Owner: `docs/adr`; surfaced
-by this target, whose spec and glossary already state both doors.
+`parallax.snapshot.handle._wire_writes.wire_insert`, `spec/python.md`. Owner:
+`docs/adr`; surfaced by this target.
 
 **What.** The ADR says a Wire Entity "returned by a Parallax Wire read may carry
 an opaque Read Origin" and describes it as selecting "the authentic source's
@@ -771,10 +741,10 @@ privately retained evidence". `tx.wire.insert` also answers an origin-bearing
 node: its Read Origin names the concrete Entity, the object, and this transaction's
 participation and carries no observation, because the row it opened had observed
 nothing — the buffered insert licenses the write that follows. That node is a
-keyed write source in every respect the read-published one is, and
-`spec/python.md` §5 (*A keyed source is a Read-Origin-bearing node Parallax
-published*) and
-`CONTEXT.md` (*Wire Keyed Write Source*) state both doors; the ADR states one.
+keyed write source in every respect the read-published one is. The ADR states
+one door, and no current document states the second: the binding sentence and
+glossary term that named both were removed when contract ownership was
+consolidated, leaving the ADR's incomplete account as the only one.
 
 **Why it is deferred rather than fixed.** A note amending or superseding an ADR
 is a decision record and is authored as one, not as a wording repair made in
@@ -783,7 +753,8 @@ transaction — is contradicted by the second door; only its account of where a
 Read Origin comes from is incomplete.
 
 **When.** With the next decision record that touches the write surface, or as a
-note on 0057 when one is authored.
+note on 0057 when one is authored. Whether the insert door also needs a current
+contract owner — `spec/python.md` or a core module — is decided with it.
 
 ### D-94 — The execution lifecycle overhead baseline publishes no current reading
 
@@ -817,7 +788,7 @@ conformance engine carries a second model of it.* Relates to
 `core/spec/m-edit.md`, `core/spec/m-navigate.md`,
 `docs/adr/0057-typed-and-wire-are-peer-interfaces-over-one-transaction.md`,
 `parallax.core.entity._edit`, `parallax.snapshot._inspection`,
-`parallax.conformance.engine`,
+`parallax.conformance._lanes.snapshot`,
 [COR-93](https://linear.app/flimflam/issue/COR-93/make-python-conformance-a-thin-adapter-over-the-production-snapshot).
 Owner: this target's Wire public interface; a second language target composing a
 class-free adapter inherits the same gap.
@@ -856,17 +827,14 @@ input" — governs WRITE verbs buffering DML, where `m-edit` derives a value and
 emits none; and `m-edit`'s own requirement that an edit "MUST return a distinct
 derived value" and "MUST NOT mutate the source" reads as consistent with a
 frozen Wire node rather than in tension with it. That reading is a decision
-record and is authored as one. The duplication it removes is ~90 lines against
-a 7,245-line module, so it earns nothing by preempting that module's structural
-work.
+record and is authored as one.
 
-**When.** As its own claim, after the conformance engine's snapshot sub-lane
-(`_compile_snapshot_scenario` / `_run_snapshot_scenario`) is a module of its
-own, so the deletion lands in a named module rather than mid-lane. Two nearby
-gaps are deliberately NOT in its scope: a Wire pin accessor, which ADR 0057
-refuses in terms ("Wire Entity mappings expose no temporal milestone
-coordinate"), leaving `_root_pin`/`_edge_rank` to repoint on
-`temporal_read.milestone_edge` instead; and `CompiledRead`'s
+**When.** As its own claim. The snapshot sub-lane it deletes from is already a
+module of its own (`_lanes.snapshot`: `compile_scenario` / `run_scenario`), so
+the deletion lands in a named module rather than mid-lane. Two nearby gaps are
+deliberately NOT in its scope: a Wire per-root pin, which
+[COR-179](https://linear.app/flimflam/issue/COR-179/expose-per-root-pins-and-row-form-reads-on-the-wire-surface)
+owns along with deleting `_root_pin`; and `CompiledRead`'s
 projection accessor, whose own docstring already says no consumer should
 re-project a family superset, which is an unrelated obligation.
 
@@ -942,6 +910,7 @@ prose.
 - **D-64** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout). Both Relational Document Layout milestone refusals it named: the grouped-find one is gone, and the case-state one survives as a settled adapter contract stated at `engine._refuse_unaccounted_document_milestone` rather than as deferred work.
 - **D-65** → [COR-97](https://linear.app/flimflam/issue/COR-97/give-a-transaction-a-supported-abandon-and-the-execution-log-an-abort). A `rollback: true` step's abort sentinel records a `commit`-phase failure and an unclassified retry verdict, which no oracle reads; `engine._AbortingPort` states the untruth and its bound, and COR-97's `Transaction.abandon()` plus an `aborted` attempt status removes the decorator.
 - **D-66** → [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would). A keyed temporal write settling against case state a committed materializing predicate write of the same case moved is refused (`engine._refuse_materialized_case_state`, marked by `temporal_state.TemporalShadow.note_materialized_write`): production resolves and plans that write internally and returns neither, so the adapter would issue a zero-row close where a real caller — who could only reach the step by reading — gets a stale write. COR-99 is the systematic pass over adapter/production divergences of that kind and cites this composition as its motivating example; this refusal is the one hand-placed instance of what that audit generalizes.
+- **D-67** → [COR-171](https://linear.app/flimflam/issue/COR-171/reconcile-d-67-inheritance-child-shape-goldens-with-root-local). CHILD-level result nodes authored per projection against one root-local published node: the eleven residual cases, the cross-language ownership decision, and the Typed authoring gap on `m-inheritance-073` / `-077`.
 - **D-68** → closed by [COR-93](https://linear.app/flimflam/issue/COR-93/make-python-conformance-a-thin-adapter-over-the-production). `parallax.conformance` reaches a corpus model through the public `domain_model_from_document` door alone and reads the accepted Metamodel's own vocabulary, so no `parallax.descriptor` private import and no `parallax.core._formation_profile` reach survives; `ACCEPTED_CONFORMANCE_PRIVATE_REACHES` ends at three `parallax.core.entity` entries that `spec/python.md` §7 states as a rebuttal rather than an exemption. One question the accepted model cannot answer survives the conversion, and it is not a model question: the order a document declared its Entities in, which `m-case-format` makes load-bearing for a case naming no target and which `conformance.models.declared_entity_spellings` therefore reads off the decoded document. This target pins that order in a unit assertion of its own (`tests/unit/conformance/test_corpus_models.py`), but no compatibility case distinguishes it from the accepted model's canonical order: exactly one case resolves the convention over a model whose two orders disagree (`m-predicate-048`), and it is refused by the same rule under either root. Which order `m-case-format` means is therefore ungated across targets, and [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would) carries it.
 - **D-76** → closed by the decision it asked for. An invalid scenario `mutate` `set` is a **case-authoring failure**: `core/spec/m-case-format.md` states it in the register the bare write row already uses, and the corpus's own model-aware validation (`reference_harness.schema_validate._validate_scenario_edit`, run by `just core-check-schemas`) refuses such a case before either executor sees it. Undeclarability is the design rather than a gap — an edit refusal is deliberately not an `expectError` member — so what the entry called a divergence is now one rule with one enforcement point, and the Python lane's own verdict (`engine._judged_assignments`) is a restatement rather than the portability mechanism.
 - **D-71** → fixed. `document_codec.classify_effective_change` is the one operation every write asks whether an assignment changes anything, and the rule it applies is stated once by `core/spec/m-document-codec.md` *Managed documents and the effective change set*.
