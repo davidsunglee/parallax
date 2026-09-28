@@ -871,7 +871,10 @@ setuptools and Cython.
   sources a source build compiles. It extends psycopg's private C loader, so it
   is compiled once against each accepted psycopg build, the adapter imports the
   one psycopg selected, and a new psycopg minor release is a reviewed change.
-  A typed stub is what static analysis reads in its place.
+  Cython sources may exist only inside `parallax.postgres`, where the scope
+  whose grants their imports reach owns them; `tools/check_native_sources.py`
+  enforces that confinement and the named diff-coverage exemption, and a typed
+  stub is what static analysis reads in their place.
 - **Credential-provider manifest proof.** `parallax-aws` declares `parallax-core`
   and `botocore` unconditionally and nothing else, and it is the sole botocore
   declarer: the built wheel's `Requires-Dist` is asserted to be exactly those

@@ -190,10 +190,10 @@
   file: justfile
   old: |-
     [metadata("runtime:fast")]
-    [doc("Ruff lint rules over the Python workspace.")]
+    [doc("Ruff lint rules over the Python workspace, and cython-lint over its Cython sources.")]
   new: |-
     [metadata("runtime:fast", "runtime:medium")]
-    [doc("Ruff lint rules over the Python workspace.")]
+    [doc("Ruff lint rules over the Python workspace, and cython-lint over its Cython sources.")]
   code: ambiguous-runtime-class
   message: "`python-lint` declares 2 runtime classes"
 

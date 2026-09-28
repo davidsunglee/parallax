@@ -52,6 +52,7 @@ dev = [
     "pytest-xdist>=3.8.0",
     "diff-cover>=10.5.0",
     "ruff>=0.16.3",
+    "cython-lint>=0.21.1",
     "pyright>=1.1.380",
     "import-linter>=2.1",
     "vulture>=2.11",
@@ -114,6 +115,31 @@ exclude_also = [
     "^\\s*\\.\\.\\.\\s*$",
     ":\\s*\\.\\.\\.\\s*$",
 ]
+
+# ---------------------------------------------------------------------------
+# diff-cover — the changed-line gate. coverage.py cannot trace a compiled
+# module, so no Cython source has a line coverage can score; each is exempted by
+# name and graded by the differential tests of the adapter's compiled loaders
+# instead. `tools/check_native_sources.py` requires this list to name exactly
+# the Cython sources that exist.
+# ---------------------------------------------------------------------------
+[tool.diff_cover]
+exclude = [
+    "*/packages/parallax-postgres/src/parallax/postgres/_cloaders.pxi",
+    "*/packages/parallax-postgres/src/parallax/postgres/_cloaders_binary.pyx",
+    "*/packages/parallax-postgres/src/parallax/postgres/_cloaders_c.pyx",
+    "*/packages/parallax-postgres/src/parallax/postgres/_psycopg_layout/cloader.pxi",
+    "*/packages/parallax-postgres/src/parallax/postgres/_psycopg_layout/psycopg_binary/__init__.pxd",
+    "*/packages/parallax-postgres/src/parallax/postgres/_psycopg_layout/psycopg_binary/_psycopg.pxd",
+    "*/packages/parallax-postgres/src/parallax/postgres/_psycopg_layout/psycopg_c/__init__.pxd",
+    "*/packages/parallax-postgres/src/parallax/postgres/_psycopg_layout/psycopg_c/_psycopg.pxd",
+]
+
+# ---------------------------------------------------------------------------
+# cython-lint — the Cython sources' lint, at Ruff's line length.
+# ---------------------------------------------------------------------------
+[tool.cython-lint]
+max-line-length = 100
 
 # ---------------------------------------------------------------------------
 # Ruff — lint + deterministic formatter.
