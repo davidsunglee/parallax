@@ -15,6 +15,7 @@ _MAX_UNAMBIGUOUS_TOKEN_LENGTH = 16
 
 class _ImmutableAuthoredNumber:
     __slots__ = ()
+    token: str
 
     def __copy__(self) -> Self:
         return self
@@ -24,8 +25,6 @@ class _ImmutableAuthoredNumber:
 
 
 class _AuthoredInt(int, _ImmutableAuthoredNumber):
-    token: str
-
     def __new__(cls, token: str) -> int:
         if exceeds_json_int_space(token):
             return _OutOfSpaceAuthoredInt(token)
@@ -44,7 +43,7 @@ class _OutOfSpaceAuthoredInt(_AuthoredInt, ManagedValueExclusion):
 
 
 class _AuthoredFloat(float, _ImmutableAuthoredNumber):
-    token: str
+    __slots__ = ("token",)
 
     def __new__(cls, token: str) -> float:
         value = float(token)
@@ -66,6 +65,8 @@ class _AuthoredFloat(float, _ImmutableAuthoredNumber):
 
 
 class _OutOfSpaceAuthoredFloat(_AuthoredFloat, ManagedValueExclusion):
+    __slots__ = ()
+
     def __new__(cls, token: str) -> _OutOfSpaceAuthoredFloat:
         value = -0.0 if token.startswith("-") else 0.0
         number = float.__new__(cls, value)

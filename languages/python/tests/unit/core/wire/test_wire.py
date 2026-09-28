@@ -10,6 +10,7 @@ import math
 import sys
 import uuid
 from collections.abc import Iterator, Mapping
+from fractions import Fraction
 from typing import cast
 
 import pytest
@@ -38,7 +39,7 @@ from parallax.core.base import (
 )
 from parallax.core.base import _neutral as neutral_carriers
 from parallax.core.base._neutral import ManagedValueExclusion
-from tests._support.binary32 import rounded_once
+from tests._support.binary32 import rounded_once, rounding_witnesses, shortest_spelling
 
 _TOKEN = uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
 _INSTANT = dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC)
@@ -54,6 +55,13 @@ def test_trusted_managed_scalars_encode_without_general_normalization() -> None:
     assert wire_codec.encode_managed_wire(BOOLEAN, True) is True
     assert wire_codec.encode_managed_wire(INT64, 7) == 7
     assert wire_codec.encode_managed_wire(STRING, "value") == "value"
+
+
+def test_a_trusted_float32_publishes_its_shortest_spelling_with_zero_positive() -> None:
+    for spelling in rounding_witnesses():
+        managed = rounded_once(spelling)
+        published = wire_codec.encode_managed_wire(FLOAT32, managed)
+        assert repr(published) == repr(float(shortest_spelling(managed + 0.0))), spelling
 
 
 def test_strict_loading_can_share_repeated_member_names_within_a_loader() -> None:
@@ -335,6 +343,7 @@ def test_integral_number_forms_decode_from_their_exact_authored_value() -> None:
     assert wire.decode_wire(INT64, wire.loads("9007199254740993.0")) == 9007199254740993
     assert wire.decode_canonical_wire(INT64, wire.loads("9007199254740993.0")) == 9007199254740993
     assert wire.decode_wire(INT64, 2.0**60) == 2**60
+    assert wire.decode_canonical_wire(INT32, 1.0) == 1
 
 
 # The only binary32 values whose canonical spelling parses onto the binary64 midpoint
@@ -375,6 +384,79 @@ def test_a_float64_host_float_decodes_to_itself(value: float) -> None:
         assert wire.decode_canonical_wire(FLOAT64, signed) == signed
 
 
+def _nearest_binary64(source: str) -> float | None:
+    """The binary64 nearest the exact number ``source`` writes, ties to even and
+    zero positive, by correctly rounded integer division; ``None`` past the
+    largest finite value."""
+    exact = Fraction(source)
+    try:
+        return exact.numerator / exact.denominator + 0.0
+    except OverflowError:
+        return None
+
+
+_FLOAT64_SOURCES_IN_SPACE = (
+    "0.1",
+    "0.5",
+    "-2.5",
+    "0.10000000000000001",
+    "9007199254740993.0",
+    "9007199254740995.0",
+    "9007199254740993",
+    "4.9406564584124654e-324",
+    "2.4703282292062328e-324",
+    "2.4703282292062327e-324",
+    "-2.4703282292062327e-324",
+    "-1e-400",
+    "1e-400",
+    "0",
+    "-0",
+    "0.0",
+    "-0.0",
+    "1.7976931348623157e308",
+    "1.7976931348623158e308",
+    f"{2**1024 - 2**970 - 1}.0",
+)
+
+
+@pytest.mark.parametrize("source", _FLOAT64_SOURCES_IN_SPACE)
+def test_a_float64_decodes_the_number_its_json_text_writes_rounded_once(source: str) -> None:
+    written = wire.loads(source)
+    expected = _nearest_binary64(source)
+    assert expected is not None
+    negative_zero = Fraction(source) == 0 and source.startswith("-")
+
+    assert repr(wire.decode_wire(FLOAT64, written)) == repr(expected)
+    decoded = wire_codec._decode_admitted(FLOAT64, written)  # pyright: ignore[reportPrivateUsage]
+    assert decoded.source_negative_zero is negative_zero
+    if not negative_zero and Fraction(source) == Fraction(repr(expected)):
+        assert repr(wire.decode_canonical_wire(FLOAT64, written)) == repr(expected)
+    else:
+        with pytest.raises(wire.WireDecodingError) as caught:
+            wire.decode_canonical_wire(FLOAT64, written)
+        assert caught.value.reason == "noncanonical"
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["1e309", "-1E+400", f"{2**1024 - 2**970}.0", str(2**1024 - 2**970), str(-(2**1024))],
+)
+def test_a_float64_past_the_largest_finite_value_is_out_of_space(source: str) -> None:
+    assert _nearest_binary64(source) is None
+    for decode in (wire.decode_wire, wire.decode_canonical_wire):
+        with pytest.raises(wire.WireDecodingError) as caught:
+            decode(FLOAT64, wire.loads(source))
+        assert caught.value.reason == "out-of-space"
+
+
+def test_a_negative_zero_integer_token_is_a_noncanonical_float64() -> None:
+    authored = wire.loads("-0")
+    assert repr(wire.decode_wire(FLOAT64, authored)) == "0.0"
+    with pytest.raises(wire.WireDecodingError) as exc_info:
+        wire.decode_canonical_wire(FLOAT64, authored)
+    assert exc_info.value.reason == "noncanonical"
+
+
 def test_json_text_keeps_digits_a_bare_float_would_name_differently() -> None:
     # Each token names its float's exact binary64 value, not the number the float's
     # shortest spelling names.
@@ -395,7 +477,7 @@ def test_out_of_space_authored_numbers_are_not_scalar_or_json_members() -> None:
     if limit == 0:
         pytest.skip("the interpreter has no integer string-conversion limit")
     for source, scalar_types in (
-        ("9" * (limit + 1), (INT32, INT64)),
+        ("9" * (limit + 1), (INT32, INT64, FLOAT32, FLOAT64)),
         ("1e9999", (FLOAT32, FLOAT64)),
     ):
         loaded = wire.loads(source)
@@ -872,6 +954,67 @@ def test_strict_loading_accepts_every_valid_json_root(source: str, expected: obj
     assert wire.loads(source.encode()) == expected
 
 
+_NONMEMBERS: tuple[tuple[NeutralType, object, str], ...] = (
+    (BOOLEAN, 1, "1 is not a member of the declared value space <Boolean>"),
+    (INT32, 2**31, "2147483648 is not a member of the declared value space <Int32>"),
+    (INT64, True, "True is not a member of the declared value space <Int64>"),
+    (FLOAT32, 0.1, "0.1 is not a member of the declared value space <Float32>"),
+    (FLOAT32, 1, "1 is not a member of the declared value space <Float32>"),
+    (FLOAT64, math.inf, "inf is not a member of the declared value space <Float64>"),
+    (
+        Decimal(4, 2),
+        decimal.Decimal("1.234"),
+        "<Decimal> is not a member of the declared value space <Decimal>",
+    ),
+    (STRING, "\ud800", "'\\ud800' is not a member of the declared value space <String>"),
+    (BYTES, "61", "'61' is not a member of the declared value space <Bytes>"),
+    (DATE, _INSTANT, "<datetime> is not a member of the declared value space <Date>"),
+    (
+        TIME,
+        dt.time(9, 30, tzinfo=dt.UTC),
+        "<time> is not a member of the declared value space <Time>",
+    ),
+    (
+        TIMESTAMP,
+        dt.datetime(2026, 1, 15),
+        "<datetime> is not a member of the declared value space <Timestamp>",
+    ),
+    (UUID, 1, "1 is not a member of the declared value space <Uuid>"),
+    (JSON, None, "None is not a member of the declared value space <Json>"),
+)
+
+
+@pytest.mark.parametrize(
+    ("neutral_type", "value", "message"),
+    _NONMEMBERS,
+    ids=[f"{row[0]}-{row[1]!r}" for row in _NONMEMBERS],
+)
+def test_encoding_names_a_nonmember_and_its_declared_space(
+    neutral_type: NeutralType, value: object, message: str
+) -> None:
+    with pytest.raises(wire.WireEncodingError) as caught:
+        wire.encode_wire(neutral_type, cast("ManagedValue", value))
+    assert str(caught.value) == message
+
+
+@pytest.mark.parametrize(
+    ("neutral_type", "value"),
+    [(INT32, -7), (INT64, 2**40), (FLOAT32, 1.25), (FLOAT64, 0.1)],
+)
+def test_encoding_checks_a_numeric_value_for_membership_once(
+    neutral_type: NeutralType, value: ManagedValue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checked: list[object] = []
+
+    def counted(candidate: object, declared: NeutralType) -> bool:
+        checked.append(candidate)
+        return matches_neutral_type(candidate, declared)
+
+    monkeypatch.setattr(wire_codec, "matches_neutral_type", counted)
+    assert wire.encode_wire(neutral_type, value) == value
+    assert checked == [value]
+
+
 def test_encoding_refuses_nonmembers_without_developer_coercion() -> None:
     with pytest.raises(wire.WireEncodingError):
         wire.encode_wire(FLOAT32, 1)
@@ -887,10 +1030,13 @@ def test_codec_rejects_unknown_neutral_type_variants_exhaustively() -> None:
         wire.encode_wire(unknown, cast("ManagedValue", 1))
 
 
-def test_programmatic_nonfinite_numbers_are_not_admitted_wire_numbers() -> None:
+@pytest.mark.parametrize("neutral_type", [INT64, FLOAT32, FLOAT64])
+def test_programmatic_nonfinite_numbers_are_not_admitted_wire_numbers(
+    neutral_type: NeutralType,
+) -> None:
     for value in (math.nan, math.inf, -math.inf):
         with pytest.raises(wire.WireDecodingError) as decoding:
-            wire.decode_wire(FLOAT64, cast("wire.WireValue", value))
+            wire.decode_wire(neutral_type, cast("wire.WireValue", value))
         assert decoding.value.reason == "type-mismatch"
 
 

@@ -130,6 +130,9 @@ def encode_managed_wire(neutral_type: NeutralType, value: ManagedValue) -> WireV
             return int(cast("int", value))
         case String():
             return str.__str__(cast("str", value))
+        case Float32():
+            float_value = float(cast("float", value))
+            return _shortest_float(0.0 if float_value == 0.0 else float_value)
         case Float64():
             float_value = float(cast("float", value))
             return 0.0 if float_value == 0.0 else float_value
@@ -193,9 +196,7 @@ def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLi
         case Float32():
             return _decode_float32(value, neutral_type)
         case Float64():
-            # A host float names the number its shortest spelling names; at binary64
-            # that number and the float's exact value both round to the float itself.
-            return _decode_float(value, _source_decimal(value), neutral_type)
+            return _decode_float64(value, neutral_type)
         case Decimal(precision, scale):
             return _decode_decimal(value, neutral_type, precision, scale)
         case String():
@@ -277,7 +278,7 @@ def _decode_float32(value: object, neutral_type: Float32) -> _DecodedWireLiteral
             _fail("out-of-space", value, neutral_type)
         return _DecodedWireLiteral(managed, managed == 0.0 and _spells_negative_zero(token))
     if isinstance(value, int):
-        return _decode_float(value, decimal.Decimal(int.__int__(value)), neutral_type)
+        return _decode_integer_to_float(value, neutral_type)
     base_value = float.__float__(value)
     managed = host_float_binary32(base_value)
     if managed is None:
@@ -288,6 +289,30 @@ def _decode_float32(value: object, neutral_type: Float32) -> _DecodedWireLiteral
     )
 
 
+def _decode_float64(value: object, neutral_type: Float64) -> _DecodedWireLiteral:
+    """Round the number ``value`` is written as once to binary64: the digits a
+    parser kept, an integer's own value, or a bare host float, which is already
+    the binary64 that both its exact value and its shortest spelling round to."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        _fail("type-mismatch", value, neutral_type)
+    token = authored_token(value)
+    if token is not None:
+        managed = float(token)
+        if math.isinf(managed):
+            _fail("out-of-space", value, neutral_type)
+        if managed == 0.0:
+            return _DecodedWireLiteral(0.0, _spells_negative_zero(token))
+        return _DecodedWireLiteral(managed)
+    if isinstance(value, int):
+        return _decode_integer_to_float(value, neutral_type)
+    managed = float.__float__(value)
+    if not math.isfinite(managed):
+        _fail("type-mismatch", value, neutral_type)
+    if managed == 0.0:
+        return _DecodedWireLiteral(0.0, math.copysign(1.0, managed) < 0.0)
+    return _DecodedWireLiteral(managed)
+
+
 def _spells_negative_zero(token: str) -> bool:
     """Whether the number ``token`` spells is zero and negative: an underflowing
     spelling such as ``-1e-400`` names a nonzero number, whatever it parses to."""
@@ -295,20 +320,11 @@ def _spells_negative_zero(token: str) -> bool:
     return significand.startswith("-") and not significand.strip("-+0.")
 
 
-def _decode_float(
-    value: object,
-    number: decimal.Decimal | None,
-    neutral_type: Float32 | Float64,
-) -> _DecodedWireLiteral:
-    if number is None or not number.is_finite():
-        _fail("type-mismatch", value, neutral_type)
-    managed = nearest_float_at_width(number, neutral_type)
+def _decode_integer_to_float(value: int, neutral_type: Float32 | Float64) -> _DecodedWireLiteral:
+    managed = nearest_float_at_width(int.__int__(value), neutral_type)
     if managed is None:
         _fail("out-of-space", value, neutral_type)
-    return _DecodedWireLiteral(
-        managed,
-        number.is_zero() and number.is_signed(),
-    )
+    return _DecodedWireLiteral(managed)
 
 
 def _decode_decimal(
@@ -452,8 +468,11 @@ def _is_canonical_output(
         case Float32() | Float64():
             if decoded.source_negative_zero:
                 return False
-            canonical = _canonical_spelling(neutral_type, decoded.managed)
-            return _spelled_number(written) == _spelled_number(canonical)
+            canonical = cast("float", _canonical_spelling(neutral_type, decoded.managed))
+            if type(written) is float:
+                # Two floats' shortest spellings name one number exactly when they are equal.
+                return written == canonical
+            return _spelled_number(written) == decimal.Decimal(float.__repr__(canonical))
         case Time() | Timestamp():
             canonical = _canonical_spelling(neutral_type, decoded.managed)
             return isinstance(written, str) and canonical == str.__str__(written)
@@ -625,15 +644,9 @@ def _base_managed_carrier(value: object, neutral_type: NeutralType) -> object:  
     if isinstance(value, ManagedValueExclusion):
         return value
     match neutral_type:
-        case Int32() | Int64() if (
-            isinstance(value, int)
-            and not isinstance(value, bool)
-            and matches_neutral_type(value, neutral_type)
-        ):
+        case Int32() | Int64() if isinstance(value, int) and not isinstance(value, bool):
             return int.__int__(value)
-        case Float32() | Float64() if isinstance(value, float) and matches_neutral_type(
-            value, neutral_type
-        ):
+        case Float32() | Float64() if isinstance(value, float):
             return float.__float__(value)
         case Decimal() if isinstance(value, decimal.Decimal):
             sign, digits, exponent = decimal.Decimal.as_tuple(value)
