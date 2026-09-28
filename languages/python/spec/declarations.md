@@ -101,15 +101,15 @@ These are developer-input choices; serialized literals follow core Wire rules.
 | Value Object | an instance of the declared class, never a raw dictionary |
 
 Float32 reads use Python's binary64 carrier widened from the actual binary32
-value. Fractional float input may round to binary32; integer input cannot lose
-precision. Direct construction runs application Pydantic validators. Database
-materialization does not run those validators or authored constructors.
-
-At a float member, a Wire number held as a Python `float` names the number its
-shortest round-trip spelling (`repr`) names, which is the number JSON
-serialization writes for it. A Float32 member rounds that number once, so a
-published Float32 value decodes back to itself. A number parsed from JSON text
-keeps its authored digits instead.
+value. A Python `float` written to a Float32 member, as a Typed value or as a
+Wire number, names the number its shortest round-trip spelling (`repr`) names,
+which is the number JSON serialization writes for it, and that number rounds
+once to binary32. So fractional input may round, both APIs store the same value
+for the same `float`, and a published Float32 value writes back as itself. A
+Wire number parsed from JSON text keeps its authored digits and rounds from
+those instead. Integer input cannot lose precision. Direct construction runs
+application Pydantic validators. Database materialization does not run those
+validators or authored constructors.
 
 ## Editing, presence, and serialization
 

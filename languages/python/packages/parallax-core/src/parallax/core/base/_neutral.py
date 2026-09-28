@@ -48,6 +48,7 @@ __all__ = [
     "base_uuid_carrier",
     "coerce_neutral_input",
     "exceeds_json_int_value_space",
+    "host_float_number",
     "matches_neutral_type",
     "nearest_float_at_width",
     "normalize_json_carrier",
@@ -307,7 +308,8 @@ def coerce_neutral_input(value: object, declared: NeutralType) -> object:
     literal, so only the input policy's own typed conversions apply: an
     :class:`int` for a :class:`Decimal`, a lossless :class:`int` for a float,
     and a canonical UUID string. A host float is
-    projected immediately to the declared width, negative zero normalizes to
+    projected immediately to the declared width from the number
+    :func:`host_float_number` says it names there, negative zero normalizes to
     positive zero, and an aware Timestamp normalizes to UTC.
 
     A caller chose an integer carrier, so an integer no float of the width
@@ -319,7 +321,12 @@ def coerce_neutral_input(value: object, declared: NeutralType) -> object:
     match declared:
         case Decimal() if _is_integer(value):
             return _decimal.Decimal(int.__int__(value))
-        case Float32() | Float64() if isinstance(value, float):
+        case Float32() if isinstance(value, float):
+            base_value = float.__float__(value)
+            projected = nearest_float_at_width(host_float_number(base_value, declared), declared)
+            return base_value if projected is None else projected
+        case Float64() if isinstance(value, float):
+            # A host float is already a binary64 value, which is what it names here.
             base_value = float.__float__(value)
             projected = nearest_float_at_width(base_value, declared)
             return base_value if projected is None else projected
@@ -347,6 +354,27 @@ def _canonical_uuid_input(value: str) -> object:
     except (AttributeError, ValueError):
         return base_value
     return decoded if str(decoded) == base_value else base_value
+
+
+def host_float_number(value: float, declared: NeutralType) -> _decimal.Decimal:
+    """The number a bare host float names at a member of ``declared``.
+
+    A bare float is one no authored digits accompany, and it stands for two
+    numbers: its exact binary64 value, and the number its shortest round-trip
+    spelling (``repr``) names, which is what JSON serialization writes for it.
+    The two round to different binary32 values only where the float is a
+    binary32 midpoint.
+
+    A Float32 member reads the spelled number, whichever API the float arrives
+    through, so Typed and Wire input store the same value and a published
+    Float32 value names itself again. Every other member reads the exact value:
+    an integer member keeps the digits a spelling drops (``2.0**60`` spells
+    ``1.152921504606847e+18``), and at Float64 both numbers name the float
+    itself. A non-finite float names a non-finite number.
+    """
+    if isinstance(declared, Float32):
+        return _decimal.Decimal(float.__repr__(value))
+    return _decimal.Decimal.from_float(value)
 
 
 def nearest_float_at_width(

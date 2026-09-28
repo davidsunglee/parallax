@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable, Mapping
 from typing import Self, cast
 
-from parallax.core.base._neutral import ManagedValueExclusion
+from parallax.core.base._neutral import FLOAT32, ManagedValueExclusion, host_float_number
 from parallax.core.wire._types import WireValue
 
 _MAX_UNAMBIGUOUS_TOKEN_LENGTH = 16
@@ -50,16 +50,15 @@ class _AuthoredFloat(float, _ImmutableAuthoredNumber):
         value = float(token)
         if not math.isfinite(value):
             return _OutOfSpaceAuthoredFloat(token)
-        # An integer member reads a bare float's exact value and a float32 member the
-        # number its shortest spelling names, so the digits go only when they name both.
-        # A float token of at most _MAX_UNAMBIGUOUS_TOKEN_LENGTH characters spends one on
-        # its point or exponent, leaving at most fifteen significant digits, and no two
-        # such decimals name the same binary64: the shortest spelling of its exact value
-        # is the token's own number.
+        # The digits go only when every member reads them from the bare float too: its
+        # exact value, and the number `host_float_number` gives a float32 member. A float
+        # token of at most _MAX_UNAMBIGUOUS_TOKEN_LENGTH characters spends one on its
+        # point or exponent, leaving at most fifteen significant digits, and no two such
+        # decimals name the same binary64, so an exact one is also that float32 number.
         authored = decimal.Decimal(token)
         if authored == decimal.Decimal.from_float(value) and (
             len(token) <= _MAX_UNAMBIGUOUS_TOKEN_LENGTH
-            or authored == decimal.Decimal(float.__repr__(value))
+            or authored == host_float_number(value, FLOAT32)
         ):
             return value
         number = super().__new__(cls, value)
