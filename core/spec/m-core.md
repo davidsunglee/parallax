@@ -187,6 +187,9 @@ decoding:
 - serialized spellings such as timestamp strings, byte hex, Decimal strings,
   and arbitrary Wire number alternatives are not developer-input coercions.
 
+Which number a host float denotes, when the host language's float type is wider
+than the declared float width, is decided by each language binding.
+
 Developer adapters apply coercion and then managed membership before storage,
 SQL lowering, or canonical encoding. Failures stay in the owning developer
 surface's vocabulary. They never become `neutral-literal-*` failures and never
