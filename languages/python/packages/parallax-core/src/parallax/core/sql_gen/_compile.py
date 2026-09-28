@@ -8,6 +8,7 @@ from typing import Literal, assert_never
 from parallax.core.base import (
     Bytes,
     DocumentReadOrdinals,
+    ManagedValue,
     UnknownFamilyTag,
     inert_scalar,
 )
@@ -30,7 +31,7 @@ from parallax.core.object_query._validated import (
     Paging,
     ValidatedSeek,
 )
-from parallax.core.predicate import Narrow, Or, Scalar
+from parallax.core.predicate import Narrow, Or
 from parallax.core.predicate._validated import DeferredKeySet, ValidatedPredicate
 from parallax.core.sql_gen._context import LoweredStatement, SqlGenError, StatementBuilder
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -371,7 +372,7 @@ class CompiledTemplate:
     bind_index: int
     postgres_array: bool
 
-    def render(self, keys: list[Scalar]) -> CompiledRead:
+    def render(self, keys: list[ManagedValue]) -> CompiledRead:
         """Bind ``keys``; the Postgres array bind is the list itself, so the caller
         hands it over and must not mutate it afterwards."""
         if not keys:

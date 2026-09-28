@@ -1,4 +1,3 @@
-# Fixture rows for the Buoy model (models/float32-key.yaml).
 parallax.compatibility.Buoy:
   - { id: 1.2, label: North }
   - { id: 0.1, label: South }

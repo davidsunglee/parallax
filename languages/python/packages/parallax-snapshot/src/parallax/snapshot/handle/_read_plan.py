@@ -7,6 +7,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from typing import Final, Literal, NamedTuple, Protocol, cast
 
 from parallax.core import deep_fetch
+from parallax.core.base import ManagedValue
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import AttributeIdentity
@@ -15,7 +16,6 @@ from parallax.core.object_query._validated import (
     Paging,
     ValidatedObjectQuery,
 )
-from parallax.core.predicate import Scalar
 from parallax.core.sql_gen._compile import (
     CompiledRead,
     CompiledTemplate,
@@ -101,7 +101,7 @@ class ReadPlan:
     def correlation_members(self, source: int) -> tuple[AttributeIdentity, ...]:
         return self._correlations[source]
 
-    def fetch_read(self, index: int, keys: list[Scalar]) -> tuple[CompiledRead, PreparedRead]:
+    def fetch_read(self, index: int, keys: list[ManagedValue]) -> tuple[CompiledRead, PreparedRead]:
         fetch = self._fetches[index]
         if fetch is None:
             raise ValueError("an executable fetch step requires a prepared template")

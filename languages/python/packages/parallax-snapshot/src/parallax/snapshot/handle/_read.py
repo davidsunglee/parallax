@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, cast, overload
 
 from parallax.core import continuation, deep_fetch, inheritance, opt_lock, read_lock
-from parallax.core import predicate as predicate_algebra
+from parallax.core.base import ManagedValue
 from parallax.core.db_port import (
     DatabaseConnection,
     Row,
@@ -1021,7 +1021,7 @@ def guarded_parents(
 
 def gather_keys(
     builder: PageBuilder, parents: tuple[int, ...], member: AttributeIdentity
-) -> list[predicate_algebra.Scalar]:
+) -> list[ManagedValue]:
     """The values of ``member`` across ``parents`` that name something.
 
     A member this level's parents did not carry and one stored null are distinct
@@ -1029,17 +1029,15 @@ def gather_keys(
     either would widen the child query by a key nothing joins on.
 
     A gathered key is always a declared PRIMARY-KEY (or unique FK) attribute's
-    own value — one of `m-predicate`'s neutral scalar types — even though a
-    projection's values are typed as plain ``object``; the cast reflects that
-    runtime invariant, not a widening of the membership node's own typed-literal
-    contract.
+    own managed value, even though a projection's values are typed as plain
+    ``object``; the cast reflects that runtime invariant.
     """
-    keys: list[predicate_algebra.Scalar] = []
-    seen: set[predicate_algebra.Scalar] = set()
+    keys: list[ManagedValue] = []
+    seen: set[ManagedValue] = set()
     for value in (builder.member_value(parent, member) for parent in parents):
         if value is None or value is ABSENT:
             continue
-        key = cast("predicate_algebra.Scalar", value)
+        key = cast("ManagedValue", value)
         if key not in seen:
             seen.add(key)
             keys.append(key)
