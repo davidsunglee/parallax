@@ -694,6 +694,15 @@ autocommit, physical-close semantics, row shape, and its own codecs, and does
 not restore caller settings it did not change. Scoped principal execution is the
 one deliberate session mutation and is restored as described above.
 
+A third setting is load-bearing: `extra_float_digits` must stay above zero, as
+PostgreSQL's default of 1 is. At zero or below the server rounds every float it
+sends, which no decoding can undo. A connection does not report the setting, so
+it is checked once, by the startup probe, which reads a Float32 and a Float64
+back and refuses startup with `DatabaseStartupError` (`phase="probe"`) naming
+`extra_float_digits` when either comes back inexact. The probe sees what every
+connection is configured with — the connection string, a service file, the
+login's or the server's default — and not a later `SET` on some connections.
+
 `prepare_threshold` is the driver's server-side auto-preparation after that many
 identical executions, defaulting to 5. Pass `None` where the same connection may
 see a table's shape change underneath identical query text — a

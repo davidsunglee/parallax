@@ -51,6 +51,8 @@ _PROBE_ROW = {
     "ready": 1,
     "temporal_bound": INFINITY,
     "document": {"ready": True},
+    "float32_witness": 7.038530691851209e-26,
+    "float64_witness": 0.30000000000000004,
     "login_identity": "runtime-login",
 }
 
@@ -253,8 +255,9 @@ def test_startup_probes_a_real_connection_and_gives_it_back(
 ) -> None:
     # Waiting for a minimum is not readiness: it says a connection exists rather
     # than that a statement works. The probe reads an integer, a neutral
-    # unbounded instant, a structured document, and the authenticated login
-    # through the same initialized execution an application gets.
+    # unbounded instant, a structured document, two exact floats, and the
+    # authenticated login through the same initialized execution an application
+    # gets.
     pool = _opened(monkeypatch, _pool())
     runtime = open_runtime("", PoolOptions(min_size=1), 5, DRIVER_MANAGED)
 
@@ -389,37 +392,12 @@ def test_a_startup_acquisition_that_fails_carries_its_phase_and_cleanup(
 @pytest.mark.parametrize(
     "row",
     [
-        {
-            "ready": 0,
-            "temporal_bound": INFINITY,
-            "document": {"ready": True},
-            "login_identity": "runtime-login",
-        },
-        {
-            "ready": 1,
-            "temporal_bound": "2026-01-01",
-            "document": {"ready": True},
-            "login_identity": "runtime-login",
-        },
-        {
-            "ready": 1,
-            "temporal_bound": INFINITY,
-            "document": "not a document",
-            "login_identity": "runtime-login",
-        },
-        {
-            "ready": 1,
-            "temporal_bound": INFINITY,
-            "document": {"ready": True},
-            "login_identity": "",
-        },
-        {
-            "ready": 1,
-            "temporal_bound": INFINITY,
-            "document": {"ready": True},
-            "login_identity": 7,
-        },
-        {"ready": 1, "temporal_bound": INFINITY, "document": {"ready": True}},
+        {**_PROBE_ROW, "ready": 0},
+        {**_PROBE_ROW, "temporal_bound": "2026-01-01"},
+        {**_PROBE_ROW, "document": "not a document"},
+        {**_PROBE_ROW, "login_identity": ""},
+        {**_PROBE_ROW, "login_identity": 7},
+        {name: value for name, value in _PROBE_ROW.items() if name != "login_identity"},
     ],
 )
 def test_a_probe_that_does_not_read_back_what_it_asked_for_fails_startup(
@@ -435,6 +413,31 @@ def test_a_probe_that_does_not_read_back_what_it_asked_for_fails_startup(
     # The probe scope is released on the way out rather than leaked.
     assert pool.returned == [connection]
     assert pool.closes == 1
+
+
+@pytest.mark.parametrize(
+    ("witness", "decoded", "names_the_loader"),
+    [
+        # What `extra_float_digits = 0` spells the Float64 witness as.
+        ("float64_witness", 0.3, False),
+        # The Float32 witness's shortest spelling parsed and then narrowed: what
+        # a plain float loader reads, whatever the session setting.
+        ("float32_witness", 7.038531308148791e-26, True),
+    ],
+)
+def test_a_probe_that_reads_a_float_back_inexactly_names_what_rounds_it(
+    monkeypatch: pytest.MonkeyPatch, witness: str, decoded: float, names_the_loader: bool
+) -> None:
+    connection = _FakeConnection(rows=[{**_PROBE_ROW, witness: decoded}])
+    _opened(monkeypatch, _pool(connection))
+
+    with pytest.raises(DatabaseStartupError) as failed:
+        open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
+
+    assert failed.value.phase == "probe"
+    reason = str(failed.value.__cause__)
+    assert "extra_float_digits is at or below zero" in reason
+    assert ("Float32 loader is not installed" in reason) is names_the_loader
 
 
 def test_a_probe_scope_whose_release_cannot_be_confirmed_fails_startup(

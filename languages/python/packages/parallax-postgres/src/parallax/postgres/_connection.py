@@ -308,13 +308,18 @@ def initialize_connection(connection: psycopg.Connection[TupleRow]) -> None:
 def _require_supported_session(connection: psycopg.Connection[TupleRow]) -> None:
     """Refuse an effective session the current codecs cannot execute under.
 
-    Two settings are load-bearing and the rest are the application's own. SQL
+    Two settings are checked here and the rest are the application's own. SQL
     crosses this boundary as UTF-8 bytes and a stored document is decoded as
     UTF-8 text, so a client encoding that is anything else corrupts both. A
     finite ``timestamptz`` is decoded from its text form, which psycopg's loader
     reads in ISO order, so a non-ISO ``DateStyle`` makes instants decode wrongly
     or not at all — the field order within ISO (``MDY``, ``DMY``, ``YMD``) does
     not affect that and is left alone.
+
+    A third, ``extra_float_digits``, is load-bearing too: at zero or below the
+    server rounds float output, which no loader can recover. A connection does
+    not report it, so it is not checked here; the runtime's startup probe reads
+    exact floats back instead.
 
     Everything else a connection string, service file, environment, or server
     default establishes is preserved: the time zone, a stronger default
