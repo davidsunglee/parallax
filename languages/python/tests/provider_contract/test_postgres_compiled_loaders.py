@@ -1,9 +1,10 @@
 """The adapter's compiled text loaders, graded against independent oracles.
 
 The loaders are compiled, so no line coverage reaches them; these differential
-checks are what grade them. Every cell is read through a session initialized
-exactly as an owned connection is, so the loader under test is the one the
-adapter registered. A ``real`` is graded against PostgreSQL's own binary-format
+checks are what grade them. Every stored cell is read through a session
+initialized exactly as an owned connection is, so the loader under test is the
+one the adapter registered; a spelling no stored value produces is handed to
+that loader directly. A ``real`` is graded against PostgreSQL's own binary-format
 result and against exact rational rounding of the text the server sent; a
 ``timestamptz`` against psycopg's own C text loader over the same bytes, apart
 from the one cell the adapter reads differently.
@@ -158,6 +159,24 @@ def test_each_float32_branch_reads_the_stored_binary32_value(
     assert (parsed == truth) is exact_parse
     assert (_binary32(parsed) != truth) is midpoint
     assert len(fallbacks) == (1 if midpoint else 0)
+
+
+@pytest.mark.parametrize("sign", [1.0, -1.0], ids=["positive", "negative"])
+def test_a_spelling_that_parses_onto_a_subnormal_midpoint_rounds_by_its_exact_decimal(
+    monkeypatch: pytest.MonkeyPatch, sign: float
+) -> None:
+    # No shortest spelling of a ``real`` parses onto a subnormal midpoint, so
+    # this one, a digit longer, is loaded directly.
+    spelling = f"{'-' if sign < 0 else ''}7.0064923216240854e-46"
+    fallbacks = _counting_fallbacks(monkeypatch)
+
+    loaded = cast("float", _LOADERS.float4(_FLOAT4_OID).load(spelling.encode()))
+
+    assert _bits(float(spelling)) == _bits(math.copysign(math.ldexp(1, -150), sign))
+    assert _binary32(float(spelling)) == 0.0
+    assert _bits(loaded) == _bits(_rounded_once(spelling))
+    assert _bits(loaded) == _bits(math.copysign(math.ldexp(1, -149), sign))
+    assert len(fallbacks) == 1
 
 
 @pytest.mark.parametrize("spelling", ["NaN", "Infinity", "-Infinity"])
