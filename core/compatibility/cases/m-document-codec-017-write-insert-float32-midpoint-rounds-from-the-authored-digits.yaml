@@ -1,0 +1,41 @@
+# A `float32` leaf authored as the exact midpoint between binary32 `1.0` and
+# `1.00000011920928955078125`, which rounds once, from those digits, to the even `1.0`
+# (m-wire "Rounding happens once, from the digits"). The same number is exactly the
+# binary64 `1.0000000596046448`, whose shortest spelling lies above the midpoint, so a
+# consumer that rounds from that spelling rather than the authored digits names the
+# upper value instead.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-wire, m-value-object, m-sql, write-sequence, insert, json, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.Sample
+      statements: 1
+      note: insert one Sample whose float32 and float64 leaves carry the same exact-midpoint digits
+      rows:
+        - id: 170
+          label: Midpoint
+          profile:
+            ratio: 1.000000059604644775390625
+            measure: 1.000000059604644775390625
+then:
+  statements:
+    - sql:
+        postgres: insert into sample(id, label, profile) values (?, ?, ?)
+        mariadb: insert into sample(id, label, profile) values (?, ?, ?)
+      binds:
+        - 170
+        - Midpoint
+        - ratio: 1.0
+          measure: 1.0000000596046448
+          entries: []
+  tableState:
+    sample:
+      - id: 170
+        label: Midpoint
+        profile:
+          ratio: 1.0
+          measure: 1.0000000596046448
+          entries: []
+  roundTrips: 1
