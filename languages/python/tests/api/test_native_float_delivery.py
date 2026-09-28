@@ -305,19 +305,11 @@ def test_every_width_edge_reads_back_exactly_and_rewriting_it_is_a_no_op(
         ], reader
 
     # Each write weighs what it states against the rows it read back, so none
-    # finds anything to write. A Wire keyed write states what its node published.
+    # finds anything to write.
     versions = {row.id: row.version for row in _read_readings(db, "typed-eager")}
     db.transact(_predicate_widths(representation, widths))
-    if representation == "typed":
-        db.transact(_keyed_widths(representation, widths))
-    else:
-        db.transact(_republished)
+    db.transact(_keyed_widths(representation, widths))
     assert {row.id: row.version for row in _read_readings(db, "typed-eager")} == versions
-
-
-def _republished(tx: Transaction) -> None:
-    for node in tx.wire.find(_wire_query("Reading")).results():
-        tx.wire.update(node, {"f32": node["f32"], "f64": node["f64"]})
 
 
 _NONFINITE = (math.nan, math.inf, -math.inf)
@@ -378,24 +370,12 @@ def _identity(representation: Representation, value: float) -> float:
 # Identities whose shortest spelling parses onto a binary64 midpoint, and others.
 _MIDPOINT_IDENTITIES = (_MIDPOINT, _ABOVE_MIDPOINT, -_MIDPOINT, -_ABOVE_MIDPOINT)
 _ORDINARY_IDENTITIES = tuple(key for key in _KEYS if key not in _MIDPOINT_IDENTITIES)
-_WIRE_MIDPOINT_IDENTITY = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "Wire publishes a Float32 whose shortest spelling parses onto a binary64 midpoint "
-        "as that plain float, and a keyed write decodes it to the adjacent binary32 value, "
-        "so it addresses the neighbouring identity"
-    ),
-)
-
-
-def _identity_cases(*wire_midpoint: pytest.MarkDecorator) -> list[Any]:
-    return [
-        pytest.param("typed", _ORDINARY_IDENTITIES, id="typed-ordinary"),
-        pytest.param("typed", _MIDPOINT_IDENTITIES, id="typed-midpoint"),
-        pytest.param("wire", _ORDINARY_IDENTITIES, id="wire-ordinary"),
-        pytest.param("wire", _MIDPOINT_IDENTITIES, id="wire-midpoint", marks=wire_midpoint),
-    ]
+_IDENTITY_CASES = [
+    pytest.param("typed", _ORDINARY_IDENTITIES, id="typed-ordinary"),
+    pytest.param("typed", _MIDPOINT_IDENTITIES, id="typed-midpoint"),
+    pytest.param("wire", _ORDINARY_IDENTITIES, id="wire-ordinary"),
+    pytest.param("wire", _MIDPOINT_IDENTITIES, id="wire-midpoint"),
+]
 
 
 def _lock_and_update_each(
@@ -425,7 +405,7 @@ def _lock_and_update_each(
     return ranked, db.transact(lock_and_update, concurrency="locking")
 
 
-@pytest.mark.parametrize(("representation", "identities"), _identity_cases())
+@pytest.mark.parametrize(("representation", "identities"), _IDENTITY_CASES)
 def test_a_locking_stream_in_nullable_order_yields_each_float32_identity_once(
     profile_run: Any, representation: Representation, identities: tuple[float, ...]
 ) -> None:
@@ -439,7 +419,7 @@ def test_a_locking_stream_in_nullable_order_yields_each_float32_identity_once(
     )
 
 
-@pytest.mark.parametrize(("representation", "identities"), _identity_cases(_WIRE_MIDPOINT_IDENTITY))
+@pytest.mark.parametrize(("representation", "identities"), _IDENTITY_CASES)
 def test_a_keyed_update_of_each_locked_float32_identity_updates_that_identity(
     profile_run: Any, representation: Representation, identities: tuple[float, ...]
 ) -> None:

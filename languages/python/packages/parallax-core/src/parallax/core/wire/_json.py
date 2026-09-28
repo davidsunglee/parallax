@@ -10,6 +10,8 @@ from typing import Self, cast
 from parallax.core.base._neutral import ManagedValueExclusion
 from parallax.core.wire._types import WireValue
 
+_UNAMBIGUOUS_TOKEN = 16
+
 
 class _ImmutableAuthoredNumber:
     __slots__ = ()
@@ -48,7 +50,16 @@ class _AuthoredFloat(float, _ImmutableAuthoredNumber):
         value = float(token)
         if not math.isfinite(value):
             return _OutOfSpaceAuthoredFloat(token)
-        if decimal.Decimal(token) == decimal.Decimal.from_float(value):
+        # An integer member reads a bare float's exact value and a float32 member the
+        # number its shortest spelling names, so the digits go only when they name both.
+        # A float token of at most _UNAMBIGUOUS_TOKEN characters spends one on its point
+        # or exponent, leaving at most fifteen significant digits, and no two such
+        # decimals name the same binary64: the shortest spelling of its exact value is
+        # the token's own number.
+        authored = decimal.Decimal(token)
+        if authored == decimal.Decimal.from_float(value) and (
+            len(token) <= _UNAMBIGUOUS_TOKEN or authored == decimal.Decimal(float.__repr__(value))
+        ):
             return value
         number = super().__new__(cls, value)
         number.token = token

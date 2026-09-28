@@ -33,6 +33,7 @@ from parallax.core.base import (
     ManagedValue,
     NeutralType,
     matches_neutral_type,
+    nearest_float_at_width,
 )
 from parallax.core.base import _neutral as neutral_carriers
 from parallax.core.base._neutral import ManagedValueExclusion
@@ -317,6 +318,49 @@ def test_integral_number_forms_decode_from_their_exact_authored_value() -> None:
     assert wire.decode_wire(INT32, wire.loads("1e0")) == 1
     assert wire.decode_wire(INT64, wire.loads("9007199254740993.0")) == 9007199254740993
     assert wire.decode_canonical_wire(INT64, wire.loads("9007199254740993.0")) == 9007199254740993
+
+
+# The only binary32 values whose canonical spelling parses onto the binary64 midpoint
+# between them and a neighbour, so narrowing the published float ties to that neighbour.
+_MIDPOINT_SPELLED_FLOAT32 = (
+    (7.038531e-26, 7.038530691851209e-26),
+    (-7.038531e-26, -7.038530691851209e-26),
+)
+
+
+@pytest.mark.parametrize(("published", "managed"), _MIDPOINT_SPELLED_FLOAT32)
+def test_a_published_float32_decodes_back_to_itself(published: float, managed: float) -> None:
+    assert wire.encode_wire(FLOAT32, managed) == published
+    narrowed = nearest_float_at_width(decimal.Decimal.from_float(published), FLOAT32)
+    assert narrowed is not None
+    assert narrowed != managed
+    assert wire.decode_wire(FLOAT32, published) == managed
+    assert wire.decode_canonical_wire(FLOAT32, published) == managed
+
+
+@pytest.mark.parametrize(
+    "value",
+    [0.1, 1.0000000596046448, 7.038531e-26, 72057594037927936.0, 5e-324, 1.7976931348623157e308],
+)
+def test_a_float64_host_float_decodes_to_itself(value: float) -> None:
+    for signed in (value, -value):
+        assert wire.decode_wire(FLOAT64, signed) == signed
+        assert wire.decode_canonical_wire(FLOAT64, signed) == signed
+
+
+def test_json_text_keeps_digits_a_bare_float_would_name_differently() -> None:
+    # Each token names its float's exact binary64 value, not the number the float's
+    # shortest spelling names.
+    midpoint = wire.loads("1.000000059604644775390625")
+    assert wire.decode_wire(FLOAT32, midpoint) == 1.0
+    assert wire.decode_wire(FLOAT32, float(cast("float", midpoint))) == 1.0 + 2.0**-23
+    with pytest.raises(wire.WireDecodingError) as exc_info:
+        wire.decode_canonical_wire(
+            FLOAT64, wire.loads("0.1000000000000000055511151231257827021181583404541015625")
+        )
+    assert exc_info.value.reason == "noncanonical"
+    integral = wire.loads("72057594037927936.0")
+    assert wire.decode_canonical_wire(INT64, integral) == 72057594037927936
 
 
 def test_out_of_space_authored_numbers_are_not_scalar_or_json_members() -> None:
