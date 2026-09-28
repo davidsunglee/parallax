@@ -481,14 +481,9 @@ _LAYOUT_TWIN_WRITES: Final[frozenset[str]] = frozenset(
     {f"m-storage-layout-{n:03d}" for n in range(29, 35)}
     | {"m-txtime-write-013", "m-txtime-write-014"}
 )
-# Float write witnesses: `m-document-codec-014` and `-017` round a `float32` leaf once,
-# from its authored digits, which for `-017` name an exact binary32 midpoint that the
-# binary64 carrier's shortest spelling does not keep; `-015`/`-016` write `float32`
-# and `float64` leaves that underflow from below or are `-0.0`, and
-# `m-core-009`/`-010` the same inputs as scalar Columns. Each zero golden binds
-# positive zero, which the bind graders tell apart from `-0.0` at a declared float
-# position — the run lane on the driver bind for a scalar, since its reported Wire
-# bind is re-encoded.
+# Float write witnesses. A zero golden binds positive zero, which the bind graders
+# tell apart from `-0.0` at a declared float position — the run lane on the driver
+# bind for a scalar, since its reported Wire bind is re-encoded.
 _FLOAT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
         "m-document-codec-014",
