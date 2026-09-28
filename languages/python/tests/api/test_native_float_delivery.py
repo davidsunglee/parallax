@@ -101,6 +101,7 @@ def _bits32(value: float) -> int:
 
 
 def _bits(value: float) -> bytes:
+    assert type(value) is float, f"{value!r} is carried as {type(value).__name__}, not float"
     return struct.pack("<d", value)
 
 
@@ -265,7 +266,11 @@ def _write_widths(
     return widths
 
 
-def _read_readings(db: ScopedDatabase, reader: str) -> list[Any]:
+type Reader = Literal["typed-eager", "typed-stream", "wire-eager", "wire-stream"]
+_READERS: tuple[Reader, ...] = ("typed-eager", "typed-stream", "wire-eager", "wire-stream")
+
+
+def _read_readings(db: ScopedDatabase, reader: Reader) -> list[Any]:
     typed = Reading.where(Reading.all).order_by(Reading.id.asc())
     wire = _wire_query("Reading", orderBy=_wire_order("Reading", "id"))
     expected = len(_FLOAT32_WIDTHS)
@@ -276,11 +281,8 @@ def _read_readings(db: ScopedDatabase, reader: str) -> list[Any]:
             return _drained(db.stream(typed, batch_size=1), expected=expected)
         case "wire-eager":
             return list(db.wire.find(wire).results())
-        case _:
+        case "wire-stream":
             return _drained(db.wire.stream(wire, batch_size=1), expected=expected)
-
-
-_READERS = ("typed-eager", "typed-stream", "wire-eager", "wire-stream")
 
 
 @pytest.mark.parametrize("writer", _WRITERS)
@@ -341,7 +343,7 @@ def test_a_nonfinite_float_is_refused_before_any_write(
                 assert not isinstance(refused.value.cause, DatabaseError)
 
     (row,) = _read_readings(db, "typed-eager")
-    assert (row.id, row.version, row.f32, row.f64) == (1, 1, 1.5, 2.5)
+    assert (row.id, row.version, _bits(row.f32), _bits(row.f64)) == (1, 1, _bits(1.5), _bits(2.5))
 
 
 # --------------------------------------------------------------------------- #
@@ -378,6 +380,7 @@ _MIDPOINT_IDENTITIES = (_MIDPOINT, _ABOVE_MIDPOINT, -_MIDPOINT, -_ABOVE_MIDPOINT
 _ORDINARY_IDENTITIES = tuple(key for key in _KEYS if key not in _MIDPOINT_IDENTITIES)
 _WIRE_MIDPOINT_IDENTITY = pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason=(
         "Wire publishes a Float32 whose shortest spelling parses onto a binary64 midpoint "
         "as that plain float, and a keyed write decodes it to the adjacent binary32 value, "
@@ -386,22 +389,19 @@ _WIRE_MIDPOINT_IDENTITY = pytest.mark.xfail(
 )
 
 
-@pytest.mark.parametrize(
-    ("representation", "identities"),
-    [
+def _identity_cases(*wire_midpoint: pytest.MarkDecorator) -> list[Any]:
+    return [
         pytest.param("typed", _ORDINARY_IDENTITIES, id="typed-ordinary"),
         pytest.param("typed", _MIDPOINT_IDENTITIES, id="typed-midpoint"),
         pytest.param("wire", _ORDINARY_IDENTITIES, id="wire-ordinary"),
-        pytest.param(
-            "wire", _MIDPOINT_IDENTITIES, id="wire-midpoint", marks=_WIRE_MIDPOINT_IDENTITY
-        ),
-    ],
-)
-def test_a_locking_stream_in_nullable_order_yields_and_updates_each_float32_identity_once(
-    profile_run: Any, representation: Representation, identities: tuple[float, ...]
-) -> None:
-    db = _served(profile_run)
-    ranks = tuple(islice(cycle((2, 1, None, 1, None, 3)), len(identities)))
+        pytest.param("wire", _MIDPOINT_IDENTITIES, id="wire-midpoint", marks=wire_midpoint),
+    ]
+
+
+def _lock_and_update_each(
+    db: ScopedDatabase, representation: Representation, identities: tuple[float, ...]
+) -> tuple[dict[float, int | None], list[Any]]:
+    ranks = islice(cycle((2, 1, None, 1, None, 3)), len(identities))
     ranked = dict(zip(identities, ranks, strict=True))
     db.transact(
         lambda tx: [
@@ -422,14 +422,30 @@ def test_a_locking_stream_in_nullable_order_yields_and_updates_each_float32_iden
                 tx.wire.update(node, {"name": "updated"})
         return rows
 
-    rows = db.transact(lock_and_update, concurrency="locking")
+    return ranked, db.transact(lock_and_update, concurrency="locking")
+
+
+@pytest.mark.parametrize(("representation", "identities"), _identity_cases())
+def test_a_locking_stream_in_nullable_order_yields_each_float32_identity_once(
+    profile_run: Any, representation: Representation, identities: tuple[float, ...]
+) -> None:
+    ranked, rows = _lock_and_update_each(_served(profile_run), representation, identities)
 
     observed = [_field(row, "id") for row in rows]
     expected = {_identity(representation, key): rank for key, rank in ranked.items()}
     assert Counter(map(_bits, observed)) == Counter(map(_bits, expected))
     assert [expected[key] for key in observed] == sorted(
-        ranks, key=lambda rank: (rank is None, rank or 0)
+        ranked.values(), key=lambda rank: (rank is None, rank or 0)
     )
+
+
+@pytest.mark.parametrize(("representation", "identities"), _identity_cases(_WIRE_MIDPOINT_IDENTITY))
+def test_a_keyed_update_of_each_locked_float32_identity_updates_that_identity(
+    profile_run: Any, representation: Representation, identities: tuple[float, ...]
+) -> None:
+    db = _served(profile_run)
+    _lock_and_update_each(db, representation, identities)
+
     stored = db.find(Marker.where(Marker.all)).results()
     assert Counter((_bits(row.id), row.name) for row in stored) == Counter(
         (_bits(key), "updated") for key in identities

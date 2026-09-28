@@ -63,12 +63,12 @@ class _Milestone(NamedTuple):
 
     def typed(self) -> tuple[object, ...]:
         valid = () if self.valid is None else self.valid
-        return (narrowed(self.amount), *self.tx, *valid)
+        return (float, narrowed(self.amount), *self.tx, *valid)
 
     def wire(self) -> tuple[object, ...]:
         valid = () if self.valid is None else tuple(map(_wire_instant, self.valid))
         amount = float(shortest_spelling(narrowed(self.amount)))
-        return (amount, *map(_wire_instant, self.tx), *valid)
+        return (float, amount, *map(_wire_instant, self.tx), *valid)
 
 
 def _wire_instant(bound: Bound) -> str:
@@ -154,12 +154,16 @@ def _write(
 
 def _typed_bounds(row: Any, entity: type[Any]) -> tuple[object, ...]:
     valid = (row.valid_start, row.valid_end) if entity is Position else ()
-    return (row.amount, row.tx_start, row.tx_end, *valid)
+    return (*_carried(row.amount), row.tx_start, row.tx_end, *valid)
 
 
 def _wire_bounds(node: Any, entity: type[Any]) -> tuple[object, ...]:
     valid = (node["validStart"], node["validEnd"]) if entity is Position else ()
-    return (node["amount"], node["txStart"], node["txEnd"], *valid)
+    return (*_carried(node["amount"]), node["txStart"], node["txEnd"], *valid)
+
+
+def _carried(value: object) -> tuple[type[object], object]:
+    return type(value), value
 
 
 def _reads(
