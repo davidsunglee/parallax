@@ -18,7 +18,6 @@ import struct
 import sys
 from collections.abc import Callable, Iterator
 from datetime import datetime
-from fractions import Fraction
 from typing import Any, cast
 
 import psycopg
@@ -30,6 +29,7 @@ from psycopg.rows import TupleRow
 from parallax.conformance._postgres_control import PostgresControl
 from parallax.core.base import INFINITY
 from parallax.postgres._compiled_loaders import compiled_loaders
+from tests._support.binary32 import narrowed, rounded_once
 
 type Session = psycopg.Connection[TupleRow]
 
@@ -61,27 +61,8 @@ def _driver_loader(oid: int) -> type[Loader]:
     return loader
 
 
-def _binary32(value: float) -> float:
-    (narrowed,) = struct.unpack("<f", struct.pack("<f", value))
-    return narrowed
-
-
 def _bits(value: float) -> bytes:
     return struct.pack("<d", value)
-
-
-def _rounded_once(spelling: str) -> float:
-    """The binary32 value nearest the exact decimal ``spelling``, ties to even."""
-    exact = Fraction(spelling)
-    if exact == 0:
-        return -0.0 if spelling.startswith("-") else 0.0
-    magnitude = abs(exact)
-    exponent = magnitude.numerator.bit_length() - magnitude.denominator.bit_length()
-    if magnitude < Fraction(2) ** exponent:
-        exponent -= 1
-    quantum = max(exponent, -126) - 23
-    units = round(magnitude / Fraction(2) ** quantum)
-    return math.copysign(math.ldexp(units, quantum), exact)
 
 
 # --------------------------------------------------------------------------- #
@@ -127,7 +108,7 @@ def _counting_fallbacks(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     ("value", "exact_parse", "midpoint"),
     [
         pytest.param(1.5, True, False, id="exactly-representable"),
-        pytest.param(_binary32(1.2), False, False, id="ordinary-rounded"),
+        pytest.param(narrowed(1.2), False, False, id="ordinary-rounded"),
         # Its shortest spelling, parsed to binary64, lands exactly on the
         # midpoint between two binary32 values and narrows to the wrong one.
         pytest.param(7.038530691851209e-26, False, True, id="midpoint"),
@@ -147,17 +128,17 @@ def test_each_float32_branch_reads_the_stored_binary32_value(
     exact_parse: bool,
     midpoint: bool,
 ) -> None:
-    assert _binary32(value) == value
+    assert narrowed(value) == value
     fallbacks = _counting_fallbacks(monkeypatch)
 
     (loaded,), (spelling,), (truth,) = _stored(session, [value])
 
     assert _bits(truth) == _bits(value)
     assert _bits(loaded) == _bits(truth)
-    assert _bits(_rounded_once(spelling)) == _bits(truth)
+    assert _bits(rounded_once(spelling)) == _bits(truth)
     parsed = float(spelling)
     assert (parsed == truth) is exact_parse
-    assert (_binary32(parsed) != truth) is midpoint
+    assert (narrowed(parsed) != truth) is midpoint
     assert len(fallbacks) == (1 if midpoint else 0)
 
 
@@ -173,8 +154,8 @@ def test_a_spelling_that_parses_onto_a_subnormal_midpoint_rounds_by_its_exact_de
     loaded = cast("float", _LOADERS.float4(_FLOAT4_OID).load(spelling.encode()))
 
     assert _bits(float(spelling)) == _bits(math.copysign(math.ldexp(1, -150), sign))
-    assert _binary32(float(spelling)) == 0.0
-    assert _bits(loaded) == _bits(_rounded_once(spelling))
+    assert narrowed(float(spelling)) == 0.0
+    assert _bits(loaded) == _bits(rounded_once(spelling))
     assert _bits(loaded) == _bits(math.copysign(math.ldexp(1, -149), sign))
     assert len(fallbacks) == 1
 
@@ -209,7 +190,7 @@ def test_random_finite_binary32_values_read_back_exactly(session: Session) -> No
 
     assert [_bits(value) for value in truth] == [_bits(value) for value in values]
     assert [_bits(value) for value in loaded] == [_bits(value) for value in truth]
-    assert [_bits(_rounded_once(spelling)) for spelling in spellings] == [
+    assert [_bits(rounded_once(spelling)) for spelling in spellings] == [
         _bits(value) for value in truth
     ]
 
