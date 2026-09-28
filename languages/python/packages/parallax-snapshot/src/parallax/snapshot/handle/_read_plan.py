@@ -15,6 +15,7 @@ from parallax.core.object_query._validated import (
     Paging,
     ValidatedObjectQuery,
 )
+from parallax.core.predicate import Scalar
 from parallax.core.sql_gen._compile import (
     CompiledRead,
     CompiledTemplate,
@@ -100,7 +101,7 @@ class ReadPlan:
     def correlation_members(self, source: int) -> tuple[AttributeIdentity, ...]:
         return self._correlations[source]
 
-    def fetch_read(self, index: int, keys: Sequence[object]) -> tuple[CompiledRead, PreparedRead]:
+    def fetch_read(self, index: int, keys: list[Scalar]) -> tuple[CompiledRead, PreparedRead]:
         fetch = self._fetches[index]
         if fetch is None:
             raise ValueError("an executable fetch step requires a prepared template")

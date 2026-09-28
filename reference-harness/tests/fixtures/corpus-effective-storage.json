@@ -2569,6 +2569,25 @@
       "valueObject": {}
     }
   },
+  "models/float32-key.yaml": {
+    "parallax.compatibility.Buoy": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.BuoyPing": {
+      "attribute": {
+        "buoyId": "buoy_id",
+        "id": "id",
+        "strength": "strength"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/grade.yaml": {
     "parallax.compatibility.Grade": {
       "attribute": {

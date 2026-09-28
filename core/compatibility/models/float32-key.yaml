@@ -1,0 +1,23 @@
+# Buoy is identified by a float32 primary key that its one-to-many `pings`
+# relationship correlates on, so an include page gathers float32 keys whose driver
+# carriers and canonical Wire values differ.
+entities:
+  - name: Buoy
+    namespace: parallax.compatibility
+    table: buoy
+    attributes:
+      - { name: id, type: float32, primaryKey: true }
+      - { name: label, type: string, maxLength: 32 }
+    relationships:
+      - name: pings
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.BuoyPing, attribute: buoyId }
+  - name: BuoyPing
+    namespace: parallax.compatibility
+    table: buoy_ping
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: buoyId, type: float32 }
+      - { name: strength, type: int32 }

@@ -705,6 +705,11 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "no mirror authored; the only construct it adds over the mirrored `account` is a "
             "plain `timestamp` member outside an as-of axis"
         ),
+        "float32-key": (
+            "no mirror authored; a float32 primary key and a one-to-many join over it "
+            "are the declarations mirrored models already make at other scalar types, so "
+            "the model adds no class-frontend construct"
+        ),
         "grade": (
             "no mirror authored; its subject is a reserved word appearing as a physical column "
             "name, which is SQL generation rather than declaration -- the `column=` override it "

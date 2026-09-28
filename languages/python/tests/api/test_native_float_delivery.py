@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import math
 import struct
+import sys
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from itertools import cycle, islice
+from pathlib import Path
+from types import FrameType
 from typing import Any, Literal, cast
 
 import pytest
@@ -35,8 +38,11 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core import wire as wire_codec
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
+from parallax.core.predicate import Scalar
+from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate
 from parallax.snapshot import connect
 from parallax.snapshot.handle import ExecutionFailure, ScopedDatabase, SnapshotStream, Transaction
 from tests._support.binary32 import narrowed, rounded_once, shortest_spelling
@@ -99,6 +105,7 @@ class Stock(Asset, table="nf_stock", namespace=_NAMESPACE, inheritance=ConcreteS
     shares: Attr[int]
 
 
+_WIRE_PACKAGE = str(Path(wire_codec.__file__).parent)
 _MODEL = DomainModel(Reading, Sheet, Plot, Marker, Parent, Child, Asset, Bond, Stock)
 
 type Representation = Literal["typed", "wire"]
@@ -611,6 +618,57 @@ def test_included_children_correlate_on_a_float32_parent_identity(
             for row in rows
         ]
         assert observed == expected
+
+
+def test_rendering_an_include_page_calls_no_wire_codec(
+    profile_run: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = _served(profile_run)
+    parents = (_stored32(1.2), _MIDPOINT, -_MIDPOINT)
+
+    def insert(tx: Transaction) -> None:
+        for key, parent in enumerate(parents, start=1):
+            tx.insert(Parent(id=parent))
+            tx.insert(Child(id=key, owner=parent, value=parent))
+
+    db.transact(insert)
+
+    wire_calls: list[str] = []
+    renders = 0
+    render = CompiledTemplate.render
+
+    def record_wire_calls(frame: FrameType, event: str, _arg: object) -> None:
+        if event == "call" and frame.f_code.co_filename.startswith(_WIRE_PACKAGE):
+            wire_calls.append(frame.f_code.co_qualname)
+
+    def spied_render(template: CompiledTemplate, keys: list[Scalar]) -> CompiledRead:
+        nonlocal renders
+        renders += 1
+        previous = sys.getprofile()
+        sys.setprofile(record_wire_calls)
+        try:
+            return render(template, keys)
+        finally:
+            sys.setprofile(previous)
+
+    monkeypatch.setattr(CompiledTemplate, "render", spied_render)
+    query = Parent.where(Parent.all).include(Parent.children)
+    wire = _wire_query(
+        "Parent", includes=[{"segments": [{"rel": f"{_NAMESPACE}.Parent.children"}]}]
+    )
+    readers: tuple[Callable[[], list[Any]], ...] = (
+        lambda: list(db.find(query).results()),
+        lambda: _drained(db.stream(query, batch_size=2), expected=len(parents)),
+        lambda: list(db.wire.find(wire).results()),
+        lambda: _drained(db.wire.stream(wire, batch_size=2), expected=len(parents)),
+    )
+    for read in readers:
+        before = renders
+        rows = read()
+        assert all(len(_field(row, "children")) == 1 for row in rows)
+        assert renders > before
+
+    assert wire_calls == []
 
 
 @pytest.mark.parametrize("direction", _DIRECTIONS)

@@ -9,10 +9,10 @@ import pytest
 
 from parallax.core import inheritance, storage_layout
 from parallax.core import predicate as predicate_algebra
-from parallax.core.base import DATE, INFINITY, STRING
+from parallax.core.base import DATE, FLOAT32, INFINITY, STRING
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
-from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.predicate._validated import DeferredKeySet, ValidatedPredicate
 from parallax.core.sql_gen import _predicate as sql_predicate
 from parallax.core.sql_gen._context import (
     LoweredStatement,
@@ -25,10 +25,15 @@ from parallax.core.sql_gen._context import (
 from parallax.core.sql_gen._predicate import EntityScope
 from parallax.core.unit_work import KeyedWrite
 from parallax.core.wire import loads
+from tests._support.binary32 import narrowed
 from tests._support.lowering_probes import lower_instruction
 from tests.unit._corpus_model_support import model as corpus_model
 
 WALLET = corpus_model("wallet")
+# Float32 carriers whose canonical Wire values differ from the carriers themselves,
+# so a projection that skips encoding cannot pass.
+_ONE_POINT_TWO = narrowed(1.2)
+_FLOAT32_KEYS = (_ONE_POINT_TWO, narrowed(0.1), narrowed(3.4))
 
 
 def _builder() -> StatementBuilder:
@@ -139,28 +144,74 @@ def test_framework_bind_can_report_an_explicit_wire_null() -> None:
     assert statement.wire_bind_overrides == (_WireBindOverride(0, None),)
 
 
-def test_replacing_a_framework_bind_preserves_surrounding_bind_provenance() -> None:
+def test_expanding_a_key_set_grows_its_covering_span_and_moves_later_metadata() -> None:
     builder = _builder()
+    builder.bind_framework("driver-infinity", wire_value="infinity")
     builder.bind_managed("before", STRING)
-    builder.bind_framework("deferred", wire_value="deferred")
+    builder.bind_managed(_ONE_POINT_TWO, FLOAT32)
+    builder.bind_managed(DeferredKeySet(FLOAT32), FLOAT32)
+    builder.bind_framework("driver-infinity", wire_value="infinity")
     builder.bind_comparison_text("after", STRING)
-    statement = builder.finish("select ?, ?, ?")
+    statement = builder.finish("select ?, ?, ?, ?, ?, ?")
 
-    expanded = statement.replace_bind(1, ("first", "second"), ("wire-first", "wire-second"))
+    expanded = statement.replace_bind(3, _FLOAT32_KEYS)
 
-    assert expanded.binds == ("before", "first", "second", "after")
-    assert expanded.wire_binds() == ("before", "wire-first", "wire-second", "after")
+    assert expanded.binds == (
+        "driver-infinity",
+        "before",
+        _ONE_POINT_TWO,
+        *_FLOAT32_KEYS,
+        "driver-infinity",
+        "after",
+    )
     assert expanded.typed_bind_spans == (
-        _TypedBindSpan(0, 1, STRING, "MANAGED"),
-        _TypedBindSpan(3, 4, STRING, "COMPARISON_TEXT"),
+        _TypedBindSpan(1, 2, STRING, "MANAGED"),
+        _TypedBindSpan(2, 6, FLOAT32, "MANAGED"),
+        _TypedBindSpan(7, 8, STRING, "COMPARISON_TEXT"),
     )
     assert expanded.wire_bind_overrides == (
-        _WireBindOverride(1, "wire-first"),
-        _WireBindOverride(2, "wire-second"),
+        _WireBindOverride(0, "infinity"),
+        _WireBindOverride(6, "infinity"),
+    )
+    assert expanded.wire_binds() == (
+        "infinity",
+        "before",
+        1.2,
+        1.2,
+        0.1,
+        3.4,
+        "infinity",
+        "after",
     )
 
-    with pytest.raises(ValueError, match="equal arity"):
-        statement.replace_bind(1, ("only",), ("one", "two"))
+
+def test_an_array_key_set_reuses_the_statement_metadata_and_holds_the_keys_by_reference() -> None:
+    builder = _builder()
+    builder.bind_managed("before", STRING)
+    builder.bind_managed_array(DeferredKeySet(FLOAT32), FLOAT32)
+    builder.bind_framework("driver-infinity", wire_value="infinity")
+    statement = builder.finish("select ?, ?, ?")
+    keys = list(_FLOAT32_KEYS)
+
+    rendered = statement.replace_bind(1, (keys,))
+
+    assert rendered.binds[1] is keys
+    assert rendered.typed_bind_spans is statement.typed_bind_spans
+    assert rendered.wire_bind_overrides is statement.wire_bind_overrides
+    assert rendered.typed_bind_spans[1] == _TypedBindSpan(1, 2, FLOAT32, "MANAGED_ARRAY")
+    assert rendered.wire_binds() == ("before", [1.2, 0.1, 3.4], "infinity")
+
+
+@pytest.mark.parametrize("form", ["MANAGED", "MANAGED_ARRAY"])
+def test_an_unrendered_key_set_has_no_wire_projection(form: str) -> None:
+    builder = _builder()
+    if form == "MANAGED":
+        builder.bind_managed(DeferredKeySet(FLOAT32), FLOAT32)
+    else:
+        builder.bind_managed_array(DeferredKeySet(FLOAT32), FLOAT32)
+
+    with pytest.raises(SqlGenError, match="until its keys are rendered"):
+        builder.finish("select ?").wire_binds()
 
 
 def test_multirow_write_uses_one_repeated_descriptor_per_typed_row_run() -> None:

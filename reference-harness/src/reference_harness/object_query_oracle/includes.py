@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
+from .. import portable_literal
 from ..case import Case, Entity, Model
 from ..case_assertions import CaseFailure, coerce_identity_key
 from ..inheritance import (
@@ -640,11 +641,16 @@ def execute_fetch_levels(
                 f"this temporal child (matched by axis), appended after the IN list."
             )
 
+        # The authored keys are canonical Wire values; the level executes their
+        # managed members, which a float32 key's Wire spelling does not equal.
+        key_type = step.child_entity.attribute_by_name(step.child_attr)["type"]
+        managed_keys = [portable_literal.decode_canonical(key, key_type) for key in authored_keys]
+        executed_keys: list[Any] = [managed_keys] if dialect == "postgres" else managed_keys
         child_rows = execute.query_rows(
             case,
             reader,
             level_sql,
-            key_slice + list(step.tag_binds) + expected_suffix,
+            executed_keys + list(step.tag_binds) + expected_suffix,
         )
         # The level is materialized WHOLE by the seam that owns its kind of
         # position, which it states its own facts to: the raw tag column a

@@ -500,12 +500,12 @@ def _lower_membership(
     if len(operands) == 1 and isinstance(operands[0], DeferredKeySet):
         if tag != "in":  # pragma: no cover - generated child reads are positive
             raise SqlGenError("a deferred key set supports only positive membership")
-        scope.ctx.bind_framework(operands[0])
-        return (
-            f"{subject.compared} = any(?)"
-            if scope.dialect.name == "postgres"
-            else f"{subject.compared} in (__parallax_deferred_keys__)"
-        )
+        key_set = operands[0]
+        if scope.dialect.name == "postgres":
+            scope.ctx.bind_managed_array(key_set, key_set.neutral_type)
+            return f"{subject.compared} = any(?)"
+        scope.ctx.bind_managed(key_set, key_set.neutral_type)
+        return f"{subject.compared} in (__parallax_deferred_keys__)"
     holes = ", ".join("?" for _ in range(hole_count))
     for index in range(len(operands)):
         _bind_member_literal(product, index, subject, scope)

@@ -1035,6 +1035,16 @@ _CORRUPT_STORED_STATE_REASON: Final[str] = (
     "`tests/unit/test_snapshot_classification.py` and `tests/unit/test_snapshot_conversion.py`"
 )
 
+_FLOAT32_KEY_SET_BIND_REASON: Final[str] = (
+    "a deep fetch whose claim is the canonical Wire projection of its gathered float32 "
+    "key-set binds, a compatibility observation no developer surface returns. The "
+    "developer-facing correlation of included children on a float32 identity, eager and "
+    "streamed, Typed and Wire, is graded against the shipped verbs by "
+    "`tests/api/test_native_float_delivery.py`, and this case's binds and graph by the run "
+    "sweep over the real provider. Its model (`models/float32-key.yaml`) is one this "
+    "package authors no idiomatic class family for by the recorded mirrored-model partition"
+)
+
 # The composition family's Transaction-Time-only arm. `m-snapshot-read-021`
 # reads `models/invoice.yaml`, which this package deliberately authors no
 # idiomatic class family for (`tests/_support/mirrored_models.UNMIRRORED`: the
@@ -1631,6 +1641,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-navigate / m-deep-fetch: Relational Document Layout traversals ----- #
     "m-navigate-025": _DOCUMENT_LAYOUT_RELATIONSHIP_REASON,
     "m-deep-fetch-024": _DOCUMENT_LAYOUT_RELATIONSHIP_REASON,
+    # -- m-deep-fetch: float32 key-set bind projection ------------------------ #
+    "m-deep-fetch-028": _FLOAT32_KEY_SET_BIND_REASON,
     "m-snapshot-read-002": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
     # -- m-snapshot-read: orders-family graph siblings ----------------------- #
     "m-snapshot-read-003": _ORDERS_GRAPH_SIBLING_REASON,

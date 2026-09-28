@@ -18,6 +18,7 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.predicate._validated import DeferredKeySet
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
 from parallax.core.wire import (
     WireDecodingError,
@@ -27,8 +28,9 @@ from parallax.core.wire import (
     encode_wire,
 )
 
-type _BindForm = Literal["MANAGED", "COMPARISON_TEXT"]
-type _TypedBindSlot = tuple[NeutralType, _BindForm]
+type _ScalarBindForm = Literal["MANAGED", "COMPARISON_TEXT"]
+type _BindForm = _ScalarBindForm | Literal["MANAGED_ARRAY"]
+type _TypedBindSlot = tuple[NeutralType, _ScalarBindForm]
 
 
 class _NoWireBindOverride:
@@ -50,6 +52,9 @@ class _TypedBindSpan:
 
     def shifted(self, offset: int) -> _TypedBindSpan:
         return _TypedBindSpan(self.start + offset, self.stop + offset, self.neutral_type, self.form)
+
+    def resized(self, growth: int) -> _TypedBindSpan:
+        return _TypedBindSpan(self.start, self.stop + growth, self.neutral_type, self.form)
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,11 +120,7 @@ class LoweredStatement:
         projected: list[WireValue | object] = [unprojected] * len(self.binds)
         for span in self._typed_bind_spans:
             for index in span.indexes():
-                value = self.binds[index]
-                if span.form == "MANAGED":
-                    projected[index] = encode_wire(span.neutral_type, cast("ManagedValue", value))
-                else:
-                    projected[index] = cast("str", value)
+                projected[index] = _typed_wire_bind(self.binds[index], span.neutral_type, span.form)
         for override in self._wire_bind_overrides:
             projected[override.index] = override.value
         for index, value in enumerate(projected):
@@ -127,41 +128,48 @@ class LoweredStatement:
                 projected[index] = _wire_bind(self.binds[index])
         return cast("tuple[WireValue, ...]", tuple(projected))
 
-    def replace_bind(
-        self,
-        index: int,
-        values: Sequence[object],
-        wire_values: Sequence[WireValue],
-    ) -> LoweredStatement:
-        """Replace one framework placeholder while preserving bind provenance."""
-        replacements = tuple(values)
-        rendered = tuple(wire_values)
-        if len(replacements) != len(rendered):
-            raise ValueError("replacement binds and Wire binds must have equal arity")
-        shift = len(replacements) - 1
+    def replace_bind(self, index: int, values: Sequence[object]) -> LoweredStatement:
+        """Replace one bind with ``values``, which the typed span covering it then covers."""
+        binds = (*self.binds[:index], *values, *self.binds[index + 1 :])
+        growth = len(values) - 1
+        if not growth:
+            return LoweredStatement(
+                self.sql,
+                binds,
+                self._typed_bind_spans,
+                self._wire_bind_overrides,
+                self._compiler_proven,
+            )
 
-        def shifted_span(span: _BindSpan) -> _BindSpan:
-            if span.start <= index:
-                return span
-            return span.shifted(shift)
+        def moved(span: _BindSpan) -> _BindSpan:
+            if span.start > index:
+                return span.shifted(growth)
+            if isinstance(span, _TypedBindSpan) and index < span.stop:
+                return span.resized(growth)
+            return span
 
-        overrides = tuple(
-            override
-            if override.index < index
-            else _WireBindOverride(override.index + shift, override.value)
-            for override in self._wire_bind_overrides
-            if override.index != index
-        )
-        overrides += tuple(
-            _WireBindOverride(index + offset, value) for offset, value in enumerate(rendered)
-        )
         return LoweredStatement(
             self.sql,
-            (*self.binds[:index], *replacements, *self.binds[index + 1 :]),
-            tuple(shifted_span(span) for span in self._typed_bind_spans),
-            overrides,
+            binds,
+            tuple(moved(span) for span in self._typed_bind_spans),
+            tuple(
+                _WireBindOverride(override.index + growth, override.value)
+                if override.index > index
+                else override
+                for override in self._wire_bind_overrides
+            ),
             self._compiler_proven,
         )
+
+
+def _typed_wire_bind(value: object, neutral_type: NeutralType, form: _BindForm) -> WireValue:
+    if isinstance(value, DeferredKeySet):
+        raise SqlGenError("a deferred key set has no Wire projection until its keys are rendered")
+    if form == "MANAGED":
+        return encode_wire(neutral_type, cast("ManagedValue", value))
+    if form == "MANAGED_ARRAY":
+        return [encode_wire(neutral_type, element) for element in cast("list[ManagedValue]", value)]
+    return cast("str", value)
 
 
 def _wire_bind(value: object) -> WireValue:
@@ -310,6 +318,9 @@ class StatementBuilder:
 
     def bind_comparison_text(self, value: object, neutral_type: NeutralType) -> None:
         self._bind_typed(value, neutral_type, "COMPARISON_TEXT")
+
+    def bind_managed_array(self, value: object, neutral_type: NeutralType) -> None:
+        self._bind_typed(value, neutral_type, "MANAGED_ARRAY")
 
     def bind_framework(
         self,

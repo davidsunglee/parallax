@@ -587,7 +587,7 @@ def test_a_back_reference_has_no_executable_child_read() -> None:
     plan = replace(_plan(ReadPlanCache(), _query()), _fetches=(None,))
 
     with pytest.raises(ValueError, match="executable fetch step"):
-        plan.fetch_read(0, ())
+        plan.fetch_read(0, [])
 
 
 def test_mixed_cold_keys_and_editions_build_without_global_lock_contention(

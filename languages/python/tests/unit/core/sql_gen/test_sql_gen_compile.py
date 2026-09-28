@@ -54,6 +54,7 @@ from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.storage_layout import _compile as storage_layout_compile
 from parallax.core.temporal_read import _compile as temporal_read_compile
 from tests._support import fake_metamodel
+from tests._support.binary32 import narrowed
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model, target
 
@@ -522,26 +523,31 @@ def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> 
     ) in compiled.attribute_reads(entity.identity)
 
 
-def _child_template(dialect: Dialect) -> sql_compile.CompiledTemplate:
-    entity = target(ORDERS, "OrderItem")
-    member = entity.attribute("orderId")
+_MARIADB = dataclasses.replace(POSTGRES, name="mariadb")
+
+
+def _child_template(
+    dialect: Dialect, meta: Metamodel = ORDERS, name: str = "OrderItem", attr: str = "orderId"
+) -> sql_compile.CompiledTemplate:
+    entity = target(meta, name)
+    member = entity.attribute(attr)
     assert member is not None
     query = deep_fetch.ValidatedEntityQuery(
         target=entity.identity,
         entity=entity,
         validated_predicate=deferred_membership(
-            attr="OrderItem.orderId",
+            attr=f"{name}.{attr}",
             member=member,
         ),
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
-    return sql_compile.compile_template(query, ORDERS, dialect)
+    return sql_compile.compile_template(query, meta, dialect)
 
 
 def test_postgres_child_template_keeps_one_array_bind_for_every_key_count() -> None:
     template = _child_template(POSTGRES)
-    first = template.render((1,))
-    several = template.render((1, 42))
+    first = template.render([1])
+    several = template.render([1, 42])
 
     assert first.statement.sql == several.statement.sql
     assert first.statement.sql.endswith("where t0.order_id = any(?)")
@@ -550,17 +556,49 @@ def test_postgres_child_template_keeps_one_array_bind_for_every_key_count() -> N
     assert several.statement.wire_binds() == ([1, 42],)
 
 
+def test_postgres_child_template_binds_the_gathered_list_under_the_template_metadata() -> None:
+    template = _child_template(POSTGRES)
+    keys: list[oa.Scalar] = [1, 42]
+
+    rendered = template.render(keys).statement
+
+    assert rendered.binds[template.bind_index] is keys
+    assert rendered.typed_bind_spans is template.compiled.statement.typed_bind_spans
+    assert rendered.wire_bind_overrides is template.compiled.statement.wire_bind_overrides
+
+
 def test_mariadb_child_template_expands_only_the_deferred_key_bind() -> None:
-    rendered = _child_template(dataclasses.replace(POSTGRES, name="mariadb")).render((1, 42))
+    rendered = _child_template(_MARIADB).render([1, 42])
 
     assert rendered.statement.sql.endswith("where t0.order_id in (?, ?)")
     assert rendered.statement.binds == (1, 42)
     assert rendered.statement.wire_binds() == (1, 42)
 
 
+@pytest.mark.parametrize(
+    ("dialect", "projected"),
+    [(POSTGRES, ([1.2, 0.1],)), (_MARIADB, (1.2, 0.1))],
+    ids=["postgres", "mariadb"],
+)
+def test_child_template_projects_each_float32_key_to_its_canonical_wire_value(
+    dialect: Dialect, projected: tuple[object, ...]
+) -> None:
+    template = _child_template(dialect, SCALARS, "ScalarThing", "f32")
+
+    rendered = template.render([narrowed(1.2), narrowed(0.1)])
+
+    assert rendered.statement.wire_binds()[template.bind_index :] == projected
+
+
+@pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
+def test_an_unrendered_child_template_has_no_wire_projection(dialect: Dialect) -> None:
+    with pytest.raises(SqlGenError, match="until its keys are rendered"):
+        _child_template(dialect).compiled.statement.wire_binds()
+
+
 def test_child_template_refuses_an_empty_set_that_should_issue_no_statement() -> None:
     with pytest.raises(SqlGenError, match="at least one gathered key"):
-        _child_template(POSTGRES).render(())
+        _child_template(POSTGRES).render([])
 
 
 def test_child_template_refuses_a_query_without_one_deferred_key_set() -> None:
