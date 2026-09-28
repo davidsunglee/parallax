@@ -65,7 +65,7 @@ Where canonical compatibility projection needs declared-type information, the
 statement carries compact private metadata over that tuple:
 
 ```text
-BindForm = MANAGED | COMPARISON_TEXT
+BindForm = MANAGED | MANAGED_ARRAY | COMPARISON_TEXT
 
 TypedBindSpan(start, stop, declaredType, form)
 RepeatedTypedBindSpan(start, width, stride, repetitions, declaredType, form)
@@ -90,9 +90,12 @@ values require no override. The database adapter ignores all span and override
 metadata.
 
 The statement's canonical bind-projection operation walks the compact metadata,
-calls `encodeWire` only for `MANAGED` spans, emits `COMPARISON_TEXT` values as the
-already-canonical Wire strings they represent, applies sparse overrides, and
-unwraps document values. It never infers a `NeutralType` from a runtime carrier.
+calls `encodeWire` only for `MANAGED` and `MANAGED_ARRAY` spans, emits
+`COMPARISON_TEXT` values as the already-canonical Wire strings they represent,
+applies sparse overrides, and unwraps document values. A `MANAGED_ARRAY` bind is
+one ordered array of members of the declared type, and projects as a JSON array
+of each element's `encodeWire` under that type, in order. It never infers a
+`NeutralType` from a runtime carrier.
 An unannotated bind in a publicly constructible statement may pass through only
 when it is already an ordinary Wire Value or a document wrapper; any other
 carrier is a SQL-generation error rather than a guessed encoding.

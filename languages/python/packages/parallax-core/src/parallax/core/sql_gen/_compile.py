@@ -3,12 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import chain
-from typing import Literal, assert_never, cast
+from typing import Literal, assert_never
 
 from parallax.core.base import (
     Bytes,
     DocumentReadOrdinals,
-    ManagedValue,
     UnknownFamilyTag,
     inert_scalar,
 )
@@ -31,7 +30,7 @@ from parallax.core.object_query._validated import (
     Paging,
     ValidatedSeek,
 )
-from parallax.core.predicate import Narrow, Or
+from parallax.core.predicate import Narrow, Or, Scalar
 from parallax.core.predicate._validated import DeferredKeySet, ValidatedPredicate
 from parallax.core.sql_gen._context import LoweredStatement, SqlGenError, StatementBuilder
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -85,7 +84,6 @@ from parallax.core.storage_layout import TableLayout as _TableLayout
 from parallax.core.storage_layout import view as _storage_view
 from parallax.core.temporal_read import ranked_axes as _ranked_axes
 from parallax.core.temporal_read import view as _temporal_view
-from parallax.core.wire import encode_wire
 
 __all__ = [
     "CompiledRead",
@@ -373,22 +371,16 @@ class CompiledTemplate:
     bind_index: int
     postgres_array: bool
 
-    def render(self, keys: Sequence[object]) -> CompiledRead:
+    def render(self, keys: list[Scalar]) -> CompiledRead:
+        """Bind ``keys``; the Postgres array bind is the list itself, so the caller
+        hands it over and must not mutate it afterwards."""
         if not keys:
             raise SqlGenError("a child read template requires at least one gathered key")
-        marker = self.compiled.statement.binds[self.bind_index]
-        if not isinstance(marker, DeferredKeySet):  # pragma: no cover - constructor invariant
-            raise SqlGenError("compiled child template lost its deferred key-set bind")
-        wire_keys = tuple(
-            encode_wire(marker.neutral_type, cast("ManagedValue", key)) for key in keys
-        )
         if self.postgres_array:
-            statement = self.compiled.statement.replace_bind(
-                self.bind_index, (list(keys),), (list(wire_keys),)
-            )
+            statement = self.compiled.statement.replace_bind(self.bind_index, (keys,))
         else:
             holes = ", ".join("?" for _ in keys)
-            statement = self.compiled.statement.replace_bind(self.bind_index, keys, wire_keys)
+            statement = self.compiled.statement.replace_bind(self.bind_index, keys)
             statement = replace(
                 statement,
                 sql=statement.sql.replace("__parallax_deferred_keys__", holes),

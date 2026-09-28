@@ -6876,6 +6876,72 @@
       ]
     }
   },
+  "models/float32-key.yaml": {
+    "buoy": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Buoy"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Buoy.id",
+          "declaringOwner": "parallax.compatibility.Buoy",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Buoy"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.Buoy.label",
+          "declaringOwner": "parallax.compatibility.Buoy",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "buoy_ping": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.BuoyPing"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.BuoyPing.id",
+          "declaringOwner": "parallax.compatibility.BuoyPing",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.BuoyPing"
+          ],
+          "column": "buoy_id",
+          "contributor": "attribute:parallax.compatibility.BuoyPing.buoyId",
+          "declaringOwner": "parallax.compatibility.BuoyPing",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.BuoyPing"
+          ],
+          "column": "strength",
+          "contributor": "attribute:parallax.compatibility.BuoyPing.strength",
+          "declaringOwner": "parallax.compatibility.BuoyPing",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/grade.yaml": {
     "grade": {
       "columns": [
