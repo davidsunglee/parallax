@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 import random
+import struct
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
@@ -25,6 +26,7 @@ from parallax.core.base import (
     BOOLEAN,
     BYTES,
     DATE,
+    FLOAT32,
     INT32,
     JSON,
     STRING,
@@ -41,8 +43,9 @@ from parallax.core.document_codec import (
     Occurrence,
     classify_effective_change,
     prepare_effective_change,
-    reduce_declared_members,
 )
+from parallax.core.document_codec import _document as document_codec_document
+from parallax.core.document_codec import _leaf as document_codec_leaf
 from parallax.core.document_codec import _managed as managed
 from parallax.core.document_codec._authoring import (
     BORROWED_SOURCE_ACCESS,
@@ -426,7 +429,7 @@ def test_a_tuple_and_a_list_are_both_carriers_of_one_value() -> None:
 
 # --------------------------------------------------------------------------- #
 # The prepared positional comparison: the same rule over the positional row a  #
-# read materializes, with the assignments normalized once rather than per row. #
+# read materializes, with the assignments canonicalized once, not per row.     #
 # --------------------------------------------------------------------------- #
 _ABSENT: Final = object()
 
@@ -443,23 +446,9 @@ def _row(shape: MemberShape, members: Mapping[str, object]) -> tuple[object, ...
 def _classified(
     shape: MemberShape, assigned: Mapping[str, object], row: tuple[object, ...]
 ) -> list[int]:
-    """The positions the keyed rule answers effective, in authored order, after
-    the one normalization a write applies to its assignments: each occurrence
-    reduced, presence preserved, to the document it would store."""
-    normalized: dict[str, object] = {}
-    for name, value in assigned.items():
-        member = shape.member(name)
-        if not isinstance(member, Occurrence):
-            normalized[name] = value
-        elif member.multiplicity is Multiplicity.MANY:
-            normalized[name] = [
-                reduce_declared_members(member.shape, element, preserve_presence=True)
-                for element in cast("Sequence[object]", value)
-            ]
-        else:
-            normalized[name] = reduce_declared_members(member.shape, value, preserve_presence=True)
+    """The positions the keyed rule answers effective, in authored order."""
     view = EntityStateRow.over_declared_members(_Selected(shape), row, absent=_ABSENT)
-    effective = classify_effective_change(shape, normalized, view).effective
+    effective = classify_effective_change(shape, assigned, view).effective
     return [cast("int", shape.position(name)) for name in assigned if name in effective]
 
 
@@ -572,6 +561,9 @@ def test_the_prepared_comparison_answers_the_keyed_rule_over_generated_positiona
         row = _row(shape, stored)
         expected = _classified(shape, assigned, row)
         assert _prepared(shape, assigned, row) == expected, (shape, assigned, stored)
+        # The frozen containers ingress admits an assignment in answer the same.
+        frozen = {name: retain_document_value(value) for name, value in assigned.items()}
+        assert _prepared(shape, frozen, row) == expected, (shape, frozen, stored)
         declared = sum(1 for name in assigned if shape.member(name) is not None)
         effective += len(expected)
         restored += declared - len(expected)
@@ -615,19 +607,28 @@ def test_the_prepared_comparison_reads_only_assigned_positions_and_stops_at_the_
     assert list(change.effective_positions(row)) == [2]
     assert reads == [2, 1]
 
-    reductions: list[object] = []
-    reduce = reduce_declared_members
+    canonicalized: list[Mapping[str, object]] = []
+    prepared_document = managed._prepared_document  # pyright: ignore[reportPrivateUsage] - the canonicalization probe
 
-    def counting(shape: MemberShape, document: object, **options: bool) -> object:
-        reductions.append(document)
-        return reduce(shape, document, **options)
+    def counting(shape: MemberShape, document: Mapping[str, object]) -> dict[str, object]:
+        canonicalized.append(document)
+        return prepared_document(shape, document)
 
-    monkeypatch.setattr(managed, "reduce_declared_members", counting)
+    monkeypatch.setattr(managed, "_prepared_document", counting)
     authored = {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}, {"kind": "work"}]}
     prepared = prepare_effective_change(_SHAPE, authored, absent=_ABSENT)
+    assert len(canonicalized) == 3
     for _ in range(5):
         prepared.any_effective(_row(_SHAPE, {"origin": {"city": "Oslo"}}))
-    assert len(reductions) == 3
+    assert len(canonicalized) == 3
+
+
+def test_a_prepared_contradiction_of_the_declared_shape_is_a_change_not_a_refusal() -> None:
+    # The prepared form keeps the keyed rule's reading of a contradiction: a
+    # non-document where a `one` is declared, or a non-array where a `many` is,
+    # passes through as itself and changes any well-formed row.
+    row = _row(_SHAPE, {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]})
+    assert _prepared(_SHAPE, {"origin": "Oslo", "entries": {"kind": "home"}}, row) == [4, 5]
 
 
 def test_an_assignment_naming_only_undeclared_members_changes_nothing() -> None:
@@ -636,10 +637,31 @@ def test_an_assignment_naming_only_undeclared_members_changes_nothing() -> None:
     assert list(change.effective_positions(_row(_SHAPE, {}))) == []
 
 
-def test_an_encoded_occurrence_is_compared_as_the_managed_document_it_decodes_to() -> None:
-    # A nested leaf may arrive in its encoded spelling; preparation decodes it
-    # once, so the row's managed Decimal is the value it is weighed against.
-    stored = {"entries": [{"kind": "home", "price": decimal.Decimal("1.50")}]}
-    row = _row(_SHAPE, stored)
-    assert _prepared(_SHAPE, {"entries": [{"kind": "home", "price": "1.50"}]}, row) == []
-    assert _prepared(_SHAPE, {"entries": [{"kind": "home", "price": "1.51"}]}, row) == [5]
+def test_a_managed_occurrence_assignment_is_weighed_without_decoding_a_leaf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An assignment arrives with every leaf already in its managed carrier — a
+    # Float32 widened to its exact host value — and the stored side is a decoded
+    # row, so neither is decoded again. An encoded spelling is therefore weighed as
+    # itself: a change against the managed value it would decode to.
+    def forbidden(*_: object) -> object:
+        raise AssertionError("the managed comparison decoded a leaf")
+
+    monkeypatch.setattr(document_codec_leaf, "decode_canonical_wire", forbidden)
+    monkeypatch.setattr(document_codec_document, "decode_leaf", forbidden)
+    point = MemberShape(members=(Leaf("f32", FLOAT32, True),))
+    shape = MemberShape(
+        members=(
+            Occurrence("point", Multiplicity.ONE, True, point),
+            Occurrence("trail", Multiplicity.MANY, False, point),
+        )
+    )
+    widened = struct.unpack("<f", struct.pack("<f", 1.2))[0]
+    stored = {"point": {"f32": widened}, "trail": [{"f32": widened}, {"f32": 1.5}]}
+    row = _row(shape, stored)
+
+    assert _prepared(shape, stored, row) == []
+    assert _prepared(shape, {"point": {"f32": 1.5}, "trail": [{"f32": widened}]}, row) == [0, 1]
+
+    priced = _row(_SHAPE, {"entries": [{"kind": "home", "price": decimal.Decimal("1.50")}]})
+    assert _prepared(_SHAPE, {"entries": [{"kind": "home", "price": "1.50"}]}, priced) == [5]

@@ -4,7 +4,6 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import NamedTuple, TypeIs, cast
 
-from parallax.core.document_codec._document import reduce_declared_members
 from parallax.core.document_codec._shape import (
     DocumentMember,
     Leaf,
@@ -119,12 +118,12 @@ def prepare_effective_change(
 ) -> PreparedEffectiveChange:
     """Prepare the effective-change comparison of ``assigned`` against rows of ``shape``.
 
-    Each assigned occurrence is reduced once to the complete document the
-    assignment would store, whether it arrives managed or in its encoded
-    spelling, and canonicalized once; a name ``shape`` does not declare takes no
-    part. A row position holding ``absent`` is always an effective change: the
-    marker is a value the row holds, never the observed null a missing mapping
-    key is to :func:`classify_effective_change`.
+    Each assigned occurrence is canonicalized once, as the managed document the
+    assignment would store, into plain containers: every row reads it again, so
+    those reads never go through a caller's frozen carrier. A name ``shape`` does
+    not declare takes no part. A row position holding ``absent`` is always an
+    effective change: the marker is a value the row holds, never the observed
+    null a missing mapping key is to :func:`classify_effective_change`.
     """
     prepared: list[_Assigned] = []
     for name, value in assigned.items():
@@ -132,21 +131,34 @@ def prepare_effective_change(
         if position is None:
             continue
         member = shape.members[position]
-        prepared.append(_Assigned(position, member, _prepared_value(member, value)))
+        prepared.append(_Assigned(position, member, _prepared_member(member, value)))
     return PreparedEffectiveChange(tuple(prepared), absent)
 
 
-def _prepared_value(member: DocumentMember, value: object) -> object:
+def _prepared_member(member: DocumentMember, value: object) -> object:
+    """:func:`_canonical_member`'s form, always built anew in plain containers."""
     if isinstance(member, Leaf):
         return value
-    if member.multiplicity is Multiplicity.MANY:
-        reduced: object = [
-            reduce_declared_members(member.shape, element, preserve_presence=True)
-            for element in cast("Sequence[object]", value)
-        ]
-    else:
-        reduced = reduce_declared_members(member.shape, value, preserve_presence=True)
-    return _canonical_member(member, reduced)
+    if member.multiplicity is not Multiplicity.MANY:
+        return _prepared_document(member.shape, value) if _is_document(value) else value
+    if value is None:
+        return []
+    if not _is_array(value):
+        return value
+    return [
+        _prepared_document(member.shape, element) if _is_document(element) else element
+        for element in value
+    ]
+
+
+def _prepared_document(shape: MemberShape, document: Mapping[str, object]) -> dict[str, object]:
+    prepared: dict[str, object] = {}
+    for member in shape.members:
+        if member.name in document:
+            prepared[member.name] = _prepared_member(member, document[member.name])
+        elif _is_many(member):
+            prepared[member.name] = []
+    return prepared
 
 
 def _restores(member: DocumentMember, value: object, cell: object, absent: object) -> bool:

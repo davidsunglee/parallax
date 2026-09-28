@@ -1468,36 +1468,59 @@ def _no_op(shape: MemberShape, assigned: Mapping[str, object], row: tuple[object
     return not prepare_effective_change(shape, assigned, absent=ABSENT).any_effective(row)
 
 
-def test_an_encoded_occurrence_assignment_is_compared_as_the_managed_document_a_row_holds() -> None:
-    # `set` accepts an occurrence in the encoded spelling production emits, and
-    # the write's comparison is prepared from it ONCE: what it weighs is the same
-    # managed document a resolved row's own decode produces, for a `one` and for
-    # every element of a `many`, so a Decimal, date, time, timestamp, UUID, or
-    # bytes leaf is weighed as the host value both sides hold.
-    encoded = {
-        "amount": "19.95",
-        "payload": "0a1b",
-        "day": "2026-08-13",
-        "time": "09:30:00",
-        "instant": "2026-08-13T13:30:00.000000Z",
-        "token": "12345678-1234-5678-1234-567812345678",
-    }
-    managed = {
-        "amount": Decimal("19.95"),
-        "payload": b"\x0a\x1b",
-        "day": dt.date(2026, 8, 13),
-        "time": dt.time(9, 30),
-        "instant": dt.datetime(2026, 8, 13, 13, 30, tzinfo=dt.UTC),
-        "token": UUID("12345678-1234-5678-1234-567812345678"),
-    }
-    shape = _managed_subscriber_shape()
-    row = positional_row(shape, {"details": managed, "entries": [managed]}, absent=ABSENT)
+_ENCODED_OCCURRENCE: dict[str, DocumentValue] = {
+    "amount": "19.95",
+    "payload": "0a1b",
+    "day": "2026-08-13",
+    "time": "09:30:00",
+    "instant": "2026-08-13T13:30:00.000000Z",
+    "token": "12345678-1234-5678-1234-567812345678",
+}
 
-    assert _no_op(shape, {"details": encoded, "entries": [encoded]}, row)
-    changed = positional_row(
-        shape, {"details": {**managed, "amount": Decimal("19.96")}}, absent=ABSENT
-    )
-    assert not _no_op(shape, {"details": encoded}, changed)
+
+def test_an_encoded_occurrence_assignment_is_decoded_at_ingress_before_it_is_weighed() -> None:
+    # Wire ingress decodes the encoded spelling once into the managed document a
+    # resolved row's decode also produces, so a Decimal, bytes, date, time,
+    # timestamp, or UUID leaf is weighed as the host value both sides hold, for a
+    # `one` and for every element of a `many`.
+    def calls(details: dict[str, DocumentValue]) -> list[type[object]]:
+        row: MappingRow = {
+            "id": 1,
+            "version": 1,
+            "amount": Decimal("19.95"),
+            "day": dt.date(2026, 8, 13),
+            "payload_hex": "0a1b",
+            "details": PresentDocument(details),
+            "entries": PresentDocument([_ENCODED_OCCURRENCE]),
+        }
+        port = ScriptedAdapter(Transact(Read(rows=[row]), Write()))
+
+        def fn(tx: Transaction) -> None:
+            tx.wire.update_where(
+                {
+                    "entity": "parallax.compatibility.WhereManagedSubscriber",
+                    "predicate": {
+                        "eq": {
+                            "attr": "parallax.compatibility.WhereManagedSubscriber.id",
+                            "value": 1,
+                        }
+                    },
+                },
+                {"details": _ENCODED_OCCURRENCE, "entries": [_ENCODED_OCCURRENCE]},
+            )
+
+        own_root(
+            Database.connect(port, _WHERE_MANAGED_SUBSCRIBER_META, clock=FixedClock(FIXED))
+        ).using_database_login().transact(fn, concurrency="optimistic")
+        return [type(op) for op in port.calls]
+
+    assert calls(_ENCODED_OCCURRENCE) == [BeginCall, ReadCall, CommitCall]
+    assert calls({**_ENCODED_OCCURRENCE, "amount": "19.96"}) == [
+        BeginCall,
+        ReadCall,
+        WriteCall,
+        CommitCall,
+    ]
 
 
 def test_managed_scalar_operands_are_compared_as_the_host_values_the_row_holds() -> None:
