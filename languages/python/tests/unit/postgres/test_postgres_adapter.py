@@ -45,6 +45,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import PhysicalIndexName
 from parallax.core.wire._json import authored_token
 from parallax.postgres import PostgresAdapter, isolation_spelling
+from parallax.postgres._compiled_loaders import compiled_loaders
 from parallax.postgres._connection import (
     ConnectionEstablishment,
     IncompatibleSessionError,
@@ -360,14 +361,17 @@ def _sent(connection: _FakeConnection) -> list[str]:
 
 
 def test_adapter_registers_boundary_value_loaders() -> None:
-    # The port normalizes native `timestamptz` infinity to the m-core sentinel by
-    # registering a custom loader on the connection at construction.
+    # A `real` decodes exactly and native `timestamptz` infinity normalizes to
+    # the m-core sentinel through the compiled loaders psycopg's implementation
+    # runs, and documents decode through the adapter's own JSON loaders.
     connection = _FakeConnection()
     _adapter(connection)
-    assert [name for name, _loader in connection.adapters.registered] == [
-        "timestamptz",
-        "jsonb",
-        "jsonb",
+    loaders = compiled_loaders(psycopg.pq.__impl__)
+    assert connection.adapters.registered == [
+        ("float4", loaders.float4),
+        ("timestamptz", loaders.timestamptz),
+        ("jsonb", connection_module._DocumentJsonbLoader),  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
+        ("jsonb", connection_module._DocumentJsonbBinaryLoader),  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
     ]
 
 

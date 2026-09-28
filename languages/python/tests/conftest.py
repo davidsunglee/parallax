@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from collections.abc import Iterator
 from contextlib import ExitStack
 from pathlib import Path
@@ -253,7 +254,17 @@ def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Wheelhouse:
     out = tmp_path_factory.mktemp("wheelhouse")
     for package in ALL_PACKAGES:
         subprocess.run(
-            ["uv", "build", "--package", package, "--wheel", "--out-dir", str(out)],
+            [
+                "uv",
+                "build",
+                "--package",
+                package,
+                "--wheel",
+                "--python",
+                sys.executable,
+                "--out-dir",
+                str(out),
+            ],
             cwd=PY_ROOT,
             check=True,
             capture_output=True,

@@ -276,7 +276,7 @@ def test_the_declaration_carries_no_default_for_an_axis_attribute() -> None:
 # For a temporal write family, a materialized CURRENT milestone's real        #
 # `out_z`/`thru_z` value is the framework's own open-interval sentinel        #
 # (`TemporalBound.INFINITY` — every real Postgres current row decodes to      #
-# exactly this, `parallax.postgres.adapter._InfinityTimestamptzLoader`),      #
+# exactly this, through the Postgres adapter's infinity-aware loader),        #
 # which the WRAP construction that materializes it never validates           #
 # (`model_construct`) — so an edit's own untouched-field revalidation must    #
 # carry a framework-owned field's CURRENT value forward WITHOUT ever          #

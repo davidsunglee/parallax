@@ -10,3 +10,7 @@ coverage.xml
 .coverage.*
 .pytest_cache/
 .ruff_cache/
+# An editable install compiles parallax-postgres's Cython sources in place.
+packages/parallax-postgres/src/**/*.c
+*.so
+*.pyd

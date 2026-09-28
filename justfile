@@ -370,6 +370,19 @@ python-test-distribution:
 python-test-pydantic-floor:
     cd {{python}} && uv run --with 'pydantic=={{pydantic_floor}}' pytest tests/unit/core/entity/test_pydantic_parity.py
 
+# The same shape as the floor above, resolving another driver build rather than
+# another release. psycopg-binary is what the lock installs; psycopg's C build is
+# compiled against the host's own libpq, which is why it is an overlay rather
+# than a locked dependency, at exactly the locked psycopg release it must match.
+# `PSYCOPG_IMPL` makes psycopg refuse to start rather than quietly fall back to
+# the binary build. What it selects is the
+# compiled loaders' differential tests and their selection, which are what differ
+# between the two builds. CI owns it in a job of its own.
+[metadata("runtime:medium")]
+[doc("Focused: the compiled loaders under psycopg's C build rather than its binary build (Docker; system libpq).")]
+python-test-psycopg-c:
+    cd {{python}} && PSYCOPG_IMPL=c uv run --with "psycopg-c==$(uv run python -c 'import psycopg; print(psycopg.__version__)')" pytest tests/unit/postgres/test_postgres_compiled_loaders.py tests/provider_contract/test_postgres_compiled_loaders.py
+
 # Like the focused selectors above it this belongs to no aggregate, and for a
 # different reason: a `report` passes no judgement, so no number it prints can
 # fail a merge. That is deliberate — nothing in this repository is enforced

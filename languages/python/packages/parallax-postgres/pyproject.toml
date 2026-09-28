@@ -10,8 +10,10 @@ dependencies = [
     "parallax-core",
     # The binary extra bundles libpq so the adapter installs self-contained (no
     # system libpq required); the adapter owns that capability, so a sibling
-    # that imports psycopg declares it without the extra.
-    "psycopg[binary]>=3.3.5",
+    # that imports psycopg declares it without the extra. The compiled loaders
+    # extend psycopg's private C loader layout, so a new minor release is a
+    # reviewed change rather than an automatic one.
+    "psycopg[binary]>=3.3.6,<3.4",
     # The companion pool the runtime owns: the same project, released
     # separately.
     "psycopg-pool>=3.3.1",
@@ -22,11 +24,24 @@ Documentation = "https://github.com/davidsunglee/parallax/blob/main/languages/py
 Repository = "https://github.com/davidsunglee/parallax"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools==84.0.0", "Cython==3.3.0"]
+build-backend = "setuptools.build_meta"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/parallax"]
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["parallax.postgres"]
+include-package-data = false
 
-[tool.hatch.build.targets.sdist]
-include = ["src/parallax", "README.md"]
+[tool.setuptools.package-data]
+"parallax.postgres" = ["py.typed", "*.pyi"]
+
+# The compiled modules are built from the Cython sources, so an edit to one must
+# rebuild the installed package.
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "setup.py" },
+    { file = "src/**/*.pyx" },
+    { file = "src/**/*.pxd" },
+    { file = "src/**/*.pxi" },
+]

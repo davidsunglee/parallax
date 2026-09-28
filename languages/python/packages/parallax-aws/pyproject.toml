@@ -24,7 +24,7 @@ dependencies = [
 # directly, so the extra declares the driver beside the adapter that brings its
 # binary build.
 [project.optional-dependencies]
-postgres = ["parallax-postgres", "psycopg>=3.3.5"]
+postgres = ["parallax-postgres", "psycopg>=3.3.6,<3.4"]
 
 [build-system]
 requires = ["hatchling"]

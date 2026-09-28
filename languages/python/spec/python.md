@@ -795,7 +795,8 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
 uv workspace under `languages/python/`; PEP 420 namespace `parallax.*` shared
 by separately installable distributions (the dormant PyPI `parallax` SSH tool
 would collide only if co-installed; documented, accepted). Build backend:
-hatchling.
+hatchling, except `parallax-postgres`, which builds its compiled module with
+setuptools and Cython.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
@@ -854,16 +855,23 @@ hatchling.
   artifact whose base installation brings the driver, and it declares
   `psycopg[binary]`: the `binary` extra bundles a self-contained
   `libpq` in the wheel, so the adapter — and the clean-install topology proof
-  below — installs and imports with **no system `libpq`** present. The accepted
-  trade-off is the pre-built binary build over compiling `psycopg[c]`/pure
-  `psycopg` against a system `libpq` (the binary build is discouraged only for
-  large-scale production connection tuning, out of scope for this slice), so the
-  self-contained deployment the topology proof relies on is the deliberate
-  default. The adapter owns that capability, so a distribution that imports
-  psycopg beside it declares the plain driver and receives the binary build
-  through the adapter. The driver-free dialect strategy ships inside
-  `parallax-core` (explicitly permitted by core), keeping `compile` Docker- and
-  driver-free.
+  below — installs and imports with **no system `libpq`** present. The binary
+  build is the deliberate default (it is discouraged only for large-scale
+  production connection tuning, out of scope for this slice), and a deployment
+  that installs `psycopg[c]`, compiled against its own system `libpq`, is
+  accepted as well. The pure-Python `psycopg` implementation is refused:
+  importing the adapter raises `ImportError` naming the implementation psycopg
+  selected, before any connection exists. The adapter owns that capability, so a
+  distribution that imports psycopg beside it declares the plain driver and
+  receives the binary build through the adapter. The driver-free dialect
+  strategy ships inside `parallax-core` (explicitly permitted by core), keeping
+  `compile` Docker- and driver-free.
+- **Compiled adapter module.** `parallax-postgres` ships a private compiled
+  module, so its wheel is platform-specific and its sdist carries the Cython
+  sources a source build compiles. It extends psycopg's private C loader, so it
+  is compiled once against each accepted psycopg build, the adapter imports the
+  one psycopg selected, and a new psycopg minor release is a reviewed change.
+  A typed stub is what static analysis reads in its place.
 - **Credential-provider manifest proof.** `parallax-aws` declares `parallax-core`
   and `botocore` unconditionally and nothing else, and it is the sole botocore
   declarer: the built wheel's `Requires-Dist` is asserted to be exactly those
