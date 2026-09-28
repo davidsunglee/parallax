@@ -25,11 +25,13 @@ from parallax.core import (
     AbstractRoot,
     Attr,
     ConcreteSubtype,
+    Document,
     DomainModel,
     Entity,
     Float32,
     Int32,
     Rel,
+    ValueObject,
     attr,
     rel,
 )
@@ -37,7 +39,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
 from parallax.snapshot import connect
 from parallax.snapshot.handle import ExecutionFailure, ScopedDatabase, SnapshotStream, Transaction
-from tests._support.binary32 import narrowed, shortest_spelling
+from tests._support.binary32 import narrowed, rounded_once, shortest_spelling
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "native.float"
@@ -48,6 +50,21 @@ class Reading(Entity, table="nf_reading", namespace=_NAMESPACE):
     version: Attr[int] = attr(type=Int32, optimistic_locking=True)
     f32: Attr[float] = attr(type=Float32)
     f64: Attr[float]
+
+
+class Sheet(Entity, table="nf_sheet", namespace=_NAMESPACE, layout=Document()):
+    id: Attr[int] = attr(primary_key=True)
+    f32: Attr[float] = attr(type=Float32)
+
+
+class Sample(ValueObject):
+    f32: Attr[float] = attr(type=Float32)
+
+
+class Plot(Entity, table="nf_plot", namespace=_NAMESPACE):
+    id: Attr[int] = attr(primary_key=True)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    sample: Attr[Sample]
 
 
 class Marker(Entity, table="nf_marker", namespace=_NAMESPACE):
@@ -82,7 +99,7 @@ class Stock(Asset, table="nf_stock", namespace=_NAMESPACE, inheritance=ConcreteS
     shares: Attr[int]
 
 
-_MODEL = DomainModel(Reading, Marker, Parent, Child, Asset, Bond, Stock)
+_MODEL = DomainModel(Reading, Sheet, Plot, Marker, Parent, Child, Asset, Bond, Stock)
 
 type Representation = Literal["typed", "wire"]
 type Direction = Literal["asc", "desc"]
@@ -114,9 +131,16 @@ _SMALLEST_SUBNORMAL = _binary32(0x00000001)
 _LARGEST_SUBNORMAL = _binary32(0x007FFFFF)
 _SMALLEST_NORMAL = _binary32(0x00800000)
 _LARGEST_FINITE = _binary32(0x7F7FFFFF)
-assert narrowed(float(shortest_spelling(_MIDPOINT))) == _ABOVE_MIDPOINT
 
-# Authored Float32 values, each stored as its nearest binary32 value.
+# Floats exactly on a binary32 midpoint. A Float32 member reads each through its
+# shortest spelling, which names `_MIDPOINT` and the value above `1.0`; rounding
+# the float itself would store the value above `_MIDPOINT` and `1.0` instead.
+_MIDPOINT_SPELLED = float(shortest_spelling(_MIDPOINT))
+_ON_A_MIDPOINT = 1.0000000596046448
+assert rounded_once(repr(_MIDPOINT_SPELLED)) != narrowed(_MIDPOINT_SPELLED) == _ABOVE_MIDPOINT
+assert rounded_once(repr(_ON_A_MIDPOINT)) != narrowed(_ON_A_MIDPOINT) == 1.0
+
+# Authored Float32 values, each stored as the binary32 value its spelling rounds to.
 _FLOAT32_WIDTHS: tuple[float, ...] = (
     0.0,
     -0.0,
@@ -134,6 +158,9 @@ _FLOAT32_WIDTHS: tuple[float, ...] = (
     _binary32(0x3F800001),
     _LARGEST_FINITE,
     -_LARGEST_FINITE,
+    _MIDPOINT_SPELLED,
+    -_MIDPOINT_SPELLED,
+    _ON_A_MIDPOINT,
 )
 _FLOAT64_WIDTHS: tuple[float, ...] = (
     0.0,
@@ -152,14 +179,18 @@ _FLOAT64_WIDTHS: tuple[float, ...] = (
     math.nextafter(1.0, 2.0),
     1e-45,
     _LARGEST_FINITE,
+    _MIDPOINT_SPELLED,
+    -_MIDPOINT_SPELLED,
+    _ON_A_MIDPOINT,
 )
 assert len(_FLOAT32_WIDTHS) == len(_FLOAT64_WIDTHS)
 _WIDTH_IDS = range(1, len(_FLOAT32_WIDTHS) + 1)
 
 
 def _stored32(authored: float) -> float:
-    """The Typed carrier: the nearest binary32 value, with zero positive."""
-    return narrowed(authored) + 0.0
+    """The Typed carrier: the binary32 value nearest the number the float's
+    shortest spelling names, with zero positive."""
+    return rounded_once(repr(authored)) + 0.0
 
 
 def _stored64(authored: float) -> float:
@@ -338,6 +369,52 @@ def test_a_nonfinite_float_is_refused_before_any_write(
     assert (row.id, row.version, _bits(row.f32), _bits(row.f64)) == (1, 1, _bits(1.5), _bits(2.5))
 
 
+def _restate_samples(representation: Representation, writer: Writer):
+    def restate(tx: Transaction) -> None:
+        if representation == "typed":
+            for row in tx.find(Plot.where(Plot.all)).results():
+                sample = Sample(f32=row.sample.f32)
+                if writer == "keyed":
+                    tx.update(row.edit(sample=sample))
+                else:
+                    tx.update_where(Plot.where(Plot.id == row.id), Plot.sample.set(sample))
+        else:
+            for node in tx.wire.find(_wire_query("Plot")).results():
+                sample = {"f32": cast("Mapping[str, object]", node["sample"])["f32"]}
+                if writer == "keyed":
+                    tx.wire.update(node, {"sample": sample})
+                else:
+                    target = {"attr": f"{_NAMESPACE}.Plot.id", "value": node["id"]}
+                    tx.wire.update_where(
+                        {"entity": f"{_NAMESPACE}.Plot", "predicate": {"eq": target}},
+                        {"sample": sample},
+                    )
+
+    return restate
+
+
+@pytest.mark.parametrize("writer", ["keyed", "predicate"])
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+def test_restating_a_value_object_float32_leaf_as_read_is_a_no_op(
+    profile_run: Any, representation: Representation, writer: Writer
+) -> None:
+    db = _served(profile_run)
+    db.transact(
+        lambda tx: [
+            tx.insert(Plot(id=key, sample=Sample(f32=f32)))
+            for key, f32 in zip(_WIDTH_IDS, _FLOAT32_WIDTHS, strict=True)
+        ]
+    )
+
+    db.transact(_restate_samples(representation, writer))
+
+    plots = db.find(Plot.where(Plot.all).order_by(Plot.id.asc())).results()
+    authored = zip(_WIDTH_IDS, _FLOAT32_WIDTHS, strict=True)
+    assert [(row.id, row.version, _bits(row.sample.f32)) for row in plots] == [
+        (key, 1, _bits(_stored32(f32))) for key, f32 in authored
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Identity, continuation, correlation, and family unions                       #
 # --------------------------------------------------------------------------- #
@@ -432,26 +509,42 @@ def test_a_keyed_update_of_each_locked_float32_identity_updates_that_identity(
     )
 
 
+# A document-resident key is ordered and resumed through a cast cell the row
+# does not otherwise read.
+type Storage = Literal["column", "document"]
+_STORAGES: tuple[Storage, ...] = ("column", "document")
+
+
 @pytest.mark.parametrize("direction", _DIRECTIONS)
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("storage", _STORAGES)
 def test_a_stream_ordered_by_a_float32_key_yields_every_root_exactly_once(
-    profile_run: Any, representation: Representation, direction: Direction
+    profile_run: Any, storage: Storage, representation: Representation, direction: Direction
 ) -> None:
     db = _served(profile_run)
     values = (*_KEYS, _KEYS[0], _KEYS[2])
     db.transact(
         lambda tx: [
-            tx.insert(Reading(id=key, f32=value, f64=0.0))
+            tx.insert(
+                Reading(id=key, f32=value, f64=0.0)
+                if storage == "column"
+                else Sheet(id=key, f32=value)
+            )
             for key, value in enumerate(values, start=1)
         ]
     )
 
-    if representation == "typed":
+    stream: SnapshotStream[Any]
+    if representation == "wire":
+        name = "Reading" if storage == "column" else "Sheet"
+        wire = _wire_query(name, orderBy=_wire_order(name, "f32", direction))
+        stream = db.wire.stream(wire, batch_size=1)
+    elif storage == "column":
         key = Reading.f32.asc() if direction == "asc" else Reading.f32.desc()
         stream = db.stream(Reading.where(Reading.all).order_by(key), batch_size=1)
     else:
-        wire = _wire_query("Reading", orderBy=_wire_order("Reading", "f32", direction))
-        stream = db.wire.stream(wire, batch_size=1)
+        key = Sheet.f32.asc() if direction == "asc" else Sheet.f32.desc()
+        stream = db.stream(Sheet.where(Sheet.all).order_by(key), batch_size=1)
     rows = _drained(stream, expected=len(values))
 
     assert sorted(_field(row, "id") for row in rows) == list(range(1, len(values) + 1))
