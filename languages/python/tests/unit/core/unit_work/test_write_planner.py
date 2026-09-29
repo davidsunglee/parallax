@@ -2470,6 +2470,26 @@ def test_a_keyed_predecessor_naming_a_non_member_is_refused_as_a_planning_error(
         )
 
 
+def _acquisition_update_until(model: Metamodel) -> PreparedPredicateWrite:
+    """The acquisition workload's interior ``updateUntil`` over its Relational
+    Document family, assigning the workload's changed title to every row."""
+    entity = acquisition_support.case_named("acquisition.rows-8.document").entity.identity.canonical
+    prepared = prepare_typed_write(
+        PredicateWrite(
+            "updateUntil",
+            PredicateSelection(
+                entity, predicate_algebra.Comparison("greaterThanEquals", f"{entity}.id", 1)
+            ),
+            (WriteAssignment(f"{entity}.title", acquisition_support.ASSIGNED_TITLE),),
+            acquisition_support.INTERIOR_FROM,
+            acquisition_support.INTERIOR_UNTIL,
+        ),
+        model,
+    )
+    assert isinstance(prepared, PreparedPredicateWrite)
+    return prepared
+
+
 def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> None:
     # One retained Relational Document row changed through each producer: a
     # keyed `updateUntil` carrying its effective member alone, and a
@@ -2480,8 +2500,8 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
     # bind that one immutable copy, and the changed successor's patch reuses
     # its subtrees.
     model = model_of(acquisition_support.MODEL)
-    case = acquisition_support.case_named("acquisition.rows-8.document")
-    target = case.prepared.selection.target
+    mutation = _acquisition_update_until(model)
+    target = mutation.selection.target
     layout = LayoutCatalog(model).entity(target.identity)
     selection = layout.member_selection
     row = positional_row(
@@ -2531,7 +2551,7 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
 
     eager = lowered(_plan([keyed], model, observations={key_: observation}))
     materialized = lowered(
-        _plan([MaterializedWriteGroup(mutation=case.prepared, evidence=sealed)], model)
+        _plan([MaterializedWriteGroup(mutation=mutation, evidence=sealed)], model)
     )
     assert materialized == eager
     for statements in (eager, materialized):
@@ -2565,7 +2585,7 @@ def test_a_directly_buffered_update_carries_a_restated_member_and_its_unknown_ke
     # the changed successor carries the stored subtree, the key no member
     # declares included, and patches `title` alone.
     model = model_of(acquisition_support.MODEL)
-    target = acquisition_support.case_named("acquisition.rows-8.document").prepared.selection.target
+    target = _acquisition_update_until(model).selection.target
     selection = LayoutCatalog(model).entity(target.identity).member_selection
     members: dict[str, object] = {
         "id": 1,

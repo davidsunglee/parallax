@@ -114,9 +114,10 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
         "bind adaptation, and psycopg's document serialization; no database execution"
     ),
     ACQUISITION_WINDOW: (
-        "a prepared Bitemporal updateUntil predicate and freshly composed resolving rows "
-        "through production acquisition to a buffered Materialized Write Group; no "
-        "ingress preparation, JSON parsing, flush, or serialization"
+        "one public tx.wire.update_until_where of a Bitemporal updateUntil, from the "
+        "caller's target and changes documents through preparation and production "
+        "acquisition over freshly composed resolving rows to a buffered Materialized "
+        "Write Group; no flush or serialization"
     ),
     RESPONSE_WINDOW: (
         "one public tx.wire.insert of a nested, polymorphic Create Payload inside an open "

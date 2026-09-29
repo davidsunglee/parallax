@@ -25,11 +25,7 @@ from parallax.core.unit_work import (
     UnitOfWork,
     instructions,
 )
-from parallax.core.unit_work.instructions import (
-    PreparedKeyedWrite,
-    PreparedPredicateWrite,
-    PreparedTemporalBounds,
-)
+from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedTemporalBounds
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -48,10 +44,7 @@ from parallax.snapshot.handle._keyed_writes import (
     retained,
 )
 from parallax.snapshot.handle._options import DatabaseOptions
-from parallax.snapshot.handle._predicate_writes import (
-    buffer_predicate,
-    buffer_predicate_instruction,
-)
+from parallax.snapshot.handle._predicate_writes import buffer_predicate
 from parallax.snapshot.handle._publication import SelectedReadModel, SelectedWriteModel
 from parallax.snapshot.handle._read import RowsResult, Snapshot
 from parallax.snapshot.handle._read_plan import ReadPlanner
@@ -745,29 +738,3 @@ class Transaction:
             until=until,
             attempt=self._attempt,
         )
-
-    def _buffer_prepared_predicate_write(self, instruction: PreparedPredicateWrite) -> None:
-        refuse_reentry(self._lifecycle)
-        buffer_predicate_instruction(
-            self._uow,
-            self._model,
-            self._conn,
-            instruction,
-            self._attempt,
-        )
-
-
-def buffer_prepared_predicate_write(
-    transaction: Transaction, instruction: PreparedPredicateWrite
-) -> None:
-    """Buffer a prepared predicate-acquisition benchmark product.
-
-    The benchmark's measurement window begins after instruction preparation and
-    measures acquisition and buffering. Production still owns dispatch,
-    materialization, lifecycle, and the unit-of-work buffer; accepting only
-    ``PreparedPredicateWrite`` keeps this seam from becoming another instruction
-    producer.
-    """
-    transaction._buffer_prepared_predicate_write(  # pyright: ignore[reportPrivateUsage]
-        instruction
-    )
