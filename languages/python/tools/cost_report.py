@@ -102,6 +102,9 @@ from parallax.conformance.cost_envelope import Provenance, Reading, validate
 from parallax.conformance.workloads import workload_digest
 from snapshot_delivery_overhead import (
     CONTROL_GROUP,
+    GEOMETRY_GROUP,
+    LEAF_GROUP,
+    PLAN_GROUP,
     Selection,
     every_cell,
     expanded_cells,
@@ -211,6 +214,7 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
         (
             "tests/unit/_snapshot_materialization_support.py",
             "tests/unit/_structural_geometry_support.py",
+            "tests/unit/_leaf_type_support.py",
             "tests/unit/_delivery_control_support.py",
         ),
     ),
@@ -233,6 +237,7 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
             "tests/unit/_write_lowering_support.py",
             "tests/unit/_predicate_acquisition_support.py",
             "tests/unit/_structural_geometry_support.py",
+            "tests/unit/_leaf_type_support.py",
         ),
     ),
 }
@@ -398,22 +403,27 @@ def validate_snapshot_matrix(
     selected: Selection = every_cell,
     runtimes: Sequence[str] | None = None,
     *,
-    require_controls: bool = False,
+    current: bool = False,
 ) -> None:
     """Validate the exact contract-derived Snapshot report matrix on every
     supported runtime among the addresses ``selected``, with comparisons of the
     selected contract cells on the authority runtime alone.
 
-    The matrix is exact with the control group, or without it as a capture
-    taken before the group existed is; ``require_controls`` accepts the current
-    matrix alone."""
+    The matrix is exact with the leaf-type reads and the control group, without
+    the leaf-type reads as a capture taken before they existed is, or without
+    either as a capture taken before the control group existed is; ``current``
+    accepts the current matrix alone."""
     minors = tuple(runtimes) if runtimes is not None else supported_minors()
     expected = selected_addresses(contract, minors, selected)
     readings = _indexed(_readings(document), label="Snapshot reading")
-    if not require_controls and set(readings) != set(expected):
-        without = selected_addresses(contract, minors, selected, controls=False)
-        if set(readings) == set(without):
-            expected = without
+    if not current and set(readings) != set(expected):
+        for controls in (True, False):
+            earlier = selected_addresses(
+                contract, minors, selected, controls=controls, leaf_types=False
+            )
+            if set(readings) == set(earlier):
+                expected = earlier
+                break
     _exact(expected, readings, label="Snapshot reading")
     comparisons = _indexed(
         cast("Sequence[Document]", document["comparisons"]), label="Snapshot comparison"
@@ -990,7 +1000,7 @@ def verify(
         document,
         SNAPSHOT_SUBJECT,
         lambda member: validate_snapshot_matrix(
-            member, active, require_controls=SNAPSHOT_SUBJECT in required
+            member, active, current=SNAPSHOT_SUBJECT in required
         ),
     )
     if snapshot is None:
@@ -1563,7 +1573,12 @@ SHARDS: Final[tuple[Shard, ...]] = (
     _snapshot_shard("versioned-document", "versioned-document"),
     _snapshot_shard("controls", CONTROL_GROUP),
     _snapshot_shard(
-        "geometry-plan-stress", "geometry", "plan", "stress-columns", "stress-document"
+        "geometry-leaf-plan-stress",
+        GEOMETRY_GROUP,
+        LEAF_GROUP,
+        PLAN_GROUP,
+        "stress-columns",
+        "stress-document",
     ),
     *(Shard(member.subject, member) for member in MEMBERS if member is not SNAPSHOT_MEMBER),
 )
@@ -1571,9 +1586,9 @@ SHARDS: Final[tuple[Shard, ...]] = (
 first. The Snapshot member dominates a whole-member capture, so it is split by
 workload from its measured attribution: each of its five heavy workloads, which
 cost about the same as one another, is a shard of its own, the provider-free
-control group is one more, and the four small ones share one, since another
-runner would cost more setup than it saves. Every other member is one whole
-shard. A split is a change to this data with its test rather than a new recipe,
+control group is one more, and the small ones share one, since another runner
+would cost more setup than it saves. Every other member is one whole shard. A
+split is a change to this data with its test rather than a new recipe,
 and a shard whose coverage changes takes a new id, so an old base or nightly
 capture of the same id can never be paired with different work."""
 

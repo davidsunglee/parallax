@@ -2,11 +2,11 @@
 
 The report owns the runtime-by-case matrix and the Cost Report Envelope. Each
 reading is taken by ``write_lowering_reading.py`` in an isolated child process:
-the twenty categorical keyed-write cases, the geometry inserts, and the
-changed-ancestor successors through their public verbs and the flush's actual
-driver serialization, the predicate-acquisition families to their buffered
-group, the public Wire insert to the node it answers, and the two
-model-preparation checkpoints.
+the twenty categorical keyed-write cases, the geometry inserts, the
+changed-ancestor successors, and the leaf-type inserts through their public
+verbs and the flush's actual driver serialization, the predicate-acquisition
+families to their buffered group, the public Wire insert to the node it
+answers, and the two model-preparation checkpoints.
 Measurements are observations: only an incomplete matrix changes this
 command's exit status.
 """
@@ -146,6 +146,7 @@ if Path(lowering_support.__file__ or "").resolve() != SUPPORT_MODULE:
 WINDOWS: Final[Mapping[str, str]] = {
     **{case.name: KEYED_WINDOW for case in lowering_support.CASES},
     **{case.name: ACQUISITION_WINDOW for case in acquisition_support.CASES},
+    **{case.name: ACQUISITION_WINDOW for case in acquisition_support.LEAF_CASES},
     **{case.name: RESPONSE_WINDOW for case in lowering_support.RESPONSE_CASES},
     MODEL_CASE: MODEL_WINDOW,
     MODEL_FAMILY_CASE: MODEL_WINDOW,
@@ -159,10 +160,22 @@ CONTROL_CASE_NAMES: Final = (
 )
 """The cases added as before/after controls beside the lowering matrix: the
 public insert response and the family-bearing preparation."""
-LEGACY_CASE_NAMES: Final = tuple(name for name in CASE_NAMES if name not in CONTROL_CASE_NAMES)
+LEAF_TYPE_CASE_NAMES: Final = (
+    *(case.name for case in lowering_support.CASES if case.family == lowering_support.LEAF_FAMILY),
+    *(case.name for case in acquisition_support.LEAF_CASES),
+)
+"""The leaf-type inserts and acquisitions, added after the controls."""
+BEFORE_LEAF_TYPE_CASE_NAMES: Final = tuple(
+    name for name in CASE_NAMES if name not in LEAF_TYPE_CASE_NAMES
+)
+"""The case set captures were taken over before the leaf-type families."""
+LEGACY_CASE_NAMES: Final = tuple(
+    name for name in BEFORE_LEAF_TYPE_CASE_NAMES if name not in CONTROL_CASE_NAMES
+)
 """The case set the retained captures were taken over, before the controls."""
 CASE_COVERAGES: Final[Mapping[str, tuple[str, ...]]] = {
     "current": CASE_NAMES,
+    "before leaf types": BEFORE_LEAF_TYPE_CASE_NAMES,
     "legacy": LEGACY_CASE_NAMES,
 }
 """Every complete case set a write-lowering envelope may carry, by the name a

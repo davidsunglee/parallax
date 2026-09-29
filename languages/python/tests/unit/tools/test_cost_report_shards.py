@@ -49,6 +49,7 @@ from parallax.conformance.budget import BudgetContract
 from snapshot_delivery_overhead import (
     CONTROL_GROUP,
     GEOMETRY_GROUP,
+    LEAF_GROUP,
     PLAN_GROUP,
     selected_addresses,
     workload_names,
@@ -142,9 +143,11 @@ def test_the_plan_splits_snapshot_by_workload_heaviest_first_and_keeps_the_other
         ("snapshot-versioned-document", SNAPSHOT.subject, frozenset({"versioned-document"})),
         ("snapshot-controls", SNAPSHOT.subject, frozenset({CONTROL_GROUP})),
         (
-            "snapshot-geometry-plan-stress",
+            "snapshot-geometry-leaf-plan-stress",
             SNAPSHOT.subject,
-            frozenset({GEOMETRY_GROUP, PLAN_GROUP, "stress-columns", "stress-document"}),
+            frozenset(
+                {GEOMETRY_GROUP, LEAF_GROUP, PLAN_GROUP, "stress-columns", "stress-document"}
+            ),
         ),
         ("lifecycle-overhead", "lifecycle-overhead", None),
         ("instance-state", "instance-state", None),
@@ -176,6 +179,8 @@ def test_the_plan_covers_every_snapshot_address_on_every_supported_minor_exactly
     assert shard_arguments(SHARDS[6]) == [
         cost_report.WORKLOAD_OPTION,
         GEOMETRY_GROUP,
+        cost_report.WORKLOAD_OPTION,
+        LEAF_GROUP,
         cost_report.WORKLOAD_OPTION,
         PLAN_GROUP,
         cost_report.WORKLOAD_OPTION,

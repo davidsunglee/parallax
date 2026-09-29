@@ -2,6 +2,13 @@
 ``updateUntil`` predicate resolved against provider-free rows, under both
 storage layouts, through the public ``tx.wire.update_until_where`` verb.
 
+The acquisition family resolves rows of a small categorical Entity at every
+acquisition level. The leaf-type family resolves rows of each Bitemporal Entity
+:mod:`tests.unit._leaf_type_support` declares, over that module's own model, at
+the levels its manifest names, and assigns each row's root occurrence one it
+does not already hold, so the type's leaves are decoded, compared, and aligned
+row by row.
+
 The window opens immediately before the verb receives the caller's target and
 changes documents, and closes once the Unit of Work has buffered the
 Materialized Write Group: document capture, instruction deserialization and
@@ -32,7 +39,11 @@ from functools import partial
 from typing import Final, Literal, cast
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.conformance.workloads import ACQUISITION_LEVELS, AcquisitionLevel
+from parallax.conformance.workloads import (
+    ACQUISITION_LEVELS,
+    AcquisitionLevel,
+    leaf_acquisition_levels,
+)
 from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
@@ -45,12 +56,15 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.snapshot.handle import Database, ExecutionFailure, ScopedDatabase, Transaction
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
+from tests.unit import _leaf_type_support as leaf_support
 
 __all__ = [
     "ACQUISITION_LEVELS",
     "ASSIGNED_CHANGES",
     "CASES",
     "ENTITY_CLASSES",
+    "LEAF_CASES",
+    "LEAF_CHANGED_KEY",
     "MODEL",
     "AcquisitionPort",
     "Case",
@@ -136,7 +150,12 @@ class Case:
 
 
 ASSIGNED_CHANGES: Final[Mapping[str, object]] = {"title": ASSIGNED_TITLE}
-"""The Wire changes document every case authors: one genuinely changed member."""
+"""The Wire changes document every acquisition family case authors: one
+genuinely changed member."""
+
+LEAF_CHANGED_KEY: Final = 0
+"""The key the root occurrence a leaf-type case assigns is valued at: no
+resolved row's, since rows are keyed from one, so every row genuinely changes."""
 
 
 def _target(cls: type[Entity]) -> Mapping[str, object]:
@@ -174,6 +193,11 @@ def stored_row(layout: Layout, key: int) -> dict[str, object]:
     return {"id": key, **_members(key), **_BOUNDS}
 
 
+def _leaf_milestone(entity: type[Entity], key: int) -> dict[str, object]:
+    """One current milestone of a leaf-type Entity, keyed by physical column."""
+    return {**leaf_support.stored_row(entity, key), **_BOUNDS}
+
+
 CASES: Final[tuple[Case, ...]] = tuple(
     Case(
         f"acquisition.{level.id}.{layout}",
@@ -190,12 +214,32 @@ CASES: Final[tuple[Case, ...]] = tuple(
     for level in ACQUISITION_LEVELS
 )
 
+LEAF_CASES: Final[tuple[Case, ...]] = tuple(
+    Case(
+        f"leaf-acquisition.{leaf.id}.{level.id}.{layout}",
+        layout,
+        cls,
+        level,
+        _target(cls),
+        {"body": leaf_support.body_document(leaf, LEAF_CHANGED_KEY)},
+        leaf_support.MODEL,
+        partial(_leaf_milestone, cls),
+    )
+    for leaf in leaf_support.ACQUIRED_TYPES
+    for level in leaf_acquisition_levels()
+    for layout in LAYOUTS
+    for cls in (leaf_support.acquisition_entity(leaf, layout),)
+)
+"""One acquisition per acquired leaf type, leaf-type level, and layout."""
+
 
 def case_named(name: str) -> Case:
-    for case in CASES:
+    for case in (*CASES, *LEAF_CASES):
         if case.name == name:
             return case
-    raise KeyError(f"{name!r} is not an acquisition case: {[case.name for case in CASES]}")
+    raise KeyError(
+        f"{name!r} is not an acquisition case: {[case.name for case in (*CASES, *LEAF_CASES)]}"
+    )
 
 
 class AcquisitionPort(ConnectsAsItself):

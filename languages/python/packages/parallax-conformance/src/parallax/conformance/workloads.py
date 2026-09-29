@@ -22,6 +22,10 @@ __all__ = [
     "ACQUISITION_LEVELS",
     "ANCESTOR_LEVEL_IDS",
     "GEOMETRY_LEVELS",
+    "LEAF_ACQUISITION_LEVEL_IDS",
+    "LEAF_CONTROL_TYPE_ID",
+    "LEAF_TYPE_IDS",
+    "LEAF_TYPE_LEVEL_ID",
     "PLAN_LEVEL_IDS",
     "READ_GEOMETRY_ROOTS",
     "STRUCTURAL_LAYOUTS",
@@ -31,6 +35,9 @@ __all__ = [
     "Workload",
     "ancestor_levels",
     "catalog",
+    "leaf_acquisition_levels",
+    "leaf_type_digest",
+    "leaf_type_level",
     "plan_levels",
     "structural_digest",
     "workload_digest",
@@ -140,6 +147,44 @@ def structural_digest() -> str:
         "ancestor": list(ANCESTOR_LEVEL_IDS),
         "plan": list(PLAN_LEVEL_IDS),
         "acquisition": [asdict(level) for level in ACQUISITION_LEVELS],
+    }
+    return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+LEAF_TYPE_IDS: Final[tuple[str, ...]] = ("float64",)
+"""The declarable Neutral Types the leaf-type families measure, each against
+:data:`LEAF_CONTROL_TYPE_ID`, in report order."""
+
+LEAF_CONTROL_TYPE_ID: Final = "string"
+"""The leaf type every measured type is read against: the geometry families'
+own leaf type, valued as they value it."""
+
+LEAF_TYPE_LEVEL_ID: Final = "width-64"
+"""The geometry level every leaf type is measured at: one root occurrence and
+its Many elements, every declared leaf of the measured type and populated."""
+
+LEAF_ACQUISITION_LEVEL_IDS: Final[tuple[str, ...]] = ("rows-32",)
+"""The acquisition row counts the leaf-type predicate acquisition resolves."""
+
+
+def leaf_type_level() -> GeometryLevel:
+    """The geometry level the leaf-type families measure."""
+    return next(level for level in GEOMETRY_LEVELS if level.id == LEAF_TYPE_LEVEL_ID)
+
+
+def leaf_acquisition_levels() -> tuple[AcquisitionLevel, ...]:
+    """Every acquisition level the leaf-type predicate acquisition resolves."""
+    by_id = {level.id: level for level in ACQUISITION_LEVELS}
+    return tuple(by_id[level_id] for level_id in LEAF_ACQUISITION_LEVEL_IDS)
+
+
+def leaf_type_digest() -> str:
+    """The SHA-256 digest of the leaf-type families' frozen identity."""
+    manifest = {
+        "types": list(LEAF_TYPE_IDS),
+        "control": LEAF_CONTROL_TYPE_ID,
+        "level": asdict(leaf_type_level()),
+        "acquisition": [asdict(level) for level in leaf_acquisition_levels()],
     }
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -396,6 +441,7 @@ def workload_digest(workloads: Mapping[str, Workload] | None = None) -> str:
         digest.update(workload.model_path.read_bytes())
         digest.update(b"\0")
     digest.update(structural_digest().encode("utf-8"))
+    digest.update(leaf_type_digest().encode("utf-8"))
     return digest.hexdigest()
 
 

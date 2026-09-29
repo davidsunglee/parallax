@@ -115,6 +115,7 @@ subtree, and an unchanged successor returns neither."""
 WINDOWS: Final[Mapping[str, Window]] = {
     **{case.name: KEYED_WINDOW for case in lowering_support.CASES},
     **{case.name: ACQUISITION_WINDOW for case in acquisition_support.CASES},
+    **{case.name: ACQUISITION_WINDOW for case in acquisition_support.LEAF_CASES},
     **{case.name: RESPONSE_WINDOW for case in lowering_support.RESPONSE_CASES},
     MODEL_CASE: MODEL_WINDOW,
     MODEL_FAMILY_CASE: MODEL_WINDOW,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Mapping
+from decimal import Decimal
 from inspect import signature
 from types import SimpleNamespace
 from typing import Any, cast
@@ -21,13 +22,17 @@ from snapshot_delivery_reading import (
     _control,  # pyright: ignore[reportPrivateUsage] - the control readings are under test
     _geometry,  # pyright: ignore[reportPrivateUsage] - the geometry reading is under test
     _last_streamed,  # pyright: ignore[reportPrivateUsage] - drain protocol is under test
+    _leaf_read,  # pyright: ignore[reportPrivateUsage] - the leaf-type reading is under test
     _plan,  # pyright: ignore[reportPrivateUsage] - the plan reading is under test
     _timed,  # pyright: ignore[reportPrivateUsage] - sampling protocol is under test
     geometry_address,
+    leaf_address,
     plan_address,
 )
 from tests._support.root_ownership import own_root
 from tests.unit import _delivery_control_support as control_support
+from tests.unit import _leaf_type_support as leaf_support
+from tests.unit import _structural_geometry_support as geometry_support
 from tests.unit.memory_instruments import in_a_child_interpreter, retained, serve_one_measurement
 
 
@@ -150,6 +155,67 @@ def test_a_geometry_level_reads_every_metric_over_a_provider_free_find() -> None
     level = GEOMETRY_LEVELS[0]
     for metric in GEOMETRY_METRICS:
         value, reading_unit, samples = _geometry(level, "columns", metric, warmups=1, measured=2)
+        assert value > 0
+        assert reading_unit == ("us/root" if metric == "elapsedUsPerRoot" else "KiB")
+        assert len(samples) == (2 if metric == "elapsedUsPerRoot" else 1)
+
+
+def test_leaf_addresses_name_a_measured_type_layout_and_metric() -> None:
+    measured = leaf_support.MEASURED_TYPES[0]
+    leaf, layout, metric = (
+        leaf_address(leaf_support.read_workload(measured), "document.retainedKiB") or (None,) * 3
+    )
+    assert leaf is measured
+    assert (layout, metric) == ("document", "retainedKiB")
+    assert leaf_address("read-width-64", "columns.peakKiB") is None
+    with pytest.raises(KeyError, match="not a measured leaf-type read"):
+        leaf_address(leaf_support.read_workload(leaf_support.CONTROL), "columns.peakKiB")
+    with pytest.raises(KeyError):
+        leaf_address("leaf-unknown", "columns.peakKiB")
+    with pytest.raises(ValueError, match="not a leaf-type read address"):
+        leaf_address(leaf_support.read_workload(measured), "columns.elapsedUs")
+
+
+def test_a_leaf_type_read_publishes_every_stored_leaf_as_its_wire_spelling() -> None:
+    for leaf in leaf_support.MEASURED_TYPES:
+        for layout in leaf_support.LAYOUTS:
+            port = leaf_support.LeafPort(leaf_support.entity_class(leaf, layout), 2)
+            root = own_root(Database(port.open(), leaf_support.MODEL))
+            results = root.using_database_login().wire.find(leaf_support.read_query(leaf, layout))
+            assert [dict(node) for node in results.results()] == [
+                leaf_support.wire_row(leaf, key) for key in (1, 2)
+            ], (leaf.id, layout)
+
+
+def test_float64_leaves_are_inexact_decimal_tenths_of_a_short_spelling() -> None:
+    float64 = leaf_support.leaf_type_named("float64")
+    values = [
+        float64.typed(index, key)
+        for key in (1, leaf_support.LEVEL.many + 32)
+        for index in range(leaf_support.LEVEL.width)
+    ]
+    assert len(set(values)) == len(values)
+    for value in values:
+        assert isinstance(value, float)
+        spelled = repr(value)
+        assert len(spelled.partition(".")[2]) == 1 and spelled[-1] not in "05", spelled
+        assert Decimal(value) != Decimal(spelled), spelled
+
+
+def test_the_string_control_is_the_geometry_level_it_is_measured_at() -> None:
+    level = leaf_support.LEVEL
+    for layout in leaf_support.LAYOUTS:
+        assert leaf_support.stored_row(
+            leaf_support.entity_class(leaf_support.CONTROL, layout), 7
+        ) == geometry_support.stored_row(level, layout, 7)
+        assert leaf_support.wire_row(leaf_support.CONTROL, 7) == geometry_support.wire_row(level, 7)
+
+
+@in_a_child_interpreter
+def test_a_leaf_type_reads_every_metric_over_a_provider_free_find() -> None:
+    leaf = leaf_support.MEASURED_TYPES[0]
+    for metric in GEOMETRY_METRICS:
+        value, reading_unit, samples = _leaf_read(leaf, "document", metric, warmups=1, measured=2)
         assert value > 0
         assert reading_unit == ("us/root" if metric == "elapsedUsPerRoot" else "KiB")
         assert len(samples) == (2 if metric == "elapsedUsPerRoot" else 1)

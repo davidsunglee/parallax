@@ -4,16 +4,16 @@ The report expands work from the contract, takes every quantitative reading in
 ``snapshot_delivery_reading.py`` children on every supported CPython minor, and
 emits one Cost Report Envelope. The contract's ceilings are compared on the
 runtime its authority fingerprint names; every other runtime's readings are
-evidence beside them. The provider-free geometry read families are read the
-same way and compared against nothing. Budget outcomes are observations: an
-outside reading never changes this command's exit status. Missing or malformed
-readings are explicit incompleteness and errors.
+evidence beside them. The provider-free geometry and leaf-type read families
+are read the same way and compared against nothing. Budget outcomes are
+observations: an outside reading never changes this command's exit status.
+Missing or malformed readings are explicit incompleteness and errors.
 
 ``--workload`` narrows the evidence path to named contract workloads and the
-``geometry``, ``plan``, and ``control`` groups: the envelope keeps full
-provenance and completeness is judged over the addresses selected, so a slice
-of the matrix is evidence about that slice, never a diagnostic promoted to
-evidence.
+``geometry``, ``leaf``, ``plan``, and ``control`` groups: the envelope keeps
+full provenance and completeness is judged over the addresses selected, so a
+slice of the matrix is evidence about that slice, never a diagnostic promoted
+to evidence.
 
 The ``control`` group is the before/after control matrix
 ``tests/unit/_delivery_control_support.py`` spells: unprojected Typed delivery
@@ -23,6 +23,12 @@ delivered through both lanes at two root counts, and one eager Typed result held
 while its model is shared and after its root has closed. It joins the exact
 matrix a complete envelope carries; a capture taken before the group existed
 remains exact without it.
+
+The ``leaf`` group reads each measured leaf type of
+``tests/unit/_leaf_type_support.py`` at the geometry level the leaf-type
+manifest names, whose geometry read is its String control. It joins the exact
+matrix as well; a capture taken before the leaf-type families existed remains
+exact without them.
 """
 
 from __future__ import annotations
@@ -74,17 +80,19 @@ from parallax.conformance.workloads import (
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "snapshot_delivery_reading.py"
 CONTROL_MODULE: Final = WORKSPACE / "tests" / "unit" / "_delivery_control_support.py"
+LEAF_MODULE: Final = WORKSPACE / "tests" / "unit" / "_leaf_type_support.py"
 sys.path.insert(0, str(WORKSPACE))
 
-# `sys.path` gains the workspace above, so this import cannot precede it; that is
-# what the E402 suppression records.
+# `sys.path` gains the workspace above, so these imports cannot precede it; that is
+# what the E402 suppression each one carries records.
 from tests.unit import _delivery_control_support as control_support  # noqa: E402
+from tests.unit import _leaf_type_support as leaf_support  # noqa: E402
 
-if Path(control_support.__file__ or "").resolve() != CONTROL_MODULE:
-    raise ImportError(
-        f"this report expands controls from {CONTROL_MODULE}, but "
-        f"'_delivery_control_support' resolved to {control_support.__file__}"
-    )
+for module, expected_file in ((control_support, CONTROL_MODULE), (leaf_support, LEAF_MODULE)):
+    if Path(module.__file__ or "").resolve() != expected_file:
+        raise ImportError(
+            f"this report expands its matrix from {expected_file}, but resolved {module.__file__}"
+        )
 
 SUBJECT: Final = "snapshot-delivery"
 ENVIRONMENT_NAMESPACE: Final = "snapshot-delivery"
@@ -92,6 +100,7 @@ GEOMETRY_METRICS: Final = ("elapsedUsPerRoot", "peakKiB", "retainedKiB")
 PLAN_METRICS: Final = ("elapsedUs", "peakKiB", "retainedKiB")
 GEOMETRY_PREFIX: Final = "read-"
 PLAN_PREFIX: Final = "plan-"
+LEAF_PREFIX: Final = leaf_support.READ_PREFIX
 CONTROL_PREFIX: Final = control_support.CONTROL_PREFIX
 LIVE_WINDOW: Final = "live-delivery"
 PROVIDER_FREE_WINDOW: Final = "provider-free-delivery"
@@ -164,7 +173,8 @@ class ChildReading:
 
 @dataclass(frozen=True, slots=True)
 class GeometryCell:
-    """One provider-free geometry read address: a level's read under one layout."""
+    """One address outside the Budget Contract: a geometry, leaf-type, plan, or
+    control workload's cell."""
 
     workload: str
     path: str
@@ -186,6 +196,16 @@ def geometry_cells() -> tuple[GeometryCell, ...]:
     return tuple(
         GeometryCell(f"{GEOMETRY_PREFIX}{level.id}", f"{layout}.{metric}")
         for level in GEOMETRY_LEVELS
+        for layout in STRUCTURAL_LAYOUTS
+        for metric in GEOMETRY_METRICS
+    )
+
+
+def leaf_cells() -> tuple[GeometryCell, ...]:
+    """Every leaf-type read address, in type then layout then metric order."""
+    return tuple(
+        GeometryCell(leaf_support.read_workload(leaf), f"{layout}.{metric}")
+        for leaf in leaf_support.MEASURED_TYPES
         for layout in STRUCTURAL_LAYOUTS
         for metric in GEOMETRY_METRICS
     )
@@ -413,14 +433,20 @@ def _reading(
 
 
 def addresses(
-    contract: BudgetContract, runtimes: Sequence[str], *, controls: bool = True
+    contract: BudgetContract,
+    runtimes: Sequence[str],
+    *,
+    controls: bool = True,
+    leaf_types: bool = True,
 ) -> tuple[Address, ...]:
     """Every (runtime, workload, cell) address a complete envelope carries;
-    without ``controls``, the matrix a capture taken before the control group
-    existed carries."""
+    without ``leaf_types``, the matrix a capture taken before the leaf-type
+    reads existed carries, and without ``controls`` as well, the one taken
+    before the control group existed."""
     cells = (
         *expanded_cells(contract),
         *geometry_cells(),
+        *(leaf_cells() if leaf_types else ()),
         *plan_cells(),
         *(control_cells(contract) if controls else ()),
     )
@@ -433,11 +459,12 @@ def selected_addresses(
     selected: Selection,
     *,
     controls: bool = True,
+    leaf_types: bool = True,
 ) -> tuple[Address, ...]:
     """The addresses among :func:`addresses` that ``selected`` keeps."""
     return tuple(
         address
-        for address in addresses(contract, runtimes, controls=controls)
+        for address in addresses(contract, runtimes, controls=controls, leaf_types=leaf_types)
         if selected(address[1], address[2])
     )
 
@@ -578,22 +605,23 @@ def every_cell(_workload: str, _path: str) -> bool:
 
 
 GEOMETRY_GROUP: Final = "geometry"
+LEAF_GROUP: Final = leaf_support.READ_GROUP
 PLAN_GROUP: Final = "plan"
 CONTROL_GROUP: Final = control_support.CONTROL_GROUP
-WORKLOAD_GROUPS: Final = (GEOMETRY_GROUP, PLAN_GROUP, CONTROL_GROUP)
+WORKLOAD_GROUPS: Final = (GEOMETRY_GROUP, LEAF_GROUP, PLAN_GROUP, CONTROL_GROUP)
 
 
 def workload_names(contract: BudgetContract) -> tuple[str, ...]:
     """Every name ``--workload`` accepts: the contract's workload ids, then the
-    three groups of cells outside the contract."""
+    groups of cells outside the contract."""
     return (*contract.workload_ids, *WORKLOAD_GROUPS)
 
 
 def workload_selection(names: Iterable[str], contract: BudgetContract | None = None) -> Selection:
     """The addresses the exact workload ``names`` cover: a contract workload id
-    selects its cells, ``geometry``, ``plan``, and ``control`` select the groups
-    outside the contract, and no name at all selects every cell. An unknown
-    name is a ``ValueError`` before any work starts."""
+    selects its cells, ``geometry``, ``leaf``, ``plan``, and ``control`` select
+    the groups outside the contract, and no name at all selects every cell. An
+    unknown name is a ``ValueError`` before any work starts."""
     active = contract if contract is not None else BudgetContract.load()
     known = workload_names(active)
     chosen = frozenset(names)
@@ -606,6 +634,8 @@ def workload_selection(names: Iterable[str], contract: BudgetContract | None = N
     def selected(workload: str, _path: str) -> bool:
         if workload.startswith(GEOMETRY_PREFIX):
             return GEOMETRY_GROUP in chosen
+        if workload.startswith(LEAF_PREFIX):
+            return LEAF_GROUP in chosen
         if workload.startswith(PLAN_PREFIX):
             return PLAN_GROUP in chosen
         if workload.startswith(CONTROL_PREFIX):
@@ -644,6 +674,7 @@ def _measure_runtime(
             )
     for group, group_cells in (
         (GEOMETRY_GROUP, geometry_cells()),
+        (LEAF_GROUP, leaf_cells()),
         (PLAN_GROUP, plan_cells()),
         (CONTROL_GROUP, control_cells(contract)),
     ):
@@ -820,7 +851,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--workload",
         action="append",
         default=[],
-        help="an exact contract workload id, or the geometry or plan group, to measure as evidence",
+        help=(
+            "an exact contract workload id, or the geometry, leaf, plan, or control group, "
+            "to measure as evidence"
+        ),
     )
     parser.add_argument(
         "--durations", type=Path, help="where the harness writes its spans; not evidence"

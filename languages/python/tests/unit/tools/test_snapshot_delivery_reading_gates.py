@@ -1,11 +1,11 @@
 """The memory gates over the structural read windows, and what they can see.
 
 `spec/memory-gates.yaml` holds one blocking ceiling per retained page and per
-high-water mark of every provider-free geometry read, under both layouts, and
-per retained entry and high-water mark of every cold read-plan compilation,
-derived from the retained capture the file names as its basis. Each family
-below reads its levels through the same child the report measures with — the
-geometry, plan, and guarded cold-plan readings of
+high-water mark of every provider-free geometry and leaf-type read, under both
+layouts, and per retained entry and high-water mark of every cold read-plan
+compilation, derived from the retained capture the file names as its basis.
+Each family below reads its levels through the same child the report measures
+with — the geometry, leaf-type, plan, and guarded cold-plan readings of
 :mod:`snapshot_delivery_reading`, the identical port, roots, cache capacity, and
 warm-ups — and grades the peak and retained readings against their gates.
 
@@ -43,8 +43,10 @@ from snapshot_delivery_reading import (
     ColdPlan,
     _cold_plan,  # pyright: ignore[reportPrivateUsage] - the cold-plan reading is what the gate grades
     _geometry,  # pyright: ignore[reportPrivateUsage] - the geometry reading is what the gate grades
+    _leaf_read,  # pyright: ignore[reportPrivateUsage] - the leaf-type reading is what the gate grades
     _plan,  # pyright: ignore[reportPrivateUsage] - the plan reading is what the gate grades
     geometry_address,
+    leaf_address,
     plan_address,
 )
 from tests.unit import _delivery_control_support as control_support
@@ -71,15 +73,22 @@ level whose rows are widest."""
 def _read(workload: str, cell: str) -> float:
     """One gated reading at ``workload.cell``, through the reading the report takes.
 
-    A geometry or plan address names its layout in the cell; a guarded cold-plan
-    address names none, so it is resolved by the control support the report
-    parses it with and read through the same cold-plan child.
+    A geometry, leaf-type, or plan address names its layout in the cell; a
+    guarded cold-plan address names none, so it is resolved by the control
+    support the report parses it with and read through the same cold-plan child.
     """
     geometry = geometry_address(workload, cell)
     if geometry is not None:
         level, layout, metric = geometry
         value, _unit, _samples = _geometry(
             level, layout, metric, warmups=WARMUPS, measured=MEASURED
+        )
+        return value
+    leaf = leaf_address(workload, cell)
+    if leaf is not None:
+        leaf_type, layout, metric = leaf
+        value, _unit, _samples = _leaf_read(
+            leaf_type, layout, metric, warmups=WARMUPS, measured=MEASURED
         )
         return value
     plan = plan_address(workload, cell)
@@ -187,6 +196,11 @@ def test_the_width_and_sparse_reads_stay_within_their_memory_gates() -> None:
     _within_gates(
         gate_support.owner_of(test_the_width_and_sparse_reads_stay_within_their_memory_gates)
     )
+
+
+@in_a_child_interpreter
+def test_the_leaf_type_reads_stay_within_their_memory_gates() -> None:
+    _within_gates(gate_support.owner_of(test_the_leaf_type_reads_stay_within_their_memory_gates))
 
 
 @in_a_child_interpreter
