@@ -14,7 +14,6 @@ from parallax.core.temporal_read import Pin
 from parallax.snapshot import Snapshot
 from parallax.snapshot.materialize import WireEntity
 from parallax.snapshot.materialize import _wire as wire_materialize
-from tests._support.model_capabilities import cataloged_for
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._instance_state_support import COMPACT, SCENARIOS, Scenario
 from tests.unit.memory_instruments import (
@@ -26,14 +25,15 @@ from tests.unit.memory_instruments import (
 
 
 def _snapshot(scenario: Scenario, count: int = 1) -> Snapshot[Any]:
-    model = cataloged_for(scenario.model)
     includes = build_include_tree(
         queried=scenario.entity,
         root=(scenario.entity,),
         positions=(),
     )
     roots = COMPACT.graph(scenario, count)
-    return Snapshot(cast("tuple[Any, ...]", roots), Pin(), "retention", includes, model)
+    return Snapshot(
+        cast("tuple[Any, ...]", roots), Pin(), "retention", includes, scenario.construction
+    )
 
 
 @in_a_child_interpreter

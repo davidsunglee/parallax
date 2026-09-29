@@ -77,6 +77,7 @@ from parallax.snapshot.materialize._publication import publication_issue
 from parallax.snapshot.materialize._root import _member_order  # pyright: ignore[reportPrivateUsage]
 from parallax.snapshot.materialize._wire import EntityReader
 from tests._support import snapshot_models as sm
+from tests._support.model_capabilities import graph_construction_for
 from tests._support.sql import compile_read
 from tests.unit.snapshot._snapshot_page_support import PageFixture, invalid_record
 
@@ -718,7 +719,7 @@ def test_a_narrowed_view_is_independent_of_the_broad_relationship() -> None:
     assert is_view_loaded(root, path) is True
     narrowed = cast("tuple[object, ...]", view(root, path))
     assert type(narrowed[0]) is sm.Dog
-    reader = EntityReader(CatalogedModel(model_of(_ANIMAL)))
+    reader = EntityReader(graph_construction_for(_ANIMAL))
     assert (
         reader.relationship(
             root,

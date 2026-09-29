@@ -173,9 +173,9 @@ class Snapshot[T]:
     ``__repr__``. Deliberately ABSENT: iteration / ``len`` / truthiness /
     indexing on the container, refresh or write methods, any lazy
     behavior, and every lifecycle accessor. A Typed result retains the request's
-    canonical finite include shape and accepted model so :meth:`wire` can publish
-    the value in memory; it retains no execution scope, Page, Root View,
-    connection, authority, or other lifecycle of the read.
+    canonical finite include shape and the graph construction that published it
+    so :meth:`wire` can publish the value in memory; it retains no execution
+    scope, Page, Root View, connection, authority, or other lifecycle of the read.
 
     A root whose stored state contradicted the model is held as its
     :class:`~parallax.snapshot.materialize.InvalidData` record. The accessors
@@ -187,14 +187,14 @@ class Snapshot[T]:
     union is partitioned with ordinary collection operations.
     """
 
-    __slots__ = ("_edition", "_includes", "_invalid", "_pin", "_projection_model", "_roots")
+    __slots__ = ("_construction", "_edition", "_includes", "_invalid", "_pin", "_roots")
 
     _roots: tuple[T | InvalidData[T], ...]
     _invalid: tuple[InvalidData[object], ...]
     _pin: Pin
     _edition: str
     _includes: deep_fetch.IncludeTree | None
-    _projection_model: CatalogedModel | EntityGraphConstruction | None
+    _construction: EntityGraphConstruction | None
 
     def __init__(
         self,
@@ -202,14 +202,14 @@ class Snapshot[T]:
         pin: Pin,
         edition: str,
         includes: deep_fetch.IncludeTree | None = None,
-        projection_model: CatalogedModel | EntityGraphConstruction | None = None,
+        construction: EntityGraphConstruction | None = None,
     ) -> None:
         self._roots = roots
         self._invalid = _invalid_records(roots)
         self._pin = pin
         self._edition = edition
         self._includes = includes
-        self._projection_model = projection_model
+        self._construction = construction
 
     def result(self) -> T:
         """The single matched root; raises on zero, on more than one, and on
@@ -269,7 +269,7 @@ class Snapshot[T]:
         at: RelationshipPath[Entity, Any] | object | None = _WIRE_AT_OMITTED,
     ) -> Snapshot[WireEntity] | WireEntity | InvalidData[WireEntity]:
         """Publish this Typed result, or one eligible node, in canonical Wire form."""
-        projection = self._projection_model
+        projection = self._construction
         includes = self._includes
         if projection is None or includes is None:
             raise SnapshotInspectionError(
@@ -333,7 +333,7 @@ class Snapshot[T]:
 
 def _require_projection_inputs(
     values: tuple[object, ...],
-    projection: CatalogedModel | EntityGraphConstruction,
+    projection: EntityGraphConstruction,
     *,
     operation: str = "Snapshot.wire",
 ) -> EntityReader:
@@ -414,7 +414,7 @@ def wire_position(
 def _project_eager_values(
     values: tuple[object, ...],
     includes: deep_fetch.IncludeTree,
-    projection: CatalogedModel | EntityGraphConstruction,
+    projection: EntityGraphConstruction,
     position: deep_fetch.PositionId,
     *,
     reader: EntityReader | None = None,
