@@ -62,7 +62,7 @@ instrument-access checker requires the boundary on every test that calls a
 whole-interpreter reader directly; any other route fails at run time, because
 each reader refuses a process the boundary did not start. Likewise the runner
 refuses an in-process open of committed evidence by an item that did not request
-its fixture; a child process the item spawns is outside that refusal.
+its fixture.
 A test grading the cost tooling over synthetic portfolios supplies its own gates
 rather than reading the committed ones.
 

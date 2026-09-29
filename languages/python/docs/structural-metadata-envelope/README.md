@@ -14,17 +14,19 @@ after/portfolio.json`, which *After capture* below reads, and
 renderings of `recovered/` against each, which *Recovered capture* reads.
 
 The portfolio under `recovered/` is the repository's canonical current cost
-portfolio: `just python-check-evidence` verifies it from any clone, recomputing
-each member's digests from the committed inputs, and exits non-zero if it does
-not verify; the memory gates are derived from it. `before/` is retained
+portfolio: `just python-check-evidence` verifies its two required members,
+Snapshot delivery and write-lowering, from any clone, recomputing their workload
+and Budget Contract digests from the committed inputs, and exits non-zero if they
+do not verify; the memory gates are derived from it. Its other members are
+verified only when `--require-member` names them. `before/` is retained
 unchanged as the recovery reference and `after/` as the fixed regression
-baseline; both are comparison bases and are verified whole alongside the
-canonical portfolio. Every check of this evidence is in the cost class, which CI
-runs on every change and `just check` omits. Only `recovered/` carries
-the `conditions.json` and `durations.json` sidecars the collector writes beside
-a capture; `before/` and `after/` predate both writers and carry neither, which
-is why `--require-compatible` reaches no source digest or interpreter identity
-against them. The historical captures under
+baseline; both are comparison bases rather than verification inputs, held to
+their original provenance by the cost class. Every check of this evidence is in
+the cost class, which CI runs on every change and `just check` omits. Only
+`recovered/` carries the `conditions.json` and `durations.json` sidecars the
+collector writes beside a capture; `before/` and `after/` predate both writers
+and carry neither, which is why `--require-compatible` reaches no source digest
+or interpreter identity against them. The historical captures under
 `../write-lowering-envelope/` and `../snapshot-delivery-envelope/` keep their
 original names, protocols, and producing commits; nothing here is compared
 against them, because their write window stopped at `LoweredStatement` and their
@@ -54,9 +56,9 @@ delta near either allowance is therefore weak evidence on its own.
 `cost_report.py --verify` fails only for evidence that is not evidence: a
 missing, malformed, or incomplete required member, a Snapshot delivery member
 that is not authoritative, a capture taken from a dirty tree, a stale workload
-digest, or members produced at different commits. The write-lowering member is
-`non-authoritative` because its sampling protocol is its own, and verification
-accepts it so. Everything else it has to say is an advisory line, printed and
+or Budget Contract digest, or members produced at different commits. The
+write-lowering member is `non-authoritative` because its sampling protocol is
+its own, and verification accepts it so. Everything else it has to say is an advisory line, printed and
 never an exit status: a timing or memory ceiling exceeded, a streamed-memory arm
 grown past its limit, a `uv.lock` that moved since the capture, and a producing
 commit the inspected head no longer descends from. `--freshness-only` reports a

@@ -23,8 +23,7 @@ process, so what is checked here is what that refusal rests on: the fixture the
 evidence module names must exist, the gates it names must be the file the memory
 gates load from, and its capture pattern must hold the canonical portfolio the
 verifier reads. An evidence location that moved would otherwise leave the
-refusal guarding nothing. A child process is outside the refusal;
-``tests/_support/committed_evidence.py`` records why.
+refusal guarding nothing.
 
 Usage
 -----
