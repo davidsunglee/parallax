@@ -417,7 +417,7 @@ def test_the_workload_digest_covers_every_defining_source(monkeypatch: pytest.Mo
     with monkeypatch.context() as patched:
         patched.setattr(workloads, "READ_GEOMETRY_ROOTS", workloads.READ_GEOMETRY_ROOTS + 1)
         assert lowering_support.write_lowering_digest() != digest
-    monkeypatch.setattr(workloads, "LEAF_ACQUISITION_LEVEL_IDS", ("rows-8",))
+    monkeypatch.setattr(workloads, "LEAF_TYPE_RUNTIMES", 2)
     assert lowering_support.write_lowering_digest() != digest
 
 
@@ -650,6 +650,9 @@ def test_durations_time_every_child_without_changing_the_matrix_or_the_stdout_en
     assert report.main([]) == 0
     plain = capsys.readouterr()
     plain_order = list(asked)
+    assert {runtime for runtime, case in plain_order if case in report.LEAF_TYPE_CASE_NAMES} == {
+        "3.14"
+    }
     asked.clear()
     sidecar = tmp_path / "durations.json"
     assert report.main(["--durations", str(sidecar)]) == 0
@@ -845,3 +848,14 @@ def test_the_leaf_type_cases_are_the_difference_between_the_two_latest_case_cove
     assert {case for _runtime, case, _cell in current - before_leaf_types} == set(
         report.LEAF_TYPE_CASE_NAMES
     )
+
+
+def test_the_leaf_type_cases_are_read_on_the_newest_supported_minor_alone() -> None:
+    oldest, newest = supported_minors()
+    assert report.runtime_cases(newest) == report.CASE_NAMES
+    assert report.runtime_cases(oldest) == report.BEFORE_LEAF_TYPE_CASE_NAMES
+    assert {
+        runtime
+        for runtime, case, _cell in report.expected_addresses((oldest, newest))
+        if case in report.LEAF_TYPE_CASE_NAMES
+    } == {newest}

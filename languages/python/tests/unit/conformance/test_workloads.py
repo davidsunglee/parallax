@@ -17,6 +17,7 @@ from parallax.conformance.workloads import (
     LEAF_CONTROL_TYPE_ID,
     LEAF_TYPE_IDS,
     LEAF_TYPE_LEVEL_ID,
+    LEAF_TYPE_RUNTIMES,
     AcquisitionLevel,
     GeometryLevel,
     Workload,
@@ -25,6 +26,7 @@ from parallax.conformance.workloads import (
     leaf_acquisition_levels,
     leaf_type_digest,
     leaf_type_level,
+    leaf_type_runtimes,
     plan_levels,
     structural_digest,
     workload_digest,
@@ -167,13 +169,20 @@ def test_the_leaf_types_are_measured_at_one_frozen_level_against_their_control()
     assert set(leaf_acquisition_levels()) <= set(ACQUISITION_LEVELS)
 
 
+def test_the_leaf_types_are_measured_on_the_newest_supported_minor_alone() -> None:
+    assert LEAF_TYPE_RUNTIMES == 1
+    assert leaf_type_runtimes(("3.13", "3.14")) == ("3.14",)
+    assert leaf_type_runtimes(("3.14", "3.9", "3.13")) == ("3.14",)
+
+
 @pytest.mark.parametrize(
     ("name", "value"),
     [
         ("LEAF_TYPE_IDS", ("float64", "float32")),
         ("LEAF_CONTROL_TYPE_ID", "bytes"),
         ("LEAF_TYPE_LEVEL_ID", "width-16"),
-        ("LEAF_ACQUISITION_LEVEL_IDS", ("rows-8",)),
+        ("LEAF_ACQUISITION_LEVEL_IDS", ("rows-32",)),
+        ("LEAF_TYPE_RUNTIMES", 2),
     ],
 )
 def test_the_workload_digest_covers_the_leaf_type_manifest_apart_from_the_structural_one(

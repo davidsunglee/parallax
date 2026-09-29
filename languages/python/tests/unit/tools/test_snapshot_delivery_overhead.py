@@ -116,14 +116,16 @@ def test_leaf_cells_read_every_measured_leaf_type_as_a_geometry_read_is_read() -
 def test_addresses_cross_every_runtime_with_contract_and_geometry_cells() -> None:
     contract = BudgetContract.load()
     expected = addresses(contract, ("3.13", "3.14"))
-    assert len(expected) == 2 * (
+    assert len(expected) == len(leaf_cells()) + 2 * (
         len(expanded_cells(contract))
         + len(geometry_cells())
-        + len(leaf_cells())
         + len(plan_cells())
         + len(control_cells(contract))
     )
     assert len(set(expected)) == len(expected)
+    assert {
+        runtime for runtime, workload, _cell in expected if workload.startswith(report.LEAF_PREFIX)
+    } == {"3.14"}
     before_leaf_types = addresses(contract, ("3.13", "3.14"), leaf_types=False)
     assert set(before_leaf_types) == set(expected) - {
         address for address in expected if address[1].startswith(report.LEAF_PREFIX)
@@ -340,7 +342,7 @@ def test_snapshot_spans_cover_every_workload_and_group_on_every_runtime_with_pro
         for name in (
             *contract.workload_ids,
             GEOMETRY_GROUP,
-            LEAF_GROUP,
+            *((LEAF_GROUP,) if runtime == "3.14" else ()),
             PLAN_GROUP,
             CONTROL_GROUP,
         )

@@ -6,7 +6,8 @@ the twenty categorical keyed-write cases, the geometry inserts, the
 changed-ancestor successors, and the leaf-type inserts through their public
 verbs and the flush's actual driver serialization, the predicate-acquisition
 families to their buffered group, the public Wire insert to the node it
-answers, and the two model-preparation checkpoints.
+answers, and the two model-preparation checkpoints. The leaf-type cases are
+read only on the supported minors the leaf-type manifest scopes them to.
 Measurements are observations: only an incomplete matrix changes this
 command's exit status.
 """
@@ -46,6 +47,7 @@ from parallax.conformance.cost_envelope import (
     classify_authority,
     validate,
 )
+from parallax.conformance.workloads import leaf_type_runtimes
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "write_lowering_reading.py"
@@ -181,6 +183,14 @@ CASE_COVERAGES: Final[Mapping[str, tuple[str, ...]]] = {
 """Every complete case set a write-lowering envelope may carry, by the name a
 validation failure reports it under; a matrix is exact under one whole case
 set and one whole counter vocabulary."""
+
+
+def runtime_cases(runtime: str, case_names: Sequence[str] = CASE_NAMES) -> tuple[str, ...]:
+    """The cases among ``case_names`` read on ``runtime``: the leaf-type cases
+    only on the supported minors the leaf-type manifest scopes them to."""
+    if runtime in leaf_type_runtimes(supported_minors()):
+        return tuple(case_names)
+    return tuple(case for case in case_names if case not in LEAF_TYPE_CASE_NAMES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,15 +336,15 @@ def missing_cells(matrix: Matrix, runtimes: Sequence[str], cases: Sequence[str])
     absent: list[str] = []
     for runtime in runtimes:
         cells = matrix.get(runtime, {})
-        for case in cases:
+        for case in runtime_cases(runtime, cases):
             cell = cells.get(case, "no child was run")
             if isinstance(cell, str):
                 absent.append(f"CPython {runtime}, {case}: {cell}")
     return absent
 
 
-def _complete(cells: Mapping[str, Cell]) -> tuple[ChildReading, ...]:
-    readings = tuple(cells.get(case) for case in CASE_NAMES)
+def _complete(runtime: str, cells: Mapping[str, Cell]) -> tuple[ChildReading, ...]:
+    readings = tuple(cells.get(case) for case in runtime_cases(runtime))
     if not all(isinstance(reading, ChildReading) for reading in readings):
         raise ValueError("the write-lowering matrix is incomplete")
     return cast("tuple[ChildReading, ...]", readings)
@@ -393,7 +403,7 @@ def expected_addresses(
     ``case_names`` carries whose keyed-write cases count ``call_names``."""
     addresses: set[tuple[str, str, str]] = set()
     for runtime in runtimes:
-        for case in case_names:
+        for case in runtime_cases(runtime, case_names):
             addresses.update((runtime, case, metric) for metric in METRICS)
             if WINDOWS[case] == KEYED_WINDOW:
                 addresses.update((runtime, case, f"calls.{name}") for name in call_names)
@@ -408,7 +418,7 @@ def build_envelope(
     """Build and validate the complete runtime-by-case evidence envelope."""
     readings: list[Reading] = []
     for runtime, cells in matrix.items():
-        for reading in _complete(cells):
+        for reading in _complete(runtime, cells):
             readings.extend(case_readings(runtime, reading))
     envelope = CostReportEnvelope(
         SUBJECT,
@@ -469,7 +479,9 @@ def _canary_reading(case: str) -> ChildReading:
 
 def canary(contract: BudgetContract) -> CostReportEnvelope:
     """Build one schema-valid complete envelope without running a child."""
-    matrix: Matrix = {CURRENT_MINOR: {case: _canary_reading(case) for case in CASE_NAMES}}
+    matrix: Matrix = {
+        CURRENT_MINOR: {case: _canary_reading(case) for case in runtime_cases(CURRENT_MINOR)}
+    }
     provenance = replace(_provenance(contract, matrix), dirty=True)
     return build_envelope(contract, provenance, matrix)
 
@@ -487,7 +499,8 @@ def diagnostic(
     """
     take = in_a_child if child is None else child
     matrix: Matrix = {
-        runtime: {case: take(runtime, case) for case in cases} for runtime in runtimes
+        runtime: {case: take(runtime, case) for case in runtime_cases(runtime, cases)}
+        for runtime in runtimes
     }
     readings = [
         reading.document()
@@ -518,12 +531,13 @@ def timed_matrix(
     spans: Spans,
     child: Callable[[str, str], Cell] | None = None,
 ) -> Matrix:
-    """Every case on every runtime, each child inside a span of its own."""
+    """Every case :func:`runtime_cases` reads on each runtime, each child inside
+    a span of its own."""
     take = in_a_child if child is None else child
     matrix: Matrix = {}
     for runtime in runtimes:
         cells: dict[str, Cell] = {}
-        for case in cases:
+        for case in runtime_cases(runtime, cases):
             with spans.span("case", case, member=SUBJECT, runtime=runtime, window=WINDOWS[case]):
                 cells[case] = take(runtime, case)
         matrix[runtime] = cells
