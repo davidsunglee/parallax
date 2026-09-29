@@ -386,10 +386,12 @@ once when a handle connects rather than per delivery.
 `../../spec/memory-gates.yaml` is the blocking half of this evidence: one
 ceiling per byte-unit reading address of the structural windows — the retained
 checkpoint and the high-water mark of each of the 46 keyed-write cases, the six
-acquisition levels, and the two model-preparation checkpoints (108 gates, in
-bytes per row or bytes), and the retained and peak readings of the eighteen
-geometry reads and nine cold plan compilations (54 gates, in KiB converted to
-bytes) — 162 in all, beside the scaling domains and the advisory allowances. The cost
+acquisition levels, the two model-preparation checkpoints, and the leaf-type
+families' 46 keyed inserts and 24 acquisitions (248 gates, in bytes per row or
+bytes), and the retained and peak readings of the eighteen geometry reads, nine
+cold plan compilations, and twenty-two leaf-type reads (98 gates, in KiB
+converted to bytes) — 346 in all, beside the scaling domains and the advisory
+allowances. The cost
 class grades them, under both layouts and through the same reading children the
 capture uses, in `tests/unit/tools/test_write_lowering_reading_gates.py` and
 `tests/unit/tools/test_snapshot_delivery_reading_gates.py`; timing is asserted
@@ -404,7 +406,7 @@ Every ceiling is the rule's output, not an edit: the largest reading of the
 address on either runtime in the capture the file names as its basis —
 `recovered/portfolio.json` — scaled by **1.10** and rounded up to a whole byte, and
 `test_every_memory_gate_is_the_basis_reading_under_the_stated_rule`
-recomputes all 162 from it. The headroom is the Budget Contract's own
+recomputes all 346 from it. The headroom is the Budget Contract's own
 `individualMax` for a memory cell; the run-to-run agreement recorded under
 *Measured noise floor* — retained checkpoints within 2.8% and high-water marks
 within 1% on this runner, and a further 1–3% between the two runtimes, which
@@ -416,57 +418,38 @@ platform allocator moves a reading by more than the headroom is accepted, and
 would surface as a gate failure to be read against this basis, never as a
 ceiling to relax.
 
-The gates were first derived from `before/`, the pre-unification tree, and
-re-derived from `after/` under the same rule once that capture existed: 107 of
-the 154 ceilings fell, by up to 42% (`geometry.width-64` retained 12,780 to
-7,401 B/row, `model.prepared` 713,988 to 469,718 B), 21 were unchanged to the
-byte, and 26 rose by 0.1–5.4% because their after-reading is above the
-baseline's — `txtime.changed.document.wire` and `txtime.opening.document.wire`
-retained (+1.4%, +1.8%), the `read-depth-4` and `read-depth-8` peaks (+3.1% to
-+5.4%), the Columns cold-plan checkpoints (+1.6%), and a few acquisition and
-`read-many`/`read-width` peaks within 1% — every one an address the capture
-confirmed rather than a ceiling moved to admit a reading. They were re-derived
-a third time from `recovered/` under the same rule when that capture became
-the canonical portfolio, after every one of its readings had passed the
-`after/`-derived ceilings (*Recovered capture*, *Memory*): 46 ceilings fell, by
-up to 7.6% (the six acquisition `transientBytes` gates, −3.3% to −7.6%;
-`txtime.opening.document.wire` retained −3.8%; every other fall under 2.4%),
-85 were unchanged to the byte, and 23 rose by at most 2.3%
-(`ancestor.width-16.document.typed` retained 4,865 to 4,975 B/row) — eighteen
-of the rises are keyed-write retained checkpoints, four are acquisition
-retained checkpoints within 0.8%, and one is a transient high-water mark
-(`bitemporal.interior.columns.wire`, +0.4%), every one an address the capture
-read under its `after/` ceiling before the ceiling was re-derived.
+The gates were first derived from `before/` and have since been re-derived
+under the same rule from `after/` and from each capture that became the
+canonical `recovered/`. Git history keeps each earlier derivation's account
+beside the capture it came from. The present basis is the capture described
+under *Recovered capture*, and every reading of it had first been graded against
+the ceilings the outgoing basis set (*Recovered capture*, *Memory*). Its
+derivation took the file from 162 gates to 346: 184 were inserted, 132 fell, 18
+are unchanged to the byte, and 12 rose.
 
-They were re-derived a fourth time from the present `recovered/` under the same
-rule, after every reading had passed the ceilings the outgoing basis set
-(*Recovered capture*, *Memory*). 154 authored ceilings were rewritten in place:
-37 fell, 55 are unchanged to the byte, and 62 rose. The largest fall is
-`read-depth-1.columns.peakKiB`, 123,513 to 113,516 B (−8.09%), then
-`read-sparse-64.columns.peakKiB` (−6.37%) and `read-many-0.columns.peakKiB`
-(−5.00%). The largest rise is +3.81% at the three Columns cold-plan
-checkpoints, `plan-depth-1` and `plan-depth-8` 18,235 to 18,930 B and
-`plan-width-64` 18,236 to 18,931. Eight entries were inserted beside their
-siblings, taking the file from 154 gates to 162: `model.prepared.family`
-`retainedBytes` and `transientBytes`, and `plan.cold.peakKiB` and
-`plan.cold.retainedKiB` at each of the three `control-guarded-` widths. Those
-eight are addresses the instruments gained after the outgoing basis was
-captured, so this is the first capture that reads them; the ownership extension
-that claims them landed before the capture, not with it.
-
-Two of the movements behind these rises are retention the tree is meant to
-hold, and a reader of a moved ceiling should know which movement is which. `model.prepared`
-`retainedBytes` retains 192 B more than `after/` on both runtimes, which is the
-shared reader seam `02058c35` introduced. Every Columns cold-plan checkpoint
-retains 0.617 KiB more, accumulated across `46883551`, `318baf64` and
-`e28d32b2`; the last of those interns equal continuations, so retention is its
-design rather than a leak, and that 0.617 KiB is exactly the +3.81% above — the
-derivation's largest upward move is an intended cache. Two further movements
-are recorded as observations and were not chased, because neither address is
-gated: `stress.preparedSetKiB` is about 2.2 KiB higher than `after/`, and the
-`control-held` `closed` retained readings are 6.4 to 12.7 KiB above the
-archived `e372c69c` capture, which is COR-112's metadata retention read again
-(*Recovered capture*, *Memory*, and `../instance-state-baseline.md`).
+- **Inserted:** the 184 leaf-type addresses (44 read, 92 keyed-insert and 48
+  acquisition gates). This is the first capture that reads them.
+- **Unchanged:** the eighteen geometry-read `retainedKiB` ceilings.
+- **Fell, in windows the source alignment changed:** 84 keyed-write ceilings,
+  every retained checkpoint among them, by 0.5% to 99.2%, and the twelve
+  acquisition ceilings by 15.3% to 56.2%. The four `txtime.unchanged` retained
+  checkpoints fall to 36 B/row because the verb's no-op path buffers nothing.
+  These are new baselines, not measured gains (*Against COR-173's capture*).
+- **Fell, in unchanged windows:** the cold-plan checkpoints by 10.7% to 14.1%,
+  the guarded cold plans by 6.5% to 15.6%, and the geometry-read peaks by 0.1%
+  to 2.7%.
+- **Rose:** eight keyed-write high-water marks and the four model-preparation
+  ceilings.
+  - The keyed-write marks are in the changed window, which now includes the
+    verb's validation and the flush: `bitemporal.interior.document.wire`
+    +11.7% (16,907 to 18,883 B/row), `ancestor.width-64.document.typed` +9.5%,
+    `bitemporal.interior.columns.wire` +7.4%,
+    `bitemporal.interior.document.typed` +3.8%, and the `geometry.width-64` and
+    `geometry.many-32` transients by 0.7% to 1.3%.
+  - The model-preparation ceilings are the attributed, accepted growth under
+    *Recovered capture*: `model.prepared` retained +2.6% (469,929 to 482,284 B)
+    and transient +2.0%, and `model.prepared.family` retained +5.9% (24,843 to
+    26,312 B) and transient +2.0%.
 
 A gate's
 sensitivity is therefore the headroom alone at every address: a retained
@@ -517,7 +500,7 @@ worth less than the headroom is invisible to its gate.
 
 `tests/unit/_memory_gate_support.py` names the cost item owning each gate;
 `tests/unit/test_memory_gate_ownership.py` grades that every named item is
-collected in the cost class and that the owners partition the 162 gates, so a
+collected in the cost class and that the owners partition the 346 gates, so a
 gate is never owned by a report member's registration. The prepared-model owner
 claims both preparation cases, `model.prepared` and `model.prepared.family`; the
 cold-plan owner claims the geometry levels under `plan-` and the guarded include
@@ -1230,310 +1213,322 @@ memory cell, and the two scaling arms named above is within its limit.
 ## Recovered capture — `recovered/`
 
 The repository's canonical current cost portfolio: one complete capture of the
-head of `main`, taken once the delivery recovery and the gate-ownership
-extension had merged, so that verification of the committed evidence is
-blocking again rather than advisory against a capture the tree had moved past.
+head of `main`, taken immediately after COR-178 aligned every cost source with
+the path production runs (`5adb0802..9676ec8a`) and nothing else had merged.
 `before/` stays the recovery reference and `after/` the fixed regression
-baseline; neither is recaptured, and `comparison-before.md` and
-`comparison-after.md` are this capture's `--compare` renderings against each.
-This capture is the basis every memory gate is derived from, and the readings
-below are what the ceilings in *Memory gates* › *Basis* were recomputed from.
+baseline; neither is recaptured. `comparison-before.md`, `comparison-after.md`
+and `comparison-cor-173.md` are this capture's plain `--compare` renderings
+against `before/`, `after/`, and the capture it replaces. This capture is the
+basis every memory gate is derived from (*Memory gates* › *Basis*).
 
-The capture this one replaces was taken at `b4091204` and narrated here as the
-recovery's acceptance: per-family required results against `before/`, a 92-row
-keyed-write table against `after/`, and its pass observations, every criterion
-passing at its original threshold. That reading belongs to the tree it was
+The capture this one replaces was taken at `93733e93` on macOS 26.6.2 and
+narrated here as the delivery recovery's canonical portfolio, amended in place
+for the `PageBuilder.add_claim` fix (470 re-measured and 8 derived readings,
+recorded in its own `conditions.json`). That account belongs to the tree it was
 taken from and is not restated here. Git history keeps its bytes, and a
 byte-for-byte copy is kept outside Git at
-`$HOME/.local/share/parallax/evidence/cor-164/recovered/`, beside the other
+`$HOME/.local/share/parallax/evidence/cor-173/recovered/`, beside the other
 retained captures the comparisons are rendered against; no tool, test, or
 workflow reads that path.
 
 ### Provenance
 
-Produced from clean commit `93733e93fd7414780f14a092cb7487f09ddd0d5d`
-(`test(cost): hold a claimed control gate to a reading its owner can take`, the
-head of `main` at capture time and already published, so no clone draws an
-ancestry advisory) by `uv run --project languages/python python
-languages/python/tools/cost_report.py --out
-languages/python/docs/structural-metadata-envelope/recovered`, 2026-09-23
-15:29:51–16:34:50 EDT (19:29:51–20:34:50 UTC, 65 minutes wall clock and
-3898.533 s of recorded collection span; collector exit 0), on the same Mac17,4
-(Apple M5, 10 cores, 32 GiB, macOS 26.6.2 build 25G83, arm64) with the same
+Produced from clean commit `9676ec8a75610b14894f8aabb631521185ee3764`
+(`docs(python): name the evidence verifier's contract once, at verify`, the head
+of `main` at capture time and already published) by `uv run --project
+languages/python python languages/python/tools/cost_report.py --out
+languages/python/docs/structural-metadata-envelope/recovered`, 2026-09-29
+13:05:42–14:10:05 EDT (17:05:42–18:10:05 UTC, 64 minutes wall clock and
+3861.749 s of recorded collection span; collector exit 0), on the same Mac17,4
+(Apple M5, 10 cores, 32 GiB, arm64), now on macOS 27.0.1 build 26A434, with
 CPython 3.14.7 in the project environment and 3.13.15 in a per-member throwaway
 environment, and PostgreSQL 18.6 (`postgres:18.6-alpine` through
-Testcontainers), as the baselines; `uv.lock` has moved since them and this
-capture records its digest `c6d88f6d…`, which is why the stale-lock advisory
-the outgoing capture drew is gone. The machine was otherwise idle: on AC power
-(59% charging to 99%), this shell and every child at nice 5 as the outgoing
-capture ran, with `fseventsd` holding about 0.85 core throughout as the one
-busy process. Of the collection span, snapshot-delivery took 3727.1 s,
-write-lowering 137.8 s, instance-state 19.1 s, and lifecycle-overhead 14.5 s.
+Testcontainers). `uv.lock` has moved since the outgoing capture, and this one
+records its digest `99db96b8…`. OrbStack was restarted (`orb stop && orb
+start`) before the run, since a VM up for days reads the live cells slow. The
+machine was otherwise idle: on AC power at 100%, the collector and every child
+at nice 5, with no process above 21% of one core before the run and none above
+3% after it. Of the collection span, snapshot-delivery took 3502.2 s (1323.0 s
+of it the leaf-type reads on 3.14), write-lowering 332.4 s, instance-state
+14.3 s, and lifecycle-overhead 12.6 s.
 
 All four members name that commit and a clean tree, none carries an incomplete
-cell or an error, and snapshot-delivery classifies authoritative. This is the
-first committed capture to carry the collector's two sidecars, `conditions.json`
-and `durations.json`: the first is the only input `--require-compatible` reads
-instrument and control source digests and per-runtime interpreter identities
-from, and the second records the spans quoted above. Every timing and memory
-cell the two comparison bases read is paired. The rows `--compare` reports
-missing on the base — 474 in each rendering — are the 184 current counter cells
-whose legacy twins are what `before/` and `after/` recorded, the 168
-`control-delivery` cells, 72 `compact` instance-state cells, 30
-`read-plan-compilation` and `read-plan-reuse` cells at the guarded widths, 8
-`result-held-metadata` cells, and 12 `model-preparation` and
-`wire-insert-response` cells, all of them addresses the instruments gained
-after those captures were taken; the 184 rows missing on the head are the
-legacy `calls.*` cells themselves, and the `incomparable` rows are zero-valued
-instance-state cells (72 against `before/`, 70 against `after/`). The
-portfolio's sha256 is
-`4284bc7f02a447a39a7c7964c5cf34400efdbcbbd0c0fba157c21cd0f6e8b590`.
+cell or an error, no reading was changed after the run (`conditions.json`
+carries no `adjustment`), and snapshot-delivery classifies authoritative. The
+write-lowering `workloadDigest` `860741a2…` and the Snapshot `workloadDigest`
+`b6af4d92…` equal `write_lowering_digest()` and `workload_digest()` at the
+producing commit. The portfolio's sha256 is
+`9dc20d3e0272652eec36ac874e14ff6cd2e2b0396d341b3fdb2b15f5938a973a`.
 
 | Member | Authority | Runtimes | Readings | Within | Outside |
 |---|---|---|---:|---:|---:|
-| snapshot-delivery | authoritative | 3.13, 3.14 | 530 | 73 | 17 |
-| lifecycle-overhead | non-authoritative | - | 87 | 4 | 11 |
+| snapshot-delivery | authoritative | 3.13, 3.14 | 596 | 81 | 9 |
+| lifecycle-overhead | non-authoritative | - | 87 | 5 | 10 |
 | instance-state | non-authoritative | - | 696 | 4 | 4 |
-| write-lowering | non-authoritative | 3.13, 3.14 | 974 | 0 | 0 |
+| write-lowering | non-authoritative | 3.13, 3.14 | 1230 | 0 | 0 |
 
-**The capture was amended, not retaken, and the amendment is recorded in the
-capture.** The run measured a memory regression that was then fixed:
-`PageBuilder.add_claim` allocated an unconditional per-projection list for
-`_overwritten_edges`, introduced at `46883551`, and the fix makes that field a
-sparse mapping behind `SparseEdges`. Rather than take a second complete
-capture, the readings the fix moves were re-measured or derived in place and the
-adjustment recorded as an `adjustment` object at the top of `conditions.json`,
-which is the full record and which `--verify` and every `--compare` rendering
-state, so no reader of a cell meets these readings as the run's own. The
-split matters to anyone reading a cell: **470 memory readings** in windows that
-need no database — snapshot-delivery's `provider-free-delivery`,
-`read-plan-compilation`, `positional-materialization`, `control-delivery`,
-`read-plan-reuse` and `result-held-metadata`, and every byte-unit
-write-lowering reading — were **re-measured** with the fix in the tree through
-the members' own `--diagnostic` subset runs, value and samples both fresh.
-**Eight `eagerMemory` readings were derived, not measured**: the
-`peakKiB` and `retainedKiB` cells of `conventional-fanout` and
-`duplicate-include` on both runtimes, each shifted, value and every sample
-alike, by the measured delta of the provider-free `control-delivery` reading of
-the same delivery shape at the same root count, which is arithmetic on captured
-samples and is why `value` still equals their median; the correspondence was
-checked against direct readings of the database-backed cells and agreed within
-0.117 KiB, 0.009% of the reading. **One of those eight moved a published
-verdict.** `duplicate-include.eagerMemory.peakKiB` is outside its Budget
-Contract memory ceiling at the value the capture read and inside it at the
-derived value, which is why the `--verify` block below carries nineteen
-advisories and not twenty; that outcome rests on arithmetic over captured
-samples rather than on a measurement, though the direct diagnostic readings of
-that cell corroborate the derivation on both runtimes to within 0.01%.
-**52 database-backed memory readings and
-every timing, count and ratio reading are exactly as captured**, the streamed
-delivery cells among them, because no provider-free correspondence survives the
-same check for them. The instance-state member builds its pages through the
-same `PageBuilder` and was re-measured whole as a check: all 258 of its byte
-readings reproduced exactly, so that member is untouched. The provenance every
-member names is the capture's producing commit, not the commit carrying the
-fix.
-
-`cost_report.py --verify recovered/portfolio.json` **exits 0** and reports
-nineteen advisories, verbatim — fourteen timing ceilings over seven cells,
-three memory ceilings, and two scaling-arm growths, none of them a memory
-*gate*. The count is nineteen rather than twenty because of the amendment
-above: the derived `duplicate-include.eagerMemory.peakKiB` sits inside the
-ceiling its captured value was outside, so that cell's absence from the block
-is a derived result and not a measured one. (The run opens with two
-informational lines before the block. The first is `snapshot-delivery
-lock freshness matches`, which names the recorded and the inspected
-`lockDigest`, both `c6d88f6d…`, and then the path of the `uv.lock` it read.
-That path is whatever clone ran the command, so reproducing it here would make
-the block match no other reader's run; it is left out for that reason. The
-second is `the capture is amended: 470 re-measured and 8 derived readings
-changed after the run its provenance names, recorded in the adjustment of
-conditions.json`, which is how the amendment above reaches a reader who runs
-the command rather than one reading this section.)
+`cost_report.py --verify recovered/portfolio.json` **exits 0** and reports ten
+advisories, verbatim: nine timing ceilings over five cells and one scaling-arm
+growth, none of them a memory ceiling or a memory *gate*. The run opens with
+`snapshot-delivery lock freshness matches`, which names the recorded and the
+inspected `lockDigest`, both `99db96b8…`, and then the path of the `uv.lock` it
+read. That path is whatever clone ran the command, so it is left out here.
 
 ```text
-advisory: duplicate-include.live.eager.maxMs is outside its timing ceiling
-advisory: duplicate-include.live.eager.minRootsPerSecond is outside its timing ceiling
 advisory: duplicate-include.providerFreeCpu.eager.maxMs is outside its timing ceiling
 advisory: duplicate-include.providerFreeCpu.eager.minRootsPerSecond is outside its timing ceiling
 advisory: duplicate-include.providerFreeCpu.page32.maxMs is outside its timing ceiling
 advisory: duplicate-include.providerFreeCpu.page32.minRootsPerSecond is outside its timing ceiling
-advisory: duplicate-include.streamedMemory.page32PeakKiB is outside its memory ceiling
-advisory: duplicate-include.streamedMemory.page128PeakKiB is outside its memory ceiling
 advisory: document-heavy.live.eager.maxMs is outside its timing ceiling
 advisory: document-heavy.live.eager.minRootsPerSecond is outside its timing ceiling
-advisory: document-heavy.live.page32.maxMs is outside its timing ceiling
-advisory: document-heavy.live.page32.minRootsPerSecond is outside its timing ceiling
 advisory: versioned-document.live.eager.maxMs is outside its timing ceiling
-advisory: versioned-document.live.eager.minRootsPerSecond is outside its timing ceiling
 advisory: versioned-document.live.page32.maxMs is outside its timing ceiling
 advisory: versioned-document.live.page32.minRootsPerSecond is outside its timing ceiling
-advisory: bitemporal-current.eagerMemory.peakKiB is outside its memory ceiling
-advisory: document-heavy.streamedMemory.page128PeakKiB grows 37.569 KiB between memory arms
-advisory: bitemporal-current.streamedMemory.page128PeakKiB grows 22.276 KiB between memory arms
+advisory: document-heavy.streamedMemory.page128PeakKiB grows 40.249 KiB between memory arms
 ```
 
-The block is the run taken after the gates were re-derived, and it is
-byte-identical to the run taken before, against the ceilings the outgoing basis
-had set — the expected outcome, since a derivation that lowers a ceiling the
-capture already sat under can neither raise nor silence an advisory. All
-nineteen advisories come from `budget-contract.yaml`, which is a different file
-and a different message from a memory gate; no run of either drew an `is
-outside its memory gate` line. Against the outgoing capture's nine advisories
-these are nineteen: the timing ceilings widen from six to fourteen and the
-memory ceilings from one to three, read below and against the timing the
-comparisons record.
+The block is the run taken after the gates were re-derived. The run taken
+before, against the ceilings the outgoing basis had set, carried two more
+lines: `bitemporal.interior.document.wire.transientBytes` outside its memory
+gate on both runtimes (16,914 and 17,166 B/row over 16,907), a keyed-write
+reading in a changed window (*Memory*). Against the outgoing capture's twenty
+advisories under this tree — its nineteen plus the stale-lock advisory the new
+`uv.lock` draws — these are ten. Every memory-ceiling advisory is gone:
+`bitemporal-current.eagerMemory.peakKiB` reads 386.7 KiB on 3.14 against its
+425 KiB ceiling, and the two `duplicate-include` streamed peaks are 8.8–8.9%
+lower. So are the `duplicate-include` live eager and `document-heavy` live
+page-32 timings and the `bitemporal-current` arm growth.
 
-### Source drift since the capture
+### Against `before/` and `after/`
 
-`conditions.json` records a digest of every instrument and control source each
-member was measured through, and several have changed since. Each change is
-judged here as the manifest's rule above requires, and none of them moves a
-reading this capture holds. The digests still differ, so `--require-compatible`
-refuses a comparison against this capture for every member but
-lifecycle-overhead; these judgements are what a reader comparing across them
-relies on instead.
+`comparison-before.md` and `comparison-after.md` are the renderings. Read as
+family medians of the paired per-cell deltas on one runtime, with the range of
+those deltas beside each — never a ratio of pooled durations:
 
-- `90e4bcda` rewrote prose in the instance-state control
-  `tests/unit/_instance_state_support.py` and its instrument
-  `tools/instance_state_overhead.py`: docstrings in both, and one line of the
-  instrument's printed scope text. No measured statement changed.
-- COR-141 edited the shared instrument `tests/unit/memory_instruments.py`
-  (`60a9edc4`, `7d7f05c7`, `8b6ef9cb`, `e01c5e97`) and
-  `tools/instance_state_overhead.py` (`7d7f05c7`). The closure reading moved
-  onto the shared reachability walker; every reader refuses a process no
-  child-interpreter boundary started, checking on entry before any window
-  opens, and `instance_state_overhead.py` marks its children as that boundary
-  does; a child records which measurement it served once the measurement
-  returns; and the whole-heap and live-graph readers went. No capture tool calls
-  a removed reader, and the `retained`, `high_water`, and `allocation` readers
-  they do call measure exactly what they did.
+| Family, per runtime | Cells | vs `before/` 3.13 | vs `before/` 3.14 | vs `after/` 3.13 | vs `after/` 3.14 |
+|---|---:|---|---|---|---|
+| Acquisition (`acquisition.*` / `elapsedUs`) † | 6 | −48.8% (−66.3% to −36.3%) | −57.5% (−62.7% to −48.4%) | −72.5% (−76.9% to −60.2%) | −73.8% (−76.4% to −62.5%) |
+| Keyed writes (46 cases / `elapsedUs`) † | 46 | −24.2% (−65.5% to +44.0%) | −31.3% (−63.6% to +14.1%) | −20.5% (−60.2% to +32.6%) | −19.8% (−58.4% to +32.2%) |
+| Geometry reads (`read-*` / `<layout>.elapsedUsPerRoot`) | 18 | −5.8% (−29.6% to +4.3%) | −2.3% (−26.5% to +10.8%) | −22.3% (−45.9% to −14.4%) | −24.4% (−45.6% to −10.9%) |
+| Cold plans (`plan-*` / `<layout>.elapsedUs`) | 6 | −33.9% (−46.4% to −25.7%) | −22.0% (−26.8% to −18.2%) | −20.1% (−22.4% to −16.5%) | −20.1% (−21.6% to −16.7%) |
+| Positional materialization (`stress-*`) † | 2 | −2.9% (−6.2% to +0.5%) | +3.2% (−1.4% to +7.8%) | −32.9% (−36.1% to −29.8%) | −38.4% (−41.2% to −35.5%) |
+| Eager live delivery (`live.eager.maxMs`) | 5 | +1.4% (−17.5% to +19.2%) | −0.2% (−17.8% to +18.2%) | −15.7% (−21.4% to −6.7%) | −15.5% (−19.3% to −7.1%) |
+| Page-32 live delivery (`live.page32.maxMs`) | 5 | −0.1% (−17.9% to +14.9%) | −10.6% (−16.3% to +2.6%) | −13.1% (−14.1% to −6.4%) | −10.9% (−12.7% to −1.3%) |
+
+† A window the source alignment changed: the pair sets a new baseline beside
+two captures that measured less of production's path, and is not an
+optimization or a regression (*Against COR-173's capture*).
+
+Every family median in an unchanged window is at or below `after/` on both
+runtimes. `model.prepared` retains 426,776 and 438,440 B against `after/`'s
+415,992 and 427,016, the attributed growth itemized below, and forms in 3,375
+and 3,322 µs against 3,738 and 3,673. Timing against these bases also carries
+the OS change below; timing evidence for a change is a same-day pair, not these
+comparisons.
+
+The rows `--compare` reports missing on the base — 980 in each rendering — are
+the 506 leaf-type cells, the 184 current-vocabulary counter cells of the keyed
+cases, and the 290 other addresses the instruments gained after those captures
+(`control-delivery`, `compact` instance-state, guarded read-plan,
+`result-held-metadata`, `model-preparation` and `wire-insert-response` cells).
+The 368 rows missing on the head are the legacy `calls.*` cells those captures
+recorded. The `incomparable` rows are zero-valued instance-state cells (72
+against `before/`, 70 against `after/`).
+
+### Against COR-173's capture
+
+`comparison-cor-173.md` renders `--compare
+$HOME/.local/share/parallax/evidence/cor-173/recovered/portfolio.json
+recovered/portfolio.json`; the base is byte-identical to `recovered/` at
+`9676ec8a` in Git history. It is the program's before/after record for the
+cleanup (COR-174, COR-175, COR-176), the quality gates (COR-140, COR-141,
+COR-182), the declaration, float, and include work (COR-181, COR-183, COR-184,
+COR-185, COR-188), and the source alignment. `--require-compatible` refuses
+the pair over snapshot-delivery and write-lowering, as it should: their
+envelopes disagree on `workloadDigest`, `lockDigest`, and `os`, their control
+and instrument sources differ, and the leaf-type cells are present on the head
+alone. The judgements below are what a reader comparing across them relies on;
+they do not make the pair strictly compatible.
+
+The rendering reports 506 rows missing on the base, which are the leaf-type
+cells (66 reads, 368 keyed-insert cells with their counters, and 72
+acquisition cells). The 184 rows missing on the head are the `shapeOfDeclaration`
+and `entityShape` counters of the 46 keyed cases on both runtimes. Production
+never called them, so the current counter vocabulary dropped them, and the
+outgoing capture's vocabulary still verifies whole. The twelve `changed` count
+rows are the `txtime.unchanged` counters of the verb's no-op path, and the 70
+`incomparable` rows are zero-valued instance-state cells.
+
+**Changed windows establish new baselines.** Each window below measures a
+different amount of production's work than the outgoing capture's did, so its
+old/new pair is recorded, not labelled a gain or a loss. Medians are per-cell
+deltas against the outgoing capture on 3.13 / 3.14 and fold in the program's
+production changes as well as the window's.
+
+| Window / cells | What changed | Against COR-173 |
+|---|---|---|
+| `positional-materialization` (stress) | Production's own read loop: rendered fetch templates, lock, prepared schema, `_retained`; still decodes no document leaf | `maxUsPerProjection` +0.2% / +2.4% |
+| instance-state `compact.*` | The model's cached graph construction, built once rather than per call | `callNs` −87.2% / −87.2%; `projectionNs` −32.7% / −32.8%; `peakBytes` −33.8% / −36.2%; retained unchanged |
+| `keyed-write` | The public verbs, including the flush, at production's default Optimistic preference; `txtime.unchanged` is the verb's no-op path with no statement; retained through the increment instrument | `elapsedUs` −22.6% / −18.9% (−59.3% to +38.9%); categorical retained −37.1% / −38.1%, `txtime.unchanged` retained −99.1%; categorical transient −26.8% / −26.4% |
+| `predicate-acquisition` | Public `tx.wire.update_until_where`, from the call through buffering | `elapsedUs` −30.7% / −32.1%; retained −33.7% / −31.0%; transient −39.6% / −36.6% |
+| live `streamedMemory` page-size-1 cells | The warm-up stream runs without page-boundary collection | `document-heavy.page1PeakKiB` +12.4% / +12.0%; the other workloads −0.6% to −16.1% |
+| live `streamedMemory.retainedKiB` | Read at page size 128 instead of 1 | −6.4% to −78.4% |
+| leaf-type cells | New, on 3.14 only | No prior reading |
+
+**Comparable windows** keep the 5% timing and 3% memory allowances. Against them:
+
+- Geometry reads: `elapsedUsPerRoot` −6.1% / −5.3% (−10.0% to −0.7%);
+  `retainedKiB` unchanged to the byte, and peaks 0.1–2.7% lower.
+- Cold plans: `elapsedUs` −19.4% / −17.5%; their retained and peak ceilings
+  fall 10.7–14.1% (COR-176's single query freeze and COR-183), and the
+  guarded cold plans' 6.5–15.6%.
+- Live delivery: `live.eager.maxMs` −3.9% / −7.2%, `live.page32.maxMs`
+  −4.1% / −4.6%, `bitemporal-current` eager peak −6.7% / −10.4%, and its page-32
+  and page-128 streamed peaks −20% to −27% (COR-176).
+- `control-delivery` elapsed: −7.2% / −6.2%, except the timing artifact below.
+- Instance-state cells outside `compact.*` are at parity. Their `callNs` cells
+  are a difference of two timings and move by any amount between runs.
+- lifecycle-overhead's ratios read 7–21% higher, because the denominator they
+  divide by got faster; its source is unchanged.
+
+**Instrument sources.** `conditions.json` records a digest of every instrument
+and control source each member was measured through. Every source differs from
+the outgoing capture's except lifecycle-overhead's and
+`tests/unit/_delivery_control_support.py`. Each change is judged here:
+
+- COR-141 edited `tests/unit/memory_instruments.py` (`60a9edc4`, `7d7f05c7`,
+  `8b6ef9cb`, `e01c5e97`) and `tools/instance_state_overhead.py` (`7d7f05c7`).
+  The closure reading moved onto the shared reachability walker, every reader
+  refuses a process that no child-interpreter boundary started, and the
+  whole-heap and live-graph readers went. Its PR states the readings
+  unchanged. The `retained`, `high_water`, and `allocation` readers the
+  capture tools call measure what they did.
+- COR-140 changed only prose in `tools/instance_state_overhead.py`
+  (`99e46dcd`), and its PR reports cost evidence unaffected apart from an
+  advisory-only lock change. `90e4bcda` rewrote docstrings in the
+  instance-state control and instrument.
+- COR-182 routed each snapshot-delivery arm through one parent-side step in
+  `tools/snapshot_delivery_overhead.py` (`c2de30ac`). Its PR states that the
+  children, their order, command lines, environment, and provisioning are
+  unchanged, so the readings are unchanged and comparable.
 - COR-174 built `tools/instance_state_reading.py`'s projection Page through
-  `PageBuilder.add_claim` from a plain tuple, as
-  `parallax/snapshot/materialize/_prepared.py` does, when it deleted the
-  `PageBuilder.add` the instrument called, which wrapped the row in a decoder
-  closure. The Page is built before `tracemalloc` starts and is read only by the
-  `direct_wire` sample, so no memory reading moves; `compact.directWireNs` may
-  shift slightly, since decoding the root no longer calls that closure. The same
-  change edited only a docstring in `tools/write_lowering_overhead.py`.
+  `PageBuilder.add_claim` (`050767ae`), as the prepared read does. The Page is
+  built before `tracemalloc` starts, so no memory reading moves. The same work
+  edited only a docstring in `tools/write_lowering_overhead.py` (`f13b8fe8`).
+- COR-175 passes the concurrency facts to `wire_roots` in
+  `tools/instance_state_reading.py` (`235e20d6`), which follows production's
+  new signature in the `direct_wire` sample. COR-181 retyped
+  `tests/unit/_instance_state_support.py` onto `OccurrenceMetadata`
+  (`f2d26231`) with no runtime statement changed.
+- COR-183 and COR-185 changed no instrument or control source. Their effects
+  reach the capture only through production code: COR-183's lower
+  `model.prepared` and plan retention, and COR-185's compiled `timestamptz`
+  loader on the live `bitemporal-current` cells. Its Float32 costs appear
+  only in the new `leaf-float32` cells.
+- Every other difference is COR-178's source alignment. The changed windows
+  above come from `b347f128`, `7dfa3df5`, `995439dd`, `ead78269`, `60794e7b`,
+  `739403ea`, `6b4c48a6`, `fdb5f0a9`, and `1606e5aa`, and the leaf-type
+  dimension from `6634dbc0`, `0862881b`, and `63e6900f`. Three are
+  reading-neutral:
+  - `404ce64a` reads document members from the model; all 18 stored rows and
+    46 observations are identical.
+  - `c5a88c7b` is the counter vocabulary above.
+  - `35f49b4a` and `673c93c7` move `FixedClock` and name the write cases'
+    sources.
 
-### Against `before/`
+**Accepted increases in unchanged windows.** Two memory readings went beyond
+the 3% allowance, `model.prepared.family` and `control-held`
+`large.closed.retainedKiB`. Both are attributed and were accepted before this
+capture became the basis, as was `model.prepared`, whose rise is inside the
+allowance but moves a gate.
 
-`comparison-before.md` is the rendering. Read as family medians of the paired
-per-cell deltas on one runtime, with the range of those deltas beside each —
-never a ratio of pooled durations — the capture is far faster than the
-pre-unification baseline on the acquisition and keyed-write families and at
-parity on the geometry reads:
+- `model.prepared` retains +10,592 / +11,232 B (+2.55% / +2.63%), and
+  `model.prepared.family` +1,216 / +1,336 B (+5.46% / +5.92%). A sweep of every
+  first-parent commit since the outgoing capture accounts for every byte:
+  - COR-176 `56c5ba6d` (one `_OccurrenceFacts` per Value Object occurrence
+    path): +9,376 / +10,400;
+  - COR-140 `f525fa88` (one `BoundShape` per occurrence and member
+    selection): +5,216;
+  - COR-176 `b36ad429` (one referential-rank record per Entity): +1,160;
+  - COR-175: +328;
+  - COR-174 `87c34e66`: −2,688;
+  - COR-183: −2,808 / −3,192.
 
-| Family, per runtime | Cells | 3.13 | 3.14 |
-|---|---:|---|---|
-| Acquisition (`acquisition.*` / `elapsedUs`) | 6 | −21.5% (−58.7% to −17.4%) | −38.5% (−45.8% to −29.2%) |
-| Keyed writes (46 cases / `elapsedUs`) | 46 | −13.8% (−22.0% to +16.0%) | −14.7% (−33.8% to −0.1%) |
-| Geometry reads (`read-*` / `<layout>.elapsedUsPerRoot`) | 18 | −1.5% (−26.7% to +13.5%) | +3.6% (−20.8% to +13.9%) |
-| Positional materialization (`stress-*`) | 2 | −3.0% (−6.7% to +0.7%) | +0.8% (−4.8% to +6.4%) |
-| Eager live delivery (`live.eager.maxMs`) | 5 | +11.1% (−16.1% to +24.0%) | +7.5% (−16.6% to +28.0%) |
-| Page-32 live delivery (`live.page32.maxMs`) | 5 | +9.1% (−14.6% to +14.2%) | −10.3% (−14.2% to +7.7%) |
+  `.family`'s rise is mostly COR-176's.
+- `control-held` `large.closed.retainedKiB` is +12.8% / +12.9% (63.4 to 71.5
+  and 68.1 to 76.9 KiB). This is COR-176 `ee51ee78`: a Typed result keeps its
+  `EntityGraphConstruction` so that `Snapshot.wire` can skip the
+  correspondence check for classes the model proved. The retention is
+  intended, and the address is not gated.
 
-The geometry-read family reads about nine points higher on both runtimes than
-the outgoing capture read against the same base, and the eager live-delivery
-family two to four points higher. The same shift appears in the
-`control-delivery` window against the archived `e372c69c` capture, which is a
-third base captured on a third day
-(`../instance-state-baseline.md`, *COR-173 rebaseline*), so it is a property of
-this run rather than of one subject or one family: a whole-portfolio capture
-taken over 65 minutes on a machine holding a steady 0.85-core background load,
-compared against a base captured on another day. No timing reading is gated,
-and the seven cells past a Budget Contract timing ceiling are the ones the
-verbatim block names. Timing evidence for a change is a same-day pair, not this
-comparison; this comparison is what the canonical portfolio reads.
+**The `control-delivery` timing artifact.** `wire.page32.roots200.elapsedUs`
+reads +6.1% to +13.1% on both runtimes and both shapes. The Typed lane moves
+by about +15–20% too, hidden by earlier gains. The cause is in the harness, not
+production: since `63e6900f`, the snapshot reading child imports the leaf-type
+support module for every address, which adds about 70,000 GC-tracked objects
+and about 3.5 ms to each full collection. It affects timing only, and timing is
+never gated. It is accepted into this baseline. A child that imports only the
+support module its address needs will remove it.
 
-### Against `after/`
+**The OS change.** The outgoing capture ran on macOS 26.6.2 and this one on
+27.0.1. A diagnostic of the outgoing capture's producing commit on 27.0.1,
+against that capture's as-taken readings, found memory OS-invariant: every
+delivery, instance-state, and lifecycle byte reading was exact, and
+write-lowering stayed within the instrument's same-OS jitter. No non-live
+timing cell was more than 5% slower (289 cells, median new/old 0.947), and the
+live cells read 0.86–1.01 once OrbStack was restarted. No offset enters this
+record. A timing difference under about 5% in an unchanged window is not
+credited to code, because OS and thermal state are not separated from it.
 
-`comparison-after.md` is the rendering, and it is the sharper of the two,
-because `after/` is the unified implementation before the read and
-predicate-acquisition recovery:
+### Leaf-type readings
 
-| Family, per runtime | Cells | 3.13 | 3.14 |
-|---|---:|---|---|
-| Acquisition (`acquisition.*` / `elapsedUs`) | 6 | −58.8% (−65.3% to −51.3%) | −60.8% (−62.1% to −48.9%) |
-| Keyed writes (46 cases / `elapsedUs`) | 46 | −2.7% (−10.1% to +6.8%) | −1.6% (−12.4% to +4.8%) |
-| Geometry reads (`read-*` / `<layout>.elapsedUsPerRoot`) | 18 | −17.7% (−42.1% to −7.4%) | −19.3% (−42.0% to −6.2%) |
-| Positional materialization (`stress-*`) | 2 | −33.1% (−36.0% to −30.1%) | −39.9% (−42.0% to −37.7%) |
-| Eager live delivery (`live.eager.maxMs`) | 5 | −8.8% (−14.2% to −2.9%) | −6.7% (−12.0% to +0.2%) |
-| Page-32 live delivery (`live.page32.maxMs`) | 5 | −7.6% (−10.5% to −2.7%) | −5.1% (−10.5% to −2.6%) |
+The leaf-type cells have no prior reading; these are their first. On 3.14,
+Columns layout (the Document layout's reads are within 2% of these):
 
-Every family median is at or below `after/` on both runtimes. The keyed-write
-medians are inside the ±15% floor of a single cell; the fourteen cells above
-`after/` on 3.13 and five on 3.14 are each under +7%, and no keyed-write family
-moves in one direction. `model.prepared` retains 416,184 and 427,208 B against
-`after/`'s 415,992 and 427,016 — the 192 B shared reader seam itemized under
-*Memory gates* › *Basis* — and forms in 3,357 and 3,433 µs against 3,738 and
-3,673.
+| Type | Read (µs/root) | Read retained (KiB) | Typed insert (µs/row) | Wire insert (µs/row) | Acquisition (µs/row) |
+|---|---:|---:|---:|---:|---:|
+| String (control) | 148.5 | 480.5 | 550.9 | 673.5 | 153.2 |
+| Boolean | 110.8 | 162.5 | 486.9 | 555.3 | 118.8 |
+| Int32 | 159.5 | 354.5 | 510.0 | 644.7 | 167.8 |
+| Int64 | 165.8 | 366.5 | 531.6 | 678.2 | 171.9 |
+| Float32 | 811.6 | 212.0 | 1,021.8 | 1,518.0 | 588.3 |
+| Float64 | 322.4 | 212.0 | 578.3 | 677.5 | 270.8 |
+| Decimal | 935.0 | 271.8 | 1,075.2 | 1,894.2 | 722.5 |
+| Bytes | 399.1 | 313.0 | 566.3 | 736.3 | 331.2 |
+| Date | 427.2 | 193.0 | 622.8 | 855.6 | 389.1 |
+| Time | 567.3 | 278.0 | 678.6 | 945.2 | 479.1 |
+| Timestamp | 1,007.1 | 303.4 | 957.5 | 1,443.8 | 819.7 |
+| Uuid | 572.0 | 321.3 | 913.0 | 1,264.3 | 433.6 |
+
+The String read and Typed insert are the `read-width-64` and
+`geometry.width-64.columns.typed` controls. Float32 reads cost 2.5 times
+Float64's because decoding and publication each search for the shortest
+spelling that rounds back to the value.
 
 ### Memory
 
-**Against the ceilings in force when the capture was taken.** Every gated
-reading the outgoing basis had a ceiling for — all 154 of its addresses on both
-runtimes, 308 readings — is under that ceiling, with zero failures. The closest
-are the 3.14 Columns cold-plan checkpoints, `plan-depth-1`, `plan-depth-8` and
-`plan-width-64` `columns.retainedKiB` at 94.4% of their 18,235–18,236 B
-ceilings, their Document twins at 94.3%, and
-`txtime.changed.document.typed` retained at 93.3%. The old-ceiling result is
-recorded before any re-derivation so a new basis cannot hide a regression
-behind a raised ceiling: none was hidden, because none occurred. Sixteen
-further readings had no ceiling to be read against — the eight addresses the
-instruments gained after the outgoing basis, at two runtimes each — and they
-enter the gates for the first time with this derivation.
+**Against the ceilings in force when the capture was taken.** Of the 324
+gated readings the outgoing basis had a ceiling for (162 addresses, two
+runtimes), 322 are under it. The two that are not are the
+`bitemporal.interior.document.wire` high-water marks, 16,914 and 17,166 B/row
+against 16,907, in the changed `keyed-write` window. That window now includes
+the verb's Wire validation and the flush, and the gate test it trips was
+named before capture as one this window's change would turn red. In unchanged windows, the
+closest are `model.prepared.family` retained at 96.3% of its ceiling on 3.14 and
+`model.prepared` at 93.3%, both the accepted increases above. The old-ceiling
+result is recorded before any re-derivation, so a new basis cannot hide a
+regression behind a raised ceiling. The 184 leaf-type readings had no ceiling to
+be read against and enter the gates with this derivation.
 
 **Scaling domains.** Both acquisition domains are monotone non-increasing on
-both runtimes across the 8, 32 and 128-row levels: `acquisition.columns`
-retained 2,408.0 → 1,745.8 → 1,584.2 and transient 5,751.0 → 3,982.9 → 3,490.5
-B/row on 3.13, retained 2,565.1 → 1,812.8 → 1,622.0 and transient 5,756.0 →
-3,829.6 → 3,310.8 on 3.14; `acquisition.document` retained 3,581.5 → 2,940.8 →
-2,769.4 and transient 7,792.1 → 6,145.2 → 5,646.3 on 3.13, retained 3,823.9 →
-3,014.4 → 2,812.4 and transient 7,863.9 → 6,014.2 → 5,463.8 on 3.14.
+both runtimes across the 8, 32 and 128-row levels. `acquisition.columns` retained
+1,528.0 → 1,057.6 → 913.4 and transient 4,690.4 → 2,668.0 → 2,006.6 B/row on
+3.13, retained 1,717.9 → 1,141.5 → 997.7 and transient 4,875.6 → 2,709.0 →
+2,046.6 on 3.14. `acquisition.document` retained 2,615.4 → 2,049.0 → 1,914.7 and
+transient 4,926.2 → 3,024.8 → 2,473.8 on 3.13, retained 2,823.5 → 2,149.6 →
+1,995.7 and transient 5,111.1 → 3,035.2 → 2,432.5 on 3.14.
 
-**Live delivery, inspected explicitly.** The delivery workloads are not gated.
-The two whose eager cells are the derived readings named under *Provenance*
-sit at parity with both comparison bases, which read those cells identically:
-`conventional-fanout` and `duplicate-include` eager peak and retained memory are
-within 0.012% of `before/` and `after/` on both runtimes, which is where the fix
-returns them to.
-`bitemporal-current` is the workload whose memory `after/` moved, and it is
-read here against both captures (`before/` → `after/` → `recovered/`, KiB):
-
-| Runtime | Cell | `before/` | `after/` | `recovered/` | vs `after/` | vs `before/` |
-|---|---|---:|---:|---:|---:|---:|
-| 3.13 | `eagerMemory.peakKiB` | 426.5 | 466.3 | 465.6 | −0.2% | +9.2% |
-| 3.13 | `eagerMemory.retainedKiB` | 299.0 | 313.8 | 312.3 | −0.5% | +4.5% |
-| 3.13 | `streamedMemory.page1PeakKiB` | 42.2 | 42.4 | 45.6 | +7.4% | +8.1% |
-| 3.13 | `streamedMemory.page32PeakKiB` | 94.2 | 101.9 | 107.9 | +5.9% | +14.5% |
-| 3.13 | `streamedMemory.page128PeakKiB` | 251.1 | 279.8 | 289.1 | +3.3% | +15.2% |
-| 3.13 | `streamedMemory.retainedKiB` | 16.2 | 20.8 | 17.7 | −15.0% | +9.3% |
-| 3.14 | `eagerMemory.peakKiB` | 398.7 | 428.6 | 431.3 | +0.6% | +8.2% |
-| 3.14 | `eagerMemory.retainedKiB` | 304.4 | 315.0 | 316.7 | +0.5% | +4.0% |
-| 3.14 | `streamedMemory.page1PeakKiB` | 42.4 | 41.8 | 45.2 | +8.0% | +6.7% |
-| 3.14 | `streamedMemory.page32PeakKiB` | 86.6 | 97.4 | 101.6 | +4.3% | +17.4% |
-| 3.14 | `streamedMemory.page128PeakKiB` | 238.8 | 283.9 | 293.5 | +3.4% | +22.9% |
-| 3.14 | `streamedMemory.retainedKiB` | 15.6 | 11.1 | 21.1 | +90.3% | +35.6% |
-
-Eager peak and retained memory sit where `after/` put them, within 0.6% on both
-runtimes; the 3.14 eager peak reads 431.3 KiB against the 425 KiB Budget
-Contract ceiling, which is the `bitemporal-current.eagerMemory.peakKiB`
-advisory in the verbatim block, as `after/`'s 428.6 was. The streamed page
-peaks are 3 to 8% above `after/` and are readings this capture left exactly as
-it took them, database-backed cells for which no provider-free correspondence
-survived; `streamedMemory.retainedKiB` is a 10–20 KiB reading whose few-KiB
-movement in either direction between captures is the most quantized cell of the
-workload. The streamed peaks of `duplicate-include` carry the same signature
-and are the two memory-ceiling advisories beside it.
-
-**Re-derivation.** With every reading under the ceilings in force, the gates
-were re-derived from this capture under the unchanged rule — the larger runtime
-reading at each address, scaled by 1.10, rounded up — and
-`spec/memory-gates.yaml` names this `recovered/portfolio.json` as its basis with
-the header, advisory allowances, and scaling domains verbatim. 154 authored
-ceilings were rewritten and eight inserted, for 162 in all: 37 fell, 55 are
-unchanged to the byte, and 62 rose. The movements, the rises that are retention the
-tree is meant to hold, and the eight inserted addresses are itemized under
-*Basis* above.
+**Re-derivation.** The gates were then re-derived from this capture under the
+unchanged rule, and `spec/memory-gates.yaml` names this `recovered/portfolio.json`
+as its basis with the header, advisory allowances, and scaling domains verbatim.
+*Basis* above itemizes the movements.
