@@ -28,6 +28,7 @@ import datetime as dt
 from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import partial
 from typing import Final, Literal, cast
 
 from parallax.conformance.scripted_clock import FixedClock
@@ -116,14 +117,18 @@ _ENTITIES: Final[Mapping[Layout, type[Entity]]] = {
 
 @dataclass(frozen=True, slots=True)
 class Case:
-    """One acquisition family level: the caller's Wire target and the rows it
-    resolves."""
+    """One acquisition level: the model its handle is connected over, the
+    caller's Wire target and changes documents, and the rows it resolves, each
+    composed by ``stored`` from its key as the driver answers it."""
 
     name: str
     layout: Layout
     entity: type[Entity]
     level: AcquisitionLevel
     target: Mapping[str, object]
+    changes: Mapping[str, object]
+    model: DomainModel
+    stored: Callable[[int], Mapping[str, object]]
 
     @property
     def rows(self) -> int:
@@ -145,8 +150,41 @@ def _target(cls: type[Entity]) -> Mapping[str, object]:
     }
 
 
+def _members(key: int) -> dict[str, object]:
+    return {
+        "title": f"title-{key:08d}",
+        "address": {"city": f"city-{key:08d}", "geo": {"country": "NO"}},
+        "tags": [{"label": f"tag-{key:08d}-a"}, {"label": f"tag-{key:08d}-b"}],
+    }
+
+
+_BOUNDS: Final[Mapping[str, object]] = {
+    "from_z": VALID_START,
+    "thru_z": INFINITY,
+    "in_z": TX_START,
+    "out_z": INFINITY,
+}
+"""Every resolved row's milestone bounds: current, and open on both axes."""
+
+
+def stored_row(layout: Layout, key: int) -> dict[str, object]:
+    """One current milestone as the driver answers it, keyed by physical column."""
+    if layout == "document":
+        return {"id": key, **_BOUNDS, "payload": _members(key)}
+    return {"id": key, **_members(key), **_BOUNDS}
+
+
 CASES: Final[tuple[Case, ...]] = tuple(
-    Case(f"acquisition.{level.id}.{layout}", layout, _ENTITIES[layout], level, _target(cls))
+    Case(
+        f"acquisition.{level.id}.{layout}",
+        layout,
+        cls,
+        level,
+        _target(cls),
+        ASSIGNED_CHANGES,
+        MODEL,
+        partial(stored_row, layout),
+    )
     for layout in LAYOUTS
     for cls in (_ENTITIES[layout],)
     for level in ACQUISITION_LEVELS
@@ -160,43 +198,24 @@ def case_named(name: str) -> Case:
     raise KeyError(f"{name!r} is not an acquisition case: {[case.name for case in CASES]}")
 
 
-def _members(key: int) -> dict[str, object]:
-    return {
-        "title": f"title-{key:08d}",
-        "address": {"city": f"city-{key:08d}", "geo": {"country": "NO"}},
-        "tags": [{"label": f"tag-{key:08d}-a"}, {"label": f"tag-{key:08d}-b"}],
-    }
-
-
-def stored_row(layout: Layout, key: int) -> dict[str, object]:
-    """One current milestone as the driver answers it, keyed by physical column."""
-    bounds: dict[str, object] = {
-        "from_z": VALID_START,
-        "thru_z": INFINITY,
-        "in_z": TX_START,
-        "out_z": INFINITY,
-    }
-    if layout == "document":
-        return {"id": key, **bounds, "payload": _members(key)}
-    return {"id": key, **_members(key), **bounds}
-
-
 class AcquisitionPort(ConnectsAsItself):
-    """A port whose resolving read answers ``rows`` freshly composed milestones
-    and whose transaction boundary is the body's own outcome."""
+    """A port whose resolving read answers ``rows`` milestones, each composed
+    by ``stored`` from its key when the statement runs, and whose transaction
+    boundary is the body's own outcome."""
 
     dialect: Dialect = POSTGRES
-    __slots__ = ("_layout", "_rows")
-    _layout: Layout
+    __slots__ = ("_rows", "_stored")
+    _stored: Callable[[int], Mapping[str, object]]
     _rows: int
 
-    def __init__(self, layout: Layout, rows: int) -> None:
-        self._layout = layout
+    def __init__(self, stored: Callable[[int], Mapping[str, object]], rows: int) -> None:
+        self._stored = stored
         self._rows = rows
 
     def rows(self) -> Iterator[Mapping[str, object]]:
+        stored = self._stored
         for offset in range(self._rows):
-            yield stored_row(self._layout, 1 + offset)
+            yield stored(1 + offset)
 
     def execute(
         self,
@@ -235,7 +254,7 @@ class _Abandoned(Exception):
 def database(case: Case) -> Generator[ScopedDatabase]:
     """A connected handle over ``case``'s port, composed outside every window."""
     with Database(
-        AcquisitionPort(case.layout, case.rows).open(), MODEL, clock=FixedClock(INSTANT)
+        AcquisitionPort(case.stored, case.rows).open(), case.model, clock=FixedClock(INSTANT)
     ) as root:
         yield root.using_database_login()
 
@@ -259,7 +278,7 @@ def acquire(
         if opened is not None:
             opened()
         transaction.wire.update_until_where(
-            case.target, ASSIGNED_CHANGES, valid_from=INTERIOR_FROM, until=INTERIOR_UNTIL
+            case.target, case.changes, valid_from=INTERIOR_FROM, until=INTERIOR_UNTIL
         )
         if closed is not None:
             closed()

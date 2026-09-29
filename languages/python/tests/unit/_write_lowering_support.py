@@ -8,8 +8,8 @@ One Value Object nesting another One and a Many — beside the geometry Entities
 :mod:`tests.unit._structural_geometry_support` declares. The geometry levels
 open a lineage; the changed-ancestor levels succeed one, changing a single leaf
 of a wide root occurrence so the cost of replacing that occurrence is read
-against its declared width. Every case names its ingress, layout, mutation,
-authored values, and the stored row it revises.
+against its declared width. Every case names its model, ingress, layout,
+mutation, authored values, and the stored row it revises.
 
 Each run is one transaction. A case that revises a row first reads it through
 production (``tx.find`` or ``tx.wire.find``), because a keyed write is licensed
@@ -263,6 +263,7 @@ ANCESTOR_KEY: Final = 1
 class Case:
     """One keyed write, what its caller authors, and the stored row it revises.
 
+    ``model`` is the domain model the case's handle is connected over.
     ``instance`` is the Typed value a Typed insert opens, held as its caller
     holds it. ``changes`` is what any other case authors: a Typed update's
     ``edit`` keywords, a Wire update's changes document with its identity
@@ -283,6 +284,7 @@ class Case:
     changes: Mapping[str, object]
     stored: Mapping[str, object] | None
     statements: int
+    model: DomainModel
     bounded: bool = False
 
 
@@ -368,6 +370,7 @@ def _keyed_case(
         _authored(ingress, mutation, value),
         None if predecessor is None else _stored_row(predecessor, layout),
         statements,
+        MODEL,
         bounded,
     )
 
@@ -656,12 +659,12 @@ def insert_response(
 
 @contextmanager
 def database(case: Case, port: AcceptingPort | None = None) -> Generator[ScopedDatabase]:
-    """A login-scoped handle over ``case``'s stored row, composed outside every
-    window, flushing at :data:`INSTANT`."""
+    """A login-scoped handle over ``case``'s model and stored row, composed
+    outside every window, flushing at :data:`INSTANT`."""
     stored = () if case.stored is None else (case.stored,)
     with Database(
         (AcceptingPort(stored) if port is None else port).open(),
-        MODEL,
+        case.model,
         clock=FixedClock(INSTANT),
     ) as root:
         yield root.using_database_login()
