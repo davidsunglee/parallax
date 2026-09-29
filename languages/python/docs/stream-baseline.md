@@ -13,7 +13,7 @@ outside-budget observation into its exit status.
 
 The *shape* of the bound is gated instead, in
 `tests/unit/snapshot/test_snapshot_stream_retention.py`, which the `cost` class owns and CI
-runs on every change through `just python-check-cost`. That suite states the bound
+runs on every change through `just python-test-cost`. That suite states the bound
 as seven separate readings. Pages do not accumulate: what a delivery retains
 at ten times the roots, at a later position of the same delivery, and once
 drained, differs from the baseline by less than one retained root costs. One

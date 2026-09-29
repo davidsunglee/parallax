@@ -904,7 +904,9 @@ def _required_member(document: Document, subject: str) -> tuple[Document | None,
     return members[0], []
 
 
-def _provenance_failures(member: Document, subject: str, expected_digest: str) -> list[str]:
+def _provenance_failures(
+    member: Document, subject: str, expected_digest: str, contract: BudgetContract
+) -> list[str]:
     failures: list[str] = []
     provenance = _provenance(member)
     if provenance is None:
@@ -913,6 +915,8 @@ def _provenance_failures(member: Document, subject: str, expected_digest: str) -
         failures.append(f"the {subject} envelope was not produced from a clean tree")
     if provenance.get("workloadDigest") != expected_digest:
         failures.append(f"the {subject} envelope's workload digest is stale")
+    if provenance.get("budgetContractDigest") != contract.digest:
+        failures.append(f"the {subject} envelope's Budget Contract digest is stale")
     return failures
 
 
@@ -972,9 +976,9 @@ def verify(
 ) -> list[str]:
     """Every reason the required portfolio is not valid evidence: a missing,
     malformed, or incomplete required envelope, a snapshot-delivery envelope
-    that is not authoritative, a capture taken from a dirty tree, a workload
-    digest disagreeing with the inspected checkout, or members produced at
-    different commits.
+    that is not authoritative, a capture taken from a dirty tree, a workload or
+    Budget Contract digest disagreeing with the inspected checkout, or members
+    produced at different commits.
 
     ``required`` names members held to their owners' exact current matrices
     beyond that: ``instance-state`` must then be present, complete, clean,
@@ -1005,7 +1009,7 @@ def verify(
     )
     if snapshot is None:
         return failures
-    failures += _snapshot_failures(snapshot)
+    failures += _snapshot_failures(snapshot, active)
     write, write_failures = _valid_member(
         document,
         WRITE_SUBJECT,
@@ -1017,7 +1021,7 @@ def verify(
     if write.get("incomplete") or write.get("errors"):
         failures.append("the write-lowering envelope is incomplete")
     failures += _provenance_failures(
-        write, WRITE_SUBJECT, write_report.lowering_support.write_lowering_digest()
+        write, WRITE_SUBJECT, write_report.lowering_support.write_lowering_digest(), active
     )
     commits = {
         str(cast("Document", member["provenance"])["commit"]) for member in (snapshot, write)
@@ -1025,7 +1029,7 @@ def verify(
     if len(commits) != 1:
         failures.append("the snapshot-delivery and write-lowering envelopes name different commits")
     if INSTANCE_STATE_SUBJECT in required:
-        failures += _instance_state_failures(document, commits)
+        failures += _instance_state_failures(document, commits, active)
     return failures
 
 
@@ -1045,7 +1049,7 @@ def _valid_member(
     return member, []
 
 
-def _snapshot_failures(snapshot: Document) -> list[str]:
+def _snapshot_failures(snapshot: Document, contract: BudgetContract) -> list[str]:
     """Why a valid snapshot-delivery envelope is not authoritative, complete,
     clean, and current evidence."""
     failures: list[str] = []
@@ -1055,10 +1059,12 @@ def _snapshot_failures(snapshot: Document) -> list[str]:
         failures.append("the snapshot-delivery envelope is incomplete")
     if snapshot.get("errors"):
         failures.append("the snapshot-delivery envelope contains errors")
-    return failures + _provenance_failures(snapshot, SNAPSHOT_SUBJECT, workload_digest())
+    return failures + _provenance_failures(snapshot, SNAPSHOT_SUBJECT, workload_digest(), contract)
 
 
-def _instance_state_failures(document: Document, commits: set[str]) -> list[str]:
+def _instance_state_failures(
+    document: Document, commits: set[str], contract: BudgetContract
+) -> list[str]:
     """Why the instance-state member is not the complete, current evidence a
     verification requiring it needs."""
     member, failures = _valid_member(
@@ -1068,7 +1074,7 @@ def _instance_state_failures(document: Document, commits: set[str]) -> list[str]
         return failures
     if member.get("incomplete") or member.get("errors"):
         failures.append("the instance-state envelope is incomplete")
-    failures += _provenance_failures(member, INSTANCE_STATE_SUBJECT, workload_digest())
+    failures += _provenance_failures(member, INSTANCE_STATE_SUBJECT, workload_digest(), contract)
     commit = str(cast("Document", member["provenance"])["commit"])
     if commits != {commit}:
         failures.append(

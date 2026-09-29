@@ -536,8 +536,8 @@ the instruments read in a gated window rather than against the file, so a
 manifest that widens the matrix is claimed at the change that widens it and not
 at the next rebaseline, and every claimed control address is held to a cold
 read-plan compilation, the one control reading an owner's child takes. The cost
-class is CI-owned (`python-check-cost`, six
-shards) and outside `just check`.
+class's tests are CI-owned (`python-test-cost`, six shards) and outside
+`just check`.
 
 ## Diagnostic runs
 
