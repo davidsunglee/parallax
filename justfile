@@ -506,9 +506,9 @@ python-check-database-access:
 python-check-instrument-access:
     cd {{python}} && uv run python tools/check_instrument_access.py
 
-# A change to the Budget Contract, or to an input a workload digest covers, fails
-# here until the evidence is retaken. Drift that leaves the capture evidence — a moved lock, a reading past a
-# ceiling or a gate — is printed as an advisory and blocks nothing.
+# A change to an input a recorded digest covers fails here until the evidence is
+# retaken. Drift that leaves the capture evidence is printed as an advisory and
+# blocks nothing.
 [metadata("runtime:fast")]
 [doc("The committed canonical cost capture is valid, current evidence for the inspected checkout.")]
 python-check-evidence:

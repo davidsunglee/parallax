@@ -1,17 +1,9 @@
 """Collect every quantitative Python report into one fail-late portfolio, verify
 committed evidence, and compare two portfolios cell by cell.
 
-Verification separates what makes evidence invalid — a missing, malformed, or
-incomplete required envelope, a snapshot-delivery envelope that is not
-authoritative, a capture taken from a dirty tree, a workload or Budget Contract
-digest that disagrees with the inspected checkout, and members produced at
-different commits — from what is merely drift or an adverse reading: a timing or
-memory ceiling exceeded, a reading past the memory gate the cost class blocks
-on, a scaling arm grown past its limit, a dependency lock that moved since the
-capture, and a producing commit the inspected head no longer descends from are
-each reported as an advisory and never fail. The write-lowering envelope's
-sampling protocol is its own, so it is non-authoritative by construction and
-verification accepts it so.
+Verification fails only for what makes evidence invalid and reports what is
+merely drift or an adverse reading as an advisory that never fails;
+:func:`verify` and :func:`advisories` name each.
 ``--freshness-only`` reports a moved lock as the same advisory and fails only
 when the portfolio establishes no freshness at all: no single snapshot-delivery
 member, or provenance whose recorded lock digest is absent or malformed.
@@ -30,10 +22,8 @@ cell, and unit all agree, names every cell present on one side alone, and
 judges a timing delta against one explicit noise allowance.
 
 Two opt-in checks tighten either mode. ``--verify ... --require-member
-SUBJECT`` also verifies that member against the exact matrix its report owner
-declares — ``instance-state`` beside the two members every verification
-requires, or one of those two against its current matrix rather than any
-coverage it once carried — so a capture the evidence audit needs whole cannot
+SUBJECT`` also holds that member to the exact matrix its report owner declares,
+as :func:`verify` states, so a capture the evidence audit needs whole cannot
 pass on the general collector's optional-member policy. ``--compare BASE HEAD
 --require-compatible`` refuses to print arithmetic until the two captures are
 established as comparable: clean producing trees, equal workload, contract,
@@ -984,12 +974,13 @@ def verify(
     beyond that: ``instance-state`` must then be present, complete, clean,
     current, and produced at the same commit, and a member every verification
     already requires must carry its current matrix rather than any coverage it
-    once carried. A name outside :data:`REQUIRABLE_MEMBERS` is a ``ValueError``.
+    once carried. A name outside :data:`REQUIRABLE_MEMBERS` is a ``ValueError``,
+    and a member neither in :data:`REQUIRED_SUBJECTS` nor named in ``required``
+    is not verified at all.
 
     The write-lowering envelope's authority is not among these: its sampling
-    protocol is its own, so it is non-authoritative by construction. Neither is
-    a ceiling exceeded, a memory gate passed, an arm grown, a moved lock, or an
-    unpublished producing commit: see :func:`advisories`.
+    protocol is its own, so it is non-authoritative by construction. Nor is
+    anything :func:`advisories` reports.
     """
     unknown = sorted(set(required) - set(REQUIRABLE_MEMBERS))
     if unknown:
