@@ -1,20 +1,21 @@
-"""The predicate-acquisition companion workloads: one prepared Bitemporal
+"""The predicate-acquisition companion workloads: one Bitemporal Wire
 ``updateUntil`` predicate resolved against provider-free rows, under both
-storage layouts, through the production materializing predicate-write path.
+storage layouts, through the public ``tx.wire.update_until_where`` verb.
 
-The window opens with a prepared predicate instruction and a port whose
-resolving read answers freshly composed rows, and closes once the Unit of Work
-has buffered the Materialized Write Group: read planning and compilation, row
-publication and materialization, per-row no-op selection, predecessor
-ownership establishment, aligned column construction, and buffering are inside
-it. Ingress preparation, JSON parsing, the flush, and driver serialization are
-outside it, and the transaction is abandoned after the checkpoint so no flush
-runs at all.
+The window opens immediately before the verb receives the caller's target and
+changes documents, and closes once the Unit of Work has buffered the
+Materialized Write Group: document capture, instruction deserialization and
+preparation, read planning and compilation, row publication and
+materialization, per-row no-op selection, predecessor ownership establishment,
+aligned column construction, and buffering are inside it. The flush and driver
+serialization are outside it, and the transaction is abandoned after the
+checkpoint so no flush runs at all.
 
 Every assignment is genuinely changed against every resolved row, so no-op
 elimination retains them all. The port composes each row when the statement
-runs and keeps none, and the Database is composed once per reading outside the
-window, so what a retained checkpoint sees is what production kept.
+runs and keeps none, and the Database and the caller's documents are composed
+once outside the window, so what a retained checkpoint sees is what production
+kept.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
@@ -27,7 +28,7 @@ import datetime as dt
 from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Final, Literal, cast
+from typing import Final, Literal, cast
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.workloads import ACQUISITION_LEVELS, AcquisitionLevel
@@ -41,21 +42,12 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity._model import model_of
-from parallax.core.object_query._fluent import mutation_selection
-from parallax.core.unit_work import (
-    PredicateSelection,
-    PredicateWrite,
-    WriteAssignment,
-    instructions,
-)
-from parallax.core.unit_work.instructions import PreparedPredicateWrite
 from parallax.snapshot.handle import Database, ExecutionFailure, ScopedDatabase, Transaction
-from parallax.snapshot.handle._transaction import buffer_prepared_predicate_write
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 
 __all__ = [
     "ACQUISITION_LEVELS",
+    "ASSIGNED_CHANGES",
     "CASES",
     "ENTITY_CLASSES",
     "MODEL",
@@ -124,40 +116,37 @@ _ENTITIES: Final[Mapping[Layout, type[Entity]]] = {
 
 @dataclass(frozen=True, slots=True)
 class Case:
-    """One acquisition family level: the prepared predicate and the rows it resolves."""
+    """One acquisition family level: the caller's Wire target and the rows it
+    resolves."""
 
     name: str
     layout: Layout
     entity: type[Entity]
     level: AcquisitionLevel
-    prepared: PreparedPredicateWrite
+    target: Mapping[str, object]
 
     @property
     def rows(self) -> int:
         return self.level.rows
 
 
-def _prepared(cls: type[Entity]) -> PreparedPredicateWrite:
-    """The interior ``updateUntil`` over every row, prepared exactly as the
-    typed ``update_until_where`` verb prepares it."""
-    key = cast("Any", cls).id
-    title = cast("Any", cls).title
-    selection = mutation_selection(cls.where(key >= 1))
-    assignment = title.set(ASSIGNED_TITLE)
-    instruction = PredicateWrite(
-        "updateUntil",
-        PredicateSelection(selection.target.canonical, selection.predicate),
-        (WriteAssignment(str(assignment.attr), assignment.value),),
-        INTERIOR_FROM,
-        INTERIOR_UNTIL,
-    )
-    prepared = instructions.prepare_typed_write(instruction, model_of(MODEL))
-    assert isinstance(prepared, PreparedPredicateWrite)
-    return prepared
+ASSIGNED_CHANGES: Final[Mapping[str, object]] = {"title": ASSIGNED_TITLE}
+"""The Wire changes document every case authors: one genuinely changed member."""
+
+
+def _target(cls: type[Entity]) -> Mapping[str, object]:
+    """The canonical ``{entity, predicate}`` selection of every row, in the Wire
+    spelling a caller hands ``update_until_where`` (`m-predicate` "Equality and
+    range")."""
+    entity = cls.identity.canonical
+    return {
+        "entity": entity,
+        "predicate": {"greaterThanEquals": {"attr": f"{entity}.id", "value": 1}},
+    }
 
 
 CASES: Final[tuple[Case, ...]] = tuple(
-    Case(f"acquisition.{level.id}.{layout}", layout, _ENTITIES[layout], level, _prepared(cls))
+    Case(f"acquisition.{level.id}.{layout}", layout, _ENTITIES[layout], level, _target(cls))
     for layout in LAYOUTS
     for cls in (_ENTITIES[layout],)
     for level in ACQUISITION_LEVELS
@@ -258,18 +247,20 @@ def acquire(
     opened: Checkpoint | None = None,
     closed: Checkpoint | None = None,
 ) -> None:
-    """Resolve and buffer ``case``'s prepared predicate, then abandon the
+    """Resolve and buffer ``case``'s Wire predicate write, then abandon the
     transaction.
 
-    ``opened`` runs immediately before the acquisition and ``closed``
-    immediately after the group is buffered, both inside the transaction body
-    and before any flush could run; a reading marks its window with them.
+    ``opened`` runs immediately before the public verb and ``closed``
+    immediately after it has buffered the group, both inside the transaction
+    body and before any flush could run; a reading marks its window with them.
     """
 
     def body(transaction: Transaction) -> None:
         if opened is not None:
             opened()
-        buffer_prepared_predicate_write(transaction, case.prepared)
+        transaction.wire.update_until_where(
+            case.target, ASSIGNED_CHANGES, valid_from=INTERIOR_FROM, until=INTERIOR_UNTIL
+        )
         if closed is not None:
             closed()
         raise _Abandoned

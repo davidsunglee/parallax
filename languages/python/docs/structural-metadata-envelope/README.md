@@ -101,7 +101,7 @@ total of what the window allocated.
 | Window | Member | Contains | Excludes |
 |---|---|---|---|
 | `keyed-write` | write-lowering | Typed row serialization or the caller's Wire mapping; preparation; settlement; SQL lowering; production PostgreSQL bind adaptation; psycopg's own transformer dump of every bind, document binds included | database execution and network time |
-| `predicate-acquisition` | write-lowering | a prepared Bitemporal `updateUntil` predicate; the resolving read's planning and compilation; row publication and materialization; per-row no-op selection; predecessor ownership establishment from freshly composed mutable rows; aligned column construction; buffering of the Materialized Write Group | ingress preparation, JSON parsing, the flush, and driver serialization — the transaction is abandoned after the checkpoint |
+| `predicate-acquisition` | write-lowering | one public `tx.wire.update_until_where` of a Bitemporal `updateUntil` over the caller's target and changes documents: document capture, instruction deserialization and preparation; the resolving read's planning and compilation; row publication and materialization; per-row no-op selection; predecessor ownership establishment from freshly composed mutable rows; aligned column construction; buffering of the Materialized Write Group | the flush and driver serialization — the transaction is abandoned after the checkpoint |
 | `model-preparation` | write-lowering | one `prepare_model` over the whole structural write model: formation from the declared Entity Classes, layouts, row codec, graph construction, and write planner | the Entity Class declarations themselves, which are retained by the importing module |
 | `wire-insert-response` | write-lowering | one public `tx.wire.insert` of a nested, polymorphic Create Payload inside an open transaction, from the payload arriving to the frozen Wire node it answers | the commit that flushes the buffered row, its lowering, and driver serialization |
 | `live-delivery` | snapshot-delivery | a connected Wire find or stream against PostgreSQL, parsing included | nothing |
@@ -142,8 +142,9 @@ window, and a Wire case holds its authored mapping in the fixture and hands it t
 preparation. Neither is counted by a retained checkpoint, because both were
 allocated before the window opened; what the checkpoint sees is what the window
 built and production still reaches. The acquisition port composes each resolving
-row when the statement runs and keeps none, and the handle is composed once per
-reading outside the window, so the checkpoint sees the retained columns, the
+row when the statement runs and keeps none, and the handle and the caller's
+target and changes documents are composed once per reading outside the window,
+so the checkpoint sees the retained columns, the
 retained encoded documents, and the buffered group rather than a fixture-held
 second batch. The provider-free read port likewise composes each row per
 statement.
@@ -268,12 +269,11 @@ captures are, without it; `--verify --require-member snapshot-delivery` and
 ### Predicate-acquisition families — 3 levels per layout
 
 A Bitemporal Entity with the categorical Value Object shape, under each layout.
-The prepared predicate is `id >= 1` with `title` assigned to a value every
-resolved row differs from, over the interior window above, so no-op elimination
-retains every row. Levels resolve 8, 32, and 128 current milestones
+The Wire target selects `id >= 1` and the changes document assigns `title` a
+value every resolved row differs from, over the interior window above, so no-op
+elimination retains every row. Levels resolve 8, 32, and 128 current milestones
 (`acquisition.rows-<n>.<layout>`, per-row units). This companion measures the
-converged prepared-predicate path once per layout and does not multiply ingress
-forms.
+Wire ingress once per layout and does not multiply ingress forms.
 
 ### Preserved delivery workloads
 

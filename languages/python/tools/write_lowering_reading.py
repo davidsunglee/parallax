@@ -6,14 +6,15 @@ window and answers with one JSON line.
 
 Four windows are read. A keyed-write case runs from Typed or Wire input
 through preparation, settlement, SQL lowering, production bind adaptation, and
-psycopg's own document serialization. A predicate-acquisition case runs from a
-prepared Bitemporal predicate and freshly composed resolving rows through
-production acquisition to a buffered Materialized Write Group, and stops before
-any flush. A public insert case runs one ``tx.wire.insert`` of a nested,
-polymorphic payload inside an open transaction to the frozen node it answers,
-and stops before the commit that flushes the row. The model-preparation cases
-each run one complete model preparation: the structural write model, and the
-table-per-hierarchy family whose variant spelling that preparation derives.
+psycopg's own document serialization. A predicate-acquisition case runs one
+public ``tx.wire.update_until_where`` from the caller's documents through
+preparation and production acquisition over freshly composed resolving rows to a
+buffered Materialized Write Group, and stops before any flush. A public insert
+case runs one ``tx.wire.insert`` of a nested, polymorphic payload inside an open
+transaction to the frozen node it answers, and stops before the commit that
+flushes the row. The model-preparation cases each run one complete model
+preparation: the structural write model, and the table-per-hierarchy family
+whose variant spelling that preparation derives.
 
 Elapsed time and the high-water mark are read over uninterrupted runs of the
 whole window. The retained checkpoint is read separately, at the production

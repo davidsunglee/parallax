@@ -712,10 +712,9 @@ instruction. The seam takes an ALREADY-PREPARED instruction, and prepared-write
 production judges exactly the converse half — a milestone verb aimed at a target
 deriving no As-Of Axis — so no instruction that reaches this seam can still be
 carrying that mistake. The temporal arm is producible but reached by no
-production caller: both `_where` ingresses (`_predicate_writes.buffer_predicate`,
+caller: both `_where` ingresses (`_predicate_writes.buffer_predicate`,
 `_wire_writes.wire_predicate_write`) call `reject_temporal_delete` before the seam,
-and the only other entry, `_transaction.buffer_prepared_predicate_write`, is a
-benchmark seam. No test drives either arm.
+and nothing else enters it. No test drives either arm.
 
 **Why it is deferred rather than fixed.** The arm is cheap and states the
 seam's own contract, which the surrounding docstring rests on: this entry point
