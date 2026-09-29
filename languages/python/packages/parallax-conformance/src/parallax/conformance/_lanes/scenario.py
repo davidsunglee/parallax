@@ -1093,18 +1093,22 @@ def _buffered(
     )  # every producer of this seam resolves keyed writes
     evidence = instruction_evidence(model, instruction, supplied=observation)
     return buffered_write(
-        instruction, evidence, change=_oracle_change(instruction, evidence, model)
+        instruction, evidence, change=instruction_change(model, instruction, evidence=evidence)
     )
 
 
-def _oracle_change(
-    instruction: PreparedKeyedWrite, evidence: SettledEvidence | None, model: AcceptedMetamodel
+def instruction_change(
+    model: AcceptedMetamodel,
+    instruction: PreparedKeyedWrite,
+    *,
+    evidence: SettledEvidence | None,
 ) -> EffectiveChangeSet | None:
     """The effective change set the verb would buffer an evidenced single-row
-    update with: its assigned members, less the identity, classified against
-    the originals the evidence observed over the target's applicable document
-    shape. Evidence stating no member values — a version or an object claim —
-    has no original to restore, so every assigned member is effective.
+    update with, for an oracle holding the INSTRUCTION rather than the value it
+    was derived from: its assigned members, less the identity, classified
+    against the originals the evidence observed over the target's applicable
+    document shape. Evidence stating no member values — a version or an object
+    claim — has no original to restore, so every assigned member is effective.
     """
     if (
         evidence is None

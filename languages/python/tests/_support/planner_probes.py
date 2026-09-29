@@ -8,18 +8,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Final
 
-from parallax.core import inheritance
-from parallax.core.document_codec import EffectiveChangeSet, classify_effective_change
+from parallax.conformance._lanes.scenario import instruction_change
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
-    UPDATE_MUTATIONS,
     BufferItem,
     KeyedWrite,
     MaterializedWriteGroup,
     ObjectKey,
     PredicateWrite,
     SubjectActor,
-    TemporalObservation,
     WriteObservation,
     buffered_write,
     object_key,
@@ -33,7 +30,7 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.unit_work.materialized import ObjectClaimedWrite, ObservedKeyedWrite
 from parallax.core.unit_work.strategy import ActorIdentity
 
-__all__ = ["TEST_ACTOR_IDENTITY", "observed_buffer", "observed_write", "producer_change"]
+__all__ = ["TEST_ACTOR_IDENTITY", "observed_buffer", "observed_write"]
 
 # An arbitrary Actor Identity: `m-unit-work` requires one on every Planning
 # Request and guarantees it is never inspected, so either closed variant serves
@@ -73,41 +70,14 @@ def observed_write(
     instruction: PreparedWrite, model: Metamodel, observation: WriteObservation | None
 ) -> BufferItem:
     """``instruction`` buffered against ``observation`` beside the change set a
-    verb would classify for it (:func:`producer_change`)."""
-    return buffered_write(
-        instruction, observation, change=producer_change(instruction, model, observation)
+    verb would classify for it, by the conformance oracle's own
+    :func:`~parallax.conformance._lanes.scenario.instruction_change`."""
+    change = (
+        instruction_change(model, instruction, evidence=observation)
+        if isinstance(instruction, PreparedKeyedWrite)
+        else None
     )
-
-
-def producer_change(
-    instruction: PreparedWrite, model: Metamodel, observation: WriteObservation | None
-) -> EffectiveChangeSet | None:
-    """The effective change set a keyed update settles against ``observation``
-    with, classified by the rule the verb applies: the assigned members, less the
-    identity, against the originals the evidence observed, over the target's
-    applicable document shape.
-
-    Only an observed single-row update has one; the carrier refuses an observed
-    write of several rows itself. A Predecessor Row states the originals; a
-    version observation states none, so every assigned member is effective.
-    """
-    if (
-        observation is None
-        or not isinstance(instruction, PreparedKeyedWrite)
-        or instruction.mutation not in UPDATE_MUTATIONS
-        or len(instruction.rows) != 1
-    ):
-        return None
-    view = inheritance.view(model).entity(instruction.target.identity)
-    assert view is not None  # the facet covers every accepted Entity
-    key = view.primary_key.identity.name
-    (row,) = instruction.rows
-    assigned = {name: value for name, value in row.items() if name != key}
-    if not isinstance(observation, TemporalObservation):
-        return EffectiveChangeSet(effective=frozenset(assigned), restored=frozenset())
-    return classify_effective_change(
-        view.applicable_document_shape, assigned, observation.predecessor.members
-    )
+    return buffered_write(instruction, observation, change=change)
 
 
 def _prepared_item(item: BufferItem | KeyedWrite | PredicateWrite, model: Metamodel) -> BufferItem:
