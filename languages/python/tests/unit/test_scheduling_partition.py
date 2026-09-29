@@ -36,7 +36,7 @@ EVIDENCE_FIXTURES = frozenset({committed_evidence.FIXTURE})
 ORTHOGONAL_SELECTORS = frozenset({"compile_sweep", "adapter_smoke"})
 
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-COST_JOB = "python-check-cost"
+COST_JOB = "python-test-cost"
 
 # The primary semantic surfaces, each one directory under `tests/`.
 SURFACES = frozenset(
@@ -150,7 +150,7 @@ def test_only_the_derivation_names_a_scheduling_class() -> None:
 
 
 def _cost_job() -> Any:
-    """The `python-check-cost` job as the CI workflow declares it."""
+    """The `python-test-cost` job as the CI workflow declares it."""
     workflow: Any = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
     return workflow["jobs"][COST_JOB]
 

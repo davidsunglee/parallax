@@ -317,4 +317,4 @@ def test_ordinary_ci_verifies_only_and_carries_no_observation_trigger(trigger: s
     ci = cast("dict[object, Any]", yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8")))
     assert trigger not in _triggers(ci)
     assert "python-report-cost" not in ci["jobs"]
-    assert "python-verify-cost" in ci["jobs"]
+    assert "python-check-evidence" in ci["jobs"]

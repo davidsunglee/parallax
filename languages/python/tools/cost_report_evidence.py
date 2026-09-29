@@ -68,7 +68,7 @@ JOB_URL: Final = "https://github.com/{repository}/actions/runs/{run}/job/{job}"
 
 ORDINARY_CI_ROW: Final = (
     "| Ordinary CI | `python-report-cost` measured a fresh portfolio on every push and pull "
-    "request (this before job) | `python-verify-cost` verifies the committed evidence only; "
+    "request (this before job) | `python-check-evidence` verifies the committed evidence only; "
     "fresh captures are the `cost-report` workflow's |"
 )
 

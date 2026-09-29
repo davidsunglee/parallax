@@ -10,9 +10,10 @@ import pytest
 import yaml
 
 from cost_report import CANONICAL_PORTFOLIO
-from tests._support.repo import REPO_ROOT
+from tests._support.repo import PY_ROOT, REPO_ROOT
 
-VERIFY_JOB = "python-verify-cost"
+VERIFY_JOB = "python-check-evidence"
+VERIFY_STEP = f"just {VERIFY_JOB}"
 SHIM_INTERPRETER = "/bin/sh"
 STEP_SHELL = "bash"
 STEP_SHELL_RUNNABLE = shutil.which(STEP_SHELL) is not None and Path(SHIM_INTERPRETER).exists()
@@ -41,7 +42,7 @@ def test_ordinary_ci_verifies_committed_evidence_and_measures_nothing() -> None:
     assert "needs" not in job
     assert list(_steps(job)) == [
         "Identify the inspected head",
-        "Verify committed evidence against head lock",
+        VERIFY_STEP,
         "Check committed evidence against event merge lock",
     ]
     for step in job["steps"]:
@@ -62,16 +63,16 @@ def test_head_verification_failure_still_exposes_freshness_in_summary(
     tmp_path: Path, fresh: bool
 ) -> None:
     steps = _steps(_job())
-    step = steps["Verify committed evidence against head lock"]
+    step = steps[VERIFY_STEP]
     assert "if" not in step
-    assert f"--verify {CANONICAL_PORTFOLIO.as_posix()}" in step["run"]
-    uv = tmp_path / "uv"
+    assert VERIFY_STEP in step["run"]
+    just = tmp_path / "just"
     freshness = "lock freshness matches" if fresh else "stale snapshot-delivery evidence"
-    uv.write_text(
+    just.write_text(
         f"#!{SHIM_INTERPRETER}\necho '{freshness}'\necho 'outside budget' >&2\nexit 1\n",
         encoding="utf-8",
     )
-    uv.chmod(0o755)
+    just.chmod(0o755)
     summary = tmp_path / "summary.md"
     completed = subprocess.run(
         [STEP_SHELL, "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
@@ -90,6 +91,18 @@ def test_head_verification_failure_still_exposes_freshness_in_summary(
     assert "head lock inspected-head" in rendered
     assert freshness in rendered
     assert "outside budget" in rendered
+
+
+def test_the_verification_the_job_invokes_is_of_the_canonical_portfolio() -> None:
+    shown = subprocess.run(
+        ["just", "--show", VERIFY_JOB],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    verified = CANONICAL_PORTFOLIO.relative_to(PY_ROOT.relative_to(REPO_ROOT))
+    assert f"--verify {verified.as_posix()}" in shown
 
 
 def test_pr_freshness_checks_event_merge_lock_without_moving_measurement_checkouts() -> None:
