@@ -113,24 +113,6 @@ def framework_comparison(
     )
 
 
-def managed_membership(
-    *, attr: str, member: AttributeMetadata, values: tuple[ManagedValue, ...]
-) -> ValidatedPredicate:
-    """Author one generated membership and retain its managed tuple occurrence."""
-    if not all(matches_neutral_type(value, member.type) for value in values):
-        raise ValueError(f"{attr}: generated membership contains a value outside {member.type!r}")
-    authored = Membership(
-        op="in",
-        attr=attr,
-        values=tuple(cast("Scalar", encode_wire(member.type, value)) for value in values),
-    )
-    return ValidatedPredicate(
-        authored,
-        operands=ValidatedOperands(values, member.type),
-        member=member,
-    )
-
-
 def deferred_membership(*, attr: str, member: AttributeMetadata) -> ValidatedPredicate:
     """Build a generated membership whose key sequence is bound after compilation."""
     marker = DeferredKeySet(member.type)

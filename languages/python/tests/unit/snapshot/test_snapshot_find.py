@@ -1468,6 +1468,27 @@ def test_a_level_whose_gathered_key_set_is_empty_attaches_the_null_result() -> N
     assert _view(_rows(result.page), _root(result), "owner") is None
 
 
+def test_a_child_statement_binds_each_gathered_key_once_in_encounter_order() -> None:
+    port = QueuePort(
+        [
+            [
+                {**_ANIMAL_ROW, "id": index, "owner_id": owner}
+                for index, owner in enumerate((20, 10, 20, 30, 10), start=1)
+            ],
+            [],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "Animal",
+            "predicate": {"all": {}},
+            "includes": [{"segments": [{"rel": "Animal.owner"}]}],
+        }
+    )
+    _find(query, ANIMAL, port)
+    assert port.executed[1][1] == [[20, 10, 30]]
+
+
 def test_a_parent_the_child_level_returned_no_row_for_is_loaded_empty() -> None:
     # The level ran and gathered both keys, so both parents are attached to; the
     # one no returned row correlates with is loaded-EMPTY rather than unloaded,
