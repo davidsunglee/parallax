@@ -8109,12 +8109,12 @@
       "cell": "columns.peakKiB",
       "runtime": "3.14",
       "samples": [
-        981.0458984375,
-        982.03515625,
-        977.7001953125
+        933.671875,
+        948.61328125,
+        933.671875
       ],
       "unit": "KiB",
-      "value": 981.0458984375,
+      "value": 933.671875,
       "window": "provider-free-delivery",
       "workload": "leaf-timestamp"
     },
@@ -8122,12 +8122,12 @@
       "cell": "columns.retainedKiB",
       "runtime": "3.14",
       "samples": [
-        303.8701171875,
-        303.41015625,
-        303.21484375
+        302.587890625,
+        302.83203125,
+        302.83203125
       ],
       "unit": "KiB",
-      "value": 303.41015625,
+      "value": 302.83203125,
       "window": "provider-free-delivery",
       "workload": "leaf-timestamp"
     },
@@ -8154,12 +8154,12 @@
       "cell": "document.peakKiB",
       "runtime": "3.14",
       "samples": [
-        985.904296875,
-        987.787109375,
-        984.490234375
+        949.392578125,
+        937.4296875,
+        937.4296875
       ],
       "unit": "KiB",
-      "value": 985.904296875,
+      "value": 937.4296875,
       "window": "provider-free-delivery",
       "workload": "leaf-timestamp"
     },
@@ -8167,12 +8167,12 @@
       "cell": "document.retainedKiB",
       "runtime": "3.14",
       "samples": [
-        304.0126953125,
-        305.248046875,
-        303.6533203125
+        306.54296875,
+        303.22265625,
+        302.685546875
       ],
       "unit": "KiB",
-      "value": 304.0126953125,
+      "value": 303.22265625,
       "window": "provider-free-delivery",
       "workload": "leaf-timestamp"
     },
