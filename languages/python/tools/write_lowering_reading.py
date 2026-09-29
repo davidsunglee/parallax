@@ -205,6 +205,14 @@ class Driver:
     kept: Callable[[Seam], int] = retained
 
 
+def _kept_by_the_verb(seam: Seam) -> int:
+    """What a keyed verb kept, read as a retained increment and answered as at
+    least zero, as :func:`_peak` answers its rise: a verb that keeps nothing — an
+    update restoring every member — can release a few dozen bytes the sequence
+    left behind it, and a retained reading is never negative."""
+    return max(0, retained_increment(seam))
+
+
 def _keyed_driver(case: lowering_support.Case, handle: ScopedDatabase) -> Driver:
     """A keyed write's runs. Its checkpoint samples twice, after the read and
     after the verb has buffered, because the read the verb revises must stay
@@ -219,7 +227,7 @@ def _keyed_driver(case: lowering_support.Case, handle: ScopedDatabase) -> Driver
     def checkpoint(sample: Sampler) -> None:
         lowering_support.write(handle, case, opened=sample, buffered=sample)
 
-    return Driver(1, run, marked, checkpoint, retained_increment)
+    return Driver(1, run, marked, checkpoint, _kept_by_the_verb)
 
 
 def _acquisition_driver(case: acquisition_support.Case, handle: ScopedDatabase) -> Driver:
