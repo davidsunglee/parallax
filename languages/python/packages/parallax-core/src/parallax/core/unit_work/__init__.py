@@ -12,7 +12,6 @@ from parallax.core.unit_work.claims import (
 )
 from parallax.core.unit_work.clock import (
     Clock,
-    FixedClock,
     SystemClock,
     TransactionInstant,
 )
@@ -134,7 +133,6 @@ __all__ = [
     "Concurrency",
     "DatabaseLoginActor",
     "EntityStateRow",
-    "FixedClock",
     "KeyedMutation",
     "KeyedWrite",
     "MaterializedWriteGroup",

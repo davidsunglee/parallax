@@ -22,6 +22,7 @@ from uuid import uuid4
 import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.diagnostics import FailureDiagnostic, diagnostic_for
@@ -45,7 +46,6 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import ScopedDatabase
 from tests._support import mirrored_models as mm

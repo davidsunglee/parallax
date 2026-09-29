@@ -175,6 +175,7 @@ from typing import Final, NamedTuple, cast, get_type_hints
 
 import pytest
 
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.db_port import (
     Bind,
     CommitFailed,
@@ -213,7 +214,6 @@ from parallax.core.execution_lifecycle._activity import (
     open_snapshot_stream_root,
     open_transaction_root,
 )
-from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import ExecutionFailure, ScopedDatabase, Transaction
 from tests._support import mirrored_models as mm

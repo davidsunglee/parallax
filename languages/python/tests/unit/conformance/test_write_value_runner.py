@@ -19,11 +19,11 @@ import pytest
 
 from parallax.conformance import case_format, engine, models, vo_models, write_value_runner
 from parallax.conformance.another_source import AnotherSource
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
 from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity import DomainModel, Entity
-from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect, prepare_model
 from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
 from tests._support.adoption import raises_contextualized

@@ -17,6 +17,7 @@ from decimal import Decimal
 import pytest
 
 from parallax.conformance.read_models import Person
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import LATEST, opt_lock
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
@@ -24,7 +25,6 @@ from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.opt_lock._facet import UNVERSIONED
 from parallax.core.unit_work import (
     SELECTION_INTENT,
-    FixedClock,
     KeyedWrite,
     ObjectKey,
     RetainedObservation,

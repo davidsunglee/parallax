@@ -33,6 +33,7 @@ from parallax.conformance._lifecycle_recording import (
     RecordedRoot,
     RecordingLifecycleProvider,
 )
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
@@ -47,7 +48,6 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.unit_work import (
     Concurrency,
-    FixedClock,
     KeyedWrite,
     TransactionSettings,
     UnitOfWork,

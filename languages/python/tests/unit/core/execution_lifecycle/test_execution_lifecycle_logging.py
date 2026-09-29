@@ -23,6 +23,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     CleanupIssue,
@@ -87,7 +88,6 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import ScopedDatabase, Transaction
 from tests._support.adoption import raises_contextualized

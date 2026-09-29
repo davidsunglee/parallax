@@ -28,13 +28,14 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import POSITION_MODEL, Position
 from parallax.core import LATEST
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.object_query import TX_TIME, VALID_TIME
-from parallax.core.unit_work import FixedClock, instructions
+from parallax.core.unit_work import instructions
 from parallax.snapshot import ServingModel, SnapshotStream, SnapshotStreamStateError, prepare_model
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import Database, KeyedWriteValueError, Transaction

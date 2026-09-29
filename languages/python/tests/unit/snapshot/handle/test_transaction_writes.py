@@ -19,6 +19,7 @@ import pytest
 
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import CardPayment, DepositRate, Person
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.vo_models import (
     CONTACT_MODEL,
     Contact,
@@ -33,7 +34,6 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity import EntityGraphWriter, NodeHandle
 from parallax.core.entity._errors import EntityRowError
 from parallax.core.unit_work import (
-    FixedClock,
     ObjectKey,
     OptimisticLockConflictError,
     StaleWriteError,

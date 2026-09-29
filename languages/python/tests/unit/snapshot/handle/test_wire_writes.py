@@ -31,11 +31,12 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import vo_models as vo
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import InstantError, PresentDocument
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.predicate import CanonicalDocumentError
-from parallax.core.unit_work import FixedClock, WriteRejectedError, instructions
+from parallax.core.unit_work import WriteRejectedError, instructions
 from parallax.snapshot import InvalidData, Snapshot, connect
 from parallax.snapshot.handle import (
     Database,

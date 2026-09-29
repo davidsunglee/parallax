@@ -20,6 +20,7 @@ from decimal import Decimal
 from typing import Any, Final, cast
 
 from parallax.conformance.class_models import MODELS
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, Bitemporal, DomainModel, attr
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -36,7 +37,7 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleProvider,
     RootExecution,
 )
-from parallax.core.unit_work import FixedClock, RetainedObservation
+from parallax.core.unit_work import RetainedObservation
 from parallax.snapshot import InvalidData, connect
 from parallax.snapshot.handle import ScopedDatabase, Snapshot
 from parallax.snapshot.materialize import WireEntity
