@@ -100,7 +100,7 @@ total of what the window allocated.
 
 | Window | Member | Contains | Excludes |
 |---|---|---|---|
-| `keyed-write` | write-lowering | Typed row serialization or the caller's Wire mapping; preparation; settlement; SQL lowering; production PostgreSQL bind adaptation; psycopg's own transformer dump of every bind, document binds included | database execution and network time |
+| `keyed-write` | write-lowering | one public keyed verb (`tx.insert`, `tx.update`, `tx.update_until`, or its `tx.wire` peer) until `transact` returns: Typed row serialization or the caller's Wire document; preparation; effective-change classification and buffering; the pre-commit flush's planning, settlement, and SQL lowering; production PostgreSQL bind adaptation; psycopg's own transformer dump of every bind, document binds included; the commit | the read of the row a write revises, earlier in the same transaction, and the Typed `edit` or Wire changes document authored against it; database execution and network time |
 | `predicate-acquisition` | write-lowering | one public `tx.wire.update_until_where` of a Bitemporal `updateUntil` over the caller's target and changes documents: document capture, instruction deserialization and preparation; the resolving read's planning and compilation; row publication and materialization; per-row no-op selection; predecessor ownership establishment from freshly composed mutable rows; aligned column construction; buffering of the Materialized Write Group | the flush and driver serialization — the transaction is abandoned after the checkpoint |
 | `model-preparation` | write-lowering | one `prepare_model` over the whole structural write model: formation from the declared Entity Classes, layouts, row codec, graph construction, and write planner | the Entity Class declarations themselves, which are retained by the importing module |
 | `wire-insert-response` | write-lowering | one public `tx.wire.insert` of a nested, polymorphic Create Payload inside an open transaction, from the payload arriving to the frozen Wire node it answers | the commit that flushes the buffered row, its lowering, and driver serialization |
@@ -112,9 +112,9 @@ total of what the window allocated.
 | `control-delivery` | snapshot-delivery | a Wire or Typed find or stream over already-parsed provider rows through production planning, materialization, and publication; the Typed result is never projected | parsing and provider work; the root and its port, composed before the window |
 | `result-held-metadata` | snapshot-delivery | the bytes one eager Typed result keeps reachable, read with its root open and sharing the prepared model and again with the root closed and the result the sole owner of whatever it still reaches | nothing but what the result does not reach |
 
-Retained checkpoints: `keyed-write` samples with the serialized rows, the
-prepared instruction, the buffered item, and the settled plan alive, before
-lowering; `predicate-acquisition` samples inside the transaction body with the
+Retained checkpoints: `keyed-write` reads what the verb kept — the difference
+between a sample taken after the read and one taken once the verb has buffered,
+both inside the transaction body and before the flush; `predicate-acquisition` samples inside the transaction body with the
 group buffered, before any flush; `model-preparation` samples with the prepared
 selection alive; a geometry read samples with the delivered results alive;
 `read-plan-compilation` samples with the already composed cache holding its one
@@ -136,12 +136,13 @@ window prices that plan separately.
 
 ### Live roots and lifetimes
 
-The keyed-write source stays alive across the window as production keeps it: a
-Typed case holds its instances in the fixture and serializes them inside the
-window, and a Wire case holds its authored mapping in the fixture and hands it to
-preparation. Neither is counted by a retained checkpoint, because both were
-allocated before the window opened; what the checkpoint sees is what the window
-built and production still reaches. The acquisition port composes each resolving
+The keyed-write source stays alive across the window as production keeps it: an
+update's source is the node the transaction's read published, edited by a Typed
+caller or handed with a changes document by a Wire one, and an insert's is the
+instance or payload the fixture holds. None is counted by the retained increment,
+which starts after the read, so what it sees is what the verb built and
+production still reaches until the flush. The keyed port composes its stored row
+per statement and keeps none. The acquisition port composes each resolving
 row when the statement runs and keeps none, and the handle and the caller's
 target and changes documents are composed once per reading outside the window,
 so the checkpoint sees the retained columns, the
@@ -173,21 +174,21 @@ the trials are not part of the baseline.
 
 Each Entity carries a One Value Object (`address`) nesting a One (`geo`) and a
 Many (`tags`, two elements) beside a primary key and a string leaf, under both
-storage layouts. Every case writes one row.
+storage layouts. Every case addresses one row, and every transaction runs at the
+default Optimistic preference, so a temporal close carries its milestone gate.
 
 | Family | Temporal profile | Operation | Predecessor evidence | Statements |
 |---|---|---|---|---:|
 | `txtime.opening` | Transaction-Time-Only | `insert` | none | 1 |
-| `txtime.changed` | Transaction-Time-Only | `update`, every member changed | complete predecessor row; the retained document under Relational Document | 2 |
-| `txtime.unchanged` | Transaction-Time-Only | `update` restating the predecessor exactly | as above | 2 |
-| `plain.changed` | non-temporal, unversioned | `update`, every member changed | none | 1 |
-| `bitemporal.interior` | Bitemporal | `updateUntil` over `[2026-03-01, 2026-09-01)`, strictly inside the predecessor's open Valid interval | complete predecessor row with both axes | 4: close, carried head, changed middle, carried tail |
+| `txtime.changed` | Transaction-Time-Only | `update`, every member changed | the row read in the same transaction: its complete predecessor row, and the retained document under Relational Document | 2 |
+| `txtime.unchanged` | Transaction-Time-Only | `update` restating the predecessor exactly | as above | 0: every member is restored, so the verb buffers nothing |
+| `plain.changed` | non-temporal, unversioned | `update`, every member changed | the row read in the same transaction, which licenses the object claim | 1 |
+| `bitemporal.interior` | Bitemporal | `updateUntil` over `[2026-03-01, 2026-09-01)`, strictly inside the predecessor's open Valid interval | the row read in the same transaction at the latest Valid Time, with both axes | 4: close, carried head, changed middle, carried tail |
 
 Each family runs as Typed and Wire ingress under Columns and Relational Document
 layout, twelve Transaction-Time-Only cases and eight others. The Typed and Wire
 twins of a case lower to identical statements and binds, which the fixture
-suite proves. Under Columns an unchanged successor still re-encodes each Value
-Object column; unchanged content there is not evidence of Entity-document reuse.
+suite proves.
 
 ### Geometry families — 9 levels, both flows, both layouts
 

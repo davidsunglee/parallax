@@ -3,9 +3,10 @@
 The report owns the runtime-by-case matrix and the Cost Report Envelope. Each
 reading is taken by ``write_lowering_reading.py`` in an isolated child process:
 the twenty categorical keyed-write cases, the geometry inserts, and the
-changed-ancestor successors through actual driver serialization, the
-predicate-acquisition families to their buffered group, the public Wire insert
-to the node it answers, and the two model-preparation checkpoints.
+changed-ancestor successors through their public verbs and the flush's actual
+driver serialization, the predicate-acquisition families to their buffered
+group, the public Wire insert to the node it answers, and the two
+model-preparation checkpoints.
 Measurements are observations: only an incomplete matrix changes this
 command's exit status.
 """
@@ -110,8 +111,10 @@ MODEL_CASE: Final = "model.prepared"
 MODEL_FAMILY_CASE: Final = "model.prepared.family"
 WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
     KEYED_WINDOW: (
-        "Typed or Wire input through preparation, settlement, SQL lowering, production "
-        "bind adaptation, and psycopg's document serialization; no database execution"
+        "one public Typed or Wire keyed verb over a row its transaction already read, "
+        "until transact returns: preparation, buffering, the pre-commit flush's "
+        "settlement and SQL lowering, production bind adaptation, psycopg's document "
+        "serialization, and the commit; no read or database execution"
     ),
     ACQUISITION_WINDOW: (
         "one public tx.wire.update_until_where of a Bitemporal updateUntil, from the "

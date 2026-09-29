@@ -49,7 +49,7 @@ ATTRIBUTE_CONSTANT = "OWN_INTERPRETER_ATTRIBUTE"
 CLASSIFIER_CONSTANT = "_OWN_INTERPRETER_ATTRIBUTE"
 
 # The instruments whose reading is taken over the whole process: the survivor
-# sample lists every tracked object, and the four byte readings each collect the
+# sample lists every tracked object, and the byte readings each collect the
 # whole heap and read a tracer the whole process shares.
 WHOLE_INTERPRETER_READERS: frozenset[str] = frozenset(
     {
@@ -57,6 +57,7 @@ WHOLE_INTERPRETER_READERS: frozenset[str] = frozenset(
         "first_run",
         "high_water",
         "retained",
+        "retained_increment",
         "survivors",
     }
 )

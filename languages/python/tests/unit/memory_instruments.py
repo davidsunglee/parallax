@@ -24,7 +24,9 @@ point that were not alive before the sequence began. It is the only one that see
 a whole graph a live scope kept: a survivor count classified by type cannot see a
 borrowed list of rows, and an allocation count cannot see a value the window
 never allocated. What it costs is that the value has to be built inside the
-window, which is what the caller arranges.
+window, which is what the caller arranges. :func:`retained_increment` reads the
+same between two sample points of one sequence, for a step whose inputs an
+earlier step of that sequence has to build and keep alive.
 
 **The high-water mark of one region.** :func:`high_water` grades how far above
 the level a marked region opened at the process ever rose inside it. Every
@@ -37,10 +39,11 @@ Every reading is Python-level — bytes are what ``tracemalloc`` traces through
 CPython's allocator and objects are what the collector tracks — so memory held
 outside that allocator is in none of them.
 
-**Warming: three warm themselves, one is warmed from outside, and one must not
+**Warming: four warm themselves, one is warmed from outside, and one must not
 be.** :func:`allocation` runs its seam :data:`WARMUP` times before opening either
-of its windows, :func:`retained` warms both its seam and its sampler inside its
-own call, and :func:`high_water` warms its span the same way. :func:`survivors`
+of its windows, :func:`retained` and :func:`retained_increment` warm both their
+seam and their sampler inside their own call, and :func:`high_water` warms its
+span the same way. :func:`survivors`
 opens its window before the first run, so a seam that fills a memo on first reach
 is handed to it through :func:`warmed`, which puts those memos in the baseline
 the sample is compared against rather than in the sample. The one that must not
@@ -96,6 +99,7 @@ __all__ = [
     "in_a_child_interpreter",
     "require_own_interpreter",
     "retained",
+    "retained_increment",
     "serve_one_measurement",
     "survivors",
     "takes_its_own_interpreter",
@@ -305,6 +309,37 @@ def retained(seam: Seam) -> int:
         before, _ = tracemalloc.get_traced_memory()
         seam(sample)
     return sampled[1] - before
+
+
+def retained_increment(seam: Seam) -> int:
+    """Bytes reachable at ``seam``'s second sample point that were not reachable
+    at its first.
+
+    :func:`retained` read across one step of a longer sequence: the seam calls
+    its sampler twice, and what the step between the two calls kept is the
+    difference. What the sequence built before the first call and still holds is
+    in both samples and so in neither side of it, which is what lets a step be
+    read whose inputs cannot be built inside it.
+
+    Warmed as :func:`retained` warms, seam and sampler both; the samples are
+    appended within the capacity the warming run already grew the list to, so
+    no list growth lands between the two.
+    """
+    require_own_interpreter("retained_increment")
+    sampled: list[int] = []
+
+    def sample() -> None:
+        gc.collect()
+        sampled.append(tracemalloc.get_traced_memory()[0])
+
+    with untraced():
+        for _ in range(WARMUP):
+            seam(_unsampled)
+        seam(sample)
+        seam(sample)
+    if len(sampled) != 4:
+        raise RuntimeError(f"a retained increment samples twice per run, not {len(sampled) // 2}")
+    return sampled[3] - sampled[2]
 
 
 def high_water(span: Span) -> int:

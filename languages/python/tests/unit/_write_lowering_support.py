@@ -1,6 +1,6 @@
 """The keyed-write workloads measured without database I/O, from Typed or Wire
-input through preparation, settlement, SQL lowering, and the driver's own
-document serialization.
+input through the public keyed verbs, the pre-commit flush, and the driver's own
+bind serialization.
 
 One class-backed model carries the categorical matrix — Transaction-Time-Only,
 non-temporal, and Bitemporal Entities under both storage layouts, each with a
@@ -9,13 +9,22 @@ One Value Object nesting another One and a Many — beside the geometry Entities
 open a lineage; the changed-ancestor levels succeed one, changing a single leaf
 of a wide root occurrence so the cost of replacing that occurrence is read
 against its declared width. Every case names its ingress, layout, mutation,
-authored values, and predecessor evidence; the window a reading opens is
-:func:`lower` alone.
+authored values, and the stored row it revises.
 
-The window ends where the driver would hand bytes to the socket: each lowered
-statement's binds cross the production PostgreSQL bind adaptation and are then
-dumped by psycopg's own transformer, which is the serialization
-``cursor.execute`` performs. Database execution and network time are outside it.
+Each run is one transaction. A case that revises a row first reads it through
+production (``tx.find`` or ``tx.wire.find``), because a keyed write is licensed
+only by evidence a read of this store retained, and a Typed case edits what the
+read published. The window then runs from the public verb — ``tx.insert``,
+``tx.update``, ``tx.update_until``, or their ``tx.wire`` peers — until
+``transact`` returns: preparation, effective-change classification, buffering,
+the pre-commit flush's planning, settlement, and SQL lowering, and the commit.
+The read and what the caller authors against it are outside it.
+
+The window ends where the driver would hand bytes to the socket: the
+provider-free port crosses each statement's binds through the production
+PostgreSQL bind adaptation and psycopg's own transformer dump, which is the
+serialization ``cursor.execute`` performs, and reports one affected row.
+Database execution and network time are outside it.
 
 Beside the lowering matrix, one public Wire insert is measured through the
 shipped ``tx.wire.insert`` over a provider-free port: a nested, polymorphic
@@ -36,12 +45,13 @@ from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal, cast
+from typing import Any, Final, Literal, cast
 
 from psycopg import postgres
 from psycopg.abc import Buffer
 from psycopg.adapt import PyFormat, Transformer
 
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.workloads import GEOMETRY_LEVELS, structural_digest
 from parallax.core import (
     AbstractRoot,
@@ -58,40 +68,29 @@ from parallax.core import (
 )
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.base import detach_json_container
-from parallax.core.db_port import DatabaseConnection, TransactionOutcome
+from parallax.core.db_port import (
+    DatabaseConnection,
+    DocumentReadOrdinals,
+    PipelineStatement,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.object_query import LATEST
 from parallax.core.storage_layout import view as storage_layout_view
-from parallax.core.unit_work import (
-    KeyedMutation,
-    KeyedWrite,
-    PlanningRequest,
-    PredecessorRow,
-    TemporalObservation,
-    WriteObservation,
-    WritePlan,
-    WritePlanner,
-    buffered_write,
-)
-from parallax.core.unit_work.instructions import (
-    PreparedKeyedWrite,
-    prepare_typed_write,
-    prepare_wire_write,
-)
+from parallax.core.unit_work import KeyedMutation, KeyedWrite
+from parallax.core.unit_work.instructions import PreparedKeyedWrite, prepare_typed_write
 from parallax.postgres._connection import adapt_binds
 from parallax.snapshot.handle import (
     Database,
     ScopedDatabase,
     Transaction,
     WireEntity,
-    stream_lowered,
 )
-from tests._support.clock_probes import inert_instant
-from tests._support.db_port import ConnectsAsItself, body_outcome
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _structural_geometry_support as geometry_support
 
@@ -106,36 +105,37 @@ __all__ = [
     "RESPONSE_CASES",
     "AcceptingPort",
     "Case",
+    "Executed",
     "Ingress",
     "Layout",
     "ResponseCase",
-    "Settled",
     "case_named",
+    "database",
     "insert_response",
-    "lower",
     "lowered",
     "response_case_named",
     "response_database",
     "serialize",
-    "settle",
+    "write",
     "write_lowering_digest",
 ]
 
 type Layout = Literal["columns", "document"]
 type Ingress = Literal["typed", "wire"]
+type Checkpoint = Callable[[], None]
 
 _NAMESPACE: Final = "write.lowering"
 
 TX_START: Final = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 VALID_START: Final = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+INSTANT: Final = dt.datetime(2026, 2, 1, tzinfo=dt.UTC)
+"""The Transaction Instant every write flushes at: later than every stored
+milestone's opening, so each close and successor is a genuine step forward."""
 INTERIOR_FROM: Final = dt.datetime(2026, 3, 1, tzinfo=dt.UTC)
 INTERIOR_UNTIL: Final = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
 """A Valid-Time window strictly inside the predecessor's open interval, so a
 Bitemporal ``updateUntil`` produces a close, a carried head, a changed middle,
 and a carried tail."""
-
-WIRE_INTERIOR_FROM: Final = "2026-03-01T00:00:00.000000Z"
-WIRE_INTERIOR_UNTIL: Final = "2026-09-01T00:00:00.000000Z"
 
 
 class Geo(ValueObject):
@@ -261,12 +261,16 @@ ANCESTOR_KEY: Final = 1
 
 @dataclass(frozen=True, slots=True)
 class Case:
-    """One keyed write and the evidence it is prepared against.
+    """One keyed write, what its caller authors, and the stored row it revises.
 
-    ``values`` are the Typed instances a Typed case serializes inside the
-    window; ``wire_rows`` are the authored mappings a Wire case hands to
-    preparation, composed outside it exactly as a caller's payload arrives.
-    ``statements`` is how many statements the case lowers to.
+    ``instance`` is the Typed value a Typed insert opens, held as its caller
+    holds it. ``changes`` is what any other case authors: a Typed update's
+    ``edit`` keywords, a Wire update's changes document with its identity
+    omitted, or a Wire insert's Create Payload — composed outside the window
+    exactly as a caller's arrives. ``stored`` is the milestone the case's read
+    answers, keyed by physical column as the driver answers it, and ``None`` for
+    an insert, which reads nothing. ``statements`` is how many statements the
+    flush executes.
     """
 
     name: str
@@ -275,24 +279,11 @@ class Case:
     ingress: Ingress
     layout: Layout
     mutation: KeyedMutation
-    values: tuple[Entity, ...]
-    wire_rows: tuple[Mapping[str, object], ...]
-    observation: WriteObservation | None
+    instance: Entity | None
+    changes: Mapping[str, object]
+    stored: Mapping[str, object] | None
     statements: int
-    valid_from: dt.datetime | str | None = None
-    until: dt.datetime | str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class Settled:
-    """What production retains once a keyed write is prepared and settled and
-    before it is lowered: the serialized rows, the prepared instruction, the
-    buffered item, and the plan."""
-
-    rows: tuple[Mapping[str, object], ...]
-    prepared: PreparedKeyedWrite
-    item: object
-    plan: WritePlan
+    bounded: bool = False
 
 
 _CODEC: Final = EntityRowCodec(CATALOG)
@@ -307,41 +298,77 @@ def _value(cls: type[Entity], key: int, label: str) -> Entity:
     )
 
 
-def _prepared_row(value: Entity) -> Mapping[str, object]:
+def _wire_row(value: Entity) -> dict[str, object]:
+    """``value``'s complete row in canonical Wire spellings, as a fresh mapping."""
     authored = _CODEC.full_row(value)
     prepared = prepare_typed_write(
         KeyedWrite("insert", type(value).identity.name, (authored,)), CATALOG.meta
     )
     assert isinstance(prepared, PreparedKeyedWrite)
     (row,) = prepared.rows
-    return row
+    return cast("dict[str, object]", detach_json_container(row))
 
 
-def _document_members(cls: type[Entity]) -> tuple[str, ...]:
-    """The members ``cls`` stores inside its shared Structured Column."""
+def _document_placement(cls: type[Entity]) -> tuple[str, tuple[str, ...]]:
+    """The Structured Column ``cls`` stores its document residents in, and their
+    names in residency order."""
     view = storage_layout_view(CATALOG.meta).entity(cls.identity)
     residents = None if view is None else view.document_residents
     assert residents is not None, cls
-    return tuple(member.name for member in residents.shape.members)
+    (column,) = {placement.slot.column.name for placement in residents.placements}
+    return column, tuple(member.name for member in residents.shape.members)
 
 
-def _observation(value: Entity, *, layout: Layout) -> TemporalObservation:
-    row = _prepared_row(value)
-    members: dict[str, object] = {**row, "txStart": TX_START, "txEnd": OPEN_BOUND}
+def _stored_row(value: Entity, layout: Layout) -> dict[str, object]:
+    """The current milestone ``value`` states, keyed by physical column as the
+    driver answers it."""
+    row = _wire_row(value)
     if isinstance(value, Bitemporal):
-        members.update(validStart=VALID_START, validEnd=OPEN_BOUND)
-    document = (
-        {name: row[name] for name in _document_members(type(value))}
-        if layout == "document"
-        else None
-    )
-    return TemporalObservation(predecessor=PredecessorRow(members, document=document))
+        row.update(from_z=VALID_START, thru_z=OPEN_BOUND)
+    if isinstance(value, Bitemporal | TxTemporal):
+        row.update(in_z=TX_START, out_z=OPEN_BOUND)
+    if layout == "document":
+        column, members = _document_placement(type(value))
+        row[column] = {name: row.pop(name) for name in members}
+    return row
 
 
-def _wire_rows(values: Sequence[Entity]) -> tuple[Mapping[str, object], ...]:
-    return tuple(
-        cast("Mapping[str, object]", detach_json_container(_prepared_row(value)))
-        for value in values
+def _authored(ingress: Ingress, mutation: KeyedMutation, value: Entity) -> Mapping[str, object]:
+    """What a caller states for ``value``: a Wire insert's whole payload, or
+    every member but the identity as an update's edit keywords or changes."""
+    row = _wire_row(value)
+    if mutation == "insert":
+        return row if ingress == "wire" else {}
+    del row["id"]
+    if ingress == "wire":
+        return row
+    return {name: getattr(value, name) for name in row}
+
+
+def _keyed_case(
+    name: str,
+    family: str,
+    ingress: Ingress,
+    layout: Layout,
+    *,
+    mutation: KeyedMutation,
+    value: Entity,
+    predecessor: Entity | None,
+    statements: int,
+    bounded: bool = False,
+) -> Case:
+    return Case(
+        name,
+        family,
+        type(value),
+        ingress,
+        layout,
+        mutation,
+        value if mutation == "insert" and ingress == "typed" else None,
+        _authored(ingress, mutation, value),
+        None if predecessor is None else _stored_row(predecessor, layout),
+        statements,
+        bounded,
     )
 
 
@@ -359,28 +386,16 @@ def _case(
     bounded: bool = False,
 ) -> Case:
     cls = _CATEGORICAL[(family, layout)]
-    value = _value(cls, key, label)
-    observation = (
-        None if predecessor is None else _observation(_value(cls, key, predecessor), layout=layout)
-    )
-    valid_from: dt.datetime | str | None = None
-    until: dt.datetime | str | None = None
-    if bounded:
-        valid_from = INTERIOR_FROM if ingress == "typed" else WIRE_INTERIOR_FROM
-        until = INTERIOR_UNTIL if ingress == "typed" else WIRE_INTERIOR_UNTIL
-    return Case(
+    return _keyed_case(
         f"{family}.{operation}.{layout}.{ingress}",
         family,
-        cls,
         ingress,
         layout,
-        mutation,
-        (value,) if ingress == "typed" else (),
-        _wire_rows((value,)) if ingress == "wire" else (),
-        observation,
-        statements,
-        valid_from,
-        until,
+        mutation=mutation,
+        value=_value(cls, key, label),
+        predecessor=None if predecessor is None else _value(cls, key, predecessor),
+        statements=statements,
+        bounded=bounded,
     )
 
 
@@ -424,7 +439,7 @@ def _categorical_cases() -> tuple[Case, ...]:
                     key=501,
                     label="same",
                     predecessor="same",
-                    statements=2,
+                    statements=0,
                 )
             )
             cases.append(
@@ -436,7 +451,7 @@ def _categorical_cases() -> tuple[Case, ...]:
                     mutation="update",
                     key=701,
                     label="after",
-                    predecessor=None,
+                    predecessor="before",
                     statements=1,
                 )
             )
@@ -459,17 +474,15 @@ def _categorical_cases() -> tuple[Case, ...]:
 
 def _geometry_cases() -> tuple[Case, ...]:
     return tuple(
-        Case(
+        _keyed_case(
             f"geometry.{level.id}.{layout}.typed",
             f"geometry-{level.family}",
-            geometry_support.entity_class(level, layout),
             "typed",
             layout,
-            "insert",
-            (geometry_support.instance(level, layout, 1),),
-            (),
-            None,
-            1,
+            mutation="insert",
+            value=geometry_support.instance(level, layout, 1),
+            predecessor=None,
+            statements=1,
         )
         for level in GEOMETRY_LEVELS
         for layout in geometry_support.LAYOUTS
@@ -485,20 +498,17 @@ def _ancestor_cases() -> tuple[Case, ...]:
     document.
     """
     return tuple(
-        Case(
+        _keyed_case(
             f"ancestor.{level.id}.{layout}.typed",
             f"ancestor-{level.family}",
-            geometry_support.successor_class(level, layout),
             "typed",
             layout,
-            "update",
-            (geometry_support.successor_instance(level, layout, ANCESTOR_KEY, changed=True),),
-            (),
-            _observation(
-                geometry_support.successor_instance(level, layout, ANCESTOR_KEY, changed=False),
-                layout=layout,
+            mutation="update",
+            value=geometry_support.successor_instance(level, layout, ANCESTOR_KEY, changed=True),
+            predecessor=geometry_support.successor_instance(
+                level, layout, ANCESTOR_KEY, changed=False
             ),
-            2,
+            statements=2,
         )
         for level in geometry_support.ANCESTOR_LEVELS
         for layout in geometry_support.LAYOUTS
@@ -556,25 +566,50 @@ def response_case_named(name: str) -> ResponseCase:
     )
 
 
+def serialize(binds: Sequence[object]) -> Sequence[Buffer | None]:
+    """The driver bytes ``binds`` become: production bind adaptation followed by
+    the transformer dump ``cursor.execute`` performs."""
+    adapted = adapt_binds(binds)
+    transformer = Transformer(postgres.adapters)
+    return transformer.dump_sequence(adapted, [PyFormat.AUTO] * len(adapted))
+
+
 class AcceptingPort(ConnectsAsItself):
-    """A provider-free port that commits every transaction and counts each DML
-    statement as one affected row, so a buffered insert flushes without a
-    database and no read is ever answered."""
+    """A provider-free port that answers every read with ``stored``, serializes
+    every DML statement's binds as the driver would, and counts it as one
+    affected row, committing every transaction.
+
+    The stored rows are copied per statement, so nothing a read answers is
+    shared with the fixture or with an earlier read.
+    """
 
     dialect: Dialect = POSTGRES
+    __slots__ = ("_stored",)
+    _stored: tuple[Mapping[str, object], ...]
+
+    def __init__(self, stored: Sequence[Mapping[str, object]] = ()) -> None:
+        self._stored = tuple(stored)
 
     def execute(
         self,
         sql: str,
         binds: Sequence[object],
-        document_reads: Sequence[object] = (),
-    ) -> list[object]:
-        del binds, document_reads
-        raise NotImplementedError(sql)
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        del binds
+        rows = (cast("Mapping[str, object]", detach_json_container(row)) for row in self._stored)
+        return projected_rows(sql, rows, document_reads)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        del sql, binds
+        del sql
+        serialize(binds)
         return 1
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        return [
+            self.execute(statement.sql, statement.binds, statement.document_reads)
+            for statement in statements
+        ]
 
     def transaction[T](
         self,
@@ -619,68 +654,112 @@ def insert_response(
     return handle.transact(body)
 
 
-def _instruction(case: Case, rows: tuple[Mapping[str, object], ...]) -> KeyedWrite:
-    return KeyedWrite(
-        case.mutation,
-        case.entity.identity.name,
-        rows,
-        valid_from=case.valid_from,
-        until=case.until,
-    )
+@contextmanager
+def database(case: Case, port: AcceptingPort | None = None) -> Generator[ScopedDatabase]:
+    """A login-scoped handle over ``case``'s stored row, composed outside every
+    window, flushing at :data:`INSTANT`."""
+    stored = () if case.stored is None else (case.stored,)
+    with Database(
+        (AcceptingPort(stored) if port is None else port).open(),
+        MODEL,
+        clock=FixedClock(INSTANT),
+    ) as root:
+        yield root.using_database_login()
 
 
-def settle(case: Case, codec: EntityRowCodec, planner: WritePlanner) -> Settled:
-    """Serialize, prepare, and settle one case, retaining what production does."""
-    rows = (
-        tuple(codec.full_row(value) for value in case.values)
-        if case.ingress == "typed"
-        else case.wire_rows
-    )
-    instruction = _instruction(case, rows)
-    prepared = (
-        prepare_typed_write(instruction, CATALOG.meta)
-        if case.ingress == "typed"
-        else prepare_wire_write(instruction, CATALOG.meta)
-    )
-    assert isinstance(prepared, PreparedKeyedWrite)
-    item = buffered_write(prepared, case.observation)
-    plan = planner.finalize(
-        PlanningRequest(
-            actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="locking",
-            buffered_writes=(item,),
-        )
-    ).plan
-    return Settled(rows, prepared, item, plan)
+def _source(tx: Transaction, case: Case) -> object:
+    """What the verb revises: the node the case's read publishes, edited for a
+    Typed case; nothing for an insert, which revises no row."""
+    if case.stored is None:
+        return None
+    entity = cast("Any", case.entity)
+    query = entity.where(entity.id == case.stored["id"])
+    if issubclass(case.entity, Bitemporal):
+        query = query.as_of(valid_time=LATEST)
+    if case.ingress == "wire":
+        return tx.wire.find(query).result()
+    return tx.find(query).result().edit(**case.changes)
 
 
-def serialize(statement: LoweredStatement) -> Sequence[Buffer | None]:
-    """The driver bytes ``statement``'s binds become: production bind adaptation
-    followed by the transformer dump ``cursor.execute`` performs."""
-    binds = adapt_binds(statement.binds)
-    transformer = Transformer(postgres.adapters)
-    return transformer.dump_sequence(binds, [PyFormat.AUTO] * len(binds))
+def _buffer(tx: Transaction, case: Case, source: object) -> None:
+    """Buffer ``case``'s keyed write through its public verb."""
+    window = {"valid_from": INTERIOR_FROM, "until": INTERIOR_UNTIL} if case.bounded else {}
+    if case.ingress == "typed":
+        if case.mutation == "insert":
+            tx.insert(cast("Entity", case.instance))
+        elif case.mutation == "updateUntil":
+            tx.update_until(cast("Entity", source), **window)
+        else:
+            tx.update(cast("Entity", source))
+        return
+    if case.mutation == "insert":
+        tx.wire.insert(case.entity.identity.name, case.changes)
+    elif case.mutation == "updateUntil":
+        tx.wire.update_until(cast("WireEntity", source), case.changes, **window)
+    else:
+        tx.wire.update(cast("WireEntity", source), case.changes)
 
 
-def lower(case: Case, codec: EntityRowCodec, planner: WritePlanner) -> int:
-    """The complete keyed-write window: ingress through driver serialization."""
-    settled = settle(case, codec, planner)
-    for _step, statement in stream_lowered(settled.plan, CATALOG.meta, POSTGRES):
-        serialize(statement)
-    return len(settled.rows)
+def write(
+    handle: ScopedDatabase,
+    case: Case,
+    *,
+    opened: Checkpoint | None = None,
+    buffered: Checkpoint | None = None,
+    closed: Checkpoint | None = None,
+) -> None:
+    """Run ``case`` as one committed transaction.
+
+    ``opened`` runs after the read, immediately before the verb; ``buffered``
+    immediately after the verb has buffered, still inside the transaction body;
+    and ``closed`` once ``transact`` has returned, its flush and commit done. A
+    reading marks its window with ``opened`` and ``closed``, and takes what the
+    verb kept between ``opened`` and ``buffered``.
+    """
+
+    def body(tx: Transaction) -> None:
+        source = _source(tx, case)
+        if opened is not None:
+            opened()
+        _buffer(tx, case, source)
+        if buffered is not None:
+            buffered()
+
+    handle.transact(body)
+    if closed is not None:
+        closed()
 
 
-def lowered(
-    case: Case, codec: EntityRowCodec, planner: WritePlanner
-) -> tuple[tuple[LoweredStatement, Sequence[Buffer | None]], ...]:
-    """Every statement one case lowers to beside its dumped binds, for a suite
-    grading what the window produced."""
-    settled = settle(case, codec, planner)
-    return tuple(
-        (statement, serialize(statement))
-        for _step, statement in stream_lowered(settled.plan, CATALOG.meta, POSTGRES)
-    )
+@dataclass(frozen=True, slots=True)
+class Executed:
+    """One statement the flush executed, as the port received it, beside the
+    bytes the driver dumps its binds to."""
+
+    sql: str
+    binds: tuple[object, ...]
+    dumped: Sequence[Buffer | None]
+
+
+class _RecordingPort(AcceptingPort):
+    __slots__ = ("executed",)
+    executed: list[Executed]
+
+    def __init__(self, stored: Sequence[Mapping[str, object]]) -> None:
+        super().__init__(stored)
+        self.executed = []
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        self.executed.append(Executed(sql, tuple(binds), serialize(binds)))
+        return 1
+
+
+def lowered(case: Case) -> tuple[Executed, ...]:
+    """Every statement one run of ``case`` executes, for a suite grading what
+    the window produced."""
+    port = _RecordingPort(() if case.stored is None else (case.stored,))
+    with database(case, port) as handle:
+        write(handle, case)
+    return tuple(port.executed)
 
 
 def write_lowering_digest() -> str:
