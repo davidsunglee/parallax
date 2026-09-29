@@ -233,6 +233,10 @@ def utc_instant(value: _dt.datetime) -> _dt.datetime | None:
     """
     if isinstance(value, ManagedValueExclusion):
         return None
+    # Aware-datetime C calls such as ``utcoffset`` leave a per-call method-name string in
+    # CPython's type method cache, so a value already in UTC answers without one.
+    if type(value) is _dt.datetime and value.tzinfo is _dt.UTC:
+        return value
     try:
         base_value = value if type(value) is _dt.datetime else base_datetime_carrier(value)
         if base_value.utcoffset() is None:

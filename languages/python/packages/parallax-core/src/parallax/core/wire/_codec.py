@@ -166,8 +166,16 @@ def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue
         case Time():
             return dt.time.isoformat(cast("dt.time", managed))
         case Timestamp():
-            instant = dt.datetime.astimezone(cast("dt.datetime", managed), dt.UTC)
-            return dt.datetime.strftime(instant, "%Y-%m-%dT%H:%M:%S.%f") + "Z"
+            # Spelled from fields: ``strftime`` on an aware value leaves a per-call method-name
+            # string in CPython's type method cache.
+            instant = cast("dt.datetime", managed)
+            if instant.tzinfo is not dt.UTC:
+                instant = dt.datetime.astimezone(instant, dt.UTC)
+            return (
+                f"{instant.year:04d}-{instant.month:02d}-{instant.day:02d}"
+                f"T{instant.hour:02d}:{instant.minute:02d}:{instant.second:02d}"
+                f".{instant.microsecond:06d}Z"
+            )
         case Uuid():
             return uuid.UUID.__str__(cast("uuid.UUID", managed))
         case Json():

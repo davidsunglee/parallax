@@ -222,6 +222,48 @@ def test_every_type_obeys_the_canonical_inverse_law(
     assert wire.decode_wire(neutral_type, written) == managed
 
 
+_FAR_WEST = dt.timezone(dt.timedelta(hours=-14))
+
+
+@pytest.mark.parametrize(
+    ("instant", "canonical"),
+    [
+        (dt.datetime(1, 1, 1, tzinfo=dt.UTC), "0001-01-01T00:00:00.000000Z"),
+        (
+            dt.datetime(999, 12, 31, 23, 59, 59, 999999, tzinfo=dt.UTC),
+            "0999-12-31T23:59:59.999999Z",
+        ),
+        (dt.datetime(1000, 1, 1, 0, 0, 0, 1, tzinfo=dt.UTC), "1000-01-01T00:00:00.000001Z"),
+        (dt.datetime(1970, 1, 1, tzinfo=dt.UTC), "1970-01-01T00:00:00.000000Z"),
+        (dt.datetime(2026, 9, 29, 8, 5, 7, 120000, tzinfo=dt.UTC), "2026-09-29T08:05:07.120000Z"),
+        (
+            dt.datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=dt.UTC),
+            "9999-12-31T23:59:59.999999Z",
+        ),
+        (
+            dt.datetime(1, 1, 1, 5, 30, tzinfo=dt.timezone(dt.timedelta(hours=5, minutes=30))),
+            "0001-01-01T00:00:00.000000Z",
+        ),
+        (
+            dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.timezone(dt.timedelta(0), "UTC")),
+            "2026-01-15T09:30:00.000000Z",
+        ),
+        (dt.datetime(1969, 12, 31, 10, 0, 0, 42, tzinfo=_FAR_WEST), "1970-01-01T00:00:00.000042Z"),
+        (
+            dt.datetime(9999, 12, 31, 9, 59, 59, 999999, tzinfo=_FAR_WEST),
+            "9999-12-31T23:59:59.999999Z",
+        ),
+    ],
+)
+def test_a_timestamp_spells_its_utc_instant_exactly_as_strftime_does(
+    instant: dt.datetime, canonical: str
+) -> None:
+    utc = instant.astimezone(dt.UTC)
+    assert dt.datetime.strftime(utc, "%Y-%m-%dT%H:%M:%S.%f") + "Z" == canonical
+    assert wire.encode_wire(TIMESTAMP, instant) == canonical
+    assert wire_codec.encode_managed_wire(TIMESTAMP, instant) == canonical
+
+
 @pytest.mark.parametrize(
     ("neutral_type", "authored", "managed", "canonical"),
     [
