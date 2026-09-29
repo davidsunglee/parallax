@@ -34,8 +34,8 @@ from parallax.core.base import INFINITY, FrozenMap
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
+    EffectiveChangeSet,
     PreparedEffectiveChange,
-    classify_effective_change,
     prepare_effective_change,
 )
 from parallax.core.entity._construction_input import ABSENT
@@ -59,6 +59,7 @@ from parallax.core.opt_lock import CallerAuthoredVersionError
 from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
+    UPDATE_MUTATIONS,
     BufferItem,
     Concurrency,
     KeyedWrite,
@@ -229,8 +230,17 @@ def _observed(
     claim: RetainedObservation | None = None,
     restorations: frozenset[str] = frozenset(),
 ) -> ObservedKeyedWrite:
+    """``write`` as an observation carrier; an update's every assigned member is
+    effective but the ``restorations`` it names."""
     prepared = _prepared_keyed(write, _ACCOUNT)
-    return ObservedKeyedWrite(prepared, observation, claim=claim, restorations=restorations)
+    change = (
+        EffectiveChangeSet(
+            effective=frozenset(prepared.rows[0]) - {"id"} - restorations, restored=restorations
+        )
+        if prepared.mutation in UPDATE_MUTATIONS
+        else None
+    )
+    return ObservedKeyedWrite(prepared, observation, claim=claim, change=change)
 
 
 def _claimed(
@@ -369,14 +379,13 @@ def _classified_balance_update(
     row: Mapping[str, object],
     observation: TemporalObservation,
     *,
-    effective: frozenset[str] | None,
+    effective: frozenset[str],
     restorations: frozenset[str] = frozenset(),
 ) -> BufferItem:
     return buffered_write(
         _prepared_keyed(KeyedWrite("update", "Balance", (row,)), _BALANCE),
         observation,
-        restorations=restorations,
-        effective=effective,
+        change=EffectiveChangeSet(effective=effective, restored=restorations),
     )
 
 
@@ -421,24 +430,48 @@ def test_coalesced_temporal_writes_overlay_what_the_last_word_classified_effecti
     assert origin.predecessor.carries(value, row.attributes[value])
 
 
-def test_a_merge_with_an_unclassified_write_is_classified_at_settlement() -> None:
-    # A caller that classified nothing leaves nothing to merge its answer with,
-    # so the merged row is classified against the Predecessor Row: `acctNum`
-    # restates what the milestone holds and is carried.
+def test_an_observed_update_refuses_to_be_buffered_without_its_producers_change_set() -> None:
+    # Settlement classifies nothing: an update settles against the change set
+    # its producer classified, so a carrier without one is refused where it is
+    # built rather than classified later against the Predecessor Row.
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
-    plan = _plan(
-        [
-            _classified_balance_update(
-                {"id": 1, "value": Decimal("9.00")}, observation, effective=frozenset({"value"})
-            ),
-            _classified_balance_update({"id": 1, "acctNum": "A"}, observation, effective=None),
-        ],
-        _BALANCE,
+    prepared = _prepared_keyed(
+        KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A"},)), _BALANCE
     )
-    origin, row = _changed_entry(plan)
-    assert _row_values(row)["value"] == Decimal("9.00")
-    (account,) = (identity for identity in row.attributes if identity.name == "acctNum")
-    assert origin.predecessor.carries(account, row.attributes[account])
+    with pytest.raises(ValueError, match="carries its producer's effective change set"):
+        buffered_write(prepared, observation)
+    with pytest.raises(ValueError, match="carries its producer's effective change set"):
+        ObservedKeyedWrite(prepared, observation)
+
+
+def test_a_write_that_assigns_nothing_refuses_a_change_set() -> None:
+    change = EffectiveChangeSet(effective=frozenset(), restored=frozenset({"balance"}))
+    delete = _prepared_keyed(KeyedWrite("delete", "Account", ({"id": 1},)), _ACCOUNT)
+    observation = VersionObservation(observed_version=4)
+    with pytest.raises(ValueError, match="carries no effective change set"):
+        buffered_write(delete, observation, change=change)
+    with pytest.raises(ValueError, match="carries no effective change set"):
+        ObservedKeyedWrite(delete, observation, change=change)
+    with pytest.raises(ValueError, match="carries no effective change set"):
+        buffered_write(delete, None, change=change)
+
+
+def test_a_wholly_restored_update_is_key_only_when_buffered_and_plans_no_step() -> None:
+    # Every member the update assigned restores what the milestone holds, so the
+    # row that leaves `buffered_write` names only the key, and stage 2 eliminates
+    # it as known no-op work: no close, no successor.
+    observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
+    prepared = _prepared_keyed(
+        KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A"},)), _BALANCE
+    )
+    item = buffered_write(
+        prepared,
+        observation,
+        change=EffectiveChangeSet(effective=frozenset(), restored=frozenset({"acctNum"})),
+    )
+    assert isinstance(item, ObservedKeyedWrite)
+    assert item.instruction.rows == ({"id": 1},)
+    assert list(_plan([item], _BALANCE).steps) == []
 
 
 def test_a_destructive_intent_supersedes_the_assignments_buffered_before_it() -> None:
@@ -2340,10 +2373,9 @@ def test_a_temporal_groups_marker_no_opened_row_expresses_is_refused_while_plann
 # multi-assignment group carries the members it restores.                     #
 # --------------------------------------------------------------------------- #
 def _comparisons(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
-    calls = {"prepared": 0, "compared": 0, "classified": 0}
+    calls = {"prepared": 0, "compared": 0}
     prepare = prepare_effective_change
     effective_positions = PreparedEffectiveChange.effective_positions
-    classify = classify_effective_change
 
     def preparing(*args: Any, **kwargs: Any) -> PreparedEffectiveChange:
         calls["prepared"] += 1
@@ -2353,13 +2385,8 @@ def _comparisons(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
         calls["compared"] += 1
         return effective_positions(change, row)
 
-    def classifying(*args: Any, **kwargs: Any) -> Any:
-        calls["classified"] += 1
-        return classify(*args, **kwargs)
-
     monkeypatch.setattr(write_settlement_module, "prepare_effective_change", preparing)
     monkeypatch.setattr(PreparedEffectiveChange, "effective_positions", comparing)
-    monkeypatch.setattr(write_settlement_module, "classify_effective_change", classifying)
     return calls
 
 
@@ -2401,7 +2428,7 @@ def test_a_surviving_multi_assignment_row_carries_the_member_it_restores(
     )
     assert isinstance(group.evidence, PredecessorRows)
     plan = _plan([group], _POSITION)
-    assert calls == {"prepared": 1, "compared": 0, "classified": 0}
+    assert calls == {"prepared": 1, "compared": 0}
 
     changed = [
         entry
@@ -2411,7 +2438,7 @@ def test_a_surviving_multi_assignment_row_carries_the_member_it_restores(
         if isinstance(entry.origin, ChangedFrom)
     ]
     assert len(changed) == 2
-    assert calls == {"prepared": 1, "compared": 2, "classified": 0}
+    assert calls == {"prepared": 1, "compared": 2}
     for entry in changed:
         values = _row_values(entry.row)
         account = next(ident for ident in entry.row.attributes if ident.name == "acctNum")
@@ -2427,22 +2454,23 @@ def test_single_assignment_groups_and_classified_keyed_writes_are_not_compared_a
     calls = _comparisons(monkeypatch)
     group = _position_update(WriteAssignment("Position.value", Decimal("9.00")), account="A")
     list(_plan([group], _POSITION).steps)
-    assert calls == {"prepared": 0, "compared": 0, "classified": 0}
+    assert calls == {"prepared": 0, "compared": 0}
 
     prepared = _prepared_keyed(
         KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "B", "value": Decimal("9.00")},)),
         _BALANCE,
     )
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
-    classified = buffered_write(prepared, observation, effective=frozenset({"value"}))
+    classified = buffered_write(
+        prepared,
+        observation,
+        change=EffectiveChangeSet(effective=frozenset({"value"}), restored=frozenset()),
+    )
     (_close, successor) = _plan([classified], _BALANCE).steps
-    assert calls == {"prepared": 0, "compared": 0, "classified": 0}
+    assert calls == {"prepared": 0, "compared": 0}
     # The producer's answer is the whole of what the successor overlays.
     assert _insert_rows(successor)[0]["acctNum"] == "A"
     assert _insert_rows(successor)[0]["value"] == Decimal("9.00")
-
-    list(_plan([buffered_write(prepared, observation)], _BALANCE).steps)
-    assert calls == {"prepared": 0, "compared": 0, "classified": 1}
 
 
 @pytest.mark.parametrize(
@@ -2580,10 +2608,10 @@ def test_a_directly_buffered_update_carries_a_restated_member_and_its_unknown_ke
     positional: bool,
 ) -> None:
     # A caller pairing a keyed update with its evidence through `buffered_write`
-    # classifies nothing itself, and restates `address` as an equal but distinct
-    # value. Settlement classifies it restored against the Predecessor Row, so
-    # the changed successor carries the stored subtree, the key no member
-    # declares included, and patches `title` alone.
+    # supplies the change set its producer classified: `address`, restated as an
+    # equal but distinct value, is restored. The changed successor therefore
+    # carries the stored subtree, the key no member declares included, and
+    # patches `title` alone.
     model = model_of(acquisition_support.MODEL)
     target = _acquisition_update_until(model).selection.target
     selection = LayoutCatalog(model).entity(target.identity).member_selection
@@ -2625,7 +2653,8 @@ def test_a_directly_buffered_update_carries_a_restated_member_and_its_unknown_ke
         ),
         model,
     )
-    plan = _plan([buffered_write(prepared, TemporalObservation(predecessor))], model)
+    change = EffectiveChangeSet(effective=frozenset({"title"}), restored=frozenset({"address"}))
+    plan = _plan([buffered_write(prepared, TemporalObservation(predecessor), change=change)], model)
 
     (changed,) = (
         step

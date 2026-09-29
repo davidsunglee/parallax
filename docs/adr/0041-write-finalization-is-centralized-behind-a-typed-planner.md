@@ -237,7 +237,10 @@ An `ObservedStateKey` is intentionally not a compile-only input: it addresses
 evidence in an active Unit Work, which pure planning does not have. A
 compile-only caller pairs explicit evidence through `buffered_write` or supplies
 a bare Write Instruction; a materialized predicate input uses the existing
-Materialized Write Group. The runtime path may resolve an Observed State Key before
+Materialized Write Group. An update paired with evidence also carries the
+effective change set its producer classified (`change=`), because settlement
+overlays that answer and classifies nothing itself; `buffered_write` refuses an
+observed update without one. The runtime path may resolve an Observed State Key before
 constructing that same Buffer Item, so lookup remains transaction-owned while
 planning remains store-free.
 

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from operator import itemgetter
 
 from parallax.core import inheritance, relationship, temporal_read
+from parallax.core.document_codec import EffectiveChangeSet
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.unit_work.claims import WriteIntent, admits, keyed_intent
 from parallax.core.unit_work.clock import TransactionInstant
@@ -390,50 +391,50 @@ def _merged_claimed(base: ClaimedKeyedWrite, arriving: ClaimedKeyedWrite) -> Cla
     and gains the merged row. Restoration and effective change follow the same
     later-wins rule as the value: a member ``arriving`` states is restored or
     effective as ``arriving`` classified it, however the earlier write left it.
-    A merge with a write its producer did not classify is left unclassified.
     """
     arriving_row = arriving.instruction.rows[0]
     merged = dict(base.instruction.rows[0])
     merged.update(arriving_row)
     stated = arriving.restorations.union(arriving_row)
-    base_effective = _effective(base)
-    arriving_effective = _effective(arriving)
+    restorations = (base.restorations - stated) | arriving.restorations
+    if isinstance(base, ObjectClaimedWrite):
+        return ObjectClaimedWrite(
+            instruction=derive_keyed_write(base.instruction, (merged,)),
+            restorations=restorations,
+        )
+    assert isinstance(arriving, ObservedKeyedWrite)  # one scope's claims share a carrier
     return _rewritten(
         base,
         merged,
-        (base.restorations - stated) | arriving.restorations,
-        None
-        if base_effective is None or arriving_effective is None
-        else (base_effective - stated) | arriving_effective,
+        EffectiveChangeSet(
+            effective=(_effective(base) - stated) | _effective(arriving),
+            restored=restorations,
+        ),
     )
 
 
-def _effective(item: ClaimedKeyedWrite) -> frozenset[str] | None:
-    return item.effective if isinstance(item, ObservedKeyedWrite) else None
+def _effective(item: ObservedKeyedWrite) -> frozenset[str]:
+    """An assignment carrier's effective members; only an update coalesces, and
+    every observed update carries its producer's change set."""
+    assert item.change is not None
+    return item.change.effective
 
 
 def _rewritten(
-    item: ClaimedKeyedWrite,
-    row: Mapping[str, object],
-    restorations: frozenset[str],
-    effective: frozenset[str] | None,
-) -> ClaimedKeyedWrite:
-    """``item`` carrying ``row``, ``restorations``, and ``effective``, at its own
-    claim scope.
+    item: ObservedKeyedWrite, row: Mapping[str, object], change: EffectiveChangeSet
+) -> ObservedKeyedWrite:
+    """``item`` carrying ``row`` and ``change``, at its own claim scope.
 
-    The one place a carrier is rebuilt, so merging and restoration-dropping state
-    what changes rather than each restating which fields a carrier keeps.
+    The one place an observation carrier is rebuilt, so merging and
+    restoration-dropping state what changes rather than each restating which
+    fields a carrier keeps.
     """
-    instruction = derive_keyed_write(item.instruction, (row,))
-    if isinstance(item, ObservedKeyedWrite):
-        return ObservedKeyedWrite(
-            instruction=instruction,
-            observation=item.observation,
-            claim=item.claim,
-            restorations=restorations,
-            effective=effective,
-        )
-    return ObjectClaimedWrite(instruction=instruction, restorations=restorations)
+    return ObservedKeyedWrite(
+        instruction=derive_keyed_write(item.instruction, (row,)),
+        observation=item.observation,
+        claim=item.claim,
+        change=change,
+    )
 
 
 def _coalesced_item(item: BufferItem | None) -> OrderedWrite | None:
@@ -461,7 +462,11 @@ def _coalesced_item(item: BufferItem | None) -> OrderedWrite | None:
         for name, value in item.instruction.rows[0].items()
         if name not in item.restorations
     }
-    return _without_object_claim(_rewritten(item, row, frozenset(), _effective(item)))
+    if isinstance(item, ObjectClaimedWrite):
+        return derive_keyed_write(item.instruction, (row,))
+    return _rewritten(
+        item, row, EffectiveChangeSet(effective=_effective(item), restored=frozenset())
+    )
 
 
 def _without_object_claim(item: ClaimedKeyedWrite) -> OrderedWrite:

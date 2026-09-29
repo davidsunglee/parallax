@@ -18,6 +18,7 @@ from parallax.core.document_codec._document import (
 )
 from parallax.core.document_codec._leaf import encode_leaf, is_text_compared
 from parallax.core.document_codec._managed import (
+    EffectiveChangeSet,
     PreparedEffectiveChange,
     classify_effective_change,
     prepare_effective_change,
@@ -43,6 +44,7 @@ __all__ = [
     "DocumentFindingCode",
     "DocumentPatch",
     "DocumentPathSegment",
+    "EffectiveChangeSet",
     "Leaf",
     "MemberShape",
     "Missing",

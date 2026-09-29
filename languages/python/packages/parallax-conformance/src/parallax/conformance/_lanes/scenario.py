@@ -70,6 +70,7 @@ from parallax.core.db_port import (
     MappingRow,
 )
 from parallax.core.dialect import Dialect
+from parallax.core.document_codec import EffectiveChangeSet, classify_effective_change
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -92,6 +93,7 @@ from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
+    UPDATE_MUTATIONS,
     BufferItem,
     CardinalityCorruptionError,
     ClaimedKeyedWrite,
@@ -1089,8 +1091,37 @@ def _buffered(
     assert isinstance(
         instruction, PreparedKeyedWrite
     )  # every producer of this seam resolves keyed writes
+    evidence = instruction_evidence(model, instruction, supplied=observation)
     return buffered_write(
-        instruction, instruction_evidence(model, instruction, supplied=observation)
+        instruction, evidence, change=_oracle_change(instruction, evidence, model)
+    )
+
+
+def _oracle_change(
+    instruction: PreparedKeyedWrite, evidence: SettledEvidence | None, model: AcceptedMetamodel
+) -> EffectiveChangeSet | None:
+    """The effective change set the verb would buffer an evidenced single-row
+    update with: its assigned members, less the identity, classified against
+    the originals the evidence observed over the target's applicable document
+    shape. Evidence stating no member values — a version or an object claim —
+    has no original to restore, so every assigned member is effective.
+    """
+    if (
+        evidence is None
+        or instruction.mutation not in UPDATE_MUTATIONS
+        or len(instruction.rows) != 1
+    ):
+        return None
+    view = inheritance.view(model).entity(instruction.target.identity)
+    assert view is not None  # the facet covers every accepted Entity
+    key = view.primary_key.identity.name
+    (row,) = instruction.rows
+    assigned = {name: value for name, value in row.items() if name != key}
+    observed = evidence.evidence if isinstance(evidence, RetainedObservation) else evidence
+    if not isinstance(observed, TemporalObservation):
+        return EffectiveChangeSet(effective=frozenset(assigned), restored=frozenset())
+    return classify_effective_change(
+        view.applicable_document_shape, assigned, observed.predecessor.members
     )
 
 

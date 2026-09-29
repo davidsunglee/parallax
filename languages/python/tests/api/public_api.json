@@ -385,6 +385,7 @@
     "DocumentFindingCode",
     "DocumentPatch",
     "DocumentPathSegment",
+    "EffectiveChangeSet",
     "Leaf",
     "MISSING",
     "MemberShape",
