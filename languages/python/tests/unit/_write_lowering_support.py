@@ -64,6 +64,7 @@ from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.sql_gen import LoweredStatement
+from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import (
     KeyedMutation,
     KeyedWrite,
@@ -256,7 +257,6 @@ CATALOG: Final = CatalogedModel(model_of(MODEL))
 LAYOUTS: Final[tuple[Layout, ...]] = ("columns", "document")
 INGRESSES: Final[tuple[Ingress, ...]] = ("typed", "wire")
 ANCESTOR_KEY: Final = 1
-_CATEGORICAL_DOCUMENT_MEMBERS: Final[tuple[str, ...]] = ("title", "address", "tags")
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,17 +317,24 @@ def _prepared_row(value: Entity) -> Mapping[str, object]:
     return row
 
 
-def _observation(
-    value: Entity,
-    *,
-    layout: Layout,
-    document_members: Sequence[str] = _CATEGORICAL_DOCUMENT_MEMBERS,
-) -> TemporalObservation:
+def _document_members(cls: type[Entity]) -> tuple[str, ...]:
+    """The members ``cls`` stores inside its shared Structured Column."""
+    view = storage_layout_view(CATALOG.meta).entity(cls.identity)
+    residents = None if view is None else view.document_residents
+    assert residents is not None, cls
+    return tuple(member.name for member in residents.shape.members)
+
+
+def _observation(value: Entity, *, layout: Layout) -> TemporalObservation:
     row = _prepared_row(value)
     members: dict[str, object] = {**row, "txStart": TX_START, "txEnd": OPEN_BOUND}
     if isinstance(value, Bitemporal):
         members.update(validStart=VALID_START, validEnd=OPEN_BOUND)
-    document = {name: row[name] for name in document_members} if layout == "document" else None
+    document = (
+        {name: row[name] for name in _document_members(type(value))}
+        if layout == "document"
+        else None
+    )
     return TemporalObservation(predecessor=PredecessorRow(members, document=document))
 
 
@@ -490,7 +497,6 @@ def _ancestor_cases() -> tuple[Case, ...]:
             _observation(
                 geometry_support.successor_instance(level, layout, ANCESTOR_KEY, changed=False),
                 layout=layout,
-                document_members=geometry_support.DOCUMENT_MEMBERS,
             ),
             2,
         )
