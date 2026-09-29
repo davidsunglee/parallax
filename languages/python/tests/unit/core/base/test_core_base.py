@@ -19,6 +19,7 @@ from parallax.core.base._neutral import (
     ManagedValueExclusion,
     host_float_binary32,
     host_float_number,
+    utc_instant,
 )
 from tests._support.binary32 import rounded_once, rounding_witnesses
 
@@ -289,6 +290,33 @@ def test_normalize_instant_converts_aware_to_utc_microsecond() -> None:
     normalized = base.normalize_instant(aware)
     assert normalized.tzinfo is dt.UTC
     assert normalized == dt.datetime(2026, 7, 12, 13, 30, 0, 123456, tzinfo=dt.UTC)
+
+
+def test_utc_instant_answers_a_utc_datetime_with_itself() -> None:
+    instant = dt.datetime(2026, 7, 12, 13, 30, 0, 123456, tzinfo=dt.UTC)
+    assert utc_instant(instant) is instant
+
+
+class _InstantSubclass(dt.datetime):
+    pass
+
+
+@pytest.mark.parametrize(
+    "aware",
+    [
+        dt.datetime(2026, 7, 12, 8, 30, 0, 123456, tzinfo=dt.timezone(dt.timedelta(hours=-5))),
+        dt.datetime(2026, 7, 12, 13, 30, 0, 123456, tzinfo=dt.timezone(dt.timedelta(0), "UTC")),
+        _InstantSubclass(2026, 7, 12, 13, 30, 0, 123456, tzinfo=dt.UTC),
+    ],
+    ids=["offset", "named-utc-zone", "subclass"],
+)
+def test_utc_instant_converts_any_other_aware_datetime_to_a_base_utc_value(
+    aware: dt.datetime,
+) -> None:
+    instant = utc_instant(aware)
+    assert type(instant) is dt.datetime
+    assert instant.tzinfo is dt.UTC
+    assert instant == dt.datetime(2026, 7, 12, 13, 30, 0, 123456, tzinfo=dt.UTC)
 
 
 def test_normalize_instant_rejects_naive() -> None:
