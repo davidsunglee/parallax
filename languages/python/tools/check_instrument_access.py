@@ -41,6 +41,7 @@ import ast
 import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePath
+from typing import cast
 
 _TOOL = "tools/check_instrument_access.py"
 WORKSPACE = Path(__file__).resolve().parents[1]
@@ -91,8 +92,8 @@ class Finding:
         return f"{self.path}:{self.line}: {self.message}"
 
 
-def _constant(tree: ast.Module, name: str) -> str | None:
-    """The string a module-level ``name = "..."`` assignment binds."""
+def _bound(tree: ast.Module, name: str) -> ast.expr | None:
+    """The expression a module-level assignment binds ``name`` to."""
     for node in tree.body:
         targets = (
             node.targets
@@ -101,36 +102,32 @@ def _constant(tree: ast.Module, name: str) -> str | None:
             if isinstance(node, ast.AnnAssign)
             else []
         )
-        value = node.value if isinstance(node, ast.Assign | ast.AnnAssign) else None
-        for target in targets:
-            named = isinstance(target, ast.Name) and target.id == name
-            if named and isinstance(value, ast.Constant) and isinstance(value.value, str):
-                return value.value
+        if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+            return cast("ast.Assign | ast.AnnAssign", node).value
     return None
+
+
+def _string(value: ast.expr | None) -> str | None:
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return value.value
+    return None
+
+
+def _constant(tree: ast.Module, name: str) -> str | None:
+    """The string a module-level ``name = "..."`` assignment binds."""
+    return _string(_bound(tree, name))
 
 
 def _path_constant(tree: ast.Module, name: str) -> str | None:
     """The string a module-level ``name = Path("...")`` assignment binds."""
-    for node in tree.body:
-        value = node.value if isinstance(node, ast.Assign | ast.AnnAssign) else None
-        targets = (
-            node.targets
-            if isinstance(node, ast.Assign)
-            else [node.target]
-            if isinstance(node, ast.AnnAssign)
-            else []
-        )
-        if not any(isinstance(target, ast.Name) and target.id == name for target in targets):
-            continue
-        if (
-            isinstance(value, ast.Call)
-            and isinstance(value.func, ast.Name)
-            and value.func.id == "Path"
-            and len(value.args) == 1
-            and isinstance(value.args[0], ast.Constant)
-            and isinstance(value.args[0].value, str)
-        ):
-            return value.args[0].value
+    value = _bound(tree, name)
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == "Path"
+        and len(value.args) == 1
+    ):
+        return _string(value.args[0])
     return None
 
 
