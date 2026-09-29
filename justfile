@@ -294,8 +294,8 @@ python-check-dbfree: python-format-check python-lint python-typecheck python-che
 [doc("Every Python check that needs a live database (Docker).")]
 python-check-db: python-test-db
 
-[doc("Every Python check needing an interpreter no other test shares.")]
-python-check-cost shard="1/1": python-check-instrument-access (python-test-cost shard)
+[doc("Every Python check needing an interpreter no other test shares, or the committed cost evidence.")]
+python-check-cost shard="1/1": python-check-instrument-access python-check-evidence (python-test-cost shard)
 
 [metadata("runtime:slow", "scheduling:dbfree")]
 [doc("Every Python test whose fixture closure reaches no database, plus branch coverage.")]
@@ -318,7 +318,7 @@ python-test-db:
 # and the cells together are the one run the class command owns
 # (core/spec/language-testing.md §9). The default is the whole class.
 [metadata("runtime:slow", "scheduling:cost")]
-[doc("Every Python test reading the whole interpreter, each in one of its own.")]
+[doc("Every Python test reading the whole interpreter, each in one of its own, or the committed cost evidence.")]
 python-test-cost shard="1/1":
     cd {{python}} && uv run pytest -m cost -n auto --shard {{shard}}
 
@@ -502,9 +502,17 @@ python-check-database-access:
 # interpreter without acquiring one of its own would be classified `dbfree`, and
 # would still pass — against a heap the rest of the suite decided the size of.
 [metadata("runtime:fast")]
-[doc("Whole-interpreter readings in the Python suite go through the designated boundary.")]
+[doc("Whole-interpreter readings in the Python suite go through the designated boundary, and committed cost evidence through its fixture.")]
 python-check-instrument-access:
     cd {{python}} && uv run python tools/check_instrument_access.py
+
+# A change to an input a workload digest covers fails here until the evidence is
+# retaken. Drift that leaves the capture evidence — a moved lock, a reading past a
+# ceiling or a gate — is printed as an advisory and blocks nothing.
+[metadata("runtime:fast")]
+[doc("The committed canonical cost capture is valid, current evidence for the inspected checkout.")]
+python-check-evidence:
+    cd {{python}} && uv run python tools/cost_report.py --verify docs/structural-metadata-envelope/recovered/portfolio.json
 
 [metadata("runtime:fast")]
 [doc("Dead-code scan over the Python workspace.")]

@@ -14,13 +14,13 @@ after/portfolio.json`, which *After capture* below reads, and
 renderings of `recovered/` against each, which *Recovered capture* reads.
 
 The portfolio under `recovered/` is the repository's canonical current cost
-portfolio: the required `python-verify-cost` CI job verifies it from any clone
-and exits non-zero if it does not, the database-free gate recomputes its
-Snapshot delivery member's Budget Contract and workload-catalog digests from the
-committed inputs, and the memory gates are derived from it. `before/` is
-retained unchanged as the recovery reference and `after/` as the fixed
-regression baseline; both are comparison bases and are verified whole by the
-database-free gate alongside the canonical portfolio. Only `recovered/` carries
+portfolio: `just python-check-evidence` verifies it from any clone, recomputing
+each member's digests from the committed inputs, and exits non-zero if it does
+not verify; the memory gates are derived from it. `before/` is retained
+unchanged as the recovery reference and `after/` as the fixed regression
+baseline; both are comparison bases and are verified whole alongside the
+canonical portfolio. Every check of this evidence is in the cost class, which CI
+runs on every change and `just check` omits. Only `recovered/` carries
 the `conditions.json` and `durations.json` sidecars the collector writes beside
 a capture; `before/` and `after/` predate both writers and carry neither, which
 is why `--require-compatible` reaches no source digest or interpreter identity

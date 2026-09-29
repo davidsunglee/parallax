@@ -216,17 +216,19 @@ jobs:
       - name: just python-check-db
         run: just python-check-db
 
-  # Every Python check needing an interpreter no other test shares: the memory
-  # instruments read the whole process, so each measurement is taken in a child
-  # that has loaded only what it needs. `just check` deliberately omits this
-  # class (core/spec/language-testing.md §7) so the command run after every
-  # change stays fast; this job is what keeps it gated on every change instead.
-  # Each child is CPU-bound work in an interpreter of its own, so a single
-  # runner cannot shorten them: the class is split across cells rather than
-  # across more workers within one. Together the cells are the one run the class
+  # Every Python test needing an interpreter no other test shares, or the
+  # committed cost evidence: the memory instruments read the whole process, so
+  # each measurement is taken in a child that has loaded only what it needs, and
+  # a verdict on the evidence is owed to a recapture. `just check` deliberately
+  # omits this class (core/spec/language-testing.md §7) so the command run after
+  # every change stays fast; these jobs are what keep it gated on every change
+  # instead, running `python-check-cost`'s dependencies side by side. Each child
+  # is CPU-bound work in an interpreter of its own, so a single runner cannot
+  # shorten them: the class's tests are split across cells rather than across
+  # more workers within one. Together the cells are the one run the class's test
   # command owns (§9), over the shards `test_scheduling_partition.py` grades
   # against this matrix.
-  python-check-cost:
+  python-test-cost:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -243,19 +245,36 @@ jobs:
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
-      - name: just python-check-cost (shard ${{ matrix.shard }})
-        run: just python-check-cost ${{ matrix.shard }}
+      - name: just python-test-cost (shard ${{ matrix.shard }})
+        run: just python-test-cost ${{ matrix.shard }}
 
-  # Required: the committed cost evidence is verified against the head lock
-  # and, on pull requests, against the event-merge lock, in seconds. It fails
-  # only for evidence that is not evidence — a stale workload digest, a dirty
-  # or split provenance, a missing or unauthoritative member — and the answer
-  # to that is a capture, so a change to an input a digest covers blocks until
-  # the evidence is retaken. Drift that leaves a capture evidence, a moved lock
-  # or a ceiling among it, is an advisory line and blocks nothing.
-  # Nothing here measures; fresh captures are the cost-report workflow's, on
-  # request by label, dispatch, or the nightly schedule.
-  python-verify-cost:
+  # The cost class's confinement check, beside the tests it confines.
+  python-check-instrument-access:
+    runs-on: ubuntu-latest
+    env:
+      UV_FROZEN: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      - name: Sync Python workspace (frozen)
+        working-directory: languages/python
+        run: uv sync --frozen
+      - name: just python-check-instrument-access
+        run: just python-check-instrument-access
+
+  # The committed canonical capture verified against the head lock and, on pull
+  # requests, against the event-merge lock, in seconds. It fails only for
+  # evidence that is not evidence — a stale workload digest, a dirty or split
+  # provenance, a missing or unauthoritative member — and the answer to that is a
+  # capture, so a change to an input a digest covers blocks until the evidence is
+  # retaken. Drift that leaves a capture evidence, a moved lock or a ceiling among
+  # it, is an advisory line and blocks nothing. Nothing here measures; fresh
+  # captures are the cost-report workflow's, on request by label, dispatch, or the
+  # nightly schedule.
+  python-check-evidence:
     runs-on: ubuntu-latest
     env:
       UV_FROZEN: "1"
@@ -266,17 +285,18 @@ jobs:
           # inspected head.
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.14"
       - name: Identify the inspected head
         shell: bash
         run: echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-      - name: Verify committed evidence against head lock
+      - name: just python-check-evidence
         shell: bash
         run: |
           echo "## Committed evidence: head lock $HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
-          uv run --project languages/python python languages/python/tools/cost_report.py --verify languages/python/docs/structural-metadata-envelope/recovered/portfolio.json 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          just python-check-evidence 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Check committed evidence against event merge lock
         if: github.event_name == 'pull_request' && !cancelled()
         shell: bash

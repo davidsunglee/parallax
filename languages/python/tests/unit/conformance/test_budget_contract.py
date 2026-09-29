@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -22,8 +21,7 @@ from parallax.conformance.budget import (
     memory_ceiling,
     reading_bytes,
 )
-from parallax.conformance.workloads import ACQUISITION_LEVELS, workload_digest
-from tests.unit import _write_lowering_support as lowering_support
+from parallax.conformance.workloads import ACQUISITION_LEVELS
 
 AFTER_PORTFOLIO = Path("languages/python/docs/structural-metadata-envelope/after/portfolio.json")
 
@@ -42,28 +40,6 @@ def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
     assert contract.memory_collect_at_page_boundary is True
     assert contract.memory_children == 3
     assert contract.memory_scaling_arms == (200, 2_000)
-
-
-# The canonical capture is current at head: a change to any input a digest
-# covers requires a recapture, never an edit to the retained evidence.
-@pytest.mark.usefixtures("committed_cost_evidence")
-def test_committed_envelope_digests_preserve_their_provenance() -> None:
-    repo = case_format.find_repo_root()
-    portfolio = cast(
-        "Mapping[str, object]",
-        json.loads((repo / CANONICAL_PORTFOLIO).read_text(encoding="utf-8")),
-    )
-    members = cast("Sequence[Mapping[str, object]]", portfolio["members"])
-    snapshot = next(member for member in members if member["subject"] == "snapshot-delivery")
-    write = next(member for member in members if member["subject"] == "write-lowering")
-    provenance = cast("Mapping[str, object]", snapshot["provenance"])
-    write_provenance = cast("Mapping[str, object]", write["provenance"])
-
-    assert provenance["budgetContractDigest"] == BudgetContract.load().digest
-    assert provenance["workloadDigest"] == workload_digest()
-    assert write_provenance["workloadDigest"] == lowering_support.write_lowering_digest()
-    assert re.fullmatch(r"[0-9a-f]{64}", cast("str", provenance["lockDigest"]))
-    assert cost_report.verify(portfolio) == []
 
 
 @pytest.mark.parametrize(

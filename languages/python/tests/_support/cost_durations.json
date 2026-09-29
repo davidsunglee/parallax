@@ -1,5 +1,4 @@
 {
- "tests/unit/conformance/test_budget_contract.py::test_committed_envelope_digests_preserve_their_provenance": 0.0,
  "tests/unit/conformance/test_budget_contract.py::test_every_memory_gate_is_the_basis_reading_under_the_stated_rule": 0.0,
  "tests/unit/conformance/test_budget_contract.py::test_the_advisory_allowances_beside_the_gates_are_the_reports_own": 0.0,
  "tests/unit/conformance/test_budget_contract.py::test_the_derivation_is_indifferent_to_the_counter_vocabulary": 0.0,
