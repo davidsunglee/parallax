@@ -455,10 +455,10 @@ class _PreparedStress:
 
     def seam(self) -> Seam:
         def run(sample: Callable[[], None]) -> None:
-            self.read_root()
             page = self.run()
             sample()
             assert page is not None
+            self.read_root()
 
         return run
 
@@ -498,8 +498,8 @@ def _stress_memory(prepared: _PreparedStress, path: str) -> tuple[float, str, tu
         return value, "KiB", (value,)
     tracemalloc.start()
     try:
-        retained_bytes = retained(prepared.seam())
         prepared.read_root()
+        retained_bytes = retained(prepared.seam())
         gc.collect()
         before, _ = tracemalloc.get_traced_memory()
         tracemalloc.reset_peak()
