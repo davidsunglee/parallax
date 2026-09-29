@@ -19,7 +19,9 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core import deep_fetch, inheritance, relationship
+from parallax.core.base import ManagedValue
 from parallax.core.deep_fetch._include_tree import EMPTY_RENDER, IncludePosition
+from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -45,6 +47,7 @@ from parallax.core.predicate import (
     Narrow,
     PredicateNode,
 )
+from parallax.core.sql_gen._compile import compile_template
 from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
 from tests.unit._corpus_model_support import model as accepted_model
@@ -106,6 +109,15 @@ def _query_step(plan: deep_fetch.ObjectQueryPlan, index: int = 0) -> deep_fetch.
     step = plan.fetch_steps[index]
     assert isinstance(step, deep_fetch.QueryFetchStep)
     return step
+
+
+def _rendered_keys(
+    model: Metamodel, step: deep_fetch.QueryFetchStep, keys: list[ManagedValue]
+) -> object:
+    """The key-set bind ``step``'s compiled child read carries once ``keys`` are
+    rendered into it."""
+    template = compile_template(step.query_template(), model, POSTGRES, result_form="instance")
+    return template.render(keys).statement.binds[template.bind_index]
 
 
 def _back_reference_step(
@@ -370,26 +382,18 @@ def test_narrow_and_broad_both_count_toward_l() -> None:
 # --------------------------------------------------------------------------- #
 def test_child_query_is_a_plain_in_membership() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),))
-    query = _query_step(plan).query_for([1, 2, 3])
+    step = _query_step(plan)
+    query = step.query_template()
     assert query.target == EntityIdentity("parallax.compatibility", "OrderStatus")
     assert isinstance(query.validated_predicate.authored, Membership)
     assert query.validated_predicate.authored.op == "in"
     assert query.validated_predicate.authored.attr == "parallax.compatibility.OrderStatus.orderId"
-    assert query.validated_predicate.authored.values == (1, 2, 3)
-
-
-def test_child_query_deduplicates_and_freezes_keys_in_encounter_order() -> None:
-    level = _query_step(_plan(ORDERS, "Order", (_path(_seg("Order.statuses")),)))
-    query = level.query_for([2, 1, 2, 3, 1])
-    authored = query.validated_predicate.authored
-    assert isinstance(authored, Membership)
-    assert authored.values == (2, 1, 3)
-    assert isinstance(authored.values, tuple)
+    assert _rendered_keys(ORDERS, step, [1, 2, 3]) == [1, 2, 3]
 
 
 def test_child_query_carries_declared_relationship_order_by() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
-    query = _query_step(plan).query_for([1])
+    query = _query_step(plan).query_template()
     assert query.target == EntityIdentity("parallax.compatibility", "OrderItem")
     assert _order_attr(query.order_by[0]) == "parallax.compatibility.OrderItem.id"
     assert query.order_by[0].direction == "desc"
@@ -398,7 +402,7 @@ def test_child_query_carries_declared_relationship_order_by() -> None:
 
 def test_child_query_multi_key_order_by_preserves_declared_sequence() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.tags")),))
-    query = _query_step(plan).query_for([1])
+    query = _query_step(plan).query_template()
     assert [(_order_attr(key), key.direction) for key in query.order_by] == [
         ("parallax.compatibility.OrderTag.priority", "desc"),
         ("parallax.compatibility.OrderTag.label", "asc"),
@@ -410,36 +414,36 @@ def test_child_query_carries_the_declared_null_placement_of_each_key() -> None:
     # authors `first` while `items` leaves placement unauthored, which the accepted
     # model has already normalized to `last`.
     placed = _plan(ORDERS, "Order", (_path(_seg("Order.notesDescNullsFirst")),))
-    query = _query_step(placed).query_for([1])
+    query = _query_step(placed).query_template()
     assert [(_order_attr(key), key.direction, key.nulls) for key in query.order_by] == [
         ("parallax.compatibility.OrderNote.resolvedOn", "desc", "first")
     ]
     defaulted = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
-    default_query = _query_step(defaulted).query_for([1])
+    default_query = _query_step(defaulted).query_template()
     assert default_query.order_by[0].nulls == "last"
 
 
 def test_child_query_has_no_order_by_when_relationship_declares_none() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),))
-    query = _query_step(plan).query_for([1])
+    query = _query_step(plan).query_template()
     assert query.order_by == ()
     assert isinstance(query.validated_predicate.authored, Membership)
 
 
 def test_child_query_appends_propagated_as_of_after_the_in_membership() -> None:
     plan = _plan(POLICY, "Policy", (_path(_seg("Policy.coverages")),), _BITEMPORAL_LATEST)
-    child_query = _query_step(plan).query_for([1, 2])
+    step = _query_step(plan)
+    child_query = step.query_template()
     assert isinstance(child_query.validated_predicate.authored, And)
     membership, *as_of_terms = child_query.validated_predicate.authored.operands
     assert isinstance(membership, Membership)
-    assert membership.values == (1, 2)
+    assert _rendered_keys(POLICY, step, [1, 2]) == [1, 2]
     assert len(as_of_terms) == 2  # Valid Time then Transaction Time (AXIS_ORDER)
 
 
 def test_a_back_reference_step_exposes_no_query_construction() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.order")),))
     back_reference = _back_reference_step(plan, 1)
-    assert not hasattr(back_reference, "query_for")
     assert not hasattr(back_reference, "query_template")
 
 
@@ -453,7 +457,7 @@ def test_single_concrete_narrow_targets_the_concrete_directly_no_narrow_node() -
     level = _query_step(plan)
     assert level.child_target == EntityIdentity("parallax.compatibility", "Dog")
     assert level.narrow_to is None
-    query = level.query_for([1])
+    query = level.query_template()
     assert isinstance(query.validated_predicate.authored, Membership)
     assert query.validated_predicate.authored.attr == "parallax.compatibility.Dog.ownerId"
 
@@ -466,7 +470,7 @@ def test_multi_concrete_narrow_wraps_a_narrow_node() -> None:
         EntityIdentity("parallax.compatibility", "Cat"),
         EntityIdentity("parallax.compatibility", "Dog"),
     )
-    query = level.query_for([1])
+    query = level.query_template()
     assert query.narrow_to == level.narrow_to
     assert isinstance(query.validated_predicate.authored, Membership)
 

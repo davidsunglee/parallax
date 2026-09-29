@@ -25,7 +25,7 @@ from parallax.conformance.workloads import (
 from parallax.core import deep_fetch, inheritance
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.sql_gen._compile import compile_read
+from parallax.core.sql_gen._compile import compile_read, compile_template
 from parallax.snapshot.handle._preflight import preflight
 
 
@@ -43,7 +43,9 @@ def test_every_workload_loads_and_compiles_its_query_and_delivery_sizes() -> Non
         for step in plan.fetch_steps:
             if isinstance(step, deep_fetch.BackReferenceFetchStep):
                 continue
-            compile_read(step.query_for([0]), workload.model, POSTGRES, result_form="instance")
+            compile_template(
+                step.query_template(), workload.model, POSTGRES, result_form="instance"
+            ).render([0])
 
 
 def test_generated_workloads_preserve_the_fixture_scale_and_fanout() -> None:

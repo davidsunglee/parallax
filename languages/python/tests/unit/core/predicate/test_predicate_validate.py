@@ -69,7 +69,6 @@ from parallax.core.predicate._validated import (
     ValidatedPredicate,
     conjunction,
     managed_comparison,
-    managed_membership,
 )
 from parallax.descriptor._records import (
     Attribute,
@@ -876,8 +875,6 @@ def test_generated_predicate_products_reject_missing_or_mistyped_semantics() -> 
         ValidatedPredicate(All()).only_child()
     with pytest.raises(ValueError, match="outside"):
         managed_comparison(op="eq", attr="Order.id", member=member, value=cast("Any", "1"))
-    with pytest.raises(ValueError, match="outside"):
-        managed_membership(attr="Order.id", member=member, values=(cast("Any", "1"),))
     with pytest.raises(ValueError, match="at least one term"):
         conjunction(ValidatedPredicate(All()))
 

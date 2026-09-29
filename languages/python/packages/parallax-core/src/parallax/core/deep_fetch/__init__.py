@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Final, Literal, NamedTuple, cast
+from typing import Final, Literal, NamedTuple
 
 from parallax.core import inheritance, navigate, relationship
 from parallax.core.base import ManagedValue
@@ -35,9 +35,6 @@ from parallax.core.predicate._validated import (
     conjunction as _validated_conjunction,
 )
 from parallax.core.predicate._validated import deferred_membership as _deferred_membership
-from parallax.core.predicate._validated import (
-    managed_membership as _managed_membership,
-)
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import (
     inject_resolved_as_of,
@@ -158,35 +155,6 @@ class QueryFetchStep:
     as_of_terms: tuple[ValidatedPredicate, ...] = ()
     order_terms: tuple[ValidatedOrderTerm, ...] = ()
     narrow_to: tuple[EntityIdentity, ...] | None = None
-
-    def query_for(self, parent_keys: Sequence[object]) -> ValidatedEntityQuery:
-        """Build this level's flat child query from gathered parent keys.
-
-        Encounter-order deduplication and tuple freezing happen here, where the
-        gathered sequence becomes a predicate product. The membership and
-        propagated temporal terms form the predicate. Narrowing and ordering stay
-        query fields rather than being manufactured as wrappers solely for SQL
-        compilation.
-        """
-        values = cast("tuple[ManagedValue, ...]", tuple(dict.fromkeys(parent_keys)))
-        membership = _managed_membership(
-            attr=self.related.reference,
-            member=self.related.member,
-            values=values,
-        )
-        predicate = (
-            membership
-            if not self.as_of_terms
-            else _validated_conjunction(membership, *self.as_of_terms)
-        )
-        return ValidatedEntityQuery(
-            target=self.child.identity,
-            entity=self.child,
-            validated_predicate=predicate,
-            narrow_to=self.narrow_to,
-            order_by=self.order_terms,
-            projection=_projection_for(self.child, None, ReadProjectionRequest("all", True)),
-        )
 
     def query_template(self) -> ValidatedEntityQuery:
         """Build this level's child query with its gathered key set deferred."""
