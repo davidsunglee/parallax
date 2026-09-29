@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import datetime as dt
+import struct
 import sys
-from collections.abc import Mapping
+import uuid
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from inspect import signature
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 
@@ -187,19 +190,64 @@ def test_a_leaf_type_read_publishes_every_stored_leaf_as_its_wire_spelling() -> 
             ], (leaf.id, layout)
 
 
-def test_float64_leaves_are_inexact_decimal_tenths_of_a_short_spelling() -> None:
-    float64 = leaf_support.leaf_type_named("float64")
-    values = [
-        float64.typed(index, key)
-        for key in (1, leaf_support.LEVEL.many + 32)
-        for index in range(leaf_support.LEVEL.width)
+def _binary32(value: float) -> float:
+    (narrowed,) = struct.unpack("<f", struct.pack("<f", value))
+    return narrowed
+
+
+def _inexact_short_float(value: object, *, narrowed: bool) -> bool:
+    """An inexact binary float whose shortest spelling at its width is its one
+    decimal tenth, as a float of that width is written."""
+    assert isinstance(value, float)
+    spelled = repr(value)
+    width = _binary32 if narrowed else float
+    stored = width(value)
+    digits = len(spelled.replace(".", "").lstrip("0"))
+    return (
+        len(spelled.partition(".")[2]) == 1
+        and spelled[-1] not in "05"
+        and Decimal(stored) != Decimal(spelled)
+        and (digits == 1 or width(float(f"{value:.{digits - 1}g}")) != stored)
+    )
+
+
+def _decimal_integer_digits(value: object) -> int:
+    assert isinstance(value, Decimal)
+    sign, digits, exponent = value.as_tuple()
+    del sign
+    assert exponent == -2 and len(digits) <= 18
+    return len(digits) + cast("int", exponent)
+
+
+_GENERAL_PATHS: Final[Mapping[str, Callable[[object], bool]]] = {
+    "boolean": lambda value: isinstance(value, bool),
+    "int32": lambda value: isinstance(value, int) and 256 < abs(value) < 2**31,
+    "int64": lambda value: isinstance(value, int) and 2**31 < abs(value) < 2**63,
+    "float32": lambda value: _inexact_short_float(value, narrowed=True),
+    "float64": lambda value: _inexact_short_float(value, narrowed=False),
+    "decimal": lambda value: 1 <= _decimal_integer_digits(value) <= 16,
+    "bytes": lambda value: isinstance(value, bytes) and len(value) == 16,
+    "date": lambda value: type(value) is dt.date,
+    "time": lambda value: isinstance(value, dt.time) and value.microsecond != 0,
+    "timestamp": lambda value: (
+        isinstance(value, dt.datetime) and value.tzinfo is dt.UTC and value.microsecond != 0
+    ),
+    "uuid": lambda value: isinstance(value, uuid.UUID),
+}
+"""What keeps each measured type's values off any shortcut its codec could take."""
+
+
+@pytest.mark.parametrize("leaf", leaf_support.MEASURED_TYPES, ids=lambda leaf: leaf.id)
+def test_every_leaf_type_is_valued_on_its_general_path(leaf: leaf_support.LeafType) -> None:
+    rows = [
+        [leaf.typed(index, key) for index in range(leaf_support.LEVEL.width)]
+        for key in (0, 1, 2, leaf_support.LEVEL.many + 32)
     ]
-    assert len(set(values)) == len(values)
-    for value in values:
-        assert isinstance(value, float)
-        spelled = repr(value)
-        assert len(spelled.partition(".")[2]) == 1 and spelled[-1] not in "05", spelled
-        assert Decimal(value) != Decimal(spelled), spelled
+    assert all(_GENERAL_PATHS[leaf.id](value) for row in rows for value in row), leaf.id
+    assert len({tuple(row) for row in rows}) == len(rows)
+    assert len(set(rows[1])) == (2 if leaf.id == "boolean" else len(rows[1]))
+    if leaf.id == "decimal":
+        assert {_decimal_integer_digits(value) for value in rows[1]} == set(range(1, 17))
 
 
 def test_the_string_control_is_the_geometry_level_it_is_measured_at() -> None:
