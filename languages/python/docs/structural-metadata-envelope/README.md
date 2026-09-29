@@ -33,8 +33,9 @@ read matrix ran on one runtime.
 ## Protocol
 
 Every reading is taken in a child interpreter of its own with `PYTHONHASHSEED=0`,
-on every supported CPython minor (3.13 and 3.14), by `just python-report-cost`
-on one runner with no competing measurement. A reading names its runtime and its
+on every supported CPython minor (3.13 and 3.14) — the leaf-type families below
+on the newest alone — by `just python-report-cost` on one runner with no
+competing measurement. A reading names its runtime and its
 window; `cost_report.py --compare` pairs two readings only when their subject,
 runtime, window, workload, cell, and unit all agree, lists every cell present on
 one side alone, and refuses a pair whose unit differs.
@@ -114,9 +115,10 @@ total of what the window allocated.
 
 Retained checkpoints: `keyed-write` reads what the verb kept — the difference
 between a sample taken after the read and one taken once the verb has buffered,
-both inside the transaction body and before the flush; `predicate-acquisition` samples inside the transaction body with the
-group buffered, before any flush; `model-preparation` samples with the prepared
-selection alive; a geometry read samples with the delivered results alive;
+both inside the transaction body and before the flush; `predicate-acquisition`
+samples inside the transaction body with the group buffered, before any flush;
+`model-preparation` samples with the prepared selection alive; a geometry or
+leaf-type read samples with the delivered results alive;
 `read-plan-compilation` samples with the already composed cache holding its one
 entry and the rendered plan handle already dropped, which is what production
 retains between two deliveries of the same query; the empty cache each sample
@@ -142,13 +144,12 @@ caller or handed with a changes document by a Wire one, and an insert's is the
 instance or payload the fixture holds. None is counted by the retained increment,
 which starts after the read, so what it sees is what the verb built and
 production still reaches until the flush. The keyed port composes its stored row
-per statement and keeps none. The acquisition port composes each resolving
-row when the statement runs and keeps none, and the handle and the caller's
-target and changes documents are composed once per reading outside the window,
-so the checkpoint sees the retained columns, the
-retained encoded documents, and the buffered group rather than a fixture-held
-second batch. The provider-free read port likewise composes each row per
-statement.
+per statement and keeps none. The acquisition port composes each resolving row
+when the statement runs and keeps none, and the handle and the caller's target
+and changes documents are composed once per reading outside the window, so the
+checkpoint sees the retained columns, the retained encoded documents, and the
+buffered group rather than a fixture-held second batch. The provider-free read
+ports likewise compose each row per statement.
 
 ## Workload manifest
 
@@ -156,8 +157,10 @@ Every identity and numeric level below is frozen in
 `parallax.conformance.workloads` (`GEOMETRY_LEVELS`, `ACQUISITION_LEVELS`,
 `ANCESTOR_LEVEL_IDS`, `READ_GEOMETRY_ROOTS`, `STRUCTURAL_LAYOUTS`) and enters the
 write member's `workloadDigest` through `structural_digest()` together with the
-bytes of the three fixture modules, and the Snapshot member's through
-`workload_digest()` beside the catalog fixtures and models. Those digests name
+bytes of the fixture modules, and the Snapshot member's through
+`workload_digest()` beside the catalog fixtures and models. The leaf-type
+families' identity enters both members' digests through `leaf_type_digest()`
+rather than `structural_digest()`. Those digests name
 what was measured; they deliberately do not name the instruments that measured
 it. A capture costs about an hour of runner time. The unification budgeted
 exactly two — the baseline under `before/` and the after-capture beside it —
@@ -276,21 +279,69 @@ elimination retains every row. Levels resolve 8, 32, and 128 current milestones
 (`acquisition.rows-<n>.<layout>`, per-row units). This companion measures the
 Wire ingress once per layout and does not multiply ingress forms.
 
+### Leaf-type families — 12 types, three flows, both layouts
+
+Every declarable Neutral Type is measured at the `width-64` geometry: String,
+the control, and the eleven types read against it
+(`workloads.LEAF_TYPE_IDS`). Json is not declarable as a leaf, which is why the
+limits below exclude its payload size. A type's Entities declare the level's
+root occurrence and its two Many elements with all 64 leaves of that type and
+populated, under each layout. The leaves live inside structured documents under
+both layouts, and every stored row spells them in canonical Wire form, so two
+types differ only in how production decodes, compares, publishes, and encodes a
+leaf. `tests/unit/_leaf_type_support.py` owns the model, the value recipes, and
+the rows.
+
+| Flow | Addresses | Window |
+|---|---|---|
+| Provider-free read of 32 roots | `leaf-<type>`, cells `<layout>.elapsedUsPerRoot`, `<layout>.peakKiB`, `<layout>.retainedKiB` | `provider-free-delivery` |
+| Keyed insert, Typed and Wire | `leaf.<type>.<layout>.<ingress>`, per-row units | `keyed-write` |
+| Predicate acquisition resolving 8 rows | `leaf-acquisition.<type>.rows-8.<layout>`, per-row units | `predicate-acquisition` |
+
+Where a geometry cell already measures the structure, it is the String control:
+`read-width-64` for the read and `geometry.width-64.<layout>.typed` for the
+Typed insert. The fixture suite proves the String type's stored and Wire rows
+equal to that geometry level's. The Wire insert and the acquisition, which no
+geometry case measures at this level, read String cells of their own. The acquisition's changes document
+assigns the root occurrence a value every resolved row differs from, over the
+interior window above.
+
+The families are read on the newest supported CPython minor alone
+(`workloads.LEAF_TYPE_RUNTIMES`). An envelope carrying them is exact only with
+every leaf-type reading on that runtime and none on another. A capture taken
+before them verifies without them, but `--require-member` accepts the current
+matrices alone, which include them. They carry no Budget Contract ceiling; their
+memory gates are derived under the rule in *Basis* from the first capture that
+reads them.
+
 ### Preserved delivery workloads
 
 The Budget Contract's `conventional-fanout`, `duplicate-include`,
 `document-heavy`, `versioned-document`, and `bitemporal-current` delivery cells
-and the `stress-columns` / `stress-document` positional-materialization cells run
-unchanged, now on both supported minors; the contract's ceilings are compared on
-the authority runtime alone, and the other runtime's readings stand beside them
-without comparisons.
+and the `stress-columns` / `stress-document` positional-materialization cells
+keep their workloads, now on both supported minors; the contract's ceilings are
+compared on the authority runtime alone, and the other runtime's readings stand
+beside them without comparisons. The stress rows keep the recipe `m-perf-bench`
+fixes. Their documents stay deferred until publication, which the
+positional-materialization window excludes, so the window decodes no document
+leaf.
+
+A live streamed-memory reading (`streamedMemory.*`) drains the workload once
+untraced as a warm-up, without collecting at page boundaries, and then traces a
+second drain that holds only the last root and collects at each page boundary as
+the Budget Contract's memory sampling directs. A `page<n>PeakKiB` reading drains
+at page size `n`; `retainedKiB` drains at page size 128
+(`snapshot_delivery_reading.STREAMED_RETAINED_PAGE_SIZE`), the largest the
+contract reads.
 
 ### Model and declaration retention
 
 `model.prepared` prices one preparation of the complete structural write model:
 the six categorical Entities, the ten geometry Entities and their six
-changed-ancestor twins, and the two acquisition Entities. The Entity Class declarations and their Value Object classes are
-retained by the fixture modules and are outside every window.
+changed-ancestor twins, and the two acquisition Entities. The leaf-type
+families' model is their own and outside it. The Entity Class declarations and
+their Value Object classes are retained by the fixture modules and are outside
+every window.
 
 ## Limits
 
