@@ -30,6 +30,7 @@ from typing import Any, cast
 
 import pytest
 
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, Int32, attr, index
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -45,7 +46,6 @@ from parallax.core.entity._model import model_of
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     DatabaseLoginActor,
-    FixedClock,
     MissingTargetError,
     OptimisticLockConflictError,
     RollbackOnlyError,

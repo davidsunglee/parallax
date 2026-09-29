@@ -18,6 +18,7 @@ import decimal
 import pytest
 
 from parallax.conformance import models
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.temporal_state import (
     AmbiguousObservationError,
     MilestoneEdgeError,
@@ -27,7 +28,6 @@ from parallax.conformance.temporal_state import (
 )
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
-    FixedClock,
     PlanningRequest,
     SubjectActor,
     TransactionInstant,

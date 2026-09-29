@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import pytest
 
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.db_port import (
     Committed,
     ConnectionAcquisitionError,
@@ -18,7 +19,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.unit_work import FixedClock, SubjectActor
+from parallax.core.unit_work import SubjectActor
 from parallax.snapshot import DatabaseOptions
 from parallax.snapshot.handle import Database, ScopedDatabase
 from tests._support.adoption import raises_contextualized

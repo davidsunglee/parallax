@@ -23,6 +23,7 @@ import pytest
 from parallax.conformance import stale_web_edit
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import (
     LATEST,
     TX_TIME,
@@ -42,7 +43,6 @@ from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.unit_work import (
     Concurrency,
-    FixedClock,
     OptimisticLockConflictError,
     ReadOrigin,
     TemporalObservation,

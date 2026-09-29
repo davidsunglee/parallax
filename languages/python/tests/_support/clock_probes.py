@@ -16,7 +16,8 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Sequence
 
-from parallax.core.unit_work import FixedClock, TransactionInstant
+from parallax.conformance.scripted_clock import FixedClock
+from parallax.core.unit_work import TransactionInstant
 
 __all__ = ["INERT_INSTANT_LITERAL", "CountingClock", "inert_instant", "instant_at"]
 

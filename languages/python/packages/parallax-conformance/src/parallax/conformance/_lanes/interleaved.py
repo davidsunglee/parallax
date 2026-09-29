@@ -35,9 +35,10 @@ from parallax.conformance._mechanism.given_state import (
 )
 from parallax.conformance._mechanism.model_facts import case_serving_model
 from parallax.conformance._mechanism.transaction_control import transact
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core.base import normalize_instant
-from parallax.core.unit_work import FixedClock, OptimisticLockConflictError
+from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import handle
 
 __all__ = ["run_interleaved_scenario_case"]

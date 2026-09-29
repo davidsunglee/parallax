@@ -48,6 +48,7 @@ from parallax.conformance._mechanism.transaction_control import (
     write_adapter,
     write_connection,
 )
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import (
     batch_write,
@@ -95,7 +96,6 @@ from parallax.core.unit_work import (
     CardinalityCorruptionError,
     ClaimedKeyedWrite,
     Concurrency,
-    FixedClock,
     KeyedWrite,
     MissingTargetError,
     ObjectKey,

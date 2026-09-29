@@ -27,6 +27,7 @@ from parallax.conformance.boundary_runner import (
     fault_injecting_adapter,
 )
 from parallax.conformance.class_models import MODELS
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     BeginFailed,
@@ -45,7 +46,6 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.unit_work import FixedClock
 from parallax.snapshot import DatabaseOptions
 from parallax.snapshot.handle import (
     Database,

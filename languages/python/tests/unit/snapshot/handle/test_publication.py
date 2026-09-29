@@ -24,13 +24,13 @@ from typing import Any, Final
 
 import pytest
 
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity import _graph_construction as graph_construction_module
 from parallax.core.entity import _layout as layout_module
 from parallax.core.entity import _row_codec as row_codec_module
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import UnresolvedEntityDeclaration
-from parallax.core.unit_work import FixedClock
 from parallax.snapshot import (
     ModelSelection,
     PublicationConflictError,

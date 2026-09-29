@@ -27,6 +27,7 @@ import pytest
 # up, which is this module's own namespace rather than `unit_work.temporal`'s.
 import parallax.core.unit_work.write_settlement as write_settlement
 from parallax.conformance import models
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import BUILTIN_MANIFEST
@@ -41,7 +42,6 @@ from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
     ChunkedColumnBuilder,
     EntityStateRow,
-    FixedClock,
     MaterializedWriteGroup,
     MilestoneTopology,
     PlannedClose,

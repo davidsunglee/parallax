@@ -5,7 +5,24 @@ from collections.abc import Sequence
 
 from parallax.core.base import normalize_instant
 
-__all__ = ["ClockExhaustedError", "ScriptedClock"]
+__all__ = ["ClockExhaustedError", "FixedClock", "ScriptedClock"]
+
+
+class FixedClock:
+    """A clock pinned to one instant — deterministic flush timing.
+
+    The instant is normalized (aware UTC, microsecond) on construction, so a naive
+    datetime is rejected here rather than at the database. Conformance cases inject
+    this clock when they author a specific Transaction-Time instant.
+    """
+
+    __slots__ = ("_instant",)
+
+    def __init__(self, instant: _dt.datetime) -> None:
+        self._instant = normalize_instant(instant)
+
+    def now(self) -> _dt.datetime:
+        return self._instant
 
 
 class ClockExhaustedError(RuntimeError):

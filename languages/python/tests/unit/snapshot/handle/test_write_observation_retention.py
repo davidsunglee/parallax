@@ -27,6 +27,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import models
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core.base import INFINITY
 from parallax.core.entity._layout import LayoutCatalog
@@ -35,7 +36,6 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     EntityStateRow,
-    FixedClock,
     ObservedStateKey,
     ReadOrigin,
     RetainedObservation,

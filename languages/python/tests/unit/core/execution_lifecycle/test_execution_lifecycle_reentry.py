@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
@@ -31,7 +32,6 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleReentryError,
     RootExecution,
 )
-from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import ScopedDatabase, Transaction
 from tests._support import mirrored_models as mm

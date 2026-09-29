@@ -23,6 +23,7 @@ import pytest
 
 from parallax.conformance import read_models
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -57,7 +58,6 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.unit_work import FixedClock
 from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import QueryTargetError, ScopedDatabase, SnapshotMaterializationError
 from parallax.snapshot.handle import _read as read_module

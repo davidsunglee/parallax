@@ -23,6 +23,7 @@ import pytest
 
 from parallax.conformance.graph_models import POLICY_MODEL, Coverage, Policy
 from parallax.conformance.read_models import DepositRate
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import (
     TABLE_PER_CONCRETE_SUBTYPE,
     AbstractRoot,
@@ -48,7 +49,6 @@ from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     BufferItem,
     Concurrency,
-    FixedClock,
     KeyedWrite,
     MaterializedWriteGroup,
     ObjectKey,

@@ -31,6 +31,7 @@ from typing import Final, cast
 
 import pytest
 
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import bitemp_write, storage_layout, temporal_read, txtime_write
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.db_port import JsonDocument, MappingRow
@@ -45,7 +46,6 @@ from parallax.core.unit_work import (
     SUPERSEDED,
     TERMINATED,
     Concurrency,
-    FixedClock,
     KeyedMutation,
     KeyedWrite,
     ObjectKey,

@@ -18,6 +18,7 @@ import datetime as dt
 
 import pytest
 
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import (
     Attr,
     DomainModel,
@@ -32,7 +33,6 @@ from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import model_of
 from parallax.core.inheritance import WriteAssignmentError, validate_write_assignment
 from parallax.core.metamodel import UnresolvedEntityDeclaration
-from parallax.core.unit_work import FixedClock
 from parallax.snapshot import QueryTargetError, SnapshotConnectionError
 from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
 from tests._support.db_port import (

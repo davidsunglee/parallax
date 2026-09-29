@@ -19,6 +19,7 @@ from types import TracebackType
 import pytest
 
 from parallax.conformance import models
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import predicate as predicate_algebra
 from parallax.core import temporal_read
 from parallax.core.base import INFINITY
@@ -27,7 +28,6 @@ from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
     SELECTION_INTENT,
     Clock,
-    FixedClock,
     KeyedWrite,
     MaterializedWriteGroup,
     ObservedStateKey,

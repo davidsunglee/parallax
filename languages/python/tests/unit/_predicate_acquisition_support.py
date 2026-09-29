@@ -29,6 +29,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Final, Literal, cast
 
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.workloads import ACQUISITION_LEVELS, AcquisitionLevel
 from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import INFINITY
@@ -43,7 +44,6 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
 from parallax.core.object_query._fluent import mutation_selection
 from parallax.core.unit_work import (
-    FixedClock,
     PredicateSelection,
     PredicateWrite,
     WriteAssignment,

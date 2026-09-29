@@ -31,6 +31,7 @@ from parallax.conformance import case_format, engine
 from parallax.conformance._lanes import scenario
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import Order
 from parallax.core import (
     TX_TIME,
@@ -78,7 +79,6 @@ from parallax.core.unit_work import (
     BufferItem,
     ChunkedColumnBuilder,
     EntityStateRow,
-    FixedClock,
     MaterializedWriteGroup,
     OptimisticLockConflictError,
     PredecessorRow,

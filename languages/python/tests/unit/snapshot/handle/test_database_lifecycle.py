@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ORDERS_MODEL, Account, Order
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -35,7 +36,6 @@ from parallax.core.db_port import (
     report_resource_issues,
 )
 from parallax.core.diagnostics import diagnostic_for
-from parallax.core.unit_work import FixedClock
 from parallax.snapshot import DatabaseOptions, connect
 from parallax.snapshot.handle import Database, ExecutionFailure, Transaction
 from tests._support.db_port import (
