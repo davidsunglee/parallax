@@ -1063,6 +1063,23 @@ def test_a_moved_checkout_lock_is_advisory_and_never_changes_authority_or_the_ve
 
 
 @pytest.mark.usefixtures("gates_no_reading_reaches")
+def test_a_capture_taken_under_other_budget_contract_bytes_is_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    document = _verifiable(contract)
+    _with_instance_state(document, contract)
+    assert verify(document, contract, required=["instance-state"]) == []
+    commented = BudgetContract.from_bytes(contract.path, contract.authored + b"# no semantics\n")
+    assert verify(document, commented, required=["instance-state"]) == [
+        "the snapshot-delivery envelope's Budget Contract digest is stale",
+        "the write-lowering envelope's Budget Contract digest is stale",
+        "the instance-state envelope's Budget Contract digest is stale",
+    ]
+
+
+@pytest.mark.usefixtures("gates_no_reading_reaches")
 def test_invalid_evidence_fails_while_every_drift_is_reported_beside_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

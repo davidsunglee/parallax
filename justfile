@@ -85,7 +85,7 @@ check-dbfree: core-check lint-markdown lint-duplication harness-check-dbfree pyt
 [doc("Every blocking check that needs a live database (Docker).")]
 check-db: harness-check-db python-check-db
 
-[doc("Every blocking check needing an interpreter no other test shares.")]
+[doc("Every blocking check needing an interpreter no other test shares, or the committed cost evidence.")]
 check-cost: python-check-cost
 
 [doc("Duplicated-code scans, one per codebase, each against its own threshold.")]
@@ -506,8 +506,8 @@ python-check-database-access:
 python-check-instrument-access:
     cd {{python}} && uv run python tools/check_instrument_access.py
 
-# A change to an input a workload digest covers fails here until the evidence is
-# retaken. Drift that leaves the capture evidence — a moved lock, a reading past a
+# A change to the Budget Contract, or to an input a workload digest covers, fails
+# here until the evidence is retaken. Drift that leaves the capture evidence — a moved lock, a reading past a
 # ceiling or a gate — is printed as an advisory and blocks nothing.
 [metadata("runtime:fast")]
 [doc("The committed canonical cost capture is valid, current evidence for the inspected checkout.")]

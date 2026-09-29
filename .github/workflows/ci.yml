@@ -267,13 +267,13 @@ jobs:
 
   # The committed canonical capture verified against the head lock and, on pull
   # requests, against the event-merge lock, in seconds. It fails only for
-  # evidence that is not evidence — a stale workload digest, a dirty or split
-  # provenance, a missing or unauthoritative member — and the answer to that is a
-  # capture, so a change to an input a digest covers blocks until the evidence is
-  # retaken. Drift that leaves a capture evidence, a moved lock or a ceiling among
-  # it, is an advisory line and blocks nothing. Nothing here measures; fresh
-  # captures are the cost-report workflow's, on request by label, dispatch, or the
-  # nightly schedule.
+  # evidence that is not evidence — a stale workload or Budget Contract digest, a
+  # dirty or split provenance, a missing or unauthoritative member — and the
+  # answer to that is a capture, so a change to an input a digest covers blocks
+  # until the evidence is retaken. Drift that leaves a capture evidence, a moved
+  # lock or a ceiling among it, is an advisory line and blocks nothing. Nothing
+  # here measures; fresh captures are the cost-report workflow's, on request by
+  # label, dispatch, or the nightly schedule.
   python-check-evidence:
     runs-on: ubuntu-latest
     env:
