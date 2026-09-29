@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol
 
-from parallax.core.document_codec import classify_effective_change
+from parallax.core.document_codec import EffectiveChangeSet, classify_effective_change
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
@@ -318,8 +318,8 @@ def keyed_write(
         family.root, shape, mutation, valid_from, until
     )
     prepared = source.prepare(resolved, PreparedTemporalBounds(valid_from_managed, until_managed))
-    effective, restorations = _effective_change(ctx, resolved, prepared, mutation)
-    if _is_no_op(ctx, resolved, mutation, effective, restorations):
+    change = _effective_change(ctx, resolved, prepared, mutation)
+    if _is_no_op(ctx, resolved, mutation, change):
         return
     evidence: SettledEvidence | None = (
         None
@@ -337,14 +337,7 @@ def keyed_write(
     cancels_pending_insert = mutation in DESTRUCTIVE_MUTATIONS and ctx.uow.pending_insert(
         prepared.object_key
     )
-    admit_and_buffer(
-        ctx.uow,
-        meta,
-        prepared.instruction,
-        evidence,
-        restorations=restorations,
-        effective=effective,
-    )
+    admit_and_buffer(ctx.uow, meta, prepared.instruction, evidence, change=change)
     if cancels_pending_insert:
         ctx.inserts.retire(written)
 
@@ -445,7 +438,7 @@ def _effective_change(
     resolved: ResolvedKeyedWriteSource,
     prepared: PreparedSourceWrite,
     mutation: KeyedMutation,
-) -> tuple[frozenset[str] | None, frozenset[str]]:
+) -> EffectiveChangeSet | None:
     """This write's effective and restored members against the originals its
     source states; a verb that assigns nothing classifies nothing.
 
@@ -460,21 +453,19 @@ def _effective_change(
     row's existence is not a change set to reduce.
     """
     if mutation not in UPDATE_MUTATIONS:
-        return None, frozenset()
-    change = classify_effective_change(
+        return None
+    return classify_effective_change(
         comparison_shape(ctx.model.meta, resolved.entity),
         prepared.assigned,
         prepared.originals,
     )
-    return change.effective, change.restored
 
 
 def _is_no_op(
     ctx: KeyedWriteContext,
     resolved: ResolvedKeyedWriteSource,
     mutation: KeyedMutation,
-    effective: frozenset[str] | None,
-    restorations: frozenset[str],
+    change: EffectiveChangeSet | None,
 ) -> bool:
     """Whether an update changes nothing and cancels nothing, so buffers nothing.
 
@@ -484,8 +475,8 @@ def _is_no_op(
     the merged write is eliminated instead of writing a value the caller took
     back.
     """
-    if effective is None or effective:
+    if change is None or change.effective:
         return False
-    return not restorations or not cancels_a_pending_assignment(
+    return not change.restored or not cancels_a_pending_assignment(
         ctx.uow, ctx.model.meta, resolved.entity, resolved.hint, mutation
     )

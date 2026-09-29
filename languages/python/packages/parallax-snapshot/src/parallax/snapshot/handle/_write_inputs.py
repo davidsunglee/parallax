@@ -6,6 +6,7 @@ from typing import Final, Literal, Protocol
 
 from parallax.core import opt_lock
 from parallax.core.base import InstantError, normalize_instant
+from parallax.core.document_codec import EffectiveChangeSet
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._declaration import declaration_of, wire_names_of
 from parallax.core.metamodel import (
@@ -370,8 +371,7 @@ def admit_and_buffer(
     instruction: PreparedKeyedWrite,
     evidence: SettledEvidence | None,
     *,
-    restorations: frozenset[str] = frozenset(),
-    effective: frozenset[str] | None = None,
+    change: EffectiveChangeSet | None = None,
 ) -> None:
     """Take this write's claim at the scope it settles against, then buffer it.
 
@@ -396,7 +396,7 @@ def admit_and_buffer(
     address one object and carry equal evidence, because what it coalesces is
     the intent rather than the claim.
     """
-    item = buffered_write(instruction, evidence, restorations=restorations, effective=effective)
+    item = buffered_write(instruction, evidence, change=change)
     admit_write_claim(
         ledger,
         instruction_identity(meta, instruction),

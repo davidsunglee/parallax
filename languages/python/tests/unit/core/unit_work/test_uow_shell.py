@@ -23,6 +23,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import predicate as predicate_algebra
 from parallax.core import temporal_read
 from parallax.core.base import INFINITY
+from parallax.core.document_codec import EffectiveChangeSet
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
@@ -71,6 +72,8 @@ from tests.unit._temporal_group_support import temporal_group
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
+_BALANCE_CHANGED = EffectiveChangeSet(effective=frozenset({"balance"}), restored=frozenset())
+"""What a verb classifies an Account update assigning a new balance as."""
 _BALANCE = _MODELS["balance"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
@@ -302,6 +305,7 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
                     _ACCOUNT,
                 ),
                 observation=resolved.evidence,
+                change=_BALANCE_CHANGED,
             )
         )
 
@@ -387,6 +391,7 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
                 KeyedWrite("update", "Account", ({"id": 1, "balance": balance},)), _ACCOUNT
             ),
             retained,
+            change=_BALANCE_CHANGED,
         )
         for balance in (Decimal("125.00"), Decimal("150.00"))
     ]

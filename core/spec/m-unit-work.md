@@ -851,16 +851,8 @@ A keyed temporal write's changed successor follows the same member rule, and its
 assigned members are classified once. The keyed verb classifies them against the
 values its source observed — the originals the published value or its Change
 Record states — and buffers that answer with the write, so planning overlays the
-members it answers as effective without comparing them again. A keyed write
-buffered with its Temporal Observation but without that answer, as a caller
-pairing an instruction with its evidence directly buffers one, is classified
-during settlement against that observation's Predecessor Row instead. Either way
-every member the successor does not effectively change carries its persisted
-state. That settlement-time classification decides only what the successor
-carries, because it runs after no-op elimination and Transaction Instant
-resolution: such a write whose every assigned member it answers as restored is
-not eliminated, and still closes its predecessor and chains a successor carrying
-that predecessor's persisted state.
+members it answers as effective without comparing them again, and every member
+the successor does not effectively change carries its persisted state.
 
 Elimination is deliberately the conservative direction wherever that answer makes
 equal two documents a store spells differently: eliminating the write leaves the

@@ -31,6 +31,7 @@ from parallax.core import LATEST, Attr, DomainModel, Entity, attr
 from parallax.core.base import DocumentValue, InstantError, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
+from parallax.core.document_codec import classify_effective_change
 from parallax.core.entity import EntityGraphWriter, NodeHandle
 from parallax.core.entity._errors import EntityRowError
 from parallax.core.unit_work import (
@@ -40,7 +41,6 @@ from parallax.core.unit_work import (
     WriteInstructionError,
     instructions,
 )
-from parallax.core.unit_work import write_settlement as write_settlement_module
 from parallax.snapshot import InvalidData
 from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
@@ -466,19 +466,15 @@ def test_a_keyed_update_classifies_its_effective_change_once(
     monkeypatch: pytest.MonkeyPatch, representation: str
 ) -> None:
     # The verb classifies against the originals its source states and buffers
-    # that answer beside the write, so settlement overlays it rather than
-    # classifying the same members again against the Predecessor Row.
+    # that answer beside the write, and settlement overlays it: the one
+    # classification a changed successor settles against is the verb's.
     classified: list[str] = []
-    for module in (keyed_writes_module, write_settlement_module):
-        classify = module.classify_effective_change
 
-        def counting(
-            *args: Any, _classify: Any = classify, _module: str = module.__name__, **kwargs: Any
-        ) -> Any:
-            classified.append(_module)
-            return _classify(*args, **kwargs)
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        classified.append(keyed_writes_module.__name__)
+        return classify_effective_change(*args, **kwargs)
 
-        monkeypatch.setattr(module, "classify_effective_change", counting)
+    monkeypatch.setattr(keyed_writes_module, "classify_effective_change", counting)
     port = ScriptedAdapter(
         Transact(
             Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]), Write(times=2)

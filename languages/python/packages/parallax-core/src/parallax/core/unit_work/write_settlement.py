@@ -10,7 +10,6 @@ from parallax.core import inheritance, temporal_read
 from parallax.core.base import INFINITY_LITERAL, TemporalBound, retain_document_value
 from parallax.core.document_codec import (
     PreparedEffectiveChange,
-    classify_effective_change,
     prepare_effective_change,
 )
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
@@ -387,7 +386,11 @@ class WriteSettlement:
                 segments.append(self._settle_group(item, concurrency, transaction_instant))
                 continue
             instruction, observation, effective = (
-                (item.instruction, item.observation, item.effective)
+                (
+                    item.instruction,
+                    item.observation,
+                    None if item.change is None else item.change.effective,
+                )
                 if isinstance(item, ObservedKeyedWrite)
                 else (item, None, None)
             )
@@ -616,9 +619,8 @@ class WriteSettlement:
         here with several is a caller wiring defect.
 
         A changed successor overlays only the members ``effective`` names, which
-        its producer classified against the values its source observed. A write
-        buffered without that classification is classified here, once, against
-        the Predecessor Row it observed.
+        its producer classified against the values its source observed; an
+        observed update always carries that classification, so none is made here.
         """
         if len(instruction.rows) != 1:
             raise WritePlanningError(
@@ -660,7 +662,7 @@ class WriteSettlement:
             or not any(
                 isinstance(resolved.state, ChangedState) for resolved in facts.resolved_successors
             )
-            else _effective_positions(facts, row, predecessor, effective)
+            else _effective_positions(facts, row, effective)
         )
         steps: list[PlannedStep] = []
         close = facts.close
@@ -1172,28 +1174,14 @@ def _successor_step(
 
 
 def _effective_positions(
-    facts: _TemporalFacts,
-    row: Mapping[str, object],
-    predecessor: PredecessorRow,
-    effective: frozenset[str] | None,
+    facts: _TemporalFacts, row: Mapping[str, object], effective: frozenset[str] | None
 ) -> tuple[int, ...]:
     """The selection positions of ``row``'s members that a keyed write's
     changed successor overlays: its key, which addresses the write rather than
-    assigns to it, and its effective members.
-
-    Without a producer's classification, every assigned member — the row less
-    its key — is classified against ``predecessor``'s members. That evidence may
-    be a caller's mapping rather than positional state, so the comparison is the
-    codec's mapping form.
-    """
+    assigns to it, and its effective members."""
+    assert effective is not None  # an observed update carries its producer's change set
     shape = facts.view.member_selection.shape
     key = facts.view.primary_key.identity.name
-    if effective is None:
-        effective = classify_effective_change(
-            shape,
-            {name: value for name, value in row.items() if name != key},
-            predecessor.members,
-        ).effective
     return tuple(
         position
         for name in row

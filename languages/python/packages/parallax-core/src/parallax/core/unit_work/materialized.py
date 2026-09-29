@@ -5,12 +5,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from parallax.core import inheritance, temporal_read
+from parallax.core.document_codec import EffectiveChangeSet
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.temporal_read import milestone_edge
 from parallax.core.unit_work.claims import SettledEvidence
 from parallax.core.unit_work.columns import ChunkedColumnBuilder, ColumnSlice, whole
 from parallax.core.unit_work.instructions import (
     INSERT_MUTATIONS,
+    UPDATE_MUTATIONS,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     PreparedWrite,
@@ -227,18 +229,17 @@ class ObservedKeyedWrite:
     """Carries verb-time evidence through planning without resolving it again.
 
     A retained ``claim`` is spent only if this write survives to settlement.
-    ``restorations`` records members touched and put back: their absent
-    assignments must cancel earlier assignments during coalescing.
-    ``effective`` names the assigned members its producer already classified as
-    changing what its source observed, and a temporal changed successor
-    overlays those alone; ``None`` leaves that classification to settlement.
+    ``change`` is the effective-change classification its producer made of an
+    update's assigned members against the values its source observed, and only
+    an update carries one: a temporal changed successor overlays its effective
+    members alone, and its restored members — touched and put back — cancel
+    earlier assignments during coalescing.
     """
 
     instruction: PreparedKeyedWrite
     observation: WriteObservation
     claim: RetainedObservation | None = None
-    restorations: frozenset[str] = frozenset()
-    effective: frozenset[str] | None = None
+    change: EffectiveChangeSet | None = None
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS:
@@ -263,6 +264,33 @@ class ObservedKeyedWrite:
                 "claim naming other evidence (m-unit-work: one resolution serves the address, "
                 "the gate, and the license)"
             )
+        if self.change is None and self.instruction.mutation in UPDATE_MUTATIONS:
+            raise ValueError(
+                f"an observed `{self.instruction.mutation}` on "
+                f"{self.instruction.target.identity.canonical!r} carries its producer's "
+                "effective change set (m-unit-work: settlement does not classify a keyed "
+                "write again)"
+            )
+        _refuse_misplaced_change(self.instruction, self.change)
+
+    @property
+    def restorations(self) -> frozenset[str]:
+        """The members this write touched and put back."""
+        return frozenset() if self.change is None else self.change.restored
+
+
+def _refuse_misplaced_change(instruction: PreparedWrite, change: EffectiveChangeSet | None) -> None:
+    """Refuse a change set on a write that is not a keyed update: a destructive
+    or close verb, and a predicate-selected write, name no member a producer
+    classified."""
+    if change is None or (
+        isinstance(instruction, PreparedKeyedWrite) and instruction.mutation in UPDATE_MUTATIONS
+    ):
+        return
+    raise ValueError(
+        f"`{instruction.mutation}` names no member a producer classified, so it carries no "
+        "effective change set"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,25 +332,27 @@ def buffered_write(
     instruction: PreparedWrite,
     evidence: SettledEvidence | None,
     *,
-    restorations: frozenset[str] = frozenset(),
-    effective: frozenset[str] | None = None,
+    change: EffectiveChangeSet | None = None,
 ) -> PreparedWrite | ClaimedKeyedWrite:
     """``instruction`` as the buffer item that settles against ``evidence``.
 
-    ``effective`` and ``restorations`` are one effective-change classification
-    of the assigned members, made by a producer against the values its source
-    observed. A restored member is written nowhere: it leaves the row here, and
-    on a claimed carrier it also cancels an earlier assignment during
-    coalescing. A temporal changed successor overlays only the ``effective``
-    members and carries every other member's predecessor cell; without
-    ``effective``, settlement classifies the assigned members once against the
-    observation's Predecessor Row instead.
+    ``change`` is a producer's effective-change classification of an update's
+    assigned members against the values its source observed; an update that
+    settles against a Write Observation requires one, and a write that is not
+    an update refuses one. A restored member is written nowhere: it leaves the
+    row here, so an update restoring every member it assigned is key-only and
+    stage 2 eliminates it, and on a claimed carrier it also cancels an earlier
+    assignment during coalescing. A temporal changed successor overlays only
+    the effective members and carries every other member's predecessor cell.
 
     Retained observations travel with the write so settlement can spend them,
     while a bare observation has no retained claim. With no evidence, the
-    instruction travels bare, so neither classification survives it.
+    instruction travels bare, so no classification survives it.
     """
-    if restorations and isinstance(instruction, PreparedKeyedWrite):
+    _refuse_misplaced_change(instruction, change)
+    restorations: frozenset[str] = frozenset() if change is None else change.restored
+    if restorations:
+        assert isinstance(instruction, PreparedKeyedWrite)  # only a keyed update carries one
         instruction = derive_keyed_write(
             instruction,
             tuple(
@@ -344,15 +374,9 @@ def buffered_write(
             instruction=instruction,
             observation=evidence.evidence,
             claim=evidence,
-            restorations=restorations,
-            effective=effective,
+            change=change,
         )
-    return ObservedKeyedWrite(
-        instruction=instruction,
-        observation=evidence,
-        restorations=restorations,
-        effective=effective,
-    )
+    return ObservedKeyedWrite(instruction=instruction, observation=evidence, change=change)
 
 
 BufferItem = PreparedWrite | ClaimedKeyedWrite | MaterializedWriteGroup
