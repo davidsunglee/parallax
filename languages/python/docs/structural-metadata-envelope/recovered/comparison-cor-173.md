@@ -3,6 +3,7 @@
 Timing deltas within 5% and byte deltas within 3% are read as noise; count deltas are exact. A cell present on one side alone, or whose unit differs, is not compared.
 
 - The base capture is amended: 470 re-measured and 8 derived readings changed after the run its provenance names, recorded in the adjustment of conditions.json.
+- The head capture is amended: 364 re-measured readings changed after the run its provenance names, recorded in the adjustment of conditions.json.
 
 ## instance-state
 
@@ -1411,7 +1412,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | ancestor.depth-1.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | ancestor.depth-1.columns.typed | elapsedUs | 223.875 | 210.416 | -13.459 us/row (-6.01%) | 9 | faster |
 | 3.13 | keyed-write | ancestor.depth-1.columns.typed | retainedBytes | 3536.000 | 1432.000 | -2104.000 B/row (-59.50%) | 1 | smaller |
-| 3.13 | keyed-write | ancestor.depth-1.columns.typed | transientBytes | 14602.000 | 10958.000 | -3644.000 B/row (-24.96%) | 9 | smaller |
+| 3.13 | keyed-write | ancestor.depth-1.columns.typed | transientBytes | 14602.000 | 10866.000 | -3736.000 B/row (-25.59%) | 9 | smaller |
 | 3.13 | keyed-write | ancestor.depth-1.document.typed | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.13 | keyed-write | ancestor.depth-1.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | ancestor.depth-1.document.typed | calls.encodeManagedDocument | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1421,7 +1422,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | ancestor.depth-1.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | ancestor.depth-1.document.typed | elapsedUs | 229.125 | 212.083 | -17.042 us/row (-7.44%) | 9 | faster |
 | 3.13 | keyed-write | ancestor.depth-1.document.typed | retainedBytes | 3486.000 | 1432.000 | -2054.000 B/row (-58.92%) | 1 | smaller |
-| 3.13 | keyed-write | ancestor.depth-1.document.typed | transientBytes | 14602.000 | 11214.000 | -3388.000 B/row (-23.20%) | 9 | smaller |
+| 3.13 | keyed-write | ancestor.depth-1.document.typed | transientBytes | 14602.000 | 11114.000 | -3488.000 B/row (-23.89%) | 9 | smaller |
 | 3.13 | keyed-write | ancestor.sparse-64.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | ancestor.sparse-64.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | ancestor.sparse-64.columns.typed | calls.encodeManagedDocument | 3.000 | 3.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1431,7 +1432,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | ancestor.sparse-64.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | ancestor.sparse-64.columns.typed | elapsedUs | 278.667 | 315.250 | +36.583 us/row (+13.13%) | 9 | slower |
 | 3.13 | keyed-write | ancestor.sparse-64.columns.typed | retainedBytes | 3486.000 | 1432.000 | -2054.000 B/row (-58.92%) | 1 | smaller |
-| 3.13 | keyed-write | ancestor.sparse-64.columns.typed | transientBytes | 14602.000 | 9056.000 | -5546.000 B/row (-37.98%) | 9 | smaller |
+| 3.13 | keyed-write | ancestor.sparse-64.columns.typed | transientBytes | 14602.000 | 8956.000 | -5646.000 B/row (-38.67%) | 9 | smaller |
 | 3.13 | keyed-write | ancestor.sparse-64.document.typed | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.13 | keyed-write | ancestor.sparse-64.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | ancestor.sparse-64.document.typed | calls.encodeManagedDocument | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1441,7 +1442,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | ancestor.sparse-64.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | ancestor.sparse-64.document.typed | elapsedUs | 264.375 | 289.541 | +25.166 us/row (+9.52%) | 9 | slower |
 | 3.13 | keyed-write | ancestor.sparse-64.document.typed | retainedBytes | 3536.000 | 1432.000 | -2104.000 B/row (-59.50%) | 1 | smaller |
-| 3.13 | keyed-write | ancestor.sparse-64.document.typed | transientBytes | 14602.000 | 9301.000 | -5301.000 B/row (-36.30%) | 9 | smaller |
+| 3.13 | keyed-write | ancestor.sparse-64.document.typed | transientBytes | 14602.000 | 9201.000 | -5401.000 B/row (-36.99%) | 9 | smaller |
 | 3.13 | keyed-write | ancestor.width-16.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | ancestor.width-16.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | ancestor.width-16.columns.typed | calls.encodeManagedDocument | 3.000 | 3.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1451,7 +1452,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | ancestor.width-16.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | ancestor.width-16.columns.typed | elapsedUs | 312.167 | 357.667 | +45.500 us/row (+14.58%) | 9 | slower |
 | 3.13 | keyed-write | ancestor.width-16.columns.typed | retainedBytes | 4376.000 | 1712.000 | -2664.000 B/row (-60.88%) | 1 | smaller |
-| 3.13 | keyed-write | ancestor.width-16.columns.typed | transientBytes | 15442.000 | 12666.000 | -2776.000 B/row (-17.98%) | 9 | smaller |
+| 3.13 | keyed-write | ancestor.width-16.columns.typed | transientBytes | 15442.000 | 12574.000 | -2868.000 B/row (-18.57%) | 9 | smaller |
 | 3.13 | keyed-write | ancestor.width-16.document.typed | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.13 | keyed-write | ancestor.width-16.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | ancestor.width-16.document.typed | calls.encodeManagedDocument | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1461,7 +1462,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | ancestor.width-16.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | ancestor.width-16.document.typed | elapsedUs | 291.375 | 339.000 | +47.625 us/row (+16.34%) | 9 | slower |
 | 3.13 | keyed-write | ancestor.width-16.document.typed | retainedBytes | 4426.000 | 1712.000 | -2714.000 B/row (-61.32%) | 1 | smaller |
-| 3.13 | keyed-write | ancestor.width-16.document.typed | transientBytes | 15442.000 | 13442.000 | -2000.000 B/row (-12.95%) | 9 | smaller |
+| 3.13 | keyed-write | ancestor.width-16.document.typed | transientBytes | 15442.000 | 13350.000 | -2092.000 B/row (-13.55%) | 9 | smaller |
 | 3.13 | keyed-write | ancestor.width-64.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | ancestor.width-64.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | ancestor.width-64.columns.typed | calls.encodeManagedDocument | 3.000 | 3.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1471,7 +1472,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | ancestor.width-64.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | ancestor.width-64.columns.typed | elapsedUs | 685.583 | 936.833 | +251.250 us/row (+36.65%) | 9 | slower |
 | 3.13 | keyed-write | ancestor.width-64.columns.typed | retainedBytes | 7786.000 | 2832.000 | -4954.000 B/row (-63.63%) | 1 | smaller |
-| 3.13 | keyed-write | ancestor.width-64.columns.typed | transientBytes | 25739.000 | 20923.000 | -4816.000 B/row (-18.71%) | 9 | smaller |
+| 3.13 | keyed-write | ancestor.width-64.columns.typed | transientBytes | 25739.000 | 20857.000 | -4882.000 B/row (-18.97%) | 9 | smaller |
 | 3.13 | keyed-write | ancestor.width-64.document.typed | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.13 | keyed-write | ancestor.width-64.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | ancestor.width-64.document.typed | calls.encodeManagedDocument | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1481,7 +1482,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | ancestor.width-64.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | ancestor.width-64.document.typed | elapsedUs | 619.542 | 860.292 | +240.750 us/row (+38.86%) | 9 | slower |
 | 3.13 | keyed-write | ancestor.width-64.document.typed | retainedBytes | 7686.000 | 2832.000 | -4854.000 B/row (-63.15%) | 1 | smaller |
-| 3.13 | keyed-write | ancestor.width-64.document.typed | transientBytes | 23900.000 | 23982.000 | +82.000 B/row (+0.34%) | 9 | within noise |
+| 3.13 | keyed-write | ancestor.width-64.document.typed | transientBytes | 23900.000 | 23890.000 | -10.000 B/row (-0.04%) | 9 | within noise |
 | 3.13 | keyed-write | bitemporal.interior.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | bitemporal.interior.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | bitemporal.interior.columns.typed | calls.encodeManagedDocument | 12.000 | 12.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1491,7 +1492,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | bitemporal.interior.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | bitemporal.interior.columns.typed | elapsedUs | 291.750 | 287.250 | -4.500 us/row (-1.54%) | 9 | within noise |
 | 3.13 | keyed-write | bitemporal.interior.columns.typed | retainedBytes | 5546.000 | 2160.000 | -3386.000 B/row (-61.05%) | 1 | smaller |
-| 3.13 | keyed-write | bitemporal.interior.columns.typed | transientBytes | 15824.000 | 15746.000 | -78.000 B/row (-0.49%) | 9 | within noise |
+| 3.13 | keyed-write | bitemporal.interior.columns.typed | transientBytes | 15824.000 | 15296.000 | -528.000 B/row (-3.34%) | 9 | smaller |
 | 3.13 | keyed-write | bitemporal.interior.columns.wire | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | bitemporal.interior.columns.wire | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | bitemporal.interior.columns.wire | calls.encodeManagedDocument | 12.000 | 12.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1500,8 +1501,8 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | bitemporal.interior.columns.wire | calls.occurrenceShape | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | bitemporal.interior.columns.wire | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | bitemporal.interior.columns.wire | elapsedUs | 265.333 | 282.958 | +17.625 us/row (+6.64%) | 9 | slower |
-| 3.13 | keyed-write | bitemporal.interior.columns.wire | retainedBytes | 5592.000 | 2390.000 | -3202.000 B/row (-57.26%) | 1 | smaller |
-| 3.13 | keyed-write | bitemporal.interior.columns.wire | transientBytes | 15816.000 | 16988.000 | +1172.000 B/row (+7.41%) | 9 | larger |
+| 3.13 | keyed-write | bitemporal.interior.columns.wire | retainedBytes | 5592.000 | 2288.000 | -3304.000 B/row (-59.08%) | 1 | smaller |
+| 3.13 | keyed-write | bitemporal.interior.columns.wire | transientBytes | 15816.000 | 16140.000 | +324.000 B/row (+2.05%) | 9 | within noise |
 | 3.13 | keyed-write | bitemporal.interior.document.typed | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.13 | keyed-write | bitemporal.interior.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | bitemporal.interior.document.typed | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1511,7 +1512,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | bitemporal.interior.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | bitemporal.interior.document.typed | elapsedUs | 291.333 | 283.625 | -7.708 us/row (-2.65%) | 9 | within noise |
 | 3.13 | keyed-write | bitemporal.interior.document.typed | retainedBytes | 5496.000 | 2160.000 | -3336.000 B/row (-60.70%) | 1 | smaller |
-| 3.13 | keyed-write | bitemporal.interior.document.typed | transientBytes | 15109.000 | 16031.000 | +922.000 B/row (+6.10%) | 9 | larger |
+| 3.13 | keyed-write | bitemporal.interior.document.typed | transientBytes | 15109.000 | 15481.000 | +372.000 B/row (+2.46%) | 9 | within noise |
 | 3.13 | keyed-write | bitemporal.interior.document.wire | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.13 | keyed-write | bitemporal.interior.document.wire | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | bitemporal.interior.document.wire | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1520,8 +1521,8 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | bitemporal.interior.document.wire | calls.occurrenceShape | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | bitemporal.interior.document.wire | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | bitemporal.interior.document.wire | elapsedUs | 276.916 | 276.875 | -0.041 us/row (-0.01%) | 9 | within noise |
-| 3.13 | keyed-write | bitemporal.interior.document.wire | retainedBytes | 5692.000 | 2491.000 | -3201.000 B/row (-56.24%) | 1 | smaller |
-| 3.13 | keyed-write | bitemporal.interior.document.wire | transientBytes | 14922.000 | 16914.000 | +1992.000 B/row (+13.35%) | 9 | larger |
+| 3.13 | keyed-write | bitemporal.interior.document.wire | retainedBytes | 5692.000 | 2288.000 | -3404.000 B/row (-59.80%) | 1 | smaller |
+| 3.13 | keyed-write | bitemporal.interior.document.wire | transientBytes | 14922.000 | 16221.000 | +1299.000 B/row (+8.71%) | 9 | larger |
 | 3.13 | keyed-write | geometry.depth-1.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | geometry.depth-1.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | geometry.depth-1.columns.typed | calls.encodeManagedDocument | 3.000 | 3.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1750,8 +1751,8 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | txtime.changed.columns.typed | calls.occurrenceShape | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.changed.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | txtime.changed.columns.typed | elapsedUs | 196.167 | 193.125 | -3.042 us/row (-1.55%) | 9 | within noise |
-| 3.13 | keyed-write | txtime.changed.columns.typed | retainedBytes | 3710.000 | 2110.000 | -1600.000 B/row (-43.13%) | 1 | smaller |
-| 3.13 | keyed-write | txtime.changed.columns.typed | transientBytes | 14826.000 | 11309.000 | -3517.000 B/row (-23.72%) | 9 | smaller |
+| 3.13 | keyed-write | txtime.changed.columns.typed | retainedBytes | 3710.000 | 2160.000 | -1550.000 B/row (-41.78%) | 1 | smaller |
+| 3.13 | keyed-write | txtime.changed.columns.typed | transientBytes | 14826.000 | 11217.000 | -3609.000 B/row (-24.34%) | 9 | smaller |
 | 3.13 | keyed-write | txtime.changed.columns.wire | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.changed.columns.wire | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.changed.columns.wire | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1761,7 +1762,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | txtime.changed.columns.wire | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | txtime.changed.columns.wire | elapsedUs | 187.917 | 177.250 | -10.667 us/row (-5.68%) | 9 | faster |
 | 3.13 | keyed-write | txtime.changed.columns.wire | retainedBytes | 3610.000 | 2192.000 | -1418.000 B/row (-39.28%) | 1 | smaller |
-| 3.13 | keyed-write | txtime.changed.columns.wire | transientBytes | 14626.000 | 11589.000 | -3037.000 B/row (-20.76%) | 9 | smaller |
+| 3.13 | keyed-write | txtime.changed.columns.wire | transientBytes | 14626.000 | 11517.000 | -3109.000 B/row (-21.26%) | 9 | smaller |
 | 3.13 | keyed-write | txtime.changed.document.typed | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.13 | keyed-write | txtime.changed.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.changed.document.typed | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1771,7 +1772,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | txtime.changed.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | txtime.changed.document.typed | elapsedUs | 208.000 | 202.459 | -5.541 us/row (-2.66%) | 9 | within noise |
 | 3.13 | keyed-write | txtime.changed.document.typed | retainedBytes | 3710.000 | 2160.000 | -1550.000 B/row (-41.78%) | 1 | smaller |
-| 3.13 | keyed-write | txtime.changed.document.typed | transientBytes | 14826.000 | 11760.000 | -3066.000 B/row (-20.68%) | 9 | smaller |
+| 3.13 | keyed-write | txtime.changed.document.typed | transientBytes | 14826.000 | 11668.000 | -3158.000 B/row (-21.30%) | 9 | smaller |
 | 3.13 | keyed-write | txtime.changed.document.wire | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.13 | keyed-write | txtime.changed.document.wire | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.changed.document.wire | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1781,7 +1782,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | txtime.changed.document.wire | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | txtime.changed.document.wire | elapsedUs | 186.959 | 191.667 | +4.708 us/row (+2.52%) | 9 | within noise |
 | 3.13 | keyed-write | txtime.changed.document.wire | retainedBytes | 3610.000 | 2192.000 | -1418.000 B/row (-39.28%) | 1 | smaller |
-| 3.13 | keyed-write | txtime.changed.document.wire | transientBytes | 14626.000 | 12192.000 | -2434.000 B/row (-16.64%) | 9 | smaller |
+| 3.13 | keyed-write | txtime.changed.document.wire | transientBytes | 14626.000 | 12096.000 | -2530.000 B/row (-17.30%) | 9 | smaller |
 | 3.13 | keyed-write | txtime.opening.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.opening.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.opening.columns.typed | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1791,7 +1792,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | txtime.opening.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | txtime.opening.columns.typed | elapsedUs | 164.625 | 116.541 | -48.084 us/row (-29.21%) | 9 | faster |
 | 3.13 | keyed-write | txtime.opening.columns.typed | retainedBytes | 2794.000 | 1872.000 | -922.000 B/row (-33.00%) | 1 | smaller |
-| 3.13 | keyed-write | txtime.opening.columns.typed | transientBytes | 15042.000 | 10210.000 | -4832.000 B/row (-32.12%) | 9 | smaller |
+| 3.13 | keyed-write | txtime.opening.columns.typed | transientBytes | 15042.000 | 10118.000 | -4924.000 B/row (-32.74%) | 9 | smaller |
 | 3.13 | keyed-write | txtime.opening.columns.wire | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.opening.columns.wire | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.opening.columns.wire | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1801,7 +1802,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | txtime.opening.columns.wire | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | txtime.opening.columns.wire | elapsedUs | 154.791 | 119.375 | -35.416 us/row (-22.88%) | 9 | faster |
 | 3.13 | keyed-write | txtime.opening.columns.wire | retainedBytes | 2562.000 | 1872.000 | -690.000 B/row (-26.93%) | 1 | smaller |
-| 3.13 | keyed-write | txtime.opening.columns.wire | transientBytes | 14810.000 | 10394.000 | -4416.000 B/row (-29.82%) | 9 | smaller |
+| 3.13 | keyed-write | txtime.opening.columns.wire | transientBytes | 14810.000 | 10302.000 | -4508.000 B/row (-30.44%) | 9 | smaller |
 | 3.13 | keyed-write | txtime.opening.document.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.opening.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.opening.document.typed | calls.encodeManagedDocument | 5.000 | 5.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1811,7 +1812,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | txtime.opening.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | txtime.opening.document.typed | elapsedUs | 174.083 | 114.625 | -59.458 us/row (-34.15%) | 9 | faster |
 | 3.13 | keyed-write | txtime.opening.document.typed | retainedBytes | 2844.000 | 1872.000 | -972.000 B/row (-34.18%) | 1 | smaller |
-| 3.13 | keyed-write | txtime.opening.document.typed | transientBytes | 15042.000 | 10242.000 | -4800.000 B/row (-31.91%) | 9 | smaller |
+| 3.13 | keyed-write | txtime.opening.document.typed | transientBytes | 15042.000 | 10142.000 | -4900.000 B/row (-32.58%) | 9 | smaller |
 | 3.13 | keyed-write | txtime.opening.document.wire | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.opening.document.wire | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.opening.document.wire | calls.encodeManagedDocument | 5.000 | 5.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1821,7 +1822,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | keyed-write | txtime.opening.document.wire | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.13 | keyed-write | txtime.opening.document.wire | elapsedUs | 145.000 | 117.834 | -27.166 us/row (-18.74%) | 9 | faster |
 | 3.13 | keyed-write | txtime.opening.document.wire | retainedBytes | 2562.000 | 1872.000 | -690.000 B/row (-26.93%) | 1 | smaller |
-| 3.13 | keyed-write | txtime.opening.document.wire | transientBytes | 14810.000 | 10362.000 | -4448.000 B/row (-30.03%) | 9 | smaller |
+| 3.13 | keyed-write | txtime.opening.document.wire | transientBytes | 14810.000 | 10262.000 | -4548.000 B/row (-30.71%) | 9 | smaller |
 | 3.13 | keyed-write | txtime.unchanged.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.unchanged.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.13 | keyed-write | txtime.unchanged.columns.typed | calls.encodeManagedDocument | 4.000 | 0.000 | -4.000 calls/row (-100.00%) | 1 | changed |
@@ -1869,23 +1870,23 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.13 | model-preparation | model.prepared.family | retainedBytes | 22256.000 | 23472.000 | +1216.000 B (+5.46%) | 1 | larger |
 | 3.13 | model-preparation | model.prepared.family | transientBytes | 27136.000 | 27536.000 | +400.000 B (+1.47%) | 9 | within noise |
 | 3.13 | predicate-acquisition | acquisition.rows-128.columns | elapsedUs | 37.406 | 24.915 | -12.491 us/row (-33.39%) | 9 | faster |
-| 3.13 | predicate-acquisition | acquisition.rows-128.columns | retainedBytes | 1584.227 | 913.414 | -670.812 B/row (-42.34%) | 1 | smaller |
-| 3.13 | predicate-acquisition | acquisition.rows-128.columns | transientBytes | 3490.477 | 2006.625 | -1483.852 B/row (-42.51%) | 9 | smaller |
+| 3.13 | predicate-acquisition | acquisition.rows-128.columns | retainedBytes | 1584.227 | 911.875 | -672.352 B/row (-42.44%) | 1 | smaller |
+| 3.13 | predicate-acquisition | acquisition.rows-128.columns | transientBytes | 3490.477 | 2003.484 | -1486.992 B/row (-42.60%) | 9 | smaller |
 | 3.13 | predicate-acquisition | acquisition.rows-128.document | elapsedUs | 41.920 | 25.822 | -16.098 us/row (-38.40%) | 9 | faster |
-| 3.13 | predicate-acquisition | acquisition.rows-128.document | retainedBytes | 2769.438 | 1914.680 | -854.758 B/row (-30.86%) | 1 | smaller |
-| 3.13 | predicate-acquisition | acquisition.rows-128.document | transientBytes | 5646.305 | 2473.766 | -3172.539 B/row (-56.19%) | 9 | smaller |
+| 3.13 | predicate-acquisition | acquisition.rows-128.document | retainedBytes | 2769.438 | 1913.375 | -856.062 B/row (-30.91%) | 1 | smaller |
+| 3.13 | predicate-acquisition | acquisition.rows-128.document | transientBytes | 5646.305 | 2469.828 | -3176.477 B/row (-56.26%) | 9 | smaller |
 | 3.13 | predicate-acquisition | acquisition.rows-32.columns | elapsedUs | 41.362 | 29.440 | -11.922 us/row (-28.82%) | 9 | faster |
-| 3.13 | predicate-acquisition | acquisition.rows-32.columns | retainedBytes | 1745.750 | 1057.594 | -688.156 B/row (-39.42%) | 1 | smaller |
-| 3.13 | predicate-acquisition | acquisition.rows-32.columns | transientBytes | 3982.875 | 2668.031 | -1314.844 B/row (-33.01%) | 9 | smaller |
+| 3.13 | predicate-acquisition | acquisition.rows-32.columns | retainedBytes | 1745.750 | 1032.500 | -713.250 B/row (-40.86%) | 1 | smaller |
+| 3.13 | predicate-acquisition | acquisition.rows-32.columns | transientBytes | 3982.875 | 2650.812 | -1332.062 B/row (-33.44%) | 9 | smaller |
 | 3.13 | predicate-acquisition | acquisition.rows-32.document | elapsedUs | 46.552 | 31.432 | -15.120 us/row (-32.48%) | 9 | faster |
-| 3.13 | predicate-acquisition | acquisition.rows-32.document | retainedBytes | 2940.781 | 2048.969 | -891.812 B/row (-30.33%) | 1 | smaller |
-| 3.13 | predicate-acquisition | acquisition.rows-32.document | transientBytes | 6145.188 | 3024.812 | -3120.375 B/row (-50.78%) | 9 | smaller |
+| 3.13 | predicate-acquisition | acquisition.rows-32.document | retainedBytes | 2940.781 | 2038.500 | -902.281 B/row (-30.68%) | 1 | smaller |
+| 3.13 | predicate-acquisition | acquisition.rows-32.document | transientBytes | 6145.188 | 3010.688 | -3134.500 B/row (-51.01%) | 9 | smaller |
 | 3.13 | predicate-acquisition | acquisition.rows-8.columns | elapsedUs | 60.984 | 49.818 | -11.167 us/row (-18.31%) | 9 | faster |
-| 3.13 | predicate-acquisition | acquisition.rows-8.columns | retainedBytes | 2408.000 | 1528.000 | -880.000 B/row (-36.54%) | 1 | smaller |
-| 3.13 | predicate-acquisition | acquisition.rows-8.columns | transientBytes | 5751.000 | 4690.375 | -1060.625 B/row (-18.44%) | 9 | smaller |
+| 3.13 | predicate-acquisition | acquisition.rows-8.columns | retainedBytes | 2408.000 | 1523.000 | -885.000 B/row (-36.75%) | 1 | smaller |
+| 3.13 | predicate-acquisition | acquisition.rows-8.columns | transientBytes | 5751.000 | 4640.250 | -1110.750 B/row (-19.31%) | 9 | smaller |
 | 3.13 | predicate-acquisition | acquisition.rows-8.document | elapsedUs | 64.182 | 49.557 | -14.625 us/row (-22.79%) | 9 | faster |
-| 3.13 | predicate-acquisition | acquisition.rows-8.document | retainedBytes | 3581.500 | 2615.375 | -966.125 B/row (-26.98%) | 1 | smaller |
-| 3.13 | predicate-acquisition | acquisition.rows-8.document | transientBytes | 7792.125 | 4926.250 | -2865.875 B/row (-36.78%) | 9 | smaller |
+| 3.13 | predicate-acquisition | acquisition.rows-8.document | retainedBytes | 3581.500 | 2547.000 | -1034.500 B/row (-28.88%) | 1 | smaller |
+| 3.13 | predicate-acquisition | acquisition.rows-8.document | transientBytes | 7792.125 | 4862.750 | -2929.375 B/row (-37.59%) | 9 | smaller |
 | 3.13 | wire-insert-response | response.insert.family.wire | elapsedUs | 65.958 | 63.292 | -2.666 us/row (-4.04%) | 9 | within noise |
 | 3.13 | wire-insert-response | response.insert.family.wire | retainedBytes | 7632.000 | 7528.000 | -104.000 B/row (-1.36%) | 1 | within noise |
 | 3.13 | wire-insert-response | response.insert.family.wire | transientBytes | 7712.000 | 7616.000 | -96.000 B/row (-1.24%) | 9 | within noise |
@@ -1898,7 +1899,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | ancestor.depth-1.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | ancestor.depth-1.columns.typed | elapsedUs | 233.667 | 235.292 | +1.625 us/row (+0.70%) | 9 | within noise |
 | 3.14 | keyed-write | ancestor.depth-1.columns.typed | retainedBytes | 3582.000 | 1440.000 | -2142.000 B/row (-59.80%) | 1 | smaller |
-| 3.14 | keyed-write | ancestor.depth-1.columns.typed | transientBytes | 15066.000 | 11126.000 | -3940.000 B/row (-26.15%) | 9 | smaller |
+| 3.14 | keyed-write | ancestor.depth-1.columns.typed | transientBytes | 15066.000 | 11034.000 | -4032.000 B/row (-26.76%) | 9 | smaller |
 | 3.14 | keyed-write | ancestor.depth-1.document.typed | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.14 | keyed-write | ancestor.depth-1.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | ancestor.depth-1.document.typed | calls.encodeManagedDocument | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1908,7 +1909,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | ancestor.depth-1.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | ancestor.depth-1.document.typed | elapsedUs | 239.291 | 239.167 | -0.124 us/row (-0.05%) | 9 | within noise |
 | 3.14 | keyed-write | ancestor.depth-1.document.typed | retainedBytes | 3582.000 | 1440.000 | -2142.000 B/row (-59.80%) | 1 | smaller |
-| 3.14 | keyed-write | ancestor.depth-1.document.typed | transientBytes | 15066.000 | 11646.000 | -3420.000 B/row (-22.70%) | 9 | smaller |
+| 3.14 | keyed-write | ancestor.depth-1.document.typed | transientBytes | 15066.000 | 11554.000 | -3512.000 B/row (-23.31%) | 9 | smaller |
 | 3.14 | keyed-write | ancestor.sparse-64.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | ancestor.sparse-64.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | ancestor.sparse-64.columns.typed | calls.encodeManagedDocument | 3.000 | 3.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1918,7 +1919,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | ancestor.sparse-64.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | ancestor.sparse-64.columns.typed | elapsedUs | 290.042 | 361.333 | +71.291 us/row (+24.58%) | 9 | slower |
 | 3.14 | keyed-write | ancestor.sparse-64.columns.typed | retainedBytes | 3632.000 | 1440.000 | -2192.000 B/row (-60.35%) | 1 | smaller |
-| 3.14 | keyed-write | ancestor.sparse-64.columns.typed | transientBytes | 15066.000 | 9320.000 | -5746.000 B/row (-38.14%) | 9 | smaller |
+| 3.14 | keyed-write | ancestor.sparse-64.columns.typed | transientBytes | 15066.000 | 9220.000 | -5846.000 B/row (-38.80%) | 9 | smaller |
 | 3.14 | keyed-write | ancestor.sparse-64.document.typed | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.14 | keyed-write | ancestor.sparse-64.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | ancestor.sparse-64.document.typed | calls.encodeManagedDocument | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1928,7 +1929,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | ancestor.sparse-64.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | ancestor.sparse-64.document.typed | elapsedUs | 289.916 | 321.875 | +31.959 us/row (+11.02%) | 9 | slower |
 | 3.14 | keyed-write | ancestor.sparse-64.document.typed | retainedBytes | 3632.000 | 1440.000 | -2192.000 B/row (-60.35%) | 1 | smaller |
-| 3.14 | keyed-write | ancestor.sparse-64.document.typed | transientBytes | 15066.000 | 9741.000 | -5325.000 B/row (-35.34%) | 9 | smaller |
+| 3.14 | keyed-write | ancestor.sparse-64.document.typed | transientBytes | 15066.000 | 9649.000 | -5417.000 B/row (-35.96%) | 9 | smaller |
 | 3.14 | keyed-write | ancestor.width-16.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | ancestor.width-16.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | ancestor.width-16.columns.typed | calls.encodeManagedDocument | 3.000 | 3.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1938,7 +1939,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | ancestor.width-16.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | ancestor.width-16.columns.typed | elapsedUs | 334.375 | 385.167 | +50.792 us/row (+15.19%) | 9 | slower |
 | 3.14 | keyed-write | ancestor.width-16.columns.typed | retainedBytes | 4472.000 | 1720.000 | -2752.000 B/row (-61.54%) | 1 | smaller |
-| 3.14 | keyed-write | ancestor.width-16.columns.typed | transientBytes | 15970.000 | 13026.000 | -2944.000 B/row (-18.43%) | 9 | smaller |
+| 3.14 | keyed-write | ancestor.width-16.columns.typed | transientBytes | 15970.000 | 12926.000 | -3044.000 B/row (-19.06%) | 9 | smaller |
 | 3.14 | keyed-write | ancestor.width-16.document.typed | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.14 | keyed-write | ancestor.width-16.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | ancestor.width-16.document.typed | calls.encodeManagedDocument | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1948,7 +1949,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | ancestor.width-16.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | ancestor.width-16.document.typed | elapsedUs | 326.583 | 370.000 | +43.417 us/row (+13.29%) | 9 | slower |
 | 3.14 | keyed-write | ancestor.width-16.document.typed | retainedBytes | 4472.000 | 1720.000 | -2752.000 B/row (-61.54%) | 1 | smaller |
-| 3.14 | keyed-write | ancestor.width-16.document.typed | transientBytes | 15970.000 | 13946.000 | -2024.000 B/row (-12.67%) | 9 | smaller |
+| 3.14 | keyed-write | ancestor.width-16.document.typed | transientBytes | 15970.000 | 13854.000 | -2116.000 B/row (-13.25%) | 9 | smaller |
 | 3.14 | keyed-write | ancestor.width-64.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | ancestor.width-64.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | ancestor.width-64.columns.typed | calls.encodeManagedDocument | 3.000 | 3.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1958,7 +1959,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | ancestor.width-64.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | ancestor.width-64.columns.typed | elapsedUs | 741.417 | 995.667 | +254.250 us/row (+34.29%) | 9 | slower |
 | 3.14 | keyed-write | ancestor.width-64.columns.typed | retainedBytes | 7932.000 | 2840.000 | -5092.000 B/row (-64.20%) | 1 | smaller |
-| 3.14 | keyed-write | ancestor.width-64.columns.typed | transientBytes | 26259.000 | 23717.000 | -2542.000 B/row (-9.68%) | 9 | smaller |
+| 3.14 | keyed-write | ancestor.width-64.columns.typed | transientBytes | 26259.000 | 23617.000 | -2642.000 B/row (-10.06%) | 9 | smaller |
 | 3.14 | keyed-write | ancestor.width-64.document.typed | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.14 | keyed-write | ancestor.width-64.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | ancestor.width-64.document.typed | calls.encodeManagedDocument | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1968,7 +1969,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | ancestor.width-64.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | ancestor.width-64.document.typed | elapsedUs | 671.166 | 920.042 | +248.876 us/row (+37.08%) | 9 | slower |
 | 3.14 | keyed-write | ancestor.width-64.document.typed | retainedBytes | 7882.000 | 2840.000 | -5042.000 B/row (-63.97%) | 1 | smaller |
-| 3.14 | keyed-write | ancestor.width-64.document.typed | transientBytes | 24604.000 | 26934.000 | +2330.000 B/row (+9.47%) | 9 | larger |
+| 3.14 | keyed-write | ancestor.width-64.document.typed | transientBytes | 24604.000 | 26834.000 | +2230.000 B/row (+9.06%) | 9 | larger |
 | 3.14 | keyed-write | bitemporal.interior.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | bitemporal.interior.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | bitemporal.interior.columns.typed | calls.encodeManagedDocument | 12.000 | 12.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1977,8 +1978,8 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | bitemporal.interior.columns.typed | calls.occurrenceShape | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | bitemporal.interior.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | bitemporal.interior.columns.typed | elapsedUs | 311.250 | 318.209 | +6.959 us/row (+2.24%) | 9 | within noise |
-| 3.14 | keyed-write | bitemporal.interior.columns.typed | retainedBytes | 5808.000 | 2326.000 | -3482.000 B/row (-59.95%) | 1 | smaller |
-| 3.14 | keyed-write | bitemporal.interior.columns.typed | transientBytes | 15740.000 | 15538.000 | -202.000 B/row (-1.28%) | 9 | within noise |
+| 3.14 | keyed-write | bitemporal.interior.columns.typed | retainedBytes | 5808.000 | 2176.000 | -3632.000 B/row (-62.53%) | 1 | smaller |
+| 3.14 | keyed-write | bitemporal.interior.columns.typed | transientBytes | 15740.000 | 14896.000 | -844.000 B/row (-5.36%) | 9 | smaller |
 | 3.14 | keyed-write | bitemporal.interior.columns.wire | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | bitemporal.interior.columns.wire | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | bitemporal.interior.columns.wire | calls.encodeManagedDocument | 12.000 | 12.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1987,8 +1988,8 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | bitemporal.interior.columns.wire | calls.occurrenceShape | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | bitemporal.interior.columns.wire | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | bitemporal.interior.columns.wire | elapsedUs | 287.167 | 318.084 | +30.917 us/row (+10.77%) | 9 | slower |
-| 3.14 | keyed-write | bitemporal.interior.columns.wire | retainedBytes | 5696.000 | 2207.000 | -3489.000 B/row (-61.25%) | 1 | smaller |
-| 3.14 | keyed-write | bitemporal.interior.columns.wire | transientBytes | 15644.000 | 16694.000 | +1050.000 B/row (+6.71%) | 9 | larger |
+| 3.14 | keyed-write | bitemporal.interior.columns.wire | retainedBytes | 5696.000 | 2304.000 | -3392.000 B/row (-59.55%) | 1 | smaller |
+| 3.14 | keyed-write | bitemporal.interior.columns.wire | transientBytes | 15644.000 | 16004.000 | +360.000 B/row (+2.30%) | 9 | within noise |
 | 3.14 | keyed-write | bitemporal.interior.document.typed | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.14 | keyed-write | bitemporal.interior.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | bitemporal.interior.document.typed | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -1997,8 +1998,8 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | bitemporal.interior.document.typed | calls.occurrenceShape | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | bitemporal.interior.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | bitemporal.interior.document.typed | elapsedUs | 312.167 | 311.750 | -0.417 us/row (-0.13%) | 9 | within noise |
-| 3.14 | keyed-write | bitemporal.interior.document.typed | retainedBytes | 5708.000 | 2226.000 | -3482.000 B/row (-61.00%) | 1 | smaller |
-| 3.14 | keyed-write | bitemporal.interior.document.typed | transientBytes | 15440.000 | 15907.000 | +467.000 B/row (+3.02%) | 9 | larger |
+| 3.14 | keyed-write | bitemporal.interior.document.typed | retainedBytes | 5708.000 | 2176.000 | -3532.000 B/row (-61.88%) | 1 | smaller |
+| 3.14 | keyed-write | bitemporal.interior.document.typed | transientBytes | 15440.000 | 15217.000 | -223.000 B/row (-1.44%) | 9 | within noise |
 | 3.14 | keyed-write | bitemporal.interior.document.wire | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.14 | keyed-write | bitemporal.interior.document.wire | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | bitemporal.interior.document.wire | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -2008,7 +2009,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | bitemporal.interior.document.wire | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | bitemporal.interior.document.wire | elapsedUs | 289.458 | 311.458 | +22.000 us/row (+7.60%) | 9 | slower |
 | 3.14 | keyed-write | bitemporal.interior.document.wire | retainedBytes | 5696.000 | 2304.000 | -3392.000 B/row (-59.55%) | 1 | smaller |
-| 3.14 | keyed-write | bitemporal.interior.document.wire | transientBytes | 15370.000 | 17166.000 | +1796.000 B/row (+11.69%) | 9 | larger |
+| 3.14 | keyed-write | bitemporal.interior.document.wire | transientBytes | 15370.000 | 16325.000 | +955.000 B/row (+6.21%) | 9 | larger |
 | 3.14 | keyed-write | geometry.depth-1.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | geometry.depth-1.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | geometry.depth-1.columns.typed | calls.encodeManagedDocument | 3.000 | 3.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -2606,7 +2607,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | txtime.changed.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | txtime.changed.columns.typed | elapsedUs | 220.459 | 221.959 | +1.500 us/row (+0.68%) | 9 | within noise |
 | 3.14 | keyed-write | txtime.changed.columns.typed | retainedBytes | 3856.000 | 2176.000 | -1680.000 B/row (-43.57%) | 1 | smaller |
-| 3.14 | keyed-write | txtime.changed.columns.typed | transientBytes | 15290.000 | 11589.000 | -3701.000 B/row (-24.21%) | 9 | smaller |
+| 3.14 | keyed-write | txtime.changed.columns.typed | transientBytes | 15290.000 | 11489.000 | -3801.000 B/row (-24.86%) | 9 | smaller |
 | 3.14 | keyed-write | txtime.changed.columns.wire | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.changed.columns.wire | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.changed.columns.wire | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -2616,7 +2617,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | txtime.changed.columns.wire | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | txtime.changed.columns.wire | elapsedUs | 206.625 | 204.125 | -2.500 us/row (-1.21%) | 9 | within noise |
 | 3.14 | keyed-write | txtime.changed.columns.wire | retainedBytes | 3698.000 | 2208.000 | -1490.000 B/row (-40.29%) | 1 | smaller |
-| 3.14 | keyed-write | txtime.changed.columns.wire | transientBytes | 15030.000 | 12039.000 | -2991.000 B/row (-19.90%) | 9 | smaller |
+| 3.14 | keyed-write | txtime.changed.columns.wire | transientBytes | 15030.000 | 11949.000 | -3081.000 B/row (-20.50%) | 9 | smaller |
 | 3.14 | keyed-write | txtime.changed.document.typed | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.14 | keyed-write | txtime.changed.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.changed.document.typed | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -2626,7 +2627,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | txtime.changed.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | txtime.changed.document.typed | elapsedUs | 239.250 | 236.667 | -2.583 us/row (-1.08%) | 9 | within noise |
 | 3.14 | keyed-write | txtime.changed.document.typed | retainedBytes | 3906.000 | 2176.000 | -1730.000 B/row (-44.29%) | 1 | smaller |
-| 3.14 | keyed-write | txtime.changed.document.typed | transientBytes | 15290.000 | 12040.000 | -3250.000 B/row (-21.26%) | 9 | smaller |
+| 3.14 | keyed-write | txtime.changed.document.typed | transientBytes | 15290.000 | 11948.000 | -3342.000 B/row (-21.86%) | 9 | smaller |
 | 3.14 | keyed-write | txtime.changed.document.wire | calls.applyPatches | 1.000 | 1.000 | +0.000 calls/row (+0.00%) | 1 | exact |
 | 3.14 | keyed-write | txtime.changed.document.wire | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.changed.document.wire | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -2636,7 +2637,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | txtime.changed.document.wire | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | txtime.changed.document.wire | elapsedUs | 210.666 | 229.042 | +18.376 us/row (+8.72%) | 9 | slower |
 | 3.14 | keyed-write | txtime.changed.document.wire | retainedBytes | 3698.000 | 2208.000 | -1490.000 B/row (-40.29%) | 1 | smaller |
-| 3.14 | keyed-write | txtime.changed.document.wire | transientBytes | 15030.000 | 12628.000 | -2402.000 B/row (-15.98%) | 9 | smaller |
+| 3.14 | keyed-write | txtime.changed.document.wire | transientBytes | 15030.000 | 12536.000 | -2494.000 B/row (-16.59%) | 9 | smaller |
 | 3.14 | keyed-write | txtime.opening.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.opening.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.opening.columns.typed | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -2646,7 +2647,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | txtime.opening.columns.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | txtime.opening.columns.typed | elapsedUs | 188.042 | 134.875 | -53.167 us/row (-28.27%) | 9 | faster |
 | 3.14 | keyed-write | txtime.opening.columns.typed | retainedBytes | 2800.000 | 1928.000 | -872.000 B/row (-31.14%) | 1 | smaller |
-| 3.14 | keyed-write | txtime.opening.columns.typed | transientBytes | 15554.000 | 10650.000 | -4904.000 B/row (-31.53%) | 9 | smaller |
+| 3.14 | keyed-write | txtime.opening.columns.typed | transientBytes | 15554.000 | 10550.000 | -5004.000 B/row (-32.17%) | 9 | smaller |
 | 3.14 | keyed-write | txtime.opening.columns.wire | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.opening.columns.wire | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.opening.columns.wire | calls.encodeManagedDocument | 4.000 | 4.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -2656,7 +2657,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | txtime.opening.columns.wire | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | txtime.opening.columns.wire | elapsedUs | 168.042 | 139.000 | -29.042 us/row (-17.28%) | 9 | faster |
 | 3.14 | keyed-write | txtime.opening.columns.wire | retainedBytes | 2610.000 | 1928.000 | -682.000 B/row (-26.13%) | 1 | smaller |
-| 3.14 | keyed-write | txtime.opening.columns.wire | transientBytes | 15266.000 | 10762.000 | -4504.000 B/row (-29.50%) | 9 | smaller |
+| 3.14 | keyed-write | txtime.opening.columns.wire | transientBytes | 15266.000 | 10670.000 | -4596.000 B/row (-30.11%) | 9 | smaller |
 | 3.14 | keyed-write | txtime.opening.document.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.opening.document.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.opening.document.typed | calls.encodeManagedDocument | 5.000 | 5.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -2666,7 +2667,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | txtime.opening.document.typed | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | txtime.opening.document.typed | elapsedUs | 192.166 | 133.958 | -58.208 us/row (-30.29%) | 9 | faster |
 | 3.14 | keyed-write | txtime.opening.document.typed | retainedBytes | 2850.000 | 1928.000 | -922.000 B/row (-32.35%) | 1 | smaller |
-| 3.14 | keyed-write | txtime.opening.document.typed | transientBytes | 15554.000 | 10794.000 | -4760.000 B/row (-30.60%) | 9 | smaller |
+| 3.14 | keyed-write | txtime.opening.document.typed | transientBytes | 15554.000 | 10702.000 | -4852.000 B/row (-31.19%) | 9 | smaller |
 | 3.14 | keyed-write | txtime.opening.document.wire | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.opening.document.wire | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.opening.document.wire | calls.encodeManagedDocument | 5.000 | 5.000 | +0.000 calls/row (+0.00%) | 1 | exact |
@@ -2676,7 +2677,7 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | keyed-write | txtime.opening.document.wire | calls.shapeOfDeclaration | | | | | missing on head |
 | 3.14 | keyed-write | txtime.opening.document.wire | elapsedUs | 164.083 | 136.042 | -28.041 us/row (-17.09%) | 9 | faster |
 | 3.14 | keyed-write | txtime.opening.document.wire | retainedBytes | 2610.000 | 1928.000 | -682.000 B/row (-26.13%) | 1 | smaller |
-| 3.14 | keyed-write | txtime.opening.document.wire | transientBytes | 15266.000 | 10898.000 | -4368.000 B/row (-28.61%) | 9 | smaller |
+| 3.14 | keyed-write | txtime.opening.document.wire | transientBytes | 15266.000 | 10798.000 | -4468.000 B/row (-29.27%) | 9 | smaller |
 | 3.14 | keyed-write | txtime.unchanged.columns.typed | calls.applyPatches | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.unchanged.columns.typed | calls.detachJsonContainer | 0.000 | 0.000 | +0.000 calls/row | 1 | exact |
 | 3.14 | keyed-write | txtime.unchanged.columns.typed | calls.encodeManagedDocument | 4.000 | 0.000 | -4.000 calls/row (-100.00%) | 1 | changed |
@@ -2724,23 +2725,23 @@ Timing deltas within 5% and byte deltas within 3% are read as noise; count delta
 | 3.14 | model-preparation | model.prepared.family | retainedBytes | 22584.000 | 23920.000 | +1336.000 B (+5.92%) | 1 | larger |
 | 3.14 | model-preparation | model.prepared.family | transientBytes | 26928.000 | 27688.000 | +760.000 B (+2.82%) | 9 | within noise |
 | 3.14 | predicate-acquisition | acquisition.rows-128.columns | elapsedUs | 38.438 | 24.938 | -13.500 us/row (-35.12%) | 9 | faster |
-| 3.14 | predicate-acquisition | acquisition.rows-128.columns | retainedBytes | 1622.031 | 997.680 | -624.352 B/row (-38.49%) | 1 | smaller |
-| 3.14 | predicate-acquisition | acquisition.rows-128.columns | transientBytes | 3310.820 | 2046.617 | -1264.203 B/row (-38.18%) | 9 | smaller |
+| 3.14 | predicate-acquisition | acquisition.rows-128.columns | retainedBytes | 1622.031 | 985.594 | -636.438 B/row (-39.24%) | 1 | smaller |
+| 3.14 | predicate-acquisition | acquisition.rows-128.columns | transientBytes | 3310.820 | 2050.805 | -1260.016 B/row (-38.06%) | 9 | smaller |
 | 3.14 | predicate-acquisition | acquisition.rows-128.document | elapsedUs | 42.423 | 25.788 | -16.635 us/row (-39.21%) | 9 | faster |
-| 3.14 | predicate-acquisition | acquisition.rows-128.document | retainedBytes | 2812.430 | 1995.680 | -816.750 B/row (-29.04%) | 1 | smaller |
-| 3.14 | predicate-acquisition | acquisition.rows-128.document | transientBytes | 5463.812 | 2432.477 | -3031.336 B/row (-55.48%) | 9 | smaller |
+| 3.14 | predicate-acquisition | acquisition.rows-128.document | retainedBytes | 2812.430 | 1987.219 | -825.211 B/row (-29.34%) | 1 | smaller |
+| 3.14 | predicate-acquisition | acquisition.rows-128.document | transientBytes | 5463.812 | 2436.273 | -3027.539 B/row (-55.41%) | 9 | smaller |
 | 3.14 | predicate-acquisition | acquisition.rows-32.columns | elapsedUs | 42.056 | 29.803 | -12.253 us/row (-29.13%) | 9 | faster |
-| 3.14 | predicate-acquisition | acquisition.rows-32.columns | retainedBytes | 1812.812 | 1141.531 | -671.281 B/row (-37.03%) | 1 | smaller |
-| 3.14 | predicate-acquisition | acquisition.rows-32.columns | transientBytes | 3829.625 | 2709.031 | -1120.594 B/row (-29.26%) | 9 | smaller |
+| 3.14 | predicate-acquisition | acquisition.rows-32.columns | retainedBytes | 1812.812 | 1135.375 | -677.438 B/row (-37.37%) | 1 | smaller |
+| 3.14 | predicate-acquisition | acquisition.rows-32.columns | transientBytes | 3829.625 | 2696.094 | -1133.531 B/row (-29.60%) | 9 | smaller |
 | 3.14 | predicate-acquisition | acquisition.rows-32.document | elapsedUs | 46.975 | 30.316 | -16.659 us/row (-35.46%) | 9 | faster |
-| 3.14 | predicate-acquisition | acquisition.rows-32.document | retainedBytes | 3014.438 | 2149.625 | -864.812 B/row (-28.69%) | 1 | smaller |
-| 3.14 | predicate-acquisition | acquisition.rows-32.document | transientBytes | 6014.250 | 3035.250 | -2979.000 B/row (-49.53%) | 9 | smaller |
+| 3.14 | predicate-acquisition | acquisition.rows-32.document | retainedBytes | 3014.438 | 2141.875 | -872.562 B/row (-28.95%) | 1 | smaller |
+| 3.14 | predicate-acquisition | acquisition.rows-32.document | transientBytes | 6014.250 | 3022.219 | -2992.031 B/row (-49.75%) | 9 | smaller |
 | 3.14 | predicate-acquisition | acquisition.rows-8.columns | elapsedUs | 62.250 | 49.339 | -12.911 us/row (-20.74%) | 9 | faster |
-| 3.14 | predicate-acquisition | acquisition.rows-8.columns | retainedBytes | 2565.125 | 1717.875 | -847.250 B/row (-33.03%) | 1 | smaller |
-| 3.14 | predicate-acquisition | acquisition.rows-8.columns | transientBytes | 5756.000 | 4875.625 | -880.375 B/row (-15.29%) | 9 | smaller |
+| 3.14 | predicate-acquisition | acquisition.rows-8.columns | retainedBytes | 2565.125 | 1742.500 | -822.625 B/row (-32.07%) | 1 | smaller |
+| 3.14 | predicate-acquisition | acquisition.rows-8.columns | transientBytes | 5756.000 | 4822.375 | -933.625 B/row (-16.22%) | 9 | smaller |
 | 3.14 | predicate-acquisition | acquisition.rows-8.document | elapsedUs | 69.854 | 50.938 | -18.917 us/row (-27.08%) | 9 | faster |
-| 3.14 | predicate-acquisition | acquisition.rows-8.document | retainedBytes | 3823.875 | 2823.500 | -1000.375 B/row (-26.16%) | 1 | smaller |
-| 3.14 | predicate-acquisition | acquisition.rows-8.document | transientBytes | 7863.875 | 5111.125 | -2752.750 B/row (-35.01%) | 9 | smaller |
+| 3.14 | predicate-acquisition | acquisition.rows-8.document | retainedBytes | 3823.875 | 2768.500 | -1055.375 B/row (-27.60%) | 1 | smaller |
+| 3.14 | predicate-acquisition | acquisition.rows-8.document | transientBytes | 7863.875 | 5052.875 | -2811.000 B/row (-35.75%) | 9 | smaller |
 | 3.14 | predicate-acquisition | leaf-acquisition.boolean.rows-8.columns | elapsedUs | | | | | missing on base |
 | 3.14 | predicate-acquisition | leaf-acquisition.boolean.rows-8.columns | retainedBytes | | | | | missing on base |
 | 3.14 | predicate-acquisition | leaf-acquisition.boolean.rows-8.columns | transientBytes | | | | | missing on base |
