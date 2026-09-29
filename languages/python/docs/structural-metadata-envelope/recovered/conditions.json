@@ -1,4 +1,22 @@
 {
+  "adjustment": {
+    "captured": {
+      "how": "left exactly as the capture read them",
+      "reach": "no other snapshot-delivery provider-free read path calls the changed code or an aware-datetime method, and bitemporal-current is the one live workload with Timestamp members; its twelve live memory readings, read three times with the fix and three times at the producing commit's tree, overlap within the live cells' run-to-run spread or differ by at most 0.5% without an attribution, so they stay as captured. A re-measurement of instance-state reproduced all 258 of its byte readings exactly, and lifecycle-overhead records no byte reading",
+      "scope": "every timing, count and ratio reading, every instance-state and lifecycle-overhead reading, and every snapshot-delivery byte reading not named above"
+    },
+    "date": "2026-09-29",
+    "evidence": "$HOME/.local/share/parallax/evidence/cor-178/amendment/: the remeasure scripts and logs with their diagnostic documents, probe_reach.py with probe-reach.jsonl, live-compare.txt and the other comparisons, amend.py and amendment.txt",
+    "provenanceCommit": "the provenance every member names is the capture's producing commit, not the commit carrying the fix; the readings below were taken after it",
+    "reason": "CPython's type method cache kept the per-call method-name strings the _datetime C calls create for an aware datetime's utcoffset and strftime, so every byte reading whose path reached utc_instant or the Timestamp Wire spelling retained a process-dependent amount. The fix is the UTC fast path in packages/parallax-core/src/parallax/core/base/_neutral.py and packages/parallax-core/src/parallax/core/wire/_codec.py, commit ecbdd36f of PR #205, which landed on main at bf287493.",
+    "remeasured": {
+      "count": 364,
+      "determinism": "three separate write-lowering diagnostic processes agreed on every byte reading to the byte; the leaf-timestamp read readings still vary by up to 2.4% between children with the fix in place, so they are the first of three runs, chosen before the other two were read",
+      "how": "a --diagnostic run of the member's own instruments, with the fix in the tree; value and samples are both the fresh reading",
+      "scope": "every byte-unit write-lowering reading on both runtimes (360), and in snapshot-delivery the four leaf-timestamp provider-free read readings on 3.14 (4)"
+    },
+    "schemaVersion": 1
+  },
   "members": {
     "instance-state": {
       "runtimes": {
