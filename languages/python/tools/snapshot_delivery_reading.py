@@ -423,27 +423,39 @@ def _live_memory(
 
 
 class _PreparedStress:
-    __slots__ = ("bound", "layout", "meta", "model", "plan", "reads", "rows")
+    """One stress layout's prepared model, validated query, read plan, and port,
+    composed outside every window.
+
+    :meth:`read_root` executes the root statement a run then consumes, and every
+    caller runs it outside the region it measures; :meth:`run` is the window.
+    """
+
+    __slots__ = ("model", "plan", "port", "query", "root")
 
     def __init__(self, layout: Any) -> None:
-        from parallax.snapshot import prepare_model
-        from parallax.snapshot.handle._publication import read_projection
-
-        self.layout = layout
-        self.meta = stress_support.metamodel(layout)
         self.model = read_projection(
             prepare_model(stress_support.workload(layout), edition="snapshot-delivery-report")
         ).model
-        self.plan = stress_support.fetch_plan(stress_support.query(layout, self.meta), self.meta)
-        self.reads = stress_support.compiled_levels(layout, self.plan, self.meta)
-        self.bound = stress_support.prepared_levels(self.model, self.reads)
-        self.rows = stress_support.rows_per_level(layout, self.model, self.plan, self.reads)
+        self.query = stress_support.query(layout, self.model.meta)
+        self.plan = stress_support.read_plan(self.model, self.query)
+        reads = stress_support.compiled_levels(layout, self.plan)
+        self.port = stress_support.StressPort(
+            reads, stress_support.rows_per_level(layout, self.model, self.plan, reads)
+        )
+        self.root = None
+
+    def read_root(self) -> None:
+        self.root = stress_support.read_root(self.model, self.query, self.plan, self.port)
 
     def run(self) -> object:
-        return stress_support.batch(self.model, self.plan, self.bound, self.rows)
+        root = self.root
+        assert root is not None
+        self.root = None
+        return stress_support.build_page(self.model, root, self.port)
 
     def seam(self) -> Seam:
         def run(sample: Callable[[], None]) -> None:
+            self.read_root()
             page = self.run()
             sample()
             assert page is not None
@@ -459,7 +471,9 @@ def _stress_layout(workload: str) -> Any:
 def _stress_timing(
     prepared: _PreparedStress, path: str, *, warmups: int, measured: int
 ) -> tuple[float, str, tuple[float, ...]]:
-    milliseconds = _timed(prepared.run, warmups=warmups, measured=measured)
+    milliseconds = _timed(
+        prepared.run, warmups=warmups, measured=measured, prepare=prepared.read_root
+    )
     projections = stress_support.PROJECTIONS_PER_BATCH
     if path.endswith("maxUsPerProjection"):
         samples = tuple(elapsed * 1_000 / projections for elapsed in milliseconds)
@@ -471,24 +485,21 @@ def _stress_timing(
 def _stress_memory(prepared: _PreparedStress, path: str) -> tuple[float, str, tuple[float, ...]]:
     if path.endswith("preparedSetKiB"):
 
-        def compiled(sample: Callable[[], None]) -> None:
-            plan = stress_support.fetch_plan(
-                stress_support.query(prepared.layout, prepared.meta), prepared.meta
-            )
-            reads = stress_support.compiled_levels(prepared.layout, plan, prepared.meta)
-            bound = stress_support.prepared_levels(prepared.model, reads)
+        def planned(sample: Callable[[], None]) -> None:
+            plan = stress_support.read_plan(prepared.model, prepared.query)
             sample()
-            assert bound is not None
+            assert plan is not None
 
         tracemalloc.start()
         try:
-            value = retained(compiled) / 1_024
+            value = retained(planned) / 1_024
         finally:
             tracemalloc.stop()
         return value, "KiB", (value,)
     tracemalloc.start()
     try:
         retained_bytes = retained(prepared.seam())
+        prepared.read_root()
         gc.collect()
         before, _ = tracemalloc.get_traced_memory()
         tracemalloc.reset_peak()

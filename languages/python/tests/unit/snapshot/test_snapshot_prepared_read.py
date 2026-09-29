@@ -78,12 +78,12 @@ from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
     OWNERS,
     Layout,
+    StressPort,
     batch,
     compiled_levels,
-    fetch_plan,
     metamodel,
-    prepared_levels,
     query,
+    read_plan,
     rows_per_level,
 )
 from tests.unit.snapshot._snapshot_page_support import physical_members, rendered_members
@@ -701,11 +701,13 @@ def _conversion_calls(layout: Layout, owners: int) -> dict[str, int]:
     itself on the way in.
     """
     calls: dict[str, int] = dict.fromkeys(_COUNTED, 0)
-    model, plan, reads, rows = _workload(layout, owners)
+    model, reads, rows = _workload(layout, owners)
+    validated = query(layout, model.meta)
+    plan = read_plan(model, validated)
     with pytest.MonkeyPatch.context() as patched:
         for name in _COUNTED:
             patched.setattr(_convert, name, _counting(name, getattr(_convert, name), calls))
-        page = batch(model, plan, prepared_levels(model, reads), rows)
+        page = batch(model, validated, plan, StressPort(reads, rows)).page
         for position in range(page.root_count):
             RootView(page, position)
     return calls
@@ -723,20 +725,18 @@ def _workload(
     layout: Layout, owners: int
 ) -> tuple[
     CatalogedModel,
-    Any,
     tuple[CompiledRead | None, ...],
     tuple[tuple[Row, ...], ...],
 ]:
-    meta = metamodel(layout)
-    model = CatalogedModel(meta)
-    plan = fetch_plan(query(layout, meta), meta)
-    reads = compiled_levels(layout, plan, meta)
-    return model, plan, reads, rows_per_level(layout, model, plan, reads, owners)
+    model = CatalogedModel(metamodel(layout))
+    plan = read_plan(model, query(layout, model.meta))
+    reads = compiled_levels(layout, plan)
+    return model, reads, rows_per_level(layout, model, plan, reads, owners)
 
 
 def _host_checked_payload_cells(layout: Layout, owners: int) -> int:
     """Non-identity Attribute cells whose storage contract needs a host check."""
-    model, _plan, reads, rows = _workload(layout, owners)
+    model, reads, rows = _workload(layout, owners)
     total = 0
     seen: set[object] = set()
     for compiled, level_rows in zip(reads, rows, strict=True):

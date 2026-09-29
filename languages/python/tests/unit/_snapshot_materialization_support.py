@@ -4,17 +4,15 @@ One representative graph shape — a table-per-hierarchy family with an abstract
 middle, nested One and Many Value Objects at two depths, every declarable Neutral
 Type as an Entity Attribute and again as a document leaf, duplicate logical nodes
 through a narrowed view, three view slots and a back-reference — driven through
-the SHIPPED raw-row read loop from ``PreparedRead.convert_driver`` to ``PageBuilder.finish``,
-with no database anywhere.
+production's own read loop with no database anywhere: ``UNCACHED_READ_PLANNER``
+plans the read, ``Materializer._read_root`` executes and holds the root statement,
+and ``Materializer._build_page`` converts it, renders and executes every fetch
+template, and retains the Page's read sources. :class:`StressPort` answers each
+statement with rows composed before it.
 
-The loop is the driver's own: :func:`batch` calls ``handle/_read.py``'s private
-helpers rather than copying them, so what it measures is the code a ``find``
-runs. What it cannot borrow is the interleaving — a query fetch's ``compile_read``
-runs between gathering its parents' keys and converting its rows, so a repeated
-batch would compile once per repetition. Compilation and the binding that
-follows it therefore happen once, outside the batch, against the keys this
-module's own fixture is built from; the gather still runs inside it, because
-production pays for it per batch.
+The two Materializer steps are private, and are reached here rather than copied:
+a measured window opens between them, so the root statement's execution stays
+outside it while every fetch the Page build runs stays inside.
 
 A fourth workload model rather than a reuse: the older Snapshot graph baseline
 workload was ``Columns``-only and declared four Neutral Types, ``_document_layout_support``
@@ -23,10 +21,10 @@ is a layout twin at the accepted-Metamodel level with no ``DomainModel`` for
 Page contract. Members are declared once in a factory over the layout, while both
 layouts retain the descriptor's one canonical namespace.
 
-Rows are projected from the catalog fixture itself through the compiled read:
-authored values, nulls, omissions, and occurrence cardinalities are preserved,
-then each authored member is placed where ``m-storage-layout`` says it lives.
-:func:`verify` states that the resulting sparse rows form the expected Page
+Rows are projected from the catalog fixture itself through each level's compiled
+read: authored values, nulls, omissions, and occurrence cardinalities are
+preserved, then each authored member is placed where ``m-storage-layout`` says it
+lives. :func:`verify` states that the resulting sparse rows form the expected Page
 without stored-data findings and that the model still declares every supported
 Neutral Type.
 
@@ -43,11 +41,11 @@ carried by this MODULE's underscore. Never imported by production code.
 
 import datetime as dt
 import uuid
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal as PyDecimal
 from functools import cache
-from typing import Final, Literal, cast
+from typing import Any, Final, Literal, cast
 
 from parallax.conformance.provision import fixture_document, fixture_literal
 from parallax.conformance.workloads import catalog
@@ -70,9 +68,9 @@ from parallax.core import (
     deep_fetch,
     rel,
 )
-from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
-from parallax.core.db_port import Row
-from parallax.core.dialect import POSTGRES
+from parallax.core.base import SQL_NULL, DocumentValue, ManagedValue, PresentDocument
+from parallax.core.db_port import DocumentReadOrdinals, Row
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.document_codec import (
     Leaf,
     MemberShape,
@@ -82,6 +80,7 @@ from parallax.core.document_codec import (
 )
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import model_of
+from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.metamodel import (
     EntityIdentity,
     Metamodel,
@@ -89,17 +88,19 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.object_query._validated import ValidatedObjectQuery
-from parallax.core.sql_gen._compile import CompiledRead, compile_read
+from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.storage_layout import DirectColumn, TableLayout
 from parallax.core.storage_layout import view as storage_layout_view
-from parallax.core.temporal_read import Pin
-from parallax.snapshot.handle import _read
+from parallax.snapshot._read_result import FindResult
+from parallax.snapshot.handle._materialization import (
+    Materializer,
+    _RootRead,  # pyright: ignore[reportPrivateUsage]
+)
 from parallax.snapshot.handle._preflight import preflight
-from parallax.snapshot.handle._retention import ObservedRows
-from parallax.snapshot.materialize import Page, PageBuilder
+from parallax.snapshot.handle._read_plan import UNCACHED_READ_PLANNER, ReadPlan
+from parallax.snapshot.materialize import Page
 from parallax.snapshot.materialize._page import ABSENT, page_rows
-from parallax.snapshot.materialize._prepared import PreparedRead, bind
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from tests._support.db_port import ConnectsAsItself
 
 __all__ = [
     "LAYOUTS",
@@ -107,13 +108,15 @@ __all__ = [
     "PROJECTIONS_PER_BATCH",
     "ROWS_PER_BATCH",
     "Layout",
+    "StressPort",
     "batch",
+    "build_page",
     "compiled_levels",
     "driver_rows",
-    "fetch_plan",
     "metamodel",
-    "prepared_levels",
     "query",
+    "read_plan",
+    "read_root",
     "rows_per_level",
     "verify",
     "workload",
@@ -146,8 +149,6 @@ and the to-one hop that re-converts one child."""
 ROWS_PER_BATCH: Final = PROJECTIONS_PER_BATCH
 """Stored rows per batch. Equal to the projection count because every row of a
 conforming batch converts, which :func:`verify` is what states."""
-
-_PIN: Final = Pin()
 
 _ROOT: Final = ""
 _NODES: Final = "nodes"
@@ -258,58 +259,42 @@ def query(layout: Layout, model: Metamodel) -> ValidatedObjectQuery:
     )
 
 
-def fetch_plan(validated: ValidatedObjectQuery, model: Metamodel) -> deep_fetch.ObjectQueryPlan:
-    """``validated``'s plan, projecting every member as an instance-form read does."""
-    return deep_fetch.plan(
-        validated, model, projection=deep_fetch.ReadProjectionRequest("all", True)
+def read_plan(model: CatalogedModel, validated: ValidatedObjectQuery) -> ReadPlan:
+    """``validated``'s instance-form read plan for a read no unit of work owns,
+    compiled afresh on every call."""
+    return UNCACHED_READ_PLANNER.plan(
+        edition="",
+        model=model,
+        dialect=POSTGRES,
+        query=validated,
+        result_form="instance",
+        preference=None,
     )
 
 
-def compiled_levels(
-    layout: Layout, plan: deep_fetch.ObjectQueryPlan, model: Metamodel
-) -> tuple[CompiledRead | None, ...]:
+def compiled_levels(layout: Layout, plan: ReadPlan) -> tuple[CompiledRead | None, ...]:
     """One compiled read per source position: the root at 0, fetch step ``i`` at
     ``i + 1``, and absence for the back-reference level, which issues no statement.
 
-    Each query fetch is compiled against the keys this module's fixture supplies,
-    which is what lets the batch be repeated without recompiling.
+    Each fetch template is rendered with the keys this module's fixture supplies,
+    which are the keys the Page build gathers from the fixture's root rows.
     """
-    reads: list[CompiledRead | None] = [
-        compile_read(plan.root, model, POSTGRES, result_form="instance")
-    ]
-    for step in plan.fetch_steps:
+    root, _prepared = plan.root_read()
+    reads: list[CompiledRead | None] = [root]
+    for index in range(plan.fetch_count):
+        step = plan.fetch_step(index)
         if isinstance(step, deep_fetch.BackReferenceFetchStep):
             reads.append(None)
             continue
-        reads.append(
-            compile_read(
-                step.query_for(_level_keys(layout, _attach_key(plan, step))),
-                model,
-                POSTGRES,
-                result_form="instance",
-            )
-        )
+        compiled, _prepared = plan.fetch_read(index, _level_keys(layout, _attach_key(plan, step)))
+        reads.append(compiled)
     return tuple(reads)
 
 
-def _attach_key(plan: deep_fetch.ObjectQueryPlan, step: deep_fetch.FetchStep) -> str:
-    view = plan.includes.position(step.position).view
+def _attach_key(plan: ReadPlan, step: deep_fetch.FetchStep) -> str:
+    view = plan.include_tree().position(step.position).view
     assert view is not None
     return view.narrowed_view or view.relationship.name
-
-
-def prepared_levels(
-    model: CatalogedModel, reads: Sequence[CompiledRead | None]
-) -> tuple[PreparedRead | None, ...]:
-    """One prepared read per compiled one, indexed as :func:`compiled_levels`
-    indexes its reads.
-
-    Bound outside the repeated batch for the same reason compilation is: a
-    production level binds where it compiles, once per statement, so a batch
-    repeated against reads compiled before it must be repeated against the
-    levels bound with them.
-    """
-    return tuple(None if read is None else bind(model, read) for read in reads)
 
 
 # --------------------------------------------------------------------------- #
@@ -374,15 +359,16 @@ def _specs(layout: Layout, attach_key: str, owners: int, first: int) -> tuple[_R
     return tuple(_row_spec(entity, row) for entity, row in selected)
 
 
-def _level_keys(layout: Layout, attach_key: str) -> list[object]:
+def _level_keys(layout: Layout, attach_key: str) -> list[ManagedValue]:
     """The distinct parent keys a level's statement binds, as the fixture fixes
-    them — what the batch's own ``_gather_keys`` answers.
+    them — what the Page build's own key gathering answers.
 
-    Always the whole fixture's keys, whatever a caller then converts: a statement
-    is compiled once and its binds are not what a row materializes under."""
+    Always the whole fixture's keys, whatever a caller then converts: the rendered
+    statement's text, which is all a rendering here is for, does not depend on
+    them."""
     rows = _WORKLOADS[layout].rows(OWNERS).entity("snapshot.materialization.Owner")
     key = "favoriteId" if attach_key == _FAVORITE else "id"
-    return [row[key] for row in rows]
+    return [cast("ManagedValue", row[key]) for row in rows]
 
 
 def _occurrence_value(shape: MemberShape, multiplicity: Multiplicity, raw: object) -> DocumentValue:
@@ -494,7 +480,7 @@ def driver_rows(
 def rows_per_level(
     layout: Layout,
     model: CatalogedModel,
-    plan: deep_fetch.ObjectQueryPlan,
+    plan: ReadPlan,
     reads: Sequence[CompiledRead | None],
     owners: int = OWNERS,
     first: int = 0,
@@ -503,85 +489,105 @@ def rows_per_level(
     root = reads[0]
     assert root is not None
     rows: list[tuple[Row, ...]] = [tuple(driver_rows(layout, model, root, _ROOT, owners, first))]
-    for index, step in enumerate(plan.fetch_steps):
+    for index in range(plan.fetch_count):
         compiled = reads[index + 1]
         rows.append(
             ()
             if compiled is None
-            else tuple(driver_rows(layout, model, compiled, _attach_key(plan, step), owners, first))
+            else tuple(
+                driver_rows(
+                    layout,
+                    model,
+                    compiled,
+                    _attach_key(plan, plan.fetch_step(index)),
+                    owners,
+                    first,
+                )
+            )
         )
     return tuple(rows)
 
 
 # --------------------------------------------------------------------------- #
-# The batch: the shipped per-level loop, with compilation lifted out of it.    #
+# The batch: production's own read loop over a provider-free port.            #
 # --------------------------------------------------------------------------- #
 
-_slot_table = _read.slot_table
-_convert_rows = _read.convert_rows
-_parent_refs = _read.parent_refs
-_guarded_parents = _read.guarded_parents
-_gather_keys = _read.gather_keys
-_correlation_member = _read.correlation_member
-_attach_children = _read.attach_children
-_attach_empty = _read.attach_empty
-_attach_back_reference = _read.attach_back_reference
+
+class StressPort(ConnectsAsItself):
+    """Provider-free stored rows for one batch, answered by statement.
+
+    Every level's rows are composed with the port, so a statement executed
+    inside a measured window costs that window a fresh list of them and nothing
+    else the port does.
+    """
+
+    dialect: Dialect = POSTGRES
+    __slots__ = ("_rows",)
+    _rows: Mapping[str, tuple[Row, ...]]
+
+    def __init__(self, reads: Sequence[CompiledRead | None], rows: Sequence[Sequence[Row]]) -> None:
+        answers: dict[str, tuple[Row, ...]] = {}
+        for read, level_rows in zip(reads, rows, strict=True):
+            if read is None:
+                continue
+            sql = self.dialect.to_driver_sql(read.statement.sql)
+            if sql in answers:  # pragma: no cover - every level reads a distinct statement
+                raise AssertionError(f"two levels issue one statement: {sql}")
+            answers[sql] = tuple(level_rows)
+        self._rows = answers
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        del binds, document_reads
+        return list(self._rows[sql])
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        del sql, binds
+        raise NotImplementedError
+
+    def transaction[T](
+        self,
+        body: Callable[[Any], T],
+        *,
+        isolation: str | None = None,
+    ) -> Any:
+        del body, isolation
+        raise NotImplementedError
+
+
+_MATERIALIZER: Final = Materializer()
+
+
+def read_root(
+    model: CatalogedModel, validated: ValidatedObjectQuery, plan: ReadPlan, port: StressPort
+) -> _RootRead:
+    """``plan``'s root statement executed on ``port`` and held for one Page build."""
+    return _MATERIALIZER._read_root(  # pyright: ignore[reportPrivateUsage]
+        validated,
+        model,
+        port,
+        calls=INERT,
+        planner=UNCACHED_READ_PLANNER,
+        plan=plan,
+    )
+
+
+def build_page(model: CatalogedModel, root: _RootRead, port: StressPort) -> FindResult:
+    """One whole Page built from an executed ``root``: its rows converted, every
+    fetch rendered, executed on ``port``, converted, and attached, and the Page's
+    read sources retained. ``root`` is consumed."""
+    return _MATERIALIZER._build_page(root, model, port, calls=INERT)  # pyright: ignore[reportPrivateUsage]
 
 
 def batch(
-    model: CatalogedModel,
-    plan: deep_fetch.ObjectQueryPlan,
-    prepared: Sequence[PreparedRead | None],
-    rows: Sequence[Sequence[Row]],
-) -> Page:
-    """One whole Page, built through the shipped raw-row conversion loop.
-
-    The root statement's provider rows are held as one returned batch. A level
-    below the root converts straight out of its own lazy result and holds one row
-    at a time.
-
-    Each level's gathered keys decide its branch and stay live across the
-    conversion beneath them, which is the compiled child query holding them in
-    production. An empty gathered set is the only thing that attaches an empty
-    result: a level with keys and no rows converts the empty result and fans it
-    back, exactly as a child statement returning nothing does.
-    """
-    meta = model.meta
-    root = prepared[0]
-    assert root is not None
-    root_rows = tuple(rows[0])
-    builder = PageBuilder(ViewSchema(_slot_table(plan)))
-    observations = ObservedRows()
-    root_refs = _convert_rows(builder, ROOT_LEVEL, root, root_rows, observations)
-    level_refs: list[tuple[int, ...]] = []
-    for index, step in enumerate(plan.fetch_steps):
-        parents = _guarded_parents(
-            builder,
-            plan.includes,
-            step,
-            _parent_refs(step.parent, root_refs, level_refs),
-        )
-        if isinstance(step, deep_fetch.BackReferenceFetchStep):
-            _attach_back_reference(builder, meta, plan.includes, step, parents)
-            level_refs.append(())
-            continue
-        keys = _gather_keys(builder, parents, _correlation_member(meta, step.owner.identity))
-        if not keys:
-            _attach_empty(builder, plan.includes, step, parents)
-            level_refs.append(())
-            continue
-        level_read = prepared[index + 1]
-        assert level_read is not None
-        child_refs = _convert_rows(
-            builder,
-            index + 1,
-            level_read,
-            rows[index + 1],
-            observations,
-        )
-        _attach_children(builder, meta, plan.includes, step, parents, child_refs)
-        level_refs.append(child_refs)
-    return builder.finish(root_refs, _PIN)
+    model: CatalogedModel, validated: ValidatedObjectQuery, plan: ReadPlan, port: StressPort
+) -> FindResult:
+    """One whole standalone find of ``validated`` over ``port``."""
+    return build_page(model, read_root(model, validated, plan, port), port)
 
 
 # --------------------------------------------------------------------------- #
@@ -648,12 +654,12 @@ DECLARABLE_TYPES: Final = frozenset(
 absent: no Python annotation denotes it, so a class-backed model declares none."""
 
 
-def verify(model: CatalogedModel, plan: deep_fetch.ObjectQueryPlan, page: Page) -> None:
+def verify(model: CatalogedModel, plan: ReadPlan, page: Page) -> None:
     """That the fixture-authored batch has the stated shape and no data issues."""
     rows = page_rows(page)
     assert len(rows.layouts) == PROJECTIONS_PER_BATCH, len(rows.layouts)
     assert len(rows.roots) == OWNERS, len(rows.roots)
-    assert len(plan.fetch_steps) == 4, len(plan.fetch_steps)
+    assert plan.fetch_count == 4, plan.fetch_count
     for projection, member_row in enumerate(rows.member_rows):
         assert ABSENT not in member_row, rows.layouts[projection].concrete
         assert rows.issues[projection] == (), rows.layouts[projection].concrete

@@ -106,7 +106,12 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
         "a Wire find over already-parsed provider rows through production planning, "
         "materialization, and publication; no parsing or provider work"
     ),
-    STRESS_WINDOW: "the shipped raw-row conversion loop over prepared reads, to a finished Page",
+    STRESS_WINDOW: (
+        "production's Page build over an already executed root statement: root row "
+        "conversion, fetch-template rendering, provider-free fetch execution and its call "
+        "bookkeeping, conversion and attachment, and read-source retention, to a finished "
+        "Page; no planning, root statement execution, or publication"
+    ),
     PLAN_WINDOW: (
         "one whole-table instance read planned into an already composed and empty read plan "
         "cache of production capacity; no cache construction, model preparation, query "
