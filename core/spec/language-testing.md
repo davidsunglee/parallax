@@ -196,15 +196,15 @@ defined meaning and MUST NOT be declared.
 | Class | A test belongs to it when |
 |---|---|
 | `db` | Running it requires a live database |
-| `cost` | Running it requires an interpreter no other test shares |
+| `cost` | Running it requires an interpreter no other test shares, or its verdict depends on committed cost evidence |
 | `dbfree` | Running it requires neither |
 
-Every class but `dbfree` names one resource, and `dbfree` is the complement of
-their union. That is what the derived classification above rests on: a test is
-classified by the resources it reaches, so neither zero nor two classes is
-representable — reaching none is `dbfree`, and reaching two is a contradiction
-the collection hook MUST fail on rather than an order of precedence a reader has
-to remember.
+Every class but `dbfree` names its own resource, and `dbfree` is the complement
+of their union. That is what the derived classification above rests on: a test
+is classified by the resources it reaches, so neither zero nor two classes is
+representable — reaching none is `dbfree`, and reaching two classes' resources is
+a contradiction the collection hook MUST fail on rather than an order of
+precedence a reader has to remember.
 
 `cost`'s resource is an interpreter whose heap the test controls. A reading taken
 over the whole process — every tracked object, every reference among them, every
@@ -213,6 +213,16 @@ as much as of its own subject: it costs what that process holds, and the floor i
 is read against moves with it. Such a measurement is meaningful only in a process
 it does not share, which is a requirement on the environment in the same sense a
 live database is, and is confined the same way.
+
+`cost`'s resource is also the committed cost evidence: the captures of its
+measurements the repository retains, and what is derived from them, such as the
+gates a reading is held to. A verdict on that evidence holds only while the
+evidence is current, and only a recapture makes stale evidence current again. A
+test whose verdict depends on it therefore belongs to `cost`: in any other class,
+a change to an input the evidence covers would fail that class's gate until a
+capture lands, binding a gate kept cheap enough to run after every change
+([§7](#7-command-roles-and-composition)) to the slowest work the repository
+does. It is confined through an entry point of its own, as the interpreter is.
 
 Each resource-bearing class is confined by a blocking check, and one of the
 scope's class aggregates ([§7](#7-command-roles-and-composition)) MUST run it:
