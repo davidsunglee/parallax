@@ -104,15 +104,15 @@ from parallax.core import (
 )
 from parallax.core.entity import (
     UNLOADED,
+    EntityGraphConstruction,
 )
 from parallax.core.entity._construction_input import ABSENT, NodeHandle
-from parallax.core.entity._declaration import shape_of, wire_names_of
+from parallax.core.entity._declaration import shape_of
 from parallax.core.entity._entity import attach_lifecycle_state
 from parallax.core.entity._graph_construction import EntityGraphWriter
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.entity._model import DomainModel as ModelType
-from parallax.core.entity._model import class_index
 from parallax.core.entity._pydantic_storage import attach_instance_state, instance_state
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -120,7 +120,7 @@ from parallax.core.metamodel import (
     OccurrenceMetadata,
 )
 from parallax.snapshot._inspection import SnapshotNodeState
-from tests._support.model_capabilities import cataloged_for, graph_construction_for
+from tests._support.model_capabilities import graph_construction_for
 
 __all__ = [
     "ARMS",
@@ -386,9 +386,15 @@ class Scenario:
     sample, so the memoized result is state the reading counts."""
 
     @cached_property
+    def construction(self) -> EntityGraphConstruction:
+        """The Entity Graph Construction preparation composes for this scenario's
+        model, derived on first reach."""
+        return graph_construction_for(self.model)
+
+    @cached_property
     def layout(self) -> EntityLayout:
         """The exact Entity's member layout — the order ``values`` is read in."""
-        return cataloged_for(self.model).layouts.entity(self.entity)
+        return self.construction.cataloged.layouts.entity(self.entity)
 
     @cached_property
     def unloaded(self) -> tuple[object, ...]:
@@ -404,30 +410,19 @@ class Scenario:
 
     @cached_property
     def plan(self) -> LegacyPlan:
-        """What the legacy arm resolves once, derived on first reach."""
-        classes = class_index(self.model)
-        assert classes is not None, "a class-backed Domain Model indexes its classes"
-        cls = classes.class_of(self.entity)
-        assert cls is not None, self.entity
-        names = wire_names_of(cls)
+        """What the legacy arm resolves once, read from the construction facts
+        publication resolves it from."""
+        facts = self.construction.facts_for(self.entity)
+        py_names = facts.plan.py_names
+        attributes = facts.layout.attribute_count
         return LegacyPlan(
-            cls=cls,
-            attributes=tuple(
-                (position, names.name_to_py[attribute.identity.name])
-                for position, attribute in enumerate(self.layout.attributes)
-            ),
+            cls=facts.cls,
+            attributes=tuple((position, py_names[position]) for position in range(attributes)),
             occurrences=tuple(
-                (
-                    position,
-                    names.name_to_py[occurrence.identity.path[-1]],
-                    occurrence,
-                    names.vo_classes[names.name_to_py[occurrence.identity.path[-1]]],
-                )
-                for position, occurrence in enumerate(
-                    self.layout.occurrences, start=self.layout.attribute_count
-                )
+                (position, py_names[position], occurrence.declared, occurrence.cls)
+                for position, occurrence in enumerate(facts.occurrences, start=attributes)
             ),
-            relationships=tuple(names.relationship_py.values()),
+            relationships=tuple(facts.plan.relationships),
         )
 
     @property
