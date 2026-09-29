@@ -398,9 +398,7 @@ def _live_memory(
         if page_size is None:
             database.wire.find(workload.query)
         else:
-            _last_streamed(
-                database, workload, page_size, collect_at_page_boundary=collect_at_page_boundary
-            )
+            _last_streamed(database, workload, page_size, collect_at_page_boundary=False)
         gc.collect()
         gc.collect()
         tracemalloc.start()
