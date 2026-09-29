@@ -15,6 +15,7 @@ from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import validate
 from parallax.conformance.workloads import workload_digest
 from tests.unit._instance_state_support import ARMS, REPORTED, Scenario
+from tests.unit.tools._provenance_support import pin_dirty_tree
 
 
 def test_envelope_retains_the_complete_matrix_and_member_provenance() -> None:
@@ -230,6 +231,7 @@ def test_durations_time_every_scenario_child_without_changing_the_stdout_envelop
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    pin_dirty_tree(monkeypatch)
     matrix = _matrix()
     runtime = next(iter(matrix))
     monkeypatch.setattr(report, "supported_minors", lambda: (runtime,))
@@ -262,6 +264,7 @@ def test_durations_time_every_scenario_child_without_changing_the_stdout_envelop
 def test_an_unwritable_sidecar_changes_neither_the_envelope_nor_the_exit_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    pin_dirty_tree(monkeypatch)
     matrix = _matrix()
     runtime = next(iter(matrix))
     monkeypatch.setattr(report, "supported_minors", lambda: (runtime,))
