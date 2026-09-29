@@ -5,7 +5,12 @@ A test whose verdict depends on the committed captures, or on the memory gates
 derived from one, is true only while that evidence is current, and only a
 recapture makes it current again, so requesting :data:`FIXTURE` schedules the
 item in the cost class exactly as requesting ``profile_run`` schedules it with a
-database. The runner refuses every other route where the evidence is opened.
+database. The runner refuses any other open of the evidence in the test process.
+
+The refusal is an audit hook, so it stops at the process boundary: a child the
+test spawns inherits no hook and can read the evidence while the item stays
+``dbfree``. Carrying the hook into children would add it to the interpreters
+whose whole-heap readings the memory gates grade.
 """
 
 from __future__ import annotations

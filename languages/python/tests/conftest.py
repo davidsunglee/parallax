@@ -37,9 +37,9 @@ _DATABASE_FIXTURES = frozenset({"profile_run"})
 # `tools/check_instrument_access.py` rather than by one importing the other.
 _OWN_INTERPRETER_ATTRIBUTE = "__parallax_own_interpreter__"
 
-# The designated entry point to the committed cost evidence. Every other route is
-# refused where the evidence is opened, by the audit hook below, while no item
-# holding the fixture is running.
+# The designated entry point to the committed cost evidence. Any other open of it
+# in this process is refused by the audit hook below while no item holding the
+# fixture is running; a child process is outside the hook.
 _COST_EVIDENCE_FIXTURES = frozenset({committed_evidence.FIXTURE})
 _evidence_admitted = False
 
