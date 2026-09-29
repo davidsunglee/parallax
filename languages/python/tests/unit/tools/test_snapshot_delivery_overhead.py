@@ -50,6 +50,7 @@ from snapshot_delivery_overhead import (
     workload_selection,
 )
 from tests.unit import _delivery_control_support as control_support
+from tests.unit.tools._provenance_support import pin_dirty_tree
 
 
 def test_child_command_carries_the_contract_sampling_counts_and_its_runtime() -> None:
@@ -512,6 +513,7 @@ def test_a_workload_slice_is_selected_evidence_and_never_a_diagnostic_or_canary(
 def test_an_unwritable_sidecar_changes_neither_the_envelope_nor_the_exit_status(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    pin_dirty_tree(monkeypatch)
     identity = json.dumps({"implementation": "CPython", "version": "3.99.1", "executable": "/p"})
 
     def probe(_command: Sequence[str], _environment: Mapping[str, str]) -> tuple[int, str, str]:

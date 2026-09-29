@@ -24,6 +24,7 @@ from parallax.core.unit_work import (
 from tests.unit import _leaf_type_support as leaf_support
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _write_lowering_support as lowering_support
+from tests.unit.tools._provenance_support import pin_dirty_tree
 
 _CATEGORICAL_OPERATIONS = {
     "txtime": ("opening", "changed", "unchanged"),
@@ -638,6 +639,7 @@ def test_durations_time_every_child_without_changing_the_matrix_or_the_stdout_en
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    pin_dirty_tree(monkeypatch)
     matrix = _matrix("3.13", "3.14")
     monkeypatch.setattr(report, "supported_minors", lambda: ("3.13", "3.14"))
     asked: list[tuple[str, str]] = []
@@ -690,6 +692,7 @@ def test_an_incomplete_matrix_still_leaves_its_durations(
 def test_an_unwritable_sidecar_changes_neither_the_envelope_nor_the_exit_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    pin_dirty_tree(monkeypatch)
     matrix = _matrix("3.14")
     monkeypatch.setattr(report, "supported_minors", lambda: ("3.14",))
     identity = json.dumps({"implementation": "CPython", "version": "3.14.7", "executable": "/p"})
