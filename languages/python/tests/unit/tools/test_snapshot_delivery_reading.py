@@ -416,13 +416,17 @@ def test_the_guarded_controls_plan_cold_and_warm_and_deliver_through_both_lanes(
             )
             assert value > 0 and reading_unit == ("us" if metric == "elapsedUs" else "KiB")
             assert len(samples) == (2 if metric == "elapsedUs" else 1)
-        warm_elapsed, _unit, _samples = _control(
+        warm_elapsed, reading_unit, samples = _control(
             control_support.GuardedPlanControl(width, "warm", "elapsedUs"), warmups=1, measured=2
         )
-        cold_elapsed, _unit, _samples = _control(
-            control_support.GuardedPlanControl(width, "cold", "elapsedUs"), warmups=1, measured=2
-        )
-        assert warm_elapsed < cold_elapsed
+        assert warm_elapsed > 0 and reading_unit == "us" and len(samples) == 2
+        # Warm reads a cache hit and cold a fresh compilation; the plan's identity
+        # says which, where comparing two timings on a shared runner cannot.
+        prepared = ColdPlan.guarded(width)
+        compiled = prepared.plan()
+        assert prepared.plan() is compiled
+        prepared.reset()
+        assert prepared.plan() is not compiled
         warm_retained, _unit, _samples = _control(
             control_support.GuardedPlanControl(width, "warm", "retainedKiB"), warmups=1, measured=2
         )
