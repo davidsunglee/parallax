@@ -61,7 +61,8 @@ onto tests. Requiring a database beside a cost resource is an error. The
 instrument-access checker requires the boundary on every test that calls a
 whole-interpreter reader directly; any other route fails at run time, because
 each reader refuses a process the boundary did not start. Likewise the runner
-refuses to open committed evidence for an item that did not request its fixture.
+refuses an in-process open of committed evidence by an item that did not request
+its fixture; a child process the item spawns is outside that refusal.
 A test grading the cost tooling over synthetic portfolios supplies its own gates
 rather than reading the committed ones.
 

@@ -18,12 +18,13 @@ the boundary must exist, and the classifier's own attribute must be spelled the
 way the instruments set it.
 
 **The committed cost evidence is the class's other resource.** Its entry point
-is a fixture, and the runner refuses every other route where the evidence is
-opened, so what is checked here is what that refusal rests on: the fixture the
+is a fixture, and the runner refuses any other open of the evidence in the test
+process, so what is checked here is what that refusal rests on: the fixture the
 evidence module names must exist, the gates it names must be the file the memory
 gates load from, and its capture pattern must hold the canonical portfolio the
 verifier reads. An evidence location that moved would otherwise leave the
-refusal guarding nothing.
+refusal guarding nothing. A child process is outside the refusal;
+``tests/_support/committed_evidence.py`` records why.
 
 Usage
 -----
