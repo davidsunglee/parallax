@@ -14,9 +14,14 @@ driver answers a document.
 
 A leaf's value is a function of its index and of the occurrence's key alone,
 so rows of one type weigh the same and every value is taken on its type's
-general path: Float64 leaves are decimal tenths, which binary64 cannot represent
-exactly. String is the control each type is read against, valued exactly as the
-geometry families value their leaves. Where a geometry cell already measures
+general path: floats are decimal tenths no binary float represents exactly,
+integers lie beyond the small-integer cache and Int64 beyond the Int32 range,
+decimals span every integer digit count their precision admits, and times and
+timestamps carry microseconds. A row is composed inside every read's window, so
+each Wire spelling is formatted from the integers its Typed value is built from,
+as cheaply as the String control's, rather than encoded from that value. String
+is the control each type is read against, valued exactly as the geometry
+families value their leaves. Where a geometry cell already measures
 that structure — the level's read and its Typed insert — the geometry cell is
 the control and the String type declares none; the Wire insert and the
 acquisition, which no geometry case measures at this level, read a String cell
@@ -31,8 +36,11 @@ carried by this MODULE's underscore. Never imported by production code.
 # are composed at import time from class objects, and a stringized annotation
 # would name a class the declaration engine cannot resolve.
 
+import datetime as dt
+import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Final, Literal, cast
 
 from parallax.conformance.workloads import (
@@ -41,7 +49,17 @@ from parallax.conformance.workloads import (
     GeometryLevel,
     leaf_type_level,
 )
-from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, ValueObject, attr
+from parallax.core import (
+    Attr,
+    Bitemporal,
+    Document,
+    DomainModel,
+    Entity,
+    Float32,
+    Int32,
+    ValueObject,
+    attr,
+)
 from parallax.core.db_port import DocumentReadOrdinals, PipelineStatement, Row
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import model_of
@@ -96,9 +114,116 @@ if LEVEL.depth != 1 or LEVEL.populated != LEVEL.width:
 
 
 def _decimal_tenths(index: int, key: int) -> float:
-    """A decimal tenth whose tenths digit is never 0 or 5, so binary64 holds it
-    inexactly while its canonical spelling stays short."""
+    """A decimal tenth whose tenths digit is never 0 or 5, so neither binary32
+    nor binary64 holds it exactly while its canonical spelling at either width
+    stays short."""
     return (key * 10_000 + index * 10 + index % 4 + 1) / 10
+
+
+def _alternating(index: int, magnitude: int) -> int:
+    return -magnitude if index % 2 else magnitude
+
+
+def _boolean(index: int, key: int) -> bool:
+    """Alternating by index, flipped where the key's low bits are set, so no two
+    keys below 256 value an occurrence alike."""
+    return (index % 2 == 0) != bool((key >> (index % 8)) & 1)
+
+
+def _int32(index: int, key: int) -> int:
+    return _alternating(index, 1_000_003 * (index + 1) + key * 7_919)
+
+
+def _int64(index: int, key: int) -> int:
+    return _alternating(index, 5_000_000_000 + index * 1_000_000_007 + key * 104_729)
+
+
+_DECIMAL_SCALE: Final = 2
+_DECIMAL_PRECISION: Final = 18
+_DECIMAL_DIGIT_COUNTS: Final = _DECIMAL_PRECISION - _DECIMAL_SCALE
+_POWERS: Final = tuple(10**digits for digits in range(_DECIMAL_DIGIT_COUNTS))
+
+
+def _decimal_wire(index: int, key: int) -> str:
+    """A declared-scale decimal whose integer part has ``1 + index % 16``
+    digits, so a row spans every digit count the precision admits."""
+    floor = _POWERS[index % _DECIMAL_DIGIT_COUNTS]
+    whole = floor + (key * 7_919 + index * 104_729) % (9 * floor)
+    cents = (key + index * 7) % 100
+    return f"{'-' if index % 2 else ''}{whole}.{cents:02d}"
+
+
+def _decimal(index: int, key: int) -> Decimal:
+    return Decimal(_decimal_wire(index, key))
+
+
+_OCTETS: Final = 16
+_BYTE_SPACE: Final = 1 << (8 * _OCTETS)
+
+
+def _octets(index: int, key: int) -> int:
+    return (key * 0x9E3779B97F4A7C15F39CC0605CEDC835 + index * 0xC2B2AE3D27D4EB4F) % _BYTE_SPACE
+
+
+def _bytes_wire(index: int, key: int) -> str:
+    return f"{_octets(index, key):032x}"
+
+
+def _bytes(index: int, key: int) -> bytes:
+    return _octets(index, key).to_bytes(_OCTETS)
+
+
+def _uuid_bits(index: int, key: int) -> int:
+    return (key * 0xBF58476D1CE4E5B9D6E8FEB86659FD93 + index * 0x94D049BB133111EB) % _BYTE_SPACE
+
+
+def _uuid_wire(index: int, key: int) -> str:
+    digits = f"{_uuid_bits(index, key):032x}"
+    return f"{digits[:8]}-{digits[8:12]}-{digits[12:16]}-{digits[16:20]}-{digits[20:]}"
+
+
+def _uuid(index: int, key: int) -> uuid.UUID:
+    return uuid.UUID(int=_uuid_bits(index, key))
+
+
+def _day(index: int, key: int) -> tuple[int, int, int]:
+    """A year, month, and day no calendar refuses, varied across all three."""
+    return 1970 + (key * 7 + index) % 60, 1 + (key + index) % 12, 1 + (key * 3 + index) % 28
+
+
+def _clock(index: int, key: int) -> tuple[int, int, int, int]:
+    """An hour, minute, second, and nonzero microsecond."""
+    hour, rest = divmod((key * 3_607 + index * 1_301) % 86_400, 3_600)
+    minute, second = divmod(rest, 60)
+    return hour, minute, second, (key * 7_919 + index * 104_729) % 999_999 + 1
+
+
+def _date_wire(index: int, key: int) -> str:
+    year, month, day = _day(index, key)
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def _date(index: int, key: int) -> dt.date:
+    return dt.date(*_day(index, key))
+
+
+def _time_wire(index: int, key: int) -> str:
+    hour, minute, second, micro = _clock(index, key)
+    return f"{hour:02d}:{minute:02d}:{second:02d}.{micro:06d}"
+
+
+def _time(index: int, key: int) -> dt.time:
+    return dt.time(*_clock(index, key))
+
+
+def _timestamp_wire(index: int, key: int) -> str:
+    year, month, day = _day(index, key + 1)
+    hour, minute, second, micro = _clock(index, key + 1)
+    return f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}.{micro:06d}Z"
+
+
+def _timestamp(index: int, key: int) -> dt.datetime:
+    return dt.datetime(*_day(index, key + 1), *_clock(index, key + 1), tzinfo=dt.UTC)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -128,7 +253,23 @@ _LEAF_TYPES: Final[Mapping[str, LeafType]] = {
     leaf.id: leaf
     for leaf in (
         LeafType("string", str, None, geometry_support.leaf_value, geometry_support.leaf_value),
+        LeafType("boolean", bool, None, _boolean, _boolean),
+        LeafType("int32", int, lambda: attr(type=Int32), _int32, _int32),
+        LeafType("int64", int, None, _int64, _int64),
+        LeafType("float32", float, lambda: attr(type=Float32), _decimal_tenths, _decimal_tenths),
         LeafType("float64", float, None, _decimal_tenths, _decimal_tenths),
+        LeafType(
+            "decimal",
+            Decimal,
+            lambda: attr(precision=_DECIMAL_PRECISION, scale=_DECIMAL_SCALE),
+            _decimal,
+            _decimal_wire,
+        ),
+        LeafType("bytes", bytes, None, _bytes, _bytes_wire),
+        LeafType("date", dt.date, None, _date, _date_wire),
+        LeafType("time", dt.time, None, _time, _time_wire),
+        LeafType("timestamp", dt.datetime, None, _timestamp, _timestamp_wire),
+        LeafType("uuid", uuid.UUID, None, _uuid, _uuid_wire),
     )
 }
 

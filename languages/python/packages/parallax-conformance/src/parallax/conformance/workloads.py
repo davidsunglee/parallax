@@ -153,7 +153,19 @@ def structural_digest() -> str:
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-LEAF_TYPE_IDS: Final[tuple[str, ...]] = ("float64",)
+LEAF_TYPE_IDS: Final[tuple[str, ...]] = (
+    "boolean",
+    "int32",
+    "int64",
+    "float32",
+    "float64",
+    "decimal",
+    "bytes",
+    "date",
+    "time",
+    "timestamp",
+    "uuid",
+)
 """The declarable Neutral Types the leaf-type families measure, each against
 :data:`LEAF_CONTROL_TYPE_ID`, in report order."""
 
