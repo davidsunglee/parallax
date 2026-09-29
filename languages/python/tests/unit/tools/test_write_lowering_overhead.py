@@ -330,12 +330,13 @@ def test_acquisition_resolves_every_row_once_and_stops_before_any_flush(
         assert len(evidence) == case.rows
         assert (evidence.documents is None) == (case.layout == "columns")
         assert all(type(row) is tuple for row in evidence.rows)
+        ((assigned, value),) = case.changes.items()
         assert all(
-            row["title"] != acquisition_support.ASSIGNED_TITLE
-            if case.layout == "columns"
-            else cast("Mapping[str, object]", row["payload"])["title"]
-            != acquisition_support.ASSIGNED_TITLE
-            for row in acquisition_support.AcquisitionPort(case.layout, case.rows).rows()
+            (row if case.layout == "columns" else cast("Mapping[str, object]", row["payload"]))[
+                assigned
+            ]
+            != value
+            for row in acquisition_support.AcquisitionPort(case.stored, case.rows).rows()
         )
 
 
