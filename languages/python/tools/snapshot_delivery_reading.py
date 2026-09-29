@@ -96,6 +96,9 @@ GEOMETRY_METRICS: Final = ("elapsedUsPerRoot", "peakKiB", "retainedKiB")
 PLAN_PREFIX: Final = "plan-"
 PLAN_METRICS: Final = ("elapsedUs", "peakKiB", "retainedKiB")
 PLAN_EDITION: Final = "snapshot-delivery-report"
+STREAMED_RETAINED_PAGE_SIZE: Final = 128
+"""The page size a ``streamedMemory.retainedKiB`` reading drains at: the largest
+the contract reads, whose drain runs the fewest statements."""
 
 
 def _order_row(row: Mapping[str, object]) -> MappingRow:
@@ -390,7 +393,11 @@ def _live_memory(
     collect_at_page_boundary: bool,
 ) -> tuple[float, str, tuple[float, ...]]:
     page_size = (
-        (_page_size(path) if path.startswith("streamedMemory.page") else 1)
+        (
+            _page_size(path)
+            if path.startswith("streamedMemory.page")
+            else STREAMED_RETAINED_PAGE_SIZE
+        )
         if path.startswith("streamedMemory.")
         else None
     )
