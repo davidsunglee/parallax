@@ -51,6 +51,7 @@ from snapshot_delivery_overhead import (
     expanded_cells,
     expected_readings,
     is_memory_cell,
+    leaf_cells,
     unit,
 )
 from tests.unit.tools._cost_report_support import complete_instance_state
@@ -98,7 +99,7 @@ def _complete_write(contract: BudgetContract) -> dict[str, Any]:
     matrix: write_report.Matrix = {
         runtime: {
             case: write_report._canary_reading(case)  # pyright: ignore[reportPrivateUsage] - canary seam
-            for case in write_report.CASE_NAMES
+            for case in write_report.runtime_cases(runtime)
         }
         for runtime in supported_minors()
     }
@@ -537,7 +538,7 @@ def test_snapshot_matrix_validation_requires_every_scaling_arm() -> None:
         (
             _drop_a_runtime,
             "reading matrix is not exact under any one case coverage and counter vocabulary; "
-            "against the current cases and current counters: missing CPython",
+            "against the before leaf types cases and current counters: missing CPython",
         ),
         (_add_comparison, "declares no comparisons"),
     ],
@@ -1382,6 +1383,31 @@ def test_a_capture_without_the_leaf_types_verifies_but_cannot_be_required_curren
     )
     (mixed,) = verify(document)
     assert "Snapshot reading matrix is not exact" in mixed
+
+
+def test_a_leaf_type_reading_is_required_on_its_one_runtime_and_refused_on_any_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    oldest, newest = supported_minors()
+    for member, leaf_workloads in (
+        (_snapshot_of, {cell.workload for cell in leaf_cells()}),
+        (_write_of, set(write_report.LEAF_TYPE_CASE_NAMES)),
+    ):
+        document = _verifiable(contract)
+        readings = cast("list[dict[str, Any]]", member(document)["readings"])
+        leaf_readings = [reading for reading in readings if reading["workload"] in leaf_workloads]
+        assert leaf_readings
+        assert {reading["runtime"] for reading in leaf_readings} == {newest}
+        assert verify(document) == []
+        readings.append({**deepcopy(leaf_readings[0]), "runtime": oldest})
+        (carried,) = verify(document)
+        assert f"unexpected CPython {oldest} {leaf_readings[0]['workload']}" in carried
+        readings.pop()
+        readings.remove(leaf_readings[0])
+        (missing,) = verify(document)
+        assert f"missing CPython {newest} {leaf_readings[0]['workload']}" in missing
 
 
 def test_a_capture_without_the_control_group_verifies_but_cannot_be_required_current(

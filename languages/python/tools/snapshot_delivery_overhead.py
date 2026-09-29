@@ -26,9 +26,10 @@ remains exact without it.
 
 The ``leaf`` group reads each measured leaf type of
 ``tests/unit/_leaf_type_support.py`` at the geometry level the leaf-type
-manifest names, whose geometry read is its String control. It joins the exact
-matrix as well; a capture taken before the leaf-type families existed remains
-exact without them.
+manifest names, whose geometry read is its String control, and only on the
+supported minors that manifest scopes the leaf-type families to. It joins the
+exact matrix as well; a capture taken before the leaf-type families existed
+remains exact without them.
 """
 
 from __future__ import annotations
@@ -73,6 +74,7 @@ from parallax.conformance.workloads import (
     STRUCTURAL_LAYOUTS,
     Workload,
     catalog,
+    leaf_type_runtimes,
     plan_levels,
     workload_digest,
 )
@@ -209,6 +211,11 @@ def leaf_cells() -> tuple[GeometryCell, ...]:
         for layout in STRUCTURAL_LAYOUTS
         for metric in GEOMETRY_METRICS
     )
+
+
+def reads_leaf_types(runtime: str) -> bool:
+    """Whether the leaf-type group is read on ``runtime``."""
+    return runtime in leaf_type_runtimes(supported_minors())
 
 
 def plan_cells() -> tuple[GeometryCell, ...]:
@@ -439,18 +446,19 @@ def addresses(
     controls: bool = True,
     leaf_types: bool = True,
 ) -> tuple[Address, ...]:
-    """Every (runtime, workload, cell) address a complete envelope carries;
+    """Every (runtime, workload, cell) address a complete envelope carries,
+    the leaf-type reads on the runtimes :func:`reads_leaf_types` admits alone;
     without ``leaf_types``, the matrix a capture taken before the leaf-type
     reads existed carries, and without ``controls`` as well, the one taken
     before the control group existed."""
-    cells = (
-        *expanded_cells(contract),
-        *geometry_cells(),
-        *(leaf_cells() if leaf_types else ()),
-        *plan_cells(),
-        *(control_cells(contract) if controls else ()),
+    leading = (*expanded_cells(contract), *geometry_cells())
+    leaves = leaf_cells() if leaf_types else ()
+    trailing = (*plan_cells(), *(control_cells(contract) if controls else ()))
+    return tuple(
+        (runtime, cell.workload, cell.path)
+        for runtime in runtimes
+        for cell in (*leading, *(leaves if reads_leaf_types(runtime) else ()), *trailing)
     )
-    return tuple((runtime, cell.workload, cell.path) for runtime in runtimes for cell in cells)
 
 
 def selected_addresses(
@@ -674,7 +682,7 @@ def _measure_runtime(
             )
     for group, group_cells in (
         (GEOMETRY_GROUP, geometry_cells()),
-        (LEAF_GROUP, leaf_cells()),
+        (LEAF_GROUP, leaf_cells() if reads_leaf_types(runtime) else ()),
         (PLAN_GROUP, plan_cells()),
         (CONTROL_GROUP, control_cells(contract)),
     ):

@@ -26,6 +26,7 @@ __all__ = [
     "LEAF_CONTROL_TYPE_ID",
     "LEAF_TYPE_IDS",
     "LEAF_TYPE_LEVEL_ID",
+    "LEAF_TYPE_RUNTIMES",
     "PLAN_LEVEL_IDS",
     "READ_GEOMETRY_ROOTS",
     "STRUCTURAL_LAYOUTS",
@@ -38,6 +39,7 @@ __all__ = [
     "leaf_acquisition_levels",
     "leaf_type_digest",
     "leaf_type_level",
+    "leaf_type_runtimes",
     "plan_levels",
     "structural_digest",
     "workload_digest",
@@ -163,8 +165,12 @@ LEAF_TYPE_LEVEL_ID: Final = "width-64"
 """The geometry level every leaf type is measured at: one root occurrence and
 its Many elements, every declared leaf of the measured type and populated."""
 
-LEAF_ACQUISITION_LEVEL_IDS: Final[tuple[str, ...]] = ("rows-32",)
+LEAF_ACQUISITION_LEVEL_IDS: Final[tuple[str, ...]] = ("rows-8",)
 """The acquisition row counts the leaf-type predicate acquisition resolves."""
+
+LEAF_TYPE_RUNTIMES: Final = 1
+"""How many supported CPython minors, newest first, the leaf-type families are
+measured on; every other family is measured on every supported minor."""
 
 
 def leaf_type_level() -> GeometryLevel:
@@ -178,6 +184,13 @@ def leaf_acquisition_levels() -> tuple[AcquisitionLevel, ...]:
     return tuple(by_id[level_id] for level_id in LEAF_ACQUISITION_LEVEL_IDS)
 
 
+def leaf_type_runtimes(supported: Sequence[str]) -> tuple[str, ...]:
+    """The CPython minors among ``supported``, each spelled ``<major>.<minor>``,
+    that the leaf-type families are measured on, oldest first."""
+    ordered = sorted(supported, key=lambda minor: tuple(map(int, minor.split("."))))
+    return tuple(ordered[-LEAF_TYPE_RUNTIMES:])
+
+
 def leaf_type_digest() -> str:
     """The SHA-256 digest of the leaf-type families' frozen identity."""
     manifest = {
@@ -185,6 +198,7 @@ def leaf_type_digest() -> str:
         "control": LEAF_CONTROL_TYPE_ID,
         "level": asdict(leaf_type_level()),
         "acquisition": [asdict(level) for level in leaf_acquisition_levels()],
+        "newestRuntimes": LEAF_TYPE_RUNTIMES,
     }
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
 
