@@ -39,7 +39,7 @@ _OWN_INTERPRETER_ATTRIBUTE = "__parallax_own_interpreter__"
 
 # The designated entry point to the committed cost evidence. Any other open of it
 # in this process is refused by the audit hook below while no item holding the
-# fixture is running; a child process is outside the hook.
+# fixture is running.
 _COST_EVIDENCE_FIXTURES = frozenset({committed_evidence.FIXTURE})
 _evidence_admitted = False
 

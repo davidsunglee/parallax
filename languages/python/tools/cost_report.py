@@ -3,11 +3,11 @@ committed evidence, and compare two portfolios cell by cell.
 
 Verification separates what makes evidence invalid — a missing, malformed, or
 incomplete required envelope, a snapshot-delivery envelope that is not
-authoritative, a capture taken from a dirty tree, a workload digest that
-disagrees with the inspected checkout, and members produced at different
-commits — from what is merely drift or an adverse reading: a timing or memory
-ceiling exceeded, a reading past the memory gate the cost class blocks on, a
-scaling arm grown past its limit, a dependency lock that moved since the
+authoritative, a capture taken from a dirty tree, a workload or Budget Contract
+digest that disagrees with the inspected checkout, and members produced at
+different commits — from what is merely drift or an adverse reading: a timing or
+memory ceiling exceeded, a reading past the memory gate the cost class blocks
+on, a scaling arm grown past its limit, a dependency lock that moved since the
 capture, and a producing commit the inspected head no longer descends from are
 each reported as an advisory and never fail. The write-lowering envelope's
 sampling protocol is its own, so it is non-authoritative by construction and
