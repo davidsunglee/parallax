@@ -585,7 +585,29 @@ def _rename_counters(
         reading["cell"] = names.get(str(reading["cell"]), reading["cell"])
 
 
+_RETIRED_COUNTERS = ("calls.shapeOfDeclaration", "calls.entityShape")
+
+
+def _add_retired_counters(
+    document: dict[str, Any], *, runtime: str | None = None, workload: str | None = None
+) -> None:
+    readings = cast("list[dict[str, Any]]", document["readings"])
+    for reading in _counter_readings(document):
+        if reading["cell"] != "calls.occurrenceShape":
+            continue
+        if runtime is not None and reading["runtime"] != runtime:
+            continue
+        if workload is not None and reading["workload"] != workload:
+            continue
+        readings.extend({**deepcopy(reading), "cell": cell} for cell in _RETIRED_COUNTERS)
+
+
+def _to_managed(document: dict[str, Any]) -> None:
+    _add_retired_counters(document)
+
+
 def _to_legacy(document: dict[str, Any]) -> None:
+    _to_managed(document)
     _rename_counters(document, {new: old for old, new in _RENAMED_COUNTERS.items()})
 
 
@@ -611,16 +633,27 @@ def test_each_retained_historical_portfolio_preserves_its_original_provenance(
     assert verify(portfolio) == ["the write-lowering envelope's workload digest is stale"]
 
 
-def test_a_complete_matrix_verifies_under_either_whole_vocabulary_and_no_mixture() -> None:
+def test_a_complete_matrix_verifies_under_any_whole_vocabulary_and_no_mixture() -> None:
     contract = BudgetContract.load()
     current = _complete_write(contract)
     validate_write_lowering_matrix(current)
     assert {str(reading["cell"]) for reading in _counter_readings(current)} == {
         f"calls.{name}" for name in write_report.CALL_NAMES
     }
+    managed = deepcopy(current)
+    _to_managed(managed)
+    validate_write_lowering_matrix(managed)
+    assert {str(reading["cell"]) for reading in _counter_readings(managed)} == {
+        f"calls.{name}" for name in write_report.MANAGED_CALL_NAMES
+    }
+    with pytest.raises(ValueError, match="not exact under any one case coverage"):
+        validate_write_lowering_matrix(managed, current=True)
     legacy = deepcopy(current)
     _to_legacy(legacy)
     validate_write_lowering_matrix(legacy)
+    assert {str(reading["cell"]) for reading in _counter_readings(legacy)} == {
+        f"calls.{name}" for name in write_report.LEGACY_CALL_NAMES
+    }
     runtimes = supported_minors()
     keyed = next(case for case, window in write_report.WINDOWS.items() if window == "keyed-write")
     refused = "not exact under any one case coverage and counter vocabulary"
@@ -642,6 +675,15 @@ def test_a_complete_matrix_verifies_under_either_whole_vocabulary_and_no_mixture
     )
     with pytest.raises(ValueError, match=refused):
         validate_write_lowering_matrix(one_runtime_legacy)
+
+    one_case_managed = deepcopy(current)
+    _add_retired_counters(one_case_managed, workload=keyed)
+    with pytest.raises(
+        ValueError,
+        match=f"{refused}; against the current cases and current counters: "
+        f"unexpected CPython {runtimes[0]} {keyed}.calls.entityShape",
+    ):
+        validate_write_lowering_matrix(one_case_managed)
 
     union = deepcopy(current)
     readings = cast("list[dict[str, Any]]", union["readings"])

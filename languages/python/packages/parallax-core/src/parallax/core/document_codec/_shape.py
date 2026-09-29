@@ -5,14 +5,11 @@ from dataclasses import dataclass
 from typing import ClassVar, Final, Self
 
 from parallax.core.metamodel import (
-    AttributeMetadata,
     DocumentMember,
     Leaf,
     MemberShape,
     Occurrence,
     OccurrenceMetadata,
-    ValueObjectMetadata,
-    ValueObjectShapeDeclaration,
 )
 
 __all__ = [
@@ -26,10 +23,8 @@ __all__ = [
     "Occurrence",
     "Presence",
     "Present",
-    "entity_shape",
     "occurrence_shape",
     "resolve",
-    "shape_of_declaration",
 ]
 
 
@@ -113,38 +108,9 @@ NULL: Final[ExplicitNull] = ExplicitNull()
 MISSING: Final[Missing] = Missing()
 
 
-def shape_of_declaration(declaration: ValueObjectShapeDeclaration) -> MemberShape:
-    """The document shape of one reusable Value Object shape declaration.
-
-    Leaves precede nested occurrences, matching the declaration's own two sequences.
-    The declaration owns this shape; access never reconstructs it.
-    """
-    return declaration.member_shape
-
-
 def occurrence_shape(container: OccurrenceMetadata) -> MemberShape:
     """The document shape held by one accepted Value Object occurrence."""
     return container.document_shape
-
-
-def entity_shape(
-    attributes: Sequence[AttributeMetadata],
-    value_objects: Sequence[ValueObjectMetadata],
-) -> MemberShape:
-    """One root document shape over the Entity members it is given.
-
-    The Entity counterpart of :func:`occurrence_shape`: one root object holding
-    the given attributes and value objects, each addressed by its canonical
-    declared name, leaves before occurrences in the order given. This only unwinds
-    their declarations into shape members.
-
-    WHICH members is the CALLER's answer, because ``m-storage-layout``'s Member
-    Placement decides residency and this module may not read a layout. A caller
-    shaping a stored Structured Column passes that column's residents alone; one
-    stating a layout-neutral rule over a whole row — the effective-change
-    comparison, which a placement cannot change — passes every applicable member.
-    """
-    return MemberShape.of(attributes, value_objects)
 
 
 def resolve(shape: MemberShape, path: Sequence[str]) -> DocumentMember:
