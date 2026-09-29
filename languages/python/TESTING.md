@@ -39,6 +39,7 @@ of helper modules.
 |---|---|
 | `profile` | Matrix declaration only; does not open a database |
 | `profile_run` | The live Testcontainers Postgres run |
+| `committed_cost_evidence` | Reading retained captures and the memory gates |
 | `wheelhouse` | Built distribution wheels |
 | `release_case_runtimes` | Autouse cleanup for roots and runtimes left open by a test |
 
@@ -54,12 +55,15 @@ records the skip; `PARALLAX_REQUIRE_DB=1` makes it fail.
 ## Scheduling and selection
 
 The collection hook derives exactly one class from each item's resource needs:
-`db` from the live fixture closure, `cost` from the child-interpreter boundary,
-otherwise `dbfree`. Do not author those markers onto tests. Requiring both
-isolated resources is an error. The instrument-access checker requires the
-boundary on every test that calls a whole-interpreter reader directly; any other
-route fails at run time, because each reader refuses a process the boundary did
-not start.
+`db` from the live fixture closure, `cost` from the child-interpreter boundary or
+the committed-evidence fixture, otherwise `dbfree`. Do not author those markers
+onto tests. Requiring a database beside a cost resource is an error. The
+instrument-access checker requires the boundary on every test that calls a
+whole-interpreter reader directly; any other route fails at run time, because
+each reader refuses a process the boundary did not start. Likewise the runner
+refuses to open committed evidence for an item that did not request its fixture.
+A test grading the cost tooling over synthetic portfolios supplies its own gates
+rather than reading the committed ones.
 
 `--shard I/N` splits the `cost` class into CI cells, balanced by what each item
 last cost in [cost_durations.json](tests/_support/cost_durations.json). A change

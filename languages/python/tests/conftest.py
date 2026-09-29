@@ -11,11 +11,11 @@ import sys
 from collections.abc import Iterator
 from contextlib import ExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from tests._support import cost_durations
+from tests._support import committed_evidence, cost_durations
 from tests._support.distributions import ALL_PACKAGES, Wheelhouse
 from tests._support.repo import PY_ROOT
 from tests._support.root_ownership import close_owned_roots
@@ -36,6 +36,12 @@ _DATABASE_FIXTURES = frozenset({"profile_run"})
 # instrument, so the two spellings are held together by
 # `tools/check_instrument_access.py` rather than by one importing the other.
 _OWN_INTERPRETER_ATTRIBUTE = "__parallax_own_interpreter__"
+
+# The designated entry point to the committed cost evidence. Every other route is
+# refused where the evidence is opened, by the audit hook below, while no item
+# holding the fixture is running.
+_COST_EVIDENCE_FIXTURES = frozenset({committed_evidence.FIXTURE})
+_evidence_admitted = False
 
 _WHOLE_CLASS = "1/1"
 _MERGE, _REPLACE = "merge", "replace"
@@ -71,8 +77,23 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def _refuse_unadmitted_evidence(event: str, arguments: tuple[object, ...]) -> None:
+    if event != "open" or _evidence_admitted:
+        return
+    target = arguments[0]
+    if not isinstance(target, str | bytes | os.PathLike):
+        return
+    path = os.path.abspath(os.fsdecode(cast("str | bytes | os.PathLike[str]", target)))
+    if committed_evidence.is_committed(path):
+        raise committed_evidence.EvidenceRefused(
+            f"{path} is committed cost evidence, which an item reads only by requesting "
+            f"the `{committed_evidence.FIXTURE}` fixture that schedules it in the cost class"
+        )
+
+
 def pytest_configure(config: pytest.Config) -> None:
     global _store_durations
+    sys.addaudithook(_refuse_unadmitted_evidence)
     _store_durations = config.getoption("--store-cost-durations") is not None and not hasattr(
         config, "workerinput"
     )
@@ -83,15 +104,16 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     class's requested shard.
 
     The class is read off what the item requires — its resolved fixture closure
-    for a database, the boundary its function carries for an interpreter of its
-    own — rather than authored beside the test, so it covers indirect requests,
-    is decided per item rather than per module, and can be neither absent nor
-    doubled. An item that is not a test function requires neither and is
-    therefore `dbfree`.
+    for a database or for the committed cost evidence, the boundary its function
+    carries for an interpreter of its own — rather than authored beside the test,
+    so it covers indirect requests, is decided per item rather than per module,
+    and can be neither absent nor doubled. An item that is not a test function
+    requires none of them and is therefore `dbfree`.
 
-    Two resources at once is a contradiction rather than a precedence: a reading
-    over the whole interpreter cannot be taken of a process a container is also
-    living in, so the run fails instead of picking a winner.
+    A database beside either cost resource is a contradiction rather than a
+    precedence: a reading over the whole interpreter cannot be taken of a process
+    a container is also living in, and a verdict owed to a recapture cannot wait
+    on a container, so the run fails instead of picking a winner.
 
     A shard is one of N sets the cost class is balanced into by what each item
     last cost, in a deterministic order over the stable collection order, so the
@@ -107,14 +129,17 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         needs_interpreter = (
             getattr(function.obj, _OWN_INTERPRETER_ATTRIBUTE, False) is True if function else False
         )
-        if needs_database and needs_interpreter:
+        needs_evidence = (
+            bool(_COST_EVIDENCE_FIXTURES.intersection(function.fixturenames)) if function else False
+        )
+        if needs_database and (needs_interpreter or needs_evidence):
             raise pytest.UsageError(
-                f"{item.nodeid} requires both a live database and an interpreter of its own; "
+                f"{item.nodeid} requires both a live database and a cost resource; "
                 f"a scheduling class names one resource (core/spec/language-testing.md §5)"
             )
         if needs_database:
             item.add_marker(pytest.mark.db)
-        elif needs_interpreter:
+        elif needs_interpreter or needs_evidence:
             item.add_marker(pytest.mark.cost)
         else:
             item.add_marker(pytest.mark.dbfree)
@@ -208,6 +233,26 @@ def profile_run(profile: Profile) -> Iterator[Any]:
         yield run
     finally:
         opened.close()
+
+
+@pytest.fixture
+def committed_cost_evidence() -> Iterator[None]:
+    """Admission to read the committed cost evidence, which schedules the item in
+    the cost class.
+
+    The memory gates are cached per process once loaded, so the cache is dropped
+    on the way out: a later item that did not request them must open them again,
+    and be refused.
+    """
+    from parallax.conformance.budget import MemoryGates
+
+    global _evidence_admitted
+    _evidence_admitted = True
+    try:
+        yield
+    finally:
+        _evidence_admitted = False
+        MemoryGates.load.cache_clear()
 
 
 @pytest.fixture(autouse=True)

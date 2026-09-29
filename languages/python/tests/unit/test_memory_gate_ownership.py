@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 import snapshot_delivery_overhead as snapshot_report
@@ -15,6 +17,7 @@ from tests.unit import _memory_gate_support as gate_support
 from tests.unit._session_selection_support import WHOLE_CLASS, selections
 
 
+@pytest.mark.usefixtures("committed_cost_evidence")
 def test_every_memory_gate_is_owned_by_one_collected_cost_item() -> None:
     # A ceiling in `spec/memory-gates.yaml` blocks only through an item CI runs
     # in the cost class. The ownership table names each gate's item by module
@@ -56,19 +59,30 @@ def test_the_owners_partition_every_address_the_instruments_gate() -> None:
     # cannot see it: it would fail first at the next rebaseline, where no
     # implementation may land. Grading the table against the addresses the
     # instruments read instead of the ones the file names moves that failure to
-    # the change that widens the matrix. Measuring nothing is what keeps this
-    # database-free and inside the merge gate.
+    # the change that widens the matrix. Measuring nothing and reading no
+    # committed gate is what keeps this database-free and inside the merge gate.
     predicted = _gated_by_the_instruments()
-    authored = MemoryGates.load()
-    assert set(authored.addresses) <= set(predicted)
-    document: Any = yaml.safe_load(authored.path.read_text(encoding="utf-8"))
+    document: dict[str, Any] = {
+        "schemaVersion": 1,
+        "basis": {"portfolio": "portfolio.json", "headroom": 1.1},
+        "advisory": {},
+        "gates": {},
+    }
     for (subject, workload, cell), unit in sorted(predicted.items()):
-        document["gates"].setdefault(subject, {}).setdefault(workload, {}).setdefault(
-            cell, {"unit": unit, "maxBytes": 1}
-        )
-    over_predicted = MemoryGates.from_bytes(authored.path, yaml.safe_dump(document).encode("utf-8"))
-    assert set(over_predicted.addresses) == set(predicted)
-    assert gate_support.unowned_gates(over_predicted) == ()
+        document["gates"].setdefault(subject, {}).setdefault(workload, {})[cell] = {
+            "unit": unit,
+            "maxBytes": 1,
+        }
+    every_predicted = MemoryGates.from_bytes(
+        Path("memory-gates.yaml"), yaml.safe_dump(document).encode("utf-8")
+    )
+    assert set(every_predicted.addresses) == set(predicted)
+    assert gate_support.unowned_gates(every_predicted) == ()
+
+
+@pytest.mark.usefixtures("committed_cost_evidence")
+def test_every_memory_gate_is_an_address_the_instruments_read() -> None:
+    assert set(MemoryGates.load().addresses) <= set(_gated_by_the_instruments())
 
 
 def test_every_claimed_control_address_is_a_cold_plan_reading() -> None:

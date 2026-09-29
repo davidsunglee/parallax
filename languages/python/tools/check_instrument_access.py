@@ -17,6 +17,14 @@ them: every declared reader must still name a function the instruments define,
 the boundary must exist, and the classifier's own attribute must be spelled the
 way the instruments set it.
 
+**The committed cost evidence is the class's other resource.** Its entry point
+is a fixture, and the runner refuses every other route where the evidence is
+opened, so what is checked here is what that refusal rests on: the fixture the
+evidence module names must exist, the gates it names must be the file the memory
+gates load from, and its capture pattern must hold the canonical portfolio the
+verifier reads. An evidence location that moved would otherwise leave the
+refusal guarding nothing.
+
 Usage
 -----
 * ``python tools/check_instrument_access.py``          check (default)
@@ -32,7 +40,7 @@ import argparse
 import ast
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 
 _TOOL = "tools/check_instrument_access.py"
 WORKSPACE = Path(__file__).resolve().parents[1]
@@ -41,6 +49,12 @@ INSTRUMENTS = TESTS_ROOT / "unit" / "memory_instruments.py"
 CONFTEST = TESTS_ROOT / "conftest.py"
 
 INSTRUMENT_MODULE_NAME = "memory_instruments"
+
+EVIDENCE = TESTS_ROOT / "_support" / "committed_evidence.py"
+GATES_LOADER = WORKSPACE / "packages/parallax-conformance/src/parallax/conformance/budget.py"
+VERIFIER = WORKSPACE / "tools" / "cost_report.py"
+PYTHON_ROOT = "languages/python/"
+"""Where the Python root sits in the repository-relative paths the loaders name."""
 
 BOUNDARY = "in_a_child_interpreter"
 """The decorator that acquires an interpreter of its own for one measurement."""
@@ -92,6 +106,31 @@ def _constant(tree: ast.Module, name: str) -> str | None:
             named = isinstance(target, ast.Name) and target.id == name
             if named and isinstance(value, ast.Constant) and isinstance(value.value, str):
                 return value.value
+    return None
+
+
+def _path_constant(tree: ast.Module, name: str) -> str | None:
+    """The string a module-level ``name = Path("...")`` assignment binds."""
+    for node in tree.body:
+        value = node.value if isinstance(node, ast.Assign | ast.AnnAssign) else None
+        targets = (
+            node.targets
+            if isinstance(node, ast.Assign)
+            else [node.target]
+            if isinstance(node, ast.AnnAssign)
+            else []
+        )
+        if not any(isinstance(target, ast.Name) and target.id == name for target in targets):
+            continue
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "Path"
+            and len(value.args) == 1
+            and isinstance(value.args[0], ast.Constant)
+            and isinstance(value.args[0].value, str)
+        ):
+            return value.args[0].value
     return None
 
 
@@ -181,6 +220,50 @@ def _check_structure() -> list[Finding]:
                 f"attribute; the runner reads what the boundary sets",
             )
         )
+    return findings + _check_evidence()
+
+
+def _check_evidence() -> list[Finding]:
+    """The three facts the evidence refusal rests on."""
+    evidence = ast.parse(EVIDENCE.read_text())
+    where = str(EVIDENCE.relative_to(WORKSPACE) if EVIDENCE.is_relative_to(WORKSPACE) else EVIDENCE)
+    fixture = _constant(evidence, "FIXTURE")
+    gates = _constant(evidence, "GATES")
+    captures = _constant(evidence, "CAPTURES")
+    defined = {
+        node.name
+        for node in ast.parse(CONFTEST.read_text()).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    findings: list[Finding] = []
+    if fixture is None or fixture not in defined:
+        findings.append(
+            Finding(
+                where, 1, f"the evidence fixture {fixture!r} is not a fixture the runner defines"
+            )
+        )
+    loaded = _path_constant(ast.parse(GATES_LOADER.read_text()), "_GATES_PATH")
+    if gates is None or loaded != f"{PYTHON_ROOT}{gates}":
+        findings.append(
+            Finding(
+                where, 1, f"the evidence names gates {gates!r}; the memory gates load {loaded!r}"
+            )
+        )
+    canonical = _path_constant(ast.parse(VERIFIER.read_text()), "CANONICAL_PORTFOLIO")
+    if (
+        captures is None
+        or canonical is None
+        or not canonical.startswith(PYTHON_ROOT)
+        or not PurePath(canonical.removeprefix(PYTHON_ROOT)).full_match(captures)
+    ):
+        findings.append(
+            Finding(
+                where,
+                1,
+                f"the evidence captures {captures!r} do not hold the canonical portfolio "
+                f"{canonical!r} the verifier reads",
+            )
+        )
     return findings
 
 
@@ -227,7 +310,10 @@ def main(argv: list[str] | None = None) -> int:
     if findings:
         print(f"{_TOOL}: {len(findings)} finding(s)", file=sys.stderr)
         return 1
-    print(f"{_TOOL}: whole-interpreter readers are called only under `{BOUNDARY}`")
+    print(
+        f"{_TOOL}: whole-interpreter readers are called only under `{BOUNDARY}`, and the "
+        f"committed-evidence refusal names the evidence the loaders read"
+    )
     return 0
 
 

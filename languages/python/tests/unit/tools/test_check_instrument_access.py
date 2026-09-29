@@ -56,3 +56,24 @@ def test_a_planted_reading_fails_the_gate(
 
     (tmp_path / "test_rogue.py").write_text(planted)
     assert guard.main([]) == 1
+
+
+@pytest.mark.parametrize(
+    ("constant", "moved"),
+    [
+        ("FIXTURE", "evidence_elsewhere"),
+        ("GATES", "spec/gates.yaml"),
+        ("CAPTURES", "docs/*-envelope/*.json"),
+    ],
+)
+def test_an_evidence_location_the_loaders_do_not_read_fails_the_gate(
+    constant: str, moved: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = guard.EVIDENCE.read_text()
+    declared = f'{constant}: Final = "'
+    assert source.count(declared) == 1
+    start = source.index(declared) + len(declared)
+    planted = tmp_path / guard.EVIDENCE.name
+    planted.write_text(f"{source[:start]}{moved}{source[source.index('"', start) :]}")
+    monkeypatch.setattr(guard, "EVIDENCE", planted)
+    assert guard.main([]) == 1
