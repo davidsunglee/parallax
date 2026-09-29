@@ -44,12 +44,13 @@ from parallax.conformance.workloads import (
 from parallax.core import Attr, Document, DomainModel, Entity, TxTemporal, ValueObject, attr
 from parallax.core.db_port import DocumentReadOrdinals, PipelineStatement, Row
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.entity import model_of
 from parallax.core.object_query._fluent import ObjectQuery
+from parallax.core.storage_layout import view as storage_layout_view
 from tests._support.db_port import ConnectsAsItself, projected_rows
 
 __all__ = [
     "ANCESTOR_LEVELS",
-    "DOCUMENT_MEMBERS",
     "ENTITY_CLASSES",
     "GEOMETRY_LEVELS",
     "LAYOUTS",
@@ -78,9 +79,6 @@ _MANY: Final = "items"
 _ONE: Final = "body"
 _NEXT: Final = "next"
 _PAYLOAD: Final = "payload"
-
-DOCUMENT_MEMBERS: Final[tuple[str, ...]] = (_ONE, _MANY)
-"""The declared members a geometry Entity's Structured Column carries."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +197,24 @@ successors last."""
 MODEL: Final = DomainModel(*ENTITY_CLASSES)
 
 
+def _document_placement(cls: type[Entity]) -> tuple[str, tuple[str, ...]]:
+    """The Structured Column ``cls`` stores its document residents in, and their
+    names in residency order."""
+    view = storage_layout_view(model_of(MODEL)).entity(cls.identity)
+    residents = None if view is None else view.document_residents
+    assert residents is not None, cls
+    (column,) = {placement.slot.column.name for placement in residents.placements}
+    return column, tuple(member.name for member in residents.shape.members)
+
+
+_DOCUMENT_PLACEMENTS: Final[Mapping[type[Entity], tuple[str, tuple[str, ...]]]] = {
+    shape.entities["document"]: _document_placement(shape.entities["document"])
+    for shape in SHAPES.values()
+}
+"""Where each document-layout geometry Entity's stored row carries its members,
+resolved once so composing a row consults nothing but this mapping."""
+
+
 def level_named(name: str) -> GeometryLevel:
     for level in GEOMETRY_LEVELS:
         if level.id == name:
@@ -289,13 +305,17 @@ def successor_instance(level: GeometryLevel, layout: Layout, key: int, *, change
     return successor_class(level, layout)(id=key, **{_ONE: body, _MANY: items})
 
 
+_MEMBER_DOCUMENTS: Final[Mapping[str, Callable[[GeometryLevel, int], object]]] = {
+    _ONE: _body_document,
+    _MANY: _items_document,
+}
+
+
 def stored_row(level: GeometryLevel, layout: Layout, key: int) -> dict[str, object]:
     """One stored row as the driver would answer it, keyed by physical column."""
     if layout == "document":
-        return {
-            "id": key,
-            _PAYLOAD: {_ONE: _body_document(level, key), _MANY: _items_document(level, key)},
-        }
+        column, members = _DOCUMENT_PLACEMENTS[entity_class(level, layout)]
+        return {"id": key, column: {name: _MEMBER_DOCUMENTS[name](level, key) for name in members}}
     return wire_row(level, key)
 
 
