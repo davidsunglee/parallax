@@ -169,7 +169,7 @@ def lifecycle_document(contract: BudgetContract) -> Document:
 
 
 def member_envelopes(contract: BudgetContract) -> dict[str, Document]:
-    """One dirty-tree envelope per member, keyed by subject."""
+    """One complete envelope per member, keyed by subject."""
     envelopes: dict[str, Document] = {}
     for member in MEMBERS:
         if member.subject == "snapshot-delivery":
