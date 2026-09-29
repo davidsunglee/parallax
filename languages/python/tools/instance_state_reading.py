@@ -69,7 +69,6 @@ from instance_state_overhead import (  # noqa: E402
     marginal,
     payload,
 )
-from tests._support.model_capabilities import cataloged_for  # noqa: E402
 from tests.unit._instance_state_support import (  # noqa: E402
     COMPACT,
     LEGACY,
@@ -252,8 +251,12 @@ def measure_arm(scenario: Scenario, arm: Arm, field_names: tuple[str, ...]) -> A
 
 
 def _projection_reading(scenario: Scenario) -> ProjectionReading:
-    """A fresh eager call and same-call reuse beside direct Wire publication."""
-    model = cataloged_for(scenario.model)
+    """A fresh eager call and same-call reuse beside direct Wire publication.
+
+    Each Snapshot retains the scenario's graph construction, as a find's result
+    retains the construction that published it."""
+    construction = scenario.construction
+    meta = construction.cataloged.meta
     includes = build_include_tree(
         queried=scenario.entity,
         root=(scenario.entity,),
@@ -264,14 +267,14 @@ def _projection_reading(scenario: Scenario) -> ProjectionReading:
         Pin(),
         "instance-state",
         includes,
-        model,
+        construction,
     )
     many = Snapshot(
         cast("Any", COMPACT.graph(scenario, MARGINAL_NODES)),
         Pin(),
         "instance-state",
         includes,
-        model,
+        construction,
     )
     layout = scenario.layout
     values = scenario.values
@@ -305,12 +308,12 @@ def _projection_reading(scenario: Scenario) -> ProjectionReading:
         assert projected.result() is not None
 
     def direct_wire() -> None:
-        projected = direct_wire_result(page, model.meta, includes, one.pin, one.edition)
+        projected = direct_wire_result(page, meta, includes, one.pin, one.edition)
         assert projected.result() is not None
 
     assert (
         one.wire().results()
-        == direct_wire_result(page, model.meta, includes, one.pin, one.edition).results()
+        == direct_wire_result(page, meta, includes, one.pin, one.edition).results()
     )
     tracemalloc.start()
     try:
