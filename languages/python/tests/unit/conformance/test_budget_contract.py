@@ -46,6 +46,7 @@ def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
 
 # The canonical capture is current at head: a change to any input a digest
 # covers requires a recapture, never an edit to the retained evidence.
+@pytest.mark.usefixtures("committed_cost_evidence")
 def test_committed_envelope_digests_preserve_their_provenance() -> None:
     repo = case_format.find_repo_root()
     portfolio = cast(
@@ -172,6 +173,7 @@ def _basis_addresses(portfolio: Mapping[str, object]) -> dict[tuple[str, str, st
 # gate missing for a basis address, or a gate for an address the basis never
 # read fails here, so the ceilings the cost class blocks on are never a
 # transcription.
+@pytest.mark.usefixtures("committed_cost_evidence")
 def test_every_memory_gate_is_the_basis_reading_under_the_stated_rule() -> None:
     gates = MemoryGates.load()
     portfolio = _basis_portfolio(gates)
@@ -197,6 +199,7 @@ def test_every_memory_gate_is_the_basis_reading_under_the_stated_rule() -> None:
 # derives exactly the ceilings the unrenamed file derives, because the rule
 # reads byte units alone and a `calls.*` cell is neither a gate nor a change
 # to one.
+@pytest.mark.usefixtures("committed_cost_evidence")
 def test_the_derivation_is_indifferent_to_the_counter_vocabulary() -> None:
     repo = case_format.find_repo_root()
     after = cast(
@@ -302,6 +305,7 @@ def test_the_derivation_reads_only_byte_units_of_gated_windows_and_one_unit_per_
 # Timing never gates; the allowances the report reads a delta against are stated
 # beside the gates so one document carries the whole memory-versus-timing
 # policy, and pinned to the report's own constants so neither drifts.
+@pytest.mark.usefixtures("committed_cost_evidence")
 def test_the_advisory_allowances_beside_the_gates_are_the_reports_own() -> None:
     gates = MemoryGates.load()
     assert gates.advisory == {
@@ -316,6 +320,7 @@ def test_the_advisory_allowances_beside_the_gates_are_the_reports_own() -> None:
     assert "roughly ±15%" in readme
 
 
+@pytest.mark.usefixtures("committed_cost_evidence")
 def test_the_scaling_domains_order_the_acquisition_levels_per_layout() -> None:
     gates = MemoryGates.load()
     assert [domain.name for domain in gates.scaling] == [
@@ -431,4 +436,5 @@ def test_memory_gates_without_a_scaling_block_load_with_no_domains(tmp_path: Pat
     assert gates.advisory == {"a": 0.5}
     assert gates.gates == (MemoryGate("s", "w", "c", "KiB", 2_048),)
     assert gates.gate("s", "w", "c").within(2.0)
-    assert gates.digest != MemoryGates.load().digest
+    other = MemoryGates.from_bytes(path, document.replace("2048", "4096").encode("utf-8"))
+    assert gates.digest != other.digest

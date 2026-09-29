@@ -114,6 +114,7 @@ def test_validation_uses_the_embedded_contract_not_the_checkout(
 # The retained captures name producing commits no fresh clone need contain.
 # Validating every committed member while any subprocess is refused pins that an
 # envelope's authority is classified from the envelope alone, never from history.
+@pytest.mark.usefixtures("committed_cost_evidence")
 def test_validation_of_committed_evidence_asks_git_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

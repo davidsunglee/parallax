@@ -1,17 +1,18 @@
 """The scheduling partition, and the layout it is orthogonal to.
 
 Every collected item's class is derived from what it requires by the collection
-hook in ``tests/conftest.py`` — its fixture closure for a database, the boundary
-its function carries for an interpreter of its own — so neither zero nor two
-classes is representable, provided the derivation stays the only source, which is
-what the authored-marker check below pins. The remaining assertions grade the real
-session rather than a synthetic one: whichever selection is running, every item
-it holds is graded.
+hook in ``tests/conftest.py`` — its fixture closure for a database or for the
+committed cost evidence, the boundary its function carries for an interpreter of
+its own — so neither zero nor two classes is representable, provided the
+derivation stays the only source, which is what the authored-marker check below
+pins. The remaining assertions grade the real session rather than a synthetic
+one: whichever selection is running, every item it holds is graded.
 """
 
 from __future__ import annotations
 
 import ast
+import os
 import re
 import subprocess
 import sys
@@ -24,13 +25,14 @@ import pytest
 import yaml
 
 from check_database_access import ENTRY_POINT_FIXTURE
-from tests._support import cost_durations
+from tests._support import committed_evidence, cost_durations
 from tests._support.repo import PY_ROOT, REPO_ROOT
 from tests.unit._session_selection_support import WHOLE_CLASS, selections
 from tests.unit.memory_instruments import takes_its_own_interpreter
 
 SCHEDULING_CLASSES = frozenset({"dbfree", "db", "cost"})
 DATABASE_FIXTURES = frozenset({ENTRY_POINT_FIXTURE})
+EVIDENCE_FIXTURES = frozenset({committed_evidence.FIXTURE})
 ORTHOGONAL_SELECTORS = frozenset({"compile_sweep", "adapter_smoke"})
 
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -89,15 +91,48 @@ def test_an_items_class_agrees_with_what_it_requires(
         function = item if isinstance(item, pytest.Function) else None
         closure = function.fixturenames if function else ()
         needs_database = bool(DATABASE_FIXTURES.intersection(closure))
-        needs_interpreter = takes_its_own_interpreter(function.obj) if function else False
-        assert not (needs_database and needs_interpreter), item.nodeid
+        needs_cost = bool(EVIDENCE_FIXTURES.intersection(closure)) or (
+            takes_its_own_interpreter(function.obj) if function else False
+        )
+        assert not (needs_database and needs_cost), item.nodeid
         if needs_database:
             expected = {"db"}
-        elif needs_interpreter:
+        elif needs_cost:
             expected = {"cost"}
         else:
             expected = {"dbfree"}
         assert _classes_of(item) == expected, item.nodeid
+
+
+def test_the_committed_evidence_is_every_retained_capture_and_the_derived_gates() -> None:
+    evidence = [
+        PY_ROOT / committed_evidence.GATES,
+        PY_ROOT / "docs/structural-metadata-envelope/recovered/portfolio.json",
+        PY_ROOT / "docs/structural-metadata-envelope/after/write-lowering.json",
+        PY_ROOT / "docs/write-lowering-envelope/rebaseline-2026-09-15/pre-rebase/portfolio.json",
+    ]
+    beside = [
+        PY_ROOT / "spec/budget-contract.yaml",
+        PY_ROOT / "docs/structural-metadata-envelope/README.md",
+        PY_ROOT / "docs/structural-metadata-envelope/recovered/summary.md",
+        PY_ROOT / "tests/_support/cost_durations.json",
+        REPO_ROOT / "core/schemas/conformance-adapter.schema.json",
+    ]
+    assert [committed_evidence.is_committed(str(path)) for path in evidence] == [True] * 4
+    assert [committed_evidence.is_committed(str(path)) for path in beside] == [False] * 5
+
+
+def test_an_item_that_did_not_request_the_committed_evidence_cannot_open_it() -> None:
+    # The refusal is not an `Exception`, so an opener suppressing its own errors
+    # cannot turn it into a pass; every spelling of the open is the same event.
+    gates = PY_ROOT / committed_evidence.GATES
+    with pytest.raises(committed_evidence.EvidenceRefused, match="committed_cost_evidence"):
+        gates.read_bytes()
+    with pytest.raises(committed_evidence.EvidenceRefused):
+        open(os.path.relpath(gates), "rb")  # noqa: SIM115 - the refusal precedes any handle
+    with pytest.raises(committed_evidence.EvidenceRefused):
+        os.open(gates, os.O_RDONLY)
+    assert (PY_ROOT / "spec/budget-contract.yaml").read_bytes()
 
 
 def test_only_the_derivation_names_a_scheduling_class() -> None:

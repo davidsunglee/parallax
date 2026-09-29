@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 
@@ -41,7 +41,12 @@ from interpreter_matrix import (
     supported_minors,
     write_metadata,
 )
-from parallax.conformance.budget import BudgetContract, MemoryGate, MemoryGates
+from parallax.conformance.budget import (
+    BudgetContract,
+    MemoryGate,
+    MemoryGates,
+    derive_memory_gates,
+)
 from parallax.conformance.cost_envelope import CostReportEnvelope, validate
 from snapshot_delivery_overhead import (
     ChildReading,
@@ -122,12 +127,50 @@ def _portfolio(*members: dict[str, Any]) -> dict[str, Any]:
     return {"schemaVersion": 1, "members": list(members), "failures": []}
 
 
+_HEADROOM: Final = 1.10
+_GATES_FILE: Final = Path("memory-gates.yaml")
+
+
 def _verifiable(contract: BudgetContract) -> dict[str, Any]:
     snapshot = _complete_snapshot(contract)
     write = _complete_write(contract)
     _clean(snapshot, contract, authoritative=True)
     _clean(write, contract, authoritative=False)
     return _portfolio(snapshot, write)
+
+
+def _gates_over(document: dict[str, Any]) -> MemoryGates:
+    """The memory gates the stated rule derives from *document* itself."""
+    authored = {
+        "schemaVersion": 1,
+        "basis": {"portfolio": "portfolio.json", "headroom": _HEADROOM},
+        "advisory": {},
+        "gates": derive_memory_gates(document, _HEADROOM),
+    }
+    return MemoryGates.from_bytes(_GATES_FILE, json.dumps(authored).encode("utf-8"))
+
+
+def _gate_with(monkeypatch: pytest.MonkeyPatch, gates: MemoryGates) -> None:
+    def load(path: Path | None = None) -> MemoryGates:
+        return gates
+
+    monkeypatch.setattr(MemoryGates, "load", staticmethod(load))
+
+
+@pytest.fixture
+def gates_no_reading_reaches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Memory gates over one address no portfolio reads, in place of the committed
+    ones: what verification reports of a synthetic portfolio is then graded apart
+    from whichever ceilings the canonical capture derives, which only the cost
+    class reads."""
+    _gate_with(
+        monkeypatch,
+        MemoryGates.from_bytes(
+            _GATES_FILE,
+            b"schemaVersion: 1\nbasis: {portfolio: p, headroom: 1.1}\nadvisory: {}\n"
+            b"gates: {unread: {w: {c: {unit: B, maxBytes: 1}}}}\n",
+        ),
+    )
 
 
 def _optional_document(member: Member) -> dict[str, object]:
@@ -618,6 +661,7 @@ def _to_legacy(document: dict[str, Any]) -> None:
 # verification names each mismatch rather than presenting the old readings as
 # current evidence.
 @pytest.mark.parametrize("name", ["before", "after"])
+@pytest.mark.usefixtures("committed_cost_evidence")
 def test_each_retained_historical_portfolio_preserves_its_original_provenance(
     name: str,
 ) -> None:
@@ -723,6 +767,7 @@ def test_a_complete_matrix_verifies_under_any_whole_vocabulary_and_no_mixture() 
         validate_write_lowering_matrix(unknown_counter)
 
 
+@pytest.mark.usefixtures("committed_cost_evidence")
 def test_compare_pairs_every_unchanged_address_across_the_counter_rename() -> None:
     after = _historical("after", "portfolio")
     base = _portfolio(_snapshot_of(after), _write_of(after))
@@ -771,6 +816,7 @@ def test_verify_refuses_a_missing_required_envelope() -> None:
     assert verify(_portfolio(snapshot)) == ["the portfolio has no required write-lowering envelope"]
 
 
+@pytest.mark.usefixtures("gates_no_reading_reaches")
 def test_a_clean_published_complete_portfolio_verifies_with_no_failures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -789,6 +835,7 @@ def test_a_clean_published_complete_portfolio_verifies_with_no_failures(
     assert captured.err == ""
 
 
+@pytest.mark.usefixtures("gates_no_reading_reaches")
 def test_adverse_timing_and_memory_outcomes_are_advisory_and_never_fail(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -827,6 +874,7 @@ def test_adverse_timing_and_memory_outcomes_are_advisory_and_never_fail(
     assert printed.err == ""
 
 
+@pytest.mark.usefixtures("gates_no_reading_reaches")
 def test_an_unpublished_producing_commit_is_advisory_and_a_dirty_or_stale_one_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -877,9 +925,10 @@ def test_a_reading_past_its_memory_gate_is_advisory_and_never_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     contract = BudgetContract.load()
-    gates = MemoryGates.load()
     monkeypatch.setattr(cost_report, "is_published", _published)
     document = _verifiable(contract)
+    gates = _gates_over(document)
+    _gate_with(monkeypatch, gates)
     assert verify(document) == []
     assert advisories(document) == []
     write_gate = gates.gate("write-lowering", "txtime.opening.columns.typed", "retainedBytes")
@@ -975,6 +1024,7 @@ def test_collection_attempts_later_members_after_an_invalid_required_matrix() ->
     assert all(result.envelope is not None for result in collection.results[1:])
 
 
+@pytest.mark.usefixtures("gates_no_reading_reaches")
 def test_a_moved_checkout_lock_is_advisory_and_never_changes_authority_or_the_verdict(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1012,6 +1062,7 @@ def test_a_moved_checkout_lock_is_advisory_and_never_changes_authority_or_the_ve
     assert snapshot["authority"] == "authoritative"
 
 
+@pytest.mark.usefixtures("gates_no_reading_reaches")
 def test_invalid_evidence_fails_while_every_drift_is_reported_beside_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1093,6 +1144,7 @@ def test_freshness_only_compares_an_explicit_lock_without_revalidating_historica
         [{"subject": "snapshot-delivery", "provenance": {"lockDigest": 0}}],
     ],
 )
+@pytest.mark.usefixtures("gates_no_reading_reaches")
 def test_freshness_reports_unavailable_evidence_without_losing_validation_diagnostics(
     tmp_path: Path, members: list[dict[str, object]], capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1520,6 +1572,7 @@ def test_instance_state_matrix_validation_rejects_semantic_forgeries(
         cost_report.validate_instance_state_matrix(document)
 
 
+@pytest.mark.usefixtures("gates_no_reading_reaches")
 def test_require_member_is_a_verify_or_compare_option_over_requirable_subjects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1718,6 +1771,7 @@ def test_a_matched_pair_is_compared_with_its_compatibility_stated_first(
     assert "Compatibility established" not in capsys.readouterr().out
 
 
+@pytest.mark.usefixtures("gates_no_reading_reaches")
 def test_an_amended_capture_is_stated_by_verification_and_by_every_comparison(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
