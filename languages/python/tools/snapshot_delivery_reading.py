@@ -1,6 +1,6 @@
 """Take one isolated Snapshot delivery reading: a Budget Contract cell, one
-provider-free geometry read family address, one read-plan compilation address,
-or one before/after control address.
+provider-free geometry or leaf-type read family address, one read-plan
+compilation address, or one before/after control address.
 
 This script is imported by nothing. It is the sole report-side reader of the
 whole-interpreter memory instruments and answers its parent with one JSON line.
@@ -60,6 +60,7 @@ INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py
 SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_snapshot_materialization_support.py"
 GEOMETRY_MODULE: Final = WORKSPACE / "tests" / "unit" / "_structural_geometry_support.py"
 CONTROL_MODULE: Final = WORKSPACE / "tests" / "unit" / "_delivery_control_support.py"
+LEAF_MODULE: Final = WORKSPACE / "tests" / "unit" / "_leaf_type_support.py"
 sys.path.insert(0, str(WORKSPACE))
 
 # `sys.path` gains the workspace above, so these imports cannot precede it; that is
@@ -73,6 +74,7 @@ if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
 
 from tests._support.db_port import projected_rows  # noqa: E402
 from tests.unit import _delivery_control_support as control_support  # noqa: E402
+from tests.unit import _leaf_type_support as leaf_support  # noqa: E402
 from tests.unit import _snapshot_materialization_support as stress_support  # noqa: E402
 from tests.unit import _structural_geometry_support as geometry_support  # noqa: E402
 
@@ -80,6 +82,7 @@ for module, expected_file in (
     (stress_support, SUPPORT_MODULE),
     (geometry_support, GEOMETRY_MODULE),
     (control_support, CONTROL_MODULE),
+    (leaf_support, LEAF_MODULE),
 ):
     if Path(module.__file__ or "").resolve() != expected_file:
         raise ImportError(f"this reading requires {expected_file}, but resolved {module.__file__}")
@@ -522,14 +525,29 @@ def _stress_memory(prepared: _PreparedStress, path: str) -> tuple[float, str, tu
 
 def geometry_address(workload: str, path: str) -> tuple[GeometryLevel, str, str] | None:
     """The level, layout, and metric a geometry read address names, or absence
-    for a Budget Contract address."""
+    for any other address."""
     if not workload.startswith(GEOMETRY_PREFIX):
         return None
     level = geometry_support.level_named(workload.removeprefix(GEOMETRY_PREFIX))
+    layout, metric = _read_cell(workload, path, "geometry")
+    return level, layout, metric
+
+
+def leaf_address(workload: str, path: str) -> tuple[leaf_support.LeafType, str, str] | None:
+    """The leaf type, layout, and metric a leaf-type read address names, or
+    absence for any other address."""
+    leaf = leaf_support.read_address(workload)
+    if leaf is None:
+        return None
+    layout, metric = _read_cell(workload, path, "leaf-type")
+    return leaf, layout, metric
+
+
+def _read_cell(workload: str, path: str, family: str) -> tuple[str, str]:
     layout, _separator, metric = path.partition(".")
     if layout not in STRUCTURAL_LAYOUTS or metric not in GEOMETRY_METRICS:
-        raise ValueError(f"{workload}.{path} is not a geometry read address")
-    return level, layout, metric
+        raise ValueError(f"{workload}.{path} is not a {family} read address")
+    return layout, metric
 
 
 def plan_address(workload: str, path: str) -> tuple[GeometryLevel, str, str] | None:
@@ -840,18 +858,52 @@ def _control(
 def _geometry(
     level: GeometryLevel, layout: str, metric: str, *, warmups: int, measured: int
 ) -> tuple[float, str, tuple[float, ...]]:
-    """One geometry level's provider-free Wire find under ``layout``.
+    """One geometry level's provider-free Wire find under ``layout``."""
+    selected = cast("geometry_support.Layout", layout)
+    return _structural_read(
+        geometry_support.GeometryPort(level, selected, READ_GEOMETRY_ROOTS),
+        geometry_support.MODEL,
+        geometry_support.read_query(level, selected),
+        metric,
+        warmups=warmups,
+        measured=measured,
+    )
+
+
+def _leaf_read(
+    leaf: leaf_support.LeafType, layout: str, metric: str, *, warmups: int, measured: int
+) -> tuple[float, str, tuple[float, ...]]:
+    """One leaf type's provider-free Wire find under ``layout``, at the roots a
+    geometry read materializes."""
+    selected = cast("leaf_support.Layout", layout)
+    return _structural_read(
+        leaf_support.LeafPort(leaf_support.entity_class(leaf, selected), READ_GEOMETRY_ROOTS),
+        leaf_support.MODEL,
+        leaf_support.read_query(leaf, selected),
+        metric,
+        warmups=warmups,
+        measured=measured,
+    )
+
+
+def _structural_read(
+    port: Any,
+    model: DomainModel,
+    query: ObjectQuery[Any, Any],
+    metric: str,
+    *,
+    warmups: int,
+    measured: int,
+) -> tuple[float, str, tuple[float, ...]]:
+    """One provider-free Wire find of ``query`` over ``port``.
 
     The handle and its port are composed outside the window; every find inside
     it plans, materializes, and publishes ``READ_GEOMETRY_ROOTS`` freshly
     composed rows.
     """
-    selected = cast("geometry_support.Layout", layout)
     roots = READ_GEOMETRY_ROOTS
-    port = geometry_support.GeometryPort(level, selected, roots)
-    root = Database(port.open(), geometry_support.MODEL)
+    root = Database(port.open(), model)
     database = root.using_database_login()
-    query = geometry_support.read_query(level, selected)
     try:
         if metric == "elapsedUsPerRoot":
 
@@ -960,6 +1012,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("timing sampling counts do not match the Budget Contract")
     try:
         geometry = geometry_address(args.workload, args.cell)
+        leaf = leaf_address(args.workload, args.cell)
         plan = plan_address(args.workload, args.cell)
         control = control_support.control_address(
             args.workload, args.cell, contract.memory_scaling_arms
@@ -970,6 +1023,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         level, layout, metric = geometry
         value, reading_unit, samples = _geometry(
             level, layout, metric, warmups=args.warmups, measured=args.measured
+        )
+    elif leaf is not None:
+        leaf_type, layout, metric = leaf
+        value, reading_unit, samples = _leaf_read(
+            leaf_type, layout, metric, warmups=args.warmups, measured=args.measured
         )
     elif plan is not None:
         level, layout, metric = plan

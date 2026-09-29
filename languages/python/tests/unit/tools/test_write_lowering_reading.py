@@ -96,6 +96,7 @@ def test_child_case_names_match_the_shared_workloads() -> None:
     assert (
         *(case.name for case in lowering_support.CASES),
         *(case.name for case in acquisition_support.CASES),
+        *(case.name for case in acquisition_support.LEAF_CASES),
         *(case.name for case in lowering_support.RESPONSE_CASES),
         write_lowering_reading.MODEL_CASE,
         write_lowering_reading.MODEL_FAMILY_CASE,
@@ -172,8 +173,19 @@ def test_a_changed_ancestor_successor_reads_its_keyed_window() -> None:
 
 
 @in_a_child_interpreter
+def test_a_leaf_type_insert_reads_its_keyed_window() -> None:
+    _assert_reading("leaf.float64.document.wire", units=1)
+
+
+@in_a_child_interpreter
 def test_an_acquisition_family_reads_its_window_per_resolved_row() -> None:
     case = acquisition_support.CASES[0]
+    _assert_reading(case.name, units=case.rows)
+
+
+@in_a_child_interpreter
+def test_a_leaf_type_acquisition_reads_its_window_per_resolved_row() -> None:
+    case = acquisition_support.LEAF_CASES[-1]
     _assert_reading(case.name, units=case.rows)
 
 

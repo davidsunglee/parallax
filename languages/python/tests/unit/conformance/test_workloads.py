@@ -13,11 +13,18 @@ from parallax.conformance.workloads import (
     ACQUISITION_LEVELS,
     ANCESTOR_LEVEL_IDS,
     GEOMETRY_LEVELS,
+    LEAF_ACQUISITION_LEVEL_IDS,
+    LEAF_CONTROL_TYPE_ID,
+    LEAF_TYPE_IDS,
+    LEAF_TYPE_LEVEL_ID,
     AcquisitionLevel,
     GeometryLevel,
     Workload,
     ancestor_levels,
     catalog,
+    leaf_acquisition_levels,
+    leaf_type_digest,
+    leaf_type_level,
     plan_levels,
     structural_digest,
     workload_digest,
@@ -148,6 +155,37 @@ def test_the_workload_digest_covers_the_changed_ancestor_selection(
     original = workload_digest()
     monkeypatch.setattr(workloads, "ANCESTOR_LEVEL_IDS", ANCESTOR_LEVEL_IDS[:-1])
     assert workload_digest() != original
+
+
+def test_the_leaf_types_are_measured_at_one_frozen_level_against_their_control() -> None:
+    assert len(set(LEAF_TYPE_IDS)) == len(LEAF_TYPE_IDS)
+    assert LEAF_CONTROL_TYPE_ID not in LEAF_TYPE_IDS
+    level = leaf_type_level()
+    assert level.id == LEAF_TYPE_LEVEL_ID
+    assert (level.depth, level.populated) == (1, level.width)
+    assert [level.id for level in leaf_acquisition_levels()] == list(LEAF_ACQUISITION_LEVEL_IDS)
+    assert set(leaf_acquisition_levels()) <= set(ACQUISITION_LEVELS)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("LEAF_TYPE_IDS", ("float64", "float32")),
+        ("LEAF_CONTROL_TYPE_ID", "bytes"),
+        ("LEAF_TYPE_LEVEL_ID", "width-16"),
+        ("LEAF_ACQUISITION_LEVEL_IDS", ("rows-8",)),
+    ],
+)
+def test_the_workload_digest_covers_the_leaf_type_manifest_apart_from_the_structural_one(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: object
+) -> None:
+    original = workload_digest()
+    leaf_types = leaf_type_digest()
+    structural = structural_digest()
+    monkeypatch.setattr(workloads, name, value)
+    assert leaf_type_digest() != leaf_types
+    assert workload_digest() != original
+    assert structural_digest() == structural
 
 
 @pytest.mark.parametrize("roots", BudgetContract.load().memory_scaling_arms)

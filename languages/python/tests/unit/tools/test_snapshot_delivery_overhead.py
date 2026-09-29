@@ -23,6 +23,7 @@ from snapshot_delivery_overhead import (
     CONTROL_GROUP,
     GEOMETRY_GROUP,
     GEOMETRY_METRICS,
+    LEAF_GROUP,
     LIVE_WINDOW,
     PLAN_GROUP,
     PLAN_METRICS,
@@ -41,6 +42,7 @@ from snapshot_delivery_overhead import (
     expected_readings,
     geometry_cells,
     is_memory_cell,
+    leaf_cells,
     plan_cells,
     selection,
     unit,
@@ -95,18 +97,39 @@ def test_plan_cells_cover_the_frozen_levels_under_both_layouts_in_their_own_wind
         )
 
 
+def test_leaf_cells_read_every_measured_leaf_type_as_a_geometry_read_is_read() -> None:
+    cells = leaf_cells()
+    assert len(cells) == (
+        len(workloads.LEAF_TYPE_IDS) * len(workloads.STRUCTURAL_LAYOUTS) * len(GEOMETRY_METRICS)
+    )
+    assert {cell.workload for cell in cells} == {
+        f"{report.LEAF_PREFIX}{type_id}" for type_id in workloads.LEAF_TYPE_IDS
+    }
+    assert {cell.path for cell in cells} == {cell.path for cell in geometry_cells()}
+    for cell in cells:
+        assert window_of(cell.path, cell.workload) == PROVIDER_FREE_WINDOW
+        assert not cell.workload.startswith(
+            (report.GEOMETRY_PREFIX, report.PLAN_PREFIX, report.CONTROL_PREFIX)
+        )
+
+
 def test_addresses_cross_every_runtime_with_contract_and_geometry_cells() -> None:
     contract = BudgetContract.load()
     expected = addresses(contract, ("3.13", "3.14"))
     assert len(expected) == 2 * (
         len(expanded_cells(contract))
         + len(geometry_cells())
+        + len(leaf_cells())
         + len(plan_cells())
         + len(control_cells(contract))
     )
     assert len(set(expected)) == len(expected)
-    without = addresses(contract, ("3.13", "3.14"), controls=False)
-    assert set(without) == set(expected) - {
+    before_leaf_types = addresses(contract, ("3.13", "3.14"), leaf_types=False)
+    assert set(before_leaf_types) == set(expected) - {
+        address for address in expected if address[1].startswith(report.LEAF_PREFIX)
+    }
+    without = addresses(contract, ("3.13", "3.14"), controls=False, leaf_types=False)
+    assert set(without) == set(before_leaf_types) - {
         address for address in expected if address[1].startswith(report.CONTROL_PREFIX)
     }
     assert window_of("live.eager.maxMs") == LIVE_WINDOW
@@ -314,7 +337,13 @@ def test_snapshot_spans_cover_every_workload_and_group_on_every_runtime_with_pro
     assert [(span.name, span.labels["runtime"]) for span in workload_spans] == [
         (name, runtime)
         for runtime in ("3.13", "3.14")
-        for name in (*contract.workload_ids, GEOMETRY_GROUP, PLAN_GROUP, CONTROL_GROUP)
+        for name in (
+            *contract.workload_ids,
+            GEOMETRY_GROUP,
+            LEAF_GROUP,
+            PLAN_GROUP,
+            CONTROL_GROUP,
+        )
     ]
     assert all(span.labels["member"] == report.SUBJECT for span in spans.spans)
     setup_spans = [span for span in spans.spans if span.scope == "setup"]
@@ -348,7 +377,7 @@ def test_durations_are_recorded_for_a_measurement_and_refused_beside_a_diagnosti
 # --------------------------------------------------------------------------- #
 # Workload selection: a slice of the matrix as evidence, never a diagnostic    #
 # --------------------------------------------------------------------------- #
-def test_workload_selection_names_exact_contract_ids_and_the_three_groups() -> None:
+def test_workload_selection_names_exact_contract_ids_and_the_groups() -> None:
     contract = BudgetContract.load()
     assert workload_selection([], contract) is report.every_cell
     first = contract.workload_ids[0]
@@ -363,12 +392,17 @@ def test_workload_selection_names_exact_contract_ids_and_the_three_groups() -> N
     assert not any(controls(cell.workload, cell.path) for cell in plan_cells())
     geometry = workload_selection([GEOMETRY_GROUP], contract)
     assert all(geometry(cell.workload, cell.path) for cell in geometry_cells())
+    assert not any(geometry(cell.workload, cell.path) for cell in leaf_cells())
     assert not geometry(first, "live.eager.maxMs")
+    leaf = workload_selection([LEAF_GROUP], contract)
+    assert all(leaf(cell.workload, cell.path) for cell in leaf_cells())
+    assert not any(leaf(cell.workload, cell.path) for cell in geometry_cells())
     with pytest.raises(ValueError, match="unknown workload read-depth-1, unknown"):
         workload_selection(["unknown", "read-depth-1", first], contract)
     assert report.workload_names(contract) == (
         *contract.workload_ids,
         GEOMETRY_GROUP,
+        LEAF_GROUP,
         PLAN_GROUP,
         CONTROL_GROUP,
     )

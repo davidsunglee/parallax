@@ -21,6 +21,7 @@ from parallax.core.unit_work import (
     PredecessorRows,
     UnitOfWork,
 )
+from tests.unit import _leaf_type_support as leaf_support
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _write_lowering_support as lowering_support
 
@@ -68,20 +69,35 @@ def _matrix(*runtimes: str) -> report.Matrix:
 # --------------------------------------------------------------------------- #
 def test_the_matrix_names_every_keyed_acquisition_and_model_case_once() -> None:
     keyed = [case.name for case in lowering_support.CASES]
+    leaf_keyed = [
+        case.name for case in lowering_support.CASES if case.family == lowering_support.LEAF_FAMILY
+    ]
     acquisition = [case.name for case in acquisition_support.CASES]
+    leaf_acquisition = [case.name for case in acquisition_support.LEAF_CASES]
     response = [case.name for case in lowering_support.RESPONSE_CASES]
     assert (
         *keyed,
         *acquisition,
+        *leaf_acquisition,
         *response,
         report.MODEL_CASE,
         report.MODEL_FAMILY_CASE,
     ) == report.CASE_NAMES
     assert len(set(report.CASE_NAMES)) == len(report.CASE_NAMES)
     assert (*response, report.MODEL_FAMILY_CASE) == report.CONTROL_CASE_NAMES
-    assert (*keyed, *acquisition, report.MODEL_CASE) == report.LEGACY_CASE_NAMES
+    assert (*leaf_keyed, *leaf_acquisition) == report.LEAF_TYPE_CASE_NAMES
+    before_leaf_types = [name for name in keyed if name not in leaf_keyed]
+    assert (
+        *before_leaf_types,
+        *acquisition,
+        *response,
+        report.MODEL_CASE,
+        report.MODEL_FAMILY_CASE,
+    ) == report.BEFORE_LEAF_TYPE_CASE_NAMES
+    assert (*before_leaf_types, *acquisition, report.MODEL_CASE) == report.LEGACY_CASE_NAMES
     assert report.CASE_COVERAGES == {
         "current": report.CASE_NAMES,
+        "before leaf types": report.BEFORE_LEAF_TYPE_CASE_NAMES,
         "legacy": report.LEGACY_CASE_NAMES,
     }
     assert len(supported_minors()) == 2
@@ -194,6 +210,48 @@ def test_the_counter_vocabularies_differ_only_in_the_retired_and_renamed_counter
     }
 
 
+def test_leaf_type_inserts_cross_every_measured_type_layout_and_ingress_beside_a_wire_control() -> (
+    None
+):
+    leaf = [case for case in lowering_support.CASES if case.family == lowering_support.LEAF_FAMILY]
+    assert {case.name for case in leaf} == {
+        *(
+            f"leaf.{type_id}.{layout}.{ingress}"
+            for type_id in workloads.LEAF_TYPE_IDS
+            for layout in workloads.STRUCTURAL_LAYOUTS
+            for ingress in lowering_support.INGRESSES
+        ),
+        *(
+            f"leaf.{workloads.LEAF_CONTROL_TYPE_ID}.{layout}.wire"
+            for layout in workloads.STRUCTURAL_LAYOUTS
+        ),
+    }
+    assert all(
+        case.mutation == "insert"
+        and case.stored is None
+        and case.model is leaf_support.MODEL
+        and report.WINDOWS[case.name] == report.KEYED_WINDOW
+        for case in leaf
+    )
+    level = workloads.leaf_type_level()
+    string_control = lowering_support.case_named(f"geometry.{level.id}.columns.typed")
+    assert string_control.model is lowering_support.MODEL
+
+
+def test_a_leaf_type_insert_writes_every_leaf_in_its_canonical_wire_spelling() -> None:
+    for case in lowering_support.CASES:
+        if case.family != lowering_support.LEAF_FAMILY:
+            continue
+        leaf = leaf_support.leaf_type_named(case.name.split(".")[1])
+        (insert,) = lowering_support.lowered(case)
+        documents = [detach_json_container(document) for document in _documents(insert.binds)]
+        if case.layout == "document":
+            (payload,) = documents
+            documents = [cast("Mapping[str, object]", payload)[name] for name in ("body", "items")]
+        expected = leaf_support.wire_row(leaf, lowering_support.LEAF_KEY)
+        assert documents == [expected["body"], expected["items"]], case.name
+
+
 def test_acquisition_cases_cover_every_row_level_under_both_layouts() -> None:
     assert {case.name for case in acquisition_support.CASES} == {
         f"acquisition.{level.id}.{layout}"
@@ -204,6 +262,19 @@ def test_acquisition_cases_cover_every_row_level_under_both_layouts() -> None:
         report.WINDOWS[case.name] == report.ACQUISITION_WINDOW for case in acquisition_support.CASES
     )
     assert report.WINDOWS[report.MODEL_CASE] == report.MODEL_WINDOW
+
+
+def test_leaf_type_acquisition_covers_every_acquired_type_and_level_under_both_layouts() -> None:
+    assert {case.name for case in acquisition_support.LEAF_CASES} == {
+        f"leaf-acquisition.{type_id}.{level.id}.{layout}"
+        for type_id in (workloads.LEAF_CONTROL_TYPE_ID, *workloads.LEAF_TYPE_IDS)
+        for level in workloads.leaf_acquisition_levels()
+        for layout in workloads.STRUCTURAL_LAYOUTS
+    }
+    assert all(
+        report.WINDOWS[case.name] == report.ACQUISITION_WINDOW and case.model is leaf_support.MODEL
+        for case in acquisition_support.LEAF_CASES
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -307,7 +378,7 @@ def test_acquisition_resolves_every_row_once_and_stops_before_any_flush(
         buffer(uow, instruction)
 
     monkeypatch.setattr(UnitOfWork, "buffer", recording_buffer)
-    for case in acquisition_support.CASES:
+    for case in (*acquisition_support.CASES, *acquisition_support.LEAF_CASES):
         _CountingPort.reads = 0
         _CountingPort.delivered = 0
         buffered.clear()
@@ -343,7 +414,10 @@ def test_acquisition_resolves_every_row_once_and_stops_before_any_flush(
 def test_the_workload_digest_covers_every_defining_source(monkeypatch: pytest.MonkeyPatch) -> None:
     digest = lowering_support.write_lowering_digest()
     assert len(digest) == 64
-    monkeypatch.setattr(workloads, "READ_GEOMETRY_ROOTS", workloads.READ_GEOMETRY_ROOTS + 1)
+    with monkeypatch.context() as patched:
+        patched.setattr(workloads, "READ_GEOMETRY_ROOTS", workloads.READ_GEOMETRY_ROOTS + 1)
+        assert lowering_support.write_lowering_digest() != digest
+    monkeypatch.setattr(workloads, "LEAF_ACQUISITION_LEVEL_IDS", ("rows-8",))
     assert lowering_support.write_lowering_digest() != digest
 
 
@@ -750,11 +824,24 @@ def test_the_family_model_is_its_own_preparation_beside_the_structural_model() -
     assert {cls.__name__ for cls in lowering_support.FAMILY_ENTITY_CLASSES} == {"Pet", "Dog", "Cat"}
 
 
-def test_the_control_cases_are_the_difference_between_the_two_case_coverages() -> None:
-    current = report.expected_addresses(("3.14",))
+def test_the_control_cases_are_the_difference_between_the_two_earlier_case_coverages() -> None:
+    before_leaf_types = report.expected_addresses(
+        ("3.14",), report.CALL_NAMES, report.BEFORE_LEAF_TYPE_CASE_NAMES
+    )
     legacy = report.expected_addresses(("3.14",), report.CALL_NAMES, report.LEGACY_CASE_NAMES)
-    assert legacy < current
-    assert current - legacy == {
+    assert legacy < before_leaf_types
+    assert before_leaf_types - legacy == {
         ("3.14", case, metric) for case in report.CONTROL_CASE_NAMES for metric in report.METRICS
     }
-    assert all(not address[2].startswith("calls.") for address in current - legacy)
+    assert all(not address[2].startswith("calls.") for address in before_leaf_types - legacy)
+
+
+def test_the_leaf_type_cases_are_the_difference_between_the_two_latest_case_coverages() -> None:
+    current = report.expected_addresses(("3.14",))
+    before_leaf_types = report.expected_addresses(
+        ("3.14",), report.CALL_NAMES, report.BEFORE_LEAF_TYPE_CASE_NAMES
+    )
+    assert before_leaf_types < current
+    assert {case for _runtime, case, _cell in current - before_leaf_types} == set(
+        report.LEAF_TYPE_CASE_NAMES
+    )

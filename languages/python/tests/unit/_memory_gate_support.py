@@ -98,6 +98,18 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
     ),
     GateOwner(
         WRITE_MODULE,
+        "test_the_leaf_type_inserts_stay_within_their_memory_gates",
+        WRITE_SUBJECT,
+        _prefixed("leaf."),
+    ),
+    GateOwner(
+        WRITE_MODULE,
+        "test_leaf_type_acquisition_stays_within_its_memory_gates",
+        WRITE_SUBJECT,
+        _prefixed("leaf-acquisition."),
+    ),
+    GateOwner(
+        WRITE_MODULE,
         "test_the_prepared_model_stays_within_its_memory_gates",
         WRITE_SUBJECT,
         _exactly("model.prepared", "model.prepared.family"),
@@ -119,6 +131,12 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
         "test_the_width_and_sparse_reads_stay_within_their_memory_gates",
         SNAPSHOT_SUBJECT,
         _prefixed("read-width-", "read-sparse-"),
+    ),
+    GateOwner(
+        SNAPSHOT_MODULE,
+        "test_the_leaf_type_reads_stay_within_their_memory_gates",
+        SNAPSHOT_SUBJECT,
+        _prefixed("leaf-"),
     ),
     GateOwner(
         SNAPSHOT_MODULE,

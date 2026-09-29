@@ -614,7 +614,7 @@ def _to_legacy(document: dict[str, Any]) -> None:
 # The two retained captures carry the legacy counter vocabulary on every keyed
 # case and both runtimes. Their original workload digests remain untouched when
 # the source defining a workload later changes without a recapture, and
-# verification names that mismatch rather than presenting the old readings as
+# verification names each mismatch rather than presenting the old readings as
 # current evidence.
 @pytest.mark.parametrize("name", ["before", "after"])
 def test_each_retained_historical_portfolio_preserves_its_original_provenance(
@@ -630,7 +630,10 @@ def test_each_retained_historical_portfolio_preserves_its_original_provenance(
             (cost_report.EVIDENCE_DIRECTORY / name / "portfolio.json").read_text(encoding="utf-8")
         ),
     )
-    assert verify(portfolio) == ["the write-lowering envelope's workload digest is stale"]
+    assert verify(portfolio) == [
+        "the snapshot-delivery envelope's workload digest is stale",
+        "the write-lowering envelope's workload digest is stale",
+    ]
 
 
 def test_a_complete_matrix_verifies_under_any_whole_vocabulary_and_no_mixture() -> None:
@@ -727,7 +730,11 @@ def test_compare_pairs_every_unchanged_address_across_the_counter_rename() -> No
     validate_write_lowering_matrix(write)
     rendered = compare(base, _portfolio(_snapshot_of(after), write))
     lines = rendered.splitlines()
-    keyed_cases = [case for case, window in write_report.WINDOWS.items() if window == "keyed-write"]
+    keyed_cases = [
+        case
+        for case in write_report.LEGACY_CASE_NAMES
+        if write_report.WINDOWS[case] == write_report.KEYED_WINDOW
+    ]
     unmatched = len(keyed_cases) * len(supported_minors())
     missing_on_head = [line for line in lines if line.endswith("| missing on head |")]
     missing_on_base = [line for line in lines if line.endswith("| missing on base |")]
@@ -1301,12 +1308,24 @@ def test_diagnostic_options_are_fenced_from_verification_and_collection(
 # --------------------------------------------------------------------------- #
 # Required members: a member held to the exact matrix its owner declares      #
 # --------------------------------------------------------------------------- #
+def _without_leaf_types(snapshot: dict[str, Any]) -> None:
+    readings = cast("list[dict[str, Any]]", snapshot["readings"])
+    readings[:] = [r for r in readings if not str(r["workload"]).startswith("leaf-")]
+
+
+def _without_leaf_type_cases(write: dict[str, Any]) -> None:
+    readings = cast("list[dict[str, Any]]", write["readings"])
+    readings[:] = [r for r in readings if r["workload"] not in write_report.LEAF_TYPE_CASE_NAMES]
+
+
 def _without_controls(snapshot: dict[str, Any]) -> None:
+    _without_leaf_types(snapshot)
     readings = cast("list[dict[str, Any]]", snapshot["readings"])
     readings[:] = [r for r in readings if not str(r["workload"]).startswith("control-")]
 
 
 def _without_control_cases(write: dict[str, Any]) -> None:
+    _without_leaf_type_cases(write)
     readings = cast("list[dict[str, Any]]", write["readings"])
     readings[:] = [r for r in readings if r["workload"] not in write_report.CONTROL_CASE_NAMES]
 
@@ -1332,6 +1351,37 @@ def _without_instance_head_only(document: dict[str, Any]) -> None:
         for reading in readings
         if cast("str", reading["cell"]) not in cost_report.HEAD_ONLY["instance-state"]
     ]
+
+
+def test_a_capture_without_the_leaf_types_verifies_but_cannot_be_required_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    document = _verifiable(contract)
+    _without_leaf_types(_snapshot_of(document))
+    _without_leaf_type_cases(_write_of(document))
+    assert verify(document) == []
+    (snapshot_failure,) = verify(document, required=["snapshot-delivery"])
+    assert snapshot_failure.startswith(
+        "the snapshot-delivery envelope is invalid: Snapshot reading matrix is not exact: "
+        "missing CPython"
+    )
+    assert "leaf-" in snapshot_failure
+    (write_failure,) = verify(document, required=[write_report.SUBJECT])
+    assert write_failure.startswith(
+        "the write-lowering envelope is invalid: write-lowering reading matrix is not exact "
+        "under any one case coverage and counter vocabulary; against the current cases and "
+        "current counters: missing CPython"
+    )
+    assert write_report.LEAF_TYPE_CASE_NAMES[0] in write_failure
+    _without_controls(_snapshot_of(document))
+    readings = cast("list[dict[str, Any]]", _snapshot_of(document)["readings"])
+    readings.append(
+        {**deepcopy(readings[0]), "workload": "leaf-float64", "cell": "columns.peakKiB"}
+    )
+    (mixed,) = verify(document)
+    assert "Snapshot reading matrix is not exact" in mixed
 
 
 def test_a_capture_without_the_control_group_verifies_but_cannot_be_required_current(

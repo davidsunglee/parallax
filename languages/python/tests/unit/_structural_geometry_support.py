@@ -61,6 +61,7 @@ __all__ = [
     "Layout",
     "entity_class",
     "instance",
+    "leaf_value",
     "level_named",
     "read_query",
     "shape_of",
@@ -235,7 +236,9 @@ def successor_class(level: GeometryLevel, layout: Layout) -> type[Entity]:
     return SUCCESSOR_ENTITIES[(level.depth, level.width)][layout]
 
 
-def _leaf_value(index: int, key: int) -> str:
+def leaf_value(index: int, key: int) -> str:
+    """Leaf ``index`` of the occurrence keyed ``key``, fixed-width so two
+    values of one level weigh the same."""
     return f"{index:03d}-{key:08d}"
 
 
@@ -245,7 +248,7 @@ the value it replaces, so the successor weighs what its predecessor weighed."""
 
 
 def _leaves(level: GeometryLevel, key: int) -> dict[str, str]:
-    return {_leaf_name(index): _leaf_value(index, key) for index in range(level.populated)}
+    return {_leaf_name(index): leaf_value(index, key) for index in range(level.populated)}
 
 
 def _body_document(level: GeometryLevel, key: int) -> dict[str, object]:
@@ -279,7 +282,7 @@ def _body_instance(
         if instance is not None:
             members[_NEXT] = instance
         if changed and position == root:
-            members[_leaf_name(0)] = _leaf_value(0, key + _CHANGED_LEAF_KEY)
+            members[_leaf_name(0)] = leaf_value(0, key + _CHANGED_LEAF_KEY)
         instance = cls(**members)
     assert instance is not None
     return instance

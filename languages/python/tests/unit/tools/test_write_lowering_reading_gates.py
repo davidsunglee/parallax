@@ -2,9 +2,9 @@
 
 `spec/memory-gates.yaml` holds one blocking ceiling per retained checkpoint and
 per high-water mark of every keyed-write, predicate-acquisition, and
-model-preparation case, derived from the retained capture the file names as its
-basis. Each family below reads its cases through the same child the report
-measures with —
+model-preparation case, the leaf-type families' among them, derived from the
+retained capture the file names as its basis. Each family below reads its cases
+through the same child the report measures with —
 :func:`write_lowering_reading.measure`, the identical windows, roots, and
 warm-ups — and grades the retained and transient readings against their gates.
 The acquisition family additionally grades its scaling domain: the per-row
@@ -249,6 +249,16 @@ def test_predicate_acquisition_stays_within_its_gates_and_amortizes_over_rows() 
             test_predicate_acquisition_stays_within_its_gates_and_amortizes_over_rows
         )
     )
+
+
+@in_a_child_interpreter
+def test_the_leaf_type_inserts_stay_within_their_memory_gates() -> None:
+    _within_gates(gate_support.owner_of(test_the_leaf_type_inserts_stay_within_their_memory_gates))
+
+
+@in_a_child_interpreter
+def test_leaf_type_acquisition_stays_within_its_memory_gates() -> None:
+    _within_gates(gate_support.owner_of(test_leaf_type_acquisition_stays_within_its_memory_gates))
 
 
 @in_a_child_interpreter

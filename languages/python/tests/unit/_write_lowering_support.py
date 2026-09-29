@@ -8,8 +8,12 @@ One Value Object nesting another One and a Many — beside the geometry Entities
 :mod:`tests.unit._structural_geometry_support` declares. The geometry levels
 open a lineage; the changed-ancestor levels succeed one, changing a single leaf
 of a wide root occurrence so the cost of replacing that occurrence is read
-against its declared width. Every case names its model, ingress, layout,
-mutation, authored values, and the stored row it revises.
+against its declared width. The leaf-type inserts open a lineage of each type
+:mod:`tests.unit._leaf_type_support` declares, over that module's own model,
+through Typed and Wire input; the width level's Typed geometry insert is their
+String control, and a Wire String insert is declared beside them. Every case
+names its model, ingress, layout, mutation, authored values, and the stored row
+it revises.
 
 Each run is one transaction. A case that revises a row first reads it through
 production (``tx.find`` or ``tx.wire.find``), because a keyed write is licensed
@@ -52,7 +56,7 @@ from psycopg.abc import Buffer
 from psycopg.adapt import PyFormat, Transformer
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.conformance.workloads import GEOMETRY_LEVELS, structural_digest
+from parallax.conformance.workloads import GEOMETRY_LEVELS, leaf_type_digest, structural_digest
 from parallax.core import (
     AbstractRoot,
     Attr,
@@ -91,6 +95,7 @@ from parallax.snapshot.handle import (
     WireEntity,
 )
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
+from tests.unit import _leaf_type_support as leaf_support
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _structural_geometry_support as geometry_support
 
@@ -257,6 +262,8 @@ CATALOG: Final = CatalogedModel(model_of(MODEL))
 LAYOUTS: Final[tuple[Layout, ...]] = ("columns", "document")
 INGRESSES: Final[tuple[Ingress, ...]] = ("typed", "wire")
 ANCESTOR_KEY: Final = 1
+LEAF_FAMILY: Final = "leaf"
+LEAF_KEY: Final = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -518,10 +525,35 @@ def _ancestor_cases() -> tuple[Case, ...]:
     )
 
 
+def _leaf_cases() -> tuple[Case, ...]:
+    """One insert per leaf type, layout, and ingress over the leaf-type model:
+    Typed and Wire for each measured type, Wire alone for the String control,
+    whose Typed insert is the width level's geometry case."""
+    return tuple(
+        Case(
+            f"{LEAF_FAMILY}.{leaf.id}.{layout}.{ingress}",
+            LEAF_FAMILY,
+            leaf_support.entity_class(leaf, layout),
+            ingress,
+            layout,
+            "insert",
+            leaf_support.instance(leaf, layout, LEAF_KEY) if ingress == "typed" else None,
+            leaf_support.wire_row(leaf, LEAF_KEY) if ingress == "wire" else {},
+            None,
+            1,
+            leaf_support.MODEL,
+        )
+        for leaf in leaf_support.WIRE_INSERTED_TYPES
+        for layout in LAYOUTS
+        for ingress in (INGRESSES if leaf in leaf_support.MEASURED_TYPES else ("wire",))
+    )
+
+
 CASES: Final[tuple[Case, ...]] = (
     *_categorical_cases(),
     *_geometry_cases(),
     *_ancestor_cases(),
+    *_leaf_cases(),
 )
 
 
@@ -772,8 +804,10 @@ def write_lowering_digest() -> str:
         Path(__file__),
         Path(geometry_support.__file__),
         Path(acquisition_support.__file__),
+        Path(leaf_support.__file__),
     ):
         digest.update(module.read_bytes())
         digest.update(b"\0")
     digest.update(structural_digest().encode("utf-8"))
+    digest.update(leaf_type_digest().encode("utf-8"))
     return digest.hexdigest()
