@@ -15,16 +15,12 @@ from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import validate
 from parallax.core.base import detach_json_container
 from parallax.core.db_port import DocumentReadOrdinals, JsonDocument, Row
-from parallax.core.entity import EntityRowCodec
 from parallax.core.unit_work import (
     BufferItem,
     MaterializedWriteGroup,
     PredecessorRows,
-    TemporalObservation,
     UnitOfWork,
-    WritePlanner,
 )
-from parallax.snapshot.handle import build_write_planner
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _write_lowering_support as lowering_support
 
@@ -65,12 +61,6 @@ def _reading(case: str) -> report.ChildReading:
 
 def _matrix(*runtimes: str) -> report.Matrix:
     return {runtime: {case: _reading(case) for case in report.CASE_NAMES} for runtime in runtimes}
-
-
-def _collaborators() -> tuple[EntityRowCodec, WritePlanner]:
-    return EntityRowCodec(lowering_support.CATALOG), build_write_planner(
-        lowering_support.CATALOG.meta
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -120,7 +110,7 @@ def test_geometry_cases_cover_every_level_under_both_layouts_through_typed_inser
         for level in workloads.GEOMETRY_LEVELS
         for layout in workloads.STRUCTURAL_LAYOUTS
     }
-    assert all(case.mutation == "insert" and case.observation is None for case in geometry)
+    assert all(case.mutation == "insert" and case.stored is None for case in geometry)
 
 
 def test_changed_ancestor_cases_succeed_a_milestone_at_every_manifest_width() -> None:
@@ -132,22 +122,17 @@ def test_changed_ancestor_cases_succeed_a_milestone_at_every_manifest_width() ->
     }
     assert {level.width for level in workloads.ancestor_levels()} == {4, 16, 64}
     assert all(
-        case.mutation == "update"
-        and case.statements == 2
-        and isinstance(case.observation, TemporalObservation)
+        case.mutation == "update" and case.statements == 2 and case.stored is not None
         for case in ancestors
     )
     assert all(report.WINDOWS[case.name] == report.KEYED_WINDOW for case in ancestors)
 
 
 def test_a_changed_ancestor_patches_one_root_leaf_and_carries_every_other_member() -> None:
-    codec, planner = _collaborators()
     for level_id in workloads.ANCESTOR_LEVEL_IDS:
         case = lowering_support.case_named(f"ancestor.{level_id}.document.typed")
-        observation = case.observation
-        assert isinstance(observation, TemporalObservation)
-        predecessor = cast("Mapping[str, object]", observation.predecessor.document)
-        (_close, _), (insert, _) = lowering_support.lowered(case, codec, planner)
+        predecessor = _stored_document(case)
+        _close, insert = lowering_support.lowered(case)
         (successor,) = _documents(insert.binds)
         root = cast("Mapping[str, object]", cast("Mapping[str, object]", successor)["body"])
         before = cast("Mapping[str, object]", predecessor["body"])
@@ -155,7 +140,10 @@ def test_a_changed_ancestor_patches_one_root_leaf_and_carries_every_other_member
         assert {name: root[name] for name in before if name != "f0"} == {
             name: before[name] for name in before if name != "f0"
         }
-        assert cast("Mapping[str, object]", successor)["items"] == predecessor["items"]
+        assert (
+            detach_json_container(cast("Mapping[str, object]", successor)["items"])
+            == predecessor["items"]
+        )
 
 
 def test_the_counter_vocabularies_differ_only_in_the_retired_and_renamed_counters() -> None:
@@ -225,16 +213,21 @@ def _documents(statement_binds: Sequence[object]) -> list[object]:
     return [bind.value for bind in statement_binds if isinstance(bind, JsonDocument)]
 
 
+def _stored_document(case: lowering_support.Case) -> Mapping[str, object]:
+    """The Structured Column of the Relational Document row ``case`` revises."""
+    assert case.layout == "document" and case.stored is not None
+    return cast("Mapping[str, object]", case.stored["payload"])
+
+
 @pytest.mark.parametrize("case", lowering_support.CASES, ids=lambda case: case.name)
 def test_every_keyed_case_lowers_to_its_stated_statements_and_dumps_each_document(
     case: lowering_support.Case,
 ) -> None:
-    codec, planner = _collaborators()
-    lowered = lowering_support.lowered(case, codec, planner)
+    lowered = lowering_support.lowered(case)
     assert len(lowered) == case.statements
-    for statement, dumped in lowered:
-        assert len(dumped) == len(statement.binds)
-        for bind, buffer in zip(statement.binds, dumped, strict=True):
+    for statement in lowered:
+        assert len(statement.dumped) == len(statement.binds)
+        for bind, buffer in zip(statement.binds, statement.dumped, strict=True):
             if isinstance(bind, JsonDocument):
                 assert (
                     bytes(buffer or b"") == json.dumps(detach_json_container(bind.value)).encode()
@@ -242,57 +235,46 @@ def test_every_keyed_case_lowers_to_its_stated_statements_and_dumps_each_documen
 
 
 def test_typed_and_wire_ingress_lower_to_the_same_statements() -> None:
-    codec, planner = _collaborators()
     by_name = {case.name: case for case in lowering_support.CASES}
     for case in lowering_support.CASES:
         if case.ingress != "typed" or case.family.startswith(("geometry-", "ancestor-")):
             continue
         twin = by_name[case.name.removesuffix(".typed") + ".wire"]
-        typed = lowering_support.lowered(case, codec, planner)
-        wire = lowering_support.lowered(twin, codec, planner)
-        assert [statement.sql for statement, _ in typed] == [statement.sql for statement, _ in wire]
-        assert [statement.binds for statement, _ in typed] == [
-            statement.binds for statement, _ in wire
-        ]
+        typed = lowering_support.lowered(case)
+        wire = lowering_support.lowered(twin)
+        assert [statement.sql for statement in typed] == [statement.sql for statement in wire]
+        assert [statement.binds for statement in typed] == [statement.binds for statement in wire]
 
 
-def test_an_unchanged_successor_carries_its_predecessor_and_a_changed_one_replaces_it() -> None:
-    codec, planner = _collaborators()
-    unchanged = lowering_support.case_named("txtime.unchanged.document.typed")
-    changed = lowering_support.case_named("txtime.changed.document.typed")
-    for case in (unchanged, changed):
-        observation = case.observation
-        assert isinstance(observation, TemporalObservation)
-        predecessor = observation.predecessor.document
-        (_close, _), (insert, _) = lowering_support.lowered(case, codec, planner)
+def test_an_unchanged_successor_writes_nothing_and_a_changed_one_replaces_it() -> None:
+    for ingress in lowering_support.INGRESSES:
+        unchanged = lowering_support.case_named(f"txtime.unchanged.document.{ingress}")
+        assert lowering_support.lowered(unchanged) == ()
+        changed = lowering_support.case_named(f"txtime.changed.document.{ingress}")
+        _close, insert = lowering_support.lowered(changed)
         (successor,) = _documents(insert.binds)
-        if case is unchanged:
-            assert successor == predecessor
-        else:
-            assert successor != predecessor
-            assert cast("Mapping[str, object]", successor)["title"] == "title-after"
+        assert successor != _stored_document(changed)
+        assert cast("Mapping[str, object]", successor)["title"] == "title-after"
 
 
 def test_a_bitemporal_interior_update_carries_head_and_tail_and_changes_the_middle() -> None:
-    codec, planner = _collaborators()
     for layout in lowering_support.LAYOUTS:
         case = lowering_support.case_named(f"bitemporal.interior.{layout}.typed")
-        _close, head, middle, tail = lowering_support.lowered(case, codec, planner)
+        _close, head, middle, tail = lowering_support.lowered(case)
         titles = [
             next(bind for bind in statement.binds if isinstance(bind, str) and "title" in bind)
             if layout == "columns"
             else cast("Mapping[str, object]", _documents(statement.binds)[0])["title"]
-            for statement, _ in (head, middle, tail)
+            for statement in (head, middle, tail)
         ]
         assert titles == ["title-before", "title-middle", "title-before"]
 
 
-def test_a_non_temporal_changed_update_revises_in_place_without_a_predecessor() -> None:
-    codec, planner = _collaborators()
+def test_a_non_temporal_changed_update_revises_the_row_it_read_in_place() -> None:
     for layout in lowering_support.LAYOUTS:
         case = lowering_support.case_named(f"plain.changed.{layout}.typed")
-        assert case.observation is None
-        ((statement, _),) = lowering_support.lowered(case, codec, planner)
+        assert case.stored is not None
+        (statement,) = lowering_support.lowered(case)
         assert statement.sql.startswith("update ")
 
 

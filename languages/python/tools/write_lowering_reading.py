@@ -4,9 +4,11 @@ This script is imported only by its gated suite. Report execution starts it in a
 child interpreter, where it drives one case through the production seams of its
 window and answers with one JSON line.
 
-Four windows are read. A keyed-write case runs from Typed or Wire input
-through preparation, settlement, SQL lowering, production bind adaptation, and
-psycopg's own document serialization. A predicate-acquisition case runs one
+Four windows are read. A keyed-write case reads its row inside one
+transaction and runs from the public keyed verb until ``transact`` returns:
+preparation, buffering, and the pre-commit flush's settlement, SQL lowering,
+production bind adaptation, and psycopg's own document serialization. A
+predicate-acquisition case runs one
 public ``tx.wire.update_until_where`` from the caller's documents through
 preparation and production acquisition over freshly composed resolving rows to a
 buffered Materialized Write Group, and stops before any flush. A public insert
@@ -18,9 +20,9 @@ whose variant spelling that preparation derives.
 
 Elapsed time and the high-water mark are read over uninterrupted runs of the
 whole window. The retained checkpoint is read separately, at the production
-stage each window names — the write prepared and settled, the group buffered,
-the node answered with its row buffered, the model prepared — so sampling never
-prolongs a lifetime inside a timed run.
+stage each window names — what the verb kept of its buffered write beyond the
+read it revises, the group buffered, the node answered with its row buffered,
+the model prepared — so sampling never prolongs a lifetime inside a timed run.
 """
 
 from __future__ import annotations
@@ -45,10 +47,9 @@ from parallax.core.document_codec._document import (
     encode_managed_document,
     encode_managed_many,
 )
-from parallax.core.entity import DomainModel, EntityRowCodec
-from parallax.core.unit_work import WritePlanner
+from parallax.core.entity import DomainModel
 from parallax.snapshot import prepare_model
-from parallax.snapshot.handle import ScopedDatabase, build_write_planner
+from parallax.snapshot.handle import ScopedDatabase
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
@@ -71,7 +72,13 @@ for module, expected in (
         raise ImportError(f"this reading requires {expected}, but resolved {module.__file__}")
 
 # E402 again, and imported below the guard proving each module is this workspace's own.
-from tests.unit.memory_instruments import WARMUP, retained, untraced  # noqa: E402
+from tests.unit.memory_instruments import (  # noqa: E402
+    WARMUP,
+    Seam,
+    retained,
+    retained_increment,
+    untraced,
+)
 
 type Window = Literal[
     "keyed-write", "predicate-acquisition", "wire-insert-response", "model-preparation"
@@ -97,7 +104,9 @@ OBSERVED_FUNCTIONS: Final[Mapping[str, Callable[..., object]]] = {
 }
 """Pass observations over the keyed-write window: returns of each named function
 per row, diagnostics that distinguish roots, nested values, and repeated calls,
-and gate nothing. The two managed encoders are observed at the private module
+and gate nothing. They are counted over exactly the region the window is timed
+over, from the verb to ``transact``'s return, so the read before it counts
+nothing. The two managed encoders are observed at the private module
 SQL lowering imports them from, so the count is of the code objects production
 runs: a nested document returns once per recursion, one Many return covers every
 element it encodes, a successor lowered as patches returns once per replaced
@@ -186,33 +195,31 @@ type Sampler = Callable[[], None]
 @dataclass(frozen=True, slots=True)
 class Driver:
     """One window's runs: an uninterrupted run, a run that marks the window's
-    two ends, and a run that samples at the retained checkpoint."""
+    two ends, and a run that samples at the retained checkpoint, beside the
+    instrument that reads that checkpoint."""
 
     units: int
     run: Callable[[], None]
     marked: Callable[[Sampler, Sampler], None]
     checkpoint: Callable[[Sampler], None]
+    kept: Callable[[Seam], int] = retained
 
 
-def _keyed_driver(case: lowering_support.Case) -> Driver:
-    codec = EntityRowCodec(lowering_support.CATALOG)
-    planner: WritePlanner = build_write_planner(lowering_support.CATALOG.meta)
-    units = len(case.values) if case.ingress == "typed" else len(case.wire_rows)
+def _keyed_driver(case: lowering_support.Case, handle: ScopedDatabase) -> Driver:
+    """A keyed write's runs. Its checkpoint samples twice, after the read and
+    after the verb has buffered, because the read the verb revises must stay
+    alive across it: what the verb kept is the difference."""
 
     def run() -> None:
-        lowering_support.lower(case, codec, planner)
+        lowering_support.write(handle, case)
 
     def marked(opened: Sampler, closed: Sampler) -> None:
-        opened()
-        lowering_support.lower(case, codec, planner)
-        closed()
+        lowering_support.write(handle, case, opened=opened, closed=closed)
 
     def checkpoint(sample: Sampler) -> None:
-        settled = lowering_support.settle(case, codec, planner)
-        sample()
-        assert settled.plan is not None
+        lowering_support.write(handle, case, opened=sample, buffered=sample)
 
-    return Driver(units, run, marked, checkpoint)
+    return Driver(1, run, marked, checkpoint, retained_increment)
 
 
 def _acquisition_driver(case: acquisition_support.Case, handle: ScopedDatabase) -> Driver:
@@ -266,7 +273,9 @@ def _model_driver(classes: Sequence[type[Entity]]) -> Driver:
 def driver_for(name: str) -> Generator[Driver]:
     window = WINDOWS[name]
     if window == KEYED_WINDOW:
-        yield _keyed_driver(lowering_support.case_named(name))
+        keyed = lowering_support.case_named(name)
+        with lowering_support.database(keyed) as handle:
+            yield _keyed_driver(keyed, handle)
         return
     if window == ACQUISITION_WINDOW:
         case = acquisition_support.case_named(name)
@@ -314,8 +323,17 @@ def _peak(driver: Driver) -> int:
 
 def _observed(driver: Driver) -> Observation:
     observer = Observer(OBSERVED_FUNCTIONS)
-    with observer:
-        driver.run()
+
+    def opened() -> None:
+        observer.__enter__()
+
+    def closed() -> None:
+        observer.__exit__(None, None, None)
+
+    try:
+        driver.marked(opened, closed)
+    finally:
+        observer.__exit__(None, None, None)
     return observer.observation()
 
 
@@ -348,7 +366,7 @@ def measure(name: str, *, warmups: int, measured: int) -> dict[str, object]:
             with untraced():
                 for _ in range(measured):
                     transient.append(_peak(driver))
-            kept = retained(driver.checkpoint)
+            kept = driver.kept(driver.checkpoint)
         finally:
             tracemalloc.stop()
 
