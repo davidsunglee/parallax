@@ -4,15 +4,15 @@ and per execution.
 Prepared exact-Entity layouts are shared rather than rebuilt per row, Page, or
 execution, while a query shape belongs to one execution and is not cached for a
 model's lifetime. This is the SIZE half of those constraints measured over the
-production materialization path, from ``prepare_model`` through ``compile_read``
-and ``bind`` to ``PreparedRead.convert_driver`` and conversion: what is retained
-must not grow with rows, with Pages, or with executions.
+production materialization path, from ``prepare_model`` through read planning
+to the Page build and its conversion: what is retained must not grow with rows,
+with Pages, or with executions.
 
 **Two axes, one claim each.** The first varies rows through one prepared
-selection, one set of compiled reads, and the levels bound from them: nothing
-prepared may grow with the rows materialized through it. The second varies whole
-executions — a fetch plan, its compiled reads, and a Page, each unreachable
-before the next begins — with only the prepared selection held: nothing
+selection and one read plan: nothing prepared may grow with the rows
+materialized through it. The second varies whole executions — a read plan and a
+Page, each unreachable before the next begins — with only the prepared selection
+held: nothing
 model-fixed may grow with Pages or with executions, which is what forbids a
 query shape retained PER EXECUTION.
 
@@ -74,11 +74,11 @@ from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
     OWNERS,
     Layout,
+    StressPort,
     batch,
     compiled_levels,
-    fetch_plan,
-    prepared_levels,
     query,
+    read_plan,
     rows_per_level,
     workload,
 )
@@ -148,9 +148,8 @@ def _rows(
     ``first`` makes a region's rows unseen: :data:`_UNSEEN` starts past every root
     any other reading converts, so its keys and authored strings reach conversion
     first inside the region."""
-    meta = model.meta
-    plan = fetch_plan(query(layout, meta), meta)
-    return rows_per_level(layout, model, plan, compiled_levels(layout, plan, meta), owners, first)
+    plan = read_plan(model, query(layout, model.meta))
+    return rows_per_level(layout, model, plan, compiled_levels(layout, plan), owners, first)
 
 
 def _root_only(rows: Sequence[Sequence[Row]]) -> tuple[tuple[Row, ...], ...]:
@@ -167,11 +166,11 @@ def _root_only(rows: Sequence[Sequence[Row]]) -> tuple[tuple[Row, ...], ...]:
 
 
 def _execute(layout: Layout, model: CatalogedModel, rows: Sequence[Sequence[Row]]) -> None:
-    """One whole execution: its own plan, its own compiled reads, its own
-    prepared reads, its own Page, none of which outlives this call."""
-    plan = fetch_plan(query(layout, model.meta), model.meta)
-    reads = compiled_levels(layout, plan, model.meta)
-    batch(model, plan, prepared_levels(model, reads), rows)
+    """One whole execution: its own read plan and its own Page, neither of which
+    outlives this call."""
+    validated = query(layout, model.meta)
+    plan = read_plan(model, validated)
+    batch(model, validated, plan, StressPort(compiled_levels(layout, plan), rows))
 
 
 def _generator(
@@ -183,9 +182,8 @@ def _generator(
     holder that keeps anything of them keeps bytes the reading counts. One root
     per run because the fixture generates every root before the one asked for,
     so what a run costs grows with how many roots every earlier run consumed."""
-    meta = model.meta
-    plan = fetch_plan(query(layout, meta), meta)
-    reads = compiled_levels(layout, plan, meta)
+    plan = read_plan(model, query(layout, model.meta))
+    reads = compiled_levels(layout, plan)
 
     def rows() -> tuple[tuple[Row, ...], ...]:
         return rows_per_level(layout, model, plan, reads, _ONE_ROOT, next(roots))
@@ -216,18 +214,17 @@ def _generating(layout: Layout) -> Seam:
 
 
 def _converting_unseen_rows(layout: Layout) -> Seam:
-    """One prepared selection and one set of compiled and bound reads, each run
-    converting the next unseen root's rows into a Page it releases before the
-    sample."""
+    """One prepared selection and one read plan, each run converting the next
+    unseen root's rows into a Page it releases before the sample."""
     selection = _prepared(layout)
     model = _catalog(selection)
-    meta = model.meta
-    plan = fetch_plan(query(layout, meta), meta)
-    prepared = prepared_levels(model, compiled_levels(layout, plan, meta))
+    validated = query(layout, model.meta)
+    plan = read_plan(model, validated)
+    reads = compiled_levels(layout, plan)
     unseen = _unseen(layout, model)
 
     def seam(sample: Callable[[], None]) -> None:
-        batch(model, plan, prepared, unseen())
+        batch(model, validated, plan, StressPort(reads, unseen()))
         sample()
 
     return seam
@@ -235,8 +232,8 @@ def _converting_unseen_rows(layout: Layout) -> Seam:
 
 def _executing_over_unseen_rows(layout: Layout) -> Seam:
     """One prepared selection, each run resolving one whole execution through it
-    — its own fetch plan, its own compiled and bound reads, and its own sealed
-    Page, none of which outlives it — over the next unseen root."""
+    — its own read plan and its own sealed Page, neither of which outlives it —
+    over the next unseen root."""
     selection = _prepared(layout)
     model = _catalog(selection)
     unseen = _unseen(layout, model)
@@ -259,26 +256,30 @@ def _settled() -> None:
 
 
 def _held_after_rows(layout: Layout, owners: int) -> tuple[Closure, Closure]:
-    """What the compiled reads and the prepared reads bound from them hold of
-    their own, and what the whole prepared selection does, once ``owners`` roots
-    have been materialized through them."""
+    """What the read plan holds of its own, and what the whole prepared selection
+    does, once ``owners`` roots have been materialized through them."""
     selection = _prepared(layout)
     model = _catalog(selection)
     meta = model.meta
-    plan = fetch_plan(query(layout, meta), meta)
-    reads = compiled_levels(layout, plan, meta)
-    prepared = prepared_levels(model, reads)
-    batch(model, plan, prepared, _rows(layout, model, owners))
+    validated = query(layout, meta)
+    plan = read_plan(model, validated)
+    reads = compiled_levels(layout, plan)
+    batch(
+        model,
+        validated,
+        plan,
+        StressPort(reads, rows_per_level(layout, model, plan, reads, owners)),
+    )
     _settled()
-    return closure((reads, prepared), (meta, selection, model, plan)), closure(
+    return closure(plan, (meta, selection, model, validated)), closure(
         selection, _boundary(layout, selection)
     )
 
 
 def _held_after_executions(layout: Layout, executions: int) -> Closure:
     """What the prepared selection holds once ``executions`` whole executions —
-    each with its own fetch plan, its own compiled and bound reads, and its own
-    sealed Page — have resolved through it and been discarded."""
+    each with its own read plan and its own sealed Page — have resolved through
+    it and been discarded."""
     selection = _prepared(layout)
     model = _catalog(selection)
     rows = _root_only(_rows(layout, model, _ONE_ROOT))
@@ -307,8 +308,8 @@ def _retains_nothing(seam: Seam, layout: Layout) -> None:
 @in_a_child_interpreter
 def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
     # What preparation holds is fixed by the model's exact Entity layouts and by
-    # the compiled reads it bound its levels from: eight times the rows through
-    # one prepared read must leave the prepared side holding the same objects
+    # the read plan that compiled and bound its levels: eight times the rows
+    # through one read plan must leave the prepared side holding the same objects
     # through the same references, and a root's rows this process has never
     # decoded must leave no byte of their conversion reachable once their Page
     # is gone. A per-row shape, dispatch table, or classified-key set
@@ -316,10 +317,10 @@ def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
     # container neither of them reaches — keyed by what the row holds, so it
     # never grows again once the same rows come back — would move the bytes.
     for layout in LAYOUTS:
-        one_reads, one_prepared = _held_after_rows(layout, _ONE_ROOT)
-        many_reads, many_prepared = _held_after_rows(layout, OWNERS)
-        assert one_reads.tracked > 0 and one_reads.references > 0, layout
-        assert one_reads == many_reads, layout
+        one_plan, one_prepared = _held_after_rows(layout, _ONE_ROOT)
+        many_plan, many_prepared = _held_after_rows(layout, OWNERS)
+        assert one_plan.tracked > 0 and one_plan.references > 0, layout
+        assert one_plan == many_plan, layout
         assert one_prepared == many_prepared, layout
     for layout in LAYOUTS:
         _retains_nothing(_converting_unseen_rows(layout), layout)
