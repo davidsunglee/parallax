@@ -54,6 +54,14 @@ WARMUPS: Final = 3
 MEASURED: Final = 9
 ENVIRONMENT_NAMESPACE: Final = "write-lowering"
 CALL_NAMES: Final = (
+    "occurrenceShape",
+    "encodeManagedDocument",
+    "encodeManagedMany",
+    "applyPatches",
+    "detachJsonContainer",
+)
+"""The pass observations a keyed-write child answers, exactly and only."""
+MANAGED_CALL_NAMES: Final = (
     "shapeOfDeclaration",
     "entityShape",
     "occurrenceShape",
@@ -62,7 +70,11 @@ CALL_NAMES: Final = (
     "applyPatches",
     "detachJsonContainer",
 )
-"""The pass observations a keyed-write child answers, exactly and only."""
+"""The vocabulary captures were taken under while the document codec still
+exported ``shape_of_declaration`` and ``entity_shape``; the unified write path
+reached neither, so both counters read zero there and the current vocabulary
+drops them. A historical envelope verifies against this vocabulary whole, and a
+child answering it is refused."""
 LEGACY_CALL_NAMES: Final = (
     "shapeOfDeclaration",
     "entityShape",
@@ -74,11 +86,12 @@ LEGACY_CALL_NAMES: Final = (
 )
 """The vocabulary the retained captures were taken under. ``encodeDocument`` and
 ``encodeMany`` counted a second, presence-driven document encoder the unified
-write path does not run; the current names count the managed encoders it does.
+write path does not run; the managed names count the managed encoders it does.
 A historical envelope verifies against this vocabulary whole, and a child
 answering it is refused."""
 CALL_VOCABULARIES: Final[Mapping[str, tuple[str, ...]]] = {
     "current": CALL_NAMES,
+    "managed": MANAGED_CALL_NAMES,
     "legacy": LEGACY_CALL_NAMES,
 }
 """Every complete counter vocabulary a write-lowering envelope may carry, by

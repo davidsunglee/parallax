@@ -88,8 +88,6 @@ RETAINED_WARMUPS: Final = WARMUP
 
 _MONITORING_TOOL_IDS: Final = range(6)
 OBSERVED_FUNCTIONS: Final[Mapping[str, Callable[..., object]]] = {
-    "shapeOfDeclaration": document_codec.shape_of_declaration,
-    "entityShape": document_codec.entity_shape,
     "occurrenceShape": document_codec.occurrence_shape,
     "encodeManagedDocument": encode_managed_document,
     "encodeManagedMany": encode_managed_many,

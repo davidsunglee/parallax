@@ -304,23 +304,27 @@ retained by the fixture modules and are outside every window.
   document counts once per recursive return, one `encodeManagedMany` return
   covers every element it encodes, a successor lowered as patches over its
   retained predecessor pays managed encodings only for the subtrees it
-  replaces, and an unchanged successor pays none. Two vocabularies exist and a
+  replaces, and an unchanged successor pays none. Three vocabularies exist and a
   capture carries exactly one of them whole. `before/` and `after/` carry the legacy names frozen with
   the manifest, `encodeDocument` and `encodeMany`, which count the source
   codec's `encode_document` and `encode_many`; the unified write path no longer
   reaches those functions, so both cells read zero at `after/` and say nothing
-  about how many encodings a row pays there. Every later capture carries the
-  current names, `encodeManagedDocument` and `encodeManagedMany`, which count
-  the managed encoders `encode_managed_document` and `encode_managed_many` that
-  the unified path does run, observed at the private module SQL lowering
-  imports them from. The two pairs are different functions under different
-  names: `--compare` leaves a renamed counter unmatched on each side rather than
+  about how many encodings a row pays there. `recovered/` carries the managed
+  names, `encodeManagedDocument` and `encodeManagedMany`, which count the
+  managed encoders `encode_managed_document` and `encode_managed_many` that the
+  unified path does run, observed at the private module SQL lowering imports
+  them from. The two pairs are different functions under different names:
+  `--compare` leaves a renamed counter unmatched on each side rather than
   aliasing it or reading a historical zero as a count of anything, while every
-  timing and memory address pairs as before. `applyPatches` and
-  `detachJsonContainer` count what they name under both vocabularies.
+  timing and memory address pairs as before. Both of those vocabularies also
+  carry `shapeOfDeclaration` and `entityShape`, which counted document-codec
+  functions the write path never reached and which no longer exist; every
+  later capture carries the current vocabulary, the managed names without
+  those two. `occurrenceShape`, `applyPatches`, and `detachJsonContainer`
+  count what they name under every vocabulary.
   `cost_report.py --verify` accepts a write-lowering matrix only under one
   whole vocabulary across every keyed case and runtime; a mixture is not exact
-  under either, and a live child answering the legacy names is refused.
+  under any, and a live child answering a historical vocabulary is refused.
 - Timing is machine- and interpreter-relative and is compared only between
   captures taken on the same runner with the same protocol.
 - Json-leaf payload size and malformed-read evidence volume are not dimensions

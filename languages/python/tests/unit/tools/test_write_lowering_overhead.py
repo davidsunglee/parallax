@@ -158,34 +158,48 @@ def test_a_changed_ancestor_patches_one_root_leaf_and_carries_every_other_member
         assert cast("Mapping[str, object]", successor)["items"] == predecessor["items"]
 
 
-def test_the_two_counter_vocabularies_differ_only_in_the_renamed_encoders() -> None:
+def test_the_counter_vocabularies_differ_only_in_the_retired_and_renamed_counters() -> None:
     assert report.CALL_VOCABULARIES == {
         "current": report.CALL_NAMES,
+        "managed": report.MANAGED_CALL_NAMES,
         "legacy": report.LEGACY_CALL_NAMES,
     }
-    assert len(report.CALL_NAMES) == len(set(report.CALL_NAMES)) == 7
+    assert len(report.CALL_NAMES) == len(set(report.CALL_NAMES)) == 5
+    assert len(report.MANAGED_CALL_NAMES) == len(set(report.MANAGED_CALL_NAMES)) == 7
     assert len(report.LEGACY_CALL_NAMES) == len(set(report.LEGACY_CALL_NAMES)) == 7
-    assert set(report.CALL_NAMES) - set(report.LEGACY_CALL_NAMES) == {
+    assert set(report.MANAGED_CALL_NAMES) - set(report.CALL_NAMES) == {
+        "shapeOfDeclaration",
+        "entityShape",
+    }
+    assert set(report.CALL_NAMES) <= set(report.MANAGED_CALL_NAMES)
+    assert set(report.MANAGED_CALL_NAMES) - set(report.LEGACY_CALL_NAMES) == {
         "encodeManagedDocument",
         "encodeManagedMany",
     }
-    assert set(report.LEGACY_CALL_NAMES) - set(report.CALL_NAMES) == {
+    assert set(report.LEGACY_CALL_NAMES) - set(report.MANAGED_CALL_NAMES) == {
         "encodeDocument",
         "encodeMany",
     }
     keyed = [case.name for case in lowering_support.CASES]
     current = report.expected_addresses(("3.14",))
+    managed = report.expected_addresses(("3.14",), report.MANAGED_CALL_NAMES)
     legacy = report.expected_addresses(("3.14",), report.LEGACY_CALL_NAMES)
     assert current == report.expected_addresses(("3.14",), report.CALL_NAMES)
-    assert {address for address in current if not address[2].startswith("calls.")} == {
-        address for address in legacy if not address[2].startswith("calls.")
+    uncounted = {address for address in current if not address[2].startswith("calls.")}
+    assert uncounted == {address for address in managed if not address[2].startswith("calls.")}
+    assert uncounted == {address for address in legacy if not address[2].startswith("calls.")}
+    assert managed - current == {
+        ("3.14", case, f"calls.{name}")
+        for case in keyed
+        for name in ("shapeOfDeclaration", "entityShape")
     }
-    assert current - legacy == {
+    assert current < managed
+    assert managed - legacy == {
         ("3.14", case, f"calls.{name}")
         for case in keyed
         for name in ("encodeManagedDocument", "encodeManagedMany")
     }
-    assert legacy - current == {
+    assert legacy - managed == {
         ("3.14", case, f"calls.{name}")
         for case in keyed
         for name in ("encodeDocument", "encodeMany")
@@ -377,6 +391,7 @@ def test_child_output_decodes_from_its_final_line() -> None:
         {"calls": {}},
         {"calls": {**dict.fromkeys(report.CALL_NAMES, 1.0), "extra": 1.0}},
         {"calls": dict.fromkeys(report.LEGACY_CALL_NAMES, 1.0)},
+        {"calls": dict.fromkeys(report.MANAGED_CALL_NAMES, 1.0)},
         {"calls": dict.fromkeys((*report.CALL_NAMES, *report.LEGACY_CALL_NAMES), 1.0)},
         {"calls": {name: 1.0 for name in report.CALL_NAMES if name != "encodeManagedMany"}},
         {"warmups": report.WARMUPS + 1},

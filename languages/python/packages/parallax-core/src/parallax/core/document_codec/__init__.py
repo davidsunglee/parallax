@@ -31,9 +31,7 @@ from parallax.core.document_codec._shape import (
     Missing,
     Occurrence,
     Present,
-    entity_shape,
     occurrence_shape,
-    shape_of_declaration,
 )
 
 __all__ = [
@@ -60,12 +58,10 @@ __all__ = [
     "decode_occurrence_classified",
     "encode_leaf",
     "encode_occurrence",
-    "entity_shape",
     "is_text_compared",
     "locate_raw_entity_member",
     "occurrence_shape",
     "prepare_effective_change",
     "prepared_raw_member_classifier",
     "reduce_declared_members",
-    "shape_of_declaration",
 ]
