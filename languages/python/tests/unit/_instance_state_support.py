@@ -483,7 +483,7 @@ def compact_publication(scenario: Scenario, state: object | None) -> object:
     step with production, because it IS production — which is the half of the
     comparison the legacy arm cannot be.
     """
-    construction = graph_construction_for(scenario.model)
+    construction = scenario.construction
     entity = scenario.entity
     members = scenario.values
     relationships = scenario.unloaded
@@ -602,7 +602,7 @@ def compact_graph(scenario: Scenario, count: int) -> tuple[object, ...]:
     state per node, so the only thing that varies with ``count`` is how many
     nodes one call's scaffolding is spread over.
     """
-    construction = graph_construction_for(scenario.model)
+    construction = scenario.construction
     entity = scenario.entity
     members = scenario.values
     relationships = scenario.unloaded
@@ -692,7 +692,7 @@ def compact_common_work_ns(scenario: Scenario, count: int) -> float:
     the residue is this figure subtracted from a timing of :func:`compact_graph`,
     so only what is counted INTO it can move the correction.
     """
-    construction = graph_construction_for(scenario.model)
+    construction = scenario.construction
     entity = scenario.entity
     members = scenario.values
     relationships = scenario.unloaded
