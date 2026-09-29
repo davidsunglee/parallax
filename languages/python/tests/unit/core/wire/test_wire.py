@@ -255,13 +255,14 @@ _FAR_WEST = dt.timezone(dt.timedelta(hours=-14))
         ),
     ],
 )
-def test_a_timestamp_spells_its_utc_instant_exactly_as_strftime_does(
+def test_a_timestamp_spells_its_utc_instant_canonically_and_decodes_back(
     instant: dt.datetime, canonical: str
 ) -> None:
-    utc = instant.astimezone(dt.UTC)
-    assert dt.datetime.strftime(utc, "%Y-%m-%dT%H:%M:%S.%f") + "Z" == canonical
+    # The canonical year is always four digits; strftime's %Y does not pad years
+    # before 1000 on every platform, so it is not the reference here.
     assert wire.encode_wire(TIMESTAMP, instant) == canonical
     assert wire_codec.encode_managed_wire(TIMESTAMP, instant) == canonical
+    assert wire.decode_canonical_wire(TIMESTAMP, canonical) == instant
 
 
 @pytest.mark.parametrize(
