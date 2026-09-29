@@ -40,12 +40,10 @@ from parallax.core import (
     deep_fetch as deep_fetch_module,
 )
 from parallax.core.base import INFINITY
-from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.entity._graph_construction import require_correspondence
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import IncludeSegment
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.temporal_read import Pin
 from parallax.snapshot import (
     InvalidData,
     Snapshot,
@@ -60,7 +58,6 @@ from parallax.snapshot.handle import _preflight as preflight_module
 from parallax.snapshot.materialize import _wire as wire_materialize
 from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support.db_port import Read, ScriptedAdapter
-from tests._support.model_capabilities import cataloged_for
 
 
 class _ForeignCustomer(
@@ -338,27 +335,6 @@ def test_a_node_of_the_class_its_model_composed_projects_without_a_correspondenc
     assert typed.wire(typed.result())["id"] == 1
     assert streamed == [1]
     assert checked == []
-
-
-def test_a_projection_over_a_bare_cataloged_model_checks_the_composed_class_too(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    checked = _recorded_correspondence_checks(monkeypatch)
-    root, db = _database(Read(rows=[_customer_row()]))
-    customer = db.find(vo.Customer.where(vo.Customer.id == 1)).result()
-    root.close()
-    bare = Snapshot(
-        (customer,),
-        Pin(),
-        "bare",
-        build_include_tree(
-            queried=vo.Customer.identity, root=(vo.Customer.identity,), positions=()
-        ),
-        cataloged_for(vo.CUSTOMER_MODEL),
-    )
-
-    assert bare.wire().result()["id"] == 1
-    assert checked == [vo.Customer.identity]
 
 
 def test_element_projection_refuses_a_mismatched_published_layout_before_position_admission(

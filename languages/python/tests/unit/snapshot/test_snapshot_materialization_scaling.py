@@ -356,19 +356,19 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
     scope = root.using_database_login()
     result = scope.find(control_support.guarded_query(control_support.GUARD_WIDTHS[-1]))
     held = cast("Any", result)
-    model = held._projection_model
+    construction = held._construction
     includes = held._includes
     root.close()
     del root, scope
     gc.collect()
     gc.collect()
 
-    assert model is not None and includes is not None
+    assert construction is not None and includes is not None
     direct = gc.get_referents(result)
-    assert any(value is model for value in direct)
+    assert any(value is construction for value in direct)
     assert any(value is includes for value in direct)
 
-    reached = reachable_objects(result, boundaries=(model, includes))
+    reached = reachable_objects(result, boundaries=(construction, includes))
     kinds: tuple[tuple[type, str], ...] = (
         (Snapshot, "snapshot"),
         (Entity, "entity"),
@@ -388,8 +388,8 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
     }
 
     def category(value: object) -> str:
-        if value is model:
-            return "model"
+        if value is construction:
+            return "construction"
         if value is includes:
             return "includes"
         if value is UNLOADED:
@@ -409,7 +409,7 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
     assert unexpected == {}
     assert inventory == {
         "snapshot": 1,
-        "model": 1,
+        "construction": 1,
         "includes": 1,
         "entity": 97,
         "node-state": 97,
