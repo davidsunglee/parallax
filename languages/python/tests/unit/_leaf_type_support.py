@@ -67,6 +67,7 @@ from parallax.core.entity import model_of
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.storage_layout import view as storage_layout_view
 from tests._support.db_port import ConnectsAsItself, projected_rows
+from tests.unit._workload_spelling_support import LEAF_PREFIX, leaf_value
 
 __all__ = [
     "ACQUIRED_TYPES",
@@ -76,7 +77,6 @@ __all__ = [
     "MEASURED_TYPES",
     "MODEL",
     "READ_GROUP",
-    "READ_PREFIX",
     "WIRE_INSERTED_TYPES",
     "Layout",
     "LeafPort",
@@ -100,8 +100,6 @@ LEVEL: Final[GeometryLevel] = leaf_type_level()
 
 READ_GROUP: Final = "leaf"
 """The name the Snapshot report selects every leaf-type read by."""
-READ_PREFIX: Final = "leaf-"
-"""What every leaf-type read workload is named with, ahead of its type id."""
 
 _NAMESPACE: Final = "structural.leaf"
 _MANY: Final = "items"
@@ -111,12 +109,6 @@ if LEVEL.depth != 1 or LEVEL.populated != LEVEL.width:
     raise ValueError(
         f"{LEVEL.id}: a leaf-type level is one root occurrence with every leaf populated"
     )
-
-
-def _string(index: int, key: int) -> str:
-    """Spelled as the geometry families spell every leaf, so the geometry read
-    of this level is the String control."""
-    return f"{index:03d}-{key:08d}"
 
 
 def _decimal_tenths(index: int, key: int) -> float:
@@ -258,7 +250,7 @@ class LeafType:
 _LEAF_TYPES: Final[Mapping[str, LeafType]] = {
     leaf.id: leaf
     for leaf in (
-        LeafType("string", str, None, _string, _string),
+        LeafType("string", str, None, leaf_value, leaf_value),
         LeafType("boolean", bool, None, _boolean, _boolean),
         LeafType("int32", int, lambda: attr(type=Int32), _int32, _int32),
         LeafType("int64", int, None, _int64, _int64),
@@ -452,14 +444,14 @@ def stored_row(entity: type[Entity], key: int) -> dict[str, object]:
 
 def read_workload(leaf: LeafType) -> str:
     """The Snapshot workload a read of ``leaf`` is reported under."""
-    return f"{READ_PREFIX}{leaf.id}"
+    return f"{LEAF_PREFIX}{leaf.id}"
 
 
 def read_address(workload: str) -> LeafType | None:
     """The leaf type a read workload names, or absence for any other workload."""
-    if not workload.startswith(READ_PREFIX):
+    if not workload.startswith(LEAF_PREFIX):
         return None
-    leaf = leaf_type_named(workload.removeprefix(READ_PREFIX))
+    leaf = leaf_type_named(workload.removeprefix(LEAF_PREFIX))
     if leaf not in MEASURED_TYPES:
         raise KeyError(f"{workload} is not a measured leaf-type read")
     return leaf

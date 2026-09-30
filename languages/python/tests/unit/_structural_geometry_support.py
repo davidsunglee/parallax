@@ -48,6 +48,7 @@ from parallax.core.entity import model_of
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.storage_layout import view as storage_layout_view
 from tests._support.db_port import ConnectsAsItself, projected_rows
+from tests.unit._workload_spelling_support import leaf_value
 
 __all__ = [
     "ANCESTOR_LEVELS",
@@ -61,7 +62,6 @@ __all__ = [
     "Layout",
     "entity_class",
     "instance",
-    "leaf_value",
     "level_named",
     "read_query",
     "shape_of",
@@ -234,12 +234,6 @@ def entity_class(level: GeometryLevel, layout: Layout) -> type[Entity]:
 def successor_class(level: GeometryLevel, layout: Layout) -> type[Entity]:
     """The Transaction-Time-Only Entity ``level``'s changed-ancestor case writes."""
     return SUCCESSOR_ENTITIES[(level.depth, level.width)][layout]
-
-
-def leaf_value(index: int, key: int) -> str:
-    """Leaf ``index`` of the occurrence keyed ``key``, fixed-width so two
-    values of one level weigh the same."""
-    return f"{index:03d}-{key:08d}"
 
 
 _CHANGED_LEAF_KEY: Final = 1_000_000
