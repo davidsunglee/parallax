@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.conformance.budget import MemoryGate, MemoryGates, ScalingDomain
+from parallax.conformance.workloads import LEAF_TYPE_IDS
 from tests.unit._workload_spelling_support import (
     GEOMETRY_PREFIX,
     GUARDED_PREFIX,
@@ -27,7 +28,7 @@ from tests.unit._workload_spelling_support import (
     PLAN_PREFIX,
 )
 
-__all__ = ["OWNERS", "GateOwner", "owner_of", "unowned_gates"]
+__all__ = ["LEAF_READ_OWNERS", "OWNERS", "GateOwner", "owner_of", "unowned_gates"]
 
 WRITE_SUBJECT: Final = "write-lowering"
 SNAPSHOT_SUBJECT: Final = "snapshot-delivery"
@@ -76,6 +77,19 @@ def _prefixed(*prefixes: str) -> Callable[[str], bool]:
 def _exactly(*names: str) -> Callable[[str], bool]:
     return lambda workload: workload in names
 
+
+LEAF_READ_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
+    GateOwner(
+        SNAPSHOT_MODULE,
+        f"test_the_{type_id}_leaf_reads_stay_within_their_memory_gates",
+        SNAPSHOT_SUBJECT,
+        _exactly(f"{LEAF_PREFIX}{type_id}"),
+    )
+    for type_id in LEAF_TYPE_IDS
+)
+"""One owner per measured leaf type, so the costliest read family spreads over
+as many cost items as it has types instead of weighing on one shard; the gate
+module defines each owner's test from this table."""
 
 OWNERS: Final[tuple[GateOwner, ...]] = (
     GateOwner(
@@ -138,12 +152,7 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
         SNAPSHOT_SUBJECT,
         _prefixed(f"{GEOMETRY_PREFIX}width-", f"{GEOMETRY_PREFIX}sparse-"),
     ),
-    GateOwner(
-        SNAPSHOT_MODULE,
-        "test_the_leaf_type_reads_stay_within_their_memory_gates",
-        SNAPSHOT_SUBJECT,
-        _prefixed(LEAF_PREFIX),
-    ),
+    *LEAF_READ_OWNERS,
     GateOwner(
         SNAPSHOT_MODULE,
         "test_the_cold_read_plans_stay_within_their_memory_gates",
