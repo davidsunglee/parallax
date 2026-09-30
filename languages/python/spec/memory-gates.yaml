@@ -452,7 +452,7 @@ gates:
     plan-depth-8:
       columns.peakKiB: { unit: KiB, maxBytes: 23660 }
       columns.retainedKiB: { unit: KiB, maxBytes: 16876 }
-      document.peakKiB: { unit: KiB, maxBytes: 23840 }
+      document.peakKiB: { unit: KiB, maxBytes: 23844 }
       document.retainedKiB: { unit: KiB, maxBytes: 17059 }
     plan-width-64:
       columns.peakKiB: { unit: KiB, maxBytes: 23661 }
@@ -514,10 +514,10 @@ gates:
       document.peakKiB: { unit: KiB, maxBytes: 938958 }
       document.retainedKiB: { unit: KiB, maxBytes: 313122 }
     leaf-timestamp:
-      columns.peakKiB: { unit: KiB, maxBytes: 1051688 }
-      columns.retainedKiB: { unit: KiB, maxBytes: 341110 }
-      document.peakKiB: { unit: KiB, maxBytes: 1055921 }
-      document.retainedKiB: { unit: KiB, maxBytes: 341550 }
+      columns.peakKiB: { unit: KiB, maxBytes: 1077648 }
+      columns.retainedKiB: { unit: KiB, maxBytes: 341275 }
+      document.peakKiB: { unit: KiB, maxBytes: 1081936 }
+      document.retainedKiB: { unit: KiB, maxBytes: 341330 }
     leaf-uuid:
       columns.peakKiB: { unit: KiB, maxBytes: 1440698 }
       columns.retainedKiB: { unit: KiB, maxBytes: 361909 }
