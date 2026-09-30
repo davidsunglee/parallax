@@ -199,9 +199,15 @@ def test_the_width_and_sparse_reads_stay_within_their_memory_gates() -> None:
     )
 
 
-@in_a_child_interpreter
-def test_the_leaf_type_reads_stay_within_their_memory_gates() -> None:
-    _within_gates(gate_support.owner_of(test_the_leaf_type_reads_stay_within_their_memory_gates))
+def _leaf_type_reads(owner: gate_support.GateOwner) -> Callable[[], None]:
+    def reads() -> None:
+        _within_gates(owner)
+
+    reads.__name__ = reads.__qualname__ = owner.test
+    return in_a_child_interpreter(reads)
+
+
+globals().update({owner.test: _leaf_type_reads(owner) for owner in gate_support.LEAF_READ_OWNERS})
 
 
 @in_a_child_interpreter
