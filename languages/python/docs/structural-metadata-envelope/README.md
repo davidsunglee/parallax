@@ -1240,7 +1240,8 @@ stopped, and no process was above 20% of one core before the run. It did not
 stay idle: `spotlightknowledged`, a macOS Spotlight process, started at
 05:59:54, 17 minutes in, and held one core at about 100% until past the end,
 so every reading from the 3.14 `duplicate-include` workload onward was taken
-beside it (*Against COR-178's capture* reads its effect). Of the collection
+beside it (*Against COR-178's capture* reads its effect); the capture is
+accepted as the basis with it. Of the collection
 span, snapshot-delivery took 2937.5 s (1297.6 s of it the leaf-type reads on
 3.14), write-lowering 331.2 s, instance-state 15.1 s, and lifecycle-overhead
 12.7 s.
@@ -1376,7 +1377,8 @@ the outgoing capture's to the byte. The 39 byte readings that moved:
   them. The streamed page-1 peaks rose with the child change where the two
   trees separate: `document-heavy` on 3.13 by 5.7% (57.2 to 60.5 KiB; the pair
   +8.7%, disjoint) and `bitemporal-current` on 3.14 by 8.5% (40.5 to 43.9 KiB;
-  the pair +5.8%, disjoint). `versioned-document`'s 3.13 page-1 peak reads
+  the pair +5.8%, disjoint). Both rises are accepted into this baseline.
+  `versioned-document`'s 3.13 page-1 peak reads
   +25.9% (27.9 to 35.1 KiB), but both trees read it at 31–35 KiB, so the
   outgoing reading was the low one. The rest move by less than the 3%
   allowance or, for `bitemporal-current`, within the spread seven readings of
@@ -1415,7 +1417,8 @@ scripts and readings are kept outside Git at
   disjoint. On 3.14 the pair reads +0.2%. It is the lean child's, not
   production's; a plausible reading is that 3.13's full collections, whose
   trigger scales with the tracked heap, now run more often during a
-  2,000-root Typed delivery. Timing is never gated.
+  2,000-root Typed delivery. Timing is never gated, and it is accepted into
+  this baseline.
 - The rest reproduce on neither tree. 3.14's `conventional-fanout` provider-free
   CPU cells (+6.2% to +7.3%), `versioned-document` live and first-result cells
   (+7.0% to +10.6%), `bitemporal-current` and `duplicate-include` rate floors
@@ -1423,7 +1426,8 @@ scripts and readings are kept outside Git at
   Document read (+7.4%) all read back within about 2% of the outgoing capture
   on both trees. `control-delivery-duplicate-include` `typed.eager.roots2000`
   on 3.14 (+11.2%) read 207 ms in one of three reruns with the lean child and
-  none of three without it, and is recorded here unattributed. All but the
+  none of three without it, and is accepted into this baseline unattributed.
+  All but the
   provider-free CPU cells were taken while `spotlightknowledged` held a core;
   the family medians taken beside it — write-lowering, and 3.14's geometry
   reads and cold plans — moved 1.1% or less.
@@ -1431,7 +1435,8 @@ scripts and readings are kept outside Git at
   on pydantic models, `legacy` and `ordinary`, on both runtimes. On 3.14, three
   runs under the locked pydantic 2.14.0b2 against three under 2.13.5 with
   pydantic-core 2.46.5 reproduce it (+6.4% and +6.8%, disjoint) and put
-  `legacy.constructNs` 0.9–3.1% slower; the `compact` lane does not move. Its
+  `legacy.constructNs` 0.9–3.1% slower; the `compact` lane does not move. It
+  is accepted into this baseline. Its
   other nanosecond and ratio cells move in both directions between runtimes,
   and its `callNs`, `scaffoldingNs` and `unreproducedNs` cells are differences
   of two timings.
