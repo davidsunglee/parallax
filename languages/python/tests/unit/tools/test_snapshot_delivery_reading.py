@@ -155,7 +155,9 @@ snapshot_delivery_reading.main(sys.argv[1:])
 print(" ".join(sorted(
     name.removeprefix("tests.unit.")
     for name, module in sys.modules.items()
-    if name.startswith("tests.unit._") and type(module) is ModuleType
+    if name.startswith("tests.unit._")
+    and name != "tests.unit._workload_spelling_support"
+    and type(module) is ModuleType
 )))
 """
 

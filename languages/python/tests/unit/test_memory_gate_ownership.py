@@ -15,6 +15,7 @@ from parallax.conformance.budget import BYTE_UNITS, GATED_WINDOWS, BudgetContrac
 from tests.unit import _delivery_control_support as control_support
 from tests.unit import _memory_gate_support as gate_support
 from tests.unit._session_selection_support import WHOLE_CLASS, selections
+from tests.unit._workload_spelling_support import CONTROL_PREFIX
 
 
 @pytest.mark.usefixtures("committed_cost_evidence")
@@ -95,7 +96,7 @@ def test_every_claimed_control_address_is_a_cold_plan_reading() -> None:
     claimed = [
         (workload, cell)
         for subject, workload, cell in _gated_by_the_instruments()
-        if workload.startswith(control_support.CONTROL_PREFIX)
+        if workload.startswith(CONTROL_PREFIX)
         and any(
             owner.subject == subject and owner.selects(workload) for owner in gate_support.OWNERS
         )

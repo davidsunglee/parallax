@@ -96,14 +96,17 @@ for module, expected_file in ((control_support, CONTROL_MODULE), (leaf_support, 
             f"this report expands its matrix from {expected_file}, but resolved {module.__file__}"
         )
 
+from tests.unit._workload_spelling_support import (  # noqa: E402
+    CONTROL_PREFIX,
+    GEOMETRY_PREFIX,
+    LEAF_PREFIX,
+    PLAN_PREFIX,
+)
+
 SUBJECT: Final = "snapshot-delivery"
 ENVIRONMENT_NAMESPACE: Final = "snapshot-delivery"
 GEOMETRY_METRICS: Final = ("elapsedUsPerRoot", "peakKiB", "retainedKiB")
 PLAN_METRICS: Final = ("elapsedUs", "peakKiB", "retainedKiB")
-GEOMETRY_PREFIX: Final = "read-"
-PLAN_PREFIX: Final = "plan-"
-LEAF_PREFIX: Final = leaf_support.READ_PREFIX
-CONTROL_PREFIX: Final = control_support.CONTROL_PREFIX
 LIVE_WINDOW: Final = "live-delivery"
 PROVIDER_FREE_WINDOW: Final = "provider-free-delivery"
 STRESS_WINDOW: Final = "positional-materialization"

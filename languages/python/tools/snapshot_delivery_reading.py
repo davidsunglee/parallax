@@ -71,6 +71,12 @@ if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
     )
 
 from tests._support.db_port import projected_rows  # noqa: E402
+from tests.unit._workload_spelling_support import (  # noqa: E402
+    CONTROL_PREFIX,
+    GEOMETRY_PREFIX,
+    LEAF_PREFIX,
+    PLAN_PREFIX,
+)
 
 # E402 again, and imported below the guard proving the module is this workspace's own.
 from tests.unit.memory_instruments import Seam, retained, untraced  # noqa: E402
@@ -111,12 +117,8 @@ else:
     geometry_support = _deferred("_structural_geometry_support")
 
 PROVIDER_FREE_IDS: Final = frozenset({"conventional-fanout", "duplicate-include"})
-GEOMETRY_PREFIX: Final = "read-"
 GEOMETRY_METRICS: Final = ("elapsedUsPerRoot", "peakKiB", "retainedKiB")
-PLAN_PREFIX: Final = "plan-"
 PLAN_METRICS: Final = ("elapsedUs", "peakKiB", "retainedKiB")
-LEAF_PREFIX: Final = "leaf-"
-CONTROL_PREFIX: Final = "control-"
 PLAN_EDITION: Final = "snapshot-delivery-report"
 STREAMED_RETAINED_PAGE_SIZE: Final = 128
 """The page size a ``streamedMemory.retainedKiB`` reading drains at: the largest
