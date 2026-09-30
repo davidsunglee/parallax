@@ -46,6 +46,7 @@ from typing import Any, Final, Literal, cast
 from parallax.conformance.workloads import (
     LEAF_CONTROL_TYPE_ID,
     LEAF_TYPE_IDS,
+    STRUCTURAL_LAYOUTS,
     GeometryLevel,
     leaf_type_level,
 )
@@ -66,7 +67,6 @@ from parallax.core.entity import model_of
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.storage_layout import view as storage_layout_view
 from tests._support.db_port import ConnectsAsItself, projected_rows
-from tests.unit import _structural_geometry_support as geometry_support
 
 __all__ = [
     "ACQUIRED_TYPES",
@@ -95,7 +95,7 @@ __all__ = [
 
 type Layout = Literal["columns", "document"]
 
-LAYOUTS: Final[tuple[Layout, ...]] = geometry_support.LAYOUTS
+LAYOUTS: Final[tuple[Layout, ...]] = STRUCTURAL_LAYOUTS
 LEVEL: Final[GeometryLevel] = leaf_type_level()
 
 READ_GROUP: Final = "leaf"
@@ -111,6 +111,12 @@ if LEVEL.depth != 1 or LEVEL.populated != LEVEL.width:
     raise ValueError(
         f"{LEVEL.id}: a leaf-type level is one root occurrence with every leaf populated"
     )
+
+
+def _string(index: int, key: int) -> str:
+    """Spelled as the geometry families spell every leaf, so the geometry read
+    of this level is the String control."""
+    return f"{index:03d}-{key:08d}"
 
 
 def _decimal_tenths(index: int, key: int) -> float:
@@ -252,7 +258,7 @@ class LeafType:
 _LEAF_TYPES: Final[Mapping[str, LeafType]] = {
     leaf.id: leaf
     for leaf in (
-        LeafType("string", str, None, geometry_support.leaf_value, geometry_support.leaf_value),
+        LeafType("string", str, None, _string, _string),
         LeafType("boolean", bool, None, _boolean, _boolean),
         LeafType("int32", int, lambda: attr(type=Int32), _int32, _int32),
         LeafType("int64", int, None, _int64, _int64),

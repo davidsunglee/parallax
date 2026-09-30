@@ -11,14 +11,15 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import gc
+import importlib.util
 import json
 import sys
 import tracemalloc
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from time import perf_counter
-from types import TracebackType
-from typing import Any, Final, cast
+from types import ModuleType, TracebackType
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import ORDERS_MODEL
@@ -56,11 +57,8 @@ from parallax.snapshot.handle._read_plan import (
 )
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
-INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
-SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_snapshot_materialization_support.py"
-GEOMETRY_MODULE: Final = WORKSPACE / "tests" / "unit" / "_structural_geometry_support.py"
-CONTROL_MODULE: Final = WORKSPACE / "tests" / "unit" / "_delivery_control_support.py"
-LEAF_MODULE: Final = WORKSPACE / "tests" / "unit" / "_leaf_type_support.py"
+SUPPORT_DIRECTORY: Final = WORKSPACE / "tests" / "unit"
+INSTRUMENT_MODULE: Final = SUPPORT_DIRECTORY / "memory_instruments.py"
 sys.path.insert(0, str(WORKSPACE))
 
 # `sys.path` gains the workspace above, so these imports cannot precede it; that is
@@ -73,28 +71,52 @@ if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
     )
 
 from tests._support.db_port import projected_rows  # noqa: E402
-from tests.unit import _delivery_control_support as control_support  # noqa: E402
-from tests.unit import _leaf_type_support as leaf_support  # noqa: E402
-from tests.unit import _snapshot_materialization_support as stress_support  # noqa: E402
-from tests.unit import _structural_geometry_support as geometry_support  # noqa: E402
 
-for module, expected_file in (
-    (stress_support, SUPPORT_MODULE),
-    (geometry_support, GEOMETRY_MODULE),
-    (control_support, CONTROL_MODULE),
-    (leaf_support, LEAF_MODULE),
-):
-    if Path(module.__file__ or "").resolve() != expected_file:
-        raise ImportError(f"this reading requires {expected_file}, but resolved {module.__file__}")
-
-# E402 again, and imported below the guard proving each module is this workspace's own.
+# E402 again, and imported below the guard proving the module is this workspace's own.
 from tests.unit.memory_instruments import Seam, retained, untraced  # noqa: E402
+
+
+def _deferred(name: str) -> ModuleType:
+    """The support module ``tests.unit.<name>``, proven to be this workspace's
+    own file now but executed only when first used.
+
+    Every family's support module builds its models when it runs, and every
+    collection inside a window walks whatever has been built, so a child runs
+    only the module its address reads.
+    """
+    qualified = f"tests.unit.{name}"
+    expected = SUPPORT_DIRECTORY / f"{name}.py"
+    spec = importlib.util.find_spec(qualified)
+    origin = None if spec is None else spec.origin
+    if spec is None or spec.loader is None or Path(origin or "").resolve() != expected:
+        raise ImportError(f"this reading requires {expected}, but resolved {origin}")
+    if qualified in sys.modules:
+        return sys.modules[qualified]
+    spec.loader = importlib.util.LazyLoader(spec.loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[qualified] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+if TYPE_CHECKING:
+    from tests.unit import _delivery_control_support as control_support
+    from tests.unit import _leaf_type_support as leaf_support
+    from tests.unit import _snapshot_materialization_support as stress_support
+    from tests.unit import _structural_geometry_support as geometry_support
+else:
+    control_support = _deferred("_delivery_control_support")
+    leaf_support = _deferred("_leaf_type_support")
+    stress_support = _deferred("_snapshot_materialization_support")
+    geometry_support = _deferred("_structural_geometry_support")
 
 PROVIDER_FREE_IDS: Final = frozenset({"conventional-fanout", "duplicate-include"})
 GEOMETRY_PREFIX: Final = "read-"
 GEOMETRY_METRICS: Final = ("elapsedUsPerRoot", "peakKiB", "retainedKiB")
 PLAN_PREFIX: Final = "plan-"
 PLAN_METRICS: Final = ("elapsedUs", "peakKiB", "retainedKiB")
+LEAF_PREFIX: Final = "leaf-"
+CONTROL_PREFIX: Final = "control-"
 PLAN_EDITION: Final = "snapshot-delivery-report"
 STREAMED_RETAINED_PAGE_SIZE: Final = 128
 """The page size a ``streamedMemory.retainedKiB`` reading drains at: the largest
@@ -543,6 +565,8 @@ def geometry_address(workload: str, path: str) -> tuple[GeometryLevel, str, str]
 def leaf_address(workload: str, path: str) -> tuple[leaf_support.LeafType, str, str] | None:
     """The leaf type, layout, and metric a leaf-type read address names, or
     absence for any other address."""
+    if not workload.startswith(LEAF_PREFIX):
+        return None
     leaf = leaf_support.read_address(workload)
     if leaf is None:
         return None
@@ -822,11 +846,13 @@ def _held(control: control_support.HeldControl) -> tuple[float, str, tuple[float
             return Database(_SoleRuntime(port), ORDERS_MODEL), port.reset
 
     else:
-        query = control_support.HELD_LARGE_QUERY
+        level = geometry_support.level_named(control_support.HELD_LARGE_LEVEL_ID)
+        layout = control_support.HELD_LARGE_LAYOUT
+        query = geometry_support.read_query(level, layout)
 
         def compose() -> tuple[Database[Any], Callable[[], None]]:
-            port = control_support.held_large_port()
-            return Database(port.open(), control_support.HELD_LARGE_MODEL), _unprepared
+            port = geometry_support.GeometryPort(level, layout, control_support.HELD_ROOTS)
+            return Database(port.open(), geometry_support.MODEL), _unprepared
 
     if control.state == "shared":
         root, prepare = compose()
@@ -1021,8 +1047,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         geometry = geometry_address(args.workload, args.cell)
         leaf = leaf_address(args.workload, args.cell)
         plan = plan_address(args.workload, args.cell)
-        control = control_support.control_address(
-            args.workload, args.cell, contract.memory_scaling_arms
+        control = (
+            control_support.control_address(args.workload, args.cell, contract.memory_scaling_arms)
+            if args.workload.startswith(CONTROL_PREFIX)
+            else None
         )
     except (KeyError, ValueError) as error:
         parser.error(str(error))

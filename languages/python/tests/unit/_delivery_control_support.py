@@ -36,12 +36,10 @@ from parallax.conformance.animal_owner import ANIMAL_MODEL
 from parallax.conformance.read_models import Animal, Cat, Dog, WildBoar
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.conformance.workloads import catalog
-from parallax.core import DomainModel
 from parallax.core.db_port import DocumentReadOrdinals, PipelineStatement, Row
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
 from tests._support.db_port import ConnectsAsItself, projected_rows
-from tests.unit import _structural_geometry_support as geometry_support
 
 __all__ = [
     "CONTROL_GROUP",
@@ -53,8 +51,8 @@ __all__ = [
     "GUARDED_PREFIX",
     "GUARDED_ROOTS",
     "GUARD_WIDTHS",
-    "HELD_LARGE_MODEL",
-    "HELD_LARGE_QUERY",
+    "HELD_LARGE_LAYOUT",
+    "HELD_LARGE_LEVEL_ID",
     "HELD_MODELS",
     "HELD_ROOTS",
     "HELD_SMALL_WORKLOAD_ID",
@@ -78,7 +76,6 @@ __all__ = [
     "control_address",
     "control_cells",
     "guarded_query",
-    "held_large_port",
     "verify_typed_twins",
 ]
 
@@ -221,15 +218,10 @@ HELD_ROOTS: Final = 32
 HELD_SMALL_WORKLOAD_ID: Final = "conventional-fanout"
 """The small model is the orders catalog the delivery controls read; the larger
 one is the whole geometry model, whose read delivers the shallow baseline."""
-_HELD_LARGE_LEVEL: Final = geometry_support.level_named("depth-1")
-HELD_LARGE_MODEL: Final[DomainModel] = geometry_support.MODEL
-HELD_LARGE_QUERY: Final[ObjectQuery[Any, Any]] = geometry_support.read_query(
-    _HELD_LARGE_LEVEL, "columns"
-)
-
-
-def held_large_port() -> geometry_support.GeometryPort:
-    return geometry_support.GeometryPort(_HELD_LARGE_LEVEL, "columns", HELD_ROOTS)
+HELD_LARGE_LEVEL_ID: Final = "depth-1"
+HELD_LARGE_LAYOUT: Final = "columns"
+"""The geometry level and layout the larger model is read at, named rather than
+composed here so that no other control builds the geometry model."""
 
 
 @dataclass(frozen=True, slots=True)
