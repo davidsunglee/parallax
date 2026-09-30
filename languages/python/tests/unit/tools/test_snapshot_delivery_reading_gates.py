@@ -52,6 +52,7 @@ from snapshot_delivery_reading import (
 from tests.unit import _delivery_control_support as control_support
 from tests.unit import _memory_gate_support as gate_support
 from tests.unit import _structural_geometry_support as geometry_support
+from tests.unit._workload_spelling_support import GUARDED_PREFIX
 from tests.unit.memory_instruments import in_a_child_interpreter, serve_one_measurement
 
 WARMUPS: Final = 1
@@ -216,7 +217,7 @@ def test_every_guarded_cold_plan_address_reads_through_the_cold_plan_child() -> 
     # whichever of those addresses the basis capture gates.
     for width in control_support.GUARD_WIDTHS:
         for metric in ("peakKiB", "retainedKiB"):
-            workload = f"{control_support.GUARDED_PREFIX}{width}"
+            workload = f"{GUARDED_PREFIX}{width}"
             assert _read(workload, f"plan.cold.{metric}") > 0.0, (workload, metric)
 
 

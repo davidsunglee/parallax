@@ -40,7 +40,7 @@ from parallax.core.db_port import DocumentReadOrdinals, PipelineStatement, Row
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
 from tests._support.db_port import ConnectsAsItself, projected_rows
-from tests.unit._workload_spelling_support import CONTROL_PREFIX
+from tests.unit._workload_spelling_support import CONTROL_PREFIX, GUARDED_PREFIX
 
 __all__ = [
     "CONTROL_GROUP",
@@ -48,7 +48,6 @@ __all__ = [
     "DELIVERY_WORKLOAD_IDS",
     "FORMS",
     "GUARDED_MODEL",
-    "GUARDED_PREFIX",
     "GUARDED_ROOTS",
     "GUARD_WIDTHS",
     "HELD_LARGE_LAYOUT",
@@ -87,7 +86,6 @@ type HeldState = Literal["shared", "closed"]
 
 CONTROL_GROUP: Final = "control"
 DELIVERY_PREFIX: Final = f"{CONTROL_PREFIX}delivery-"
-GUARDED_PREFIX: Final = f"{CONTROL_PREFIX}guarded-"
 HELD_WORKLOAD: Final = f"{CONTROL_PREFIX}held"
 
 LANES: Final[tuple[Lane, ...]] = ("wire", "typed")
