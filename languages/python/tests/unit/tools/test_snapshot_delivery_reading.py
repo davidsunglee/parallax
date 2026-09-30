@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import struct
+import subprocess
 import sys
 import uuid
 from collections.abc import Callable, Mapping
@@ -140,6 +142,67 @@ def test_catalog_port_preserves_child_fanout_for_offset_parent_keys() -> None:
     expected = rows.entity("parallax.compatibility.OrderItem")
     assert returned == [(row["id"], row["orderId"]) for row in expected]
     assert len(returned) == 2 * rows.fanout
+
+
+_RUN_SUPPORT_MODULES: Final = """
+import sys
+from types import ModuleType
+
+import snapshot_delivery_reading
+
+snapshot_delivery_reading.main(sys.argv[1:])
+# A support module the child has registered but never run is not yet a plain module.
+print(" ".join(sorted(
+    name.removeprefix("tests.unit.")
+    for name, module in sys.modules.items()
+    if name.startswith("tests.unit._") and type(module) is ModuleType
+)))
+"""
+
+
+@pytest.mark.parametrize(
+    ("workload", "cell", "support"),
+    [
+        ("read-depth-1", "columns.elapsedUsPerRoot", "_structural_geometry_support"),
+        ("leaf-float64", "document.elapsedUsPerRoot", "_leaf_type_support"),
+        ("plan-depth-1", "columns.elapsedUs", "_structural_geometry_support"),
+        (
+            "control-delivery-conventional-fanout",
+            "wire.page32.roots200.elapsedUs",
+            "_delivery_control_support",
+        ),
+        (
+            "control-held",
+            "large.closed.retainedKiB",
+            "_delivery_control_support _structural_geometry_support",
+        ),
+        ("stress-columns", "stress.maxUsPerProjection", "_snapshot_materialization_support"),
+        ("conventional-fanout", "providerFreeCpu.eager.maxMs", ""),
+    ],
+)
+def test_a_reading_child_runs_only_the_support_module_its_address_reads(
+    workload: str, cell: str, support: str
+) -> None:
+    contract = BudgetContract.load()
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _RUN_SUPPORT_MODULES,
+            *("--workload", workload, "--cell", cell),
+            *("--roots", str(contract.memory_scaling_arms[0])),
+            *("--warmups", str(contract.timing_warmups)),
+            *("--measured", str(contract.timing_measured)),
+        ],
+        cwd=snapshot_delivery_reading.WORKSPACE,
+        env=os.environ | {"PYTHONPATH": os.pathsep.join(entry for entry in sys.path if entry)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines()[-1] == support
 
 
 def test_geometry_addresses_name_a_level_layout_and_metric() -> None:
