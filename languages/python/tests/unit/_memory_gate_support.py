@@ -20,6 +20,12 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.conformance.budget import MemoryGate, MemoryGates, ScalingDomain
+from tests.unit._workload_spelling_support import (
+    GEOMETRY_PREFIX,
+    GUARDED_PREFIX,
+    LEAF_PREFIX,
+    PLAN_PREFIX,
+)
 
 __all__ = ["OWNERS", "GateOwner", "owner_of", "unowned_gates"]
 
@@ -118,31 +124,31 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
         SNAPSHOT_MODULE,
         "test_the_depth_reads_stay_within_their_memory_gates",
         SNAPSHOT_SUBJECT,
-        _prefixed("read-depth-"),
+        _prefixed(f"{GEOMETRY_PREFIX}depth-"),
     ),
     GateOwner(
         SNAPSHOT_MODULE,
         "test_the_many_reads_stay_within_their_memory_gates",
         SNAPSHOT_SUBJECT,
-        _prefixed("read-many-"),
+        _prefixed(f"{GEOMETRY_PREFIX}many-"),
     ),
     GateOwner(
         SNAPSHOT_MODULE,
         "test_the_width_and_sparse_reads_stay_within_their_memory_gates",
         SNAPSHOT_SUBJECT,
-        _prefixed("read-width-", "read-sparse-"),
+        _prefixed(f"{GEOMETRY_PREFIX}width-", f"{GEOMETRY_PREFIX}sparse-"),
     ),
     GateOwner(
         SNAPSHOT_MODULE,
         "test_the_leaf_type_reads_stay_within_their_memory_gates",
         SNAPSHOT_SUBJECT,
-        _prefixed("leaf-"),
+        _prefixed(LEAF_PREFIX),
     ),
     GateOwner(
         SNAPSHOT_MODULE,
         "test_the_cold_read_plans_stay_within_their_memory_gates",
         SNAPSHOT_SUBJECT,
-        _prefixed("plan-", "control-guarded-"),
+        _prefixed(PLAN_PREFIX, GUARDED_PREFIX),
     ),
 )
 """Every memory-gate owner. Together they claim each gate exactly once, which
