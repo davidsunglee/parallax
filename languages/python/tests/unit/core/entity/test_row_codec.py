@@ -152,11 +152,12 @@ def _every_construction_door[E: Entity](cls: type[E], state: dict[str, Any]) -> 
     ``TypeAdapter`` validation are the two it never calls but a caller can: the
     last one builds inside pydantic-core with no framework call site at all.
     """
+    nested_type = list[cls]
     return (
         cls(**state),
         cls.model_construct(**state),
         cls.model_validate(dict(state)),
-        TypeAdapter(list[cls]).validate_python([dict(state)])[0],
+        TypeAdapter[list[E]](nested_type).validate_python([dict(state)])[0],
     )
 
 
