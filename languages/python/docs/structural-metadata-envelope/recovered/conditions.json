@@ -1,22 +1,4 @@
 {
-  "adjustment": {
-    "captured": {
-      "how": "left exactly as the capture read them",
-      "reach": "no other snapshot-delivery provider-free read path calls the changed code or an aware-datetime method, and bitemporal-current is the one live workload with Timestamp members; its twelve live memory readings, read three times with the fix and three times at the producing commit's tree, overlap within the live cells' run-to-run spread or differ by at most 0.5% without an attribution, so they stay as captured. A re-measurement of instance-state reproduced all 258 of its byte readings exactly, and lifecycle-overhead records no byte reading",
-      "scope": "every timing, count and ratio reading, every instance-state and lifecycle-overhead reading, and every snapshot-delivery byte reading not named above"
-    },
-    "date": "2026-09-29",
-    "evidence": "$HOME/.local/share/parallax/evidence/cor-178/amendment/: the remeasure scripts and logs with their diagnostic documents, probe_reach.py with probe-reach.jsonl, live-compare.txt and the other comparisons, amend.py and amendment.txt",
-    "provenanceCommit": "the provenance every member names is the capture's producing commit, not the commit carrying the fix; the readings below were taken after it",
-    "reason": "CPython's type method cache kept the per-call method-name strings the _datetime C calls create for an aware datetime's utcoffset and strftime, so every byte reading whose path reached utc_instant or the Timestamp Wire spelling retained a process-dependent amount. The fix is the UTC fast path in packages/parallax-core/src/parallax/core/base/_neutral.py and packages/parallax-core/src/parallax/core/wire/_codec.py, commit ecbdd36f of PR #205, which landed on main at bf287493.",
-    "remeasured": {
-      "count": 364,
-      "determinism": "three separate write-lowering diagnostic processes agreed on every byte reading to the byte; the leaf-timestamp read readings still vary by up to 2.4% between children with the fix in place, so they are the first of three runs, chosen before the other two were read",
-      "how": "a --diagnostic run of the member's own instruments, with the fix in the tree; value and samples are both the fresh reading",
-      "scope": "every byte-unit write-lowering reading on both runtimes (360), and in snapshot-delivery the four leaf-timestamp provider-free read readings on 3.14 (4)"
-    },
-    "schemaVersion": 1
-  },
   "members": {
     "instance-state": {
       "runtimes": {
@@ -27,7 +9,7 @@
           "version": "3.13.15"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-178/capture/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax/.claude/worktrees/agent-a3cee48e5189954ff/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.7"
@@ -47,7 +29,7 @@
           "status": "unavailable"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-178/capture/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax/.claude/worktrees/agent-a3cee48e5189954ff/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.7"
@@ -66,20 +48,21 @@
           "version": "3.13.15"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-178/capture/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax/.claude/worktrees/agent-a3cee48e5189954ff/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.7"
         }
       },
       "sources": {
-        "tests/unit/_delivery_control_support.py": "ae358951103bad5ca975222606daf36f1a903ac6f8e1facf95376a73ff992ca8",
-        "tests/unit/_leaf_type_support.py": "bc578b1649e283c89b04453ef019dff6d5c681c18ac392bccbf43afe6aafc33d",
+        "tests/unit/_delivery_control_support.py": "0ecc84095d7bef7051a6a7e103683130b355bd769fcffa3bd46ec0dc813144db",
+        "tests/unit/_leaf_type_support.py": "3236a2c55f73ca00b8a8a45a9637a019b592c6bdccb6ccff9b94fc10cc1fe5aa",
         "tests/unit/_snapshot_materialization_support.py": "a11927a3cd3bf62336977f627303687488504bf55f200b2b0c0a4841fa03821d",
-        "tests/unit/_structural_geometry_support.py": "ed06411f7bfd60c9ee9f142e65cca8420afde53a72af8c0716204d77230c0315",
+        "tests/unit/_structural_geometry_support.py": "392f575838735da962f88078de395eac6e4438080f0d614512a2c6be654214d7",
+        "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
-        "tools/snapshot_delivery_overhead.py": "90c863a251f0d8e8c59dd093080357e38a9dd046cee23d9f90b6a901a3fc06ea",
-        "tools/snapshot_delivery_reading.py": "078067702b49e982edc6af8f3d3762b7e8ce5d655bba3710701bceca4932c896"
+        "tools/snapshot_delivery_overhead.py": "7a3ff6bfb1da3a15f8d6063f43d76bd5043b69e3a2f6fcdd0783d2b8539cba04",
+        "tools/snapshot_delivery_reading.py": "5b8f28c97977e83e3276f0ef36707c4912d7ec010660f249ac2712c50358b677"
       }
     },
     "write-lowering": {
@@ -91,16 +74,17 @@
           "version": "3.13.15"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-178/capture/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax/.claude/worktrees/agent-a3cee48e5189954ff/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.7"
         }
       },
       "sources": {
-        "tests/unit/_leaf_type_support.py": "bc578b1649e283c89b04453ef019dff6d5c681c18ac392bccbf43afe6aafc33d",
+        "tests/unit/_leaf_type_support.py": "3236a2c55f73ca00b8a8a45a9637a019b592c6bdccb6ccff9b94fc10cc1fe5aa",
         "tests/unit/_predicate_acquisition_support.py": "95fc69f0fb0c20fb0ecad748b0d5cd0e15b2121ea2a8657b25fc37b92f130ce7",
-        "tests/unit/_structural_geometry_support.py": "ed06411f7bfd60c9ee9f142e65cca8420afde53a72af8c0716204d77230c0315",
+        "tests/unit/_structural_geometry_support.py": "392f575838735da962f88078de395eac6e4438080f0d614512a2c6be654214d7",
+        "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
         "tests/unit/_write_lowering_support.py": "b3becf97cde5dbb7458587c77f7071c9c0ab82a12a89143a056d7f1d0f463650",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
         "tools/write_lowering_overhead.py": "1be3a55ad0ac0f2eb20071838b26bf7ce64e9aed6076d92e775aaa5e6feac4d4",
