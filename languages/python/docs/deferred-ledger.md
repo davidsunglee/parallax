@@ -787,8 +787,6 @@ re-project a family superset, which is an unrelated obligation.
 
 ## Forwarding pointers
 
-- **D-90** → fixed. Keyed claim admission belongs to `parallax.core.unit_work.UnitOfWork.buffer`, which reads the claim off the buffered carrier and names a refused write by its prepared target, so `admit_and_buffer` and `instruction_identity` are gone with their unreachable authored-instruction arm.
-- **D-91** → fixed. Prepared-write production is the sole admissibility judgment, so `buffer_predicate_instruction` no longer re-judges family or verb applicability and neither of its arms survives.
 - **D-97** → fixed. `parallax.core.base.nearest_binary32_of_spelling` rounds a decimal to binary32 once by parsing to binary64 and narrowing, reading the exact decimal only when the parse is exactly a binary32 midpoint — the only place the two roundings can differ — so `_shortest_float`'s candidates and Float32 membership no longer build an exact ratio.
 - **D-98** → closed by the COR-142 owner decision. The unsupported 10% attribution gate is withdrawn rather than replaced; Phase 2 totals and counts remain before evidence, and the same single-implementation report supplies Phase 6's clean whole-lane after deltas without paired adapters or builder-exclusive attribution.
 - **D-96** → closed. The Snapshot delivery portfolio takes each materialization-stress memory cell in a child interpreter of its own (`tools/snapshot_delivery_reading.py`), as a collected window delta with no timed batch run before the reading, so the retained and transient cells are differences rather than levels; the retired reader's mixed-order matrix survives only as dated evidence in `docs/snapshot-materialization-baseline.md`.
