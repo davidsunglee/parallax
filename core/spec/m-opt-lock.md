@@ -47,6 +47,7 @@ is this module's `view(model) -> OptimisticLockFacet` function.
 ```text
 OptimisticLockFacet
   key(EntityIdentity) -> OptimisticKey | absent
+  required_key(EntityIdentity) -> OptimisticKey
 
 OptimisticKey =
     Unversioned
@@ -57,7 +58,12 @@ OptimisticKey =
 `key` is total, nonthrowing, and expected amortized O(1); it returns absent
 only for an identity outside the accepted Metamodel. It is family-uniform:
 every position in one inheritance family returns the same value, derived from
-the family root, and a standalone Entity is its own root.
+the family root, and a standalone Entity is its own root. `required_key`
+returns the same stored value and refuses an identity outside the accepted
+Metamodel instead of answering absent. A consumer whose answer depends on which
+variant the family declares uses it, because reading absence as `Unversioned`
+would let an unrecognized Entity's write claim an object on the strength of what
+was missing.
 
 - `ExplicitVersion` carries the declaring Attribute Identity of the effective
   `optimisticLocking: true` Attribute — the root's identity on every
@@ -74,6 +80,24 @@ the family root, and a standalone Entity is its own root.
 
 The facet copies no Attribute Metadata; both keyed variants carry identities
 that resolve through the Metamodel's local lookup.
+
+Each key is also its family's **write-evidence policy**, the interface
+`m-unit-work` declares for admitting a keyed write. It answers two declared
+facts and decides nothing about any transaction's state:
+
+- the Effective Concurrency Strategy a Concurrency Preference yields — the
+  preference itself for `ExplicitVersion` and `TransactionTimeDerived`, and
+  Locking under every preference for `Unversioned` (`m-unit-work` "Strategy
+  selection"); and
+- what a keyed write of a mutation settles against, and therefore claims —
+  nothing for an insert under every key, the source's observation for the two
+  keyed variants, and the addressed Object Key for `Unversioned` (`m-unit-work`
+  "Observed-State Coalescing").
+
+The composition root binds the connected model's `required_key` lookup into
+each unit of work, which applies its own participation, consumption, and claim
+state to these answers. The dependency stays `m-opt-lock --> m-unit-work`: the
+unit of work reaches this policy only through the lookup it was handed.
 
 ## The version column
 

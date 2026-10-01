@@ -143,6 +143,7 @@ def _in_transaction[T](model: AcceptedMetamodel, body: Callable[[UnitOfWork], T]
         flush_executor=_no_flush,
         planner=build_write_planner(model),
         actor_identity=TEST_ACTOR_IDENTITY,
+        evidence_policy_for=opt_lock.view(model).required_key,
     )
 
 

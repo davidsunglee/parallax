@@ -26,8 +26,9 @@ Gate, and Affected Rows Policy vocabulary it is built from; the neutral shortfal
 tags; the authoritative affected-row enforcer; and the Write Effect Error family
 that enforcer raises (ADR 0041, ADR 0048). Sibling policy modules
 (`m-batch-write`, `m-opt-lock`, `m-read-lock`, `m-txtime-write`,
-`m-bitemp-write`) keep their own policies and reach planning only through
-strategy ports this module declares, which the composition root injects once.
+`m-bitemp-write`) keep their own policies and reach planning and write
+admission only through strategy ports this module declares, which the
+composition root injects once per accepted model.
 
 ## The unit of work
 
@@ -1269,6 +1270,13 @@ The Write Planner consumes the Concurrency Preference and the model's Optimistic
 Lock Facet, settles each Planned Write's gate or explicit `Ungated` decision, and
 retains neither the preference nor the Effective Concurrency Strategy in the
 Write Plan.
+
+Write admission resolves the same strategy through the connected model's
+injected write-evidence policy (`m-opt-lock` "The Optimistic Lock Facet"), which
+also names what each keyed write settles against. The unit of work applies that
+answer to its own state — the participation its reads stamp, the observations a
+flush has consumed, and the claims its buffer holds — and buffering is the one
+operation that admits a write's claim and buffers the write, all or nothing.
 
 ### The Isolation Level beside it — what the transaction READS
 

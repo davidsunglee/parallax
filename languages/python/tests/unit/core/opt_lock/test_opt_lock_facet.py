@@ -161,8 +161,11 @@ def test_a_formed_model_serves_its_facet_through_the_typed_view() -> None:
     assert opt_lock.view(model) is model.facet(FACET_KEY)
 
 
-def test_the_facet_offers_only_key_lookup() -> None:
-    assert {name for name in dir(_facet("account")) if not name.startswith("_")} == {"key"}
+def test_the_facet_offers_only_key_lookups() -> None:
+    assert {name for name in dir(_facet("account")) if not name.startswith("_")} == {
+        "key",
+        "required_key",
+    }
 
 
 def test_the_owned_code_set_is_closed() -> None:
@@ -206,18 +209,29 @@ def test_every_accepted_entity_has_a_key_and_a_miss_returns_absence() -> None:
     assert facet.key(EntityIdentity("elsewhere", "Fridge")) is None
 
 
-def test_the_key_accessor_refuses_an_unrecognized_entity() -> None:
+def test_the_required_lookup_refuses_an_unrecognized_entity() -> None:
     # The consumer whose domain is the three variants themselves reads the key
     # through this, so a miss must raise rather than normalize: an Entity this
     # model does not carry has no declared version source, and answering
     # `Unversioned` for it would let a write claim an object on the strength of
     # what was missing.
     model = _formed("appliance")
+    facet = opt_lock.view(model)
+    miss = EntityIdentity("elsewhere", "Fridge")
     with pytest.raises(KeyError, match="no Optimistic Key"):
-        opt_lock.optimistic_key(model, EntityIdentity("elsewhere", "Fridge"))
-    assert opt_lock.optimistic_key(model, _corpus_entity("Fridge")) == opt_lock.view(model).key(
-        _corpus_entity("Fridge")
-    )
+        facet.required_key(miss)
+    with pytest.raises(KeyError, match="no Optimistic Key"):
+        opt_lock.optimistic_key(model, miss)
+    assert facet.key(miss) is None
+
+
+def test_the_required_lookup_answers_the_exact_stored_key() -> None:
+    model = _formed("appliance")
+    facet = opt_lock.view(model)
+    for entity in model.entities:
+        stored = facet.key(entity.identity)
+        assert facet.required_key(entity.identity) is stored
+        assert opt_lock.optimistic_key(model, entity.identity) is stored
 
 
 # --------------------------------------------------------------------------
@@ -231,6 +245,7 @@ def test_every_position_in_a_versioned_family_carries_the_roots_attribute() -> N
     expected = ExplicitVersion(AttributeIdentity(root, "version"))
     for name in ("Appliance", "Fridge", "Oven"):
         assert facet.key(_corpus_entity(name)) == expected, name
+        assert facet.required_key(_corpus_entity(name)) is facet.key(root), name
 
 
 def test_every_position_in_a_temporal_family_carries_the_roots_axis_start() -> None:

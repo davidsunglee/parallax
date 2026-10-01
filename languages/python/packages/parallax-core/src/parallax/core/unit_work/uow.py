@@ -3,25 +3,34 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
 from itertools import islice
 from types import TracebackType
-from typing import Literal, Protocol
+from typing import Final, Literal, Protocol
 from weakref import WeakValueDictionary
 
 from parallax.core import inheritance
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.unit_work.claims import (
     SELECTION_INTENT,
     ClaimScope,
     ClaimTable,
-    ClaimVerdict,
-    WriteIntent,
+    SettledEvidence,
+    claim_scope,
+    claimed_object,
+    keyed_intent,
 )
 from parallax.core.unit_work.clock import Clock, TransactionInstant
-from parallax.core.unit_work.instructions import DESTRUCTIVE_MUTATIONS, INSERT_MUTATIONS
+from parallax.core.unit_work.instructions import (
+    DESTRUCTIVE_MUTATIONS,
+    INSERT_MUTATIONS,
+    KeyedMutation,
+)
 from parallax.core.unit_work.materialized import (
     BufferItem,
     MaterializedWriteGroup,
+    ObjectClaimedWrite,
+    ObservedKeyedWrite,
     buffered_instruction,
     group_state_keys,
 )
@@ -31,17 +40,21 @@ from parallax.core.unit_work.planner import (
     ObservedStateKey,
     resolve_object_key,
 )
-from parallax.core.unit_work.retain import ParticipationToken, RetainedObservation
-from parallax.core.unit_work.strategy import ActorIdentity, Concurrency
+from parallax.core.unit_work.retain import ParticipationToken, ReadOrigin, RetainedObservation
+from parallax.core.unit_work.strategy import ActorIdentity, Concurrency, EvidencePolicyLookup
 from parallax.core.unit_work.write_planner import PlanningRequest, WritePlanner
 
 __all__ = [
+    "WRITE_EVIDENCE_CODES",
+    "BufferOutcome",
     "Concurrency",
     "RollbackOnlyError",
     "TransactionSettings",
     "UnitOfWork",
     "UnitOfWorkError",
     "WriteBatchTrigger",
+    "WriteEvidenceError",
+    "WriteEvidenceErrorCode",
     "active_unit_of_work",
     "run_unit_of_work",
 ]
@@ -128,6 +141,70 @@ class RollbackOnlyError(UnitOfWorkError):
     """
 
 
+type WriteEvidenceErrorCode = Literal[
+    "write-evidence-unavailable",
+    "write-evidence-consumed",
+    "write-evidence-already-claimed",
+]
+"""The write-evidence refusals a keyed verb raises.
+
+The three partition what can be wrong with a source's evidence at the verb:
+there is none the target Entity's Effective Concurrency Strategy can use, the
+evidence there is has been spent by a successful flush, or a write already
+buffered in this unit of work claimed the scope this one settles against, for an
+intent this one cannot join. A conflict the database discovers later is a
+different thing entirely and keeps its own flush-time classification.
+"""
+
+WRITE_EVIDENCE_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "write-evidence-unavailable",
+        "write-evidence-consumed",
+        "write-evidence-already-claimed",
+    }
+)
+"""The complete set of codes :class:`WriteEvidenceError` carries."""
+
+
+class WriteEvidenceError(LookupError):
+    """A keyed write verb was handed a source whose write evidence it cannot use.
+
+    A ``LookupError`` because every code reports that the evidence this write
+    needs is not there for it to use: never recorded for this source, recorded
+    and already spent, or still live but claimed by an intent this unit of work
+    already buffered at the scope this write settles against, which this one
+    cannot join. ``object_key`` is the object the write addressed, always
+    visible so a caller can say WHICH write was refused; the Read Origin and the
+    claim scope behind it stay implementation state.
+
+    Raised synchronously at the verb, before any buffering and before any
+    database access. A conflict the database discovers later is a different
+    thing entirely and keeps its own flush-time classification.
+    """
+
+    def __init__(
+        self, *, code: WriteEvidenceErrorCode, message: str, object_key: ObjectKey
+    ) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code: Final = code
+        self.message: Final = message
+        self.object_key: Final = object_key
+
+
+class BufferOutcome(Enum):
+    """What buffering one accepted item did to the buffer's pending inserts.
+
+    Both values mean the item was buffered; a refused item raises instead.
+    ``CANCELLED_PENDING_INSERT`` reports a destructive keyed write that removed
+    a still-unflushed insert of its object from the pending set — the pair the
+    flush will annihilate — and nothing about SQL: the insert stays buffered
+    until planning coalesces the two.
+    """
+
+    BUFFERED = "buffered"
+    CANCELLED_PENDING_INSERT = "cancelled-pending-insert"
+
+
 @dataclass(frozen=True, slots=True)
 class TransactionSettings:
     """A unit of work's fixed Concurrency Preference.
@@ -146,7 +223,8 @@ class UnitOfWork:
 
     Construct via :func:`run_unit_of_work` (which owns the frame lifecycle); the
     body receives the unit of work and drives it with :meth:`buffer`, :meth:`retain`,
-    and :meth:`read`.
+    and :meth:`read`, asking :meth:`holds_assignment` and
+    :meth:`resolve_write_evidence` what a keyed write's source licenses here.
     """
 
     __slots__ = (
@@ -154,6 +232,7 @@ class UnitOfWork:
         "_buffer",
         "_claims",
         "_closed",
+        "_evidence_policy_for",
         "_observations",
         "_participation",
         "_pending_inserts",
@@ -178,6 +257,7 @@ class UnitOfWork:
         flush_executor: FlushExecutor,
         planner: WritePlanner,
         actor_identity: ActorIdentity,
+        evidence_policy_for: EvidencePolicyLookup,
         write_batch_opening: WriteBatchOpening | None = None,
     ) -> None:
         self.settings = settings
@@ -196,6 +276,9 @@ class UnitOfWork:
         # this attempt plans. A forced flush reuses it unchanged; a retry attempt
         # receives its own new `UnitOfWork` and therefore its own copy.
         self._actor_identity = actor_identity
+        # The connected model's write-evidence policy, bound once per accepted
+        # model by the composition root, which alone may reach `m-opt-lock`.
+        self._evidence_policy_for = evidence_policy_for
         # An opaque demarcation-layer companion (the `db.transact` transaction
         # facade), published for the scope's duration so a joining call recovers
         # it via `active_unit_of_work()`. The shell never reads it, and it needs
@@ -214,9 +297,8 @@ class UnitOfWork:
         # The objects the buffer currently holds an unflushed insert of: the
         # planner's own `pending_insert` map, kept live as writes arrive instead
         # of rebuilt when they are planned. `buffer` and `_coalesce` read the
-        # SAME two mutation families over the same object key, so a verb asking
-        # what the flush will do with an insert cannot be told one thing while
-        # the flush does another.
+        # SAME two mutation families over the same object key, so the outcome a
+        # verb is told cannot disagree with what the flush does with the pair.
         self._pending_inserts: set[ObjectKey] = set()
         # The ledger is an INDEX, not an owner: a retained observation lives as
         # long as some source value or buffered write reaches it, and this entry
@@ -248,37 +330,88 @@ class UnitOfWork:
         self._ensure_open()
         return self._participation
 
-    def buffer(self, instruction: BufferItem) -> None:
-        """Buffer a write instruction — bare, travelling with the claim its verb
-        took for it
-        (:data:`~parallax.core.unit_work.materialized.ClaimedKeyedWrite`), or as
-        a materializing predicate write's
-        :class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup` —
-        for flush at the unit-of-work boundary.
+    def buffer(self, item: BufferItem) -> BufferOutcome:
+        """Admit ``item``'s claim and buffer it for flush at the unit-of-work
+        boundary — all of it, or nothing.
 
-        A carrier built from a read's retained claim brings that claim with it
-        (:func:`~parallax.core.unit_work.materialized.buffered_write`), so the
-        buffer is what keeps a write's evidence alive once the caller releases
-        the source value it came from, and what a successful flush spends it
-        through. A write the flush's earlier stages retire takes its claim out
-        of that flush with it.
+        The claim is read off the carrier itself
+        (:func:`~parallax.core.unit_work.materialized.buffered_write`): a
+        retained observation claims the state it observed, an object-claimed
+        write claims its instruction's object, and a Materialized Write Group
+        claims every state it selected (`m-unit-work` "Observed-State
+        Coalescing"). A caller-held observation, an insert, and a bare
+        instruction claim nothing. An arriving keyed intent the held claim
+        cannot absorb raises :class:`WriteEvidenceError`
+        (``write-evidence-already-claimed``); a group colliding with a held
+        claim raises :class:`UnitOfWorkError`, withdrawing the claims it had
+        admitted. Either way the buffer, the claims, and the pending inserts are
+        left as they were.
 
-        A Materialized Write Group is buffered together with its selection
-        claim on every state it selected (`m-unit-work` "Observed-State
-        Coalescing"), or not at all: if deriving or installing any of those
-        claims fails, the claims it had admitted are withdrawn and neither the
-        buffer nor any claim held before it changes.
+        A carrier built from a read's retained claim brings that claim with it,
+        so the buffer is what keeps a write's evidence alive once the caller
+        releases the source value it came from, and what a successful flush
+        spends it through.
 
-        Buffering also maintains :meth:`pending_insert`: an insert records the
-        object it opens and a destructive write of that object discards it,
-        which is the cancellation the flush will perform, recognized at the
-        moment the pair is complete rather than when it is planned.
+        The outcome reports the pending-insert transition buffering made: an
+        insert records the object it opens, and a destructive write of an object
+        whose insert is still unflushed cancels that pair — recognized when the
+        pair is complete rather than when it is planned.
         """
         self._ensure_open()
-        if isinstance(instruction, MaterializedWriteGroup):
-            self._claim_selection(instruction)
-        self._buffer.append(instruction)
-        self._track_pending_insert(instruction)
+        instruction = buffered_instruction(item)
+        key = self._addressed_object(item)
+        if isinstance(item, MaterializedWriteGroup):
+            self._claim_selection(item)
+        else:
+            self._claim_keyed(item, key)
+        self._buffer.append(item)
+        mutation = instruction.mutation
+        if key is not None and mutation in INSERT_MUTATIONS:
+            self._pending_inserts.add(key)
+        elif key in self._pending_inserts and mutation in DESTRUCTIVE_MUTATIONS:
+            self._pending_inserts.discard(key)
+            return BufferOutcome.CANCELLED_PENDING_INSERT
+        return BufferOutcome.BUFFERED
+
+    def _addressed_object(self, item: BufferItem) -> ObjectKey | None:
+        """The one object ``item`` addresses where buffering needs it — to claim
+        it, or to open or cancel a pending insert of it — derived once."""
+        if isinstance(item, MaterializedWriteGroup):
+            return None
+        instruction = buffered_instruction(item)
+        mutation = instruction.mutation
+        if (
+            isinstance(item, ObjectClaimedWrite)
+            or mutation in INSERT_MUTATIONS
+            or mutation in DESTRUCTIVE_MUTATIONS
+        ):
+            return resolve_object_key(instruction, inheritance.view(self.meta))
+        return None
+
+    def _claim_keyed(self, item: BufferItem, key: ObjectKey | None) -> None:
+        if isinstance(item, ObservedKeyedWrite):
+            scope: ClaimScope | None = None if item.claim is None else item.claim.key
+        elif isinstance(item, ObjectClaimedWrite):
+            scope = key
+        else:
+            return
+        intent = keyed_intent(item.instruction)
+        if scope is None or intent is None:
+            return
+        if self._claims.claim(scope, intent) != "incompatible":
+            return
+        raise WriteEvidenceError(
+            code="write-evidence-already-claimed",
+            message=(
+                f"{item.instruction.target.identity.canonical}: a write already buffered in this "
+                "transaction claims what this one settles against, for an intent it cannot be "
+                "combined with — a different Valid-Time region composes no interval, an "
+                "assignment after a destructive intent resurrects nothing, and a predicate "
+                "write's selected rows are one compact group; read the row through this "
+                "transaction to flush the buffered intent and settle against fresh state"
+            ),
+            object_key=claimed_object(scope),
+        )
 
     def _claim_selection(self, group: MaterializedWriteGroup) -> None:
         # The resolving read force-flushed the buffer, so no pending intent can
@@ -299,59 +432,100 @@ class UnitOfWork:
             self._claims.release(islice(group_state_keys(group, self.meta), admitted))
             raise
 
-    def pending_insert(self, key: ObjectKey) -> bool:
-        """Whether this buffer holds an insert of ``key`` that no destructive
-        write has cancelled and no flush has emitted.
+    def holds_assignment(
+        self, target: EntityMetadata, origin: ReadOrigin | None, *, mutation: KeyedMutation
+    ) -> bool:
+        """Whether this buffer already holds an ASSIGNMENT at the scope a write
+        of ``mutation`` from ``origin`` would claim.
 
-        The frontend's question when it has to know what the flush would do with
-        an insert that is still the flush's to decide — which is only true while
-        the insert is unflushed, because a flush plans the buffer it has and
-        leaves nothing pending. It answers about the BUFFER, so it is not the
-        question "did this transaction insert this object", which the writes
-        that have already reached the database are also part of.
+        The question a wholly restoring update asks before it decides whether it
+        has anything to cancel, so it demands no usable evidence: a net-zero
+        chain off a value the write would refuse still buffers nothing rather
+        than raising (`m-opt-lock`'s no-op-first ordering). The scope is the one
+        ``target``'s policy derives, so a versioned write is asked about the
+        exact state its source observed and an unversioned Non-Temporal one
+        about its object. A source from no read cancels nothing.
         """
         self._ensure_open()
-        return key in self._pending_inserts
+        if origin is None:
+            return False
+        scope = claim_scope(
+            self._evidence_policy_for(target.identity).settled_evidence(
+                mutation, object_key=origin.object_key, observation=origin.observation
+            )
+        )
+        if scope is None:  # pragma: no cover - a Read Origin reaches its target's own arm
+            return False
+        held = self._claims.held(scope)
+        return held is not None and held.kind == "assignment"
 
-    def _track_pending_insert(self, item: BufferItem) -> None:
-        instruction = buffered_instruction(item)
-        mutation = instruction.mutation
-        if mutation not in INSERT_MUTATIONS and mutation not in DESTRUCTIVE_MUTATIONS:
-            return
-        key = resolve_object_key(instruction, inheritance.view(self.meta))
-        if key is None:
-            return
-        if mutation in INSERT_MUTATIONS:
-            self._pending_inserts.add(key)
-        else:
-            self._pending_inserts.discard(key)
+    def resolve_write_evidence(
+        self,
+        target: EntityMetadata,
+        origin: ReadOrigin | None,
+        *,
+        mutation: KeyedMutation,
+        object_key: ObjectKey,
+    ) -> SettledEvidence | None:
+        """What a keyed write of ``target`` against existing state settles
+        against, read off its source's ``origin``, or :class:`WriteEvidenceError`
+        where this unit of work cannot use it.
 
-    def claim(self, key: ClaimScope, intent: WriteIntent) -> ClaimVerdict:
-        """Take ``intent``'s claim at the scope ``key`` names, answering
-        what it became against whatever this buffer already claimed there.
+        One resolution serves the address, the gate, the version advance, and
+        the claim, so they cannot disagree. It follows ``target``'s Effective
+        Concurrency Strategy (`m-opt-lock`), not the preference alone:
 
-        The verdict is the one algebra
-        (:func:`~parallax.core.unit_work.claims.admits`) both the arriving verb
-        and the flush read: an ``incompatible`` answer is what a verb refuses
-        synchronously, and every other answer names what finalization will do
-        with the two writes. Called before the write is buffered, so a refused
-        intent leaves the buffer and the claim it could not join untouched.
+        * **Locking** — the license is the shared row lock, so the source read
+          must have run in THIS unit of work. A source from another scope, or
+          none at all, proves no held lock. That holds for unversioned
+          Non-Temporal targets too: the lock is the whole of their evidence, and
+          unconditional intent has its own predicate-selected spelling.
+        * **Optimistic** — the license is the database gate, so the retained
+          observation IS the evidence, and a standalone read's source carries it
+          exactly as a participating read's does.
+
+        Evidence a successful flush already spent is refused under BOTH
+        strategies: consumption says the state the source observed is no longer
+        the stored state, and a held lock does not restore it.
         """
         self._ensure_open()
-        return self._claims.claim(key, intent)
-
-    def claimed(self, key: ClaimScope) -> WriteIntent | None:
-        """What the buffered writes currently claim at one scope, if anything —
-        the read side of :meth:`claim`.
-
-        A verb asks this when what it has to buffer depends on whether there is
-        an earlier intent to combine with: an edit that restores everything it
-        touched writes nothing on its own, but cancels a pending assignment at
-        the same scope, so whether it buffers at all is a question about this
-        answer rather than about the value alone.
-        """
-        self._ensure_open()
-        return self._claims.held(key)
+        policy = self._evidence_policy_for(target.identity)
+        observation = None if origin is None else origin.observation
+        settled = policy.settled_evidence(mutation, object_key=object_key, observation=observation)
+        identity = target.identity.canonical
+        if policy.effective_strategy(self.settings.concurrency) == "locking":
+            if origin is None or origin.participation is not self._participation:
+                raise WriteEvidenceError(
+                    code="write-evidence-unavailable",
+                    message=(
+                        f"{identity}: the Locking strategy licenses this write through the "
+                        "shared row lock a read of THIS transaction holds, and the value handed "
+                        "to the verb came from no such read; read the row through this "
+                        "transaction and write what that read returned"
+                    ),
+                    object_key=object_key,
+                )
+        elif observation is None:
+            raise WriteEvidenceError(
+                code="write-evidence-unavailable",
+                message=(
+                    f"{identity}: the Optimistic strategy gates this write on the state its "
+                    "source observed, and the value handed to the verb carries no retained "
+                    "observation; read the row through a `find` and write what it returned"
+                ),
+                object_key=object_key,
+            )
+        if observation is not None and observation.consumed:
+            raise WriteEvidenceError(
+                code="write-evidence-consumed",
+                message=(
+                    f"{identity}: the state this value observed was already written by a flush "
+                    "of this unit of work, so its evidence is spent; read the row again and "
+                    "write what that read returns"
+                ),
+                object_key=object_key,
+            )
+        return settled
 
     def retain(self, observation: RetainedObservation) -> RetainedObservation:
         """Index ``observation`` under the state it observed, answering the
@@ -532,6 +706,7 @@ def run_unit_of_work[T](
     flush_executor: FlushExecutor,
     planner: WritePlanner,
     actor_identity: ActorIdentity,
+    evidence_policy_for: EvidencePolicyLookup,
     write_batch_opening: WriteBatchOpening | None = None,
 ) -> T:
     """Run ``body`` in a unit of work — joining the active one or opening a new frame.
@@ -540,14 +715,15 @@ def run_unit_of_work[T](
     body receives the same unit of work and its return value is returned
     immediately (commit and abort belong to the outermost frame), and the passed
     ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` /
-    ``write_batch_opening`` / ``planner`` / ``actor_identity`` are ignored in
-    favor of the active transaction's (``db.transact`` performs the
-    option-conflict check before calling).
+    ``write_batch_opening`` / ``planner`` / ``actor_identity`` /
+    ``evidence_policy_for`` are ignored in favor of the active transaction's
+    (``db.transact`` performs the option-conflict check before calling).
     Otherwise a new outermost frame is opened, and its value is returned only
     after a durable flush; an abort withholds it. ``planner`` is the injected
     Write Planner a new outermost frame's flushes call, and ``actor_identity``
     the boundary-captured Actor Identity every one of its Planning Requests
-    carries.
+    carries, and ``evidence_policy_for`` the connected model's write-evidence
+    policy its keyed writes are admitted under.
     """
     active = active_unit_of_work()
     if active is not None:
@@ -559,6 +735,7 @@ def run_unit_of_work[T](
         flush_executor=flush_executor,
         planner=planner,
         actor_identity=actor_identity,
+        evidence_policy_for=evidence_policy_for,
         write_batch_opening=write_batch_opening,
     )
     return uow.run_outermost(body)

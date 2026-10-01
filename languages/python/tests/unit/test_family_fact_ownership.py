@@ -616,6 +616,7 @@ def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
             flush_executor=_no_flush,
             planner=planner,
             actor_identity=TEST_ACTOR_IDENTITY,
+            evidence_policy_for=opt_lock.view(meta).required_key,
         )
         if participating
         else retain(None)

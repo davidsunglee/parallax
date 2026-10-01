@@ -6,6 +6,7 @@ from types import TracebackType
 from typing import Any, cast
 from uuid import uuid4
 
+from parallax.core import opt_lock
 from parallax.core.db_port import DatabaseAdapter, DatabaseRuntime, IsolationLevel
 from parallax.core.entity import DomainModel, EntityGraphConstruction, EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
@@ -75,6 +76,7 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
         construction=(None if classes is None else EntityGraphConstruction(catalog, classes)),
         codec=EntityRowCodec(catalog),
         planner=build_write_planner(catalog.meta),
+        evidence_policy_for=opt_lock.view(catalog.meta).required_key,
     )
 
 

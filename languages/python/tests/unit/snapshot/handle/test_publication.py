@@ -25,6 +25,7 @@ from typing import Any, Final
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core import opt_lock
 from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity import _graph_construction as graph_construction_module
 from parallax.core.entity import _layout as layout_module
@@ -159,6 +160,9 @@ def test_a_class_backed_model_prepares_every_product_for_every_entity() -> None:
     assert set(read.model.layouts._layouts) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert set(write.codec._facts_by_identity) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert set(read.construction._facts) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
+    facet = opt_lock.view(write.model.meta)
+    assert write.evidence_policy_for == facet.required_key
+    assert all(write.evidence_policy_for(entity) is facet.key(entity) for entity in expected)
 
 
 def test_a_descriptor_backed_model_prepares_with_no_graph_construction() -> None:

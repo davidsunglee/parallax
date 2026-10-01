@@ -90,7 +90,6 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     instructions,
 )
-from parallax.core.unit_work.claims import ClaimTable
 from parallax.core.unit_work.columns import ColumnSlice
 from parallax.core.unit_work.write_settlement import assigned_many_path
 from parallax.snapshot import QueryTargetError, Snapshot, SnapshotDecodingError, connect
@@ -2622,23 +2621,6 @@ def _traversals(
     return traversals
 
 
-def _unit_of_work_mutations(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    mutations: list[str] = []
-    buffer, claim = UnitOfWork.buffer, ClaimTable.claim
-
-    def recording_buffer(uow: UnitOfWork, instruction: BufferItem) -> None:
-        mutations.append("buffer")
-        buffer(uow, instruction)
-
-    def recording_claim(table: ClaimTable, key: Any, intent: Any) -> Any:
-        mutations.append("claim")
-        return claim(table, key, intent)
-
-    monkeypatch.setattr(UnitOfWork, "buffer", recording_buffer)
-    monkeypatch.setattr(ClaimTable, "claim", recording_claim)
-    return mutations
-
-
 def _account_rows(*owners: str | None) -> list[MappingRow]:
     return [
         {"id": key, "owner": owner, "balance": Decimal("10.00"), "version": 1}
@@ -2664,15 +2646,14 @@ def test_a_materializing_write_judges_compares_and_keeps_each_root_in_one_traver
     # One traversal, begun while the resolving Read is still open, decides
     # everything: the no-op row is eliminated there, the changed row is kept
     # there, and a versioned target's rows are read positionally rather than
-    # through a named row view. The group reaches the Unit of Work after the
-    # traversal, and buffering it installs its claim.
+    # through a named row view. The group the traversal sealed is what the flush
+    # writes.
     def named_view(*args: object, **kwargs: object) -> object:
         del args, kwargs
         raise AssertionError("a versioned acquisition viewed a row by member name")
 
     recorder = RecordingLifecycleProvider()
     traversals = _traversals(monkeypatch, recorder)
-    mutations = _unit_of_work_mutations(monkeypatch)
     monkeypatch.setattr(EntityStateRow, "over_declared_members", staticmethod(named_view))
     port = ScriptedAdapter(Transact(Read(rows=_account_rows("Ada", "Grace")), Write()))
 
@@ -2680,7 +2661,6 @@ def test_a_materializing_write_judges_compares_and_keeps_each_root_in_one_traver
 
     (traversal,) = traversals
     assert _read_open(traversal)
-    assert mutations == ["buffer", "claim"]
     (written,) = (call for call in port.calls if isinstance(call, WriteCall))
     assert written.binds == ("Ada", 2, 2, 1)
 
@@ -2691,10 +2671,10 @@ def test_a_root_refused_later_in_the_traversal_leaves_the_unit_of_work_untouched
     # The first two roots are compared and kept before the third is judged, and
     # its invalid stored document fails the resolving Read itself. What the
     # traversal had accumulated stays in its local builders: nothing was
-    # buffered or claimed, so the transaction commits with no write at all.
+    # buffered or claimed, so the same states select again and only that
+    # second write reaches the database.
     recorder = RecordingLifecycleProvider()
     traversals = _traversals(monkeypatch, recorder)
-    mutations = _unit_of_work_mutations(monkeypatch)
     compared: list[tuple[object, ...]] = []
     any_effective = PreparedEffectiveChange.any_effective
 
@@ -2703,51 +2683,60 @@ def test_a_root_refused_later_in_the_traversal_leaves_the_unit_of_work_untouched
         return any_effective(change, row)
 
     monkeypatch.setattr(PreparedEffectiveChange, "any_effective", recording_any_effective)
+
+    def rows(*cities: str | int) -> list[MappingRow]:
+        return [
+            {"id": key, "version": 1, "address": PresentDocument({"city": city})}
+            for key, city in enumerate(cities, start=1)
+        ]
+
     port = ScriptedAdapter(
-        Transact(
-            Read(
-                rows=[
-                    {"id": key, "version": 1, "address": PresentDocument({"city": city})}
-                    for key, city in ((1, "Bergen"), (2, "Paris"), (3, 7))
-                ]
-            )
-        )
+        Transact(Read(rows=rows("Bergen", "Paris", 7)), Read(rows=rows("Bergen")), Write())
     )
+
+    def assign(tx: Transaction) -> None:
+        tx.update_where(
+            WhereSubscriber.where(WhereSubscriber.id < 10),
+            WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
+        )
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(SnapshotDecodingError):
-            tx.update_where(
-                WhereSubscriber.where(WhereSubscriber.id < 10),
-                WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
-            )
+            assign(tx)
+        assign(tx)
 
     own_root(
         connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED), lifecycle_provider=recorder)
     ).using_database_login().transact(fn, concurrency="optimistic")
 
-    assert len(traversals) == 1
-    assert [row[0] for row in compared] == [1, 2]
-    assert mutations == []
-    (finished,) = (event for event in recorder.roots[-1].events if isinstance(event, ReadFinished))
+    assert len(traversals) == 2
+    assert [row[0] for row in compared] == [1, 2, 1]
+    finished = next(event for event in recorder.roots[-1].events if isinstance(event, ReadFinished))
     assert isinstance(finished.outcome, ReadFailed)
     assert isinstance(finished.outcome.failure, DirectFailure)
     assert finished.outcome.failure.diagnostic.qualified_type.endswith(".SnapshotDecodingError")
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, ReadCall, WriteCall, CommitCall]
 
 
 @pytest.mark.parametrize("owners", [(), ("Ada", "Ada")], ids=["empty", "all-no-op"])
 def test_a_resolve_keeping_no_row_buffers_and_claims_nothing(
     monkeypatch: pytest.MonkeyPatch, owners: tuple[str, ...]
 ) -> None:
+    # Nothing the resolve compared was claimed, so a second write selecting
+    # those same states is admitted and is the only one that writes.
     traversals = _traversals(monkeypatch)
-    mutations = _unit_of_work_mutations(monkeypatch)
-    port = ScriptedAdapter(Transact(Read(rows=_account_rows(*owners))))
+    port = ScriptedAdapter(
+        Transact(Read(rows=_account_rows(*owners)), Read(rows=_account_rows("Grace")), Write())
+    )
 
-    account_db(port).transact(_assign_owner, concurrency="optimistic")
+    def fn(tx: Transaction) -> None:
+        _assign_owner(tx)
+        _assign_owner(tx)
 
-    assert len(traversals) == 1
-    assert mutations == []
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
+    account_db(port).transact(fn, concurrency="optimistic")
+
+    assert len(traversals) == 2
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, ReadCall, WriteCall, CommitCall]
 
 
 def test_a_verb_carrying_no_assignments_prepares_no_comparison(

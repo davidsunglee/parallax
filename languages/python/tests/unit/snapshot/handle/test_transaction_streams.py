@@ -23,7 +23,7 @@ import datetime as dt
 import gc
 import weakref
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -38,7 +38,13 @@ from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.unit_work import instructions
 from parallax.snapshot import ServingModel, SnapshotStream, SnapshotStreamStateError, prepare_model
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import Database, KeyedWriteValueError, Transaction
+from parallax.snapshot.handle import (
+    Database,
+    KeyedWriteValueError,
+    ScopedDatabase,
+    Transaction,
+    WriteEvidenceError,
+)
 from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -303,6 +309,110 @@ def test_a_streamed_roots_own_observation_licenses_a_later_keyed_write() -> None
 
     account_db(port).transact(fn)
     assert port.calls[-2] == WriteCall(_UPDATE_SQL, (Decimal("125.00"), 2, 1, 1))
+
+
+type _Representation = Literal["typed", "wire"]
+_REPRESENTATIONS: tuple[_Representation, ...] = ("typed", "wire")
+_LOCKING_UPDATE_SQL = POSTGRES.to_driver_sql(
+    "update account set balance = ?, version = ? where id = ?"
+)
+
+
+def _first_root(scope: Transaction | ScopedDatabase, representation: _Representation) -> Any:
+    """The first root a one-row-per-page delivery of Account 1 publishes."""
+    query = mm.Account.where(mm.Account.id == 1)
+    stream = (
+        scope.stream(query, batch_size=1)
+        if representation == "typed"
+        else scope.wire.stream(query, batch_size=1)
+    )
+    with stream as delivered:
+        return next(iter(delivered))
+
+
+def _update(tx: Transaction, representation: _Representation, root: Any, balance: str) -> None:
+    if representation == "typed":
+        tx.update(cast("mm.Account", root).edit(balance=Decimal(balance)))
+    else:
+        tx.wire.update(root, {"balance": balance})
+
+
+def _restore(tx: Transaction, representation: _Representation, root: Any) -> None:
+    """A write whose authored change puts back the balance ``root`` observed."""
+    if representation == "typed":
+        account = cast("mm.Account", root)
+        tx.update(account.edit(balance=Decimal("1.00")).edit(balance=account.balance))
+    else:
+        tx.wire.update(root, {"balance": "100.00"})
+
+
+def _delete(tx: Transaction, representation: _Representation, root: Any) -> None:
+    if representation == "typed":
+        tx.delete(root)
+    else:
+        tx.wire.delete(root)
+
+
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+def test_a_streamed_roots_claim_refuses_an_intent_it_cannot_join(
+    representation: _Representation,
+) -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_account_row(1)])))
+
+    def fn(tx: Transaction) -> None:
+        root = _first_root(tx, representation)
+        _delete(tx, representation, root)
+        _update(tx, representation, root, "125.00")
+
+    with raises_contextualized(WriteEvidenceError) as refusal:
+        account_db(port).transact(fn)
+    assert refusal.value.code == "write-evidence-already-claimed"
+    assert WriteCall not in _kinds(port)
+
+
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+def test_a_consumed_streamed_root_restores_silently_and_refuses_a_change(
+    representation: _Representation,
+) -> None:
+    # The dependent read flushes the first write and spends the root's evidence.
+    # A write that only puts back what the root observed is a no-op settled
+    # before any evidence is asked for, so the spent evidence refuses nothing
+    # until a write actually needs it.
+    port = ScriptedAdapter(
+        Transact(Read(rows=[_account_row(1)]), Write(), Read(rows=[_account_row(2)]))
+    )
+
+    def fn(tx: Transaction) -> None:
+        root = _first_root(tx, representation)
+        _update(tx, representation, root, "125.00")
+        tx.find(mm.Account.where(mm.Account.id == 2))
+        _restore(tx, representation, root)
+        _update(tx, representation, root, "150.00")
+
+    with raises_contextualized(WriteEvidenceError) as refusal:
+        account_db(port).transact(fn)
+    assert refusal.value.code == "write-evidence-consumed"
+    assert _kinds(port).count(WriteCall) == 1
+
+
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+def test_only_a_participating_stream_licenses_a_locking_write(
+    representation: _Representation,
+) -> None:
+    port = ScriptedAdapter(
+        Read(rows=[_account_row(1)]), Transact(Read(rows=[_account_row(1)]), Write())
+    )
+    db = account_db(port)
+    standalone = _first_root(db, representation)
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(WriteEvidenceError) as refusal:
+            _update(tx, representation, standalone, "150.00")
+        assert refusal.value.code == "write-evidence-unavailable"
+        _update(tx, representation, _first_root(tx, representation), "125.00")
+
+    db.transact(fn, concurrency="locking")
+    assert port.calls[-2] == WriteCall(_LOCKING_UPDATE_SQL, (Decimal("125.00"), 2, 1))
 
 
 def test_a_wire_streamed_value_and_a_typed_find_of_one_row_carry_one_observation() -> None:
