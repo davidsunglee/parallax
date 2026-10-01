@@ -35,6 +35,7 @@ import pytest
 from parallax.conformance import models
 from parallax.core import predicate as oa
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
+from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import Metamodel
@@ -61,7 +62,7 @@ class _Converted:
     issues: tuple[StoredDataIssueInput, ...]
 
 
-def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Converted:
+def _converted(model: Metamodel, name: str, stored: Row | Mapping[str, object]) -> _Converted:
     """One stored row through the production read sequence, database aside."""
     compiled = compile_read(oa.All(), model, POSTGRES, entity(model, name), result_form="instance")
     prepared = bind(CatalogedModel(model), compiled)
@@ -71,6 +72,14 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Co
     rows = page_rows(page)
     root = RootView(page)
     return _Converted(rendered_members(rows.layouts[index], root.member_values(0)), root.issues(0))
+
+
+def _positional(model: Metamodel, name: str, stored: Mapping[str, object]) -> Row:
+    """``stored`` laid out in the compiled read's own result order, as a port
+    returns a provider row."""
+    compiled = compile_read(oa.All(), model, POSTGRES, entity(model, name), result_form="instance")
+    assert set(stored) == set(compiled.result_keys)
+    return tuple(stored[key] for key in compiled.result_keys)
 
 
 def _members(node: _Converted) -> Mapping[str, Any]:
@@ -262,6 +271,30 @@ def test_an_occurrence_column_classifies_an_absent_required_member() -> None:
 def test_an_occurrence_column_requires_a_folded_document_read() -> None:
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         _converted(_TWIN_COLUMNS, "Person", {**_COLUMNS_ROW, "address": {"city": "Oslo"}})
+
+
+@pytest.mark.parametrize(
+    ("payload", "codes"),
+    [
+        pytest.param(PresentDocument(_ADA_DOCUMENT), [], id="carried"),
+        pytest.param(PresentDocument({"displayName": "Bo"}), [], id="members-absent"),
+        pytest.param(PresentDocument({"displayName": "Bo", "note": None}), [], id="json-null"),
+        pytest.param(
+            PresentDocument({"displayName": 7}), ["stored-data-leaf-undecodable"], id="undecodable"
+        ),
+        pytest.param(SQL_NULL, [], id="sql-null-document"),
+    ],
+)
+def test_a_positional_and_a_result_keyed_document_row_classify_alike(
+    payload: object, codes: list[str]
+) -> None:
+    # A positional row carries the Structured Column at its ordinal and a
+    # result-keyed one under its key; either way each document-resident member
+    # is located inside it and classified by what the document actually holds.
+    keyed: Mapping[str, object] = {"id": 2, "payload": payload}
+    positional = _converted(_CORPUS, "Traveler", _positional(_CORPUS, "Traveler", keyed))
+    assert positional == _converted(_CORPUS, "Traveler", keyed)
+    assert [issue.code for issue in positional.issues] == codes
 
 
 def test_an_sql_null_entity_document_converts_each_member_to_null() -> None:
