@@ -114,7 +114,7 @@ or leaves the skip map, no case changes lane, and no grade moves.
 ### D-70 — A transaction's own buffered insert leaves a later keyed write of that object with no evidence once a flush intervenes
 
 *High — a correct program earns a refusal it cannot avoid.* Relates to
-`parallax.snapshot.handle._write_inputs.resolve_write_evidence`,
+`parallax.core.unit_work.UnitOfWork.resolve_write_evidence`,
 `parallax.snapshot.handle.Transaction`'s buffered-insert ledger.
 
 **What.** `tx.insert(a)` exempts a later keyed write of `a` from the
@@ -674,28 +674,6 @@ it is the prerequisite for such a case, and the refusal's own tests
 `tests/unit/conformance/_mechanism/test_given_state.py::test_given_corrupt_refuses_a_temporal_entity_before_reading_anything`)
 are what have to change first, since they pin the restriction this entry lifts.
 
-### D-90 — `instruction_identity`'s authored-instruction arm is unreachable, and so is the fallback inside it
-
-*Low — dead code on a live path, kept only until a deletion sweep can judge it
-beside its neighbour.* Relates to
-`parallax.snapshot.handle._write_inputs.instruction_identity`,
-`parallax.snapshot.handle._write_inputs.admit_and_buffer`.
-
-**What.** `instruction_identity` accepts `KeyedWrite | PreparedKeyedWrite` and
-branches on which it was handed. Its only caller is `admit_and_buffer`, whose
-parameter is `PreparedKeyedWrite`, so the authored-`KeyedWrite` arm never runs —
-nor does the `entity is None` fallback nested in it, which carries its own
-`pragma: no cover`. Every keyed ingress now buffers through `admit_and_buffer`,
-so nothing else can reach the function either.
-
-**Why it is deferred rather than fixed.** Narrowing the parameter to
-`PreparedKeyedWrite` collapses the function to one field read, which is an
-argument for inlining it rather than for keeping a narrowed helper — and that is
-a shape question about the buffering step, not a repair.
-
-**When.** When keyed claim admission moves into the Unit of Work, which removes
-`admit_and_buffer` and this helper with it.
-
 ### D-92 — ADR 0057 limits Read Origins to Wire-read results, and the node a Wire insert answers carries one too
 
 *Low — the one document naming where a Read Origin comes from omits the second
@@ -809,6 +787,8 @@ re-project a family superset, which is an unrelated obligation.
 
 ## Forwarding pointers
 
+- **D-90** → fixed. Keyed claim admission belongs to `parallax.core.unit_work.UnitOfWork.buffer`, which reads the claim off the buffered carrier and names a refused write by its prepared target, so `admit_and_buffer` and `instruction_identity` are gone with their unreachable authored-instruction arm.
+- **D-91** → fixed. Prepared-write production is the sole admissibility judgment, so `buffer_predicate_instruction` no longer re-judges family or verb applicability and neither of its arms survives.
 - **D-97** → fixed. `parallax.core.base.nearest_binary32_of_spelling` rounds a decimal to binary32 once by parsing to binary64 and narrowing, reading the exact decimal only when the parse is exactly a binary32 midpoint — the only place the two roundings can differ — so `_shortest_float`'s candidates and Float32 membership no longer build an exact ratio.
 - **D-98** → closed by the COR-142 owner decision. The unsupported 10% attribution gate is withdrawn rather than replaced; Phase 2 totals and counts remain before evidence, and the same single-implementation report supplies Phase 6's clean whole-lane after deltas without paired adapters or builder-exclusive attribution.
 - **D-96** → closed. The Snapshot delivery portfolio takes each materialization-stress memory cell in a child interpreter of its own (`tools/snapshot_delivery_reading.py`), as a collected window delta with no timed batch run before the reading, so the retained and transient cells are differences rather than levels; the retired reader's mixed-order matrix survives only as dated evidence in `docs/snapshot-materialization-baseline.md`.

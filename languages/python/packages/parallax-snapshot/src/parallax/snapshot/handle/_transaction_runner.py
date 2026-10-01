@@ -27,6 +27,7 @@ from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
+    EvidencePolicyLookup,
     OptimisticLockConflictError,
     RollbackOnlyError,
     TransactionSettings,
@@ -160,10 +161,11 @@ class _ActiveTransaction:
     can be settled before that comparison, the capture that fixes execution
     authority, the physical attempt currently
     running — which is what a joined invocation is a child activity OF — and the
-    Write Planner of the selection that attempt adopted, so a join plans through
-    what it inherited rather than adopting anything. All five ride core's single
-    per-thread active binding, so their visibility ends exactly when it does (no
-    handle-owned thread-local, nothing to clean up). ``root`` is a strong
+    Write Planner and write-evidence policy of the selection that attempt
+    adopted, so a join plans and admits through what it inherited rather than
+    adopting anything. All six ride core's single per-thread active binding,
+    so their visibility ends exactly when it does (no handle-owned
+    thread-local, nothing to clean up). ``root`` is a strong
     reference deliberately: it is resource-scoped state whose lifetime is the
     transaction's, not a registry entry.
     """
@@ -173,6 +175,7 @@ class _ActiveTransaction:
     capture: ExecutionCapture
     attempt: TransactionAttemptActivity
     planner: WritePlanner
+    evidence_policy_for: EvidencePolicyLookup
 
 
 class TransactionRunner:
@@ -316,6 +319,7 @@ class TransactionRunner:
                                     capture=capture,
                                     attempt=physical,
                                     planner=write.planner,
+                                    evidence_policy_for=write.evidence_policy_for,
                                 )
                                 return fn(tx)
 
@@ -332,6 +336,7 @@ class TransactionRunner:
                                 # re-adopted.
                                 planner=write.planner,
                                 actor_identity=capture.actor,
+                                evidence_policy_for=write.evidence_policy_for,
                             )
 
                         # One connection for this attempt and everything inside
@@ -449,6 +454,7 @@ class TransactionRunner:
                 write_batch_opening=active.write_batch_opening,
                 planner=joined.planner,
                 actor_identity=joined.capture.actor,
+                evidence_policy_for=joined.evidence_policy_for,
             )
 
 

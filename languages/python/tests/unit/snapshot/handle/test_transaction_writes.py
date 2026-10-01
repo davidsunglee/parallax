@@ -13,10 +13,11 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import pytest
 
+import parallax.snapshot
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import CardPayment, DepositRate, Person
 from parallax.conformance.scripted_clock import FixedClock
@@ -27,7 +28,7 @@ from parallax.conformance.vo_models import (
     ContactGeo,
     ContactPoint,
 )
-from parallax.core import LATEST, Attr, DomainModel, Entity, attr
+from parallax.core import LATEST, Attr, DomainModel, Entity, attr, unit_work
 from parallax.core.base import DocumentValue, InstantError, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
@@ -41,7 +42,7 @@ from parallax.core.unit_work import (
     WriteInstructionError,
     instructions,
 )
-from parallax.snapshot import InvalidData
+from parallax.snapshot import InvalidData, handle
 from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
     Database,
@@ -1793,3 +1794,30 @@ def test_the_keyed_write_value_code_set_is_closed_against_an_unlisted_code() -> 
         KeyedWriteValueError(
             code="write-value-nosuch", message="invented", identity=mm.Account.identity
         )
+
+
+def test_both_facades_publish_the_unit_of_works_one_evidence_vocabulary() -> None:
+    # The refusal is the Unit of Work's own; the developer facades publish that
+    # one class, code type, and closed code set rather than copies of them, and
+    # the buffering outcome the keyed ingress reads stays internal.
+    assert (
+        parallax.snapshot.WriteEvidenceError
+        is handle.WriteEvidenceError
+        is unit_work.WriteEvidenceError
+    )
+    assert (
+        parallax.snapshot.WriteEvidenceErrorCode
+        is handle.WriteEvidenceErrorCode
+        is unit_work.WriteEvidenceErrorCode
+    )
+    assert (
+        parallax.snapshot.WRITE_EVIDENCE_CODES
+        is handle.WRITE_EVIDENCE_CODES
+        is unit_work.WRITE_EVIDENCE_CODES
+    )
+    assert (
+        frozenset(get_args(unit_work.WriteEvidenceErrorCode.__value__))
+        == unit_work.WRITE_EVIDENCE_CODES
+    )
+    assert "BufferOutcome" not in parallax.snapshot.__all__
+    assert "BufferOutcome" not in handle.__all__

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Final, assert_never
+from typing import Final
 
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.opt_lock._compile import MODEL_COMPILER
@@ -11,12 +11,10 @@ from parallax.core.opt_lock._facet import (
     OptimisticKey,
     OptimisticLockFacet,
     TransactionTimeDerived,
-    Unversioned,
     view,
 )
 from parallax.core.opt_lock._rules import ISSUE_CODES, RULE_SET
 from parallax.core.unit_work import (
-    INSERT_MUTATIONS,
     Concurrency,
     KeyedMutation,
     ObjectKey,
@@ -122,42 +120,27 @@ def effective_strategy(preference: Concurrency, key: OptimisticKey | None) -> Co
     recover correctness with and therefore falls back to `m-read-lock`'s shared
     lock. One transaction consequently mixes strategies across Entities, and
     every consumer — read-lock derivation per deep-fetch level, gate settlement
-    per planned write, write-evidence rules — resolves through this one
-    function rather than reading the preference directly.
+    per planned write, write-evidence rules — resolves through the key's own
+    answer rather than reading the preference directly.
 
     An Identity the facet does not name has no key and takes the same Locking
     fallback: an unrecognized Entity is never granted a gate it cannot supply.
     """
-    if preference == "locking":
+    if preference == "locking" or key is None:
         return "locking"
-    return "optimistic" if isinstance(key, ExplicitVersion | TransactionTimeDerived) else "locking"
+    return key.effective_strategy(preference)
 
 
 def optimistic_key(model: Metamodel, entity: EntityIdentity) -> OptimisticKey:
     """``entity``'s Optimistic Key under ``model`` — one of the three variants,
-    never their absence.
-
-    The Optimistic Lock Facet carries a key for every accepted Entity and for
-    nothing else, so an Identity ``model`` does not name reaches no key of its
-    own — a caller that skipped resolving its target rather than a family without
-    a version source. It RAISES here, because the consumer this exists for
-    (:func:`settled_evidence`) has exactly one arm per variant: reading a miss as
-    :class:`Unversioned` would let an unrecognized Entity's write claim an object
-    on the strength of what was missing.
+    never their absence (:meth:`OptimisticLockFacet.required_key`).
 
     :func:`effective_strategy` takes the facet's own answer instead, absence
     included, because what follows from absence there is the shared lock a write
     it cannot gate would get anyway — safe for a lock, and a different question
     from which state a write claims.
     """
-    key = view(model).key(entity)
-    if key is None:
-        raise KeyError(
-            f"{entity.canonical!r} names no Entity this model declares, so it carries no "
-            "Optimistic Key; resolve a write's target against the model before deriving "
-            "what that write settles against"
-        )
-    return key
+    return view(model).required_key(entity)
 
 
 def settled_evidence(
@@ -168,52 +151,18 @@ def settled_evidence(
     observation: WriteObservation | RetainedObservation | None,
 ) -> SettledEvidence | None:
     """What a keyed write settles against, and therefore claims — the total
-    derivation over the write kind (`m-unit-work` "Observed-State Coalescing").
-
-    Three arms, each named by what the write IS:
-
-    * an **insert** settles against nothing and claims nothing: it opens a row
-      rather than writing against one, so there is no prior row to conflict over,
-      and a value naming a row that IS stored has its own provenance refusal;
-    * a **versioned or temporal** existing-row write settles against the exact
-      observed state its source retained and claims that state, because two
-      writes of one key that observed two different states are two independent
-      intents;
-    * an **unversioned Non-Temporal** existing-row write settles against its
-      **object**, because the shared row lock its evidence rule demands (arm 4
-      above) is held on the object and covers every state the row can be in. Two
-      such writes can never have observed two different states, so the
-      state-keyed rule's own reason does not apply and the object is the correct
-      grain.
+    derivation over the write kind (`m-unit-work` "Observed-State Coalescing"),
+    which ``key``'s own variant answers.
 
     The arms are derived from declared facts alone — this family's Optimistic Key
-    and the write's own mutation — exactly as :func:`effective_strategy` derives a
-    strategy from a preference and that same key. Each is named by the fact that
-    selects it and none is reached by falling through the others; absence is not
-    among the inputs, because ``key`` is a variant an accepted Entity's family
-    declares and the target is resolved before the derivation runs
-    (:func:`optimistic_key`). Deriving the object arm from a missing observation
-    instead would sweep in the insert, which observes no state either and has no
-    prior row to claim at all.
-
-    ``observation`` is what the producer resolved for the write, and reaches the
-    answer only on the state-keyed arm; a state-keyed write handed none settles
-    against nothing here and is refused where every buffered write is settled
-    (`m-unit-work`: a required observation that is missing is a planning error).
-    ``object_key`` is what the object arm claims, absent for a write that
-    addresses no single object — a row naming no complete primary key, or an
-    instruction naming several rows — which leaves nothing for a claim to be
-    about and settles the write against nothing.
+    and the write's own mutation — never from an absent observation, which would
+    sweep in the insert: it observes no state either and has no prior row to
+    claim at all. ``observation`` reaches the answer only for a versioned or
+    temporal family, and ``object_key`` only for an unversioned Non-Temporal
+    one; either may be absent for a write that has nothing for a claim to be
+    about, which then settles against nothing.
     """
-    if mutation in INSERT_MUTATIONS:
-        return None
-    match key:
-        case ExplicitVersion() | TransactionTimeDerived():
-            return observation
-        case Unversioned():
-            return object_key
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(key)
+    return key.settled_evidence(mutation, object_key=object_key, observation=observation)
 
 
 def reject_caller_authored_version(entity: str, version_attr: str) -> None:

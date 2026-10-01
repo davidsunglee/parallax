@@ -6,7 +6,7 @@ from typing import NoReturn
 
 from parallax.core.entity import DomainModel, EntityGraphConstruction, EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.unit_work import WritePlanner
+from parallax.core.unit_work import EvidencePolicyLookup, WritePlanner
 
 __all__ = [
     "ModelSelection",
@@ -64,14 +64,16 @@ class SelectedReadModel:
 class SelectedWriteModel:
     """The write projection of one Model Selection: the same edition and the
     exact same cataloged model as its read projection, with the Entity Row
-    Codec every write derives its rows through and the Write Planner every
-    flush plans through.
+    Codec every write derives its rows through, the Write Planner every flush
+    plans through, and the write-evidence policy every keyed write is admitted
+    under — all derived from that one model.
     """
 
     edition: str
     model: CatalogedModel
     codec: EntityRowCodec
     planner: WritePlanner
+    evidence_policy_for: EvidencePolicyLookup
 
 
 class ModelSelection:
@@ -127,6 +129,7 @@ def select_model(
     construction: EntityGraphConstruction | None,
     codec: EntityRowCodec,
     planner: WritePlanner,
+    evidence_policy_for: EvidencePolicyLookup,
 ) -> ModelSelection:
     """The complete selection ``model`` prepares into under ``edition``.
 
@@ -143,7 +146,13 @@ def select_model(
     """
     checked = check_edition(edition)
     read = SelectedReadModel(edition=checked, model=catalog, construction=construction)
-    write = SelectedWriteModel(edition=checked, model=catalog, codec=codec, planner=planner)
+    write = SelectedWriteModel(
+        edition=checked,
+        model=catalog,
+        codec=codec,
+        planner=planner,
+        evidence_policy_for=evidence_policy_for,
+    )
     selection = object.__new__(ModelSelection)
     object.__setattr__(selection, "_edition", checked)
     object.__setattr__(selection, "_model", model)

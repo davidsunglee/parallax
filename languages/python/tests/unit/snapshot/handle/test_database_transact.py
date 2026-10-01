@@ -31,7 +31,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import Attr, DomainModel, Entity, Int32, attr, index
+from parallax.core import Attr, DomainModel, Entity, Int32, attr, index, opt_lock
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
@@ -46,6 +46,7 @@ from parallax.core.entity._model import model_of
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     DatabaseLoginActor,
+    EvidencePolicyLookup,
     MissingTargetError,
     OptimisticLockConflictError,
     RollbackOnlyError,
@@ -57,6 +58,7 @@ from parallax.core.unit_work import (
     WriteBatchTrigger,
     WritePlan,
     WritePlanner,
+    active_unit_of_work,
     run_unit_of_work,
 )
 from parallax.core.unit_work.uow import EscapedTransactionError
@@ -71,6 +73,7 @@ from parallax.snapshot.handle import (
     TransactionRollbackError,
     build_write_planner,
 )
+from parallax.snapshot.handle._publication import write_projection
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -475,6 +478,7 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
         flush_executor=executor,
         planner=build_write_planner(model),
         actor_identity=TEST_ACTOR_IDENTITY,
+        evidence_policy_for=opt_lock.view(model).required_key,
     )
 
 
@@ -921,6 +925,39 @@ def test_a_retry_adopts_the_selection_published_since_the_failed_attempt() -> No
     assert db.transact(body) == "b"
     assert seen == ["a", "b"]
     assert port.calls.count(BeginCall()) == 2
+
+
+_OTHER_MODEL = prepare_model(DomainModel(mm.Account), edition="other-model")
+"""A selection over a second accepted model of the same Entity, so its compiled
+write-evidence policy is a different object from ``_A``'s."""
+
+
+def _admitting_policy() -> EvidencePolicyLookup:
+    uow = active_unit_of_work()
+    assert uow is not None
+    return uow._evidence_policy_for  # pyright: ignore[reportPrivateUsage] - the policy this attempt's keyed writes are admitted under
+
+
+def test_each_attempt_admits_under_the_policy_its_adopted_selection_carries() -> None:
+    # The write-evidence policy rides the selection rather than the root: the
+    # first attempt and a join into it admit under the selection that attempt
+    # adopted, and the retry under the one published since.
+    serving = ServingModel(_A)
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
+    db = _serving_db(port, serving)
+    seen: list[EvidencePolicyLookup] = []
+
+    def body(tx: Transaction) -> None:
+        seen.append(_admitting_policy())
+        if len(seen) == 1:
+            serving.publish(_OTHER_MODEL, expected=_A)
+            db.transact(lambda _inner: seen.append(_admitting_policy()))
+
+    db.transact(body)
+    adopted = write_projection(_A).evidence_policy_for
+    published = write_projection(_OTHER_MODEL).evidence_policy_for
+    assert adopted != published
+    assert seen == [adopted, adopted, published]
 
 
 def test_terminal_exhaustion_reports_the_final_attempts_edition() -> None:

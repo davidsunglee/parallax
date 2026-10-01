@@ -34,6 +34,7 @@ from parallax.conformance._lifecycle_recording import (
     RecordingLifecycleProvider,
 )
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core import opt_lock
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
@@ -219,6 +220,7 @@ def _participating[T](
             write_batch_opening=attempt.write_batch,
             planner=build_write_planner(_META),
             actor_identity=TEST_ACTOR_IDENTITY,
+            evidence_policy_for=opt_lock.view(_META).required_key,
         )
         attempt.committed()
         return answered

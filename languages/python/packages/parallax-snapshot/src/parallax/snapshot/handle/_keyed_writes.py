@@ -12,13 +12,14 @@ from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refu
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
-    DESTRUCTIVE_MUTATIONS,
     UPDATE_MUTATIONS,
+    BufferOutcome,
     KeyedMutation,
     ObjectKey,
     ReadOrigin,
     SettledEvidence,
     UnitOfWork,
+    buffered_write,
     object_key,
 )
 from parallax.core.unit_work.columns import freeze_retained_value
@@ -33,10 +34,7 @@ from parallax.snapshot.handle._write_inputs import (
     BufferedInserts,
     Provenance,
     WriteRepresentation,
-    admit_and_buffer,
-    cancels_a_pending_assignment,
     refuse_repeated_insert,
-    resolve_write_evidence,
     validate_provenance,
     validate_source_pin,
     written_object_of_row,
@@ -290,15 +288,13 @@ def keyed_write(
     flush will annihilate that pair and emit nothing for it, so from here on an
     insert of it is a first opening and an update of it addresses nothing.
 
-    Pending is asked of the unit of work
-    (:meth:`~parallax.core.unit_work.UnitOfWork.pending_insert`) and read BEFORE
-    the buffer, because buffering this very write is what ends the pair. It is
-    the whole condition, and an object whose insert already flushed is not one:
-    that row exists, so a second insert of it would collide with it — the flush
-    emits every surviving insert ahead of every delete, so a delete and a
-    re-insert of one flushed row cannot even be ordered as authored. Retiring
-    follows the buffer rather than preceding it for the guarantee the claim
-    ledger already gives: a refused write leaves every ledger as it found it.
+    Whether it cancelled one is the unit of work's report of the buffering
+    itself (:class:`~parallax.core.unit_work.BufferOutcome`). An object whose
+    insert already flushed is not pending: that row exists, so a second insert
+    of it would collide with it — the flush emits every surviving insert ahead
+    of every delete, so a delete and a re-insert of one flushed row cannot even
+    be ordered as authored. Retiring follows the buffer for the guarantee the
+    buffer itself gives: a refused write leaves every ledger as it found it.
     """
     refuse_reentry(ctx.lifecycle)
     source.capture(mutation)
@@ -327,21 +323,12 @@ def keyed_write(
     evidence: SettledEvidence | None = (
         None
         if opened_by is not None
-        else resolve_write_evidence(
-            meta,
-            resolved.entity,
-            resolved.hint,
-            mutation=mutation,
-            object_key=prepared.object_key,
-            preference=ctx.uow.settings.concurrency,
-            participation=ctx.uow.participation,
+        else ctx.uow.resolve_write_evidence(
+            resolved.entity, resolved.hint, mutation=mutation, object_key=prepared.object_key
         )
     )
-    cancels_pending_insert = mutation in DESTRUCTIVE_MUTATIONS and ctx.uow.pending_insert(
-        prepared.object_key
-    )
-    admit_and_buffer(ctx.uow, meta, prepared.instruction, evidence, change=change)
-    if cancels_pending_insert:
+    item = buffered_write(prepared.instruction, evidence, change=change)
+    if ctx.uow.buffer(item) is BufferOutcome.CANCELLED_PENDING_INSERT:
         ctx.inserts.retire(written)
 
 
@@ -400,7 +387,7 @@ def keyed_insert(
         mutation,
         opened_by=ctx.inserts.opened_by(written),
     )
-    admit_and_buffer(ctx.uow, meta, prepared, None)
+    ctx.uow.buffer(prepared)
     ctx.inserts.record(written, resolved.representation)
     opened = object_key(prepared, meta)
     # A Create Payload is a complete document, so the row it buffers always names
@@ -477,6 +464,6 @@ def _is_no_op(
     """
     if change is None or change.effective:
         return False
-    return not change.restored or not cancels_a_pending_assignment(
-        ctx.uow, ctx.model.meta, resolved.entity, resolved.hint, mutation
+    return not change.restored or not ctx.uow.holds_assignment(
+        resolved.entity, resolved.hint, mutation=mutation
     )

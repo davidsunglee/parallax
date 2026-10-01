@@ -32,7 +32,7 @@ from typing import Final, cast
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import bitemp_write, storage_layout, temporal_read, txtime_write
+from parallax.core import bitemp_write, opt_lock, storage_layout, temporal_read, txtime_write
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES, Dialect
@@ -1142,6 +1142,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
         flush_executor=_no_flush,
         planner=build_write_planner(model),
         actor_identity=TEST_ACTOR_IDENTITY,
+        evidence_policy_for=opt_lock.view(model).required_key,
     )
     assert isinstance(observation, TemporalObservation)
     assert dict(observation.predecessor.members) == {
@@ -1181,6 +1182,7 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
         flush_executor=_no_flush,
         planner=build_write_planner(model),
         actor_identity=TEST_ACTOR_IDENTITY,
+        evidence_policy_for=opt_lock.view(model).required_key,
     )
     assert isinstance(observation, TemporalObservation)
     assert observation.predecessor.document == stored

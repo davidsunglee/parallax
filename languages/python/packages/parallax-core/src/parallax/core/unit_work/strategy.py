@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
@@ -12,9 +12,13 @@ from parallax.core.metamodel import (
     TemporalDimension,
 )
 from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
+from parallax.core.unit_work.claims import SettledEvidence
 from parallax.core.unit_work.clock import TransactionInstant
+from parallax.core.unit_work.instructions import KeyedMutation
 from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.planned import CloseCause, PlannedWrite
+from parallax.core.unit_work.planner import ObjectKey
+from parallax.core.unit_work.retain import RetainedObservation
 
 __all__ = [
     "AUTHORED_FROM",
@@ -37,6 +41,7 @@ __all__ = [
     "Concurrency",
     "ConcurrencyStrategy",
     "DatabaseLoginActor",
+    "EvidencePolicyLookup",
     "MilestoneClosure",
     "MilestoneSuccessor",
     "MilestoneTopology",
@@ -49,6 +54,7 @@ __all__ = [
     "ValidTimeBound",
     "ValidTimeWindow",
     "VersionArithmetic",
+    "WriteEvidencePolicy",
     "concurrency_preference",
 ]
 
@@ -337,6 +343,44 @@ class ConcurrencyStrategy(Protocol):
     def reject_authored_version(
         self, entity: EntityIdentity, attribute: AttributeIdentity
     ) -> None: ...
+
+
+class WriteEvidencePolicy(Protocol):
+    """One target Entity's write-evidence policy (`m-opt-lock`), which the unit
+    of work applies to its own transaction state when it admits a keyed write.
+
+    Both answers are declared facts about the target's family, never about a
+    source's evidence: :meth:`effective_strategy` combines the unit of work's
+    Concurrency Preference with the family's version source, and
+    :meth:`settled_evidence` names what a keyed write settles against — and so
+    claims — from the mutation alone: nothing for an insert, the supplied
+    observation for a versioned or temporal family, and the supplied object
+    key for an unversioned Non-Temporal one. Neither reads participation,
+    consumption, or claims, which are the unit of work's own state, and
+    neither refuses anything.
+    """
+
+    def effective_strategy(self, preference: Concurrency, /) -> Concurrency: ...
+
+    def settled_evidence(
+        self,
+        mutation: KeyedMutation,
+        /,
+        *,
+        object_key: ObjectKey | None,
+        observation: WriteObservation | RetainedObservation | None,
+    ) -> SettledEvidence | None: ...
+
+
+type EvidencePolicyLookup = Callable[[EntityIdentity], WriteEvidencePolicy]
+"""The connected model's write-evidence policy for one accepted Entity.
+
+Bound once per accepted model by the composition root, because the policy is
+`m-opt-lock`'s and the module DAG runs `m-opt-lock --> m-unit-work`. An identity
+the model does not declare raises ``KeyError`` rather than answering a default
+policy: what an unrecognized Entity's write may claim cannot be read off what
+was missing.
+"""
 
 
 @runtime_checkable

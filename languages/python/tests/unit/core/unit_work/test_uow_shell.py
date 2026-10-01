@@ -4,8 +4,9 @@ Exercises the transaction-scope state machine independently of any real port or
 SQL lowering (the flush is an injected neutral executor): the frame stack (a
 nested scope joins the active transaction, ADR 0005), rollback-only doom and
 re-entry refusal, abort that discards buffered effects and withholds the callback
-value (ADR 0006), read-your-own-writes force-flush, Clock injection, and
-use-after-scope rejection.
+value (ADR 0006), read-your-own-writes force-flush, Clock injection,
+use-after-scope rejection, and what buffering admits: the claim each carrier
+names, all or nothing, and the pending-insert transition it reports.
 """
 
 from __future__ import annotations
@@ -20,15 +21,20 @@ import pytest
 
 from parallax.conformance import models
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core import opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
-from parallax.core import temporal_read
 from parallax.core.base import INFINITY
 from parallax.core.document_codec import EffectiveChangeSet
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
-    SELECTION_INTENT,
+    SUPERSEDED,
+    TERMINATED,
+    BufferItem,
+    BufferOutcome,
     Clock,
+    KeyedMutation,
     KeyedWrite,
     MaterializedWriteGroup,
     ObservedStateKey,
@@ -48,7 +54,7 @@ from parallax.core.unit_work import (
     VersionedEvidenceBuilder,
     VersionObservation,
     WriteBatchTrigger,
-    WriteIntent,
+    WriteEvidenceError,
     WritePlan,
     active_unit_of_work,
     buffered_write,
@@ -61,7 +67,7 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core.unit_work.materialized import ObservedKeyedWrite
-from parallax.core.unit_work.planned import PlannedUpdate
+from parallax.core.unit_work.planned import PlannedClose, PlannedUpdate
 from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.core.unit_work.uow import EscapedTransactionError, FlushExecutor, WriteBatchOpening
 from parallax.snapshot.handle import build_write_planner
@@ -69,6 +75,7 @@ from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._temporal_group_support import temporal_group
+from tests.unit._transact_support import PERSON
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
@@ -113,6 +120,7 @@ def _run[T](
         flush_executor=executor or _noop,
         planner=build_write_planner(resolved_meta),
         actor_identity=TEST_ACTOR_IDENTITY,
+        evidence_policy_for=opt_lock.view(resolved_meta).required_key,
         write_batch_opening=opening,
     )
 
@@ -698,25 +706,67 @@ def _balance_state(key: int) -> ObservedStateKey:
     )
 
 
-_ASSIGNMENT = WriteIntent(kind="assignment")
+def _account_write(
+    mutation: KeyedMutation, account_id: int, version: int, *, retained: bool = True
+) -> BufferItem:
+    """A keyed write of one Account state, carrying its source's evidence:
+    the retained observation a read of that state claims, or (``retained=False``)
+    the same evidence as a caller-held value, which claims nothing."""
+    row: dict[str, object] = {"id": account_id}
+    if mutation == "update":
+        row["balance"] = Decimal("1.00")
+    evidence = VersionObservation(observed_version=version)
+    return buffered_write(
+        _prepared_keyed(KeyedWrite(mutation, "Account", (row,)), _ACCOUNT),
+        RetainedObservation(_account_state(account_id, version), evidence, None)
+        if retained
+        else evidence,
+        change=_BALANCE_CHANGED if mutation == "update" else None,
+    )
+
+
+def _balance_update(key: int) -> BufferItem:
+    observation = TemporalObservation(predecessor=PredecessorRow(_balance_members(key)))
+    return buffered_write(
+        _prepared_keyed(
+            KeyedWrite("update", "Balance", ({"id": key, "value": Decimal("2.00")},)), _BALANCE
+        ),
+        RetainedObservation(_balance_state(key), observation, None),
+        change=_VALUE_CHANGED,
+    )
+
+
+_VALUE_CHANGED = EffectiveChangeSet(effective=frozenset({"value"}), restored=frozenset())
+
+
+def _refused_as_claimed(uow: UnitOfWork, item: BufferItem) -> WriteEvidenceError:
+    with pytest.raises(WriteEvidenceError) as refusal:
+        uow.buffer(item)
+    assert refusal.value.code == "write-evidence-already-claimed"
+    return refusal.value
+
+
+def _step_kinds(recorder: _Recorder) -> list[str]:
+    return [type(step).__name__ for plan in recorder.plans for step in plan.steps]
 
 
 def test_buffering_a_group_claims_every_state_it_selected_as_a_keyed_read_would_key_it() -> None:
     recorder = _Recorder()
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_group((1, 7), (2, 3)))
-        assert uow.claimed(_account_state(1, 7)) is SELECTION_INTENT
-        assert uow.claimed(_account_state(2, 3)) is SELECTION_INTENT
-        assert uow.claimed(_account_state(2, 7)) is None
+        assert uow.buffer(_account_group((1, 7), (2, 3))) is BufferOutcome.BUFFERED
+        _refused_as_claimed(uow, _account_write("update", 1, 7))
+        _refused_as_claimed(uow, _account_write("delete", 2, 3))
+        # Another state of a selected object is another claim scope.
+        assert uow.buffer(_account_write("update", 2, 7)) is BufferOutcome.BUFFERED
 
     _run(body, executor=recorder)
-    assert len(recorder.plans) == 1
+    assert sorted(_step_kinds(recorder)) == ["PlannedDelete", "PlannedDelete", "PlannedUpdate"]
 
     def temporal(uow: UnitOfWork) -> None:
         uow.buffer(_balance_group(_balance_members(1), _balance_members(2)))
-        assert uow.claimed(_balance_state(1)) is SELECTION_INTENT
-        assert uow.claimed(_balance_state(2)) is SELECTION_INTENT
+        _refused_as_claimed(uow, _balance_update(1))
+        _refused_as_claimed(uow, _balance_update(2))
 
     _run(temporal, meta=_BALANCE)
 
@@ -726,37 +776,43 @@ def test_a_late_milestone_edge_failure_withdraws_only_the_admitted_prefix() -> N
     # after two claims were admitted. Those two are withdrawn, the claim held
     # before the group is untouched, and the group is never buffered.
     recorder = _Recorder()
-    held = _balance_state(9)
 
     def body(uow: UnitOfWork) -> None:
-        assert uow.claim(held, _ASSIGNMENT) == "admit"
+        uow.buffer(_balance_update(9))
         group = _balance_group(
             _balance_members(1), _balance_members(2), _balance_members(3, tx_start="soon")
         )
         with pytest.raises(TemporalReadError):
             uow.buffer(group)
-        assert uow.claimed(_balance_state(1)) is None
-        assert uow.claimed(_balance_state(2)) is None
-        assert uow.claimed(held) is _ASSIGNMENT
+        uow.buffer(_balance_group(_balance_members(1), _balance_members(2)))
+        with pytest.raises(UnitOfWorkError, match="collides with a claim"):
+            uow.buffer(_balance_group(_balance_members(9)))
 
     _run(body, meta=_BALANCE, executor=recorder)
-    assert recorder.plans == []
+    closes = [
+        step for plan in recorder.plans for step in plan.steps if isinstance(step, PlannedClose)
+    ]
+    assert {type(close.cause) for close in closes} == {type(SUPERSEDED), type(TERMINATED)}
 
 
 def test_a_late_collision_leaves_the_pending_claim_it_met_standing() -> None:
     recorder = _Recorder()
 
     def body(uow: UnitOfWork) -> None:
-        assert uow.claim(_account_state(3, 7), _ASSIGNMENT) == "admit"
+        uow.buffer(_account_write("update", 3, 7))
         with pytest.raises(UnitOfWorkError, match="collides with a claim"):
             uow.buffer(_account_group((1, 7), (2, 7), (3, 7), (4, 7)))
-        assert uow.claimed(_account_state(1, 7)) is None
-        assert uow.claimed(_account_state(2, 7)) is None
-        assert uow.claimed(_account_state(3, 7)) is _ASSIGNMENT
-        assert uow.claimed(_account_state(4, 7)) is None
+        with pytest.raises(UnitOfWorkError, match="collides with a claim"):
+            uow.buffer(_account_group((3, 7)))
+        for account_id in (1, 2, 4):
+            uow.buffer(_account_write("delete", account_id, 7))
 
     _run(body, executor=recorder)
-    assert recorder.plans == []
+    assert set(_step_kinds(recorder)) == {"PlannedUpdate", "PlannedDelete"}
+    (update,) = (
+        step for plan in recorder.plans for step in plan.steps if isinstance(step, PlannedUpdate)
+    )
+    assert _member_value(update.assignments.attributes, "version") == 8
 
 
 def test_a_group_selecting_one_state_twice_is_refused_and_leaves_no_claim() -> None:
@@ -765,8 +821,182 @@ def test_a_group_selecting_one_state_twice_is_refused_and_leaves_no_claim() -> N
     def body(uow: UnitOfWork) -> None:
         with pytest.raises(UnitOfWorkError, match="incompatible"):
             uow.buffer(_account_group((1, 7), (2, 7), (1, 7)))
-        assert uow.claimed(_account_state(1, 7)) is None
-        assert uow.claimed(_account_state(2, 7)) is None
+        uow.buffer(_account_write("update", 1, 7))
+        uow.buffer(_account_write("update", 2, 7))
 
     _run(body, executor=recorder)
+    assert set(_step_kinds(recorder)) == {"PlannedUpdate"}
+
+
+# --------------------------------------------------------------------------- #
+# Buffering a keyed write admits the claim its carrier names, or refuses it    #
+# and changes nothing.                                                         #
+# --------------------------------------------------------------------------- #
+_PERSON_META = model_of(PERSON)
+
+
+def _person_write(mutation: KeyedMutation, person_id: int) -> BufferItem:
+    """An unversioned Non-Temporal Person write settling against its object."""
+    row: dict[str, object] = {"id": person_id}
+    if mutation == "update":
+        row["name"] = "Grace"
+    prepared = _prepared_keyed(KeyedWrite(mutation, "Person", (row,)), _PERSON_META)
+    return buffered_write(
+        prepared,
+        corpus_object_key("Person", ("id", person_id)),
+        change=(
+            EffectiveChangeSet(effective=frozenset({"name"}), restored=frozenset())
+            if mutation == "update"
+            else None
+        ),
+    )
+
+
+def test_a_retained_observation_claims_its_state_and_compatible_intents_combine() -> None:
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_account_write("update", 1, 7))
+        uow.buffer(_account_write("update", 1, 7))
+        uow.buffer(_account_write("delete", 1, 7))
+        uow.buffer(_account_write("delete", 1, 7))
+        refusal = _refused_as_claimed(uow, _account_write("update", 1, 7))
+        assert refusal.object_key == corpus_object_key("Account", ("id", 1))
+        assert "parallax.compatibility.Account" in refusal.message
+
+    _run(body, executor=recorder)
+    assert _step_kinds(recorder) == ["PlannedDelete"]
+
+
+def test_a_retained_claim_is_taken_at_the_exact_observed_state() -> None:
+    # Two states of one object are two scopes: a destruction of one leaves the
+    # other's assignment unrefused.
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_account_write("delete", 1, 7))
+        uow.buffer(_account_write("update", 1, 8))
+        _refused_as_claimed(uow, _account_write("update", 1, 7))
+        raise _Abandoned
+
+    with pytest.raises(_Abandoned):
+        _run(body)
+
+
+def test_a_caller_held_observation_claims_nothing() -> None:
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_account_write("delete", 1, 7, retained=False))
+        uow.buffer(_account_write("update", 1, 7, retained=False))
+        # Nor did either take the retained form's claim at that state.
+        uow.buffer(_account_write("update", 1, 7))
+        raise _Abandoned
+
+    with pytest.raises(_Abandoned):
+        _run(body)
+
+
+def test_an_object_claimed_write_claims_its_instructions_object() -> None:
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_person_write("update", 1))
+        uow.buffer(_person_write("delete", 1))
+        refusal = _refused_as_claimed(uow, _person_write("update", 1))
+        assert refusal.object_key == corpus_object_key("Person", ("id", 1))
+        uow.buffer(_person_write("update", 2))
+
+    _run(body, executor=recorder, meta=_PERSON_META)
+    assert sorted(_step_kinds(recorder)) == ["PlannedDelete", "PlannedUpdate"]
+
+
+def test_a_refused_carrier_or_claim_leaves_claims_and_pending_inserts_as_they_were() -> None:
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_account_insert(9))
+        uow.buffer(_account_write("delete", 1, 7))
+        with pytest.raises(ValueError, match="evidence about one row"):
+            uow.buffer(
+                buffered_write(
+                    _prepared_keyed(
+                        KeyedWrite("delete", "Account", ({"id": 9}, {"id": 1})), _ACCOUNT
+                    ),
+                    RetainedObservation(
+                        _account_state(1, 7), VersionObservation(observed_version=7), None
+                    ),
+                )
+            )
+        _refused_as_claimed(uow, _account_write("update", 1, 7))
+        assert uow.buffer(_account_delete(9)) is BufferOutcome.CANCELLED_PENDING_INSERT
+        _refused_as_claimed(uow, _account_write("update", 1, 7))
+
+    _run(body)
+
+
+class _Abandoned(Exception):
+    """Ends a body whose buffer no flush is meant to plan."""
+
+
+# --------------------------------------------------------------------------- #
+# Buffering reports the pending-insert transition it made.                    #
+# --------------------------------------------------------------------------- #
+def _account_delete(account_id: int) -> PreparedKeyedWrite:
+    return _prepared_keyed(KeyedWrite("delete", "Account", ({"id": account_id},)), _ACCOUNT)
+
+
+def test_a_destructive_write_of_a_pending_insert_reports_the_cancellation() -> None:
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        assert uow.buffer(_account_insert(9)) is BufferOutcome.BUFFERED
+        assert uow.buffer(_account_delete(8)) is BufferOutcome.BUFFERED
+        assert uow.buffer(_account_delete(9)) is BufferOutcome.CANCELLED_PENDING_INSERT
+        assert uow.buffer(_account_insert(9)) is BufferOutcome.BUFFERED
+        assert uow.buffer(_account_delete(9)) is BufferOutcome.CANCELLED_PENDING_INSERT
+        assert uow.buffer(_account_delete(9)) is BufferOutcome.BUFFERED
+        raise _Abandoned
+
+    with pytest.raises(_Abandoned):
+        _run(body, executor=recorder)
     assert recorder.plans == []
+
+
+def test_every_other_accepted_item_reports_plain_buffering() -> None:
+    predicate = prepare_typed_write(
+        PredicateWrite(
+            "delete",
+            PredicateSelection("Account", predicate_algebra.Comparison("eq", "Account.id", 1)),
+        ),
+        _ACCOUNT,
+    )
+
+    def body(uow: UnitOfWork) -> None:
+        assert uow.buffer(_account_write("update", 1, 7)) is BufferOutcome.BUFFERED
+        assert uow.buffer(_account_write("delete", 2, 7)) is BufferOutcome.BUFFERED
+        assert uow.buffer(_account_write("delete", 3, 7, retained=False)) is (
+            BufferOutcome.BUFFERED
+        )
+        assert uow.buffer(predicate) is BufferOutcome.BUFFERED
+        assert uow.buffer(_account_group((4, 7))) is BufferOutcome.BUFFERED
+        raise _Abandoned
+
+    with pytest.raises(_Abandoned):
+        _run(body)
+
+    def unversioned(uow: UnitOfWork) -> None:
+        assert uow.buffer(_person_write("update", 1)) is BufferOutcome.BUFFERED
+        assert uow.buffer(_person_write("delete", 2)) is BufferOutcome.BUFFERED
+        raise _Abandoned
+
+    with pytest.raises(_Abandoned):
+        _run(unversioned, meta=_PERSON_META)
+
+
+def test_a_destructive_write_after_the_insert_flushed_cancels_nothing() -> None:
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_account_insert(9))
+        uow.read(lambda: None)
+        assert uow.buffer(_account_write("delete", 9, 1, retained=False)) is (
+            BufferOutcome.BUFFERED
+        )
+
+    _run(body, executor=recorder)
+    assert _step_kinds(recorder) == ["PlannedInsert", "PlannedDelete"]
