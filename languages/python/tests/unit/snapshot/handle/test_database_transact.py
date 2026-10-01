@@ -23,6 +23,7 @@ Everything a `Transaction` itself does is elsewhere: keyed verbs in
 from __future__ import annotations
 
 import contextlib
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
@@ -46,7 +47,6 @@ from parallax.core.entity._model import model_of
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     DatabaseLoginActor,
-    EvidencePolicyLookup,
     MissingTargetError,
     OptimisticLockConflictError,
     RollbackOnlyError,
@@ -56,9 +56,9 @@ from parallax.core.unit_work import (
     UnitOfWork,
     UnitOfWorkError,
     WriteBatchTrigger,
+    WriteEvidenceError,
     WritePlan,
     WritePlanner,
-    active_unit_of_work,
     run_unit_of_work,
 )
 from parallax.core.unit_work.uow import EscapedTransactionError
@@ -73,7 +73,6 @@ from parallax.snapshot.handle import (
     TransactionRollbackError,
     build_write_planner,
 )
-from parallax.snapshot.handle._publication import write_projection
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -85,6 +84,7 @@ from tests._support.db_port import (
     ScriptedAdapter,
     Transact,
     Write,
+    WriteCall,
     body_outcome,
 )
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
@@ -97,6 +97,7 @@ from tests.unit._transact_support import (
     account_db,
     db_for,
     deadlock,
+    grace,
     new_account,
     read_account,
 )
@@ -927,37 +928,52 @@ def test_a_retry_adopts_the_selection_published_since_the_failed_attempt() -> No
     assert port.calls.count(BeginCall()) == 2
 
 
-_OTHER_MODEL = prepare_model(DomainModel(mm.Account), edition="other-model")
-"""A selection over a second accepted model of the same Entity, so its compiled
-write-evidence policy is a different object from ``_A``'s."""
+class _UnversionedAccount(
+    Entity,
+    table="account",
+    name="Account",
+    namespace="parallax.compatibility",
+    indices=(index("account_owner", "owner"),),
+):
+    """``ACCOUNT``'s Entity without its version Attribute, so the default
+    preference resolves it to the Locking strategy rather than Optimistic."""
+
+    id: Attr[int] = attr(primary_key=True)
+    owner: Attr[str] = attr(max_length=64)
+    balance: Attr[Decimal] = attr(precision=18, scale=2)
 
 
-def _admitting_policy() -> EvidencePolicyLookup:
-    uow = active_unit_of_work()
-    assert uow is not None
-    return uow._evidence_policy_for  # pyright: ignore[reportPrivateUsage] - the policy this attempt's keyed writes are admitted under
+_UNVERSIONED = prepare_model(DomainModel(_UnversionedAccount), edition="unversioned")
 
 
-def test_each_attempt_admits_under_the_policy_its_adopted_selection_carries() -> None:
-    # The write-evidence policy rides the selection rather than the root: the
-    # first attempt and a join into it admit under the selection that attempt
-    # adopted, and the retry under the one published since.
+def _refusing_strategy(delete: Callable[[], object]) -> str:
+    """The strategy named by the refusal of a keyed delete whose value no read produced."""
+    with pytest.raises(WriteEvidenceError) as refusal:
+        delete()
+    assert refusal.value.code == "write-evidence-unavailable"
+    named = re.search(r"the (\w+) strategy", refusal.value.message)
+    assert named is not None
+    return named.group(1)
+
+
+def test_each_attempt_settles_write_evidence_under_its_adopted_selection() -> None:
     serving = ServingModel(_A)
     port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
     db = _serving_db(port, serving)
-    seen: list[EvidencePolicyLookup] = []
+    seen: list[str] = []
 
     def body(tx: Transaction) -> None:
-        seen.append(_admitting_policy())
-        if len(seen) == 1:
-            serving.publish(_OTHER_MODEL, expected=_A)
-            db.transact(lambda _inner: seen.append(_admitting_policy()))
+        if seen:
+            unread = _UnversionedAccount(id=3, owner="Grace", balance=Decimal("10.00"))
+            seen.append(_refusing_strategy(lambda: tx.delete(unread)))
+            return
+        seen.append(_refusing_strategy(lambda: tx.delete(grace())))
+        serving.publish(_UNVERSIONED, expected=_A)
+        db.transact(lambda inner: seen.append(_refusing_strategy(lambda: inner.delete(grace()))))
 
     db.transact(body)
-    adopted = write_projection(_A).evidence_policy_for
-    published = write_projection(_OTHER_MODEL).evidence_policy_for
-    assert adopted != published
-    assert seen == [adopted, adopted, published]
+    assert seen == ["Optimistic", "Optimistic", "Locking"]
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 def test_terminal_exhaustion_reports_the_final_attempts_edition() -> None:
