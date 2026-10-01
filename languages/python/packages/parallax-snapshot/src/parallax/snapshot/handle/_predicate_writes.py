@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import datetime as dt
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Final
 
 from parallax.core import deep_fetch, inheritance
 from parallax.core.db_port import DatabaseConnection
@@ -13,12 +12,9 @@ from parallax.core.document_codec import (
     PreparedEffectiveChange,
     prepare_effective_change,
 )
-from parallax.core.entity import AttributeAssignment
-from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import TransactionAttemptActivity
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata
-from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
 from parallax.core.object_query._validated import latest_temporal_selections
 from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import NonTemporal, Pin, TemporalShape
@@ -27,17 +23,10 @@ from parallax.core.unit_work import (
     PredecessorRows,
     PredecessorRowsBuilder,
     PredicateMutation,
-    PredicateSelection,
-    PredicateWrite,
-    UnitOfWork,
     VersionedEvidence,
     VersionedEvidenceBuilder,
-    WriteAssignment,
-    instructions,
 )
-from parallax.core.unit_work.instructions import (
-    PreparedPredicateWrite,
-)
+from parallax.core.unit_work.instructions import PreparedPredicateWrite
 from parallax.core.unit_work.write_settlement import reject_readless_document_many
 from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._family import (
@@ -46,63 +35,39 @@ from parallax.snapshot.handle._family import (
     family_view,
     temporal_shape,
 )
+from parallax.snapshot.handle._keyed_writes import KeyedWriteContext
 from parallax.snapshot.handle._materialization import FlatPageRead, Materializer, RowPublication
 from parallax.snapshot.handle._read import entity_read_lock, execute_read
 from parallax.snapshot.materialize import Page, RootView, require_publishable
 from parallax.snapshot.materialize._page import ABSENT
+
+__all__ = ["PredicateWriteContext", "buffer_predicate_instruction"]
 
 # The predicate mutations that carry Assignments; the rest take none at all and
 # their verbs' signatures say so.
 _ASSIGNMENT_BEARING: Final[frozenset[PredicateMutation]] = frozenset({"update", "updateUntil"})
 
 
-def buffer_predicate(
-    uow: UnitOfWork,
-    model: CatalogedModel,
-    conn: DatabaseConnection,
-    mutation: PredicateMutation,
-    query: ObjectQuery[Any, Any],
-    assignments: Sequence[AttributeAssignment[Any]],
-    *,
-    valid_from: dt.datetime | None,
-    until: dt.datetime | None = None,
-    attempt: TransactionAttemptActivity,
-) -> None:
-    """The Typed entry to the predicate-write lane: a mutation-compatible
-    :class:`~parallax.core.object_query.ObjectQuery` plus ``Attr.set(...)``
-    assignments, stated as the canonical
-    :class:`~parallax.core.unit_work.PredicateWrite` every ingress prepares.
+@dataclass(frozen=True, slots=True)
+class PredicateWriteContext:
+    """The transaction state a predicate-selected write reads.
 
-    Only the query's own form is judged here: a query carrying a result-shaping,
-    temporal, narrowing, or deep-fetch clause is no write target
-    (:func:`~parallax.core.object_query.mutation_selection`,
-    ``query-not-mutation-compatible``), and no instruction has a spelling for
-    such a clause. Everything the instruction states — its target, verb, window,
-    predicate, and assignments — is judged by
-    :func:`~parallax.core.unit_work.instructions.prepare_typed_write` before
-    :func:`buffer_predicate_instruction` dispatches the prepared product.
+    Built once per ``Transaction`` and shared by its Typed and Wire predicate
+    ingress. ``keyed`` is that transaction's one :class:`KeyedWriteContext`, so
+    both families read the same accepted model, unit of work, and installed
+    lifecycle. The connection and the attempt sit beside it rather than inside
+    it because only a materializing predicate write reads: its resolve is a Read
+    of its own under this attempt, on this transaction's connection, and no
+    keyed write reads at all.
     """
-    selection = mutation_selection(query)
-    instruction = PredicateWrite(
-        mutation,
-        PredicateSelection(selection.target.canonical, selection.predicate),
-        tuple(
-            WriteAssignment(str(assignment.attr), assignment.value) for assignment in assignments
-        ),
-        valid_from,
-        until,
-    )
-    prepared = instructions.prepare_typed_write(instruction, model.meta)
-    assert isinstance(prepared, PreparedPredicateWrite)
-    buffer_predicate_instruction(uow, model, conn, prepared, attempt)
+
+    keyed: KeyedWriteContext
+    conn: DatabaseConnection
+    attempt: TransactionAttemptActivity
 
 
 def buffer_predicate_instruction(
-    uow: UnitOfWork,
-    model: CatalogedModel,
-    conn: DatabaseConnection,
-    instruction: PreparedPredicateWrite,
-    attempt: TransactionAttemptActivity,
+    ctx: PredicateWriteContext, instruction: PreparedPredicateWrite
 ) -> None:
     """Dispatch a prepared predicate write READLESS (`m-batch-write`) or
     MATERIALIZE it (`m-opt-lock`, ADR 0014) — the seam both representations'
@@ -114,7 +79,7 @@ def buffer_predicate_instruction(
     statement, after refusing a document-resident ``many`` assignment no
     readless statement can express; every other target materializes.
     """
-    meta = model.meta
+    meta = ctx.keyed.model.meta
     entity = instruction.selection.target
     shape = temporal_shape(meta, entity)
     version_attr = CONCURRENCY.version_attribute(meta, entity.identity)
@@ -122,29 +87,17 @@ def buffer_predicate_instruction(
         # Readless (`m-batch-write.md` "Predicate-selected readless forms"):
         # one statement, no materialization, no equality-elimination pass.
         reject_readless_document_many(entity, instruction)
-        uow.buffer(instruction)
+        ctx.keyed.uow.buffer(instruction)
         return
-    _materialize_predicate_write(
-        uow,
-        model,
-        conn,
-        instruction,
-        entity,
-        shape,
-        version_attr,
-        attempt,
-    )
+    _materialize_predicate_write(ctx, instruction, entity, shape, version_attr)
 
 
 def _materialize_predicate_write(
-    uow: UnitOfWork,
-    model: CatalogedModel,
-    conn: DatabaseConnection,
+    ctx: PredicateWriteContext,
     instruction: PreparedPredicateWrite,
     entity: EntityMetadata,
     family_shape: TemporalShape,
     version_attr: AttributeIdentity | None,
-    attempt: TransactionAttemptActivity,
 ) -> None:
     """Materialize a predicate write on a VERSIONED or TEMPORAL target
     (`m-opt-lock` "Predicate-selected writes materialize when observations
@@ -176,6 +129,9 @@ def _materialize_predicate_write(
     resolve would match every historical milestone too, not just the open
     one(s).
     """
+    model = ctx.keyed.model
+    uow = ctx.keyed.uow
+    conn = ctx.conn
     meta = model.meta
     layout = entity_layout(meta, entity)
     if layout is None:  # pragma: no cover - a predicate-write target always owns rows
@@ -258,7 +214,7 @@ def _materialize_predicate_write(
     # local builder, which nothing else reaches. Buffering the group then
     # installs its selection claims with it, or neither.
     def resolve() -> VersionedEvidence | PredecessorRows | None:
-        with attempt.read(entity.identity, "rows") as read:
+        with ctx.attempt.read(entity.identity, "rows") as read:
             query = deep_fetch.plan_mutation_read(
                 instruction,
                 model=meta,

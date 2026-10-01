@@ -115,7 +115,7 @@ or leaves the skip map, no case changes lane, and no grade moves.
 
 *High — a correct program earns a refusal it cannot avoid.* Relates to
 `parallax.core.unit_work.UnitOfWork.resolve_write_evidence`,
-`parallax.snapshot.handle.Transaction`'s buffered-insert ledger.
+`parallax.snapshot.handle.Transaction`'s opened-object ledger.
 
 **What.** `tx.insert(a)` exempts a later keyed write of `a` from the
 provenance rule, because a row this unit of work inserted is a row it stores. The
@@ -131,7 +131,7 @@ target fails at settlement despite the transaction holding a perfectly fresh
 observation of the row the flush just wrote. It reproduces identically through
 both representations, because they share one buffer and one ledger. The insert
 door reads that same ledger for the opposite verdict
-(`_write_inputs.refuse_repeated_insert`), so the flush's non-retirement has a
+(`_keyed_writes.refuse_repeated_insert`), so the flush's non-retirement has a
 second face: after the flush the object can be neither written with evidence
 nor inserted again. Both faces are pinned as fixed expectations
 (`tests/unit/snapshot/handle/test_keyed_write_order.py`'s reread axis), and both move with

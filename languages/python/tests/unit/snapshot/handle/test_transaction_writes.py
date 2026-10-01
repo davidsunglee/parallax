@@ -513,11 +513,11 @@ def test_a_keyed_update_classifies_its_effective_change_once(
 # --------------------------------------------------------------------------- #
 def test_the_engine_and_the_typed_verbs_share_the_prepared_write_producer() -> None:
     from parallax.conformance._lanes import scenario
-    from parallax.snapshot.handle import _transaction as transaction_module
+    from parallax.snapshot.handle import _typed_writes as typed_writes_module
 
     assert scenario.instructions.prepare_wire_write is instructions.prepare_wire_write  # pyright: ignore[reportPrivateImportUsage] - the identity proof reads the module's own import binding
     assert (
-        transaction_module.instructions.prepare_typed_write  # pyright: ignore[reportPrivateImportUsage] - the identity proof reads the module's own import binding
+        typed_writes_module.instructions.prepare_typed_write  # pyright: ignore[reportPrivateImportUsage] - the identity proof reads the module's own import binding
         is instructions.prepare_typed_write
     )
 
@@ -1102,7 +1102,7 @@ def test_a_temporal_update_after_an_audit_read_of_the_same_milestone_commits(
 
 # --------------------------------------------------------------------------- #
 # The finite-Transaction-Time-pin refusal (`m-temporal-read`'s finite-pin      #
-# mutation row; `_write_inputs.validate_source_pin`): a view pinned at a       #
+# mutation row; `_keyed_writes.validate_source_pin`): a view pinned at a       #
 # FINITE Transaction-Time instant is read-only. That every keyed verb refuses  #
 # it, in either representation, is the order suite's; what is asked here is    #
 # which pins are NOT that one. A LATEST Transaction-Time pin and a finite      #
@@ -1172,7 +1172,7 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_is_refused_too(
 
 
 # --------------------------------------------------------------------------- #
-# The KEYED verbs' own entity-class guard (`_write_inputs.                     #
+# The KEYED verbs' own entity-class guard (`_typed_writes.                     #
 # metadata_of_instance`). It needs no fixture but a boundary that runs no      #
 # statement, so it lives here with the rest of the keyed-verb region.          #
 # --------------------------------------------------------------------------- #
@@ -1261,7 +1261,7 @@ def test_the_keyed_entity_class_guard_still_accepts_its_own_models_instance() ->
 
 # --------------------------------------------------------------------------- #
 # The keyed-write value contract (`m-unit-work` "Write value provenance";      #
-# `_write_inputs.validate_write_value`): which verbs accept a value is decided #
+# `_keyed_writes.validate_provenance`): which verbs accept a value is decided  #
 # by which framework-managed source produced it, and never by whether an       #
 # author has since changed it. The four outcomes below are the whole rule —    #
 # three refusals partitioning the values a verb can be handed, and the         #

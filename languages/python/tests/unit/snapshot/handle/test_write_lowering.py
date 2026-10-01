@@ -745,7 +745,8 @@ def test_materializing_predicate_write_reaching_finalization_is_refused() -> Non
     # A predicate write on a VERSIONED (or temporal) target never reaches
     # finalization directly in production — materialization decomposes it to
     # per-row keyed writes at BUFFER time (`parallax.snapshot.handle`'s
-    # `buffer_predicate`, which the `_where` verbs only delegate to; ADR 0014),
+    # `buffer_predicate_instruction`, which both representations' `_where`
+    # verbs reach; ADR 0014),
     # before it is ever planned. Reaching here with one is a caller wiring
     # defect this seam still refuses loudly, never mis-emits.
     predicate = PredicateWrite("delete", PredicateSelection("Account", oa.All()))
@@ -775,8 +776,8 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # inheritance family is REJECTED BEFORE SQL with the corpus's
     # `subtype-write-set-based-unsupported` classification (m-inheritance-089)".
     #
-    # The buffer-time seams (`_predicate_writes.buffer_predicate` /
-    # `buffer_predicate_instruction`) guard the developer `_where` verbs and the
+    # The buffer-time seams (`_typed_writes.typed_predicate_write` /
+    # `_predicate_writes.buffer_predicate_instruction`) guard the developer `_where` verbs and the
     # engine's buffering translation — but they are NOT on every road here.
     # `stream_lowered` is EXPORTED (`parallax.snapshot.handle.__all__`,
     # `tests/api/public_api.json`), and the conformance engine's readless

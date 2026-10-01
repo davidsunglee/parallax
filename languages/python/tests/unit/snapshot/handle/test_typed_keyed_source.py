@@ -36,7 +36,7 @@ from parallax.core.entity._errors import EntityRowError
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import ObjectKey, WriteInstructionError
 from parallax.snapshot import InvalidData
-from parallax.snapshot.handle._transaction import (
+from parallax.snapshot.handle._typed_writes import (
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,
     provenance_of,
@@ -170,7 +170,7 @@ def test_a_pinned_view_answers_the_instant_it_stands_at() -> None:
 
 
 def test_a_value_whose_class_keys_the_entity_elsewhere_names_no_object() -> None:
-    # The identity row names the object to the buffered-insert ledger, and the
+    # The identity row names the object to the opened-object ledger, and the
     # ledger is asked before the provenance refusal such a value has coming, so
     # the answer for a value that can key nothing is "no object" rather than the
     # codec failure deriving a row for the purpose would raise.

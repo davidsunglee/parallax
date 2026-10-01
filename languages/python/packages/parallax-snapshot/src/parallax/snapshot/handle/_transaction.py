@@ -1,265 +1,43 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping
 from typing import Any
 
 from parallax.core.db_port import DatabaseConnection
-from parallax.core.entity import (
-    AttributeAssignment,
-    EntityRowCodec,
-    lifecycle_state_of,
-)
+from parallax.core.entity import AttributeAssignment, EntityRowCodec
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
     TransactionAttemptActivity,
-    refuse_reentry,
 )
-from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.unit_work import (
-    UPDATE_MUTATIONS,
-    KeyedMutation,
-    UnitOfWork,
-    instructions,
-)
-from parallax.core.unit_work.instructions import PreparedKeyedWrite
+from parallax.core.unit_work import UnitOfWork
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle._keyed_writes import (
+    InsertedObjects,
     KeyedWriteContext,
-    PreparedSourceWrite,
-    Provenance,
-    ResolvedKeyedInsert,
-    ResolvedKeyedWriteSource,
     keyed_insert,
     keyed_write,
-    retained,
 )
 from parallax.snapshot.handle._options import DatabaseOptions
-from parallax.snapshot.handle._predicate_writes import buffer_predicate
+from parallax.snapshot.handle._predicate_writes import PredicateWriteContext
 from parallax.snapshot.handle._publication import SelectedReadModel, SelectedWriteModel
 from parallax.snapshot.handle._read import RowsResult, Snapshot
 from parallax.snapshot.handle._read_plan import ReadPlanner
 from parallax.snapshot.handle._read_scope import participating_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream
-from parallax.snapshot.handle._wire import WireTransactionView
-from parallax.snapshot.handle._wire_writes import WireWriteLane
-from parallax.snapshot.handle._write_inputs import (
-    BufferedInserts,
-    keyed_instruction,
-    metadata_of_instance,
-    read_origin_of,
-    source_identity_row,
-    source_pin,
-    written_object_key,
+from parallax.snapshot.handle._typed_writes import (
+    TypedKeyedInsertSource,
+    TypedKeyedWriteSource,
+    typed_predicate_write,
 )
-
-
-def provenance_of(value: EntityBase) -> Provenance:
-    """Which framework-managed source produced ``value``.
-
-    Read through :func:`~parallax.snapshot._inspection.snapshot_state_of` and the
-    un-narrowed :func:`~parallax.core.entity.lifecycle_state_of`, never through a
-    value's private state: the narrowed answer authenticates THIS Snapshot
-    lifecycle, and its Read Origin says whether that lifecycle published valid
-    stored Entity State. Diagnostic data from an invalid root carries Snapshot
-    state for inspection but no origin, so it is ``none`` rather than a stored
-    value of this source. The un-narrowed answer distinguishes another
-    framework-managed source's value from one no managed source produced at all.
-
-    It lives beside the Typed verbs because only a Typed value carries a
-    lifecycle to read: a Wire source answers the same fact from the Read Origin
-    the door that published it filed, and what the keyed write judges is the
-    answer rather than either carrier.
-    """
-    if lifecycle_state_of(value) is None:
-        return "none"
-    state = snapshot_state_of(value)
-    if state is None:
-        return "foreign"
-    return "none" if state.source is None else "this"
-
-
-def prepared_typed_write(
-    meta: Metamodel,
-    mutation: KeyedMutation,
-    entity: EntityMetadata,
-    row: Mapping[str, object],
-    *,
-    valid_from: dt.datetime | None,
-    until: dt.datetime | None,
-) -> PreparedKeyedWrite:
-    """One authored single-row keyed instruction, judged by Unit Work's sole
-    typed preparation — target and window, then member names, values, and
-    assignment legality.
-
-    The bounds ride the instruction's dimension-explicit fields rather than the
-    row (ADR 0010/0013): an As-Of Axis endpoint is framework-owned, so a
-    Valid-Time bound is never a member a caller could author.
-    """
-    prepared = instructions.prepare_typed_write(
-        keyed_instruction(mutation, entity.identity, row, valid_from=valid_from, until=until),
-        meta,
-    )
-    assert isinstance(prepared, PreparedKeyedWrite)
-    return prepared
-
-
-class TypedKeyedWriteSource:
-    """The Typed Keyed Write Source: what an Entity value and its Change Record
-    answer the keyed write ingress.
-
-    Inert when constructed and private to one verb call, so nothing it can refuse
-    runs before the ingress refuses re-entry. :meth:`capture` judges nothing at
-    all — a Typed value's shape is fixed by its class, and ``edit()`` has already
-    judged every assignment its Change Record holds, which is why the authoring
-    refusals the Wire lane raises at its own capture reach a Typed caller before a
-    verb ever receives a value.
-
-    The mutation and the accepted Metamodel arrive at the phases the protocol
-    hands them to and are retained for :meth:`prepare`, which authors the
-    instruction and is handed neither.
-    """
-
-    __slots__ = ("_codec", "_meta", "_mutation", "_value")
-
-    def __init__(self, value: EntityBase, codec: EntityRowCodec) -> None:
-        self._value = value
-        self._codec = codec
-        self._meta: Metamodel | None = None
-        self._mutation: KeyedMutation | None = None
-
-    def capture(self, mutation: KeyedMutation, /) -> None:
-        return None
-
-    def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedWriteSource:
-        """The facts this value states about the state the write revises."""
-        self._meta = model
-        self._mutation = mutation
-        entity = metadata_of_instance(model, self._value)
-        return ResolvedKeyedWriteSource(
-            entity=entity,
-            pin=source_pin(self._value),
-            hint=read_origin_of(self._value),
-            identity_row=source_identity_row(entity, model, self._value),
-            provenance=provenance_of(self._value),
-            representation="typed",
-        )
-
-    def prepare(
-        self,
-        resolved: ResolvedKeyedWriteSource,
-        /,
-        *,
-        valid_from: dt.datetime | None,
-        until: dt.datetime | None,
-    ) -> PreparedSourceWrite:
-        """The instruction this value authors, beside its own originals.
-
-        Both sides cross the SAME coercion and only the authored side is judged:
-        an update family verb measures the Change Record's two halves — every
-        touched member at the value it now holds, and those same members at the
-        value the chain first recorded — so the ingress weighs effectiveness over
-        like carriers rather than over a serialized document on one side. What the
-        chain first recorded is state this write revises rather than anything its
-        caller stated in the call, so preparation's judgement is asked of the
-        authored half alone and a correction of a member current authoring would
-        refuse still reaches the ingress. A destructive or close verb names no
-        member at all and authors its identity row alone, and so does an update
-        off a value whose chain touched nothing.
-
-        The object a refusal reports comes from the source's own hint where there
-        is one, and is derived from the authored row where there is not — the two
-        agree by construction, because a read keys its hint by the same rule a
-        written row is keyed by.
-        """
-        meta, mutation = self._retained()
-        authored = self._codec.authored_row(self._value) if mutation in UPDATE_MUTATIONS else None
-        if authored is None:
-            instruction = prepared_typed_write(
-                meta,
-                mutation,
-                resolved.entity,
-                self._codec.identity_row(self._value),
-                valid_from=valid_from,
-                until=until,
-            )
-            originals: Mapping[str, object] = {}
-        else:
-            instruction = prepared_typed_write(
-                meta, mutation, resolved.entity, authored.row, valid_from=valid_from, until=until
-            )
-            originals = instructions.coerce_typed_row(authored.originals, meta, resolved.entity)
-        return PreparedSourceWrite(
-            instruction=instruction,
-            object_key=(
-                resolved.hint.object_key
-                if resolved.hint is not None
-                else written_object_key(resolved.entity, meta, instruction.rows[0])
-            ),
-            originals=originals,
-        )
-
-    def _retained(self) -> tuple[Metamodel, KeyedMutation]:
-        return retained(self._meta), retained(self._mutation)
-
-
-class TypedKeyedInsertSource:
-    """The Typed Keyed Insert Source: what a fresh Entity instance answers the
-    ingress's insert door.
-
-    Narrower than its peer by exactly what an opening row has no answer for: no
-    hint, no identity row named ahead of the instruction, and no originals. What
-    it authors is the Create Payload — every member the instance actually SET —
-    rather than a change set, because there is no prior state for a change to be
-    against.
-    """
-
-    __slots__ = ("_codec", "_instance", "_meta", "_mutation")
-
-    def __init__(self, instance: EntityBase, codec: EntityRowCodec) -> None:
-        self._instance = instance
-        self._codec = codec
-        self._meta: Metamodel | None = None
-        self._mutation: KeyedMutation | None = None
-
-    def capture(self, mutation: KeyedMutation, /) -> None:
-        return None
-
-    def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedInsert:
-        self._meta = model
-        self._mutation = mutation
-        return ResolvedKeyedInsert(
-            entity=metadata_of_instance(model, self._instance),
-            pin=source_pin(self._instance),
-            provenance=provenance_of(self._instance),
-            representation="typed",
-        )
-
-    def prepare(
-        self,
-        resolved: ResolvedKeyedInsert,
-        /,
-        *,
-        valid_from: dt.datetime | None,
-        until: dt.datetime | None,
-    ) -> PreparedKeyedWrite:
-        return prepared_typed_write(
-            retained(self._meta),
-            retained(self._mutation),
-            resolved.entity,
-            self._codec.full_row(self._instance),
-            valid_from=valid_from,
-            until=until,
-        )
+from parallax.snapshot.handle._wire import WireTransactionView
 
 
 class Transaction:
@@ -281,7 +59,7 @@ class Transaction:
     unversioned,
     non-temporal target, materializing to per-row keyed writes otherwise
     (:mod:`parallax.snapshot.handle._predicate_writes`, ADR 0014, which those
-    five verbs delegate to). A reference used after
+    five verbs reach through the Typed predicate ingress). A reference used after
     its owning scope ends raises
     :class:`~parallax.core.unit_work.EscapedTransactionError` (every verb
     delegates to the unit of work, which fences use-after-scope).
@@ -301,14 +79,11 @@ class Transaction:
     """
 
     __slots__ = (
-        "_attempt",
         "_codec",
-        "_conn",
         "_edition",
         "_keyed",
-        "_lifecycle",
-        "_model",
         "_options",
+        "_predicates",
         "_reads",
         "_uow",
     )
@@ -325,7 +100,6 @@ class Transaction:
         options: DatabaseOptions,
     ) -> None:
         self._uow = uow
-        self._conn = conn
         # The invocation's resolved record, shared by reference across every
         # attempt of the invocation: what a joining call is compared against,
         # and what a caller inspects, without ambient state on either path.
@@ -336,22 +110,14 @@ class Transaction:
         # write names Entities and derives rows, so it needs the catalog without
         # the materialization capability beside it. Both carry the edition.
         self._edition = write.edition
-        self._model = write.model
         self._codec: EntityRowCodec = write.codec
-        # The physical attempt every activity this transaction opens hangs
-        # under: a read, the dependency batch that precedes it, and the
-        # resolving read a materializing predicate write runs are all its
-        # children, so the tree an observer sees is the call tree that made it.
-        self._attempt = attempt
-        # The opening handle's own installed lifecycle, which is what makes
-        # "the originating Handle or Transaction" one refusal rather than two: a
-        # verb called from inside that handle's provider, handler, or reporter is
-        # refused here on exactly the state the handle refuses on
-        # (`m-execution-lifecycle`).
-        self._lifecycle = lifecycle
         # The one Read Scope this transaction's eager reads run through — its
         # own Typed verbs and the Wire view it answers alike (the Python binding "Private
-        # read composition").
+        # read composition"). The opening handle's own installed lifecycle rides
+        # every read and write context, which is what makes "the originating
+        # Handle or Transaction" one refusal rather than two: a verb called from
+        # inside that handle's provider, handler, or reporter is refused on
+        # exactly the state the handle refuses on (`m-execution-lifecycle`).
         self._reads = participating_read_scope(
             lifecycle=lifecycle,
             selected=read,
@@ -361,19 +127,22 @@ class Transaction:
             planner=planner,
         )
         # The transaction state every keyed write of this transaction reads,
-        # built once because all four facts are fixed for its life and handed to
-        # each keyed verb by value. Its ledger of what THIS transaction buffered
-        # an insert of is what a same-transaction insert leaves for a subsequent
-        # keyed write to build on, so both read-your-own-writes exemptions — the
-        # value-provenance refusal and the write-evidence resolution — and the
-        # repeated-insert refusal read one ledger, and so does the Wire ingress,
-        # whose inserts and updates pair with the Typed ones.
+        # built once because all four facts are fixed for its life. Its
+        # opened-object ledger is what a same-transaction insert leaves for a
+        # subsequent keyed write to build on, so both read-your-own-writes
+        # exemptions — the value-provenance refusal and the write-evidence
+        # resolution — and the repeated-insert refusal read one ledger, through
+        # either representation.
         self._keyed = KeyedWriteContext(
-            model=self._model,
+            model=write.model,
             uow=uow,
-            inserts=BufferedInserts(),
+            inserts=InsertedObjects(),
             lifecycle=lifecycle,
         )
+        # The predicate-selected writes of both representations share the keyed
+        # context plus what only a materializing write reads: this connection,
+        # and the physical attempt its resolving read hangs under as a child.
+        self._predicates = PredicateWriteContext(self._keyed, conn, attempt)
 
     @property
     def edition(self) -> str:
@@ -598,20 +367,16 @@ class Transaction:
         Wire calls mix within one transaction without any cross-interface
         bookkeeping — a Wire node and a Typed node of one row carry the identical
         claim, and a Wire write and a Typed write of one object meet in the one
-        claim algebra. The write lane reads the same buffered-insert ledger the
-        Typed verbs record into, so read-your-own-writes spans both
-        representations.
+        claim algebra.
 
         Its read half is this transaction's one Read Scope, retained rather than
         wrapped, so a Wire read enters at that scope's own verb and refuses
-        re-entry at the same first line ``tx.find`` crosses. Its write half is a
-        lane of its own, because a write settles against evidence a read never
-        derives.
+        re-entry at the same first line ``tx.find`` crosses. Its write half is
+        the same write context the Typed verbs here use, so a Wire write reads
+        the opened-object ledger the Typed verbs record into and
+        read-your-own-writes spans both representations.
         """
-        return WireTransactionView(
-            self._reads,
-            WireWriteLane(self._keyed, self._conn, self._attempt),
-        )
+        return WireTransactionView(self._reads, self._predicates)
 
     def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
         """Deliver ``query``'s roots one at a time inside this transaction, as
@@ -660,19 +425,9 @@ class Transaction:
         field, each addressing the query's exact target. Readless
         (one statement) for an unversioned, non-temporal target; a versioned
         or temporal target MATERIALIZES (`m-opt-lock`, ADR 0014) — see
-        :func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate`,
-        the neutral seam this and every other ``_where`` verb share."""
-        refuse_reentry(self._lifecycle)
-        buffer_predicate(
-            self._uow,
-            self._model,
-            self._conn,
-            "update",
-            query,
-            assignments,
-            valid_from=valid_from,
-            attempt=self._attempt,
-        )
+        :func:`~parallax.snapshot.handle._typed_writes.typed_predicate_write`,
+        the Typed predicate ingress every ``_where`` verb here delegates to."""
+        typed_predicate_write(self._predicates, "update", query, assignments, valid_from=valid_from)
 
     def delete_where(self, query: ObjectQuery[Any, Any]) -> None:
         """A predicate-selected ``delete`` over a NON-temporal target
@@ -681,17 +436,7 @@ class Transaction:
          — in both modes, since each row's write requires that row's own prior
          observation — with no no-op elimination, because a delete changes a
          row's existence, never a value (`m-opt-lock`)."""
-        refuse_reentry(self._lifecycle)
-        buffer_predicate(
-            self._uow,
-            self._model,
-            self._conn,
-            "delete",
-            query,
-            (),
-            valid_from=None,
-            attempt=self._attempt,
-        )
+        typed_predicate_write(self._predicates, "delete", query, (), valid_from=None)
 
     def terminate_where(
         self, query: ObjectQuery[Any, Any], *, valid_from: dt.datetime | None = None
@@ -700,17 +445,7 @@ class Transaction:
         : Transaction-Time-Only takes no ``valid_from``;
          Bitemporal requires it. Always materializes — a temporal predicate
          write has no readless template."""
-        refuse_reentry(self._lifecycle)
-        buffer_predicate(
-            self._uow,
-            self._model,
-            self._conn,
-            "terminate",
-            query,
-            (),
-            valid_from=valid_from,
-            attempt=self._attempt,
-        )
+        typed_predicate_write(self._predicates, "terminate", query, (), valid_from=valid_from)
 
     def update_until_where(
         self,
@@ -722,17 +457,13 @@ class Transaction:
         """A predicate-selected, Valid-Time-bounded ``updateUntil`` over a
         Bitemporal target (the Python binding; `m-bitemp-write` "The rectangle
         split"): always materializes to a close plus head/middle/tail."""
-        refuse_reentry(self._lifecycle)
-        buffer_predicate(
-            self._uow,
-            self._model,
-            self._conn,
+        typed_predicate_write(
+            self._predicates,
             "updateUntil",
             query,
             assignments,
             valid_from=valid_from,
             until=until,
-            attempt=self._attempt,
         )
 
     def terminate_until_where(
@@ -742,15 +473,11 @@ class Transaction:
         a Bitemporal target: always materializes to a close
         plus head/tail (no middle — the window becomes a hole in Valid
         time)."""
-        refuse_reentry(self._lifecycle)
-        buffer_predicate(
-            self._uow,
-            self._model,
-            self._conn,
+        typed_predicate_write(
+            self._predicates,
             "terminateUntil",
             query,
             (),
             valid_from=valid_from,
             until=until,
-            attempt=self._attempt,
         )

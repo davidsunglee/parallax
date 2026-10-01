@@ -475,9 +475,9 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # `parallax.core.entity`, and a forbidden row is the complement of a
     # closure, so each rides in whatever this composition itself imports. What
     # the row says about them is that this scope inherits them, not that they are
-    # forbidden. `_write_inputs`, `_family` and `_predicate_writes` are modules
-    # of the parent package rather than declared scopes, so no row can name any
-    # of the three either way.
+    # forbidden. The representation adapters (`_typed_writes`, `_wire_writes`)
+    # and `_predicate_writes` are modules of the parent package rather than
+    # declared scopes, so no row can name any of them either way.
     "parallax.snapshot.handle._keyed_writes": frozenset(
         {
             "parallax.core.entity",

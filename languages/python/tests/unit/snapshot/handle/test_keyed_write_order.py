@@ -371,7 +371,7 @@ def test_a_reversed_window_is_refused_before_the_change_set_is_weighed(
 
 
 # --------------------------------------------------------------------------- #
-# The provenance axis. One buffered-insert ledger serves both representations, #
+# The provenance axis. One opened-object ledger serves both representations,  #
 # so a write over a row THIS unit of work opened answers the same way whoever  #
 # opened it: the pair coalesces into the insert's own statement, and a         #
 # destructive verb cancels it to no DML at all. Three of the four crossings    #

@@ -79,7 +79,7 @@ The enforcement unit is the **scope**, not a package's `__all__`: an importer
 granted `parallax.core.entity` reaches every module that scope owns, private
 ones included. Three Snapshot modules use that grant for six names the Entity
 frontend deliberately does not export — `parallax.snapshot._inspection` and
-`parallax.snapshot.handle._write_inputs` read what a class carries from
+`parallax.snapshot.handle._typed_writes` read what a class carries from
 `parallax.core.entity._declaration` (`declaration_of`, `is_entity_class`,
 `members_of`, and the family-merged member-name correspondences
 `wire_names_of`), and `parallax.snapshot.handle._database` reads the accepted
@@ -178,10 +178,9 @@ traversal modules, so naming it moves no generated contract. What the row states
 is direct use — an effective change set is the codec's answer and the ingress asks
 for it itself — which is what tells a reader where the ingress's own imports end
 rather than leaving the codec to be inferred from a transitive edge. The
-verb-input step library this ingress composes, the family answers it resolves
-through, and the predicate-selected lane beside it are all modules of the parent
-package rather than declared scopes, so no contract can name any of them either
-way.
+representation adapters that enter this ingress and the predicate-selected lane
+beside it are modules of the parent package rather than declared scopes, so no
+contract can name any of them either way.
 
 A behavioral module maps to the scope that needs its whole edge set.
 `m-execution-lifecycle` is owned by `parallax.core.execution_lifecycle`, while
