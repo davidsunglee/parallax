@@ -3,20 +3,14 @@ from __future__ import annotations
 from parallax.core import inheritance, storage_layout, temporal_read
 from parallax.core.document_codec import MemberShape
 from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import (
-    EntityMetadata,
-    Metamodel,
-    entity_by_name,
-)
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.temporal_read import TemporalShape
-from parallax.snapshot.handle._errors import QueryTargetError
 
 __all__ = [
     "assignment_member",
     "comparison_shape",
     "entity_layout",
-    "entity_of",
     "family_view",
     "temporal_shape",
 ]
@@ -37,25 +31,6 @@ def temporal_shape(model: Metamodel, entity: EntityMetadata) -> TemporalShape:
     if shape is None:  # pragma: no cover - the facet covers every accepted Entity
         raise RuntimeError(f"{entity.identity.canonical}: no Temporal Facet shape")
     return shape
-
-
-def entity_of(model: Metamodel, name: str) -> EntityMetadata:
-    """The accepted Metadata a write's bare-or-canonical target spelling names.
-
-    The write-lowering group resolves within the accepted model itself (it holds
-    no descriptor record graph and no entity-scope seam): a write target is an
-    unambiguous declared name, resolved by
-    :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting
-    bare-or-canonical rule. Raises :class:`QueryTargetError` when the connected
-    model declares no such Entity — the same refusal a read's preflight answers
-    with, because it is the same failure."""
-    entity = entity_by_name(model, name)
-    if entity is None:
-        raise QueryTargetError(
-            "the connected model declares no Entity for this write's target "
-            "(query-target-not-in-model)"
-        )
-    return entity
 
 
 def entity_layout(model: Metamodel, entity: EntityMetadata) -> EntityLayoutView | None:

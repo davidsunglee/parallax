@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from typing import Final, Literal, Protocol
 
 from parallax.core import opt_lock
-from parallax.core.base import InstantError, normalize_instant
 from parallax.core.document_codec import EffectiveChangeSet
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._declaration import declaration_of, wire_names_of
@@ -17,15 +16,8 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.object_query import Latest
-from parallax.core.temporal_read import (
-    Bitemporal,
-    NonTemporal,
-    Pin,
-    TemporalShape,
-    TransactionTimeOnly,
-)
+from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
-    BOUNDED_MUTATIONS,
     INSERT_MUTATIONS,
     UPDATE_MUTATIONS,
     BufferItem,
@@ -43,7 +35,6 @@ from parallax.core.unit_work import (
     buffered_write,
     claim_scope,
     claimed_object,
-    instructions,
     keyed_intent,
 )
 from parallax.core.unit_work.instructions import (
@@ -68,13 +59,11 @@ __all__ = [
     "metadata_of_instance",
     "read_origin_of",
     "refuse_repeated_insert",
-    "reject_temporal_delete",
     "resolve_write_evidence",
     "source_identity_row",
     "source_pin",
     "validate_provenance",
     "validate_source_pin",
-    "validate_window",
     "written_object_key",
     "written_object_of_row",
 ]
@@ -353,14 +342,14 @@ def keyed_instruction(
     entity: EntityIdentity,
     row: Mapping[str, object],
     *,
-    valid_from: str | dt.datetime | None = None,
-    until: str | dt.datetime | None = None,
+    valid_from: dt.datetime | None = None,
+    until: dt.datetime | None = None,
 ) -> KeyedWrite:
     """One single-row authored keyed instruction.
 
-    Typed callers pass managed instants; the Wire ingress passes canonical
-    spellings for its own decode. Both ride the instruction's dimension-explicit
-    fields, never the row, and preparation applies the policy of the ingress.
+    The bounds ride the instruction's dimension-explicit fields as the caller
+    passed them, never the row: an As-Of Axis endpoint is framework-owned, and
+    preparation judges the window against the target.
     """
     return KeyedWrite(mutation, entity.canonical, (row,), valid_from, until)
 
@@ -904,8 +893,8 @@ def refuse_repeated_insert(
     (:func:`written_object_of_row`), which is why this stands after preparation
     rather than beside the provenance question: a Wire payload's key members are
     canonical only once its row is prepared. A Typed instance could answer
-    earlier and does not, so both representations hear pin, provenance, window,
-    and preparation ahead of this. ``None`` is the whole "not held" answer, so
+    earlier and does not, so both representations hear pin, provenance, and
+    preparation ahead of this. ``None`` is the whole "not held" answer, so
     the refusal and the spelling of the way out come from one reading: the
     advice names the update verb over the carrier the OPENING interface produced
     (:data:`_REPEATED_INSERT_ADVICE`), which is the only carrier that exists,
@@ -925,196 +914,6 @@ def refuse_repeated_insert(
         ),
         identity=identity,
     )
-
-
-def reject_temporal_delete(
-    entity: EntityMetadata,
-    shape: TemporalShape,
-    mutation: str,
-    *,
-    surface: instructions.WriteSurface,
-) -> None:
-    """Refuse a ``delete`` aimed at a target that milestones its rows, at the
-    verb and before the window gate — on either surface, in either
-    representation.
-
-    ``delete`` states no Valid-Time bound in any of its spellings, so a
-    Bitemporal target has nothing to say about the window the caller passed: it
-    passed none, and no spelling of the verb offers an argument for one.
-    Reaching :func:`validate_window` first would answer such a call by naming the
-    ``valid_from`` a Bitemporal write requires, which the caller cannot supply;
-    what is actually wrong is the verb, and the target spells its removal
-    ``terminate``.
-
-    The converse half of applicability — a milestone verb aimed at a target
-    deriving no As-Of Axis — is not hoisted with it, because the window gate
-    misdirects no milestone call. Those verbs all TAKE a bound: a call that
-    states one hears the gate refuse that bound, a true verdict on an argument
-    the caller can drop; a boundless ``terminate`` clears the gate in silence and
-    reaches the quadrant prepared-write production states.
-    """
-    if isinstance(shape, NonTemporal):
-        return
-    refusal = instructions.temporal_delete_refusal(entity.identity.name, mutation, surface=surface)
-    if refusal is not None:
-        raise instructions.WriteInstructionError(refusal)
-
-
-def _stated_instant(name: str, mutation: KeyedMutation, bound: str, value: object) -> dt.datetime:
-    """``value`` as the ``timestamp`` a Valid-Time bound has to be.
-
-    Total over what a caller can actually pass, which a type annotation is not:
-    a value of another type is no `m-core` instant at all, so it keeps
-    `m-core`'s :class:`~parallax.core.base.InstantError` — the same class a
-    naive datetime earns one step later — rather than reaching
-    :func:`~parallax.core.base.normalize_instant` and leaving an
-    ``AttributeError`` where a verdict belongs.
-    """
-    if not isinstance(value, dt.datetime):
-        raise InstantError(
-            f"{name}: {mutation!r} takes an aware datetime for {bound}, "
-            f"and {type(value).__name__} is no `timestamp`"
-        )
-    return value
-
-
-def validate_window(
-    root: EntityIdentity,
-    shape: TemporalShape,
-    mutation: KeyedMutation,
-    valid_from: object,
-    until: object,
-) -> tuple[dt.datetime | None, dt.datetime | None]:
-    """One write verb's managed Valid-Time bounds, validated together — the
-    single window gate every keyed AND ``_where`` temporal verb runs, in both
-    representations.
-
-    Three questions in a fixed order, because each presupposes the one before
-    it. **Is the window stated?** A ``*_until`` verb's window is a PAIR, and a
-    call stating one bound without the other has stated no window at all, so it
-    is refused whatever else the call turns out to be — before the target's
-    temporality is consulted and before either bound's type is. Which bound is
-    missing is asked of the MUTATION rather than of the other bound, because a
-    keyed update whose change set is wholly restoring buffers no instruction:
-    the window this seam waves through is a window the instruction build never
-    sees. **Does the target admit it?** (:func:`_validate_valid_from`.) **Is
-    each bound an instant, and is the window ordered?**
-    (:func:`_validate_until`, measuring ``until`` against the ``valid_from``
-    that judgement accepted.)
-
-    Which refusal follows from whose rule was broken. A half-stated window, a
-    bound the target's temporality does not admit, and an unordered window are
-    all the verb's OWN verdict on caller input
-    (:class:`~parallax.core.unit_work.WriteInstructionError`); a bound that is
-    no instant keeps `m-core`'s :class:`~parallax.core.base.InstantError`. All
-    are ``ValueError``s, and all precede any evidence question.
-
-    ``root`` names the family root whose temporality ``shape`` is, and every
-    refusal names the family by it.
-    """
-    _require_stated_window(root, mutation, valid_from, until)
-    valid_from_managed = _validate_valid_from(root, shape, mutation, valid_from)
-    if until is None:
-        return valid_from_managed, None
-    return valid_from_managed, _validate_until(root, mutation, valid_from, until)
-
-
-def _require_stated_window(
-    root: EntityIdentity, mutation: KeyedMutation, valid_from: object, until: object
-) -> None:
-    if mutation not in BOUNDED_MUTATIONS:
-        return
-    missing = "valid_from" if valid_from is None else "until" if until is None else None
-    if missing is None:
-        return
-    raise instructions.WriteInstructionError(
-        f"{root.name}: a bounded {mutation!r} states its window as a pair, and {missing} is absent"
-    )
-
-
-def _validate_valid_from(
-    root: EntityIdentity, shape: TemporalShape, mutation: KeyedMutation, valid_from: object
-) -> dt.datetime | None:
-    """Validate and normalize a write verb's ``valid_from``:
-    a Bitemporal target requires it (the mutation's own Valid-Time instant
-    ``B``, `m-bitemp-write` "Plain (unbounded) bitemporal writes"); a
-    non-temporal or Transaction-Time-Only target takes none.
-
-    Which refusal follows from whose rule the bound broke. A bound the target's
-    temporality does not admit — stated where none is taken, absent where one is
-    required — is the verb's OWN verdict on caller input and raises
-    :class:`~parallax.core.unit_work.WriteInstructionError`; a bound the target
-    does admit but that is no instant keeps `m-core`'s
-    :class:`~parallax.core.base.InstantError`, whose rule that is. Admissibility
-    leads because it is the more specific complaint: a target declaring no
-    Valid-Time dimension takes no bound whatever type the caller spelled it as.
-    Both are ``ValueError``s, and both precede any evidence question.
-    """
-    name = root.name
-    if isinstance(shape, Bitemporal):
-        if valid_from is None:
-            raise instructions.WriteInstructionError(
-                f"{name}: a bitemporal {mutation!r} requires valid_from "
-                "(the mutation's own Valid-Time instant)"
-            )
-        return normalize_instant(_stated_instant(name, mutation, "valid_from", valid_from))
-    if valid_from is not None:
-        profile = (
-            "a Transaction-Time-Only"
-            if isinstance(shape, TransactionTimeOnly)
-            else "a non-temporal"
-        )
-        raise instructions.WriteInstructionError(
-            f"{name}: {profile} {mutation!r} takes no valid_from "
-            f"({name!r} declares no Valid-Time dimension to bound)"
-        )
-    return None
-
-
-def _validate_until(
-    root: EntityIdentity,
-    mutation: KeyedMutation,
-    valid_from: object,
-    until: object,
-) -> dt.datetime:
-    """Validate + normalize a ``*Until`` verb's window bound (the Python binding:
-    "both aware-UTC-microsecond datetimes, all validated at build" ... "the
-    `*_until` trio additionally requires `until`, with `valid_from <
-    until` ... all validated at build"): reject an equal or reversed window
-    — ``until`` must be strictly later than ``valid_from`` — at the verb
-    call, before any buffering (never at flush time).
-
-    An unordered window is the verb's own verdict on caller input and raises
-    :class:`~parallax.core.unit_work.WriteInstructionError`, exactly as
-    :func:`_validate_valid_from`'s inadmissible bound does; a bound that is no
-    ``timestamp`` keeps `m-core`'s :class:`~parallax.core.base.InstantError`,
-    exactly as that function's ``valid_from`` does.
-
-    Only a Bitemporal target carrying BOTH bounds reaches this stage: ``until``
-    belongs to the bounded verbs alone, :func:`_require_stated_window` has
-    already refused a window stated as one bound, and
-    :func:`_validate_valid_from` has already refused a ``valid_from`` the
-    target's temporality does not admit. Both bounds are normalized here so the
-    ordering comparison is wholly expressed in managed instant space.
-
-    NORMALIZES both bounds BEFORE comparing them: comparing raw, un-normalized
-    datetimes let a naive ``until`` — measured against a ``valid_from`` its own
-    rendering had already normalized — leak a bare ``TypeError`` from the ``<=``
-    comparison itself, rather than the
-    :class:`~parallax.core.base.InstantError`
-    :func:`~parallax.core.base.normalize_instant` raises for any datetime it
-    cannot put in UTC."""
-    name = root.name
-    valid_from_normalized = normalize_instant(
-        _stated_instant(name, mutation, "valid_from", valid_from)
-    )
-    until_normalized = normalize_instant(_stated_instant(name, mutation, "until", until))
-    if until_normalized <= valid_from_normalized:
-        raise instructions.WriteInstructionError(
-            f"{name}: {mutation!r} requires valid_from < until "
-            f"(python.md §5) — got valid_from={valid_from!r}, until={until!r}"
-        )
-    return until_normalized
 
 
 def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadata:

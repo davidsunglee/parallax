@@ -158,19 +158,6 @@ def _instant(value: str) -> dt.datetime:
     return dt.datetime.fromisoformat(value)
 
 
-def _canonical_instruction(instruction: KeyedWrite) -> KeyedWrite:
-    def managed(value: str | dt.datetime | None) -> dt.datetime | None:
-        return (
-            None if value is None else value if isinstance(value, dt.datetime) else _instant(value)
-        )
-
-    return dataclasses.replace(
-        instruction,
-        valid_from=managed(instruction.valid_from),
-        until=managed(instruction.until),
-    )
-
-
 def _lower_full(
     instruction: KeyedWrite,
     meta: Metamodel,
@@ -181,7 +168,7 @@ def _lower_full(
     concurrency: Concurrency = "locking",
 ) -> list[LoweredStatement]:
     return lower_instruction(
-        _canonical_instruction(instruction),
+        instruction,
         formed(meta),
         dialect,
         concurrency,
@@ -201,7 +188,7 @@ def _lower_steps(
 ) -> list[tuple[PlannedStep, LoweredStatement]]:
     """The same statements, paired with the settled step each came from."""
     return lower_instruction_steps(
-        _canonical_instruction(instruction),
+        instruction,
         formed(meta),
         dialect,
         concurrency,
@@ -219,7 +206,7 @@ def _finalize(
     concurrency: Concurrency = "locking",
 ) -> tuple[PlannedStep, ...]:
     steps = lower_instruction_steps(
-        _canonical_instruction(instruction),
+        instruction,
         formed(meta),
         POSTGRES,
         concurrency,
@@ -431,25 +418,6 @@ def test_a_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
         _finalize(terminate, _MODELS["account"], "2024-08-01T00:00:00+00:00")
 
 
-@pytest.mark.parametrize(
-    ("entity", "meta"),
-    [("Balance", BALANCE), ("Position", POSITION)],
-    ids=["txtime", "bitemporal"],
-)
-def test_a_delete_on_a_temporal_entity_is_refused(entity: str, meta: Metamodel) -> None:
-    # `delete` removes the row rather than closing its milestone, so a target
-    # that keeps history has no lowering for it and would otherwise erase the
-    # history it exists to keep. Refused where the target's family is resolved,
-    # naming the verb that target does take, on both temporal profiles.
-    delete = KeyedWrite("delete", entity, ({"id": 1},))
-    with pytest.raises(WritePlanningError) as raised:
-        _finalize(delete, meta, "2024-08-01T00:00:00+00:00")
-    assert str(raised.value) == (
-        f"Temporal objects like {entity!r} do not support 'delete', which physically "
-        "removes rows. Use 'terminate' instead."
-    )
-
-
 def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -> None:
     # m-txtime-write-005: a locking-mode close never binds `in_z`, even when one
     # was observed.
@@ -517,8 +485,8 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
         "updateUntil",
         "Position",
         ({"id": 1, "value": Decimal("200.00")},),
-        valid_from="2024-03-01T00:00:00+00:00",
-        until="2024-09-01T00:00:00+00:00",
+        valid_from=_instant("2024-03-01T00:00:00+00:00"),
+        until=_instant("2024-09-01T00:00:00+00:00"),
     )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
@@ -582,8 +550,8 @@ def test_bitemporal_terminate_until_chains_head_and_tail_no_middle() -> None:
         "terminateUntil",
         "Position",
         ({"id": 1},),
-        valid_from="2024-03-01T00:00:00+00:00",
-        until="2024-09-01T00:00:00+00:00",
+        valid_from=_instant("2024-03-01T00:00:00+00:00"),
+        until=_instant("2024-09-01T00:00:00+00:00"),
     )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
@@ -606,8 +574,8 @@ def test_bitemporal_insert_until_opens_one_bounded_rectangle() -> None:
         "insertUntil",
         "Position",
         ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},),
-        valid_from="2024-03-01T00:00:00+00:00",
-        until="2024-09-01T00:00:00+00:00",
+        valid_from=_instant("2024-03-01T00:00:00+00:00"),
+        until=_instant("2024-09-01T00:00:00+00:00"),
     )
     statements = _lower(insert_until, POSITION, "2024-01-01T00:00:00+00:00")
     assert statements == [
@@ -633,7 +601,7 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
         "update",
         "Position",
         ({"id": 1, "value": Decimal("200.00")},),
-        valid_from="2024-06-01T00:00:00+00:00",
+        valid_from=_instant("2024-06-01T00:00:00+00:00"),
     )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
@@ -679,7 +647,7 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
 def test_bitemporal_plain_terminate_chains_head_only() -> None:
     # m-bitemp-write-007.
     terminate = KeyedWrite(
-        "terminate", "Position", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
+        "terminate", "Position", ({"id": 1},), valid_from=_instant("2024-06-01T00:00:00+00:00")
     )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
@@ -715,7 +683,7 @@ def test_bitemporal_plain_insert_opens_one_fully_current_rectangle() -> None:
         "insert",
         "Position",
         ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},),
-        valid_from="2024-01-01T00:00:00+00:00",
+        valid_from=_instant("2024-01-01T00:00:00+00:00"),
     )
     statements = _lower(insert, POSITION, "2024-01-01T00:00:00+00:00")
     assert statements == [
@@ -763,7 +731,7 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
         "update",
         "Position",
         ({"id": 1, "value": Decimal("200.00")},),
-        valid_from="2024-04-01T00:00:00+00:00",
+        valid_from=_instant("2024-04-01T00:00:00+00:00"),
     )
     close, head, tail = _lower(
         update,
@@ -1234,7 +1202,7 @@ def test_milestone_close_selects_operation_identities_not_the_physical_key() -> 
         "out_z",
     )
     terminate = KeyedWrite(
-        "terminate", "Bond", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
+        "terminate", "Bond", ({"id": 1},), valid_from=_instant("2024-06-01T00:00:00+00:00")
     )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
@@ -1305,7 +1273,7 @@ def test_tpcs_txtime_terminate_has_no_tag_guard() -> None:
 def test_tph_bitemporal_terminate_carries_the_tag_guard() -> None:
     # m-inheritance-094.
     terminate = KeyedWrite(
-        "terminate", "Bond", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
+        "terminate", "Bond", ({"id": 1},), valid_from=_instant("2024-06-01T00:00:00+00:00")
     )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
@@ -1324,7 +1292,7 @@ def test_tph_bitemporal_terminate_carries_the_tag_guard() -> None:
 def test_tpcs_bitemporal_terminate_has_no_tag_guard() -> None:
     # m-inheritance-095: routes to the concrete `deposit_rate` table.
     terminate = KeyedWrite(
-        "terminate", "DepositRate", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
+        "terminate", "DepositRate", ({"id": 1},), valid_from=_instant("2024-06-01T00:00:00+00:00")
     )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
@@ -1345,8 +1313,8 @@ def test_tph_bitemporal_terminate_until_chains_head_and_tail() -> None:
         "terminateUntil",
         "Stock",
         ({"id": 2},),
-        valid_from="2024-03-01T00:00:00+00:00",
-        until="2024-09-01T00:00:00+00:00",
+        valid_from=_instant("2024-03-01T00:00:00+00:00"),
+        until=_instant("2024-09-01T00:00:00+00:00"),
     )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
@@ -1370,8 +1338,8 @@ def test_tpcs_bitemporal_terminate_until_chains_head_and_tail() -> None:
         "terminateUntil",
         "LoanRate",
         ({"id": 2},),
-        valid_from="2024-03-01T00:00:00+00:00",
-        until="2024-09-01T00:00:00+00:00",
+        valid_from=_instant("2024-03-01T00:00:00+00:00"),
+        until=_instant("2024-09-01T00:00:00+00:00"),
     )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
@@ -1448,8 +1416,8 @@ def test_bitemporal_update_until_carries_the_value_object_document_on_every_chai
         "updateUntil",
         "Branch",
         ({"id": 1, "name": "Central Branch", "address": d2},),
-        valid_from="2024-03-01T00:00:00+00:00",
-        until="2024-09-01T00:00:00+00:00",
+        valid_from=_instant("2024-03-01T00:00:00+00:00"),
+        until=_instant("2024-09-01T00:00:00+00:00"),
     )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
@@ -1536,8 +1504,8 @@ def test_bitemporal_successor_origins_follow_the_split(
             mutation,
             "Position",
             (row,),
-            valid_from="2024-03-01T00:00:00+00:00",
-            until=until,
+            valid_from=_instant("2024-03-01T00:00:00+00:00"),
+            until=None if until is None else _instant(until),
         ),
         POSITION,
         "2024-02-15T00:00:00+00:00",
@@ -1562,8 +1530,8 @@ def test_bitemporal_insert_successor_begins_a_lineage() -> None:
             "insertUntil",
             "Position",
             ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},),
-            valid_from="2024-03-01T00:00:00+00:00",
-            until="2024-09-01T00:00:00+00:00",
+            valid_from=_instant("2024-03-01T00:00:00+00:00"),
+            until=_instant("2024-09-01T00:00:00+00:00"),
         ),
         POSITION,
         "2024-01-01T00:00:00+00:00",
@@ -1576,7 +1544,10 @@ def test_bitemporal_close_target_is_mode_independent() -> None:
     targets = [
         _finalize(
             KeyedWrite(
-                "terminate", "Position", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
+                "terminate",
+                "Position",
+                ({"id": 1},),
+                valid_from=_instant("2024-06-01T00:00:00+00:00"),
             ),
             POSITION,
             "2024-07-01T00:00:00+00:00",

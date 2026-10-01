@@ -27,7 +27,7 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core import bitemp_write, inheritance, relationship, temporal_read, txtime_write
+from parallax.core import bitemp_write, relationship, temporal_read, txtime_write
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, FrozenMap
@@ -55,7 +55,6 @@ from parallax.core.metamodel import (
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedRelationshipJoin,
 )
-from parallax.core.opt_lock import CallerAuthoredVersionError
 from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
@@ -90,10 +89,10 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work import planner as planner_module
 from parallax.core.unit_work import write_settlement as write_settlement_module
 from parallax.core.unit_work.instructions import (
-    PreparedAssignment,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     WriteInstructionError,
+    derive_keyed_write,
     prepare_typed_write,
 )
 from parallax.core.unit_work.materialized import ObjectClaimedWrite, ObservedKeyedWrite
@@ -608,7 +607,9 @@ def test_bitemporal_insert_then_update_keeps_the_valid_time_bound() -> None:
         ({"id": 9, "acctNum": "D", "value": Decimal("100.00")},),
         valid_from=_B1_MANAGED,
     )
-    update = KeyedWrite("update", "Position", ({"id": 9, "value": Decimal("150.00")},))
+    update = KeyedWrite(
+        "update", "Position", ({"id": 9, "value": Decimal("150.00")},), valid_from=_B1_MANAGED
+    )
     plan = _plan([insert, update], _POSITION, tx_instant=instant_at(_B1))
     (step,) = plan.steps
     assert isinstance(step, PlannedInsert)  # one fully-current rectangle, no head/tail split
@@ -1448,21 +1449,12 @@ def test_materialized_group_settles_to_one_step_per_resolved_row_in_order() -> N
     assert ids == [1, 2]
 
 
-@pytest.mark.parametrize("mutation", ["updateUntil", "terminate", "terminateUntil"])
-def test_materialized_group_refuses_a_milestone_verb_on_a_non_temporal_target(
-    mutation: PredicateMutation,
-) -> None:
-    # A group reaches settlement already resolved, so the verb it carries is
-    # measured against the target here or nowhere: `Account` is versioned and
-    # NON-temporal, so a bounded `updateUntil` has no Valid-Time window to
-    # write and nothing to close. Settled as an ordinary versioned update it
-    # would consume each row's observed version while silently discarding the
-    # bounds — the same mismatch an addressed keyed write is refused for.
-    assignments = (
-        [WriteAssignment("Account.balance", Decimal("5.00"))] if mutation == "updateUntil" else []
-    )
+def test_no_materialized_group_carries_a_milestone_verb_on_a_non_temporal_target() -> None:
+    # `Account` is versioned and NON-temporal, so a `terminate` has nothing to
+    # close. Preparation refuses it before any group can be resolved, so no
+    # settled group consumes a row's version while dropping the verb's meaning.
     with pytest.raises(WriteInstructionError, match="Non-temporal objects like 'Account'"):
-        _version_group("Account", mutation, "id", [(1, 1)], assignments)
+        _version_group("Account", "terminate", "id", [(1, 1)])
 
 
 def test_materialized_group_rejects_an_authored_version_assignment() -> None:
@@ -2149,67 +2141,15 @@ def test_only_surviving_writes_contribute_claims_and_a_shared_claim_answers_once
 
 
 # --------------------------------------------------------------------------- #
-# Settlement's structural refusals are TOTAL: they judge the prepared         #
-# carrier handed across the seam rather than the ingress that built one, so   #
-# a shape no preparation path produces is refused here rather than settled.   #
-# Each carrier below is derived from a prepared write, which is the only      #
-# input settlement takes.                                                     #
+# Settlement's own refusals judge the rows a prepared carrier holds. Each      #
+# carrier below is derived from a prepared write through the planner's own    #
+# controlled derivation, which retains rows without re-admitting them.        #
 # --------------------------------------------------------------------------- #
-def _derived(write: KeyedWrite, model: Metamodel, **changes: object) -> PreparedKeyedWrite:
-    """A prepared keyed write carrying a shape no ingress would have produced."""
-    return dataclasses.replace(_prepared_keyed(write, model), **changes)
-
-
-def test_a_plural_temporal_instruction_is_refused_at_settlement() -> None:
-    plural = _derived(
-        KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("1.00")},)),
-        _BALANCE,
-        rows=({"id": 1, "value": Decimal("1.00")}, {"id": 2, "value": Decimal("2.00")}),
-    )
-    with pytest.raises(WritePlanningError, match="multi-row temporal 'update' on 'Balance'"):
-        _plan([plural], _BALANCE)
-
-
-def test_a_keyed_milestone_verb_on_a_non_temporal_target_is_refused_at_settlement() -> None:
-    bounded = _derived(
-        KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("1.00")},)),
-        _WALLET,
-        mutation="updateUntil",
-    )
-    with pytest.raises(WritePlanningError, match="Non-temporal objects like 'Wallet'"):
-        _plan([bounded], _WALLET)
-
-
-def test_a_readless_predicate_milestone_verb_is_refused_at_settlement() -> None:
-    deletion = prepare_typed_write(
-        PredicateWrite(
-            "delete",
-            PredicateSelection("Wallet", predicate_algebra.Comparison("eq", "Wallet.id", 1)),
-        ),
-        _WALLET,
-    )
-    assert isinstance(deletion, PreparedPredicateWrite)
-    with pytest.raises(WritePlanningError, match="a readless predicate 'terminate'"):
-        _plan([dataclasses.replace(deletion, mutation="terminate")], _WALLET)
-
-
-def test_a_materialized_group_authoring_the_version_is_refused_at_settlement() -> None:
-    group = _version_group(
-        "Account", "update", "id", [(1, 1)], [WriteAssignment("Account.balance", Decimal("5.00"))]
-    )
-    entity = group.mutation.selection.target
-    position = inheritance.view(_ACCOUNT).entity(entity.identity)
-    assert position is not None
-    version = position.applicable_attribute("version")
-    assert version is not None
-    authored = MaterializedWriteGroup(
-        mutation=dataclasses.replace(
-            group.mutation, managed_assignments=(PreparedAssignment(version, 9),)
-        ),
-        evidence=group.evidence,
-    )
-    with pytest.raises(CallerAuthoredVersionError, match="framework-owned"):
-        _plan([authored], _ACCOUNT)
+def _derived(
+    write: KeyedWrite, model: Metamodel, rows: tuple[Mapping[str, object], ...]
+) -> PreparedKeyedWrite:
+    """A prepared keyed write whose rows no ingress would have produced."""
+    return derive_keyed_write(_prepared_keyed(write, model), rows)
 
 
 def test_a_row_naming_a_member_outside_the_family_is_refused_at_settlement() -> None:
@@ -2310,8 +2250,6 @@ class _Constructions:
     [
         ("Balance", "update", 2),
         ("Balance", "terminate", 1),
-        ("Balance", "updateUntil", 2),
-        ("Balance", "terminateUntil", 1),
         ("Position", "update", 3),
         ("Position", "terminate", 2),
         ("Position", "updateUntil", 4),

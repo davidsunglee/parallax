@@ -1,39 +1,31 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass
 from typing import cast
 
-from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
-from parallax.core.base import TIMESTAMP
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.execution_lifecycle._activity import (
     TransactionAttemptActivity,
     refuse_reentry,
 )
-from parallax.core.metamodel import (
-    AttributeMetadata,
-    EntityMetadata,
-    Metamodel,
-    ValueObjectMetadata,
-)
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.unit_work import (
     UPDATE_MUTATIONS,
     KeyedMutation,
     PredicateMutation,
+    PredicateSelection,
     PredicateWrite,
     ReadOrigin,
+    WriteAssignment,
     instructions,
 )
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
-    PreparedTemporalBounds,
 )
-from parallax.core.wire import encode_wire
-from parallax.snapshot.handle._family import family_view, temporal_shape
 from parallax.snapshot.handle._keyed_writes import (
     KeyedWriteContext,
     PreparedSourceWrite,
@@ -44,11 +36,7 @@ from parallax.snapshot.handle._keyed_writes import (
     retained,
 )
 from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
-from parallax.snapshot.handle._write_inputs import (
-    keyed_instruction,
-    reject_temporal_delete,
-    validate_window,
-)
+from parallax.snapshot.handle._write_inputs import keyed_instruction
 from parallax.snapshot.materialize import WireEntity, opened_wire_entity
 from parallax.snapshot.materialize._wire import read_origin_of
 
@@ -82,8 +70,6 @@ canonical selection shape — never an Object Query, because ordering, the cap,
 temporal selection, result narrowing, and Include Paths all shape a RESULT and a
 set-based write has none to shape."""
 
-_DeclaredMember = AttributeMetadata | ValueObjectMetadata
-
 
 @dataclass(frozen=True, slots=True)
 class WireWriteLane:
@@ -108,10 +94,6 @@ class WireWriteLane:
     keyed: KeyedWriteContext
     conn: DatabaseConnection
     attempt: TransactionAttemptActivity
-
-
-def _wire_bound(value: dt.datetime | None) -> str | None:
-    return None if value is None else cast("str", encode_wire(TIMESTAMP, value))
 
 
 def wire_insert(
@@ -194,13 +176,13 @@ def wire_keyed_write(
     and close verbs, which key off the source alone.
 
     The order is the Keyed Write Validation Order, which this verb enters rather
-    than states: the change document's own shape, then the source, its pin, the
-    verb's applicability to a target that milestones its rows, the window, and
-    only then every named member's legality and value — all before the strategy
-    is derived or any evidence resolved. A write whose every named member already
-    holds the value the source published is the ordinary no-op, dropped before the
-    evidence question is asked at all, exactly as an empty Typed effective change
-    set is.
+    than states: the change document's own shape, then the source and its pin,
+    then preparation — the verb's applicability to the target and the window,
+    and only then every named member's legality and value — all before the
+    strategy is derived or any evidence resolved. A write whose every named
+    member already holds the value the source published is the ordinary no-op,
+    dropped before the evidence question is asked at all, exactly as an empty
+    Typed effective change set is.
     """
     keyed_write(
         lane.keyed,
@@ -233,45 +215,26 @@ def wire_predicate_write(
     resolved from the model, the same lead the keyed verb gives them — and a
     selection's shape runs to the bottom of its predicate, so a malformed node
     is `m-predicate`'s own refusal rather than whatever the model happens to say
-    about the Entity, the window, or the assignments beside it. The Entity is
-    then resolved HERE rather than left to the instruction build, because the
-    temporal bounds are rendered against the target family's Temporal Shape and
-    a bound has to be canonical from the moment the instruction exists — and
-    ``delete_where``, which offers no bound to render, hears the target's
-    verdict on the VERB before the window gate is reached at all, exactly as the
-    Typed ``_where`` lane does.
+    about the Entity, the window, or the assignments beside it. The predicate
+    parsed there is the one the instruction carries, and each change is an
+    assignment owned by the target's own spelling; preparation then judges the
+    target, the window, the predicate, and each assignment in authored order.
     """
     refuse_reentry(lane.keyed.lifecycle)
-    selection = _authored_document(target, "a predicate-selected write's canonical target")
-    entity_name = _selection_shape(selection)
-    authored = _authored_changes(mutation, changes)
-    entity = instructions.resolve_target(lane.keyed.model.meta, entity_name)
-    shape = temporal_shape(lane.keyed.model.meta, entity)
-    reject_temporal_delete(entity, shape, mutation, surface="predicate")
-    valid_from_managed, until_managed = validate_window(
-        family_view(lane.keyed.model.meta, entity).root, shape, mutation, valid_from, until
+    selection = _selection_shape(
+        _authored_document(target, "a predicate-selected write's canonical target")
     )
-    members = _row_members(lane.keyed.model.meta, entity)
-    unknown = sorted(set(authored) - set(members))
-    if unknown:
-        raise instructions.WriteInstructionError(
-            f"{entity.identity.canonical}: assignments name undeclared members {unknown}"
-        )
-    doc: dict[str, object] = {
-        "mutation": mutation,
-        "target": selection,
-    }
-    if authored:
-        doc["assignments"] = [
-            {"attr": f"{entity.identity.canonical}.{member}", "value": value}
+    authored = _authored_changes(mutation, changes)
+    instruction = PredicateWrite(
+        mutation,
+        selection,
+        tuple(
+            WriteAssignment(f"{selection.entity}.{member}", value)
             for member, value in authored.items()
-        ]
-    if valid_from_managed is not None:
-        doc["validFrom"] = _wire_bound(valid_from_managed)
-    if until_managed is not None:
-        doc["until"] = _wire_bound(until_managed)
-    instruction = instructions.deserialize(doc)
-    assert isinstance(instruction, PredicateWrite)  # a `target` document always builds this shape
+        ),
+        valid_from,
+        until,
+    )
     prepared = instructions.prepare_wire_write(instruction, lane.keyed.model.meta)
     assert isinstance(prepared, PreparedPredicateWrite)
     buffer_predicate_instruction(
@@ -329,31 +292,23 @@ def _prepared_wire_write(
     mutation: KeyedMutation,
     entity: EntityMetadata,
     row: Mapping[str, object],
-    bounds: PreparedTemporalBounds,
-    assigned: frozenset[str] | None,
+    authored: Set[str],
+    *,
+    valid_from: dt.datetime | None,
+    until: dt.datetime | None,
 ) -> PreparedKeyedWrite:
     """One authored single-row keyed instruction, decoded and judged by Unit
     Work's sole Wire judgment.
 
-    ``assigned`` names the members whose ASSIGNMENT is judged, and is absent for
-    an opening payload, whose members are the row itself rather than assignments
-    against one this store already holds.
-
-    The bounds ride the instruction's dimension-explicit fields in the canonical
-    spelling the Wire decoder reads, never the row: an As-Of Axis
-    endpoint is framework-owned, so a Valid-Time bound is never a member a caller
-    could author.
+    ``authored`` names the members the caller explicitly wrote — an opening
+    payload's keys, judged as insert authoring, or a change document's keys,
+    judged as assignments — never the source identity an update's row carries
+    beside them.
     """
     prepared = instructions.prepare_wire_write(
-        keyed_instruction(
-            mutation,
-            entity.identity,
-            row,
-            valid_from=_wire_bound(bounds.valid_from),
-            until=_wire_bound(bounds.until),
-        ),
+        keyed_instruction(mutation, entity.identity, row, valid_from=valid_from, until=until),
         meta,
-        assigned_members=assigned,
+        authored_members=authored,
     )
     assert isinstance(prepared, PreparedKeyedWrite)
     return prepared
@@ -370,7 +325,7 @@ def _published_identity(source: _WireKeyedSource) -> dict[str, object]:
 
 
 def _published_originals(
-    meta: Metamodel, entity: EntityMetadata, source: _WireKeyedSource, members: frozenset[str]
+    meta: Metamodel, entity: EntityMetadata, source: _WireKeyedSource, members: Set[str]
 ) -> dict[str, object]:
     """What the source published under ``members``, in the carriers a prepared
     authored row states the same members in.
@@ -427,7 +382,12 @@ class WireKeyedWriteSource:
         return self._source.resolved
 
     def prepare(
-        self, resolved: ResolvedKeyedWriteSource, bounds: PreparedTemporalBounds, /
+        self,
+        resolved: ResolvedKeyedWriteSource,
+        /,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
     ) -> PreparedSourceWrite:
         """The instruction this document authors, beside the source's own originals.
 
@@ -441,10 +401,10 @@ class WireKeyedWriteSource:
         is a rule about what the CALLER wrote.
         """
         meta, mutation, source = self._retained()
-        assigned = frozenset(self._authored)
-        authored = {**_published_identity(source), **self._authored}
+        assigned = self._authored.keys()
+        row = {**_published_identity(source), **self._authored}
         instruction = _prepared_wire_write(
-            meta, mutation, resolved.entity, authored, bounds, assigned
+            meta, mutation, resolved.entity, row, assigned, valid_from=valid_from, until=until
         )
         return PreparedSourceWrite(
             instruction=instruction,
@@ -506,18 +466,27 @@ class WireKeyedInsertSource:
         )
 
     def prepare(
-        self, resolved: ResolvedKeyedInsert, bounds: PreparedTemporalBounds, /
+        self,
+        resolved: ResolvedKeyedInsert,
+        /,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
     ) -> PreparedKeyedWrite:
-        """The row this payload opens.
-
-        The framework-owned refusal leads it: the interval bounds are stamped at
-        flush from the Clock Strategy and the version is derived, so neither is
-        ever caller data, and a payload naming one is refused as the authoring it
-        is rather than measured member by member.
-        """
+        """The row this payload opens, with every payload key judged as the
+        caller's authoring: a framework-owned member is refused, because the
+        interval bounds are stamped at flush from the Clock Strategy and the
+        version is derived."""
         meta, mutation = self._retained()
-        _refuse_framework_owned(meta, resolved.entity, self._payload)
-        return _prepared_wire_write(meta, mutation, resolved.entity, self._payload, bounds, None)
+        return _prepared_wire_write(
+            meta,
+            mutation,
+            resolved.entity,
+            self._payload,
+            self._payload.keys(),
+            valid_from=valid_from,
+            until=until,
+        )
 
     def _retained(self) -> tuple[Metamodel, KeyedMutation]:
         return retained(self._meta), retained(self._mutation)
@@ -561,17 +530,15 @@ def _concrete_entity(meta: Metamodel, hint: ReadOrigin) -> EntityMetadata:
     return record
 
 
-def _selection_shape(target: Mapping[str, object]) -> str:
-    """The Entity spelling ``target`` states, refusing anything but the canonical
+def _selection_shape(target: Mapping[str, object]) -> PredicateSelection:
+    """The selection ``target`` states, refusing anything but the canonical
     selection shape.
 
-    Judged whole before the model is consulted, which is why the predicate node
-    is deserialized here and not left to the instruction build: a selection that
-    states no well-formed predicate has stated no target, and answering it with
-    an unknown-Entity, inadmissible-bound, or illegal-assignment verdict would
+    Judged whole before the model is consulted: a selection that states no
+    well-formed predicate has stated no target, and answering it with an
+    unknown-Entity, inadmissible-bound, or illegal-assignment verdict would
     report the defect the fixed order places later. The node is `m-predicate`'s
-    to judge — the same serde the instruction build reaches for the identical
-    document — so a malformed one carries that module's
+    to judge, so a malformed one carries that module's
     :class:`~parallax.core.predicate.CanonicalDocumentError` while the selection
     envelope around it stays this verb's own verdict.
 
@@ -596,54 +563,9 @@ def _selection_shape(target: Mapping[str, object]) -> str:
         raise instructions.WriteInstructionError(
             "predicate write: `target.predicate` must be a mapping"
         )
-    predicate_algebra.deserialize(cast("Mapping[str, object]", node))
-    return name
-
-
-def _refuse_framework_owned(
-    meta: Metamodel, entity: EntityMetadata, row: Mapping[str, object]
-) -> None:
-    """Refuse an insert payload naming a framework-owned member.
-
-    The interval bounds come from the Clock Strategy at flush and the version is
-    derived from the observation a later write's source retained, so neither is
-    ever caller data (ADR 0010/0013). The Typed peer of this refusal is the
-    Entity constructor's, which is why a Typed insert never reaches it.
-    """
-    members = _row_members(meta, entity)
-    for member in row:
-        declared = members.get(member)
-        if isinstance(declared, AttributeMetadata) and declared.framework_owned:
-            raise instructions.WriteInstructionError(
-                f"{entity.identity.canonical}.{member}: framework-owned fields may not be "
-                "assigned — the interval bounds are stamped from the Clock Strategy and the "
-                "optimistic-lock version is derived"
-            )
-
-
-def _declared_row_members(meta: Metamodel, entity: EntityMetadata) -> Sequence[_DeclaredMember]:
-    position = inheritance.view(meta).entity(entity.identity)
-    if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        return ()
-    return (*position.applicable_attributes, *position.applicable_value_objects)
-
-
-def _row_members(meta: Metamodel, entity: EntityMetadata) -> Mapping[str, _DeclaredMember]:
-    """``entity``'s family-effective row members, by the name a write spells.
-
-    Family-effective rather than local for the reason every other write-side
-    member resolution is: a family's key and version columns are declared on the
-    root alone, and a concrete-subtype write names them exactly as it names its
-    own. Resolved once per call and threaded, so the legality judgement, the
-    effective-change comparison, and the decode all read one answer.
-    """
-    return {_member_name(member): member for member in _declared_row_members(meta, entity)}
-
-
-def _member_name(member: _DeclaredMember) -> str:
-    if isinstance(member, AttributeMetadata):
-        return member.identity.name
-    return member.identity.path[-1]
+    return PredicateSelection(
+        name, predicate_algebra.deserialize(cast("Mapping[str, object]", node))
+    )
 
 
 def _authored_document(value: object, described: str) -> Mapping[str, object]:

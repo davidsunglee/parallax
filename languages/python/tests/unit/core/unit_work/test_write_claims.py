@@ -91,7 +91,7 @@ _RETAINED = RetainedObservation(
 )
 _PERSON = EntityIdentity("parallax.compatibility", "Person")
 _PERSON_META = model_of(PERSON)
-_BALANCE_META = model_of(BALANCE)
+_WHERE_POSITION_META = model_of(WHERE_POSITION_META)
 
 
 def _person_delete(*ids: int) -> KeyedWrite:
@@ -113,16 +113,20 @@ def _prepared_person_delete(*ids: int) -> PreparedKeyedWrite:
 
 
 def _prepared_intent(mutation: str) -> PreparedKeyedWrite:
+    """``mutation`` prepared over a target that admits it: a Bitemporal one for
+    every verb but ``delete``, which only a non-temporal target takes."""
+    if mutation == "delete":
+        return _prepared_person_delete(1)
     document: dict[str, object] = {
         "mutation": mutation,
-        "entity": "Balance",
+        "entity": "WherePosition",
         "rows": [{"id": 1, "acctNum": "A", "value": "100.00"}],
         "validFrom": "2024-01-01T00:00:00.000000Z",
     }
     if mutation.endswith("Until"):
         document["until"] = "2024-06-01T00:00:00.000000Z"
     instruction = instructions.deserialize(document)
-    prepared = instructions.prepare_wire_write(instruction, _BALANCE_META)
+    prepared = instructions.prepare_wire_write(instruction, _WHERE_POSITION_META)
     assert isinstance(prepared, PreparedKeyedWrite)
     return prepared
 
@@ -155,10 +159,11 @@ def test_an_insert_intends_nothing_against_an_observed_state() -> None:
 def test_every_other_keyed_mutation_intends_an_assignment_or_a_destruction(
     mutation: str, kind: str
 ) -> None:
-    intent = keyed_intent(_prepared_intent(mutation))
+    prepared = _prepared_intent(mutation)
+    intent = keyed_intent(prepared)
     assert intent is not None
     assert intent.kind == kind
-    assert intent.region[0] is not None
+    assert intent.region == (prepared.bounds.valid_from, prepared.bounds.until)
 
 
 @pytest.mark.parametrize(
@@ -496,7 +501,7 @@ def test_an_instruction_naming_no_entity_of_the_model_is_refused() -> None:
         {"mutation": "delete", "entity": "parallax.compatibility.Account", "rows": [{"id": 1}]}
     )
     assert isinstance(foreign, KeyedWrite)
-    with pytest.raises(instructions.WriteInstructionError, match="unknown entity"):
+    with pytest.raises(instructions.WriteInstructionError, match="declares no entity"):
         instructions.prepare_wire_write(foreign, _PERSON_META)
 
 

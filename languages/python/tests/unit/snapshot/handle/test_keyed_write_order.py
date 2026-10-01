@@ -208,7 +208,7 @@ def _applicability_refusal(scenario: Scenario, *, statements: int = 0) -> Answer
         return _refused(
             WriteInstructionError,
             f"{_short(target)}: {_MUTATIONS[verb]!r} requires valid_from < until "
-            f"(python.md §5) — got valid_from={UNTIL!r}, until={VALID_FROM!r}",
+            f"— got valid_from={UNTIL!r}, until={VALID_FROM!r}",
             statements=statements,
         )
     if verb == "terminate" and target.profile == "non_temporal":

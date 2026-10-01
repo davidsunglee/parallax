@@ -236,7 +236,7 @@ class Target:
 
     ``valid_from`` is the Valid-Time instant this target's PLAIN verbs state — an
     instant for a Bitemporal target, absent for every other, which is exactly
-    what :func:`~parallax.snapshot.handle._write_inputs.validate_window` admits.
+    what write preparation admits.
 
     ``profile`` and ``gate`` are the two model facts a fixed expectation is keyed
     by: which verbs the target admits and which window they may state, and what

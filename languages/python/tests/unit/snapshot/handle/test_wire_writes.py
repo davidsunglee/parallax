@@ -35,7 +35,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import InstantError, PresentDocument
 from parallax.core.db_port import JsonDocument, MappingRow
-from parallax.core.predicate import CanonicalDocumentError
+from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
 from parallax.core.unit_work import WriteRejectedError, instructions
 from parallax.snapshot import InvalidData, Snapshot, connect
 from parallax.snapshot.handle import (
@@ -67,6 +67,7 @@ from tests.unit._transact_support import (
     INFINITY_INSTANT,
     PAYMENT,
     PERSON,
+    RATE,
     WHERE_POSITION_META,
     balance_row,
     db_for,
@@ -793,10 +794,52 @@ def test_predicate_write_rejects_valid_selection_changes_that_name_unknown_membe
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="undeclared members"):
+        with pytest.raises(
+            instructions.WriteInstructionError,
+            match=r"'parallax\.compatibility\.Person\.undeclared' does not name a declared member",
+        ):
             tx.wire.update_where(_PERSON_TARGET, {"undeclared": 1})
 
     db_for(PERSON, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_a_predicate_writes_first_failing_assignment_is_the_one_refused() -> None:
+    # Each assignment is completed — its member resolved, then its value
+    # decoded and judged — before the next one is visited.
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="declared member"):
+            tx.wire.update_where(_PERSON_TARGET, {"undeclared": 1, "name": 5})
+        with pytest.raises(instructions.InstructionRejectedError) as value_fault:
+            tx.wire.update_where(_PERSON_TARGET, {"name": 5, "undeclared": 1})
+        assert value_fault.value.rule == "neutral-literal-type-mismatch"
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_a_predicate_writes_window_is_judged_before_its_predicate() -> None:
+    port = ScriptedAdapter(Transact())
+    inverted: dict[str, object] = {
+        "entity": "parallax.compatibility.WherePosition",
+        "predicate": {
+            "between": {
+                "attr": "parallax.compatibility.WherePosition.id",
+                "lower": 10,
+                "upper": 1,
+            }
+        },
+    }
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="requires valid_from"):
+            tx.wire.update_where(inverted, {"value": "1.00"})
+        with pytest.raises(ModelRejectedError):
+            tx.wire.update_where(inverted, {"value": "1.00"}, valid_from=_VALID_FROM)
+
+    db_for(WHERE_POSITION_META, port).transact(fn)
     assert _writes(port) == []
 
 
@@ -813,7 +856,9 @@ def test_an_empty_change_document_is_a_keyed_no_op_and_a_predicate_refusal() -> 
         tx.wire.update(_node(tx, _ACCOUNT_QUERY), {})
 
     def predicate_fn(tx: Transaction) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="MUST carry `assignments`"):
+        with pytest.raises(
+            instructions.WriteInstructionError, match="requires at least one assignment"
+        ):
             tx.wire.update_where(_PERSON_TARGET, {})
 
     db_for(ACCOUNT, keyed).transact(keyed_fn)
@@ -910,11 +955,44 @@ def test_an_insert_refuses_a_framework_owned_member() -> None:
     assert _writes(port) == []
 
 
+@pytest.mark.parametrize(
+    ("extra", "refusal", "message"),
+    [
+        (
+            {"txStart": "2024-01-01T00:00:00.000000Z", "tagValue": "deposit"},
+            WriteRejectedError,
+            "tagValue",
+        ),
+        (
+            {"txStart": "2024-01-01T00:00:00.000000Z", "nonsense": 1},
+            instructions.WriteInstructionError,
+            r"DepositRate\.txStart: framework-owned fields",
+        ),
+    ],
+    ids=["subtype-before-framework-owned", "framework-owned-before-undeclared"],
+)
+def test_an_insert_judges_its_payload_subtype_then_framework_owned_then_undeclared(
+    extra: dict[str, object], refusal: type[Exception], message: str
+) -> None:
+    port = ScriptedAdapter(Transact())
+    payload = {"id": 1, "amount": "1.00", "grade": "A", **extra}
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(refusal, match=message):
+            tx.wire.insert("parallax.compatibility.DepositRate", payload, valid_from=_VALID_FROM)
+
+    db_for(RATE, port).transact(fn)
+    assert _writes(port) == []
+
+
 def test_an_unresolvable_entity_spelling_is_refused_at_the_verb() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="unknown entity"):
+        with pytest.raises(
+            instructions.WriteInstructionError,
+            match=r"the connected model declares no entity 'parallax\.compatibility\.Nope'",
+        ):
             tx.wire.insert("parallax.compatibility.Nope", {"id": 7})
 
     db_for(ACCOUNT, port).transact(fn)

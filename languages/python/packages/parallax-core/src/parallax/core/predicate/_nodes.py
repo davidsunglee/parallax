@@ -102,7 +102,6 @@ QUERY_DEFINITION_CODES: Final[frozenset[str]] = frozenset(
         "query-path-invalid",
         "query-clause-invalid",
         "query-assignment-invalid",
-        "query-assignment-target-mismatch",
         "query-not-mutation-compatible",
     }
 )

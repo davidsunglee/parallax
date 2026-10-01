@@ -321,15 +321,14 @@ _QUERY_SPEC_CODES = frozenset(
         "query-path-invalid",
         "query-clause-invalid",
         "query-assignment-invalid",
-        "query-assignment-target-mismatch",
         "query-not-mutation-compatible",
     }
 )
 
 
-def test_the_query_definition_code_set_is_exactly_the_seven_spec_codes() -> None:
+def test_the_query_definition_code_set_is_exactly_the_six_spec_codes() -> None:
     assert QUERY_DEFINITION_CODES == _QUERY_SPEC_CODES
-    assert len(QUERY_DEFINITION_CODES) == 7
+    assert len(QUERY_DEFINITION_CODES) == 6
 
 
 def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:

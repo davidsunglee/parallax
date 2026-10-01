@@ -160,7 +160,10 @@ Three structural rules keep the instruction framework-honest:
 
 - **The instant surface is dimension-explicit.** A Bitemporal write's authored
   Valid-Time lower bound is `validFrom`; bounded writes use `until` for the
-  exclusive Valid-Time upper bound. The Transaction-Time instant is *not* an
+  exclusive Valid-Time upper bound. Each authored bound is a finite instant: a
+  serialized one is `m-wire`'s `timestamp`, decoded by that codec when the
+  document is deserialized, and an unbounded write omits `until` rather than
+  stating an infinite one. The Transaction-Time instant is *not* an
   instruction field — it is supplied at flush from the Clock Strategy (ADR 0010),
   so no caller-facing shape can smuggle one in. Compatibility-case `at` is harness
   clock context, not an alias or an instruction member.
@@ -193,9 +196,10 @@ Three structural rules keep the instruction framework-honest:
   itself the input under test (`m-case-format`), classified
   `temporal-keyed-write-multi-row`.
 
-A conforming implementation **MUST** round-trip every instruction through the
-canonical form losslessly (`serialize(deserialize(x)) == x`), the write-side of the
-`m-predicate` serde contract.
+A conforming implementation **MUST** round-trip every canonical instruction
+document losslessly (`serialize(deserialize(x)) == x`), the write-side of the
+`m-predicate` serde contract. Deserialization judges the document's own grammar;
+whether its bounds suit the target is judged when the write is prepared.
 
 A Write Instruction is **buffered author intent** and stays that until flush. It
 is never a Planned Write, and a Planned Write is never serialized back into one.
@@ -218,7 +222,14 @@ members, wrong document carriers, multiplicity violations, missing required
 members, nullability, and other structural failures retain their existing rules.
 
 Two producer operations converge on the same private immutable `PreparedWrite`
-algebra. `prepareWireWrite` applies the serialized decoding above;
+algebra, and they are the one admissibility judgment every ingress crosses. Each
+resolves the target first and judges whether it admits the write: a temporal
+target refuses `delete`; the window must be stated as the verb's form requires,
+admitted by the target's temporal profile, and ordered; a non-temporal target
+refuses a milestone verb; and a temporal keyed instruction carries one row. Only
+then is the payload judged — a keyed row's subtype shape, members, and values, or
+a predicate-selected write's predicate, family refusal, and assignments in
+authored order, each assignment's member resolved before its value is judged. `prepareWireWrite` applies the serialized decoding above;
 `prepareTypedWrite` applies `m-core.coerceNeutralInput` followed by managed
 membership and retains developer-facing mismatch errors. Neither consumer may
 choose the other policy from the runtime carrier it happens to receive.

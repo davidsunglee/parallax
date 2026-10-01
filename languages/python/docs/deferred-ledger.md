@@ -691,40 +691,10 @@ so nothing else can reach the function either.
 **Why it is deferred rather than fixed.** Narrowing the parameter to
 `PreparedKeyedWrite` collapses the function to one field read, which is an
 argument for inlining it rather than for keeping a narrowed helper — and that is
-a shape question about the buffering step, not a repair. It is also one of two
-dead arms of the same kind in this area, and judging them together is what tells
-a genuinely unreachable arm from one whose producer simply has not been written
-yet.
+a shape question about the buffering step, not a repair.
 
-**When.** With the deletion sweep that also judges D-91.
-
-### D-91 — `buffer_predicate_instruction`'s non-temporal applicability arm is reachable by no producible instruction
-
-*Low — a refusal standing over a case its own producer already settles.* Relates
-to `parallax.snapshot.handle._predicate_writes.buffer_predicate_instruction`,
-`parallax.core.unit_work.instructions.non_temporal_milestone_refusal`,
-`parallax.snapshot.handle._write_inputs.reject_temporal_delete`.
-
-**What.** The seam settles target/verb applicability from a two-arm quadrant: a
-temporal target is asked for the `delete_where` refusal, a non-temporal one for
-the milestone-verb refusal. The non-temporal arm is reachable by no producible
-instruction. The seam takes an ALREADY-PREPARED instruction, and prepared-write
-production judges exactly the converse half — a milestone verb aimed at a target
-deriving no As-Of Axis — so no instruction that reaches this seam can still be
-carrying that mistake. The temporal arm is producible but reached by no
-caller: both `_where` ingresses (`_predicate_writes.buffer_predicate`,
-`_wire_writes.wire_predicate_write`) call `reject_temporal_delete` before the seam,
-and nothing else enters it. No test drives either arm.
-
-**Why it is deferred rather than fixed.** The arm is cheap and states the
-seam's own contract, which the surrounding docstring rests on: this entry point
-is reachable in-package without an ingress, so it deliberately takes nothing on
-faith. Deleting it trades a stated contract for the producer's promise to keep
-judging that quadrant first, and keeping it leaves an arm no test can drive.
-Which way that goes is a question about how much the seam is entitled to assume
-of its callers, and it is the same question D-90 raises one module over.
-
-**When.** With the deletion sweep that also judges D-90.
+**When.** When keyed claim admission moves into the Unit of Work, which removes
+`admit_and_buffer` and this helper with it.
 
 ### D-92 — ADR 0057 limits Read Origins to Wire-read results, and the node a Wire insert answers carries one too
 

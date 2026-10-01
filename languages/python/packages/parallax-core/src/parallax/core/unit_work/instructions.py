@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from collections.abc import Callable, Mapping, Set
+from collections.abc import Callable, Mapping, Sequence, Set
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, cast
@@ -11,9 +11,11 @@ from parallax.core import inheritance, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import (
     TIMESTAMP,
+    InstantError,
     NeutralType,
     coerce_neutral_input,
     matches_neutral_type,
+    normalize_instant,
     retain_document_value,
 )
 from parallax.core.document_codec._authoring import (
@@ -25,15 +27,17 @@ from parallax.core.document_codec._authoring import (
 )
 from parallax.core.metamodel import (
     AttributeMetadata,
+    EntityIdentity,
     EntityMetadata,
     ValueObjectMetadata,
     VoDocumentViolation,
+    WriteAssignmentError,
     entity_by_name,
+    judge_assignment,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.predicate import PredicateNode
-from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.unit_work.columns import freeze_retained_value
 from parallax.core.unit_work.planned import ValidatedMutationSelection
 from parallax.core.unit_work.write_validate import WriteRejectedError, validate_write
@@ -58,17 +62,14 @@ __all__ = [
     "WriteAssignment",
     "WriteInstruction",
     "WriteInstructionError",
-    "WriteSurface",
     "coerce_typed_row",
     "decode_wire_row",
     "derive_keyed_write",
     "deserialize",
-    "non_temporal_milestone_refusal",
     "prepare_typed_write",
     "prepare_wire_write",
     "resolve_target",
     "serialize",
-    "temporal_delete_refusal",
 ]
 
 # The keyed write mutation surface: the MVP non-temporal / audit-only verbs plus
@@ -84,7 +85,7 @@ PredicateMutation = Literal["update", "delete", "terminate", "updateUntil", "ter
 # so a refusal can name methods the caller can act on: one mutation token is
 # spelled by two methods, and answering a `terminate_where` call with "use
 # `delete`" names the addressed verb, which selects nothing.
-WriteSurface = Literal["keyed", "predicate"]
+type _WriteSurface = Literal["keyed", "predicate"]
 
 INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
 """The keyed mutations that OPEN a row rather than write against an existing
@@ -135,13 +136,7 @@ BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
 )
 """The mutations whose window is a PAIR of Valid-Time bounds, keyed and
 predicate-selected alike; every other form carries no `until` — its window runs
-`[validFrom, infinity)`, or the target is non-temporal.
-
-Shared so the developer verbs' own pair-presence gate and this module's
-instruction-level check read one definition of which verbs the pairing rule
-binds. The verb-level gate is not redundant with the instruction-level one: a
-keyed update whose change set is wholly restoring buffers no instruction, so a
-window no verb judged is a window nothing judges."""
+`[validFrom, infinity)`, or the target is non-temporal."""
 # The assignment-bearing predicate verbs; the others name nothing to assign.
 _ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 
@@ -196,13 +191,14 @@ class KeyedWrite:
     bounded ``*Until`` mutation carries both, a plain temporal mutation carries only
     ``valid_from`` (window ``[valid_from, infinity)``), and a non-temporal
     mutation carries neither. The Transaction-Time instant is never a field here.
+    Whether the bounds suit the target is judged by preparation, not here.
     """
 
     mutation: KeyedMutation
     entity: str
     rows: tuple[Mapping[str, object], ...]
-    valid_from: str | dt.datetime | None = None
-    until: str | dt.datetime | None = None
+    valid_from: dt.datetime | None = None
+    until: dt.datetime | None = None
 
     def __post_init__(self) -> None:
         row_names = {name for row in self.rows for name in row}
@@ -253,8 +249,8 @@ class PredicateWrite:
     mutation: PredicateMutation
     target: PredicateSelection
     assignments: tuple[WriteAssignment, ...] = ()
-    valid_from: str | dt.datetime | None = None
-    until: str | dt.datetime | None = None
+    valid_from: dt.datetime | None = None
+    until: dt.datetime | None = None
 
 
 WriteInstruction = KeyedWrite | PredicateWrite
@@ -282,9 +278,13 @@ class PreparedAssignment:
         return f"{self.member.identity.entity.canonical}.{self.member.identity.path[-1]}"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class PreparedKeyedWrite:
-    """A keyed mutation over an exact resolved target and owned managed rows."""
+    """A keyed mutation over an exact resolved target and owned managed rows.
+
+    Only this module's producers construct one, so holding one means the write
+    was judged admissible against its target.
+    """
 
     mutation: KeyedMutation
     target: EntityMetadata
@@ -292,9 +292,13 @@ class PreparedKeyedWrite:
     bounds: PreparedTemporalBounds
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class PreparedPredicateWrite:
-    """A predicate mutation over a resolved selection and managed assignments."""
+    """A predicate mutation over a resolved selection and managed assignments.
+
+    Only this module's producers construct one, so holding one means the write
+    was judged admissible against its target.
+    """
 
     mutation: PredicateMutation
     selection: ValidatedMutationSelection
@@ -305,11 +309,32 @@ class PreparedPredicateWrite:
 PreparedWrite = PreparedKeyedWrite | PreparedPredicateWrite
 
 
-@dataclass(frozen=True, slots=True)
-class _TransformedMember:
-    value: object
-    vo_violation: VoDocumentViolation | None
-    value_valid: bool
+def _prepared_keyed_write(
+    mutation: KeyedMutation,
+    target: EntityMetadata,
+    rows: tuple[Mapping[str, object], ...],
+    bounds: PreparedTemporalBounds,
+) -> PreparedKeyedWrite:
+    prepared = object.__new__(PreparedKeyedWrite)
+    object.__setattr__(prepared, "mutation", mutation)
+    object.__setattr__(prepared, "target", target)
+    object.__setattr__(prepared, "rows", rows)
+    object.__setattr__(prepared, "bounds", bounds)
+    return prepared
+
+
+def _prepared_predicate_write(
+    mutation: PredicateMutation,
+    selection: ValidatedMutationSelection,
+    managed_assignments: tuple[PreparedAssignment, ...],
+    bounds: PreparedTemporalBounds,
+) -> PreparedPredicateWrite:
+    prepared = object.__new__(PreparedPredicateWrite)
+    object.__setattr__(prepared, "mutation", mutation)
+    object.__setattr__(prepared, "selection", selection)
+    object.__setattr__(prepared, "managed_assignments", managed_assignments)
+    object.__setattr__(prepared, "bounds", bounds)
+    return prepared
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,18 +343,12 @@ class _TransformedRow:
     failures: Mapping[int, VoDocumentViolation]
 
 
-@dataclass(frozen=True, slots=True)
-class _TransformedAssignment:
-    assignment: WriteAssignment
-    failure: VoDocumentViolation | None
-
-
 def derive_keyed_write(
     prepared: PreparedKeyedWrite, rows: tuple[Mapping[str, object], ...]
 ) -> PreparedKeyedWrite:
     """Derive a keyed prepared product while retaining owned values by identity."""
     sealed = tuple(cast("Mapping[str, object]", retain_document_value(row)) for row in rows)
-    return PreparedKeyedWrite(prepared.mutation, prepared.target, sealed, prepared.bounds)
+    return _prepared_keyed_write(prepared.mutation, prepared.target, sealed, prepared.bounds)
 
 
 # The reference pattern a predicate-write assignment `attr` must match, mirroring
@@ -349,6 +368,10 @@ def deserialize(doc: object) -> WriteInstruction:
     Valid-Time-bound pairing rules (a bounded ``*Until`` carries both bounds, every
     other form carries no ``until``), and — for a keyed write — that no row
     carries a forbidden observation control key or a smuggled Transaction-Time instant.
+
+    Each bound is a finite canonical ``timestamp`` decoded by the Wire codec, whose
+    refusals keep their ``neutral-literal-*`` classification; ``infinity`` is no
+    authored bound, since an open upper end is spelled by omitting ``until``.
     """
     if not isinstance(doc, Mapping):
         raise WriteInstructionError(
@@ -399,17 +422,18 @@ def _entity_name(node: Mapping[str, object], key: str, shape: str) -> str:
     return value
 
 
-def _bound(node: Mapping[str, object], key: str, shape: str) -> str | None:
+def _bound(node: Mapping[str, object], key: str, shape: str) -> dt.datetime | None:
     if key not in node:
         return None
     value = node[key]
     if not isinstance(value, str) or not value:
         raise WriteInstructionError(f"{shape}: `{key}` must be a non-empty instant string")
-    return value
+    decoded, _valid = _decode_wire_leaf(TIMESTAMP, value, f"{shape} `{key}`")
+    return cast("dt.datetime", decoded)
 
 
 def _check_valid_time_bounds(
-    mutation: str, valid_from: str | None, until: str | None, shape: str
+    mutation: str, valid_from: dt.datetime | None, until: dt.datetime | None, shape: str
 ) -> None:
     """Enforce the schema's Valid-Time-bound pairing: a bounded ``*Until``
     mutation carries BOTH ``validFrom`` and ``until``, and every other mutation
@@ -417,9 +441,7 @@ def _check_valid_time_bounds(
 
     Verb shape only. Whether ``validFrom`` is required, optional, or forbidden
     follows from the TARGET's temporal profile, which deserialization has no
-    model to ask, so nothing here rejects a ``validFrom`` on a write whose target
-    turns out to be non-temporal or Transaction-Time-Only, nor a Bitemporal
-    write that omits one.
+    model to ask; preparation judges it, together with the window's order.
     """
     if mutation in BOUNDED_MUTATIONS:
         if valid_from is None or until is None:
@@ -572,8 +594,8 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
 
 def _emit_bounds(
     body: dict[str, object],
-    valid_from: str | dt.datetime | None,
-    until: str | dt.datetime | None,
+    valid_from: dt.datetime | None,
+    until: dt.datetime | None,
 ) -> None:
     # An omitted bound stays omitted (the canonical minimal form), so a non-temporal
     # or plain-temporal instruction round-trips without gaining a null bound.
@@ -583,10 +605,8 @@ def _emit_bounds(
         body["until"] = _wire_bound(until)
 
 
-def _wire_bound(value: str | dt.datetime) -> object:
-    if isinstance(value, dt.datetime):
-        return encode_wire(TIMESTAMP, cast("dt.datetime", coerce_neutral_input(value, TIMESTAMP)))
-    return value
+def _wire_bound(value: dt.datetime) -> object:
+    return encode_wire(TIMESTAMP, cast("dt.datetime", coerce_neutral_input(value, TIMESTAMP)))
 
 
 _KEYED_SPELLING: Final[dict[str, str]] = {
@@ -607,7 +627,7 @@ _MILESTONE_MEANING: Final[dict[str, tuple[str, str]]] = {
 }
 
 
-def _spelled(mutation: str, surface: WriteSurface) -> str:
+def _spelled(mutation: str, surface: _WriteSurface) -> str:
     """``mutation``'s METHOD name on ``surface``, which is the only spelling a
     caller can act on.
 
@@ -621,25 +641,16 @@ def _spelled(mutation: str, surface: WriteSurface) -> str:
     return keyed if surface == "keyed" else f"{keyed}_where"
 
 
-def temporal_delete_refusal(
-    entity_name: str, mutation: str, *, surface: WriteSurface
+def _temporal_delete_refusal(
+    entity_name: str, mutation: str, *, surface: _WriteSurface
 ) -> str | None:
     """Why a TEMPORAL target refuses ``mutation``'s VERB, or ``None`` when this
     rule has nothing to say about it.
 
-    Reached only once the caller has established that ``entity_name``'s
-    inheritance family DOES derive an As-Of Axis. ``delete`` is physical row
-    removal and carries no temporal meaning at all, so a target that milestones
-    its rows spells its removal ``terminate`` and rejects ``delete`` outright
-    (the Python binding "Write verbs and temporal spellings"; `m-txtime-write` /
-    `m-bitemp-write`). Settling one anyway would erase the history the target
-    exists to keep, leaving no milestone recording that the value ever held.
-
-    A MESSAGE rather than a refusal, for the same reason
-    :func:`non_temporal_milestone_refusal` is one: the two layers that can reach
-    this quadrant classify differently, and one wording keeps the verb's refusal
-    and the flush's from describing the mismatch differently. The two are
-    converse halves of one applicability rule and are never both consulted.
+    ``delete`` is physical row removal and carries no temporal meaning at all,
+    so a target that milestones its rows spells its removal ``terminate`` and
+    rejects ``delete`` outright (`m-txtime-write` / `m-bitemp-write`). Settling
+    one anyway would erase the history the target exists to keep.
     """
     if mutation != "delete":
         return None
@@ -650,31 +661,16 @@ def temporal_delete_refusal(
     )
 
 
-def non_temporal_milestone_refusal(
-    entity_name: str, mutation: str, *, surface: WriteSurface
+def _non_temporal_milestone_refusal(
+    entity_name: str, mutation: str, *, surface: _WriteSurface
 ) -> str | None:
     """Why a NON-TEMPORAL target refuses ``mutation``'s VERB, or ``None`` when
     this rule has nothing to say about it.
 
-    ``None`` is not a verdict that the target admits the write: the verb is all
-    that is measured, and the temporal coordinates the profile does or does not
-    use go unexamined here and at every caller.
-
-    Reached only once the caller has established that ``entity_name``'s
-    inheritance family derives no As-Of Axis, because temporality is the whole
-    question: a milestone verb names a milestone to open, split, or close, and a
+    A milestone verb names a milestone to open, split, or close, and a
     non-temporal target has no axis to hold one. Settling one anyway would keep
     the verb's row effect and silently drop its temporal meaning — a bounded
     ``updateUntil`` becoming an ordinary overwrite of the row it addressed.
-
-    A MESSAGE rather than a refusal, because the same rule is owed by layers
-    that classify differently: the build-time validator raises
-    :class:`WriteInstructionError`, the buffering seam refuses before it can
-    resolve a materializing target against a real connection, and
-    :mod:`parallax.core.unit_work.write_settlement` raises its own planning error as
-    the last structural refusal before SQL. One wording, so an ingress cannot
-    describe the mismatch differently from the flush that would otherwise settle
-    it.
 
     The alternative each milestone verb names is the one that keeps the caller's
     row effect on a target with no axis, which is why it is per-verb: a bounded
@@ -691,22 +687,16 @@ def non_temporal_milestone_refusal(
     )
 
 
-def temporal_singleton_refusal(entity_name: str, instruction: WriteInstruction) -> str | None:
+def _temporal_singleton_refusal(entity_name: str, instruction: WriteInstruction) -> str | None:
     """Why a TEMPORAL target refuses ``instruction``'s ROW COUNT, or ``None``
     when this rule has nothing to say about it.
 
-    Reached only once the caller has established that ``entity_name``'s
-    inheritance family DOES derive an As-Of Axis — the converse half of
-    :func:`non_temporal_milestone_refusal`'s quadrant, and temporality is again
-    the whole question. Each row of a milestone chain closes its own current
-    milestone, consumes its own Temporal Observation, and opens its own
-    successors, and a temporal entity never collapses into a set-based statement
-    (`m-batch-write`), so several rows under one keyed instruction denote several
-    independent chains rather than one wider write (`m-unit-work` "A temporal
-    keyed instruction carries exactly one row").
-
-    ``None`` for a predicate-selected instruction, which carries no rows at all,
-    and for the single-row keyed shape the rule admits.
+    Each row of a milestone chain closes its own current milestone, consumes its
+    own Temporal Observation, and opens its own successors, and a temporal
+    entity never collapses into a set-based statement (`m-batch-write`), so
+    several rows under one keyed instruction denote several independent chains
+    rather than one wider write (`m-unit-work` "A temporal keyed instruction
+    carries exactly one row").
     """
     if not isinstance(instruction, KeyedWrite) or len(instruction.rows) == 1:
         return None
@@ -718,52 +708,36 @@ def temporal_singleton_refusal(entity_name: str, instruction: WriteInstruction) 
     )
 
 
-def _preflight_write_shape(
-    instruction: WriteInstruction, model: AcceptedMetamodel
-) -> EntityMetadata:
-    entity = resolve_target(
-        model,
-        instruction.entity if isinstance(instruction, KeyedWrite) else instruction.target.entity,
-    )
-    if isinstance(instruction, KeyedWrite):
-        members = _declared_members(model, entity)
-        for row in instruction.rows:
-            try:
-                inheritance.validate_subtype_write(model, entity, row)
-            except inheritance.InheritanceError as error:
-                raise WriteRejectedError(error.rule, str(error)) from error
-            unknown = sorted(name for name in row if name not in members)
-            if unknown:
-                raise WriteInstructionError(
-                    f"{entity.identity.name}: keyed write row names undeclared member(s) {unknown}"
-                )
-    if isinstance(
-        temporal_read.view(model).shape(entity.identity),
-        temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
-    ):
-        plural = temporal_singleton_refusal(entity.identity.name, instruction)
-        if plural is not None:
-            raise InstructionRejectedError(TEMPORAL_KEYED_WRITE_MULTI_ROW, plural)
-    else:
-        refusal = non_temporal_milestone_refusal(
-            entity.identity.name,
-            instruction.mutation,
-            surface="keyed" if isinstance(instruction, KeyedWrite) else "predicate",
-        )
-        if refusal is not None:
-            raise WriteInstructionError(refusal)
-    return entity
-
-
 def prepare_typed_write(instruction: WriteInstruction, model: AcceptedMetamodel) -> PreparedWrite:
-    """Coerce developer values once, then validate and freeze the write."""
+    """Coerce developer values once, then judge and freeze the write."""
     return _prepare_write(
         instruction,
         model,
         converter=_coerce_typed_leaf,
         source_access=BORROWED_SOURCE_ACCESS,
-        bound_decoder=_decode_typed_bound,
-        assigned_members=None,
+        authored_members=None,
+    )
+
+
+def prepare_wire_write(
+    instruction: WriteInstruction,
+    model: AcceptedMetamodel,
+    *,
+    authored_members: Set[str] | None = None,
+) -> PreparedWrite:
+    """Decode one serialized instruction, then judge and freeze the write.
+
+    ``authored_members`` names the row members a Wire caller explicitly wrote:
+    an insert's payload keys, judged as insert authoring, or an update's change
+    keys, judged as assignments. A neutral instruction omits it, and its row is
+    judged as row content alone.
+    """
+    return _prepare_write(
+        instruction,
+        model,
+        converter=_decode_wire_leaf,
+        source_access=MAPPING_SOURCE_ACCESS,
+        authored_members=authored_members,
     )
 
 
@@ -773,273 +747,369 @@ def _prepare_write(
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
-    bound_decoder: _BoundDecoder,
-    assigned_members: Set[str] | None,
+    authored_members: Set[str] | None,
 ) -> PreparedWrite:
-    entity = _preflight_write_shape(instruction, model)
-    transformed_rows: tuple[_TransformedRow, ...] = ()
-    transformed_assignments: tuple[_TransformedAssignment, ...] = ()
-    if isinstance(instruction, KeyedWrite):
-        transformed_rows = tuple(
-            _transform_row(
-                model,
-                entity,
-                row,
-                converter=converter,
-                source_access=source_access,
-                fill_missing_many=instruction.mutation in INSERT_MUTATIONS,
-            )
-            for row in instruction.rows
-        )
-        if assigned_members is not None:
-            if len(transformed_rows) != 1:
-                raise WriteInstructionError(
-                    "a keyed assignment set applies only to one addressed write row"
-                )
-            for name in assigned_members:
-                try:
-                    inheritance.validate_write_assignment(
-                        model,
-                        entity,
-                        name,
-                        transformed_rows[0].row[name],
-                        known_vo_violation=_member_failure(
-                            model, entity, name, transformed_rows[0].failures
-                        ),
-                        known_value_valid=_attribute_validity(
-                            model, entity, name, transformed_rows[0].failures
-                        ),
-                    )
-                except inheritance.WriteAssignmentError as error:
-                    raise WriteInstructionError(str(error)) from error
-        prepared_input: WriteInstruction = instruction
-    else:
-        selection = _member_selection(model, entity)
-        assignment_results: list[_TransformedAssignment] = []
-        for assignment in instruction.assignments:
-            _owner, _separator, name = assignment.attr.rpartition(".")
-            member = None if selection is None else selection.binding(name)
-            if member is None:
-                transformed = _TransformedMember(assignment.value, None, False)
-            else:
-                prepared_member = prepare_member_authoring(
-                    member.definition,
-                    assignment.value,
-                    source_access=source_access,
-                    normalize_leaf=converter,
-                    path=assignment.attr,
-                    allow_marker=isinstance(member, AttributeMetadata),
-                )
-                transformed = _TransformedMember(
-                    prepared_member.value,
-                    prepared_member.failure,
-                    prepared_member.failure is None,
-                )
-            assignment_results.append(
-                _TransformedAssignment(
-                    WriteAssignment(assignment.attr, transformed.value),
-                    transformed.vo_violation,
-                )
-            )
-        transformed_assignments = tuple(assignment_results)
-        prepared_input = PredicateWrite(
-            mutation=instruction.mutation,
-            target=instruction.target,
-            assignments=tuple(result.assignment for result in transformed_assignments),
-            valid_from=instruction.valid_from,
-            until=instruction.until,
-        )
-    return _prepare_managed_write(
-        prepared_input,
-        model,
-        entity=entity,
-        bound_decoder=bound_decoder,
-        transformed_rows=transformed_rows,
-        transformed_assignments=transformed_assignments,
-    )
+    """The sole admissibility judgment of a write: its target first, then its
+    payload.
 
-
-def _prepare_managed_write(
-    instruction: WriteInstruction,
-    model: AcceptedMetamodel,
-    *,
-    entity: EntityMetadata,
-    bound_decoder: _BoundDecoder,
-    transformed_rows: tuple[_TransformedRow, ...],
-    transformed_assignments: tuple[_TransformedAssignment, ...],
-) -> PreparedWrite:
-    """Validate an instruction against the metamodel: its selecting predicate,
-    then its member names.
-
-    A predicate-selected instruction's ``target.predicate`` is measured BEFORE
-    the assignments, in the order `m-case-format` states ("The model-aware
-    validator validates the predicate ... and checks its entity scope, [then]
-    rejects ... unassignable assignments"):
-
-    - the WHOLE ``validate_predicate`` vocabulary from its own resolved root —
-      an attribute reference outside the active position, an ambiguous Entity
-      spelling, an inverted ``between`` window, a literal disagreeing with its
-      member's declared type. There is no separate rule refusing a query-wide
-      clause: ``target.predicate`` is a :class:`PredicateNode`, and ordering, the
-      cap, Temporal Selections, result narrowing, and Includes have no spelling
-      in that type or in the schema it deserializes from;
-    An inheritance-family target is then rejected
-    (``subtype-write-set-based-unsupported``, `m-inheritance` "Per-object
-    writes are keyed; set-based inheritance writes are out of scope") — after
-    the predicate rules, which the spec orders first, and BEFORE the
-    assignments, which the Python binding requires: "every assigned attribute or
-    value-object member must be declared by the exact target entity — set-based
-    writes already reject inheritance-family targets, so ancestry resolution
-    never arises."
-
-    Every predicate-write ingress reaches these rules through here — the typed
-    ``_where`` verbs and the conformance engine's own translation both call this
-    before the buffering seam — so both classify the same instruction the same
-    way, and a rejection precedes buffering, the materializing resolve, and any
-    SQL.
-
-    A keyed write row key must name a declared attribute or value object of the
-    entity — for an inheritance-family participant, ANCESTRY-EFFECTIVE: every
-    member the Inheritance Facet's applicable-member view carries, never just
-    the target's own LOCAL declarations, else a well-formed concrete-subtype
-    write naming a root- or abstract-subtype-inherited member (`CardPayment`'s
-    inherited `id`/`amount`) would be wrongly rejected as "undeclared" (a family
-    participant's own accepted Metadata carries only its OWN attributes —
-    m-inheritance "Inherited members"). Sibling-branch and
-    framework-owned-metadata fields are already caught more specifically, and
-    FIRST, by ``inheritance.validate_subtype_write`` in
-    :func:`_preflight_write_shape` — this gate only ever sees
-    whatever THAT pass left unexamined, so widening it to the whole family never
-    re-opens a hole the more specific check already closes. A predicate write's
-    assignment `attr` must name a `target.entity` member, same family-effective
-    set. This is the member-name honesty gate — the flush-time refusing compile
-    port is the structural enforcer of the remaining typed / Table Layout slot
-    classification, mirroring the predicate-write materialization split.
-
-    Once a predicate-write assignment's `attr` names a genuinely declared
-    member, `inheritance.validate_write_assignment` additionally rejects a
-    primary-key or framework-owned (version) target and any scalar value that
-    does not conform to its declared neutral type
-    (the Python binding/`m-case-format.md:700` -- the SAME classification a
-    `.set(...)`-built assignment and an `Entity.edit(**changes)` entry are
-    rejected with at build time (`entity._expressions.AttributeExpr.set`,
-    `entity._entity.Entity.edit`); one validator, three callers, which is
-    the sharing neither scope could otherwise reach across the
-    `core/spec/modules.md` section 7 DAG).
-
-    Last, for BOTH shapes, the target's temporal profile decides one rule per
-    side. A target whose family derives NO As-Of Axis refuses a milestone verb
-    (:func:`non_temporal_milestone_refusal`); a target whose family DOES derive
-    one refuses a plural keyed instruction
-    (:func:`temporal_singleton_refusal`, classified
-    ``temporal-keyed-write-multi-row``). Both are rules about the target rather
-    than about the instruction alone, so they are asked here rather than in
-    :func:`deserialize`, and both are asked of the whole write surface. Without
-    the first, a milestone verb aimed at a versioned non-temporal target reaches
-    the materializing resolve and settles as an ordinary row write, keeping the
-    row effect and dropping the bounded-temporal meaning the verb was chosen
-    for. Without the second, a plural chain survives to
-    :mod:`parallax.core.unit_work.write_settlement`, whose own settle-time refusal
-    stays the last structural backstop before SQL but can no longer name the
-    ingress that authored it.
-
-    Those two are the whole of it, and `m-case-format`'s rule that the
-    model-aware validator "requires only the temporal coordinates the target
-    profile uses" is NOT yet enforced here. A TEMPORAL target's verb goes
-    unmeasured, so a temporal `delete` is accepted, and no bound is
-    measured against a profile at all: a `validFrom` on a non-temporal or
-    Transaction-Time-Only target passes, and so does a Bitemporal write that
-    omits the one it requires.
+    The target stage resolves the Entity, then asks whether it admits the verb
+    (both halves of temporal applicability), the window, and the row count.
+    Only then is the payload measured — a keyed row's subtype shape, members,
+    and values, or a predicate write's selecting predicate, family refusal, and
+    assignments in authored order — so a call whose verb or window is wrong for
+    its target hears that before any complaint about what it carries.
     """
-    validated_predicate: ValidatedPredicate | None = None
-    if not isinstance(instruction, KeyedWrite):
-        validated_predicate = predicate_algebra.validate_predicate(
-            entity, instruction.target.predicate, model
-        )
-        inheritance.reject_predicate_write(entity)
-        members = _declared_members(model, entity)
-        seen: set[str] = set()
-        for transformed in transformed_assignments:
-            assignment = transformed.assignment
-            # The owner segment is RESOLVED rather than compared as text, so a
-            # canonical spelling names the target it denotes while an ambiguous
-            # bare one — which resolves nowhere — stays refused.
-            owner_spelling, _, member = assignment.attr.rpartition(".")
-            owner = entity_by_name(model, owner_spelling)
-            if owner is None or owner.identity != entity.identity or member not in members:
-                raise WriteInstructionError(
-                    f"{entity.identity.name}: assignment {assignment.attr!r} does not name a "
-                    "declared member"
-                )
-            if member in seen:
-                raise WriteInstructionError(
-                    f"{entity.identity.name}: assignment {assignment.attr!r} is duplicated — each "
-                    "field may be assigned at most once (python.md §5)"
-                )
-            seen.add(member)
-            try:
-                inheritance.validate_write_assignment(
-                    model,
-                    entity,
-                    member,
-                    assignment.value,
-                    known_vo_violation=transformed.failure,
-                    known_value_valid=transformed.failure is None,
-                )
-            except inheritance.WriteAssignmentError as exc:
-                raise WriteInstructionError(str(exc)) from exc
-    if isinstance(instruction, KeyedWrite):
-        for transformed in transformed_rows:
-            validate_write(
-                entity,
-                transformed.row,
-                model,
-                mutation=instruction.mutation,
-                known_failures=transformed.failures,
-            )
-    managed_valid_from = bound_decoder(instruction.valid_from, "validFrom")
-    managed_until = bound_decoder(instruction.until, "until")
-    if isinstance(instruction, KeyedWrite):
-        return PreparedKeyedWrite(
-            mutation=instruction.mutation,
-            target=entity,
-            rows=tuple(result.row for result in transformed_rows),
-            bounds=PreparedTemporalBounds(managed_valid_from, managed_until),
-        )
-    assert validated_predicate is not None
+    keyed = isinstance(instruction, KeyedWrite)
+    entity = resolve_target(model, instruction.entity if keyed else instruction.target.entity)
+    bounds = _judge_target(model, entity, instruction)
     selection = _member_selection(model, entity)
-    if selection is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise RuntimeError(f"{entity.identity.canonical}: no Inheritance Facet view")
-    prepared_assignments = tuple(
-        PreparedAssignment(
-            cast("_DeclaredMember", selection.binding(assignment.attr.rpartition(".")[2])),
-            assignment.value,
+    if isinstance(instruction, KeyedWrite):
+        return _prepare_keyed_payload(
+            instruction,
+            model,
+            entity,
+            selection,
+            bounds,
+            converter=converter,
+            source_access=source_access,
+            authored_members=authored_members,
         )
-        for assignment in instruction.assignments
-    )
-    return PreparedPredicateWrite(
-        mutation=instruction.mutation,
-        selection=ValidatedMutationSelection(entity, validated_predicate),
-        managed_assignments=prepared_assignments,
-        bounds=PreparedTemporalBounds(managed_valid_from, managed_until),
-    )
-
-
-def prepare_wire_write(
-    instruction: WriteInstruction,
-    model: AcceptedMetamodel,
-    *,
-    assigned_members: Set[str] | None = None,
-) -> PreparedWrite:
-    """Decode one serialized instruction and return the managed write product."""
-    return _prepare_write(
+    return _prepare_predicate_payload(
         instruction,
         model,
-        converter=_decode_wire_leaf,
-        source_access=MAPPING_SOURCE_ACCESS,
-        bound_decoder=_decode_wire_bound,
-        assigned_members=assigned_members,
+        entity,
+        selection,
+        bounds,
+        converter=converter,
+        source_access=source_access,
     )
+
+
+def _judge_target(
+    model: AcceptedMetamodel, entity: EntityMetadata, instruction: WriteInstruction
+) -> PreparedTemporalBounds:
+    """Judge the verb, window, and row count against ``entity``'s Temporal
+    Shape, and answer the managed bounds.
+
+    A temporal ``delete`` is refused before the window: ``delete`` states no
+    bound in any spelling, so answering it by naming the ``valid_from`` a
+    Bitemporal target requires would ask for an argument the verb has no place
+    for. A milestone verb aimed at a non-temporal target is refused after it:
+    every such verb takes a bound, so a call stating one hears a true verdict on
+    an argument it can drop, while a boundless ``terminate`` clears the window
+    and is refused for its verb.
+    """
+    surface: _WriteSurface = "keyed" if isinstance(instruction, KeyedWrite) else "predicate"
+    name = entity.identity.name
+    shape = temporal_read.view(model).shape(entity.identity)
+    temporal = isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
+    if temporal:
+        refusal = _temporal_delete_refusal(name, instruction.mutation, surface=surface)
+        if refusal is not None:
+            raise WriteInstructionError(refusal)
+    bounds = _judge_window(
+        _family_root(model, entity),
+        shape,
+        instruction.mutation,
+        instruction.valid_from,
+        instruction.until,
+    )
+    if temporal:
+        plural = _temporal_singleton_refusal(name, instruction)
+        if plural is not None:
+            raise InstructionRejectedError(TEMPORAL_KEYED_WRITE_MULTI_ROW, plural)
+    else:
+        refusal = _non_temporal_milestone_refusal(name, instruction.mutation, surface=surface)
+        if refusal is not None:
+            raise WriteInstructionError(refusal)
+    return bounds
+
+
+def _judge_window(
+    root: EntityIdentity,
+    shape: temporal_read.TemporalShape | None,
+    mutation: str,
+    valid_from: object,
+    until: object,
+) -> PreparedTemporalBounds:
+    """One write's Valid-Time window, judged once per call.
+
+    Three questions in a fixed order, because each presupposes the one before
+    it. Is the window stated as the verb's form requires — a ``*Until`` window
+    is a PAIR, and no other form carries ``until``? Does the target's Temporal
+    Shape admit ``valid_from`` — a Bitemporal target requires it, every other
+    takes none? Is each bound an instant, and is the window ordered?
+
+    A half-stated window, an inadmissible bound, and an unordered one are this
+    write's own verdict on its input (:class:`WriteInstructionError`); a bound
+    that is no instant keeps `m-core`'s :class:`~parallax.core.base.InstantError`.
+    Refusals name the family by its root.
+    """
+    if mutation in BOUNDED_MUTATIONS:
+        missing = "valid_from" if valid_from is None else "until" if until is None else None
+        if missing is not None:
+            raise WriteInstructionError(
+                f"{root.name}: a bounded {mutation!r} states its window as a pair, "
+                f"and {missing} is absent"
+            )
+    elif until is not None:
+        raise WriteInstructionError(
+            f"{root.name}: {mutation!r} is unbounded and takes no until "
+            "(its window runs to infinity)"
+        )
+    if isinstance(shape, temporal_read.Bitemporal):
+        if valid_from is None:
+            raise WriteInstructionError(
+                f"{root.name}: a bitemporal {mutation!r} requires valid_from "
+                "(the mutation's own Valid-Time instant)"
+            )
+        managed_from = normalize_instant(_stated_instant(root, mutation, "valid_from", valid_from))
+    elif valid_from is not None:
+        profile = (
+            "a Transaction-Time-Only"
+            if isinstance(shape, temporal_read.TransactionTimeOnly)
+            else "a non-temporal"
+        )
+        raise WriteInstructionError(
+            f"{root.name}: {profile} {mutation!r} takes no valid_from "
+            f"({root.name!r} declares no Valid-Time dimension to bound)"
+        )
+    else:
+        managed_from = None
+    if until is None:
+        return PreparedTemporalBounds(managed_from, None)
+    # A stated `until` belongs to a bounded verb, whose pair and profile were
+    # both judged above, so a Bitemporal `valid_from` stands beside it.
+    assert managed_from is not None
+    managed_until = normalize_instant(_stated_instant(root, mutation, "until", until))
+    if managed_until <= managed_from:
+        raise WriteInstructionError(
+            f"{root.name}: {mutation!r} requires valid_from < until "
+            f"— got valid_from={valid_from!r}, until={until!r}"
+        )
+    return PreparedTemporalBounds(managed_from, managed_until)
+
+
+def _stated_instant(root: EntityIdentity, mutation: str, bound: str, value: object) -> dt.datetime:
+    """``value`` as the ``timestamp`` a Valid-Time bound has to be.
+
+    Total over what a caller can actually pass, which a type annotation is not:
+    a value of another type is no `m-core` instant at all, so it keeps
+    :class:`~parallax.core.base.InstantError` — the class a naive datetime earns
+    one step later — rather than leaving an ``AttributeError`` where a verdict
+    belongs.
+    """
+    if not isinstance(value, dt.datetime):
+        raise InstantError(
+            f"{root.name}: {mutation!r} takes an aware datetime for {bound}, "
+            f"and {type(value).__name__} is no `timestamp`"
+        )
+    return value
+
+
+def _prepare_keyed_payload(
+    instruction: KeyedWrite,
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    selection: inheritance.EntityMemberSelection,
+    bounds: PreparedTemporalBounds,
+    *,
+    converter: _LeafConverter,
+    source_access: SourceAccess,
+    authored_members: Set[str] | None,
+) -> PreparedKeyedWrite:
+    """Judge a keyed write's rows: subtype shape, members, then values.
+
+    A keyed row key must name a member the target's family makes applicable —
+    ANCESTRY-EFFECTIVE, so a concrete subtype's write naming an inherited key is
+    declared. Sibling-branch and framework-owned-metadata fields are classified
+    more specifically, and first, by ``inheritance.validate_subtype_write``.
+
+    An explicit Wire insert payload may name an application-assigned primary key
+    but never a framework-owned member: the interval bounds are stamped from the
+    Clock Strategy and the version is derived. A neutral instruction row states
+    content rather than authorship, so it carries such cells unjudged here. An
+    explicit Wire update judges each changed member as an assignment.
+    """
+    inserting = instruction.mutation in INSERT_MUTATIONS
+    members = selection.shape.by_name
+    for row in instruction.rows:
+        try:
+            inheritance.validate_subtype_write(model, entity, row)
+        except inheritance.InheritanceError as error:
+            raise WriteRejectedError(error.rule, str(error)) from error
+        if inserting and authored_members is not None:
+            _refuse_framework_owned(entity, selection, authored_members)
+        unknown = sorted(name for name in row if name not in members)
+        if unknown:
+            raise WriteInstructionError(
+                f"{entity.identity.name}: keyed write row names undeclared member(s) {unknown}"
+            )
+    transformed = tuple(
+        _transform_row(
+            selection,
+            entity,
+            row,
+            converter=converter,
+            source_access=source_access,
+            fill_missing_many=inserting,
+        )
+        for row in instruction.rows
+    )
+    if authored_members is not None and not inserting:
+        if len(transformed) != 1:
+            raise WriteInstructionError(
+                "a keyed assignment set applies only to one addressed write row"
+            )
+        (only,) = transformed
+        for name in authored_members:
+            failure = _member_failure(selection, name, only.failures)
+            _judge_prepared_assignment(
+                entity,
+                _declared_member(selection, name),
+                only.row[name],
+                known_vo_violation=failure,
+                known_value_valid=failure is None,
+            )
+    for result in transformed:
+        validate_write(
+            entity,
+            result.row,
+            model,
+            mutation=instruction.mutation,
+            known_failures=result.failures,
+        )
+    return _prepared_keyed_write(
+        instruction.mutation, entity, tuple(result.row for result in transformed), bounds
+    )
+
+
+def _refuse_framework_owned(
+    entity: EntityMetadata,
+    selection: inheritance.EntityMemberSelection,
+    authored_members: Set[str],
+) -> None:
+    for name in authored_members:
+        attribute = selection.attribute(name)
+        if attribute is not None and attribute.framework_owned:
+            raise WriteInstructionError(
+                f"{entity.identity.canonical}.{name}: framework-owned fields may not be "
+                "assigned — the interval bounds are stamped from the Clock Strategy and the "
+                "optimistic-lock version is derived"
+            )
+
+
+def _prepare_predicate_payload(
+    instruction: PredicateWrite,
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    selection: inheritance.EntityMemberSelection,
+    bounds: PreparedTemporalBounds,
+    *,
+    converter: _LeafConverter,
+    source_access: SourceAccess,
+) -> PreparedPredicateWrite:
+    """Judge a predicate write's payload in `m-case-format`'s order: the
+    selecting predicate, the family refusal, then the assignments.
+
+    The predicate is measured with the whole ``validate_predicate``
+    vocabulary. An inheritance-family target is then refused
+    (``subtype-write-set-based-unsupported``) before any assignment, so
+    ancestry resolution never arises for one.
+
+    Each assignment is completed before the next is visited: its reference must
+    name a member of the exact target, once, before its value is prepared and
+    judged. The first failing assignment therefore wins, and a reference fault
+    outranks a bad value on the same assignment. Authored order is data order
+    only; lowering emits columns in the target's Table Layout order.
+    """
+    validated = predicate_algebra.validate_predicate(entity, instruction.target.predicate, model)
+    inheritance.reject_predicate_write(entity)
+    _judge_assignment_shape(entity, instruction.mutation, instruction.assignments)
+    seen: set[str] = set()
+    prepared: list[PreparedAssignment] = []
+    for assignment in instruction.assignments:
+        # The owner segment is RESOLVED rather than compared as text, so a
+        # canonical spelling names the target it denotes while an ambiguous
+        # bare one — which resolves nowhere — stays refused.
+        owner_spelling, _, name = assignment.attr.rpartition(".")
+        owner = entity_by_name(model, owner_spelling)
+        member = selection.binding(name)
+        if owner is None or owner.identity != entity.identity or member is None:
+            raise WriteInstructionError(
+                f"{entity.identity.name}: assignment {assignment.attr!r} does not name a "
+                f"declared member of {entity.identity.canonical}"
+            )
+        if name in seen:
+            raise WriteInstructionError(
+                f"{entity.identity.name}: assignment {assignment.attr!r} is duplicated — each "
+                "member may be assigned at most once"
+            )
+        seen.add(name)
+        authored = prepare_member_authoring(
+            member.definition,
+            assignment.value,
+            source_access=source_access,
+            normalize_leaf=converter,
+            path=assignment.attr,
+            allow_marker=isinstance(member, AttributeMetadata),
+        )
+        _judge_prepared_assignment(
+            entity,
+            member,
+            authored.value,
+            known_vo_violation=authored.failure,
+            known_value_valid=authored.failure is None,
+        )
+        prepared.append(PreparedAssignment(member, authored.value))
+    return _prepared_predicate_write(
+        instruction.mutation,
+        ValidatedMutationSelection(entity, validated),
+        tuple(prepared),
+        bounds,
+    )
+
+
+def _judge_assignment_shape(
+    entity: EntityMetadata,
+    mutation: PredicateMutation,
+    assignments: Sequence[WriteAssignment],
+) -> None:
+    if mutation in _ASSIGNMENT_MUTATIONS:
+        if not assignments:
+            raise WriteInstructionError(
+                f"{entity.identity.name}: a predicate-selected {mutation!r} requires at least "
+                "one assignment"
+            )
+    elif assignments:
+        raise WriteInstructionError(
+            f"{entity.identity.name}: a predicate-selected {mutation!r} names nothing to "
+            "assign and takes no assignments"
+        )
+
+
+def _judge_prepared_assignment(
+    target: EntityMetadata,
+    member: _DeclaredMember,
+    value: object,
+    *,
+    known_vo_violation: VoDocumentViolation | None,
+    known_value_valid: bool,
+) -> None:
+    """Judge one already-resolved assignment, as the addressed target's refusal.
+
+    The shared judgment names the member relative to its own owner, so the
+    reason is qualified with the target the write addressed.
+    """
+    try:
+        judge_assignment(
+            member,
+            value,
+            known_vo_violation=known_vo_violation,
+            known_value_valid=known_value_valid,
+        )
+    except WriteAssignmentError as error:
+        raise WriteInstructionError(f"{target.identity.canonical}.{error}") from error
 
 
 def decode_wire_row(
@@ -1058,7 +1128,7 @@ def decode_wire_row(
     a door for caller input.
     """
     return _transform_row(
-        model,
+        _member_selection(model, entity),
         entity,
         row,
         converter=_decode_wire_leaf,
@@ -1085,7 +1155,7 @@ def coerce_typed_row(
     then makes correcting that member the whole point of the call.
     """
     return _transform_row(
-        model,
+        _member_selection(model, entity),
         entity,
         row,
         converter=_coerce_typed_leaf,
@@ -1095,53 +1165,46 @@ def coerce_typed_row(
 
 
 type _LeafConverter = Callable[[NeutralType, object, str], tuple[object, bool]]
-type _BoundDecoder = Callable[[object | None, str], dt.datetime | None]
-
-
-def _decode_typed_bound(value: object | None, path: str) -> dt.datetime | None:
-    if value is None:
-        return None
-    managed = coerce_neutral_input(value, TIMESTAMP)
-    if not matches_neutral_type(managed, TIMESTAMP):
-        raise WriteInstructionError(
-            f"{path}: invalid typed temporal bound: expected an aware datetime, "
-            f"got {type(value).__name__}"
-        )
-    return cast("dt.datetime", managed)
-
-
-def _decode_wire_bound(value: object | None, path: str) -> dt.datetime | None:
-    if value is None:
-        return None
-    decoded, _valid = _decode_wire_leaf(TIMESTAMP, value, path)
-    assert isinstance(decoded, dt.datetime)
-    return decoded
-
-
 type _DeclaredMember = AttributeMetadata | ValueObjectMetadata
+
+
+def _family_position(
+    model: AcceptedMetamodel, entity: EntityMetadata
+) -> inheritance.InheritanceEntityView:
+    position = inheritance.view(model).entity(entity.identity)
+    if position is None:
+        raise RuntimeError(f"{entity.identity.canonical}: no Inheritance Facet view")
+    return position
 
 
 def _member_selection(
     model: AcceptedMetamodel, entity: EntityMetadata
-) -> inheritance.EntityMemberSelection | None:
-    position = inheritance.view(model).entity(entity.identity)
-    return None if position is None else position.member_selection
+) -> inheritance.EntityMemberSelection:
+    """``entity``'s family-effective members: the whole inheritance FAMILY's
+    applicable members for a participant, its own declarations otherwise."""
+    return _family_position(model, entity).member_selection
+
+
+def _family_root(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityIdentity:
+    return _family_position(model, entity).root
+
+
+def _declared_member(selection: inheritance.EntityMemberSelection, name: str) -> _DeclaredMember:
+    member = selection.binding(name)
+    if member is None:  # pragma: no cover - member honesty already refused an undeclared name
+        raise WriteInstructionError(f"{name!r} names no declared member")
+    return member
 
 
 def _transform_row(
-    model: AcceptedMetamodel,
+    selection: inheritance.EntityMemberSelection,
     entity: EntityMetadata,
     row: Mapping[str, object],
     *,
     converter: _LeafConverter,
-    source_access: SourceAccess = MAPPING_SOURCE_ACCESS,
-    fill_missing_many: bool = False,
+    source_access: SourceAccess,
+    fill_missing_many: bool,
 ) -> _TransformedRow:
-    selection = _member_selection(model, entity)
-    if selection is None:
-        return _TransformedRow(
-            cast("Mapping[str, object]", retain_document_value(row)), MappingProxyType({})
-        )
     prepared = prepare_authoring(
         selection.shape,
         row,
@@ -1155,25 +1218,12 @@ def _transform_row(
 
 
 def _member_failure(
-    model: AcceptedMetamodel,
-    entity: EntityMetadata,
+    selection: inheritance.EntityMemberSelection,
     name: str,
     failures: Mapping[int, VoDocumentViolation],
 ) -> VoDocumentViolation | None:
-    selection = _member_selection(model, entity)
-    if selection is None:  # pragma: no cover - the facet covers every accepted Entity
-        return None
     position = selection.shape.position(name)
     return None if position is None else failures.get(position)
-
-
-def _attribute_validity(
-    model: AcceptedMetamodel,
-    entity: EntityMetadata,
-    name: str,
-    failures: Mapping[int, VoDocumentViolation],
-) -> bool:
-    return _member_failure(model, entity, name, failures) is None
 
 
 def _coerce_typed_leaf(neutral_type: NeutralType, value: object, path: str) -> tuple[object, bool]:
@@ -1206,10 +1256,8 @@ def resolve_target(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     ambiguous instruction out of the planner, whose own target lookup would
     answer the same miss by leaving the write unbound to any observation.
 
-    Exported because an ingress that must resolve a target BEFORE it can build
-    an instruction — a Wire insert, which decodes its payload against the Entity
-    it names, and a Wire predicate write, which renders its bounds against the
-    target's declaring Entity — has to reach the same two classifications the
+    Exported because a Wire insert must resolve the Entity it names before its
+    source facts can be judged, and has to reach the same classifications the
     instruction itself would have earned one step later.
     """
     entity = entity_by_name(model, name)
@@ -1223,16 +1271,4 @@ def resolve_target(model: AcceptedMetamodel, name: str) -> EntityMetadata:
             "single Entity in this model and the write resolves nowhere (m-predicate reference "
             "resolution); spell the one this write means",
         )
-    raise WriteInstructionError(f"unknown entity {name!r}")
-
-
-def _declared_members(model: AcceptedMetamodel, entity: EntityMetadata) -> Mapping[str, object]:
-    """The declared attribute + value-object names a write may reference (business
-    names, never physical columns) — ``entity``'s whole inheritance FAMILY for a
-    participant, its own declarations otherwise (the Inheritance Facet's
-    applicable-member view already degrades to the plain single-entity view for a
-    non-participant, so no branch is needed here)."""
-    view = inheritance.view(model).entity(entity.identity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return {}
-    return cast("Mapping[str, object]", view.member_selection.shape.by_name)
+    raise WriteInstructionError(f"the connected model declares no entity {name!r} for this write")

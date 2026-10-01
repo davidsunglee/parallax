@@ -571,7 +571,7 @@ def _position_row_dt() -> MappingRow:
 # own optional bitemporal `valid_from`, `terminate`, `update_until`, and    #
 # `terminate_until` — the KEYED siblings of `update_where` / `terminate_where` #
 # / `update_until_where` / `terminate_until_where`, sharing the SAME           #
-# `_buffer` seam and the SAME `validate_window` gate, so a keyed and a      #
+# `_buffer` seam and the SAME prepared-write window judgment, so a keyed and a #
 # predicate-selected write over the identical bitemporal correction lower to  #
 # the identical rectangle split (`m-bitemp-write-001/002/006/007`'s own       #
 # witnessed shape, replayed here through the KEYED verb instead of `_where`). #
@@ -890,8 +890,8 @@ def test_an_inherited_positions_window_is_judged_by_its_family_shape(
 # REVERSED window both reject, at the verb call, before any buffering, for    #
 # BOTH the KEYED (`update_until`/`terminate_until`) and `_where`              #
 # (`update_until_where`/`terminate_until_where`) verb families — the ONE      #
-# shared `validate_window` gate (`parallax.snapshot.handle._write_inputs`)    #
-# makes all four converge.                                                    #
+# window judgment of write preparation (`parallax.core.unit_work.            #
+# instructions`) makes all four converge.                                     #
 # --------------------------------------------------------------------------- #
 def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
@@ -1226,6 +1226,26 @@ def test_a_foreign_twins_members_are_refused_when_the_row_is_derived() -> None:
     assert refusal.value.code == "entity-row-member-missing"
     assert "'leftOnly'" in refusal.value.message
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
+
+
+def test_a_foreign_twins_row_refusal_precedes_a_window_its_target_does_not_admit() -> None:
+    # The source acquires its row before core preparation judges the instruction
+    # built from it, so a call carrying both a member the connected model does not
+    # declare and a `valid_from` its non-temporal target takes none of hears the
+    # acquisition refusal; the model's own instance hears the window's.
+    def insert(instance: Entity) -> type[Exception]:
+        port = ScriptedAdapter(Transact())
+
+        def fn(tx: Transaction) -> None:
+            tx.insert(instance, valid_from=FIXED)
+
+        with raises_contextualized(Exception) as refusal:
+            db_for(_TWIN_RIGHT, port).transact(fn)
+        assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
+        return type(refusal.value)
+
+    assert insert(_TwinLeft(id=1, left_only="x")) is EntityRowError
+    assert insert(_TwinRight(id=1, right_only="x")) is WriteInstructionError
 
 
 def test_the_keyed_entity_class_guard_still_accepts_its_own_models_instance() -> None:

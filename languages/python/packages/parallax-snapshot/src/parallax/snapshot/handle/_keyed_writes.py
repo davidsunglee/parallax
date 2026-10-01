@@ -22,13 +22,13 @@ from parallax.core.unit_work import (
     object_key,
 )
 from parallax.core.unit_work.columns import freeze_retained_value
-from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedTemporalBounds
+from parallax.core.unit_work.instructions import PreparedKeyedWrite
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores.
-from parallax.snapshot.handle._family import comparison_shape, family_view, temporal_shape
+from parallax.snapshot.handle._family import comparison_shape, family_view
 from parallax.snapshot.handle._write_inputs import (
     BufferedInserts,
     Provenance,
@@ -36,11 +36,9 @@ from parallax.snapshot.handle._write_inputs import (
     admit_and_buffer,
     cancels_a_pending_assignment,
     refuse_repeated_insert,
-    reject_temporal_delete,
     resolve_write_evidence,
     validate_provenance,
     validate_source_pin,
-    validate_window,
     written_object_of_row,
 )
 
@@ -82,8 +80,8 @@ class KeyedWriteContext:
 class ResolvedKeyedWriteSource:
     """What a Keyed Write Source answers about the state a write revises.
 
-    Everything here is answerable before the temporal window is judged, which is
-    what makes it one record rather than a phase's worth of separate getters: the
+    Everything here is answerable before the write is prepared, which is what
+    makes it one record rather than a phase's worth of separate getters: the
     provenance refusal, the pin refusal, and the buffered-insert exemption are
     all decided from it, in that order, and the identity row is what names the
     object to the ledger before any instruction exists.
@@ -118,7 +116,7 @@ class ResolvedKeyedWriteSource:
 
 @dataclass(frozen=True, slots=True)
 class PreparedSourceWrite:
-    """What a Keyed Write Source answers once the window has been judged.
+    """What a Keyed Write Source answers once its write has been prepared.
 
     ``instruction`` carries the identity plus every member the caller named,
     canonical and owned; ``originals`` carries those same members' original
@@ -207,9 +205,9 @@ class KeyedWriteSource(Protocol):
     :meth:`capture` judges and freezes whatever the representation alone can be
     wrong about — a Wire change document's own shape; nothing at all for a Typed
     value, whose shape its class fixes. :meth:`resolve` answers the source facts.
-    :meth:`prepare` builds the instruction and the originals beside it, after the
-    window has been judged, because a prepared instruction carries the managed
-    bounds.
+    :meth:`prepare` acquires the authored row, builds the instruction with the
+    caller's raw bounds, and has core preparation judge it — target and window
+    first, then payload — answering the originals beside it.
     """
 
     def capture(self, mutation: KeyedMutation, /) -> None: ...
@@ -217,7 +215,12 @@ class KeyedWriteSource(Protocol):
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedWriteSource: ...
 
     def prepare(
-        self, resolved: ResolvedKeyedWriteSource, bounds: PreparedTemporalBounds, /
+        self,
+        resolved: ResolvedKeyedWriteSource,
+        /,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
     ) -> PreparedSourceWrite: ...
 
 
@@ -237,7 +240,12 @@ class KeyedInsertSource(Protocol):
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedInsert: ...
 
     def prepare(
-        self, resolved: ResolvedKeyedInsert, bounds: PreparedTemporalBounds, /
+        self,
+        resolved: ResolvedKeyedInsert,
+        /,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
     ) -> PreparedKeyedWrite: ...
 
 
@@ -312,12 +320,7 @@ def keyed_write(
         representation=resolved.representation,
     )
     validate_source_pin(resolved.entity.identity, resolved.pin)
-    shape = temporal_shape(meta, resolved.entity)
-    reject_temporal_delete(resolved.entity, shape, mutation, surface="keyed")
-    valid_from_managed, until_managed = validate_window(
-        family.root, shape, mutation, valid_from, until
-    )
-    prepared = source.prepare(resolved, PreparedTemporalBounds(valid_from_managed, until_managed))
+    prepared = source.prepare(resolved, valid_from=valid_from, until=until)
     change = _effective_change(ctx, resolved, prepared, mutation)
     if _is_no_op(ctx, resolved, mutation, change):
         return
@@ -354,8 +357,8 @@ def keyed_insert(
 
     The same three phases over the facts an opening row has, and the stages it
     has no meaning for are absent rather than guarded: nothing is restored, no
-    prior state was observed, and no claim is taken. What remains beside the
-    window and preparation is the pin the value's own view carries and the
+    prior state was observed, and no claim is taken. What remains beside
+    preparation is the pin the value's own view carries and the
     provenance it states — in that order, because a pinned value is one this
     store's read published, so both refusals stand over the one value and the
     read-only view is the more specific complaint. (On the source-backed door the
@@ -367,8 +370,8 @@ def keyed_insert(
     refused, whichever value spells it and whichever representation opened the
     row. It reads the same ledger the source-backed door's exemption reads, over
     the object the PREPARED row names, because a Wire payload's key members are
-    canonical only once the row is — so pin, provenance, window, and preparation
-    are all heard ahead of it, on both lanes.
+    canonical only once the row is — so pin, provenance, and preparation are all
+    heard ahead of it, on both lanes.
 
     The row this opens is recorded in that ledger under the representation that
     opened it, which is what licenses the keyed write that follows and what the
@@ -388,11 +391,8 @@ def keyed_insert(
         inserted=False,
         representation=resolved.representation,
     )
+    prepared = opening.prepare(resolved, valid_from=valid_from, until=until)
     family = family_view(meta, resolved.entity)
-    valid_from_managed, until_managed = validate_window(
-        family.root, temporal_shape(meta, resolved.entity), mutation, valid_from, until
-    )
-    prepared = opening.prepare(resolved, PreparedTemporalBounds(valid_from_managed, until_managed))
     row = prepared.rows[0]
     written = written_object_of_row(resolved.entity.identity, family.primary_key, row)
     refuse_repeated_insert(

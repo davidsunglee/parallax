@@ -85,8 +85,8 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.object_query import LATEST
 from parallax.core.storage_layout import view as storage_layout_view
-from parallax.core.unit_work import KeyedMutation, KeyedWrite
-from parallax.core.unit_work.instructions import PreparedKeyedWrite, prepare_typed_write
+from parallax.core.unit_work import KeyedMutation
+from parallax.core.unit_work.instructions import coerce_typed_row
 from parallax.postgres._connection import adapt_binds
 from parallax.snapshot.handle import (
     Database,
@@ -309,12 +309,9 @@ def _value(cls: type[Entity], key: int, label: str) -> Entity:
 
 def _wire_row(value: Entity) -> dict[str, object]:
     """``value``'s complete row in canonical Wire spellings, as a fresh mapping."""
-    authored = _CODEC.full_row(value)
-    prepared = prepare_typed_write(
-        KeyedWrite("insert", type(value).identity.name, (authored,)), CATALOG.meta
-    )
-    assert isinstance(prepared, PreparedKeyedWrite)
-    (row,) = prepared.rows
+    entity = CATALOG.meta.entity(type(value).identity)
+    assert entity is not None
+    row = coerce_typed_row(_CODEC.full_row(value), CATALOG.meta, entity)
     return cast("dict[str, object]", detach_json_container(row))
 
 
