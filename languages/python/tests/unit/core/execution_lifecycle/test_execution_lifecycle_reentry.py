@@ -36,11 +36,14 @@ from parallax.snapshot import connect
 from parallax.snapshot.handle import ScopedDatabase, Transaction
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
+    BeginCall,
+    CommitCall,
     Read,
     ReadCall,
     ScriptedAdapter,
     Transact,
     Write,
+    WriteCall,
 )
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import ACCOUNT, FIXED, NEW_ROW, new_account
@@ -287,9 +290,11 @@ def _database_entry_points(db: ScopedDatabase) -> dict[str, _Work]:
 def _transaction_entry_points(tx: Transaction) -> dict[str, _Work]:
     """Every public operation a ``Transaction`` offers, keyed by its spelling.
 
-    The Wire write verbs are here under the view that publishes them, because
-    the view holds the lane rather than the transaction and each of the three
-    lane entries is its own refusal point.
+    The Wire write verbs are here under the view that publishes them, beside
+    their Typed peers: each verb is its own entry even where the two
+    representations share one write operation, because the refusal is that
+    shared operation's first line and a verb reaching it some other way would
+    acquire or prepare its input first.
     """
     return {
         "find": lambda: tx.find(UNUSED),
@@ -387,3 +392,6 @@ def test_every_public_entry_point_of_the_handle_and_its_transaction_refuses() ->
     assert refused["database"] == list(_database_entry_points(db))
     assert refused["transaction"] == list(_transaction_entry_points(opened[0]))
     assert provider.reported == [], "no verb raised anything but the refusal"
+    assert [type(op) for op in port.calls] == [BeginCall, WriteCall, CommitCall], (
+        "no refused verb reached the port: the one statement is the body's own insert"
+    )

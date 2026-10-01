@@ -1351,7 +1351,7 @@ def test_an_insert_refuses_the_node_a_previous_insert_answered() -> None:
 
 def test_an_insert_refuses_the_payload_a_previous_insert_opened_a_row_with() -> None:
     # A payload is no keyed source, so the provenance rule has nothing to say
-    # about it; the buffered-insert ledger does, once the row is prepared: the
+    # about it; the opened-object ledger does, once the row is prepared: the
     # object it names is one this unit of work already opened. The advice points
     # at the node the first insert answered, the only value a Wire caller can
     # revise the row through.
@@ -1419,7 +1419,7 @@ def test_a_typed_insert_of_an_object_a_wire_insert_opened_is_refused() -> None:
 
 
 def test_a_typed_update_of_a_row_a_wire_insert_opened_coalesces_in_place() -> None:
-    # The buffered-insert ledger is ONE ledger: the Typed provenance refusal
+    # The opened-object ledger is ONE ledger: the Typed provenance refusal
     # exempts a value naming an object the WIRE verb inserted, so the pair
     # coalesces into a single INSERT carrying the final value rather than being
     # refused as a write of a row no read produced.

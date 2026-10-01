@@ -1657,7 +1657,7 @@ def test_materializing_versioned_update_where_projects_only_the_assigned_value_o
 
 def test_materializing_update_until_where_rejects_an_equal_window_bound() -> None:
     # No resolving read ever fires — the window rejects at build, before any
-    # buffering (`buffer_predicate`, before `_materialize_predicate_write`).
+    # buffering (preparation, before `_materialize_predicate_write`).
     port = ScriptedAdapter(Transact())
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 

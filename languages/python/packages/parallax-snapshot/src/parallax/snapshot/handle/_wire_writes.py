@@ -6,11 +6,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from parallax.core import predicate as predicate_algebra
-from parallax.core.db_port import DatabaseConnection
-from parallax.core.execution_lifecycle._activity import (
-    TransactionAttemptActivity,
-    refuse_reentry,
-)
+from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.unit_work import (
     UPDATE_MUTATIONS,
@@ -32,18 +28,20 @@ from parallax.snapshot.handle._keyed_writes import (
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
     keyed_insert,
+    keyed_instruction,
     keyed_write,
     retained,
 )
-from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
-from parallax.snapshot.handle._write_inputs import keyed_instruction
+from parallax.snapshot.handle._predicate_writes import (
+    PredicateWriteContext,
+    buffer_predicate_instruction,
+)
 from parallax.snapshot.materialize import WireEntity, opened_wire_entity
 from parallax.snapshot.materialize._wire import read_origin_of
 
 __all__ = [
     "WireChanges",
     "WirePredicateTarget",
-    "WireWriteLane",
     "wire_insert",
     "wire_keyed_write",
     "wire_predicate_write",
@@ -71,33 +69,8 @@ temporal selection, result narrowing, and Include Paths all shape a RESULT and a
 set-based write has none to shape."""
 
 
-@dataclass(frozen=True, slots=True)
-class WireWriteLane:
-    """The transaction state a Wire write verb reads, and nothing wider.
-
-    ``keyed`` is the SAME ``KeyedWriteContext`` this transaction's Typed verbs
-    read — one accepted model, one unit of work, one buffered-insert ledger, one
-    installed lifecycle. That the ledger is one is what makes a Typed insert
-    followed by a Wire update of one object, and the reverse, one
-    read-your-own-writes pair rather than two ingresses each with their own idea
-    of what this transaction stores; that the model is one is what stops a lane
-    resolving metadata against a model its Typed peer does not use. The
-    predicate verb here reads three of the four for the same reason, so the four
-    are stated once rather than restated per lane.
-
-    The connection and the attempt sit beside that record rather than inside it
-    because only the predicate-selected lane reads either: a materializing
-    set-based write runs a resolving read of its own, and no keyed write reads at
-    all.
-    """
-
-    keyed: KeyedWriteContext
-    conn: DatabaseConnection
-    attempt: TransactionAttemptActivity
-
-
 def wire_insert(
-    lane: WireWriteLane,
+    ctx: KeyedWriteContext,
     entity_name: str,
     data: Mapping[str, object],
     *,
@@ -125,7 +98,7 @@ def wire_insert(
     resolved Entity spelling supplies. So is a fresh payload naming an object
     this transaction already buffered an insert of, the same payload twice
     included: the provenance rule has nothing to say about a document, and the
-    buffered-insert ledger refuses it once its row is prepared, under the same
+    opened-object ledger refuses it once its row is prepared, under the same
     code, advising the update verb of whichever interface OPENED the row — the
     node this verb answered where a Wire insert did, and the instance the caller
     still holds where a Typed one did, which is the only carrier that exists in
@@ -144,17 +117,17 @@ def wire_insert(
     coalesce.
     """
     opened = keyed_insert(
-        lane.keyed,
+        ctx,
         WireKeyedInsertSource(entity_name, data),
         mutation,
         valid_from=valid_from,
         until=until,
     )
-    return opened_wire_entity(lane.keyed.model, opened.identity, opened.row, opened.hint)
+    return opened_wire_entity(ctx.model, opened.identity, opened.row, opened.hint)
 
 
 def wire_keyed_write(
-    lane: WireWriteLane,
+    ctx: KeyedWriteContext,
     mutation: KeyedMutation,
     observed: object,
     changes: WireChanges | None = None,
@@ -185,7 +158,7 @@ def wire_keyed_write(
     Typed effective change set is.
     """
     keyed_write(
-        lane.keyed,
+        ctx,
         WireKeyedWriteSource(observed, changes),
         mutation,
         valid_from=valid_from,
@@ -194,7 +167,7 @@ def wire_keyed_write(
 
 
 def wire_predicate_write(
-    lane: WireWriteLane,
+    ctx: PredicateWriteContext,
     mutation: PredicateMutation,
     target: WirePredicateTarget,
     changes: WireChanges | None = None,
@@ -220,7 +193,7 @@ def wire_predicate_write(
     assignment owned by the target's own spelling; preparation then judges the
     target, the window, the predicate, and each assignment in authored order.
     """
-    refuse_reentry(lane.keyed.lifecycle)
+    refuse_reentry(ctx.keyed.lifecycle)
     selection = _selection_shape(
         _authored_document(target, "a predicate-selected write's canonical target")
     )
@@ -235,11 +208,9 @@ def wire_predicate_write(
         valid_from,
         until,
     )
-    prepared = instructions.prepare_wire_write(instruction, lane.keyed.model.meta)
+    prepared = instructions.prepare_wire_write(instruction, ctx.keyed.model.meta)
     assert isinstance(prepared, PreparedPredicateWrite)
-    buffer_predicate_instruction(
-        lane.keyed.uow, lane.keyed.model, lane.conn, prepared, lane.attempt
-    )
+    buffer_predicate_instruction(ctx, prepared)
 
 
 @dataclass(frozen=True, slots=True)
@@ -438,7 +409,7 @@ class WireKeyedInsertSource:
     recognizes, so it arrives as the plain document it is. Whether a plain
     document names an object this transaction already opened is not a provenance
     answer at all — its key members are canonical only once :meth:`prepare` has
-    run — so the ingress asks the buffered-insert ledger after preparation, and a
+    run — so the ingress asks the opened-object ledger after preparation, and a
     payload repeated is refused there.
     """
 

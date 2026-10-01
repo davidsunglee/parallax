@@ -3,13 +3,13 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping
 
+from parallax.snapshot.handle._predicate_writes import PredicateWriteContext
 from parallax.snapshot.handle._read import Snapshot
 from parallax.snapshot.handle._read_scope import ReadScope, WireQuery
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._wire_writes import (
     WireChanges,
     WirePredicateTarget,
-    WireWriteLane,
     wire_insert,
     wire_keyed_write,
     wire_predicate_write,
@@ -93,7 +93,7 @@ class WireTransactionView(WireDatabaseView):
 
     __slots__ = ("_writes",)
 
-    def __init__(self, reads: ReadScope, writes: WireWriteLane) -> None:
+    def __init__(self, reads: ReadScope, writes: PredicateWriteContext) -> None:
         super().__init__(reads)
         self._writes = writes
 
@@ -131,7 +131,7 @@ class WireTransactionView(WireDatabaseView):
         exactly: a Transaction-Time-Only or non-temporal target takes none.
         """
         return wire_insert(
-            self._writes, entity_name, data, mutation="insert", valid_from=valid_from
+            self._writes.keyed, entity_name, data, mutation="insert", valid_from=valid_from
         )
 
     def insert_until(
@@ -148,7 +148,7 @@ class WireTransactionView(WireDatabaseView):
         :meth:`insert` does. A window that does not satisfy
         ``valid_from < until`` raises at THIS call, before any buffering."""
         return wire_insert(
-            self._writes,
+            self._writes.keyed,
             entity_name,
             data,
             mutation="insertUntil",
@@ -176,7 +176,7 @@ class WireTransactionView(WireDatabaseView):
         ``valid_from`` is the plain Bitemporal correction's own Valid-Time
         instant; a Transaction-Time-Only or non-temporal target takes none.
         """
-        wire_keyed_write(self._writes, "update", observed, changes, valid_from=valid_from)
+        wire_keyed_write(self._writes.keyed, "update", observed, changes, valid_from=valid_from)
 
     def delete(self, observed: WireEntity) -> None:
         """Buffer a Wire ``delete`` of the row ``observed`` came from, keyed off
@@ -188,13 +188,13 @@ class WireTransactionView(WireDatabaseView):
         ``delete`` physically removes the row and carries no temporal meaning, so
         a target that milestones its rows refuses it at this call and names
         :meth:`terminate`, which closes the row's history instead."""
-        wire_keyed_write(self._writes, "delete", observed)
+        wire_keyed_write(self._writes.keyed, "delete", observed)
 
     def terminate(self, observed: WireEntity, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a Wire ``terminate``: close the milestone ``observed`` came
         from (the temporal delete-equivalent). Transaction-Time-Only takes no
         ``valid_from``; Bitemporal requires it."""
-        wire_keyed_write(self._writes, "terminate", observed, valid_from=valid_from)
+        wire_keyed_write(self._writes.keyed, "terminate", observed, valid_from=valid_from)
 
     def update_until(
         self,
@@ -210,7 +210,7 @@ class WireTransactionView(WireDatabaseView):
         call, before the restoration/no-op rule :meth:`update` states is
         weighed."""
         wire_keyed_write(
-            self._writes, "updateUntil", observed, changes, valid_from=valid_from, until=until
+            self._writes.keyed, "updateUntil", observed, changes, valid_from=valid_from, until=until
         )
 
     def terminate_until(
@@ -220,7 +220,7 @@ class WireTransactionView(WireDatabaseView):
         Valid-Time window ``[valid_from, until)`` on the milestone ``observed``
         came from (`m-bitemp-write`) — bitemporal-only."""
         wire_keyed_write(
-            self._writes, "terminateUntil", observed, valid_from=valid_from, until=until
+            self._writes.keyed, "terminateUntil", observed, valid_from=valid_from, until=until
         )
 
     def update_where(

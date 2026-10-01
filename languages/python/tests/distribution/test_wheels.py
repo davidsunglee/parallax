@@ -153,9 +153,9 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
         "parallax/snapshot/handle/_stream.py",
         "parallax/snapshot/handle/_transaction.py",
         "parallax/snapshot/handle/_transaction_runner.py",
+        "parallax/snapshot/handle/_typed_writes.py",
         "parallax/snapshot/handle/_wire.py",
         "parallax/snapshot/handle/_wire_writes.py",
-        "parallax/snapshot/handle/_write_inputs.py",
         "parallax/snapshot/handle/_write_lowering.py",
     }
     assert "parallax/snapshot/handle.py" not in _names(wheelhouse, "parallax-snapshot")
