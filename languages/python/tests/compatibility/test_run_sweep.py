@@ -1069,6 +1069,33 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
             )
 
 
+# The Wire `mutate` whole-occurrence replacement cases: a find, then edits whose
+# `expectRows` state the copy each derives. Python ships no Wire edit verb, so the
+# engine's own derivation is what this grades. Their find statement is not graded:
+# its golden omits the `marks` presence probe the other top-level `many`
+# goldens carry.
+_EDIT_OCCURRENCE_CASES: Final[tuple[str, ...]] = ("m-edit-010", "m-edit-011")
+
+
+@pytest.mark.parametrize("case_id", _EDIT_OCCURRENCE_CASES)
+def test_edit_occurrence_run_grades_each_derived_copy(
+    case_id: str, profile: Profile, profile_run: Any
+) -> None:
+    from parallax.conformance import sweep
+
+    (case,) = [c for c in sweep.reachable_cases() if c.case_id == case_id]
+    model = engine.load_case_metamodel(case)
+    profile_run.reset(model, case_fixtures(case))
+
+    envelope = adapter.run_case(case.path, profile_run)
+
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok", envelope
+    assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
+    steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+    _grade_step_rows(case, model, steps, envelope)
+
+
 def _reachable_error_cases() -> list[case_format.Case]:
     """The single-connection error-shape cases (statement trigger, no choreography)."""
     from parallax.conformance import sweep

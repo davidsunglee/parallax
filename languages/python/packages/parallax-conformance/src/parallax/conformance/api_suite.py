@@ -1406,8 +1406,9 @@ _EXECUTION_LIFECYCLE_STREAMED_ROOT_REASON: Final[str] = (
 
 _WIRE_EDIT_OCCURRENCE_REASON: Final[str] = (
     "the portable Wire `mutate` adapter's whole-occurrence replacement, graded from the "
-    "case's own `expectRows` by both the reference harness and the Python compatibility "
-    "run sweep. The idiomatic copy verb and its native state witnesses are exercised by "
+    "case's own `expectRows` by the reference harness and by the Python compatibility "
+    "run test `test_edit_occurrence_run_grades_each_derived_copy`. The idiomatic copy "
+    "verb and its native state witnesses are exercised by "
     "the edit-shape examples, so repeating this mapping-only adapter spelling in the API "
     "suite would not add a developer surface"
 )

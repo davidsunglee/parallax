@@ -554,14 +554,10 @@ def _applicable_member_names(model: AcceptedMetamodel, identity: EntityIdentity)
     one's own assignability.
 
     Membership alone, which is the question a `mutate` step's `set`
-    (:func:`_edited_copy`) asks before the prepared-write producer judges its
-    values. Inheritance is part of
-    that question and not a later one: `Dog` has `Pet`'s `licenseId` as plainly as
-    its own `barkVolume`, so both are here. Whether a member may then be ASSIGNED
-    is the later and separate verdict (:func:`_judged_assignments`), which is what
-    refuses a primary-key or read-only target; a name absent from this set is
-    refused earlier and for the different reason that it names no member at all. A
-    key a read publishes BESIDE the members is absent by construction — an
+    (:func:`_edited_copy`) asks before its values are decoded. Inheritance is part
+    of that question and not a later one: `Dog` has `Pet`'s `licenseId` as plainly
+    as its own `barkVolume`, so both are here. A key a read publishes BESIDE the
+    members is absent by construction — an
     inheritance participant's synthetic `familyVariant` names no member of any
     ancestor, so it is no more assignable than a name the model never heard of,
     however plainly the materialized node carries it.
@@ -603,14 +599,11 @@ def _edited_node_identity(
     An abstract-target read materializes COMPLETE CONCRETE instances
     (`m-case-format`), so a node published under an abstract `Animal` carries
     `Dog`'s own members and the `familyVariant` spelling saying which concrete it
-    is. An edit is judged against THAT Entity: its applicable members — the ones
+    is. An edit resolves against THAT Entity: its applicable members — the ones
     it declares and the ones it inherits alike — are the vocabulary an authored
     name resolves in (:func:`_applicable_member_names`), and their declared types
-    are what a value is judged against, where the abstract target has neither and
-    would wave both through. Whether a member of that vocabulary may then be
-    ASSIGNED is the separate later verdict (:func:`_judged_assignments`), which is
-    what refuses the primary-key, read-only and framework-owned members applicable
-    membership deliberately includes. The resolution belongs here rather than at
+    are what a value is decoded as, where the abstract target has neither. The
+    resolution belongs here rather than at
     the read because one read answers many concretes at once; only a step holding
     exactly one node has a concrete to name.
 
@@ -624,7 +617,7 @@ def _edited_node_identity(
     one node's key means metadata to both sides or domain state to both.
 
     A variant spelling naming no concrete subtype of a PARTICIPANT ``target`` is
-    refused rather than fallen back on: falling back would judge a subtype member
+    refused rather than fallen back on: falling back would resolve a subtype member
     against the abstract position again, which is the hole this resolution exists
     to close.
     """
@@ -640,7 +633,7 @@ def _edited_node_identity(
             return concrete
     raise EngineError(
         f"{case.path.name}: the view holds a {variant!r} node, which is no concrete subtype "
-        f"of {target.name} — an edit is judged against the Entity its node IS"
+        f"of {target.name} — an edit resolves against the Entity its node IS"
     )
 
 
@@ -728,14 +721,14 @@ def _edited_copy(
     contents still names the find (:func:`_access_step_graph`). No DML follows
     either way: no unit of work holds the view (`m-snapshot-read`).
 
-    Every verdict below is reached against the Entity the retained node IS
+    Every name below resolves against the Entity the retained node IS
     (:func:`_edited_node_identity`), never against the query target that
     published it: an abstract-target read answers concrete instances, so it is
-    the concrete subtype that fixes which names are assignable — its own members
+    the concrete subtype that fixes which names are applicable — its own members
     and its ancestors' alike — and what type each holds. That resolved Identity
-    rides on the copy, so a chain of edits keeps judging the same Entity.
+    rides on the copy, so a chain of edits keeps resolving the same Entity.
 
-    Three verdicts stand between a `set` and the copy, in this order. A
+    Two model lookups stand between a `set` and the copy, in this order. A
     RELATIONSHIP name is refused outright — no edit changes a relationship
     member, so a carried view can only ever describe what a read observed, and a
     copy whose `items` the author replaced would describe a fetch that never
@@ -746,18 +739,17 @@ def _edited_copy(
     mapping's own keys: an inheritance participant's node publishes the synthetic
     `familyVariant` beside its members, and that key is read-time provenance no
     edit authors — while on a standalone Entity the same spelling is an ordinary
-    declared member the gate admits. What survives both is judged as any edited
-    value is (:func:`~parallax.core.inheritance.validate_write_assignment`), so a
-    primary-key, read-only or framework-owned target and an ill-typed value are
-    refused by the SAME verdict the typed `edit(**changes)` reaches. The
-    edited row is decoded by the conformance case ingress rather than admitted
-    as a write, so this lane owns no second recursive conversion; the edit-only
-    assignment judgment receives the managed frozen values that decode returned.
+    declared member the gate admits. The source's members and what survives both
+    are decoded together by the conformance case ingress into managed values, and
+    nothing is judged: `m-case-format` makes a `set` naming an unassignable member or a
+    value its member does not admit a case-authoring failure, refused before any
+    executor runs the case, so no case depends on a run-time verdict and the
+    edit judgment itself is owned by `Entity.edit`.
 
-    Every verdict is reached over the WHOLE `set` before any member is copied, so
-    a refused mutation derives nothing at all: `set` is an unordered mapping, and
-    applying its accepted names up to the first refused one would make the result
-    depend on authoring order.
+    Both lookups cover the WHOLE `set` before any member is copied, so a refused
+    mutation derives nothing at all: `set` is an unordered mapping, and applying
+    its accepted names up to the first refused one would make the result depend
+    on authoring order.
 
     A `mutate` carrying NO `set` is the change-free edit, which is legal and
     derives a copy of the source's own state — the branch an implementation that
@@ -791,52 +783,13 @@ def _edited_copy(
             f"{case.path.name}: `mutate` on step {on} assigns {unassignable!r}, which "
             f"{identity.name} has no assignable member of"
         )
-    edited = _judged_assignments(case, model, identity, assignments, members)
-    return _ScenarioStepResult(({**members, **edited},), source.pin, identity)
-
-
-def _judged_assignments(
-    case: case_format.Case,
-    model: AcceptedMetamodel,
-    identity: EntityIdentity,
-    assignments: Mapping[str, object],
-    current: Mapping[str, object],
-) -> dict[str, object]:
-    """One `mutate` step's `set`, decoded against ``identity``'s applicable members
-    and judged assignable, or a loud refusal naming the case.
-
-    An unassignable target or an ill-typed value is a case-AUTHORING defect
-    rather than a graded observation: `m-case-format` says in so many words that
-    such a `set` is a case-authoring failure and deliberately not an `expectError`,
-    so a case cannot declare the refusal and no executor owes a graded one. The
-    corpus refuses such a case before either executor runs it, which is what makes
-    the outcome portable; this verdict is the same rule reached again at run time,
-    where it also guards the shapes a case never carries — a hand-built step, or a
-    node whose concrete Entity only the read knows. The edited row is state the
-    copy holds rather than a write it authors, so it is decoded without write
-    admission; the decode refuses a value no declared type admits.
-    """
     prepared_members = _prepared_row_member_names(model, identity)
-    row = {name: value for name, value in current.items() if name in prepared_members}
+    row = {name: value for name, value in members.items() if name in prepared_members}
     row.update(assignments)
-    entity = case_entity(model, identity.canonical)
     try:
-        managed = _case_ingress.decode_case_row(row, model, entity)
+        edited = _case_ingress.decode_case_row(row, model, case_entity(model, identity.canonical))
     except instructions.InstructionRejectedError as exc:
         raise EngineError(
-            f"{case.path.name}: `mutate` carries a value that does not match the declared type "
-            f"— {exc}"
+            f"{case.path.name}: `mutate` carries a value its member cannot decode — {exc}"
         ) from exc
-    for name in assignments:
-        if name not in managed:
-            raise EngineError(
-                f"{case.path.name}: `mutate` carries an invalid assignment — {name!r} names no "
-                f"member of {identity.canonical}"
-            )
-        try:
-            inheritance.validate_write_assignment(model, entity, name, managed[name])
-        except inheritance.WriteAssignmentError as exc:
-            raise EngineError(
-                f"{case.path.name}: `mutate` assigns {name!r}, which an edit refuses — {exc}"
-            ) from exc
-    return dict(managed)
+    return _ScenarioStepResult(({**members, **edited},), source.pin, identity)

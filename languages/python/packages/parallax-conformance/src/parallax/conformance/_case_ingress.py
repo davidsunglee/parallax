@@ -54,8 +54,8 @@ def decode_case_row(
     nothing.
 
     For state a case states rather than a write it authors — seeded fixtures,
-    and the member values an edit is weighed against. Write admission measures a
-    write against its target, so such state is decoded by
+    and the members an edit assigns its copy. Write admission measures a write
+    against its target, so such state is decoded by
     :func:`~parallax.core.unit_work.instructions.decode_wire_row` instead.
     """
     members = _entity_members(model, entity)

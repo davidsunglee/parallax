@@ -774,14 +774,14 @@ relationship name". The Wire surface has neither, so a consumer holding wire
 nodes and a metamodel can reach neither module. The conformance engine is that
 consumer: it runs class-free against every corpus model, and `class_models.py`
 hand-authors class families for 17 of 168. It therefore derives its own edited
-copy (`_edited_copy`, `_judged_assignments`) and walks its own loaded arms
+copy (`_edited_copy`) and walks its own loaded arms
 (`_navigate_step_view`) — about 90 lines restating rules production states
 elsewhere, with unit tests mirroring `tests/unit/core/entity/test_edit.py` case for case
-(unknown field, primary key, relationship field, change-free edit, preserved
+(unknown field, relationship field, change-free edit, preserved
 views, chaining). What is duplicated is the member resolution and the copy, not
-the verdict: the engine already reaches
-`inheritance.validate_write_assignment`, the one judgement `.set(...)` and
-`Entity.edit(**changes)` also reach. This residue is what COR-93 left rather
+a verdict: the engine judges no assigned value, because `m-case-format` makes an
+inadmissible `set` a case-authoring failure refused before any executor runs it.
+This residue is what COR-93 left rather
 than what it missed: that claim moved read traversal, observation resolution,
 temporal evolution, write orchestration and retry accounting to production, and
 stated the test this entry answers to — where removing a conformance helper

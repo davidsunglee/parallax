@@ -27,12 +27,16 @@ from parallax.core import (
     Entity,
     TxTemporal,
     attr,
+    inheritance,
 )
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import model_of
-from parallax.core.inheritance import WriteAssignmentError, validate_write_assignment
-from parallax.core.metamodel import UnresolvedEntityDeclaration
+from parallax.core.metamodel import (
+    UnresolvedEntityDeclaration,
+    WriteAssignmentError,
+    judge_assignment,
+)
 from parallax.snapshot import QueryTargetError, SnapshotConnectionError
 from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
 from tests._support.db_port import (
@@ -285,12 +289,26 @@ def _typed_violation(entity: type[Entity], member: str, value: object) -> EditVi
     return None
 
 
+def _model_judgement(model: DomainModel, entity: type[Entity], member: str, value: object) -> None:
+    """The shared judgement over the model's family-effective member, qualified
+    with the addressed Entity as the write boundary qualifies it."""
+    metadata = model.meta(entity)
+    position = inheritance.view(model_of(model)).entity(metadata.identity)
+    assert position is not None
+    resolved = position.member_selection.binding(member)
+    assert resolved is not None
+    try:
+        judge_assignment(resolved, value)
+    except WriteAssignmentError as error:
+        raise WriteAssignmentError(error.rule, f"{metadata.identity.canonical}.{error}") from error
+
+
 def _boundary_verdict(
     model: DomainModel, entity: type[Entity], member: str, value: object
 ) -> str | None:
     """The same, through the write boundary's own family-effective resolution."""
     try:
-        validate_write_assignment(model_of(model), model.meta(entity), member, value)
+        _model_judgement(model, entity, member, value)
     except WriteAssignmentError as error:
         return str(error)
     return None
@@ -362,7 +380,7 @@ def test_a_rejection_still_says_which_of_the_three_designations_it_is() -> None:
     rules: list[str] = []
     for member, value in (("version", 1), ("computed", "x"), ("id", 1)):
         with pytest.raises(WriteAssignmentError) as caught:
-            validate_write_assignment(model_of(WIDGETS), WIDGETS.meta(Widget), member, value)
+            _model_judgement(WIDGETS, Widget, member, value)
         rules.append(caught.value.rule)
     assert rules == ["framework-owned", "read-only", "primary-key"]
 
@@ -377,5 +395,5 @@ def test_every_surface_classifies_a_read_only_member_the_same_way() -> None:
     with pytest.raises(EditError, match="read-only fields may not be assigned"):
         Widget(id=1, label="x").edit(computed="x")
     with pytest.raises(WriteAssignmentError) as caught:
-        validate_write_assignment(model_of(WIDGETS), WIDGETS.meta(Widget), "computed", "x")
+        _model_judgement(WIDGETS, Widget, "computed", "x")
     assert caught.value.rule == "read-only"
