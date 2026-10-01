@@ -34,8 +34,7 @@ from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._errors import EntityRowError
 from parallax.core.metamodel import Metamodel
-from parallax.core.unit_work import ObjectKey
-from parallax.core.unit_work.instructions import PreparedTemporalBounds
+from parallax.core.unit_work import ObjectKey, WriteInstructionError
 from parallax.snapshot import InvalidData
 from parallax.snapshot.handle._transaction import (
     TypedKeyedInsertSource,
@@ -71,7 +70,6 @@ _POSITION_ROW: Final[MappingRow] = {
     "in_z": _TX_START,
     "out_z": INFINITY_INSTANT,
 }
-_UNBOUNDED: Final = PreparedTemporalBounds(None, None)
 
 
 # One Entity Identity declared twice, keyed by a different member each time: an
@@ -200,7 +198,7 @@ def test_prepare_states_every_touched_member_beside_its_original() -> None:
     source = TypedKeyedWriteSource(edited, codec)
     resolved = source.resolve(meta, "update")
 
-    prepared = source.prepare(resolved, _UNBOUNDED)
+    prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.originals == {"balance": Decimal("100.00")}
@@ -217,7 +215,7 @@ def test_the_assigned_side_of_the_comparison_is_the_originals_names_and_no_ident
     edited = _published_account().edit(balance=Decimal("125.00"))
     source = TypedKeyedWriteSource(edited, codec)
 
-    prepared = source.prepare(source.resolve(meta, "update"), _UNBOUNDED)
+    prepared = source.prepare(source.resolve(meta, "update"), valid_from=None, until=None)
 
     assert prepared.assigned == {"balance": Decimal("125.00")}
     assert prepared.assigned.keys() == prepared.originals.keys()
@@ -231,7 +229,7 @@ def test_a_wholly_restoring_chain_still_states_the_member_it_took_back() -> None
     restored = _published_account().edit(balance=Decimal("125.00")).edit(balance=Decimal("100.00"))
     source = TypedKeyedWriteSource(restored, codec)
 
-    prepared = source.prepare(source.resolve(meta, "update"), _UNBOUNDED)
+    prepared = source.prepare(source.resolve(meta, "update"), valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("100.00")}
     assert prepared.originals == {"balance": Decimal("100.00")}
@@ -250,7 +248,7 @@ def test_a_correction_states_the_original_current_authoring_would_refuse() -> No
         _published_contact().edit(address=_COMPLETE_ADDRESS), row_codec_for(CONTACT_MODEL)
     )
 
-    prepared = source.prepare(source.resolve(meta, "update"), _UNBOUNDED)
+    prepared = source.prepare(source.resolve(meta, "update"), valid_from=None, until=None)
 
     assert prepared.instruction.rows[0]["address"] == {
         "street": "Main",
@@ -271,7 +269,7 @@ def test_an_untouched_copy_authors_its_identity_row_alone() -> None:
     meta, codec = _accounts()
     source = TypedKeyedWriteSource(_published_account(), codec)
 
-    prepared = source.prepare(source.resolve(meta, "update"), _UNBOUNDED)
+    prepared = source.prepare(source.resolve(meta, "update"), valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1}
     assert prepared.originals == {}
@@ -281,7 +279,7 @@ def test_a_destructive_verb_authors_its_identity_row_and_no_originals() -> None:
     meta, codec = _accounts()
     source = TypedKeyedWriteSource(_published_account(), codec)
 
-    prepared = source.prepare(source.resolve(meta, "delete"), _UNBOUNDED)
+    prepared = source.prepare(source.resolve(meta, "delete"), valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1}
     assert prepared.originals == {}
@@ -293,7 +291,7 @@ def test_a_value_no_read_produced_keys_its_object_off_the_row_it_authors() -> No
     meta, codec = _accounts()
     source = TypedKeyedWriteSource(new_account().edit(balance=Decimal("9.00")), codec)
 
-    prepared = source.prepare(source.resolve(meta, "update"), _UNBOUNDED)
+    prepared = source.prepare(source.resolve(meta, "update"), valid_from=None, until=None)
 
     assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 7),))
 
@@ -316,9 +314,25 @@ def test_an_insert_source_authors_the_whole_create_payload() -> None:
     meta, codec = _accounts()
     source = TypedKeyedInsertSource(new_account(), codec)
 
-    prepared = source.prepare(source.resolve(meta, "insert"), _UNBOUNDED)
+    prepared = source.prepare(source.resolve(meta, "insert"), valid_from=None, until=None)
 
     assert prepared.rows[0] == {"id": 7, "owner": "Newton", "balance": Decimal("5.00")}
+
+
+def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
+    # The source states the caller's bounds as they were passed; preparation
+    # judges them against the target and normalizes what it admits.
+    meta, codec = cataloged_for(WHERE_POSITION_META).meta, row_codec_for(WHERE_POSITION_META)
+    position = WherePosition(id=9, acct_num="A", value=Decimal("1.00"))
+    source = TypedKeyedInsertSource(position, codec)
+    resolved = source.resolve(meta, "insert")
+    stated = dt.datetime(2024, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+
+    prepared = source.prepare(resolved, valid_from=stated, until=None)
+
+    assert prepared.bounds.valid_from == _TX_START
+    with pytest.raises(WriteInstructionError, match="a bitemporal 'insert' requires valid_from"):
+        source.prepare(resolved, valid_from=None, until=None)
 
 
 # --------------------------------------------------------------------------- #

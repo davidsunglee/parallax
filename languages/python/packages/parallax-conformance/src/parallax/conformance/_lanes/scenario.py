@@ -54,6 +54,7 @@ from parallax.core import (
     batch_write,
     inheritance,
     opt_lock,
+    predicate,
     storage_layout,
 )
 from parallax.core.base import (
@@ -1275,8 +1276,8 @@ def _buffer_wire_predicate_write(
         for assignment in prepared.managed_assignments
     }
     changes = ActualWireProjection(model).entity_values(prepared.selection.target, managed_changes)
-    valid_from = _bound_instant(prepared.bounds.valid_from)
-    until = _bound_instant(prepared.bounds.until)
+    valid_from = prepared.bounds.valid_from
+    until = prepared.bounds.until
     match prepared.mutation:
         case "update":
             tx.wire.update_where(target, changes, valid_from=valid_from)
@@ -2277,16 +2278,10 @@ def _run_materializing_pair(
     # write target remains the bare predicate, so the two predicates compare
     # directly; planning the read would additionally inject interval
     # predicates and is therefore still not the apples-to-apples form.
-    comparable_find = _case_ingress.prepare_case_write(
-        PredicateWrite(
-            "delete",
-            instructions.PredicateSelection(write_target, find.predicate),
-            (),
-        ),
-        model,
-    )
-    assert isinstance(comparable_find, PreparedPredicateWrite)
-    if comparable_find.selection.predicate.authored != write_predicate:
+    comparable_find = predicate.validate_predicate(
+        instruction.selection.target, find.predicate, model
+    ).authored
+    if comparable_find != write_predicate:
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} is not preceded by "
             "a resolving find over the SAME canonical predicate as the write's own target "
@@ -2699,8 +2694,8 @@ def _buffer_wire_write(
     entity_name = instruction.target.identity.canonical
     entity_metadata = instruction.target
     row = dict(instruction.rows[0])
-    valid_from = _bound_instant(instruction.bounds.valid_from)
-    until = _bound_instant(instruction.bounds.until)
+    valid_from = instruction.bounds.valid_from
+    until = instruction.bounds.until
     if instruction.mutation in INSERT_MUTATIONS:
         payload = _wire_insert_payload(model, entity_metadata, row)
         opened = (
@@ -2750,14 +2745,6 @@ def _wire_insert_payload(
     is dropped here rather than smuggled through a door built to close it.
     """
     return ActualWireProjection(model).entity_values(entity, row, omit_framework=True)
-
-
-def _bound_instant(literal: str | dt.datetime | None) -> dt.datetime | None:
-    """One instruction-level Valid-Time bound as the instant a verb takes."""
-    if literal is None:
-        return None
-    instant = dt.datetime.fromisoformat(literal) if isinstance(literal, str) else literal
-    return normalize_instant(instant)
 
 
 def _required(instant: dt.datetime | None) -> dt.datetime:

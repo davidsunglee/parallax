@@ -25,7 +25,7 @@ from parallax.core.base import SQL_NULL
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import ObjectKey, instructions
-from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedTemporalBounds
+from parallax.core.unit_work.instructions import PreparedKeyedWrite
 from parallax.snapshot.handle._wire_writes import (
     WireKeyedInsertSource,
     WireKeyedWriteSource,
@@ -45,7 +45,6 @@ from tests.unit._transact_support import (
 _TX_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _TX_PIN: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 _TX_PIN_WIRE: Final = "2024-03-01T00:00:00.000000Z"
-_UNBOUNDED: Final = PreparedTemporalBounds(None, None)
 
 _ACCOUNT = "parallax.compatibility.Account"
 _CONTACT = "parallax.compatibility.Contact"
@@ -152,7 +151,7 @@ def test_a_projected_node_enters_the_existing_wire_keyed_source() -> None:
     source.capture("update")
 
     resolved = source.resolve(_meta(ACCOUNT), "update")
-    prepared = source.prepare(resolved, _UNBOUNDED)
+    prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert resolved.provenance == "this"
     assert resolved.representation == "wire"
@@ -198,7 +197,7 @@ def test_prepare_states_every_authored_member_beside_what_the_source_published()
     source.capture("update")
     resolved = source.resolve(_meta(ACCOUNT), "update")
 
-    prepared = source.prepare(resolved, _UNBOUNDED)
+    prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.originals == {"balance": Decimal("100.00")}
@@ -221,7 +220,7 @@ def test_a_member_the_source_published_nothing_for_is_measured_against_a_null() 
     source.capture("update")
     resolved = source.resolve(_meta(CONTACT), "update")
 
-    prepared = source.prepare(resolved, _UNBOUNDED)
+    prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert set(prepared.originals) == {"address"}
     assert prepared.originals["address"] is None
@@ -232,7 +231,7 @@ def test_a_destructive_verb_authors_its_identity_row_and_no_originals() -> None:
     source.capture("delete")
     resolved = source.resolve(_meta(ACCOUNT), "delete")
 
-    prepared = source.prepare(resolved, _UNBOUNDED)
+    prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1}
     assert prepared.originals == {}
@@ -280,10 +279,25 @@ def test_an_insert_source_authors_the_whole_create_payload() -> None:
     source = WireKeyedInsertSource(_ACCOUNT, {"id": 7, "owner": "Newton", "balance": "5.00"})
     source.capture("insert")
 
-    prepared = source.prepare(source.resolve(_meta(ACCOUNT), "insert"), _UNBOUNDED)
+    prepared = source.prepare(source.resolve(_meta(ACCOUNT), "insert"), valid_from=None, until=None)
 
     assert isinstance(prepared, PreparedKeyedWrite)
     assert prepared.rows[0] == {"id": 7, "owner": "Newton", "balance": Decimal("5.00")}
+
+
+def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
+    source = WireKeyedInsertSource(_POSITION, {"id": 9, "acctNum": "A", "value": "1.00"})
+    source.capture("insert")
+    resolved = source.resolve(_meta(WHERE_POSITION_META), "insert")
+    stated = dt.datetime(2024, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+
+    prepared = source.prepare(resolved, valid_from=stated, until=None)
+
+    assert prepared.bounds.valid_from == _TX_START
+    with pytest.raises(
+        instructions.WriteInstructionError, match="a bitemporal 'insert' requires valid_from"
+    ):
+        source.prepare(resolved, valid_from=None, until=None)
 
 
 def test_an_insert_source_refuses_a_framework_owned_member_before_it_authors() -> None:
@@ -294,4 +308,4 @@ def test_an_insert_source_refuses_a_framework_owned_member_before_it_authors() -
     resolved = source.resolve(_meta(ACCOUNT), "insert")
 
     with pytest.raises(instructions.WriteInstructionError, match="framework-owned"):
-        source.prepare(resolved, _UNBOUNDED)
+        source.prepare(resolved, valid_from=None, until=None)

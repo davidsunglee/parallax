@@ -59,14 +59,7 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Pin
-from parallax.core.unit_work import (
-    KeyedWrite,
-    WriteRejectedError,
-    instructions,
-)
-from parallax.core.unit_work.instructions import (
-    PreparedKeyedWrite,
-)
+from parallax.core.unit_work import instructions
 from parallax.snapshot import handle
 from parallax.snapshot.handle import (
     TransactionTimePinReadOnlyError,
@@ -757,10 +750,9 @@ def _edited_copy(
     value is (:func:`~parallax.core.inheritance.validate_write_assignment`), so a
     primary-key, read-only or framework-owned target and an ill-typed value are
     refused by the SAME verdict the typed `edit(**changes)` reaches. The
-    conformance preparation seam first normalizes every authored value through
-    the canonical prepared-write producer, so this lane owns no second recursive
-    conversion; the edit-only assignment judgment receives the managed frozen
-    values that producer returned.
+    edited row is decoded by the conformance case ingress rather than admitted
+    as a write, so this lane owns no second recursive conversion; the edit-only
+    assignment judgment receives the managed frozen values that decode returned.
 
     Every verdict is reached over the WHOLE `set` before any member is copied, so
     a refused mutation derives nothing at all: `set` is an unordered mapping, and
@@ -820,28 +812,27 @@ def _judged_assignments(
     corpus refuses such a case before either executor runs it, which is what makes
     the outcome portable; this verdict is the same rule reached again at run time,
     where it also guards the shapes a case never carries — a hand-built step, or a
-    node whose concrete Entity only the read knows. The conformance preparation
-    seam normalizes case carriers before the canonical producer judges them.
+    node whose concrete Entity only the read knows. The edited row is state the
+    copy holds rather than a write it authors, so it is decoded without write
+    admission; the decode refuses a value no declared type admits.
     """
     prepared_members = _prepared_row_member_names(model, identity)
     row = {name: value for name, value in current.items() if name in prepared_members}
     row.update(assignments)
-    instruction = KeyedWrite("update", identity.canonical, (row,))
+    entity = case_entity(model, identity.canonical)
     try:
-        prepared = _case_ingress.prepare_case_write(instruction, model)
+        managed = _case_ingress.decode_case_row(row, model, entity)
     except instructions.InstructionRejectedError as exc:
         raise EngineError(
             f"{case.path.name}: `mutate` carries a value that does not match the declared type "
             f"— {exc}"
         ) from exc
-    except (instructions.WriteInstructionError, WriteRejectedError) as exc:
-        raise EngineError(
-            f"{case.path.name}: `mutate` carries an invalid assignment — {exc}"
-        ) from exc
-    assert isinstance(prepared, PreparedKeyedWrite)
-    managed = prepared.rows[0]
-    entity = case_entity(model, identity.canonical)
     for name in assignments:
+        if name not in managed:
+            raise EngineError(
+                f"{case.path.name}: `mutate` carries an invalid assignment — {name!r} names no "
+                f"member of {identity.canonical}"
+            )
         try:
             inheritance.validate_write_assignment(model, entity, name, managed[name])
         except inheritance.WriteAssignmentError as exc:

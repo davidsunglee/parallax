@@ -25,7 +25,7 @@ from parallax.core.unit_work import (
     UnitOfWork,
     instructions,
 )
-from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedTemporalBounds
+from parallax.core.unit_work.instructions import PreparedKeyedWrite
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -93,19 +93,20 @@ def prepared_typed_write(
     mutation: KeyedMutation,
     entity: EntityMetadata,
     row: Mapping[str, object],
-    bounds: PreparedTemporalBounds,
+    *,
+    valid_from: dt.datetime | None,
+    until: dt.datetime | None,
 ) -> PreparedKeyedWrite:
-    """One authored single-row keyed instruction, measured by Unit Work's sole
-    typed judgment — member names, values, and assignment legality together.
+    """One authored single-row keyed instruction, judged by Unit Work's sole
+    typed preparation — target and window, then member names, values, and
+    assignment legality.
 
     The bounds ride the instruction's dimension-explicit fields rather than the
     row (ADR 0010/0013): an As-Of Axis endpoint is framework-owned, so a
     Valid-Time bound is never a member a caller could author.
     """
     prepared = instructions.prepare_typed_write(
-        keyed_instruction(
-            mutation, entity.identity, row, valid_from=bounds.valid_from, until=bounds.until
-        ),
+        keyed_instruction(mutation, entity.identity, row, valid_from=valid_from, until=until),
         meta,
     )
     assert isinstance(prepared, PreparedKeyedWrite)
@@ -154,7 +155,12 @@ class TypedKeyedWriteSource:
         )
 
     def prepare(
-        self, resolved: ResolvedKeyedWriteSource, bounds: PreparedTemporalBounds, /
+        self,
+        resolved: ResolvedKeyedWriteSource,
+        /,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
     ) -> PreparedSourceWrite:
         """The instruction this value authors, beside its own originals.
 
@@ -179,12 +185,17 @@ class TypedKeyedWriteSource:
         authored = self._codec.authored_row(self._value) if mutation in UPDATE_MUTATIONS else None
         if authored is None:
             instruction = prepared_typed_write(
-                meta, mutation, resolved.entity, self._codec.identity_row(self._value), bounds
+                meta,
+                mutation,
+                resolved.entity,
+                self._codec.identity_row(self._value),
+                valid_from=valid_from,
+                until=until,
             )
             originals: Mapping[str, object] = {}
         else:
             instruction = prepared_typed_write(
-                meta, mutation, resolved.entity, authored.row, bounds
+                meta, mutation, resolved.entity, authored.row, valid_from=valid_from, until=until
             )
             originals = instructions.coerce_typed_row(authored.originals, meta, resolved.entity)
         return PreparedSourceWrite(
@@ -234,14 +245,20 @@ class TypedKeyedInsertSource:
         )
 
     def prepare(
-        self, resolved: ResolvedKeyedInsert, bounds: PreparedTemporalBounds, /
+        self,
+        resolved: ResolvedKeyedInsert,
+        /,
+        *,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
     ) -> PreparedKeyedWrite:
         return prepared_typed_write(
             retained(self._meta),
             retained(self._mutation),
             resolved.entity,
             self._codec.full_row(self._instance),
-            bounds,
+            valid_from=valid_from,
+            until=until,
         )
 
 
@@ -397,7 +414,7 @@ class Transaction:
         ``valid_from`` is the plain Bitemporal insert's Valid-Time instant — the
         open rectangle's lower bound ``[valid_from, infinity)`` (`m-bitemp-write` "insert /
         insertUntil — a single open rectangle, no close"); mirrors ``update``'s
-        own Bitemporal-only-required :func:`validate_window`: a
+        own Bitemporal-only requirement: a
         Transaction-Time-Only or non-temporal target takes none (no Valid-Time dimension to
         bound)."""
         keyed_insert(
@@ -418,7 +435,7 @@ class Transaction:
         ``update_until``'s own required ``valid_from`` / ``until``). A window
         that does not satisfy ``valid_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
-        (:func:`validate_window` "all validated at build"), and
+        (all validated at build), and
         so does a repeated insert of an object this transaction already buffered
         an insert of, exactly as :meth:`insert` refuses one.
         The window bounds come from THESE verb arguments, never from instance
@@ -459,9 +476,9 @@ class Transaction:
         Transaction Time, then chains head
         (the old value) + a new tail (the new value) running to infinity, the
         two-way degenerate of ``update_until``'s three-way rectangle split).
-        Mirrors ``update_where``'s own bitemporal-only-required
-        :func:`validate_window`: a Transaction-Time-Only or non-temporal target
-        takes none (no Valid-Time dimension to bound)."""
+        Mirrors ``update_where``'s own Bitemporal-only requirement: a
+        Transaction-Time-Only or non-temporal target takes none (no Valid-Time
+        dimension to bound)."""
         keyed_write(
             self._keyed,
             TypedKeyedWriteSource(copy, self._codec),
@@ -490,8 +507,7 @@ class Transaction:
         its primary key alone, no chained row (close-only, `m-txtime-write` /
         `m-bitemp-write`). Transaction-Time-Only takes no ``valid_from``;
         Bitemporal requires it (the mutation's own Valid-Time
-        instant, mirrors ``terminate_where``'s own
-        :func:`validate_window`)."""
+        instant, mirroring ``terminate_where``)."""
         keyed_write(
             self._keyed,
             TypedKeyedWriteSource(node_or_instance, self._codec),
@@ -509,7 +525,7 @@ class Transaction:
         ``update_until_where``'s own required ``valid_from`` / ``until``). A
         window that does not satisfy ``valid_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
-        (:func:`validate_window` "all validated at build") —
+        (all validated at build) —
         checked BEFORE the empty-effective-change-set no-op return below:
         window validation runs first for every window verb, never after;
         equal bounds reject even when the
@@ -533,7 +549,7 @@ class Transaction:
         alone (`m-bitemp-write`) — bitemporal-only (mirrors
         ``terminate_until_where``). A window that does not satisfy
         ``valid_from < until`` (equal or reversed bounds) raises at THIS
-        call, before any buffering (:func:`validate_window`)."""
+        call, before any buffering."""
         keyed_write(
             self._keyed,
             TypedKeyedWriteSource(node_or_instance, self._codec),

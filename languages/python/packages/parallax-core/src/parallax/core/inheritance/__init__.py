@@ -204,18 +204,12 @@ def reject_predicate_write(entity: EntityMetadata) -> None:
     a predicate-selected write is set-based BY CONSTRUCTION (there is no row at
     all, keyed or otherwise), so this needs no row inspection and never
     synthesizes a fake keyless row just to trigger
-    :func:`validate_subtype_write`'s own branch. The build-time caller is
-    shared managed-write preparation reached by both
+    :func:`validate_subtype_write`'s own branch. Its caller is prepared-write
+    production, shared by
     :func:`~parallax.core.unit_work.instructions.prepare_typed_write` and
-    :func:`~parallax.core.unit_work.instructions.prepare_wire_write`. The
-    developer-facing ``_where`` verb family and the conformance
-    engine's predicate-write translation therefore run it before they buffer,
-    so no ingress can classify an inheritance-family predicate write differently.
-    Two callers stand behind it, each covering a route that call
-    cannot: ``parallax.snapshot.handle``'s directly reachable buffering seam,
-    before it can resolve a materializing family target against a real
-    connection, and :mod:`~parallax.core.unit_work.write_settlement` at flush, as
-    the structural refusal before SQL for whatever was buffered. A
+    :func:`~parallax.core.unit_work.instructions.prepare_wire_write`, so no
+    ingress can classify an inheritance-family predicate write differently and
+    no prepared product names one. A
     no-op for a non-participant ``entity`` (every entity outside an
     inheritance family accepts a predicate-selected write, subject to every
     OTHER m-batch-write / m-opt-lock rule).

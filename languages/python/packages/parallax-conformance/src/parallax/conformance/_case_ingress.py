@@ -30,7 +30,7 @@ from parallax.core.unit_work.instructions import (
     WriteInstruction,
 )
 
-__all__ = ["normalize_case_query", "prepare_case_write"]
+__all__ = ["decode_case_row", "normalize_case_query", "prepare_case_write"]
 
 type _ScalarMember = AttributeMetadata | ValueObjectAttributeMetadata
 
@@ -45,6 +45,25 @@ def prepare_case_write(instruction: WriteInstruction, model: AcceptedMetamodel) 
     and retain in its ``PreparedWrite`` result.
     """
     return instructions.prepare_wire_write(_normalize_instruction(instruction, model), model)
+
+
+def decode_case_row(
+    row: Mapping[str, object], model: AcceptedMetamodel, entity: EntityMetadata
+) -> Mapping[str, object]:
+    """Normalize one case-format row of ``entity`` state and decode it, judging
+    nothing.
+
+    For state a case states rather than a write it authors — seeded fixtures,
+    and the member values an edit is weighed against. Write admission measures a
+    write against its target, so such state is decoded by
+    :func:`~parallax.core.unit_work.instructions.decode_wire_row` instead.
+    """
+    members = _entity_members(model, entity)
+    normalized = {
+        name: _normalize_member(members[name], value) if name in members else value
+        for name, value in row.items()
+    }
+    return instructions.decode_wire_row(normalized, model, entity)
 
 
 def normalize_case_query(query: ObjectQueryNode, model: AcceptedMetamodel) -> ObjectQueryNode:
@@ -88,8 +107,6 @@ def _normalize_instruction(
     entity = entity_by_name(model, target_name)
     if entity is None:
         return instruction
-    valid_from = normalize_case_bound(instruction.valid_from)
-    until = normalize_case_bound(instruction.until)
     if isinstance(instruction, KeyedWrite):
         members = _entity_members(model, entity)
         rows = tuple(
@@ -99,7 +116,13 @@ def _normalize_instruction(
             }
             for row in instruction.rows
         )
-        return KeyedWrite(instruction.mutation, instruction.entity, rows, valid_from, until)
+        return KeyedWrite(
+            instruction.mutation,
+            instruction.entity,
+            rows,
+            instruction.valid_from,
+            instruction.until,
+        )
 
     members = _entity_members(model, entity)
     assignments = tuple(
@@ -119,8 +142,8 @@ def _normalize_instruction(
         instruction.mutation,
         selection,
         assignments,
-        valid_from,
-        until,
+        instruction.valid_from,
+        instruction.until,
     )
 
 

@@ -14,8 +14,6 @@ from parallax.core.db_port import DatabaseConnection, JsonDocument
 from parallax.core.metamodel import EntityMetadata, PrimaryKey, ValueObjectIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.storage_layout import DirectColumn, DocumentPath
-from parallax.core.unit_work import KeyedWrite
-from parallax.core.unit_work.instructions import PreparedKeyedWrite
 from parallax.core.wire import WireValue, decode_wire
 
 __all__ = ["apply_given_apply", "apply_given_corrupt", "seed_shadow_from_fixtures"]
@@ -259,14 +257,12 @@ def seed_shadow_from_fixtures(
         managed_rows: list[Mapping[str, object]] = []
         for row in cast("list[Mapping[str, object]]", rows):
             open_bounds = {name: value for name, value in row.items() if value == INFINITY_LITERAL}
-            instruction = KeyedWrite(
-                "insert",
-                entity.identity.canonical,
-                ({name: value for name, value in row.items() if name not in open_bounds},),
+            decoded = _case_ingress.decode_case_row(
+                {name: value for name, value in row.items() if name not in open_bounds},
+                model,
+                entity,
             )
-            prepared = _case_ingress.prepare_case_write(instruction, model)
-            assert isinstance(prepared, PreparedKeyedWrite)
-            managed_rows.append({**prepared.rows[0], **open_bounds})
+            managed_rows.append({**decoded, **open_bounds})
         shadow.seed_fixtures(model, entity, managed_rows)
 
 

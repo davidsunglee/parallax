@@ -148,9 +148,10 @@
       }
     },
     "instant": {
-      "description": "A Valid-Time instant: an ISO-8601 UTC timestamp string, or the open-bound sentinel `infinity`.",
+      "description": "A finite Valid-Time instant, spelled as `m-wire`'s `timestamp` and decoded by that codec. No authored bound is infinite: an unbounded write omits `until`, and the `infinity` literal is refused.",
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "not": { "const": "infinity" }
     },
     "entityName": {
       "description": "The concrete descriptor entity a write begins from, spelled bare or namespace-qualified (identity.schema.json).",

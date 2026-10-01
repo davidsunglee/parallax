@@ -24,6 +24,7 @@ share of the count.
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Mapping
 from decimal import Decimal
 
@@ -59,8 +60,8 @@ def test_materialization_constructs_no_keyed_write_regardless_of_row_count(
         mutation: KeyedMutation,
         entity: str,
         rows: tuple[Mapping[str, object], ...],
-        valid_from: str | None = None,
-        until: str | None = None,
+        valid_from: dt.datetime | None = None,
+        until: dt.datetime | None = None,
     ) -> None:
         constructed.append(self)
         original_init(self, mutation, entity, rows, valid_from, until)

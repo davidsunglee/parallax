@@ -35,9 +35,6 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
     PreparedTemporalBounds,
     PreparedWrite,
-    WriteSurface,
-    non_temporal_milestone_refusal,
-    temporal_delete_refusal,
 )
 from parallax.core.unit_work.materialized import (
     MaterializedWriteGroup,
@@ -433,7 +430,7 @@ class WriteSettlement:
                 concurrency,
                 tx_instant,
             )
-        facts = self._non_temporal_facts(entity, instruction.mutation, surface="keyed")
+        facts = self._non_temporal_facts(entity)
         if instruction.mutation == "insert":
             return (self._settle_insert(facts, instruction),)
         addressed = self._addressed_facts(facts, concurrency)
@@ -466,18 +463,13 @@ class WriteSettlement:
     def _settle_predicate(self, instruction: PreparedPredicateWrite) -> tuple[PlannedStep, ...]:
         """One readless predicate-selected write as its single step.
 
-        The refusals live here, on the semantic side, because they answer what
-        a write MEANS rather than how it reads: an inheritance-family target
-        has no per-object write to select (`m-inheritance`), and a versioned
-        or temporal target has no readless template at all — it materializes
-        to keyed writes at buffer time, so reaching this stage is a
-        caller wiring defect. Both guards are total rather than upstream-only:
-        settlement judges the prepared carrier it is handed and never which door
-        prepared it, so a shape buffering would have refused or materialized is
-        refused here rather than settled.
+        Admissibility is the prepared product's own: preparation already refused
+        an inheritance-family target and a verb the target does not take. What
+        is refused here is routing — a versioned or temporal target has no
+        readless template at all and materializes to keyed writes at buffer
+        time, so reaching this stage with one is a caller wiring defect.
         """
         entity = instruction.selection.target
-        inheritance.reject_predicate_write(entity)
         if (
             isinstance(
                 self._temporal_facet.shape(entity.identity), TransactionTimeOnly | Bitemporal
@@ -541,29 +533,17 @@ class WriteSettlement:
         )
         return PlannedInsert(entity=facts.entity.identity, entries=entries)
 
-    def _non_temporal_facts(
-        self,
-        entity: EntityMetadata,
-        mutation: str,
-        *,
-        surface: WriteSurface,
-    ) -> _NonTemporalFacts:
+    def _non_temporal_facts(self, entity: EntityMetadata) -> _NonTemporalFacts:
         """What one non-temporal mutation settles about its target, before a
         row is in hand and whatever the verb does to it.
 
         The sole site for each of these decisions, whichever representation the
-        mutation arrived as: whether the verb has a milestone to act on at all,
-        which members the family makes applicable, and which Attribute (if any)
-        carries the optimistic version. An eagerly settled instruction and a
-        Materialized Write Group therefore cannot answer any of them
-        differently. What only a write against EXISTING rows settles belongs to
-        :meth:`_addressed_facts` instead.
-
-        ``surface`` is what the milestone-verb refusal words itself with, and it
-        is the one input that genuinely differs between an addressed write and a
-        resolved predicate.
+        mutation arrived as: which members the family makes applicable, and
+        which Attribute (if any) carries the optimistic version. An eagerly
+        settled instruction and a Materialized Write Group therefore cannot
+        answer any of them differently. What only a write against EXISTING rows
+        settles belongs to :meth:`_addressed_facts` instead.
         """
-        _reject_milestone_verb(entity, mutation, surface)
         return _NonTemporalFacts(
             entity=entity,
             view=_view(self._families, entity),
@@ -614,29 +594,20 @@ class WriteSettlement:
     ) -> tuple[PlannedStep, ...]:
         """One temporal mutation as its close and its successors, in that order.
 
-        Each row of a milestone chain opens its own successors, so a temporal
-        keyed instruction carries exactly one row (`m-unit-work`) and reaching
-        here with several is a caller wiring defect.
+        Preparation admits a temporal keyed instruction with exactly one row
+        (`m-unit-work`), since each row of a milestone chain opens its own
+        successors.
 
         A changed successor overlays only the members ``effective`` names, which
         its producer classified against the values its source observed; an
         observed update always carries that classification, so none is made here.
         """
-        if len(instruction.rows) != 1:
-            raise WritePlanningError(
-                f"multi-row temporal {instruction.mutation!r} on {entity.identity.name!r} "
-                f"({len(instruction.rows)} rows): a temporal keyed instruction carries exactly "
-                "one row (m-unit-work) — each row closes its own milestone and chains its own "
-                "successors, and the set-based batch collapse never applies to a temporal "
-                "entity (m-batch-write)"
-            )
         observed = observation if isinstance(observation, TemporalObservation) else None
         facts = self._temporal_facts(
             entity,
             shape,
             instruction.mutation,
             instruction.bounds,
-            surface="keyed",
             observed=observed is not None,
             concurrency=concurrency,
             tx_instant=tx_instant,
@@ -703,7 +674,6 @@ class WriteSettlement:
         mutation: str,
         bounds: PreparedTemporalBounds,
         *,
-        surface: WriteSurface,
         observed: bool,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
@@ -711,11 +681,10 @@ class WriteSettlement:
         """Everything one temporal mutation settles before a row is in hand.
 
         The sole site for each of these decisions, whichever representation the
-        mutation arrived as: whether the verb has a milestone to act on at all,
-        which topology the Temporal Facet describes it with, what closing takes
-        if that topology closes anything, which successors exist and what each
-        one's bound expression and represented-state kind is, and the one
-        instant the attempt stamps.
+        mutation arrived as: which topology the Temporal Facet describes it
+        with, what closing takes if that topology closes anything, which
+        successors exist and what each one's bound expression and
+        represented-state kind is, and the one instant the attempt stamps.
         An eagerly settled instruction and a Materialized Write Group therefore
         cannot answer any of them differently.
 
@@ -732,7 +701,6 @@ class WriteSettlement:
         after it — the clock included, which is what keeps a refused write from
         capturing the attempt's instant.
         """
-        _reject_temporal_delete(entity, mutation, surface)
         topology = self._temporal_strategy.topology(shape, mutation)
         if topology.closure is not None and not observed:
             raise WritePlanningError(
@@ -850,7 +818,7 @@ class WriteSettlement:
         """
         evidence = group.evidence
         assert isinstance(evidence, VersionedEvidence)
-        facts = self._non_temporal_facts(entity, group.mutation.mutation, surface="predicate")
+        facts = self._non_temporal_facts(entity)
         addressed = self._addressed_facts(facts, concurrency)
         mutation = group.mutation.mutation
         if facts.version_attribute is None:
@@ -913,7 +881,6 @@ class WriteSettlement:
             shape,
             group.mutation.mutation,
             group.mutation.bounds,
-            surface="predicate",
             observed=True,
             concurrency=concurrency,
             tx_instant=tx_instant,
@@ -1708,46 +1675,6 @@ def _marker(value: object) -> tuple[str, object] | None:
         return None
     key = next(iter(marker))
     return (key, marker[key]) if key in _MARKER_KEYS else None
-
-
-def _reject_temporal_delete(entity: EntityMetadata, mutation: str, surface: WriteSurface) -> None:
-    """Refuse ``mutation`` when ``entity``'s family milestones the rows it would
-    physically remove.
-
-    Reached only once the caller has established that the target DOES derive an
-    As-Of Axis — the converse of :func:`_reject_milestone_verb`'s quadrant, and
-    the last structural refusal before the temporal facet is asked for a
-    topology it owns none for. Refusing here rather than there is what lets the
-    caller hear which verb their target does take: a facet answers a mutation
-    token alone and carries neither the target's name nor the surface the call
-    arrived on.
-    """
-    refusal = temporal_delete_refusal(entity.identity.name, mutation, surface=surface)
-    if refusal is not None:
-        raise WritePlanningError(refusal)
-
-
-def _reject_milestone_verb(entity: EntityMetadata, mutation: str, surface: WriteSurface) -> None:
-    """Refuse ``mutation`` when ``entity``'s family has no milestone for it to
-    open, split, or close.
-
-    Reached only once the caller has established that the target derives no
-    As-Of Axis, which is where the two settlement paths a milestone verb can
-    arrive through meet: an addressed keyed write, and a Materialized Write
-    Group whose predicate resolved against a versioned (non-temporal) target.
-    Both must refuse rather than settle, because settling keeps the verb's row
-    effect and drops its temporal meaning — a bounded `updateUntil` consuming
-    the row's version as an ordinary overwrite of the window it named.
-
-    The wording comes from
-    :func:`~parallax.core.unit_work.instructions.non_temporal_milestone_refusal`,
-    which the build-time validator and the buffering seam raise their own errors
-    from, so an instruction refused before SQL and one refused at flush describe
-    the same mismatch.
-    """
-    refusal = non_temporal_milestone_refusal(entity.identity.name, mutation, surface=surface)
-    if refusal is not None:
-        raise WritePlanningError(refusal)
 
 
 def _require_unobserved(entity: EntityMetadata, mutation: str, observation: object | None) -> None:

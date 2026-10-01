@@ -25,7 +25,7 @@ from parallax.conformance import models
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import JSON
+from parallax.core.base import JSON, InstantError
 from parallax.core.metamodel import Table
 from parallax.core.unit_work import WriteRejectedError
 from parallax.core.unit_work import instructions as wi
@@ -100,6 +100,8 @@ _DOCUMENT_MODEL = form_metamodel(
 
 _B1 = "2024-01-01T00:00:00.000000Z"
 _B2 = "2024-06-01T00:00:00.000000Z"
+_I1 = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_I2 = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 # Every canonical instruction shape, authored in the axis-explicit spelling with no
 # Transaction-Time instant (Clock context) — the coalescing witnesses' target buffered
@@ -273,8 +275,8 @@ def test_python_construction_round_trips() -> None:
         mutation="insertUntil",
         entity="Position",
         rows=({"id": 9, "value": 150.00},),
-        valid_from=_B1,
-        until=_B2,
+        valid_from=_I1,
+        until=_I2,
     )
     assert wi.deserialize(wi.serialize(instruction)) == instruction
 
@@ -653,27 +655,23 @@ def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
     serialized = wi.serialize(instruction)
     assert serialized["validFrom"] == "2024-01-01T00:00:00.000000Z"
     wire_prepared = wi.prepare_wire_write(
-        wi.KeyedWrite(
-            "update",
-            "Position",
-            ({"id": 1, "value": "5.00"},),
-            valid_from=cast("str", serialized["validFrom"]),
-        ),
+        wi.deserialize({**serialized, "rows": [{"id": 1, "value": "5.00"}]}),
         _POSITION,
     )
     assert wire_prepared.bounds == prepared.bounds
 
 
-def test_typed_preparation_rejects_a_non_instant_temporal_bound() -> None:
-    instruction = wi.KeyedWrite(
-        "update",
-        "Position",
-        ({"id": 1, "value": Decimal("5.00")},),
-        valid_from="2024-01-01T00:00:00.000000Z",
-    )
-
-    with pytest.raises(wi.WriteInstructionError, match="invalid typed temporal bound"):
-        wi.prepare_typed_write(instruction, _POSITION)
+@pytest.mark.parametrize("prepare", [wi.prepare_typed_write, wi.prepare_wire_write])
+def test_both_producers_refuse_a_bound_that_is_no_instant(prepare: Any) -> None:
+    for bound in ("2024-01-01T00:00:00.000000Z", dt.date(2024, 1, 1)):
+        instruction = wi.KeyedWrite(
+            "update", "Position", ({"id": 1},), valid_from=cast("dt.datetime", bound)
+        )
+        with pytest.raises(InstantError, match="takes an aware datetime for valid_from"):
+            prepare(instruction, _POSITION)
+    naive = wi.KeyedWrite("update", "Position", ({"id": 1},), valid_from=dt.datetime(2024, 1, 1))
+    with pytest.raises(InstantError, match="naive datetime"):
+        prepare(naive, _POSITION)
 
 
 def test_assigned_member_validation_rejects_a_plural_keyed_write() -> None:
@@ -687,7 +685,7 @@ def test_assigned_member_validation_rejects_a_plural_keyed_write() -> None:
     )
 
     with pytest.raises(wi.WriteInstructionError, match="applies only to one addressed write row"):
-        wi.prepare_wire_write(instruction, _ACCOUNT, assigned_members={"balance"})
+        wi.prepare_wire_write(instruction, _ACCOUNT, authored_members={"balance"})
 
 
 def test_preparation_rejects_a_model_whose_inheritance_view_lost_the_target(
@@ -703,36 +701,11 @@ def test_preparation_rejects_a_model_whose_inheritance_view_lost_the_target(
 
     monkeypatch.setattr(inheritance, "view", missing_view)
 
-    with pytest.raises(wi.WriteInstructionError, match="undeclared member"):
+    with pytest.raises(RuntimeError, match="no Inheritance Facet view"):
         wi.prepare_typed_write(
             wi.KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("1.00")},)),
             _ACCOUNT,
         )
-
-
-def test_member_transformation_preserves_unknown_values_when_position_metadata_is_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entity = next(item for item in _ACCOUNT.entities if item.identity.name == "Account")
-
-    class MissingPosition:
-        @staticmethod
-        def entity(_identity: object) -> None:
-            return None
-
-    def missing_view(_model: object) -> MissingPosition:
-        return MissingPosition()
-
-    monkeypatch.setattr(inheritance, "view", missing_view)
-    assert wi._member_selection(_ACCOUNT, entity) is None  # pyright: ignore[reportPrivateUsage]
-
-    transformed = wi._transform_row(  # pyright: ignore[reportPrivateUsage]
-        _ACCOUNT,
-        entity,
-        {"future": {"opaque": True}},
-        converter=lambda _type, value, _path: (value, True),
-    )
-    assert transformed.row == {"future": {"opaque": True}}
 
 
 def test_member_name_honesty_rejects_undeclared_row_member() -> None:
@@ -807,7 +780,9 @@ def test_member_name_honesty_rejects_a_duplicate_assignment() -> None:
 
 def test_member_name_honesty_rejects_unknown_entity() -> None:
     keyed = wi.deserialize({"mutation": "delete", "entity": "Ghost", "rows": [{"id": 1}]})
-    with pytest.raises(wi.WriteInstructionError, match="unknown entity"):
+    with pytest.raises(
+        wi.WriteInstructionError, match="the connected model declares no entity 'Ghost'"
+    ):
         wi.prepare_typed_write(keyed, _ACCOUNT)
 
 
@@ -825,7 +800,7 @@ def test_an_ambiguous_bare_spelling_is_classified_apart_from_an_unknown_one() ->
     assert "catalog.SharedVariant" in str(excinfo.value)
 
     unknown = wi.deserialize({"mutation": "delete", "entity": "Ghost", "rows": [{"id": 1}]})
-    with pytest.raises(wi.WriteInstructionError, match="unknown entity") as plain:
+    with pytest.raises(wi.WriteInstructionError, match="declares no entity 'Ghost'") as plain:
         wi.prepare_typed_write(unknown, _SHARED_LOCAL_NAME)
     assert not isinstance(plain.value, wi.InstructionRejectedError)
 
@@ -845,88 +820,89 @@ def test_a_canonical_spelling_resolves_where_the_bare_one_is_ambiguous() -> None
     ("instruction", "expected"),
     [
         (
-            {
-                "mutation": "insertUntil",
-                "entity": "Account",
-                "rows": [{"id": 1, "balance": 5.00}],
-                "validFrom": _B1,
-                "until": _B2,
-            },
-            "Non-temporal objects like 'Account' do not support 'insert_until', which "
-            "records a row over a time range. Use 'insert' instead.",
-        ),
-        (
-            {
-                "mutation": "updateUntil",
-                "entity": "Account",
-                "rows": [{"id": 1, "balance": 5.00}],
-                "validFrom": _B1,
-                "until": _B2,
-            },
-            "Non-temporal objects like 'Account' do not support 'update_until', which "
-            "records a change over a time range. Use 'update' instead.",
-        ),
-        (
             {"mutation": "terminate", "entity": "Account", "rows": [{"id": 1}]},
             "Non-temporal objects like 'Account' do not support 'terminate', which closes "
             "a row's history instead of removing it. Use 'delete' instead.",
         ),
         (
-            {
-                "mutation": "terminateUntil",
-                "entity": "Account",
-                "rows": [{"id": 1}],
-                "validFrom": _B1,
-                "until": _B2,
-            },
-            "Non-temporal objects like 'Account' do not support 'terminate_until', which "
-            "closes a row's history instead of removing it. Use 'delete' instead.",
-        ),
-        (
-            {
-                "mutation": "updateUntil",
-                "target": {"entity": "Account", "predicate": {"all": {}}},
-                "assignments": [{"attr": "Account.balance", "value": 0}],
-                "validFrom": _B1,
-                "until": _B2,
-            },
-            "Non-temporal objects like 'Account' do not support 'update_until_where', which "
-            "records a change over a time range. Use 'update_where' instead.",
-        ),
-        (
-            {
-                "mutation": "terminateUntil",
-                "target": {"entity": "Account", "predicate": {"all": {}}},
-                "validFrom": _B1,
-                "until": _B2,
-            },
-            "Non-temporal objects like 'Account' do not support 'terminate_until_where', which "
+            {"mutation": "terminate", "target": {"entity": "Account", "predicate": {"all": {}}}},
+            "Non-temporal objects like 'Account' do not support 'terminate_where', which "
             "closes a row's history instead of removing it. Use 'delete_where' instead.",
         ),
     ],
-    ids=[
-        "keyed-insertUntil",
-        "keyed-updateUntil",
-        "keyed-terminate",
-        "keyed-terminateUntil",
-        "predicate-updateUntil",
-        "predicate-terminateUntil",
-    ],
+    ids=["keyed-terminate", "predicate-terminate"],
 )
 def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
     instruction: dict[str, Any], expected: str
 ) -> None:
     # `Account` is versioned and non-temporal, so it has no milestone for a
-    # bounded or closing verb to address. The validator owns this because it is
-    # the one model-aware gate every ingress crosses: a predicate-selected
-    # milestone verb reaching the buffering seam instead resolves against a real
-    # connection first, and settles as an ordinary versioned write that consumes
-    # the row's version while dropping the bounds the caller wrote. Each verb
-    # names the alternative that keeps the caller's row effect, spelled for the
-    # surface the call arrived on, so the refusal is asserted in full.
+    # closing verb to address. Each verb names the alternative that keeps the
+    # caller's row effect, spelled for the surface the call arrived on, so the
+    # refusal is asserted in full.
     with pytest.raises(wi.WriteInstructionError) as raised:
         wi.prepare_wire_write(wi.deserialize(instruction), _ACCOUNT)
     assert str(raised.value) == expected
+
+
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        {
+            "mutation": "insertUntil",
+            "entity": "Account",
+            "rows": [{"id": 1, "balance": 5.00}],
+            "validFrom": _B1,
+            "until": _B2,
+        },
+        {
+            "mutation": "updateUntil",
+            "entity": "Account",
+            "rows": [{"id": 1, "balance": 5.00}],
+            "validFrom": _B1,
+            "until": _B2,
+        },
+        {
+            "mutation": "terminateUntil",
+            "entity": "Account",
+            "rows": [{"id": 1}],
+            "validFrom": _B1,
+            "until": _B2,
+        },
+        {
+            "mutation": "updateUntil",
+            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "assignments": [{"attr": "Account.balance", "value": 0}],
+            "validFrom": _B1,
+            "until": _B2,
+        },
+        {
+            "mutation": "terminateUntil",
+            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "validFrom": _B1,
+            "until": _B2,
+        },
+    ],
+    ids=[
+        "keyed-insertUntil",
+        "keyed-updateUntil",
+        "keyed-terminateUntil",
+        "predicate-updateUntil",
+        "predicate-terminateUntil",
+    ],
+)
+def test_a_bounded_verb_on_a_non_temporal_target_hears_its_window_refused_first(
+    instruction: dict[str, Any],
+) -> None:
+    # Every bounded verb states a pair, and a target declaring no Valid-Time
+    # dimension takes no `valid_from`: the window is the verdict on an argument
+    # the caller can drop, heard ahead of the verb's own applicability.
+    mutation = instruction["mutation"]
+    with pytest.raises(wi.WriteInstructionError) as raised:
+        wi.prepare_wire_write(wi.deserialize(instruction), _ACCOUNT)
+    assert str(raised.value) == (
+        f"Account: a non-temporal {mutation!r} takes no valid_from "
+        "('Account' declares no Valid-Time dimension to bound)"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1592,3 +1568,310 @@ def test_a_keyed_row_aimed_at_an_abstract_target_is_rejected() -> None:
     with pytest.raises(WriteRejectedError) as caught:
         wi.prepare_typed_write(keyed, _PAYMENT)
     assert caught.value.rule == "abstract-write-target"
+
+
+# --------------------------------------------------------------------------- #
+# Finite authored bounds: a document decodes them, preparation judges them.    #
+# --------------------------------------------------------------------------- #
+def test_a_document_bound_decodes_to_the_instant_it_spells() -> None:
+    instruction = wi.deserialize(dict(_INSTRUCTIONS[6][1]))
+    assert (instruction.valid_from, instruction.until) == (_I1, _I2)
+
+
+@pytest.mark.parametrize(
+    ("bound", "rule"),
+    [
+        ("infinity", "neutral-literal-type-mismatch"),
+        ("2024-01-01", "neutral-literal-type-mismatch"),
+        ("2024-01-01T00:00:00+00:00", "neutral-literal-noncanonical"),
+    ],
+)
+def test_a_document_bound_must_be_a_finite_canonical_timestamp(bound: str, rule: str) -> None:
+    # An open upper end is spelled by omitting `until`, never by an `infinity`
+    # bound, so the decode refuses one exactly as it refuses any other spelling
+    # its timestamp codec does not admit.
+    with pytest.raises(wi.InstructionRejectedError) as raised:
+        wi.deserialize(
+            {
+                "mutation": "updateUntil",
+                "entity": "Position",
+                "rows": [{"id": 1, "value": 1}],
+                "validFrom": _B1,
+                "until": bound,
+            }
+        )
+    assert raised.value.rule == rule
+
+
+def test_the_schema_admits_no_infinite_authored_bound() -> None:
+    document = {
+        "mutation": "updateUntil",
+        "entity": "Position",
+        "rows": [{"id": 1, "value": 1}],
+        "validFrom": _B1,
+        "until": "infinity",
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        _validate(document, _SCHEMA)
+
+
+def test_a_reserved_observation_key_refuses_before_any_window_is_judged() -> None:
+    with pytest.raises(wi.WriteInstructionError, match="forbidden observation control key"):
+        wi.KeyedWrite(
+            "updateUntil", "Account", ({"id": 1, "observedVersion": 2},), valid_from=_I2, until=_I1
+        )
+
+
+def test_a_prepared_write_has_no_field_constructor() -> None:
+    prepared = wi.prepare_typed_write(wi.KeyedWrite("delete", "Account", ({"id": 1},)), _ACCOUNT)
+    assert isinstance(prepared, wi.PreparedKeyedWrite)
+    with pytest.raises(TypeError):
+        cast("Any", wi.PreparedKeyedWrite)(
+            prepared.mutation, prepared.target, prepared.rows, prepared.bounds
+        )
+    with pytest.raises(TypeError):
+        cast("Any", wi.PreparedPredicateWrite)("delete", None, (), prepared.bounds)
+    derived = wi.derive_keyed_write(prepared, ({"id": 2},))
+    assert (derived.mutation, derived.target, derived.bounds) == (
+        prepared.mutation,
+        prepared.target,
+        prepared.bounds,
+    )
+    assert derived.rows == ({"id": 2},)
+
+
+# --------------------------------------------------------------------------- #
+# Every producer judges the target first: verb, window, and row count, then    #
+# the payload.                                                                 #
+# --------------------------------------------------------------------------- #
+_PRODUCERS = pytest.mark.parametrize(
+    "prepare", [wi.prepare_typed_write, wi.prepare_wire_write], ids=["typed", "wire"]
+)
+_ALL = predicate_algebra.All()
+
+
+@_PRODUCERS
+@pytest.mark.parametrize(
+    ("instruction", "model", "message"),
+    [
+        (
+            wi.KeyedWrite("delete", "Position", ({"id": 1, "nonsense": 1},)),
+            _POSITION,
+            "Temporal objects like 'Position' do not support 'delete'",
+        ),
+        (
+            wi.PredicateWrite("delete", wi.PredicateSelection("Balance", _ALL)),
+            _BALANCE,
+            "Temporal objects like 'Balance' do not support 'delete_where'",
+        ),
+        (
+            wi.KeyedWrite("insert", "Position", ({"id": 1, "nonsense": 1},)),
+            _POSITION,
+            "a bitemporal 'insert' requires valid_from",
+        ),
+        (
+            wi.KeyedWrite("update", "Balance", ({"id": 1, "nonsense": 1},), valid_from=_I1),
+            _BALANCE,
+            "a Transaction-Time-Only 'update' takes no valid_from",
+        ),
+        (
+            wi.PredicateWrite(
+                "update",
+                wi.PredicateSelection("Account", _ALL),
+                (wi.WriteAssignment("Account.nonsense", 1),),
+                valid_from=_I1,
+            ),
+            _ACCOUNT,
+            "a non-temporal 'update' takes no valid_from",
+        ),
+        (
+            wi.KeyedWrite("updateUntil", "Position", ({"id": 1},), valid_from=_I1),
+            _POSITION,
+            "states its window as a pair, and until is absent",
+        ),
+        (
+            wi.KeyedWrite("update", "Position", ({"id": 1},), valid_from=_I1, until=_I2),
+            _POSITION,
+            "'update' is unbounded and takes no until",
+        ),
+        (
+            wi.KeyedWrite("updateUntil", "Position", ({"id": 1},), valid_from=_I2, until=_I1),
+            _POSITION,
+            "'updateUntil' requires valid_from < until",
+        ),
+        (
+            wi.KeyedWrite("terminateUntil", "Position", ({"id": 1},), valid_from=_I1, until=_I1),
+            _POSITION,
+            "'terminateUntil' requires valid_from < until",
+        ),
+        (
+            wi.PredicateWrite(
+                "update",
+                wi.PredicateSelection("Position", predicate_algebra.Between("Position.id", 10, 1)),
+                (wi.WriteAssignment("Position.value", 1),),
+            ),
+            _POSITION,
+            "a bitemporal 'update' requires valid_from",
+        ),
+        (
+            wi.KeyedWrite("terminate", "Account", ({"id": 1, "nonsense": 1},)),
+            _ACCOUNT,
+            "Non-temporal objects like 'Account' do not support 'terminate'",
+        ),
+    ],
+    ids=[
+        "temporal-delete-before-members",
+        "temporal-delete-where",
+        "bitemporal-requires-valid-from-before-members",
+        "txtime-takes-no-valid-from-before-members",
+        "non-temporal-takes-no-valid-from-before-assignments",
+        "half-a-pair",
+        "unbounded-verb-states-until",
+        "reversed-window",
+        "empty-window",
+        "window-before-predicate",
+        "milestone-before-members",
+    ],
+)
+def test_the_target_is_judged_before_the_payload(
+    prepare: Any, instruction: wi.WriteInstruction, model: Any, message: str
+) -> None:
+    with pytest.raises(wi.WriteInstructionError, match=message) as raised:
+        prepare(instruction, model)
+    assert not isinstance(raised.value, wi.InstructionRejectedError)
+
+
+@_PRODUCERS
+def test_both_producers_normalize_an_aware_bound_to_utc(prepare: Any) -> None:
+    stated = dt.datetime(2024, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+    prepared = prepare(
+        wi.KeyedWrite("terminateUntil", "Position", ({"id": 1},), valid_from=stated, until=_I2),
+        _POSITION,
+    )
+    assert prepared.bounds == wi.PreparedTemporalBounds(_I1, _I2)
+
+
+@_PRODUCERS
+def test_a_plural_temporal_keyed_write_is_refused_before_its_members(prepare: Any) -> None:
+    plural = wi.KeyedWrite("update", "Balance", ({"id": 1, "nonsense": 1}, {"id": 2}))
+    with pytest.raises(wi.InstructionRejectedError) as raised:
+        prepare(plural, _BALANCE)
+    assert raised.value.rule == "temporal-keyed-write-multi-row"
+
+
+@_PRODUCERS
+@pytest.mark.parametrize(
+    ("mutation", "assignments", "message"),
+    [
+        ("update", (), "a predicate-selected 'update' requires at least one assignment"),
+        (
+            "delete",
+            (wi.WriteAssignment("Account.balance", 1),),
+            "a predicate-selected 'delete' names nothing to assign",
+        ),
+    ],
+)
+def test_both_producers_judge_a_constructed_assignment_list(
+    prepare: Any,
+    mutation: wi.PredicateMutation,
+    assignments: tuple[wi.WriteAssignment, ...],
+    message: str,
+) -> None:
+    instruction = wi.PredicateWrite(mutation, wi.PredicateSelection("Account", _ALL), assignments)
+    with pytest.raises(wi.WriteInstructionError, match=message):
+        prepare(instruction, _ACCOUNT)
+
+
+# --------------------------------------------------------------------------- #
+# Each assignment is completed before the next: its reference, then its value. #
+# --------------------------------------------------------------------------- #
+def _account_update(*assignments: tuple[str, object]) -> wi.PredicateWrite:
+    return wi.PredicateWrite(
+        "update",
+        wi.PredicateSelection("Account", _ALL),
+        tuple(wi.WriteAssignment(attr, value) for attr, value in assignments),
+    )
+
+
+@_PRODUCERS
+@pytest.mark.parametrize(
+    ("assignments", "message"),
+    [
+        ((("Account.nonsense", "not-a-decimal"),), "does not name a declared member"),
+        ((("Balance.value", "not-a-decimal"),), "does not name a declared member"),
+        (
+            (("Account.owner", "Ada"), ("Account.owner", 5)),
+            "is duplicated",
+        ),
+        (
+            (("Account.nonsense", 1), ("Account.balance", "not-a-decimal")),
+            "does not name a declared member",
+        ),
+    ],
+    ids=["undeclared-member", "foreign-owner", "duplicate", "earlier-reference"],
+)
+def test_an_assignments_reference_fault_precedes_any_value_fault_it_or_a_later_one_carries(
+    prepare: Any, assignments: tuple[tuple[str, object], ...], message: str
+) -> None:
+    with pytest.raises(wi.WriteInstructionError, match=message) as raised:
+        prepare(_account_update(*assignments), _ACCOUNT)
+    assert not isinstance(raised.value, wi.InstructionRejectedError)
+
+
+@_PRODUCERS
+def test_an_earlier_assignments_value_fault_precedes_a_later_reference_fault(
+    prepare: Any,
+) -> None:
+    instruction = _account_update(("Account.balance", "not-a-decimal"), ("Account.nonsense", 1))
+    with pytest.raises(wi.WriteInstructionError) as raised:
+        prepare(instruction, _ACCOUNT)
+    assert "declared member" not in str(raised.value)
+    assert "balance" in str(raised.value)
+
+
+# --------------------------------------------------------------------------- #
+# A Wire insert's authored payload is judged as authoring; a neutral row is   #
+# row content.                                                                #
+# --------------------------------------------------------------------------- #
+_RATE = _MODELS["rate"]
+_RATE_ROW: dict[str, object] = {"id": 1, "amount": "1.00", "grade": "A"}
+
+
+def _rate_insert(row: Mapping[str, object]) -> wi.KeyedWrite:
+    return wi.KeyedWrite("insert", "DepositRate", (row,), valid_from=_I1)
+
+
+def test_an_authored_insert_may_assign_its_primary_key() -> None:
+    prepared = wi.prepare_wire_write(
+        _rate_insert(_RATE_ROW), _RATE, authored_members=_RATE_ROW.keys()
+    )
+    assert isinstance(prepared, wi.PreparedKeyedWrite)
+    assert prepared.rows[0]["id"] == 1
+
+
+def test_an_authored_insert_refuses_a_framework_owned_member_before_an_undeclared_one() -> None:
+    row = {**_RATE_ROW, "txStart": _B1, "nonsense": 1}
+    with pytest.raises(
+        wi.WriteInstructionError, match=r"DepositRate\.txStart: framework-owned fields"
+    ):
+        wi.prepare_wire_write(_rate_insert(row), _RATE, authored_members=row.keys())
+
+
+def test_an_authored_inserts_subtype_shape_is_judged_before_its_framework_owned_member() -> None:
+    row = {**_RATE_ROW, "txStart": _B1, "tagValue": "deposit"}
+    with pytest.raises(WriteRejectedError) as raised:
+        wi.prepare_wire_write(_rate_insert(row), _RATE, authored_members=row.keys())
+    assert raised.value.rule == "subtype-write-metadata-field"
+
+
+def test_a_neutral_insert_row_carries_its_framework_owned_cells() -> None:
+    # `m-case-format`'s neutral rows state stored content, the optimistic-lock
+    # version included (`m-unit-work-001`), so only a caller's explicit authoring
+    # is refused for one.
+    row = {"id": 9, "owner": "Noether", "balance": "5.00", "version": 1}
+    prepared = wi.prepare_wire_write(wi.KeyedWrite("insert", "Account", (row,)), _ACCOUNT)
+    assert isinstance(prepared, wi.PreparedKeyedWrite)
+    with pytest.raises(wi.WriteInstructionError, match="framework-owned"):
+        wi.prepare_wire_write(
+            wi.KeyedWrite("insert", "Account", (row,)), _ACCOUNT, authored_members=row.keys()
+        )

@@ -511,14 +511,11 @@ def test_where_verb_rejects_an_inheritance_family_target() -> None:
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
-def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
-    # A set-based write assigns members of its exact target, and an inherited
-    # member's Assignment addresses the DECLARING Entity — here the family root.
-    # The typed ingress composes the Assignment list with the query before it
-    # resolves anything, so this classifies as a composition failure; the
-    # canonical instruction the conformance engine hands to Wire preparation
-    # carries no query to compose with, and still classifies the family first
-    # (`test_write_instructions.py`).
+def test_the_family_refusal_precedes_an_assignment_addressing_another_entity() -> None:
+    # An inherited member's Assignment addresses the DECLARING Entity — here the
+    # family root — so it names no member of the exact target. Preparation judges
+    # the predicate and the family before any assignment, so a set-based write
+    # over a family is refused as one whatever it assigns.
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
@@ -526,11 +523,31 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
             im.CardPayment.where(im.CardPayment.id == 1), im.Payment.amount.set(Decimal("1.00"))
         )
 
-    with raises_contextualized(QueryDefinitionError, match=r"Payment\.amount") as caught:
+    with raises_contextualized(
+        inheritance.InheritanceError, match="subtype-write-set-based-unsupported"
+    ):
         own_root(
             Database.connect(port, PAYMENT, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
-    assert caught.value.code == "query-assignment-target-mismatch"
+    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
+
+
+def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
+    # A set-based write assigns members of its exact target; an Assignment built
+    # through another Entity of the same model names none.
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(mm.Ticket.where(mm.Ticket.id == 1), mm.Badge.holder.set("Ada"))
+
+    with raises_contextualized(
+        instructions.WriteInstructionError,
+        match=r"'parallax\.compatibility\.Badge\.holder' does not name a declared member of "
+        r"parallax\.compatibility\.Ticket",
+    ):
+        own_root(
+            Database.connect(port, mm.PK_SEQUENCE_MODEL, clock=FixedClock(FIXED))
+        ).using_database_login().transact(fn)
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
@@ -540,11 +557,12 @@ def test_an_assignment_bearing_verb_requires_an_assignment() -> None:
     def fn(tx: Transaction) -> None:
         tx.update_where(mm.Person.where(mm.Person.id == 1))
 
-    with raises_contextualized(QueryDefinitionError, match="at least one assignment") as caught:
+    with raises_contextualized(
+        instructions.WriteInstructionError, match="requires at least one assignment"
+    ):
         own_root(
             Database.connect(port, PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
-    assert caught.value.code == "query-assignment-target-mismatch"
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
@@ -558,11 +576,10 @@ def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
             mm.Person.name.set("Grace"),
         )
 
-    with raises_contextualized(QueryDefinitionError, match="assigned twice") as caught:
+    with raises_contextualized(instructions.WriteInstructionError, match="is duplicated"):
         own_root(
             Database.connect(port, PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
-    assert caught.value.code == "query-assignment-target-mismatch"
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
@@ -1789,11 +1806,29 @@ def test_a_where_verb_never_classifies_deferred_execution_features() -> None:
 
 
 def test_update_where_refuses_a_target_the_connected_model_does_not_declare() -> None:
-    # Target resolution answers the write side with the SAME refusal a read's
-    # preflight raises, because it is the same failure: the connected model
-    # declares no such Entity. It precedes buffering and every adapter touch.
+    # A write target is resolved by write preparation, the one boundary every
+    # write crosses, so it is refused as the write it is: naming the authored
+    # Entity and the connected model that declares none. It precedes buffering
+    # and every adapter touch.
+    port = ScriptedAdapter(Transact())
+
     def fn(tx: Transaction) -> None:
         tx.update_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
+
+    with raises_contextualized(
+        instructions.WriteInstructionError,
+        match=r"^the connected model declares no entity 'parallax\.compatibility\.Person' "
+        "for this write$",
+    ):
+        own_root(
+            Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+        ).using_database_login().transact(fn)
+    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
+
+
+def test_a_read_of_a_target_the_connected_model_does_not_declare_keeps_its_refusal() -> None:
+    def fn(tx: Transaction) -> None:
+        tx.find(mm.Person.where(mm.Person.id == 1))
 
     with raises_contextualized(QueryTargetError) as caught:
         own_root(
@@ -2190,10 +2225,9 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
 #
 # WHICH refusal fires depends on what the call states, and both are the fixed
 # order working. A bounded verb states a Valid-Time window, and a target
-# declaring no Valid-Time dimension takes none — judged at the shared window
-# gate, before the model is asked anything about the verb. Plain `terminate`
-# states no window at all, so nothing precedes prepared-write production's own
-# target-profile quadrant, which is the rule this shape reaches.
+# declaring no Valid-Time dimension takes none — judged with the window, ahead
+# of the verb's own applicability. Plain `terminate` states no window at all, so
+# the verb is what preparation refuses.
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -2233,21 +2267,17 @@ def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_t
         ).using_database_login().transact(fn)
 
 
-# The buffering seam's OWN contract, below every ingress: `buffer_predicate` and
-# the Wire `_where` lane both validate first, so this drives the free function
-# DIRECTLY with an instruction nothing measured. Without the seam's own
-# `inheritance.reject_predicate_write` the bitemporal family instruction reaches
-# `_materialize_predicate_write`'s resolving read — real SQL on the caller's
-# connection, which `port.calls` then shows — so deleting that call fails here and
-# nowhere else.
+# A materializing family instruction never reaches the buffering seam: the one
+# producer of prepared writes refuses it, so no seam re-judges the family.
 def test_preparation_refuses_an_inheritance_family_predicate_instruction() -> None:
     instruction = instructions.deserialize(
         {
-            "mutation": "delete",
+            "mutation": "terminate",
             "target": {
                 "entity": "DepositRate",
                 "predicate": {"eq": {"attr": "DepositRate.id", "value": 1}},
             },
+            "validFrom": "2024-07-01T00:00:00.000000Z",
         }
     )
     assert isinstance(instruction, PredicateWrite)
@@ -2287,11 +2317,12 @@ class _Abandon(Exception):
 
 
 # --------------------------------------------------------------------------- #
-# Both closed predicate refusals precede adapter access, proven by a boundary  #
-# whose script holds no statement rather than by a recorded absence. An empty  #
-# recording says a call was never made; an empty script says a call would have #
-# failed at the call, which is the stronger reading of "before Unit of Work or #
-# adapter access" and the one the refusals' own contract states.               #
+# The query refusal and an assignment refusal precede adapter access, proven   #
+# by a boundary whose script holds no statement rather than by a recorded      #
+# absence. An empty recording says a call was never made; an empty script says #
+# a call would have failed at the call, which is the stronger reading of       #
+# "before Unit of Work or adapter access" and the one the refusals' own        #
+# contract states.                                                             #
 # --------------------------------------------------------------------------- #
 def test_query_not_mutation_compatible_precedes_every_adapter_call() -> None:
     def fn(tx: Transaction) -> None:
@@ -2304,17 +2335,16 @@ def test_query_not_mutation_compatible_precedes_every_adapter_call() -> None:
     assert caught.value.code == "query-not-mutation-compatible"
 
 
-def test_query_assignment_target_mismatch_precedes_every_adapter_call() -> None:
+def test_an_assignment_addressing_another_entity_precedes_every_adapter_call() -> None:
     def fn(tx: Transaction) -> None:
-        tx.update_where(
-            im.CardPayment.where(im.CardPayment.id == 1), im.Payment.amount.set(Decimal("1.00"))
-        )
+        tx.update_where(mm.Ticket.where(mm.Ticket.id == 1), mm.Badge.holder.set("Ada"))
 
-    with raises_contextualized(QueryDefinitionError) as caught:
+    with raises_contextualized(instructions.WriteInstructionError, match="declared member"):
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), PAYMENT, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()), mm.PK_SEQUENCE_MODEL, clock=FixedClock(FIXED)
+            )
         ).using_database_login().transact(fn)
-    assert caught.value.code == "query-assignment-target-mismatch"
 
 
 # --------------------------------------------------------------------------- #

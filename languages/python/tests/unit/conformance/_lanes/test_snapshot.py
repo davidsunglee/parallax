@@ -1321,6 +1321,22 @@ def test_judged_assignments_reject_an_invalid_member() -> None:
         )
 
 
+def test_judged_assignments_decode_a_bitemporal_edit_without_admitting_a_write() -> None:
+    # An edit derives a copy; it states no write, so a Bitemporal node's edit
+    # owes no Valid-Time bound and its decoded member is what the copy carries.
+    position = models.load_models()["position"]
+    entity = next(item for item in position.entities if item.identity.name == "Position")
+    case = _synthetic_write("scenario", {"model": "models/position.yaml"})
+    edited = snapshot._judged_assignments(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+        case, position, entity.identity, {"value": "250.00"}, {"id": 1, "acctNum": "A"}
+    )
+    assert edited["value"] == decimal.Decimal("250.00")
+    with pytest.raises(EngineError, match="does not match the declared type"):
+        snapshot._judged_assignments(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+            case, position, entity.identity, {"value": "lots"}, {"id": 1, "acctNum": "A"}
+        )
+
+
 def test_a_snapshot_scenarios_write_step_opens_at_the_cases_root_level() -> None:
     # The snapshot lane's own Handle serves standalone finds, which open no
     # transaction; a `write:` step delegates to the keyed unit-of-work lane,

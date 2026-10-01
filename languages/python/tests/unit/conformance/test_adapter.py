@@ -149,16 +149,19 @@ def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
     assert prepared.bounds.valid_from == dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
 
-def test_case_write_adapter_accepts_canonical_case_temporal_bounds() -> None:
-    instruction = instructions.KeyedWrite(
-        "update",
-        "parallax.compatibility.Position",
-        ({"id": 1, "value": "5.00"},),
-        valid_from="2024-02-01T00:00:00.000000Z",
+def test_case_write_adapter_carries_the_decoded_case_temporal_bounds() -> None:
+    instruction = instructions.deserialize(
+        {
+            "mutation": "update",
+            "entity": "parallax.compatibility.Position",
+            "rows": [{"id": 1, "value": "5.00"}],
+            "validFrom": "2024-02-01T00:00:00.000000Z",
+        }
     )
+    assert instruction.valid_from == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["position"])
     assert isinstance(prepared, PreparedKeyedWrite)
-    assert prepared.bounds.valid_from == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    assert prepared.bounds.valid_from == instruction.valid_from
 
 
 @pytest.mark.parametrize(
@@ -205,7 +208,7 @@ def test_case_write_adapter_leaves_malformed_values_for_core_classification() ->
 
 def test_case_write_adapter_leaves_unknown_entities_for_core_classification() -> None:
     instruction = instructions.KeyedWrite("insert", "Missing", ({"id": 1},))
-    with pytest.raises(instructions.WriteInstructionError, match="unknown entity"):
+    with pytest.raises(instructions.WriteInstructionError, match="declares no entity 'Missing'"):
         _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
 
 
