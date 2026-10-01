@@ -5,22 +5,22 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any, cast
 
-import pytest
-
 from parallax.conformance.story_models import ORDERS_MODEL
+from parallax.core.base import SQL_NULL
 from parallax.core.entity._model import model_of
-from parallax.core.sql_gen._compile import AttributeReadContract
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import PageBuilder, RootView, _convert
-from parallax.snapshot.materialize._convert import LevelContext
+from parallax.snapshot.materialize import PageBuilder, RootView
 from parallax.snapshot.materialize._page import page_rows, root_last_uses
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from tests.unit._prepared_read_support import bound_read
+from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 from tests.unit.snapshot._snapshot_page_support import (
     PageFixture,
-    convert_mapping,
-    identity_of,
-    layout_of,
+    RecordingObserver,
+    recorded_conversion_dependencies,
 )
+
+_ENCODED = model_of(ENCODED_ORDERS)
 
 
 def _order(order_id: object, name: str = "Ada") -> dict[str, object]:
@@ -35,60 +35,40 @@ def _order(order_id: object, name: str = "Ada") -> dict[str, object]:
     }
 
 
-def _context() -> LevelContext:
-    meta = model_of(ORDERS_MODEL)
-    identity = identity_of(meta, "Order")
-    layout = layout_of(meta, identity)
-    return LevelContext(
-        layout,
-        attribute_reads=tuple(
-            AttributeReadContract(
-                attribute,
-                attribute.storage.name,
-                temporal_end=True,
-                encoded=False,
-            )
-            for attribute in layout.attributes
-        ),
-    )
+def _encoded_order(key: str | None, name: str = "Ada", badge: str = "0f") -> dict[str, object]:
+    return {"id_hex": key, "name": name, "badge_hex": badge, "address": SQL_NULL}
 
 
 def _page(
     occurrences: tuple[tuple[int, dict[str, object]], ...],
+    observer: RecordingObserver | None = None,
 ) -> tuple[object, tuple[int, ...]]:
     source_count = max((source for source, _row in occurrences), default=0) + 1
-    builder = PageBuilder(ViewSchema(tuple(() for _ in range(source_count))))
+    builder = PageBuilder(ViewSchema(tuple(() for _ in range(source_count))), observer)
+    prepared = bound_read(_ENCODED, "EncodedOrder")
     roots = tuple(
-        convert_mapping(row, _context(), builder, source=source) for source, row in occurrences
+        prepared.convert_row(row, builder, source=source)[0] for source, row in occurrences
     )
     return builder.finish(roots, Pin()), roots
 
 
-def test_equal_witnesses_decode_once_and_share_one_page_state(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = 0
-    decode = _convert._decode_row  # pyright: ignore[reportPrivateUsage]
+def test_equal_witnesses_decode_once_and_share_one_page_state() -> None:
+    with recorded_conversion_dependencies() as calls:
+        page, _roots = _page(
+            ((ROOT_LEVEL, _encoded_order("01")), (ROOT_LEVEL, _encoded_order("01")))
+        )
+        assert calls.decoded == ["01", "01"]
 
-    def counting(*args: Any, **kwargs: Any) -> Any:
-        nonlocal calls
-        calls += 1
-        return decode(*args, **kwargs)
+        first = RootView(cast("Any", page), 0)
+        second = RootView(cast("Any", page), 1)
 
-    monkeypatch.setattr(_convert, "_decode_row", counting)
-    page, _roots = _page(((ROOT_LEVEL, _order(1)), (ROOT_LEVEL, _order(1))))
-    assert calls == 0
-
-    first = RootView(cast("Any", page), 0)
-    second = RootView(cast("Any", page), 1)
-
-    assert calls == 1
+    assert calls.decoded == ["01", "01", "0f"]
     assert len(page_rows(page).judged_states.group(0)) == 1
     assert first.member_values(0) is second.member_values(0)
 
 
 def test_separate_roots_may_store_unequal_witnesses_for_one_logical_key() -> None:
-    page, _roots = _page(((0, _order(1, "Ada")), (1, _order(1, "Grace"))))
+    page, _roots = _page(((0, _encoded_order("01", "Ada")), (1, _encoded_order("01", "Grace"))))
 
     first = RootView(cast("Any", page), 0)
     second = RootView(cast("Any", page), 1)
@@ -98,29 +78,21 @@ def test_separate_roots_may_store_unequal_witnesses_for_one_logical_key() -> Non
     assert len(page_rows(page).judged_states.group(0)) == 2
 
 
-def test_keyless_occurrences_are_judged_only_when_their_root_is_requested(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = 0
-    decode = _convert._decode_row  # pyright: ignore[reportPrivateUsage]
+def test_keyless_occurrences_are_judged_only_when_their_root_is_requested() -> None:
+    with recorded_conversion_dependencies() as calls:
+        page, _roots = _page(
+            ((0, _encoded_order(None, badge="0e")), (0, _encoded_order(None, badge="0f")))
+        )
+        assert calls.decoded == []
+        assert page_rows(cast("Any", page)).roots == (0, 1)
 
-    def counting(*args: Any, **kwargs: Any) -> Any:
-        nonlocal calls
-        calls += 1
-        return decode(*args, **kwargs)
+        first = RootView(cast("Any", page), 0)
+        assert calls.decoded == ["0e"]
+        assert [root.ordinal for root in first.invalid_roots] == [0]
 
-    monkeypatch.setattr(_convert, "_decode_row", counting)
-    page, _roots = _page(((0, _order(None)), (0, _order(None))))
-    assert calls == 0
-    assert page_rows(cast("Any", page)).roots == (0, 1)
-
-    first = RootView(cast("Any", page), 0)
-    assert calls == 1
-    assert [root.ordinal for root in first.invalid_roots] == [0]
-
-    second = RootView(cast("Any", page), 1)
-    assert calls == 2
-    assert [root.ordinal for root in second.invalid_roots] == [1]
+        second = RootView(cast("Any", page), 1)
+        assert calls.decoded == ["0e", "0f"]
+        assert [root.ordinal for root in second.invalid_roots] == [1]
 
 
 def test_a_root_view_reaches_only_its_roots_nodes_and_unions_its_views() -> None:
@@ -173,35 +145,6 @@ def test_releasing_a_root_view_twice_is_idempotent() -> None:
     root.release_finished_page_rows(0, root_last_uses(cast("Any", page)))
 
 
-class RecordingObserver:
-    def __init__(self) -> None:
-        self.events: list[tuple[str, int]] = []
-
-    def prepared(self, levels: int) -> None:
-        self.events.append(("prepared", levels))
-
-    def statement_rendered(self, level: int) -> None:
-        self.events.append(("statement_rendered", level))
-
-    def statement_executed(self, level: int, rows: int) -> None:
-        self.events.append(("statement_executed", rows))
-
-    def occurrences_reached(self, count: int) -> None:
-        self.events.append(("occurrences_reached", count))
-
-    def witnesses_compared(self, count: int) -> None:
-        self.events.append(("witnesses_compared", count))
-
-    def states_decoded(self) -> None:
-        self.events.append(("states_decoded", 1))
-
-    def states_shared(self) -> None:
-        self.events.append(("states_shared", 1))
-
-    def root_published(self, ordinal: int) -> None:
-        self.events.append(("root_published", ordinal))
-
-
 def publish_roots(page: Any, observer: RecordingObserver) -> Iterator[object]:
     from parallax.snapshot.handle._materialization import Materializer
 
@@ -213,10 +156,9 @@ def publish_roots(page: Any, observer: RecordingObserver) -> Iterator[object]:
 
 def test_root_zero_publishes_before_root_one_state_is_decoded() -> None:
     observer = RecordingObserver()
-    builder = PageBuilder(ViewSchema.of(), observer)
-    first = convert_mapping(_order(1), _context(), builder)
-    second = convert_mapping(_order(2), _context(), builder)
-    page = builder.finish((first, second), Pin())
+    page, _roots = _page(
+        ((ROOT_LEVEL, _encoded_order("01")), (ROOT_LEVEL, _encoded_order("02"))), observer
+    )
 
     assert list(publish_roots(page, observer)) == [0, 1]
     relevant = [

@@ -758,7 +758,6 @@ def convert_rows(
     prepared: PreparedRead,
     rows: Iterable[Row],
     observations: ObservedRows,
-    correlation_members: tuple[AttributeIdentity, ...] = (),
 ) -> tuple[int, ...]:
     """Convert ``rows`` into ``builder``, observing each one while it is still live.
 
@@ -790,9 +789,7 @@ def convert_rows(
     """
     refs: list[int] = []
     for row in rows:
-        ref, resolved, document, _variant = prepared.convert_driver(
-            row, builder, source=source, correlation_members=correlation_members
-        )
+        ref, resolved, document, _variant = prepared.convert_row(row, builder, source=source)
         refs.append(ref)
         observations.observe_occurrence(ref, resolved, document)
     return tuple(refs)

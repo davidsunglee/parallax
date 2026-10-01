@@ -26,6 +26,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import class_models, models
+from parallax.core.base import SQL_NULL
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import _layout as layout_module
 from parallax.core.entity._layout import (
@@ -57,11 +58,11 @@ from parallax.core.metamodel import (
 from parallax.core.relationship import view as relationship_view
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import PageBuilder, RootView
-from parallax.snapshot.materialize._convert import LevelContext, convert_deferred
 from parallax.snapshot.materialize._page import page_rows
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests.unit._corpus_model_support import corpus, formed, target
 from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit._prepared_read_support import bound_read, compiled_read
 
 _NAMESPACE = "parallax.compatibility"
 
@@ -539,48 +540,49 @@ def test_every_corpus_entitys_to_many_set_is_the_declared_cardinality_of_its_own
 # --------------------------------------------------------------------------- #
 
 
-def _merged(layout: EntityLayout, row: tuple[object, ...], views: tuple[RelationshipViewKey, ...]):
-    """One projection of ``layout``'s Entity carrying ``row`` and ``views``,
-    merged — the state every consumer of these two rules reads them through."""
+def _merged_view_order(
+    model: Metamodel, identity: EntityIdentity, views: tuple[RelationshipViewKey, ...]
+) -> tuple[RelationshipViewKey, ...]:
+    """The order projection merging walks and publishes ``views`` in, over one
+    converted row of ``identity`` carrying them all."""
     builder = PageBuilder(ViewSchema.of(*views))
-    projection = _claimed(builder, layout, row)
+    projection = _claimed(builder, model, identity, 0)
     for view in views:
         builder.write_view(projection, view, None)
-    return RootView(builder.finish((projection,), Pin()))
+    return RootView(builder.finish((projection,), Pin())).view_layout(0).slots
 
 
-def _merged_view_order(
-    layout: EntityLayout, views: tuple[RelationshipViewKey, ...]
-) -> tuple[RelationshipViewKey, ...]:
-    """The order projection merging walks and publishes ``views`` in."""
-    row = tuple(range(len(layout.members)))
-    return _merged(layout, row, views).view_layout(0).slots
-
-
-def _claimed(builder: PageBuilder, layout: EntityLayout, row: tuple[object, ...]) -> int:
-    """``row`` registered as a provider row of ``layout``'s Entity is."""
-    return convert_deferred(
-        row,
-        LevelContext(layout),
-        builder,
-        source=ROOT_LEVEL,
-        classifiable=(1 << len(row)) - 1,
+def _claimed(builder: PageBuilder, model: Metamodel, identity: EntityIdentity, seed: int) -> int:
+    """One driver row of ``identity``'s own read, every cell distinct and derived
+    from ``seed``, converted into ``builder`` as a root provider row is."""
+    compiled = compiled_read(model, identity)
+    row = tuple(
+        SQL_NULL
+        if key == compiled.structured_column
+        else f"{seed + position:04x}"
+        if key.endswith("_hex")
+        else seed + position
+        for position, key in enumerate(compiled.result_keys)
     )
+    ref, _resolved, _document, _variant = bound_read(model, identity).convert_row(
+        row, builder, source=ROOT_LEVEL
+    )
+    return ref
 
 
 def test_every_corpus_entitys_family_and_key_agree_with_the_merge_identity_rule() -> None:
     # Two projections of one row share a logical node exactly where the layout
     # says their keys agree, which is the merge-side statement of `family` and
-    # `primary_key` together.
+    # `primary_key` together. Each concrete Entity's own read converts its rows,
+    # so the keys are the ones conversion claims.
     for stem, model, identity, layout in _corpus_layouts():
-        del model
+        if tuple(_view(model, identity).concrete_subtypes) != (identity,):
+            continue
         where = (stem, identity.canonical)
-        row = tuple(range(100, 100 + len(layout.members)))
-        other = tuple(value + 1 for value in row)
         builder = PageBuilder(ViewSchema.of())
-        first = _claimed(builder, layout, row)
-        again = _claimed(builder, layout, row)
-        apart = _claimed(builder, layout, other)
+        first = _claimed(builder, model, identity, 100)
+        again = _claimed(builder, model, identity, 100)
+        apart = _claimed(builder, model, identity, 101)
         rows = page_rows(builder.finish((first, again, apart), Pin()))
         assert list(rows.logical_ids) == [0, 0, 1], where
         first_key, apart_key = rows.keys[first], rows.keys[apart]
@@ -600,7 +602,7 @@ def test_the_layouts_view_order_is_the_order_the_merge_walks_and_publishes() -> 
         _key("Person", "animals"),
         _key("Person", "animals", "animals[Cat]"),
     )
-    assert layout.ordered(scrambled) == _merged_view_order(layout, scrambled)
+    assert layout.ordered(scrambled) == _merged_view_order(model, identity, scrambled)
 
 
 # --------------------------------------------------------------------------- #

@@ -84,7 +84,6 @@ from parallax.snapshot.materialize import (
     ClassifiedRoot,
     Page,
     RootView,
-    _convert,
     classify_roots,
     page_edges,
 )
@@ -103,6 +102,11 @@ from tests._support.document_reads import fold_mapping_rows
 from tests._support.root_ownership import own_root
 from tests.unit._corpus_model_support import formed
 from tests.unit._transact_support import ACCOUNT, NEW_ROW, PERSON
+from tests.unit.snapshot._snapshot_page_support import (
+    ConversionCalls,
+    RecordingObserver,
+    recorded_conversion_dependencies,
+)
 
 _MODELS = models.load_models()
 ORDERS = _MODELS["orders"]
@@ -257,47 +261,34 @@ class QueuePort(ConnectsAsItself):
         raise NotImplementedError
 
 
-def test_find_collects_claims_without_decoding_trusted_scalar_payloads(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    decoded = 0
-    decode = _convert._decode_row  # pyright: ignore[reportPrivateUsage]
+def test_find_collects_claims_without_decoding_trusted_scalar_payloads() -> None:
+    with recorded_conversion_dependencies() as calls:
+        result = _find(
+            deserialize_query({"target": "Order", "predicate": {"all": {}}}),
+            ORDERS,
+            QueuePort([[{**_ORDER_ROW, "id": 1}, {**_ORDER_ROW, "id": 2}]]),
+        )
+        assert len(page_rows(result.page).keys) == 2
+        RootView(result.page, 0)
+        RootView(result.page, 1)
 
-    def counting(*args: Any, **kwargs: Any) -> Any:
-        nonlocal decoded
-        decoded += 1
-        return decode(*args, **kwargs)
-
-    monkeypatch.setattr(_convert, "_decode_row", counting)
-    result = _find(
-        deserialize_query({"target": "Order", "predicate": {"all": {}}}),
-        ORDERS,
-        QueuePort([[{**_ORDER_ROW, "id": 1}, {**_ORDER_ROW, "id": 2}]]),
-    )
-
-    assert len(page_rows(result.page).keys) == 2
-    assert decoded == 0
-    RootView(result.page, 0)
-    assert decoded == 0
-    RootView(result.page, 1)
-    assert decoded == 0
+    assert calls == ConversionCalls()
 
 
-def test_a_later_root_document_is_not_classified_before_its_root_view(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    decoded = 0
-    decode = _convert._decode_row  # pyright: ignore[reportPrivateUsage]
+def _states_decoded(observer: RecordingObserver) -> int:
+    return sum(value for name, value in observer.events if name == "states_decoded")
 
-    def counting(*args: Any, **kwargs: Any) -> Any:
-        nonlocal decoded
-        decoded += 1
-        return decode(*args, **kwargs)
 
-    monkeypatch.setattr(_convert, "_decode_row", counting)
-    result = _find(
-        deserialize_query({"target": "ProfileOwner", "predicate": {"all": {}}}),
-        model_of(_PROFILE_OWNER_MODEL),
+def test_a_later_root_document_is_not_classified_before_its_root_view() -> None:
+    meta = model_of(_PROFILE_OWNER_MODEL)
+    observer = RecordingObserver()
+    result = handle.find(
+        preflight(
+            deserialize_query({"target": "ProfileOwner", "predicate": {"all": {}}}),
+            model=meta,
+            form="graph",
+        ),
+        _cataloged(meta),
         QueuePort(
             [
                 [
@@ -306,13 +297,15 @@ def test_a_later_root_document_is_not_classified_before_its_root_view(
                 ]
             ]
         ),
+        observer=observer,
     )
 
-    assert decoded == 0
-    RootView(result.page, 0)
-    assert decoded == 1
-    RootView(result.page, 1)
-    assert decoded == 2
+    assert _states_decoded(observer) == 0
+    assert RootView(result.page, 0).issues(0) == ()
+    assert _states_decoded(observer) == 1
+    later = RootView(result.page, 1)
+    assert _states_decoded(observer) == 2
+    assert [issue.code for issue in later.issues(0)] == ["stored-data-leaf-undecodable"]
 
 
 class PipelineQueuePort(QueuePort):

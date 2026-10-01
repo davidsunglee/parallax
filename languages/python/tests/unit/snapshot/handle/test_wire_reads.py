@@ -76,7 +76,6 @@ from parallax.snapshot.materialize import (
 from parallax.snapshot.materialize import (
     _wire as wire_materialize,
 )
-from parallax.snapshot.materialize._convert import LevelContext
 from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
@@ -95,11 +94,10 @@ from tests._support.document_reads import fold_mapping_rows
 from tests._support.root_ownership import own_root
 from tests._support.sql import compile_read
 from tests.unit._metamodel_support import Declaration, key, source
+from tests.unit._prepared_read_support import bound_read, compiled_read
 from tests.unit.snapshot._snapshot_page_support import (
-    convert_mapping,
-    documents_of,
+    driver_row,
     identity_of,
-    layout_of,
 )
 
 # Descriptor-backed Domain Models, because a connection takes the Domain Model
@@ -431,17 +429,20 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
     assert _mapping(root["address"])["phones"] == []
 
 
-def test_an_absent_many_publishes_empty_through_the_unclassified_decode_too() -> None:
-    # The same document reaching conversion with no member preclassified, which is
-    # the arm a level with no classified members takes. Its
-    # occurrence reduction has to answer exactly as the row transform's does, or
-    # one stored state publishes two nodes depending on which door it came in by.
+def test_an_absent_many_publishes_empty_through_a_result_keyed_row_too() -> None:
+    # The same document reaching conversion as a result-keyed row rather than a
+    # positional one, so each member is located by its key. Its occurrence
+    # reduction has to answer exactly as the positional row's does, or one stored
+    # state publishes two nodes depending on which door it came in by.
     identity = identity_of(CUSTOMER_META, "Customer")
     builder = PageBuilder(ViewSchema.of())
-    ref = convert_mapping(
-        {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}},
-        LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
+    ref, _resolved, _document, _variant = bound_read(CUSTOMER_META, "Customer").convert_row(
+        driver_row(
+            compiled_read(CUSTOMER_META, "Customer"),
+            {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}},
+        ),
         builder,
+        source=ROOT_LEVEL,
     )
     (published,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),
@@ -460,10 +461,13 @@ def test_the_absent_sentinel_reaches_no_published_position_at_any_depth() -> Non
     # depth a document can nest to.
     identity = identity_of(CUSTOMER_META, "Customer")
     builder = PageBuilder(ViewSchema.of())
-    ref = convert_mapping(
-        {"id": 3, "address": {"street": "9 Beacon St", "geo": {"country": "NO"}}},
-        LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
+    ref, _resolved, _document, _variant = bound_read(CUSTOMER_META, "Customer").convert_row(
+        driver_row(
+            compiled_read(CUSTOMER_META, "Customer"),
+            {"id": 3, "address": {"street": "9 Beacon St", "geo": {"country": "NO"}}},
+        ),
         builder,
+        source=ROOT_LEVEL,
     )
     (published,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),
@@ -1212,9 +1216,9 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
         "archive_profile": PresentDocument({"label": "archive"}),
     }
     builder = PageBuilder(ViewSchema.of())
-    ref, resolved, _document, _variant = bind(
-        CatalogedModel(_VARIANT_MODEL), compiled
-    ).convert_driver(stored, builder, source=ROOT_LEVEL)
+    ref, resolved, _document, _variant = bind(CatalogedModel(_VARIANT_MODEL), compiled).convert_row(
+        stored, builder, source=ROOT_LEVEL
+    )
     (root,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),
         _VARIANT_MODEL,

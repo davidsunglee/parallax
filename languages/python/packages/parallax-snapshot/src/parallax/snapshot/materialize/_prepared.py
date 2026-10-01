@@ -25,10 +25,10 @@ from parallax.core.unit_work.observe import occurrence_value
 from parallax.core.wire import encode_wire
 from parallax.snapshot.materialize._convert import (
     AttributeReadContract,
-    LevelContext,
+    BoundLevel,
     build_positional_many,
     build_positional_object,
-    convert_deferred,
+    register_reduced_row,
 )
 from parallax.snapshot.materialize._page import ABSENT, LogicalKey, PageBuilder
 from parallax.snapshot.materialize._views import SourceLevel
@@ -91,17 +91,24 @@ class PreparedRead:
     """
 
     _compiled: _CompiledRead
-    _levels: Mapping[EntityIdentity, LevelContext]
+    _levels: Mapping[EntityIdentity, BoundLevel]
 
-    def convert_driver(
+    def convert_row(
         self,
         row: Row | Mapping[str, object],
         builder: PageBuilder,
         *,
         source: SourceLevel,
-        correlation_members: tuple[AttributeIdentity, ...] = (),
     ) -> tuple[int, EntityIdentity, object | None, str | None]:
-        """Convert one provider row without allocating a per-row carrier."""
+        """Register one provider row in ``builder``, answering its projection
+        index, the Entity it resolved to, its shared document, and its
+        `familyVariant` spelling.
+
+        A row whose level needs no state reduction registers its witness as its
+        member row. Any other row is claimed now, with its identity and
+        correlation values judged for page assembly, and the rest of its
+        payload judged when a Root View first needs its state.
+        """
         resolved, variant, unknown, document = self._compiled.row_identity(row)
         level = self._levels[resolved]
         if isinstance(row, tuple) and level.direct_row is not None:
@@ -111,29 +118,7 @@ class PreparedRead:
                 if len(level.result_ordinals) != 1
                 else (selected,)
             )
-            if not level.requires_state_reduction and unknown is None:
-                layout = level.layout
-                primary_key = witness[layout.primary_key[0]]
-                key = (
-                    None
-                    if primary_key is ABSENT
-                    else LogicalKey(
-                        layout.family,
-                        primary_key,
-                        tuple(witness[position] for position in layout.temporal_starts),
-                    )
-                )
-                ref = builder.add_claim(
-                    source,
-                    layout,
-                    key,
-                    witness,
-                    witness,
-                    (),
-                    witness,
-                )
-                return ref, resolved, document, variant
-            classifiable = (1 << len(witness)) - 1
+            classifiable = level.every_member_present
         else:
             classifiable = 0
             layout = level.layout
@@ -190,15 +175,28 @@ class PreparedRead:
                 if present:
                     classifiable |= 1 << position
             witness = tuple(witness_values)
-        ref = convert_deferred(
-            witness,
-            level,
-            builder,
-            source=source,
-            classifiable=classifiable,
-            unknown_family_tag=unknown,
-            correlation_members=correlation_members,
-        )
+        if not level.requires_state_reduction and unknown is None:
+            layout = level.layout
+            primary_key = witness[layout.primary_key[0]]
+            key = (
+                None
+                if primary_key is ABSENT
+                else LogicalKey(
+                    layout.family,
+                    primary_key,
+                    tuple(witness[position] for position in layout.temporal_starts),
+                )
+            )
+            ref = builder.add_claim(source, layout, key, witness, witness, (), witness)
+        else:
+            ref = register_reduced_row(
+                witness,
+                level,
+                builder,
+                source=source,
+                classifiable=classifiable,
+                unknown_family_tag=unknown,
+            )
         return ref, resolved, document, variant
 
     def _raw_driver_presence(
@@ -229,7 +227,7 @@ class RowPublisher:
     __slots__ = ("_compiled", "_levels", "_operations")
 
     def __init__(
-        self, compiled: _CompiledRead, levels: Mapping[EntityIdentity, LevelContext]
+        self, compiled: _CompiledRead, levels: Mapping[EntityIdentity, BoundLevel]
     ) -> None:
         self._compiled = compiled
         self._levels = levels
@@ -272,9 +270,7 @@ class _RowOperation:
         return values
 
 
-def _row_operation(
-    level: LevelContext, keys: tuple[str, ...], variant: str | None
-) -> _RowOperation:
+def _row_operation(level: BoundLevel, keys: tuple[str, ...], variant: str | None) -> _RowOperation:
     # Key order is observable: kept members in layout order, then renamed
     # Attributes, then publication-key padding, then `familyVariant`. An
     # Attribute's own result key wins over its storage key, which may be another
@@ -314,24 +310,26 @@ def bind(
     Paid once per compiled read, which is where the state belongs — the member
     layouts are the model's and the projected documents and Attribute contracts
     are this statement's, and no row of the read can change either.
+    ``correlation_members`` are the members this read's rows route by; a read
+    routed by a different selection is bound separately.
     """
     return PreparedRead(
         compiled,
         MappingProxyType(
             {
-                identity: _level_context(model, compiled, identity, correlation_members)
+                identity: _bound_level(model, compiled, identity, correlation_members)
                 for identity in compiled.resolvable
             }
         ),
     )
 
 
-def _level_context(
+def _bound_level(
     model: CatalogedModel,
     compiled: _CompiledRead,
     identity: EntityIdentity,
-    correlation_members: tuple[AttributeIdentity, ...] = (),
-) -> LevelContext:
+    correlation_members: tuple[AttributeIdentity, ...],
+) -> BoundLevel:
     layout = model.layouts.entity(identity)
     reads = compiled.attribute_reads(identity)
     keys = tuple(
@@ -339,13 +337,13 @@ def _level_context(
         for position, attribute in enumerate(layout.attributes)
     ) + tuple(occurrence.storage.name for occurrence in layout.occurrences)
     classified = compiled.classified_members(identity)
-    return LevelContext(
+    return BoundLevel(
         layout,
         compiled.projected_documents,
         reads,
         classified,
         tuple(compiled.raw_member_ordinal(identity, key) for key in keys),
-        classifiers=tuple(
+        tuple(
             compiled.raw_member_classifier(
                 identity,
                 key,
@@ -356,6 +354,6 @@ def _level_context(
             else None
             for key in keys
         ),
-        document_member_names=tuple(compiled.raw_member_location(identity, key) for key in keys),
-        routing_members=correlation_members,
+        tuple(compiled.raw_member_location(identity, key) for key in keys),
+        correlation_members,
     )

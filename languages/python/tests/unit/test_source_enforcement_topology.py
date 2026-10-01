@@ -190,8 +190,6 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ),
     ("parallax.snapshot.materialize._classify", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._convert", "_layout"): frozenset({"EntityLayout"}),
-    ("parallax.snapshot.materialize._identity", "_construction_input"): frozenset({"ABSENT"}),
-    ("parallax.snapshot.materialize._identity", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._page", "_construction_input"): frozenset({"ABSENT"}),
     ("parallax.snapshot.materialize._page", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._prepared", "_layout"): frozenset({"CatalogedModel"}),

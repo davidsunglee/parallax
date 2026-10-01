@@ -32,54 +32,14 @@ from parallax.snapshot.materialize import (
     classify_roots,
 )
 from parallax.snapshot.materialize._classify import RootClassifications
-from parallax.snapshot.materialize._convert import LevelContext
 from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
-from tests.unit.snapshot._snapshot_page_support import (
-    convert_mapping,
-    identity_of,
-    layout_of,
-)
-
-
-class _RecordingObserver:
-    def __init__(self) -> None:
-        self.events: list[tuple[str, int]] = []
-
-    def prepared(self, levels: int) -> None:
-        self.events.append(("prepared", levels))
-
-    def statement_rendered(self, level: int) -> None:
-        self.events.append(("statement_rendered", level))
-
-    def statement_executed(self, level: int, rows: int) -> None:
-        del level
-        self.events.append(("statement_executed", rows))
-
-    def occurrences_reached(self, count: int) -> None:
-        self.events.append(("occurrences_reached", count))
-
-    def witnesses_compared(self, count: int) -> None:
-        self.events.append(("witnesses_compared", count))
-
-    def states_decoded(self) -> None:
-        self.events.append(("states_decoded", 1))
-
-    def states_shared(self) -> None:
-        self.events.append(("states_shared", 1))
-
-    def root_published(self, ordinal: int) -> None:
-        self.events.append(("root_published", ordinal))
+from tests.unit._prepared_read_support import bound_read
+from tests.unit.snapshot._snapshot_page_support import RecordingObserver
 
 
 def test_the_inert_observer_accepts_a_witness_comparison_total() -> None:
     INERT.witnesses_compared(1)
-
-
-def _context() -> LevelContext:
-    model = model_of(ORDERS_MODEL)
-    identity = identity_of(model, "Order")
-    return LevelContext(layout_of(model, identity))
 
 
 def _row(order_id: int) -> dict[str, object]:
@@ -96,7 +56,11 @@ def _row(order_id: int) -> dict[str, object]:
 
 def _page(observer: MaterializationObserver, *order_ids: int) -> Page:
     builder = PageBuilder(ViewSchema.of(), observer)
-    roots = tuple(convert_mapping(_row(order_id), _context(), builder) for order_id in order_ids)
+    prepared = bound_read(model_of(ORDERS_MODEL), "Order")
+    roots = tuple(
+        prepared.convert_row(_row(order_id), builder, source=ROOT_LEVEL)[0]
+        for order_id in order_ids
+    )
     return builder.finish(roots, Pin())
 
 
@@ -123,7 +87,7 @@ def _order_read() -> tuple[Metamodel, CatalogedModel, CompiledRead]:
 
 
 def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
-    observer = _RecordingObserver()
+    observer = RecordingObserver()
     materializer = Materializer(observer)
     meta, model, compiled = _order_read()
     rows = tuple(tuple(_row(1)[key] for key in compiled.result_keys) for _ in range(2))
@@ -149,7 +113,7 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
 def test_eager_row_publication_withholds_events_when_a_later_root_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    observer = _RecordingObserver()
+    observer = RecordingObserver()
     meta, model, compiled = _order_read()
     rows = tuple(tuple(_row(order_id)[key] for key in compiled.result_keys) for order_id in (1, 2))
     stage = Materializer(observer).read_page(FlatPageRead(model, compiled, lambda: rows, Pin()))
@@ -183,18 +147,18 @@ def test_a_flat_page_read_without_an_observer_records_none_and_publishes_inertly
 
 
 def test_root_publication_requires_one_pin_per_page_root() -> None:
-    observer = _RecordingObserver()
+    observer = RecordingObserver()
     page = _page(observer, 1)
     with pytest.raises(ValueError, match="pin count must match"):
         list(Materializer(observer).roots(page, _publish(page), pins=()))
 
 
 def test_eager_and_streamed_pages_report_the_same_publication_totals() -> None:
-    eager = _RecordingObserver()
+    eager = RecordingObserver()
     eager_page = _page(eager, 1, 2)
     assert list(Materializer(eager).roots(eager_page, _publish(eager_page))) == [0, 1]
 
-    streamed = _RecordingObserver()
+    streamed = RecordingObserver()
     ordinal = 0
     for order_id in (1, 2):
         page = _page(streamed, order_id)
@@ -215,7 +179,7 @@ def test_atomic_publication_withholds_every_root_and_event_when_a_later_root_fai
     # An eager result is one publication boundary. Even though root zero can be
     # prepared, root one's failure prevents either value or either publication
     # event from crossing that boundary.
-    observer = _RecordingObserver()
+    observer = RecordingObserver()
     page = _page(observer, 1, 2)
 
     def publish(_root: RootView, position: int) -> Iterator[object]:
@@ -234,7 +198,7 @@ def test_atomic_publication_withholds_every_root_and_event_when_a_later_root_fai
 
 
 def test_an_atomic_publication_needs_the_model_that_decides_state_deferral() -> None:
-    observer = _RecordingObserver()
+    observer = RecordingObserver()
     page = _page(observer, 1)
     with pytest.raises(ValueError, match="state deferral against its model"):
         list(Materializer(observer).roots(page, _publish(page), atomic=True))
@@ -245,7 +209,7 @@ def test_incremental_publication_keeps_the_prefix_before_a_later_root_fails() ->
     # A streamed Page uses the same root seam without eager atomicity. Root zero
     # therefore crosses the boundary, and its event is emitted, before root one
     # fails; the already-delivered prefix remains observable.
-    observer = _RecordingObserver()
+    observer = RecordingObserver()
     page = _page(observer, 1, 2)
     received: list[object] = []
 

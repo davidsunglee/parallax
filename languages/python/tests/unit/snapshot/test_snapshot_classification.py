@@ -11,7 +11,9 @@ one Structured Column.
 
 Per-row detection lives in `test_snapshot_conversion.py`, propagation through the
 Root View in `test_materializer_roots.py`, and the accessors that consume what
-publishes here in `test_snapshot_find.py`.
+publishes here in `test_snapshot_find.py`. A native Column is trusted as its
+provider normalized it, so the stored state these Pages reject is carried by
+encoded Bytes Columns, document members, and temporal ends.
 """
 
 from __future__ import annotations
@@ -27,7 +29,6 @@ import pytest
 
 from parallax.conformance import read_models
 from parallax.conformance import vo_models as vo
-from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import DomainModel
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_port import MappingRow
@@ -61,7 +62,11 @@ from tests._support.db_port import (
     ScriptedAdapter,
 )
 from tests._support.root_ownership import own_root
-from tests.unit._transact_support import ACCOUNT
+from tests.unit.snapshot._encoded_page_models import (
+    ENCODED_ACCOUNT,
+    ENCODED_ORDERS,
+    EncodedOrder,
+)
 from tests.unit.snapshot._layout_twin_columns import COLUMNS_TWIN
 from tests.unit.snapshot._layout_twin_columns import LayoutTwinItem as ColumnsItem
 from tests.unit.snapshot._layout_twin_document import DOCUMENT_TWIN
@@ -70,22 +75,11 @@ from tests.unit.snapshot._snapshot_page_support import PageFixture, invalid_reco
 
 _NAMESPACE = "parallax.compatibility"
 
-_ORDER_ROW: dict[str, object] = {
-    "id": 1,
-    "name": "Ada",
-    "sku": "A",
-    "qty": 1,
-    "price": Decimal("1"),
-    "active": True,
-    "ordered_on": dt.date(2024, 1, 1),
-}
-_ITEM_ROW: dict[str, object] = {
-    "id": 11,
-    "order_id": 1,
-    "sku": "x",
-    "quantity": 1,
-    "shipped_on": None,
-}
+_ORDER_ROW: dict[str, object] = {"id_hex": "01", "name": "Ada", "badge_hex": None, "address": None}
+_ITEM_ROW: dict[str, object] = {"id_hex": "0b", "order_id_hex": "01", "code_hex": "0c"}
+_ITEMS = "parallax.compatibility.EncodedOrder.items"
+_ITEM_ORDER = "parallax.compatibility.EncodedOrderItem.order"
+_ITEM = EntityIdentity(_NAMESPACE, "EncodedOrderItem")
 
 
 def _classified(root: RootClassification) -> ClassifiedRoot:
@@ -98,7 +92,7 @@ def _classify(fixture: PageFixture, *roots: object, offset: int = 0) -> RootClas
     graph = fixture.page(*cast("Any", roots))
     return classify_roots(
         RootView(graph),
-        model_of(ORDERS_MODEL),
+        model_of(ENCODED_ORDERS),
         CONCURRENCY,
         ordinal_offset=offset,
     )
@@ -110,11 +104,9 @@ def _classify(fixture: PageFixture, *roots: object, offset: int = 0) -> RootClas
 def test_a_conforming_graph_is_answered_without_walking_or_wrapping() -> None:
     # The common case pays nothing: no issue anywhere means no reachability walk,
     # no excluded node, and no record to unwrap at publication.
-    fixture = PageFixture(ORDERS_MODEL, "parallax.compatibility.Order.items")
-    order = fixture.node("Order", _ORDER_ROW)
-    fixture.attach(
-        order, "parallax.compatibility.Order.items", (fixture.node("OrderItem", _ITEM_ROW),)
-    )
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    order = fixture.node("EncodedOrder", _ORDER_ROW)
+    fixture.attach(order, _ITEMS, (fixture.node("EncodedOrderItem", _ITEM_ROW),))
 
     classification = _classify(fixture, order)
     assert classification.conforming
@@ -126,20 +118,20 @@ def test_an_invalid_included_node_invalidates_every_root_that_reaches_it() -> No
     # Reaching one affected object through several roots repeats its diagnosis in
     # each affected root's record, because classification is root-granular and no
     # root may deliver a pruned or partly published tree.
-    fixture = PageFixture(ORDERS_MODEL, "parallax.compatibility.Order.items")
-    first = fixture.node("Order", _ORDER_ROW)
-    second = fixture.node("Order", {**_ORDER_ROW, "id": 2})
-    shared = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
-    fixture.attach(first, "parallax.compatibility.Order.items", (shared,))
-    fixture.attach(second, "parallax.compatibility.Order.items", (shared,))
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    first = fixture.node("EncodedOrder", _ORDER_ROW)
+    second = fixture.node("EncodedOrder", {**_ORDER_ROW, "id_hex": "02"})
+    shared = fixture.node("EncodedOrderItem", {**_ITEM_ROW, "code_hex": "not-hex"})
+    fixture.attach(first, _ITEMS, (shared,))
+    fixture.attach(second, _ITEMS, (shared,))
 
     diagnosis = StoredDataIssue(
         "stored-data-leaf-undecodable",
-        EntityIdentity(_NAMESPACE, "OrderItem"),
-        AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "shippedOn"),
-        ObjectKey(EntityIdentity(_NAMESPACE, "OrderItem"), (("id", 11),)),
+        _ITEM,
+        AttributeIdentity(_ITEM, "code"),
+        ObjectKey(_ITEM, (("id", b"\x0b"),)),
         path=(),
-        stored_value="not-a-date",
+        stored_value="not-hex",
     )
     affected = [_classified(root) for root in _classify(fixture, first, second).roots]
     assert [root.issues for root in affected] == [frozenset({diagnosis}), frozenset({diagnosis})]
@@ -147,14 +139,19 @@ def test_an_invalid_included_node_invalidates_every_root_that_reaches_it() -> No
 
 
 def test_a_root_reaching_no_issue_stays_conforming_beside_an_invalid_sibling() -> None:
-    fixture = PageFixture(ORDERS_MODEL, "parallax.compatibility.Order.items")
-    clean = fixture.node("Order", _ORDER_ROW)
-    affected = fixture.node("Order", {**_ORDER_ROW, "id": 2})
-    fixture.attach(clean, "parallax.compatibility.Order.items", ())
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    clean = fixture.node("EncodedOrder", _ORDER_ROW)
+    affected = fixture.node("EncodedOrder", {**_ORDER_ROW, "id_hex": "02"})
+    fixture.attach(clean, _ITEMS, ())
     fixture.attach(
         affected,
-        "parallax.compatibility.Order.items",
-        (fixture.node("OrderItem", {**_ITEM_ROW, "id": 12, "order_id": 2, "shipped_on": "nope"}),),
+        _ITEMS,
+        (
+            fixture.node(
+                "EncodedOrderItem",
+                {**_ITEM_ROW, "id_hex": "0c", "order_id_hex": "02", "code_hex": "nope"},
+            ),
+        ),
     )
 
     conforming, classified = _classify(fixture, clean, affected).roots
@@ -166,25 +163,19 @@ def test_one_invalid_node_reached_twice_from_one_root_carries_one_diagnosis() ->
     # A broad view and its narrowed sibling reach the same node, and an object
     # diagnosed once is diagnosed once: the record is a set of facts, not a walk
     # log, so the second path adds nothing.
-    fixture = PageFixture(
-        ORDERS_MODEL,
-        "parallax.compatibility.Order.items",
-        ("parallax.compatibility.Order.items", "items[OrderItem]"),
-    )
-    order = fixture.node("Order", _ORDER_ROW)
-    item = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
-    fixture.attach(order, "parallax.compatibility.Order.items", (item,))
-    fixture.attach(
-        order, "parallax.compatibility.Order.items", (item,), narrowed="items[OrderItem]"
-    )
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS, (_ITEMS, "items[EncodedOrderItem]"))
+    order = fixture.node("EncodedOrder", _ORDER_ROW)
+    item = fixture.node("EncodedOrderItem", {**_ITEM_ROW, "code_hex": "not-hex"})
+    fixture.attach(order, _ITEMS, (item,))
+    fixture.attach(order, _ITEMS, (item,), narrowed="items[EncodedOrderItem]")
 
     (classified,) = _classify(fixture, order).roots
     assert len(_classified(classified).issues) == 1
 
 
 def test_the_ordinal_offset_positions_a_record_in_the_published_result() -> None:
-    fixture = PageFixture(ORDERS_MODEL)
-    order = fixture.node("Order", {**_ORDER_ROW, "ordered_on": "not-a-date"})
+    fixture = PageFixture(ENCODED_ORDERS)
+    order = fixture.node("EncodedOrder", {**_ORDER_ROW, "badge_hex": "not-hex"})
 
     (classified,) = _classify(fixture, order, offset=4).roots
     assert _classified(classified).ordinal == 4
@@ -194,15 +185,13 @@ def test_the_ordinal_offset_positions_a_record_in_the_published_result() -> None
 # The construction scope narrows with the classification.                      #
 # --------------------------------------------------------------------------- #
 def test_a_non_hydrating_root_leaves_its_own_subtree_out_of_construction() -> None:
-    fixture = PageFixture(
-        ORDERS_MODEL, "parallax.compatibility.OrderItem.order", "parallax.compatibility.Order.items"
-    )
-    order = fixture.node("Order", _ORDER_ROW)
-    item = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
+    fixture = PageFixture(ENCODED_ORDERS, _ITEM_ORDER, _ITEMS)
+    order = fixture.node("EncodedOrder", _ORDER_ROW)
+    item = fixture.node("EncodedOrderItem", {**_ITEM_ROW, "code_hex": "not-hex"})
     # A loaded-null view reaches nothing and so attributes nothing, which is the
     # arm distinct from an empty to-many and from an unloaded relationship.
-    fixture.attach(item, "parallax.compatibility.OrderItem.order", None)
-    fixture.attach(order, "parallax.compatibility.Order.items", (item,))
+    fixture.attach(item, _ITEM_ORDER, None)
+    fixture.attach(order, _ITEMS, (item,))
 
     classification = _classify(fixture, order)
     assert classification.excluded == frozenset({0, 1})
@@ -213,19 +202,19 @@ def test_a_node_a_conforming_root_also_reaches_stays_in_construction() -> None:
     # Exclusion follows publication, not blame: the shared item is constructible
     # and the conforming root needs it, so only the nodes no publishable root
     # reaches are left out.
-    fixture = PageFixture(ORDERS_MODEL, "parallax.compatibility.Order.items")
-    clean = fixture.node("Order", _ORDER_ROW)
-    affected = fixture.node("Order", {**_ORDER_ROW, "id": 2})
-    shared = fixture.node("OrderItem", _ITEM_ROW)
-    broken = fixture.node("OrderItem", {**_ITEM_ROW, "id": 12, "shipped_on": "not-a-date"})
-    fixture.attach(clean, "parallax.compatibility.Order.items", (shared,))
-    fixture.attach(affected, "parallax.compatibility.Order.items", (shared, broken))
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    clean = fixture.node("EncodedOrder", _ORDER_ROW)
+    affected = fixture.node("EncodedOrder", {**_ORDER_ROW, "id_hex": "02"})
+    shared = fixture.node("EncodedOrderItem", _ITEM_ROW)
+    broken = fixture.node("EncodedOrderItem", {**_ITEM_ROW, "id_hex": "0c", "code_hex": "not-hex"})
+    fixture.attach(clean, _ITEMS, (shared,))
+    fixture.attach(affected, _ITEMS, (shared, broken))
 
     classification = _classify(fixture, clean, affected)
     assert classification.excluded == frozenset({2, 3})
     published, invalid = fixture.materialize(clean, affected)
-    order = cast("Order", published)
-    assert order.id == 1
+    order = cast("EncodedOrder", published)
+    assert order.id == b"\x01"
     assert len(order.items) == 1
     assert invalid_record(invalid).data is None
 
@@ -285,7 +274,13 @@ def test_a_temporal_root_locates_itself_by_the_milestone_it_decoded() -> None:
     # versioned root would carry `version` here instead; the two never coexist.
     opened = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     published = _balance(
-        {"bal_id": 1, "acct_num": "A-1", "val": "not-a-decimal", "in_z": opened, "out_z": INFINITY}
+        {
+            "bal_id": 1,
+            "acct_num": "A-1",
+            "val": Decimal("1.00"),
+            "in_z": opened,
+            "out_z": "not-an-instant",
+        }
     )
     assert published.data is None
     assert published.version is None
@@ -293,23 +288,17 @@ def test_a_temporal_root_locates_itself_by_the_milestone_it_decoded() -> None:
     assert published.edge.tx_time == opened
 
 
-def test_a_temporal_root_whose_milestone_did_not_decode_locates_no_edge() -> None:
+def test_a_temporal_root_whose_milestone_was_not_carried_locates_no_edge() -> None:
     # The locator is a decoded fact or nothing: a milestone the row never carried
     # is not manufactured to fill the field.
-    published = _balance(
-        {"bal_id": 1, "acct_num": "A-1", "val": "not-a-decimal", "in_z": None, "out_z": INFINITY}
-    )
+    published = _balance({"bal_id": 1, "acct_num": "A-1", "val": Decimal("1.00"), "out_z": None})
     assert published.edge is None
-    assert {issue.code for issue in published.issues} == {
-        "stored-data-leaf-undecodable",
-        "stored-data-attribute-null",
-    }
+    assert {issue.code for issue in published.issues} == {"stored-data-attribute-null"}
 
 
-def test_a_versioned_root_whose_version_did_not_decode_locates_no_version() -> None:
-    row: dict[str, object] = {"id": 1, "owner": "Ada", "balance": Decimal("1.00"), "version": "x"}
-    fixture = PageFixture(ACCOUNT)
-    root = fixture.node("Account", row)
+def test_a_versioned_root_whose_version_was_not_carried_locates_no_version() -> None:
+    fixture = PageFixture(ENCODED_ACCOUNT)
+    root = fixture.node("EncodedAccount", {"id": 1, "token_hex": "not-hex"})
     published = invalid_record(fixture.materialize(root)[0])
     assert published.version is None
     assert published.edge is None
@@ -341,10 +330,10 @@ def test_an_inherited_record_reads_its_key_at_the_layout_and_its_version_where_t
         "DepositRate",
         {
             "id": 7,
-            "amount": None,
+            "amount": Decimal("1.00"),
             "grade": "A",
             "from_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
-            "thru_z": INFINITY,
+            "thru_z": "not-an-instant",
             "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
             "out_z": INFINITY,
         },
@@ -372,17 +361,15 @@ def test_an_inherited_record_reads_its_key_at_the_layout_and_its_version_where_t
 def test_a_loaded_to_one_view_carries_attribution_to_its_parent() -> None:
     # A to-one arm is a lone allocation index rather than a tuple, and reaching an
     # invalid node through one invalidates its holder exactly as a to-many does.
-    fixture = PageFixture(
-        ORDERS_MODEL, "parallax.compatibility.OrderItem.order", "parallax.compatibility.Order.items"
-    )
-    order = fixture.node("Order", _ORDER_ROW)
-    item = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
-    fixture.attach(item, "parallax.compatibility.OrderItem.order", order)
-    fixture.attach(order, "parallax.compatibility.Order.items", (item,))
+    fixture = PageFixture(ENCODED_ORDERS, _ITEM_ORDER, _ITEMS)
+    order = fixture.node("EncodedOrder", _ORDER_ROW)
+    item = fixture.node("EncodedOrderItem", {**_ITEM_ROW, "code_hex": "not-hex"})
+    fixture.attach(item, _ITEM_ORDER, order)
+    fixture.attach(order, _ITEMS, (item,))
 
     published = invalid_record(fixture.materialize(item)[0])
     assert published.data is None
-    assert published.object_key == ObjectKey(EntityIdentity(_NAMESPACE, "OrderItem"), (("id", 11),))
+    assert published.object_key == ObjectKey(_ITEM, (("id", b"\x0b"),))
 
 
 # --------------------------------------------------------------------------- #

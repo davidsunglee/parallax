@@ -477,6 +477,7 @@ class OwnedFridge(
     inheritance=ConcreteSubtype,
 ):
     litres: Attr[int | None] = attr(type=Int32)
+    serial: Attr[bytes | None]
 
 
 _APPLIANCE: Final = DomainModel(OwnedAppliance, OwnedFridge)
@@ -531,7 +532,7 @@ def test_materializing_an_inherited_versioned_page_reads_the_version_from_its_ow
 ) -> None:
     row = {"id": 1, "name": "Chill", "version": 3, "litres": 40}
     prepared = _PreparedPage(
-        _APPLIANCE, "OwnedFridge", row, {**row, "id": 2, "name": None}, history=False
+        _APPLIANCE, "OwnedFridge", row, {**row, "id": 2, "serial_hex": "not-hex"}, history=False
     )
     callers = _trace_declarations(monkeypatch, prepared.cataloged.meta)
 
@@ -557,7 +558,7 @@ def test_materializing_an_inherited_milestone_page_reads_axes_from_the_family_sh
         "out_z": INFINITY_INSTANT,
     }
     prepared = _PreparedPage(
-        RATE, "DepositRate", row, {**row, "id": 2, "amount": None}, history=True
+        RATE, "DepositRate", row, {**row, "id": 2, "thru_z": "not-an-instant"}, history=True
     )
     callers = _trace_declarations(monkeypatch, prepared.cataloged.meta)
 
