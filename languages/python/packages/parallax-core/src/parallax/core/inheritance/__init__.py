@@ -24,14 +24,9 @@ from parallax.core.inheritance._table_groups import (
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
-    AttributeMetadata,
     ConcreteSubtype,
     EntityIdentity,
     EntityMetadata,
-    ValueObjectMetadata,
-    VoDocumentViolation,
-    WriteAssignmentError,
-    judge_assignment,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 
@@ -51,17 +46,13 @@ __all__ = [
     "InheritanceTableGroup",
     "TableGroupContributor",
     "TopLevelValueObjectTableContributor",
-    "WriteAssignmentError",
     "family_variant_name",
     "project_table_groups",
     "reject_predicate_write",
     "root_metadata",
     "validate_subtype_write",
-    "validate_write_assignment",
     "view",
 ]
-
-_UNJUDGED = object()
 
 
 class InheritanceError(ValueError):
@@ -225,76 +216,6 @@ def reject_predicate_write(entity: EntityMetadata) -> None:
         "writes are out of scope')",
         entity=name,
     )
-
-
-def validate_write_assignment(
-    model: AcceptedMetamodel,
-    entity: EntityMetadata,
-    name: str,
-    value: object,
-    *,
-    known_vo_violation: VoDocumentViolation | object | None = _UNJUDGED,
-    known_value_valid: bool | None = None,
-) -> None:
-    """The ONE predicate-write assignment check every caller applies to one
-    `{attr, value}` pair, resolved family-effectively and then judged.
-
-    Resolution is this scope's half: a family's version and key columns are
-    declared only on the root, so ``name`` is matched against the Inheritance
-    Facet's FAMILY-EFFECTIVE applicable members, exactly like every other
-    write-side member-name resolution. The verdict itself — assignability,
-    nullability, declared-type conformance, and Value Object document shape — is
-    :func:`~parallax.core.metamodel.judge_assignment`'s, the one judgement the
-    typed ``.set(...)`` path and ``Entity.edit(**changes)`` both reach
-    without a model at all. Only the resolution in front of it differs between
-    the three callers, never the rule.
-
-    The judgement names the member relative to its own owner, so this caller
-    prefixes the addressed Entity exactly: an assignment reported here reads
-    ``parallax.compatibility.Order.total: …`` however deep in a Value Object the
-    violation was found.
-
-    A ``name`` this family declares NEITHER a scalar attribute NOR a value object
-    for (the prepared write's own member-name-honesty gate already
-    rejects as wholly undeclared) is out of this function's scope — it returns
-    silently, leaving that classification to its own owning check.
-    """
-    position = _entity_view(view(model), entity.identity)
-    owner = entity.identity.canonical
-    for attribute in position.applicable_attributes:
-        if attribute.identity.name == name:
-            _judged(owner, attribute, value, known_value_valid=known_value_valid)
-            return
-    for value_object in position.applicable_value_objects:
-        if value_object.identity.path[-1] == name:
-            _judged(
-                owner,
-                value_object,
-                value,
-                known_vo_violation=known_vo_violation,
-                known_value_valid=known_value_valid,
-            )
-            return
-
-
-def _judged(
-    owner: str,
-    member: AttributeMetadata | ValueObjectMetadata,
-    value: object,
-    *,
-    known_vo_violation: VoDocumentViolation | object | None = _UNJUDGED,
-    known_value_valid: bool | None = None,
-) -> None:
-    """Judge ``member`` against ``value``, re-raising owner-qualified."""
-    try:
-        judge_assignment(
-            member,
-            value,
-            known_vo_violation=known_vo_violation,
-            known_value_valid=known_value_valid,
-        )
-    except WriteAssignmentError as error:
-        raise WriteAssignmentError(error.rule, f"{owner}.{error}") from error
 
 
 def _concrete_accepted_field_names(

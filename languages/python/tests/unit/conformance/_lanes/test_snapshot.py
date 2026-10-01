@@ -1,5 +1,5 @@
 """The snapshot action-step lane, driven database-free: the `mutate` action's
-edited copy and how its assignments are judged, the `access` step's graph
+edited copy and how its assignments resolve, the `access` step's graph
 observation off the retained view, the `expectError` and `expectGraph`
 grading, the `write:` step the lane commits as its own unit of work, and the
 lane's own refusals, each named for the case.
@@ -112,7 +112,7 @@ def _run(case: case_format.Case, port: CaseDatabase) -> ScenarioRun:
 
 # --------------------------------------------------------------------------- #
 # The scenario `mutate` action over a snapshot graph: the edited copy a step    #
-# publishes and how its assignments are judged. What a root LOOKS like is the  #
+# publishes and how its assignments resolve. What a root LOOKS like is the    #
 # wire materializer's own contract (`test_wire_reads.py`).                      #
 # --------------------------------------------------------------------------- #
 _VARIANT_ROOT = EntityIdentity("catalog", "AssetRecord")
@@ -282,23 +282,12 @@ def test_edited_copy_refuses_the_whole_set_when_one_name_is_unassignable() -> No
     assert source.roots[0] == {"id": 1, "name": "Ada"}
 
 
-def test_edited_copy_refuses_an_assignment_to_the_primary_key() -> None:
-    # `declarations.md`'s edit contract: a primary-key target may not be assigned. The
-    # engine reaches the SAME verdict the typed `edit(**changes)` does rather
-    # than merging whatever the case authored.
-    step = {"action": "mutate", "on": 0, "set": {"id": 2}}
-    source = _order_view(id=1, name="Ada")
-    with pytest.raises(EngineError, match="primary-key fields may not be assigned"):
-        _edited_copy(step, 0, source)
-
-
-def test_edited_copy_refuses_an_ill_typed_assignment() -> None:
-    # The other half of the same verdict: a value that does not match the
-    # member's declared type is refused at edit time, never carried into a copy
-    # a later step names.
+def test_edited_copy_reports_a_value_its_member_cannot_decode() -> None:
+    # Decoding, not judgment: a literal with no managed value fails the case
+    # loudly rather than escaping the lane as a decoder error.
     step = {"action": "mutate", "on": 0, "set": {"qty": "five"}}
     source = _order_view(id=1, name="Ada", qty=5)
-    with pytest.raises(EngineError, match="does not match the declared type"):
+    with pytest.raises(EngineError, match="cannot decode"):
         _edited_copy(step, 0, source)
 
 
@@ -353,15 +342,6 @@ def _edited_animal(authored: Mapping[str, object], source: Any) -> Any:
     )
 
 
-def test_edited_copy_judges_a_subtype_member_against_the_node_it_edits() -> None:
-    # The read's target is the ABSTRACT `Animal`, which declares no `barkVolume`
-    # at all; the node is a `Dog`, which declares it as an `int32`. Judging
-    # against the target would wave the string through, because a name the
-    # position does not declare is nobody's assignment to refuse.
-    with pytest.raises(EngineError, match="does not match the declared type"):
-        _edited_animal({"barkVolume": "loud"}, _abstract_read_of_a_dog())
-
-
 def test_edited_copy_refuses_an_assignment_to_read_time_provenance() -> None:
     # `familyVariant` is a key the read publishes, not a member anything on the
     # node's ancestry declares, so a gate asking the materialized mapping would
@@ -380,7 +360,7 @@ def test_edited_copy_refuses_a_sibling_branchs_member() -> None:
 def test_edited_copy_carries_the_concrete_identity_its_node_resolves_to() -> None:
     # The accepted half: a member the node's own concrete Entity declares lands,
     # and the copy states the Entity it IS rather than the abstract target that
-    # published it — so a chain of edits keeps judging against `Dog`.
+    # published it — so a chain of edits keeps resolving against `Dog`.
     copy = _edited_animal({"barkVolume": 9}, _abstract_read_of_a_dog())
     assert (
         copy.identity
@@ -391,14 +371,14 @@ def test_edited_copy_carries_the_concrete_identity_its_node_resolves_to() -> Non
 
 
 def test_edited_copy_refuses_a_variant_naming_no_concrete_subtype() -> None:
-    # An unresolvable variant is refused rather than fallen back on: judging
+    # An unresolvable variant is refused rather than fallen back on: resolving
     # against the abstract target instead is exactly the hole the resolution
     # closes, so it may not be the failure mode when resolution fails.
     with pytest.raises(EngineError, match="no concrete subtype of Animal"):
         _edited_animal({"name": "Rexy"}, _abstract_read_of_a_dog(familyVariant="Unicorn"))
 
 
-def test_edited_copy_judges_a_concrete_target_read_against_that_target() -> None:
+def test_edited_copy_resolves_a_concrete_target_read_against_that_target() -> None:
     # A CONCRETE-target read carries no `familyVariant` at all (`m-case-format`):
     # the caller already knows the variant, so a node states no provenance to
     # resolve and the target it was published under is the Entity it is.
@@ -440,13 +420,11 @@ def test_edited_copy_reads_a_standalone_entitys_family_variant_as_domain_state()
     # standalone Entity may declare a member of its own by that name, and
     # resolving its value as a variant spelling would refuse every edit of such a
     # node — even one touching another member entirely. It stays ordinary domain
-    # state here: assignable, judged against its own declared type, and carried
-    # by a copy that is still the Entity the read named.
+    # state here: assignable, and carried by a copy that is still the Entity the
+    # read named.
     copy = _edited_ticket({"familyVariant": "standard"})
     assert copy.roots[0] == {"id": 1, "familyVariant": "standard"}
     assert copy.identity == _TICKET
-    with pytest.raises(EngineError, match="does not match the declared type"):
-        _edited_ticket({"familyVariant": 7})
 
 
 def test_grade_mutate_step_rejects_an_on_index_naming_no_view() -> None:
@@ -1307,34 +1285,18 @@ def test_run_scenario_case_access_step_graph_keeps_an_all_to_one_terminal_null()
     assert graph["Order"] == [None]
 
 
-def test_judged_assignments_reject_an_invalid_member() -> None:
-    account = models.load_models()["account"]
-    account_entity = next(item for item in account.entities if item.identity.name == "Account")
-    case = _synthetic_write("scenario", {"model": "models/account.yaml"})
-    with pytest.raises(EngineError, match="invalid assignment"):
-        snapshot._judged_assignments(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
-            case,
-            account,
-            account_entity.identity,
-            {"missing": 1},
-            {"id": 1},
-        )
-
-
-def test_judged_assignments_decode_a_bitemporal_edit_without_admitting_a_write() -> None:
+def test_edited_copy_decodes_a_bitemporal_edit_without_admitting_a_write() -> None:
     # An edit derives a copy; it states no write, so a Bitemporal node's edit
     # owes no Valid-Time bound and its decoded member is what the copy carries.
     position = models.load_models()["position"]
     entity = next(item for item in position.entities if item.identity.name == "Position")
     case = _synthetic_write("scenario", {"model": "models/position.yaml"})
-    edited = snapshot._judged_assignments(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
-        case, position, entity.identity, {"value": "250.00"}, {"id": 1, "acctNum": "A"}
+    step = {"action": "mutate", "on": 0, "set": {"value": "250.00"}}
+    source = _scenario_result({"id": 1, "acctNum": "A"}, identity=entity.identity)
+    copy = snapshot._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+        case, position, step, 0, source
     )
-    assert edited["value"] == decimal.Decimal("250.00")
-    with pytest.raises(EngineError, match="does not match the declared type"):
-        snapshot._judged_assignments(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
-            case, position, entity.identity, {"value": "lots"}, {"id": 1, "acctNum": "A"}
-        )
+    assert copy.roots[0] == {"id": 1, "acctNum": "A", "value": decimal.Decimal("250.00")}
 
 
 def test_a_snapshot_scenarios_write_step_opens_at_the_cases_root_level() -> None:
