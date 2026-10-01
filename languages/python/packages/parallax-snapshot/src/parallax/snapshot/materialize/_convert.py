@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import InitVar, dataclass, field
 from operator import itemgetter
-from typing import Final, NamedTuple, Protocol, cast
+from typing import Final, Protocol, cast
 
 from parallax.core.base import (
     SQL_NULL,
@@ -224,17 +224,6 @@ class BoundLevel:
         )
 
 
-class IdentityClaim(NamedTuple):
-    """What a reduced row registers before its payload is judged: the logical key
-    formed from its judged identity, the routed values page assembly reads, and
-    the findings its identity and its correlations raised."""
-
-    key: LogicalKey | None
-    routed_values: tuple[object, ...]
-    identity_findings: tuple[StoredDataIssueInput, ...]
-    correlation_findings: tuple[StoredDataIssueInput, ...]
-
-
 def register_reduced_row(
     witness: tuple[object, ...],
     level: BoundLevel,
@@ -251,30 +240,14 @@ def register_reduced_row(
     ``witness`` is positional, laid out by ``level.layout``, with ``ABSENT``
     wherever the read carried no value. ``classifiable`` marks, one bit per
     position, the members the row carried for document classification.
+
+    The claim keeps the raw witness for comparing claimants and classifying the
+    payload, beside the routed values page assembly reads: the witness with
+    each judged identity and correlation cell decoded, or ``ABSENT`` where
+    rejected. Identity findings join the Page's identity issues; correlation
+    findings wait for the payload judgment, which places them at their own
+    positions.
     """
-    claim = _claim_identity(witness, level, unknown_family_tag)
-    projection = builder.add_claim(
-        source,
-        level.layout,
-        claim.key,
-        witness,
-        claim.routed_values,
-        claim.identity_findings,
-        level,
-    )
-    partial = None if classifiable == level.every_member_present else classifiable
-    if partial is not None or claim.correlation_findings or unknown_family_tag is not None:
-        builder.add_payload_inputs(
-            projection, partial, claim.correlation_findings, unknown_family_tag
-        )
-    return projection
-
-
-def _claim_identity(
-    witness: tuple[object, ...],
-    level: BoundLevel,
-    unknown_family_tag: UnknownFamilyTag | None,
-) -> IdentityClaim:
     routed, identity_findings = _judge(level.eager_identity_positions, witness, level, None, None)
     routed, correlation_findings = _judge(
         level.eager_correlation_positions, witness, level, routed, None
@@ -291,12 +264,24 @@ def _claim_identity(
             level.temporal_start_values(routed_values),
         )
     )
-    return IdentityClaim(
+    projection = builder.add_claim(
+        source,
+        layout,
         key,
+        witness,
         routed_values,
         () if identity_findings is None else tuple(identity_findings),
-        () if correlation_findings is None else tuple(correlation_findings),
+        level,
     )
+    partial = None if classifiable == level.every_member_present else classifiable
+    if partial is not None or correlation_findings or unknown_family_tag is not None:
+        builder.add_payload_inputs(
+            projection,
+            partial,
+            () if correlation_findings is None else tuple(correlation_findings),
+            unknown_family_tag,
+        )
+    return projection
 
 
 def _tuple_getter(
