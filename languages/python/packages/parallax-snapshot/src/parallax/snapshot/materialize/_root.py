@@ -490,10 +490,7 @@ class RootView:
         if rows is None:  # pragma: no cover - completion owns a live Page
             raise ValueError("a completed Root View cannot judge another state")
         if rows.keys[canonical] is None:
-            state = self._decode(canonical)
-            if not rows.decoders.pending(canonical):
-                _release_witness(rows, canonical)
-            return state
+            return self._decode(canonical)
         held = judged_state(rows, canonical)
         if held is not None:
             _notify(rows.observer, "states_shared")

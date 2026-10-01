@@ -175,14 +175,12 @@ def test_root_zero_publishes_before_root_one_state_is_decoded() -> None:
     assert relevant == ["states_decoded", "root_published", "states_decoded", "root_published"]
 
 
-def _shared_unknown_animal(owners: tuple[int, ...]) -> object:
-    """A Page rooted at ``owners``, each Person owning one Animal row tagged for a
-    concrete the family never declared, so that row claims no key."""
+def _shared_keyless_animal(owners: tuple[int, ...], animal_row: dict[str, object]) -> object:
+    """A Page rooted at ``owners``, each Person owning the one keyless Animal
+    occurrence ``animal_row`` claims."""
     animals = RelationshipViewKey(RelationshipIdentity(identity_of(_ANIMAL, "Person"), "animals"))
     builder = PageBuilder(ViewSchema.of(animals))
-    animal, *_ = bound_read(_ANIMAL, "Animal").convert_row(
-        {"id": 7, "kind": "unicorn", "owner_id": 1}, builder, source=ROOT_LEVEL
-    )
+    animal, *_ = bound_read(_ANIMAL, "Animal").convert_row(animal_row, builder, source=ROOT_LEVEL)
     people = bound_read(_ANIMAL, "Person")
     roots = tuple(
         people.convert_row({"id": owner, "name": f"P{owner}"}, builder, source=ROOT_LEVEL)[0]
@@ -201,17 +199,35 @@ def _shared_unknown_animal(owners: tuple[int, ...]) -> object:
         pytest.param((1, 2, 1), True, id="atomic-releasing-at-last-use"),
     ],
 )
+@pytest.mark.parametrize(
+    ("animal_row", "expected"),
+    [
+        pytest.param(
+            {"id": 7, "kind": "unicorn", "owner_id": 1},
+            ({"id": 7, "ownerId": 1}, [("stored-data-family-tag-unknown", "unicorn")]),
+            id="unknown-concrete",
+        ),
+        pytest.param(
+            {"kind": "dog", "name": "Rex", "owner_id": 1},
+            ({"name": "Rex", "ownerId": 1}, list[object]()),
+            id="without-key-column",
+        ),
+    ],
+)
 def test_a_keyless_occurrence_is_judged_again_for_every_root_reaching_it(
-    owners: tuple[int, ...], atomic: bool
+    owners: tuple[int, ...],
+    atomic: bool,
+    animal_row: dict[str, object],
+    expected: tuple[object, ...],
 ) -> None:
     # A keyless claim shares no judged state, so each root reaching it judges its
     # payload anew, after earlier roots released what they alone reached.
     from parallax.snapshot.handle._materialization import Materializer
 
-    page = _shared_unknown_animal(owners)
+    page = _shared_keyless_animal(owners, animal_row)
 
     def publish(root: RootView, _position: int) -> Iterator[tuple[object, ...]]:
-        (node,) = (node for node, concrete in enumerate(root.order) if concrete.name == "Animal")
+        (node,) = (node for node, concrete in enumerate(root.order) if concrete.name != "Person")
         yield (
             rendered_members(root.layout(node), root.member_values(node)),
             [(issue.code, issue.stored_value) for issue in root.issues(node)],
@@ -223,6 +239,4 @@ def test_a_keyless_occurrence_is_judged_again_for_every_root_reaching_it(
         )
     )
 
-    assert published == [
-        ({"id": 7, "ownerId": 1}, [("stored-data-family-tag-unknown", "unicorn")])
-    ] * len(owners)
+    assert published == [expected] * len(owners)
