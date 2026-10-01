@@ -5,22 +5,30 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any, cast
 
+import pytest
+
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.core.base import SQL_NULL
+from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity._model import model_of
+from parallax.core.metamodel import RelationshipIdentity
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import PageBuilder, RootView
 from parallax.snapshot.materialize._page import page_rows, root_last_uses
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import bound_read
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 from tests.unit.snapshot._snapshot_page_support import (
     PageFixture,
     RecordingObserver,
+    identity_of,
     recorded_conversion_dependencies,
+    rendered_members,
 )
 
 _ENCODED = model_of(ENCODED_ORDERS)
+_ANIMAL = corpus_model("animal")
 
 
 def _order(order_id: object, name: str = "Ada") -> dict[str, object]:
@@ -165,3 +173,56 @@ def test_root_zero_publishes_before_root_one_state_is_decoded() -> None:
         name for name, _value in observer.events if name in {"states_decoded", "root_published"}
     ]
     assert relevant == ["states_decoded", "root_published", "states_decoded", "root_published"]
+
+
+def _shared_unknown_animal(owners: tuple[int, ...]) -> object:
+    """A Page rooted at ``owners``, each Person owning one Animal row tagged for a
+    concrete the family never declared, so that row claims no key."""
+    animals = RelationshipViewKey(RelationshipIdentity(identity_of(_ANIMAL, "Person"), "animals"))
+    builder = PageBuilder(ViewSchema.of(animals))
+    animal, *_ = bound_read(_ANIMAL, "Animal").convert_row(
+        {"id": 7, "kind": "unicorn", "owner_id": 1}, builder, source=ROOT_LEVEL
+    )
+    people = bound_read(_ANIMAL, "Person")
+    roots = tuple(
+        people.convert_row({"id": owner, "name": f"P{owner}"}, builder, source=ROOT_LEVEL)[0]
+        for owner in owners
+    )
+    for root in roots:
+        builder.write_view(root, animals, (animal,))
+    return builder.finish(roots, Pin())
+
+
+@pytest.mark.parametrize(
+    ("owners", "atomic"),
+    [
+        pytest.param((1, 2), False, id="streamed"),
+        pytest.param((1, 2), True, id="atomic"),
+        pytest.param((1, 2, 1), True, id="atomic-releasing-at-last-use"),
+    ],
+)
+def test_a_keyless_occurrence_is_judged_again_for_every_root_reaching_it(
+    owners: tuple[int, ...], atomic: bool
+) -> None:
+    # A keyless claim shares no judged state, so each root reaching it judges its
+    # payload anew, after earlier roots released what they alone reached.
+    from parallax.snapshot.handle._materialization import Materializer
+
+    page = _shared_unknown_animal(owners)
+
+    def publish(root: RootView, _position: int) -> Iterator[tuple[object, ...]]:
+        (node,) = (node for node, concrete in enumerate(root.order) if concrete.name == "Animal")
+        yield (
+            rendered_members(root.layout(node), root.member_values(node)),
+            [(issue.code, issue.stored_value) for issue in root.issues(node)],
+        )
+
+    published = list(
+        Materializer(RecordingObserver()).roots(
+            cast("Any", page), publish, atomic=atomic, model=_ANIMAL
+        )
+    )
+
+    assert published == [
+        ({"id": 7, "ownerId": 1}, [("stored-data-family-tag-unknown", "unicorn")])
+    ] * len(owners)

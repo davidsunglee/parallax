@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Final, cast
@@ -39,6 +39,7 @@ from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Rel, ValueObje
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import Row
+from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import MISSING
 from parallax.core.entity._layout import CatalogedModel
@@ -47,6 +48,7 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
+    RelationshipIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
@@ -787,6 +789,16 @@ def test_a_result_keyed_row_without_a_column_carries_no_value_for_it() -> None:
     assert delivered.issues == ()
 
 
+def test_a_row_without_its_key_column_still_publishes_what_it_carried() -> None:
+    # Omitting the key leaves the row no logical node to share, yet a level that
+    # keeps its witness as its member row still judges and publishes the rest.
+    prepared = _prepared(ORDERS, "Order")
+    keyed = _converted(prepared, _ORDER)
+    unkeyed = _converted(prepared, {key: value for key, value in _ORDER.items() if key != "id"})
+    assert unkeyed.members == {name: value for name, value in keyed.members.items() if name != "id"}
+    assert unkeyed.issues == ()
+
+
 @_ROW_FORMS
 @pytest.mark.parametrize(
     ("model", "entity", "cells", "starts"),
@@ -1055,6 +1067,53 @@ def test_a_rejected_correlation_freezes_its_evidence_when_it_is_judged() -> None
     assert issue.member == _HOLDER
     assert evidence == ("0a", {"k": "1b"})
     assert isinstance(evidence[1], MappingProxyType)
+
+
+@pytest.mark.parametrize(
+    ("holders", "atomic"),
+    [
+        pytest.param(("a101", "b202"), False, id="streamed"),
+        pytest.param(("a101", "b202"), True, id="atomic"),
+        pytest.param(("a101", "b202", "a101"), True, id="atomic-releasing-at-last-use"),
+    ],
+)
+def test_a_keyless_holding_keeps_its_captured_finding_for_every_holder_reaching_it(
+    holders: tuple[str, ...], atomic: bool
+) -> None:
+    # A holding read without its key claims no logical node, so every holder
+    # reaching it judges its payload again, after the first holder's release.
+    from parallax.snapshot.handle._materialization import Materializer
+
+    holdings = RelationshipViewKey(
+        RelationshipIdentity(EntityIdentity(_NAMESPACE, "CorrelatedHolder"), "holdings")
+    )
+    builder = PageBuilder(ViewSchema.of(holdings))
+    keyless = _holding(holder_id_hex="zz")
+    del keyless["id"]
+    holding, *_ = _holdings().convert_row(keyless, builder, source=ROOT_LEVEL)
+    holder_read = bound_read(HOLDINGS, "CorrelatedHolder")
+    roots = tuple(
+        holder_read.convert_row({"id_hex": key}, builder, source=ROOT_LEVEL)[0] for key in holders
+    )
+    for root in roots:
+        builder.write_view(root, holdings, (holding,))
+    page = builder.finish(roots, Pin())
+
+    def publish(root: RootView, _position: int) -> Iterator[tuple[object, ...]]:
+        node = root.order.index(_HOLDING)
+        yield (
+            rendered_members(root.layout(node), root.member_values(node)),
+            [(issue.code, issue.member, issue.stored_value) for issue in root.issues(node)],
+        )
+
+    published = list(Materializer().roots(page, publish, atomic=atomic, model=HOLDINGS))
+
+    assert published == [
+        (
+            {"digest": b"\xd1\x01", "custodianId": b"\xc1\x01", "terms": None},
+            [("stored-data-leaf-undecodable", _HOLDER, "zz")],
+        )
+    ] * len(holders)
 
 
 # --------------------------------------------------------------------------- #

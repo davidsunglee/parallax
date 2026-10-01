@@ -4,10 +4,11 @@ import datetime as dt
 import decimal
 import uuid
 from array import array
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
-from typing import Final, Literal, NamedTuple, cast
+from typing import Final, Literal, NamedTuple, Protocol, cast
 
+from parallax.core.base import UnknownFamilyTag
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.document_codec import DocumentPathSegment
 from parallax.core.entity._construction_input import ABSENT
@@ -122,7 +123,21 @@ class EntityState(NamedTuple):
     findings: tuple[StoredDataIssueInput, ...]
 
 
-type _Decoder = Callable[[], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]]
+class PayloadDecoder(Protocol):
+    """Judges a reduced claim's deferred payload from the inputs its Page retains:
+    the raw ``witness``, the ``routed_values`` its claim registered, the
+    ``classifiable`` member mask (``None`` where the row carried every member),
+    the findings its correlations raised when claimed, and its unrecognized
+    family tag. One decoder serves every claim of its level."""
+
+    def decode_payload(
+        self,
+        witness: tuple[object, ...],
+        routed_values: tuple[object, ...],
+        classifiable: int | None,
+        correlation_findings: tuple[StoredDataIssueInput, ...],
+        unknown_family_tag: UnknownFamilyTag | None,
+    ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]: ...
 
 
 class SparseIssues:
@@ -168,36 +183,102 @@ class SparseEdges:
 
 
 class DecoderRows:
-    __slots__ = ("_count", "_values", "_witnesses")
+    """Each projection's payload judgment.
+
+    A claim registered with its member row answers its own witness. A reduced
+    claim is judged by its level's shared decoder from the witness and routed
+    member row the Page holds for it, plus the sparse inputs registered beside
+    them, each ``None`` where no claim registered one. A judgment is
+    :meth:`pending` until :meth:`settle` or :meth:`release` drops its decoder
+    and inputs. A keyless claim's is never settled, since every root reaching it
+    judges it again, so the Page keeps its witness and routed row until release.
+    """
+
+    __slots__ = (
+        "_classifiable",
+        "_correlation_findings",
+        "_count",
+        "_member_rows",
+        "_unknown_family_tags",
+        "_values",
+        "_witnesses",
+    )
 
     def __init__(
         self,
         count: int,
-        values: dict[int, _Decoder | None],
+        values: dict[int, PayloadDecoder | None],
         witnesses: Sequence[object],
+        member_rows: Sequence[tuple[object, ...]],
+        classifiable: dict[int, int] | None,
+        correlation_findings: dict[int, tuple[StoredDataIssueInput, ...]] | None,
+        unknown_family_tags: dict[int, UnknownFamilyTag] | None,
     ) -> None:
         self._count = count
         self._values = values
         self._witnesses = witnesses
+        self._member_rows = member_rows
+        self._classifiable = classifiable
+        self._correlation_findings = correlation_findings
+        self._unknown_family_tags = unknown_family_tags
 
     def __len__(self) -> int:
         return self._count
 
-    def __getitem__(self, projection: int) -> _Decoder | tuple[object, ...] | None:
-        if projection in self._values:
-            return self._values[projection]
-        witness = self._witnesses[projection]
-        return cast("tuple[object, ...]", witness) if isinstance(witness, tuple) else None
+    def pending(self, projection: int) -> bool:
+        """Whether ``projection`` still has a deferred payload to judge."""
+        return self._values.get(projection) is not None
 
-    def __setitem__(self, projection: int, value: _Decoder | None) -> None:
-        self._values[projection] = value
+    def decode(
+        self, projection: int
+    ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
+        """``projection``'s member row and payload findings."""
+        if projection in self._values:
+            decoder = self._values[projection]
+        else:
+            witness = self._witnesses[projection]
+            decoder = cast("tuple[object, ...]", witness) if isinstance(witness, tuple) else None
+        if decoder is None:  # pragma: no cover - a judged keyed projection is read from its state
+            raise ValueError("a released projection decoder has no unjudged state")
+        if isinstance(decoder, tuple):
+            return decoder, ()
+        masks = self._classifiable
+        findings = self._correlation_findings
+        tags = self._unknown_family_tags
+        return decoder.decode_payload(
+            cast("tuple[object, ...]", self._witnesses[projection]),
+            self._member_rows[projection],
+            None if masks is None else masks.get(projection),
+            () if findings is None else findings.get(projection, ()),
+            None if tags is None else tags.get(projection),
+        )
+
+    def settle(self, projection: int) -> None:
+        """Retire ``projection``'s judgment once its state no longer needs one."""
+        self._values[projection] = None
+        if self._classifiable:
+            self._classifiable.pop(projection, None)
+        if self._correlation_findings:
+            self._correlation_findings.pop(projection, None)
+        if self._unknown_family_tags:
+            self._unknown_family_tags.pop(projection, None)
 
     def release(self, projection: int) -> None:
         self._values.pop(projection, None)
+        if self._classifiable:
+            self._classifiable.pop(projection, None)
+        if self._correlation_findings:
+            self._correlation_findings.pop(projection, None)
+        if self._unknown_family_tags:
+            self._unknown_family_tags.pop(projection, None)
 
     def clear(self) -> None:
         self._values.clear()
+        self._classifiable = None
+        self._correlation_findings = None
+        self._unknown_family_tags = None
         self._witnesses = ()
+        self._member_rows = ()
         self._count = 0
 
 
@@ -477,6 +558,8 @@ class PageBuilder:
 
     __slots__ = (
         "_claims",
+        "_classifiable",
+        "_correlation_findings",
         "_decoders",
         "_first",
         "_identity",
@@ -494,6 +577,7 @@ class PageBuilder:
         "_sealed",
         "_slots",
         "_sources",
+        "_unknown_family_tags",
         "_views",
         "_witnesses",
     )
@@ -516,7 +600,10 @@ class PageBuilder:
         self._identity: dict[LogicalKey, int] = {}
         self._first: list[int] = []
         self._claims: list[int | list[int]] = []
-        self._decoders: dict[int, _Decoder | None] = {}
+        self._decoders: dict[int, PayloadDecoder | None] = {}
+        self._classifiable: dict[int, int] = {}
+        self._correlation_findings: dict[int, tuple[StoredDataIssueInput, ...]] = {}
+        self._unknown_family_tags: dict[int, UnknownFamilyTag] = {}
         self._witnesses: list[object] = []
         self._sealed = False
 
@@ -528,8 +615,7 @@ class PageBuilder:
         witness: object,
         raw_member_values: tuple[object, ...],
         identity_issues: tuple[StoredDataIssueInput, ...],
-        decode: Callable[[], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]]
-        | tuple[object, ...],
+        payload: PayloadDecoder | tuple[object, ...],
     ) -> int:
         """Append an identity claim without judging its payload, and answer its
         projection index.
@@ -537,9 +623,10 @@ class PageBuilder:
         Claims under one ``key`` share a logical node; a claim with no key keeps
         its own, so it shares with nothing — not even a second claim of the
         identical unreadable row. A Root View compares every claim's
-        ``witness`` for a logical node before invoking ``decode``, then shares one
-        Page-owned Entity State among equal witnesses. ``decode`` is either the
-        deferred payload judgment or the member row it would produce.
+        ``witness`` for a logical node before judging its payload, then shares one
+        Page-owned Entity State among equal witnesses. ``payload`` is either the
+        member row itself or the decoder that judges it from ``witness``,
+        ``raw_member_values`` and any :meth:`add_payload_inputs`.
         """
         self._require_open()
         if source == self._last_source and layout is self._last_layout:
@@ -567,8 +654,8 @@ class PageBuilder:
         self._member_rows.append(raw_member_values)
         if identity_issues:
             self._issues[projection] = identity_issues
-        if callable(decode):
-            self._decoders[projection] = decode
+        if not isinstance(payload, tuple):
+            self._decoders[projection] = payload
         self._sources.append(source)
         self._slots.append(slots)
         self._views.append(
@@ -578,6 +665,25 @@ class PageBuilder:
         self._keys.append(key)
         self._witnesses.append(witness)
         return projection
+
+    def add_payload_inputs(
+        self,
+        projection: int,
+        classifiable: int | None,
+        correlation_findings: tuple[StoredDataIssueInput, ...],
+        unknown_family_tag: UnknownFamilyTag | None,
+    ) -> None:
+        """Retain what a deferred payload judgment needs beyond the claim's witness
+        and routed row, each only where set: the members the row carried for
+        classification where it did not carry them all, the findings its
+        correlations raised when claimed, and its unrecognized family tag."""
+        self._require_open()
+        if classifiable is not None:
+            self._classifiable[projection] = classifiable
+        if correlation_findings:
+            self._correlation_findings[projection] = correlation_findings
+        if unknown_family_tag is not None:
+            self._unknown_family_tags[projection] = unknown_family_tag
 
     def write_view(self, projection: int, view: RelationshipViewKey, value: object) -> None:
         """Record one relationship view on an already-added projection.
@@ -665,7 +771,15 @@ class PageBuilder:
             witnesses=self._witnesses,
             source_ordinals=source_ordinals,
             claims=sealed_claims,
-            decoders=DecoderRows(count, self._decoders, self._witnesses),
+            decoders=DecoderRows(
+                count,
+                self._decoders,
+                self._witnesses,
+                self._member_rows,
+                self._classifiable or None,
+                self._correlation_findings or None,
+                self._unknown_family_tags or None,
+            ),
         )
         self._sealed = True
         self._layouts = []
@@ -684,6 +798,9 @@ class PageBuilder:
         self._last_source = None
         self._claims = []
         self._decoders = {}
+        self._classifiable = {}
+        self._correlation_findings = {}
+        self._unknown_family_tags = {}
         self._witnesses = []
         return Page(rows)
 
