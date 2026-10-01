@@ -122,16 +122,12 @@ class PreparedRead:
         else:
             classifiable = 0
             layout = level.layout
+            keys = level.result_keys
+            ordinals = level.result_ordinals
+            document_members = level.document_member_names
             witness_values: list[object] = [ABSENT] * len(layout.members)
-            for position, attribute in enumerate(level.layout.attributes):
-                key = (
-                    attribute.storage.name
-                    if not level.attribute_reads
-                    else level.attribute_reads[position].result_key
-                )
-                document_member = (
-                    level.document_member_names[position] if level.document_member_names else None
-                )
+            for position in range(layout.attribute_count):
+                document_member = document_members[position]
                 if document_member is not None:
                     raw = (
                         SQL_NULL
@@ -142,21 +138,18 @@ class PreparedRead:
                     )
                     present = True
                 else:
-                    ordinal = level.result_ordinals[position] if level.result_ordinals else None
-                    raw, present = self._raw_driver_presence(row, resolved, key, ordinal=ordinal)
+                    raw, present = self._raw_driver_presence(
+                        row, resolved, keys[position], ordinal=ordinals[position]
+                    )
                 witness_values[position] = raw
                 if present:
                     classifiable |= 1 << position
-            for position, (occurrence, projected) in enumerate(
-                zip(level.layout.occurrences, level.projected_by_position, strict=True),
-                start=len(level.layout.attributes),
+            for position, projected in enumerate(
+                level.projected_by_position, start=layout.attribute_count
             ):
                 if not projected:
                     continue
-                key = occurrence.storage.name
-                document_member = (
-                    level.document_member_names[position] if level.document_member_names else None
-                )
+                document_member = document_members[position]
                 if document_member is not None:
                     raw = (
                         SQL_NULL
@@ -167,9 +160,8 @@ class PreparedRead:
                     )
                     present = True
                 else:
-                    ordinal = level.result_ordinals[position] if level.result_ordinals else None
                     raw, present = self._raw_driver_presence(
-                        row, resolved, key, ordinal=ordinal, default=None
+                        row, resolved, keys[position], ordinal=ordinals[position], default=None
                     )
                 witness_values[position] = raw
                 if present:
@@ -181,11 +173,7 @@ class PreparedRead:
             key = (
                 None
                 if primary_key is ABSENT
-                else LogicalKey(
-                    layout.family,
-                    primary_key,
-                    tuple(witness[position] for position in layout.temporal_starts),
-                )
+                else LogicalKey(layout.family, primary_key, level.temporal_start_values(witness))
             )
             ref = builder.add_claim(source, layout, key, witness, witness, (), witness)
         else:
@@ -342,6 +330,7 @@ def _bound_level(
         compiled.projected_documents,
         reads,
         classified,
+        keys,
         tuple(compiled.raw_member_ordinal(identity, key) for key in keys),
         tuple(
             compiled.raw_member_classifier(

@@ -625,8 +625,44 @@ def test_a_row_publisher_views_a_projected_occurrence_in_place() -> None:
 _OPENED: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _VALID_FROM: Final = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 POSITION = corpus_model("position")
+BALANCE = corpus_model("balance")
 ORDERS = corpus_model("orders")
 TWIN_COLUMNS = columns_model()
+
+
+def _shadowed_payload_model() -> Metamodel:
+    """An encoded Attribute whose result key spells another Attribute's Column."""
+    blob = DescriptorEntity(
+        name="Blob",
+        table="blob",
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="payload", type="bytes", column="payload", nullable=True),
+            Attribute(name="shadow", type="bytes", column="payload_hex", nullable=True),
+        ),
+    )
+    return formed(DescriptorMetamodel(entities=(blob,)))
+
+
+SHADOWED = _shadowed_payload_model()
+
+_ORDER: Final[Mapping[str, object]] = {
+    "id": 1,
+    "name": "Ada",
+    "sku": None,
+    "qty": 2,
+    "price": decimal.Decimal("1.50"),
+    "active": True,
+    "ordered_on": dt.date(2024, 1, 1),
+}
+_SCALAR_THING: Final[Mapping[str, object]] = {
+    "id": 1,
+    "f32": 1.5,
+    "f64": 2.5,
+    "payload_hex": "0a1b",
+    "local_time": dt.time(9, 30),
+    "external_id": None,
+}
 
 
 def _position(**cells: object) -> dict[str, object]:
@@ -682,35 +718,10 @@ def _delivered(model: Metamodel, entity: str, row: Row | Mapping[str, object]) -
     ("model", "entity", "cells", "member", "value"),
     [
         pytest.param(
-            ORDERS,
-            "Order",
-            {
-                "id": 1,
-                "name": "Ada",
-                "sku": None,
-                "qty": 2,
-                "price": decimal.Decimal("1.50"),
-                "active": True,
-                "ordered_on": dt.date(2024, 1, 1),
-            },
-            "orderedOn",
-            dt.date(2024, 1, 1),
-            id="native-columns",
+            ORDERS, "Order", _ORDER, "orderedOn", dt.date(2024, 1, 1), id="native-columns"
         ),
         pytest.param(
-            SCALARS,
-            "ScalarThing",
-            {
-                "id": 1,
-                "f32": 1.5,
-                "f64": 2.5,
-                "payload_hex": "0a1b",
-                "local_time": dt.time(9, 30),
-                "external_id": None,
-            },
-            "payload",
-            b"\x0a\x1b",
-            id="encoded-column",
+            SCALARS, "ScalarThing", _SCALAR_THING, "payload", b"\x0a\x1b", id="encoded-column"
         ),
         pytest.param(POSITION, "Position", _position(), "validEnd", INFINITY, id="bitemporal"),
         pytest.param(
@@ -737,6 +748,77 @@ def test_a_positional_and_a_result_keyed_row_convert_and_publish_alike(
     assert positional.key is not None
     assert positional.members[member] == value
     assert positional.issues == ()
+
+
+_ROW_FORMS: Final = pytest.mark.parametrize(
+    "positional", [False, True], ids=["result-keyed", "positional"]
+)
+
+
+@_ROW_FORMS
+def test_a_member_stored_at_another_members_result_key_reads_its_own_cell(
+    positional: bool,
+) -> None:
+    # `payload` arrives under its encoded alias `payload_hex`, which is the Column
+    # `shadow` is stored in, so `shadow`'s own cell arrives aliased once more.
+    # Each Attribute reads the cell its own result key names, and the flat row
+    # publishes both renamed members after the one it keeps.
+    cells = {"id": 1, "payload_hex": "00ff", "payload_hex_hex": "0102"}
+    delivered = _delivered(
+        SHADOWED, "Blob", _positional(SHADOWED, "Blob", cells) if positional else cells
+    )
+    assert (delivered.members["payload"], delivered.members["shadow"]) == (
+        b"\x00\xff",
+        b"\x01\x02",
+    )
+    assert list(delivered.flat.items()) == [
+        ("id", 1),
+        ("payload_hex", "00ff"),
+        ("payload_hex_hex", "0102"),
+    ]
+
+
+def test_a_result_keyed_row_without_a_column_carries_no_value_for_it() -> None:
+    # Only a result-keyed row can omit a column. An omitted Attribute holds no
+    # value rather than a null, while an omitted occurrence reads as one stored
+    # without a document: no value for a One and nothing for a Many.
+    delivered = _delivered(TWIN_COLUMNS, "Person", {"id": 1, "display_name": "Ada"})
+    assert delivered.members == {"id": 1, "displayName": "Ada", "address": None, "tags": ()}
+    assert delivered.issues == ()
+
+
+@_ROW_FORMS
+@pytest.mark.parametrize(
+    ("model", "entity", "cells", "starts"),
+    [
+        pytest.param(ORDERS, "Order", _ORDER, (), id="no-axis-unreduced"),
+        pytest.param(SCALARS, "ScalarThing", _SCALAR_THING, (), id="no-axis-reduced"),
+        pytest.param(
+            BALANCE,
+            "Balance",
+            {
+                "bal_id": 1,
+                "acct_num": "A-1",
+                "val": decimal.Decimal("1.50"),
+                "in_z": _OPENED,
+                "out_z": INFINITY,
+            },
+            (_OPENED,),
+            id="transaction-time",
+        ),
+        pytest.param(POSITION, "Position", _position(), (_VALID_FROM, _OPENED), id="bitemporal"),
+    ],
+)
+def test_a_row_keys_by_its_axis_starts_in_layout_order(
+    model: Metamodel,
+    entity: str,
+    cells: Mapping[str, object],
+    starts: tuple[object, ...],
+    positional: bool,
+) -> None:
+    row = _positional(model, entity, cells) if positional else cells
+    key = _delivered(model, entity, row).key
+    assert key == (target(model, entity).identity, 1, starts)
 
 
 # --------------------------------------------------------------------------- #

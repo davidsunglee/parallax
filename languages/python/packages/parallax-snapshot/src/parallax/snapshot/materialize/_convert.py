@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import InitVar, dataclass, field
 from operator import itemgetter
 from typing import Final, NamedTuple, Protocol, cast
@@ -106,6 +106,7 @@ class BoundLevel:
     documents: InitVar[tuple[ValueObjectMetadata, ...]]
     attribute_reads: tuple[AttributeReadContract, ...]
     classified_members: frozenset[str]
+    result_keys: tuple[str, ...]
     result_ordinals: tuple[int | None, ...]
     classifiers: tuple[Callable[[object], tuple[object, tuple[DocumentFinding, ...]]] | None, ...]
     document_member_names: tuple[str | None, ...]
@@ -114,6 +115,7 @@ class BoundLevel:
     projected_by_position: tuple[bool, ...] = field(init=False)
     direct_row: Callable[[tuple[object, ...]], object] | None = field(init=False)
     every_member_present: int = field(init=False)
+    temporal_start_values: Callable[[tuple[object, ...]], tuple[object, ...]] = field(init=False)
     eager_identity_positions: tuple[int, ...] = field(init=False)
     eager_correlation_positions: tuple[int, ...] = field(init=False)
     payload_positions: tuple[int, ...] = field(init=False)
@@ -128,7 +130,8 @@ class BoundLevel:
         reads = self.attribute_reads
         member_count = len(layout.members)
         if (  # pragma: no cover - bind derives every member source from one key sequence
-            len(self.result_ordinals) != member_count
+            len(self.result_keys) != member_count
+            or len(self.result_ordinals) != member_count
             or len(self.classifiers) != member_count
             or len(self.document_member_names) != member_count
         ):
@@ -148,6 +151,7 @@ class BoundLevel:
             else None,
         )
         object.__setattr__(self, "every_member_present", (1 << member_count) - 1)
+        object.__setattr__(self, "temporal_start_values", _tuple_getter(layout.temporal_starts))
         host_checked = frozenset(
             position
             for position, attribute in enumerate(layout.attributes)
@@ -285,7 +289,7 @@ def _claim_identity(
         else LogicalKey(
             layout.family,
             routed_values[layout.primary_key[0]],
-            _values_at(routed_values, layout.temporal_starts),
+            level.temporal_start_values(routed_values),
         )
     )
     return IdentityClaim(
@@ -296,12 +300,20 @@ def _claim_identity(
     )
 
 
-def _values_at(values: Sequence[object], positions: tuple[int, ...]) -> tuple[object, ...]:
+def _tuple_getter(
+    positions: tuple[int, ...],
+) -> Callable[[tuple[object, ...]], tuple[object, ...]]:
+    # `itemgetter` answers a bare value for one position and refuses none.
     if not positions:
-        return ()
+        return _no_values
     if len(positions) == 1:
-        return (values[positions[0]],)
-    return tuple(values[position] for position in positions)
+        (position,) = positions
+        return lambda values: (values[position],)
+    return cast("Callable[[tuple[object, ...]], tuple[object, ...]]", itemgetter(*positions))
+
+
+def _no_values(_values: tuple[object, ...]) -> tuple[object, ...]:
+    return ()
 
 
 def _classify_payload(
