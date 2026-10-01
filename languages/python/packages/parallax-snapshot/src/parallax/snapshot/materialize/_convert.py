@@ -198,6 +198,31 @@ class BoundLevel:
             or any(projected_by_position),
         )
 
+    def decode_payload(
+        self,
+        witness: tuple[object, ...],
+        routed_values: tuple[object, ...],
+        classifiable: int | None,
+        correlation_findings: tuple[StoredDataIssueInput, ...],
+        unknown_family_tag: UnknownFamilyTag | None,
+    ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
+        """Judge the payload of one reduced row claimed under this level, from the
+        inputs its Page retained for it, answering its member row and findings."""
+        values, findings, classified = _classify_payload(
+            witness,
+            self,
+            self.every_member_present if classifiable is None else classifiable,
+        )
+        return _decode_payload(
+            values,
+            self,
+            routed_values,
+            correlation_findings,
+            findings,
+            unknown_family_tag,
+            classified,
+        )
+
 
 class IdentityClaim(NamedTuple):
     """What a reduced row registers before its payload is judged: the logical key
@@ -208,30 +233,6 @@ class IdentityClaim(NamedTuple):
     routed_values: tuple[object, ...]
     identity_findings: tuple[StoredDataIssueInput, ...]
     correlation_findings: tuple[StoredDataIssueInput, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _DeferredPayloadDecoder:
-    witness: tuple[object, ...]
-    level: BoundLevel
-    routed_values: tuple[object, ...]
-    correlation_findings: tuple[StoredDataIssueInput, ...]
-    classifiable: int
-    unknown_family_tag: UnknownFamilyTag | None
-
-    def __call__(self) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
-        values, findings, classified = _classify_payload(
-            self.witness, self.level, self.classifiable
-        )
-        return _decode_payload(
-            values,
-            self.level,
-            self.routed_values,
-            self.correlation_findings,
-            findings,
-            self.unknown_family_tag,
-            classified,
-        )
 
 
 def register_reduced_row(
@@ -252,23 +253,21 @@ def register_reduced_row(
     position, the members the row carried for document classification.
     """
     claim = _claim_identity(witness, level, unknown_family_tag)
-    decoder = _DeferredPayloadDecoder(
-        witness,
-        level,
-        claim.routed_values,
-        claim.correlation_findings,
-        classifiable,
-        unknown_family_tag,
-    )
-    return builder.add_claim(
+    projection = builder.add_claim(
         source,
         level.layout,
         claim.key,
         witness,
         claim.routed_values,
         claim.identity_findings,
-        decoder,
+        level,
     )
+    partial = None if classifiable == level.every_member_present else classifiable
+    if partial is not None or claim.correlation_findings or unknown_family_tag is not None:
+        builder.add_payload_inputs(
+            projection, partial, claim.correlation_findings, unknown_family_tag
+        )
+    return projection
 
 
 def _claim_identity(

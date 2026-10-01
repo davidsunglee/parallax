@@ -212,14 +212,17 @@ class RootView:
             return None
 
     def release_raw_rows(self) -> None:
-        """Release reached raw member rows after all evidence lookups are primed."""
+        """Release reached raw member rows after all evidence lookups are primed,
+        except a keyless claim's, whose payload a later root judges again."""
         releasable = self._releasable_rows
         if releasable is None:
             return
         page_rows, reached = releasable
         member_rows = cast("list[tuple[object, ...]]", page_rows.member_rows)
+        keys = page_rows.keys
         for projection in reached:
-            member_rows[projection] = ()
+            if keys[projection] is not None or not page_rows.decoders.pending(projection):
+                member_rows[projection] = ()
         self._releasable_rows = None
 
     def release_finished_page_rows(
@@ -227,7 +230,9 @@ class RootView:
         root_position: int,
         last_uses: tuple[array[int], array[int]],
     ) -> None:
-        """Release Page occurrence storage no later root can reach."""
+        """Release Page occurrence storage no later root can reach, and the raw
+        member rows of the other reached projections except a keyless claim's,
+        whose payload a later root judges again."""
         releasable = self._releasable_rows
         if releasable is None:
             return
@@ -239,9 +244,11 @@ class RootView:
         witnesses = cast("list[object]", rows.witnesses)
         logical_ids = cast("list[int]", rows.logical_ids)
         for projection in reached:
-            member_rows[projection] = ()
             if projection_last[projection] != root_position:
+                if keys[projection] is not None or not rows.decoders.pending(projection):
+                    member_rows[projection] = ()
                 continue
+            member_rows[projection] = ()
             logical = logical_ids[projection]
             rows.issues.release(projection)
             keys[projection] = None
@@ -435,15 +442,9 @@ class RootView:
         rows = self._rows
         if rows is None:  # pragma: no cover - completion owns a live Page
             raise ValueError("a completed Root View cannot decode another state")
-        decoder = rows.decoders[projection]
-        if decoder is None:  # pragma: no cover - a judged keyed projection is read from its state
-            raise ValueError("a released projection decoder has no unjudged state")
-        if isinstance(decoder, tuple):
-            member_row, findings = cast("tuple[object, ...]", decoder), ()
-        else:
-            member_row, findings = decoder()
+        member_row, findings = rows.decoders.decode(projection)
         if rows.keys[projection] is not None:
-            rows.decoders[projection] = None
+            rows.decoders.settle(projection)
         identity_findings = rows.issues[projection]
         if not findings:
             findings = identity_findings
@@ -458,13 +459,13 @@ class RootView:
             raise ValueError("a completed Root View cannot compare another witness")
         if len(occurrences) == 2 and same_witness(rows, occurrences[0], occurrences[1]):
             _notify(rows.observer, "witnesses_compared", 1)
-            rows.decoders[occurrences[1]] = None
+            rows.decoders.settle(occurrences[1])
             return occurrences[0]
         first, *remaining = occurrences
         if all(same_witness(rows, first, candidate) for candidate in remaining):
             _notify(rows.observer, "witnesses_compared", len(remaining))
             for candidate in remaining:
-                rows.decoders[candidate] = None
+                rows.decoders.settle(candidate)
             return first
         canonical, *candidates = sorted(
             occurrences,
@@ -490,7 +491,8 @@ class RootView:
             raise ValueError("a completed Root View cannot judge another state")
         if rows.keys[canonical] is None:
             state = self._decode(canonical)
-            _release_witness(rows, canonical)
+            if not rows.decoders.pending(canonical):
+                _release_witness(rows, canonical)
             return state
         held = judged_state(rows, canonical)
         if held is not None:
