@@ -220,11 +220,12 @@ the full gate.
 
 ## Related observations
 
-- **An UPDATE sets only the attributes whose setters were called.** The SET clause is
+- **A direct setter UPDATE sets only the attributes whose setters were called.** The SET clause is
   built from the buffered `AttributeUpdateWrapper` list
   (`MithraAbstractDatabaseObject.java:3645-3661`), so a concurrent write to a
-  different column is never overwritten regardless of locking. What the concurrency
-  machinery protects is the read that fed the decision, not untouched columns.
+  different column is not overwritten by that setter. Detached merging can itself call
+  setters for differences between stale detached values and current live values; see
+  [10](10-object-lifecycle.md#detached-merge-version-checks-and-retries).
 - **Optimistic retry is opt-in.** `MithraRootTransaction.retryOnOptimisticLockFailure`
   defaults to `false` (`mithra/transaction/MithraRootTransaction.java:69`, `:84-91`);
   the exception is marked retriable only when the application called
@@ -243,10 +244,10 @@ the full gate.
   (`templates/readonly/Finder.jsp:1470-1491`). That third case is the only
   transactional shape where dropping read locks leaves a write with just its
   business-date milestone gate.
-- **The detached-merge path checks the version in memory first.**
-  `zCopyAttributesFromImpl` compares versions and raises a non-retriable
-  `MithraOptimisticLockException` before issuing any statement, but only when retry is
-  off (`mithra/superclassimpl/MithraTransactionalObjectImpl.java:1411-1427`).
+- **Detached merge has a separate, retry-dependent in-memory version check.**
+  [10](10-object-lifecycle.md#detached-merge-version-checks-and-retries) traces that check,
+  its bypass when optimistic retries are enabled, and why SQL then gates on the live
+  predecessor rather than the detached copy's old version.
 - **`ReadCacheUpdateNotAllowedTxParticipationMode` is not a user-selectable
   transactional mode**; it is what `MithraReadOnlyPortal` returns (`:45-51`).
 

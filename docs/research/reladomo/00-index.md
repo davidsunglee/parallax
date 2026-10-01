@@ -81,11 +81,11 @@ metadata is exposed on the `RelatedFinder` and every `Attribute`.
 | [03-code-generation.md](03-code-generation.md) | The code generator turns one XML into a fixed set of Java artifacts via a JSP template engine; generated code is scaffolding over the runtime |
 | [04-query-operations.md](04-query-operations.md) | The finder query language builds a composable `Operation` tree that `SqlQuery` compiles to a WHERE clause |
 | [05-deep-fetch.md](05-deep-fetch.md) | Deep fetch batches relationship traversal into one query per level, eliminating N+1 |
-| [06-bitemporal-milestoning.md](06-bitemporal-milestoning.md) | Bitemporal milestoning: `AsOfAttribute` models `[from,to)` intervals; `TemporalDirector` chains milestone rows on every write |
+| [06-bitemporal-milestoning.md](06-bitemporal-milestoning.md) | Bitemporal milestoning and multi-interval range planning: `AsOfAttribute` models `[from,to)` intervals; `TemporalDirector` preserves residuals and chains affected rows |
 | [07-lists-aggregation.md](07-lists-aggregation.md) | Lists are lazy operation-backed views; `AggregateList` runs GROUP BY/HAVING (in SQL or in-memory) |
 | [08-caching.md](08-caching.md) | The identity cache guarantees one object per PK; the query cache maps operations to results; notification invalidates both |
-| [09-transactions-locking.md](09-transactions-locking.md) | Transactions are JTA-backed with buffered/batched writes; correctness comes from read locks or optimistic version checks |
-| [10-object-lifecycle.md](10-object-lifecycle.md) | Object lifecycle is a state machine dispatched through per-state singleton behavior objects; detach copies data and merges it back |
+| [09-transactions-locking.md](09-transactions-locking.md) | Transactions are JTA-backed with buffered/batched writes; dated concurrency distinguishes per-row gates, point/range read locks, and isolation guarantees |
+| [10-object-lifecycle.md](10-object-lifecycle.md) | Object lifecycle uses per-state behavior objects; detached merge distinguishes the detached version check from the live predecessor's SQL gate, with retry-dependent semantics |
 | [11-database-dialects.md](11-database-dialects.md) | Database portability is isolated behind `DatabaseType`, obtained from the connection manager at query time |
 | [12-test-infrastructure.md](12-test-infrastructure.md) | The test suite is an H2-based, no-mock integration harness; the same tests re-run on real vendors via swapped connection managers |
 | [13-excluded-feature-entanglement.md](13-excluded-feature-entanglement.md) | Entanglement check: remote and XML are cleanly separable; off-heap is medium-coupled; source-attribute/sharding is highly coupled |
@@ -107,6 +107,7 @@ metadata is exposed on the `RelatedFinder` and every `Attribute`.
 | [29-blind-write-prevention-for-deletes-and-terminates.md](29-blind-write-prevention-for-deletes-and-terminates.md) | Deletes carry the same version gate as updates because both consume one mode-aware primary-key where clause; dated writes add an unconditional milestone gate, so terminates are gated in every mode; only the affected-row check is weaker for DELETE |
 | [30-fixed-slot-data-objects.md](30-fixed-slot-data-objects.md) | A generated data object IS its layout — fixed Java fields, an out-of-band `isNullBitsN` mask covering nullable primitives alone, and a metadata-positioned hydration walk that can stop after the primary key |
 | [31-runtime-model-replacement-and-schema-evolution.md](31-runtime-model-replacement-and-schema-evolution.md) | The portal is a static slot per generated Finder that a repeat configuration read either leaves alone or, under a programmatic `destroyExistingPortal` flag, destroys and rebuilds with no transaction guard; DDL is full per-table `create table` scripts with no diff, alter, migration, or runtime schema check, and the only model version is a class-shape CRC checked against cache archives and remote peers; there is no inheritance discriminator — a table-per-class row with no subclass row silently hydrates as its root class, and `table-for-all-subclasses` delegates the choice to a hand-written hook |
+| [32-gap-starting-writes-and-insert-overlap.md](32-gap-starting-writes-and-insert-overlap.md) | Gap-starting writes and insert overlap validation: ordinary inserts check active starting state; compound range operations and database constraints have distinct safety limits |
 
 ## Research questions
 
@@ -193,6 +194,17 @@ primary-key-only arm produces a partial carrier nothing records as partial. Appl
 descriptive, like [25](25-cascade-operations.md): it closes with what Parallax adopts, adapts, and
 rejects for its compact published instance state
 ([30](30-fixed-slot-data-objects.md)).
+
+**Bitemporal range-concurrency pass (2026-09-30, same commit).** A source and test-definition pass
+reconciled multi-interval mutation and residual preservation into
+[06](06-bitemporal-milestoning.md#writes-resolve-complete-affected-business-ranges), and physical-row
+gates, point/range read locking, and isolation qualifications into
+[09](09-transactions-locking.md#bitemporal-concurrency-scope). The point-refresh discussion in
+[27](27-read-enrollment-and-write-licensing.md) links to those scope findings. The detached-merge
+follow-up in [10](10-object-lifecycle.md#detached-merge-version-checks-and-retries) traces the
+retry-dependent detached-version check separately from the live predecessor's SQL gate;
+[29](29-blind-write-prevention-for-deletes-and-terminates.md) links to that owner. Descriptive;
+it recommends no Parallax semantics. Test definitions were inspected, not executed.
 
 ## Scope — what this research does not cover
 

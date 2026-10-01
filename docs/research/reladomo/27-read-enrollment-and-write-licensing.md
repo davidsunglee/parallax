@@ -203,6 +203,12 @@ own `processingDate == ∞` passes `checkInfinityDate` and whose UPDATE is gated
 from its own data. Calling a setter on the *historical* object instead throws `"processing date must
 be infinity when creating/modifying an object"`.
 
+That coordinate-scoped SELECT is the point-refresh path, not a limit on the write's affected
+business range. A mutation can additionally resolve and enroll several overlapping predecessors;
+the range query's read-lock request follows the effective participation mode. See
+[affected ranges](06-bitemporal-milestoning.md#writes-resolve-complete-affected-business-ranges)
+and [bitemporal concurrency scope](09-transactions-locking.md#bitemporal-concurrency-scope).
+
 ## Key construction, collected
 
 | Structure | Key | Citation |

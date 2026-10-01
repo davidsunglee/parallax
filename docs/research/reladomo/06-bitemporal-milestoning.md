@@ -42,10 +42,10 @@ with three implementations: `GenericBiTemporalDirector` (both axes), `AuditOnlyT
 `GenericBiTemporalDirector` (`mithra/behavior/GenericBiTemporalDirector.java`):
 
 - **Insert** (71-103): set `IN_Z=txTime`, `OUT_Z=∞`, `THRU_Z=∞`; insert one row.
-- **`inactivateObject`** (301-345): close an existing row — `UPDATE … SET OUT_Z=txTime WHERE PK AND FROM_Z=? AND THRU_Z=? AND IN_Z=? AND OUT_Z=∞`.
-- **Update** (405-503): close the old row and insert a new head row `[fromDate, ∞)` at `IN_Z=txTime`; `cutTail` shortens the preceding segment's `THRU_Z` to `fromDate`.
-- **`updateUntil`** (1011-1127) + **`splitTailEnd`** (1129-1137): the bitemporal **rectangle split** — one row becomes head `[from, fromDate)`, middle `[fromDate, endDate)`, tail `[endDate, to)`, all at fresh processing time, with the original inactivated.
-- **Terminate** (687-756): close all open rows (`OUT_Z=txTime`); no new insert. Terminated state = absence of any row with `OUT_Z=∞ AND THRU_Z=∞`.
+- **`inactivateObject`** (301-345): close an existing predecessor by setting `OUT_Z=txTime`. Its predicate uses the primary key and as-of **end** columns, plus processing-start `IN_Z` under optimistic participation; it does not add `FROM_Z`. [Dated gate construction](29-blind-write-prevention-for-deletes-and-terminates.md#dated-writes-carry-an-unconditional-milestone-gate-plus-an-optional-processing-date-gate) owns the details.
+- **Update** (405-503): resolve rows overlapping `[fromDate, ∞)`, close affected predecessors, preserve an earlier fragment where necessary, and insert changed successor state. `cutTail` handles the segment crossing `fromDate`.
+- **`updateUntil`** (1011-1127) + **`splitTailEnd`** (1129-1137): resolve rows overlapping `[fromDate, endDate)`, preserve fragments outside the window, and insert changed state inside it. The single-predecessor case is the bitemporal **rectangle split** into head, middle, and tail; the same operation can cross several predecessors.
+- **Terminate** (687-756): resolve rows overlapping `[fromDate, ∞)`, close or remove affected rows, and preserve an earlier fragment where necessary. A surviving fragment can require an insert; termination removes current-processing state inside the affected range, not all history for the key.
 
 ```text
 BEFORE:  business [FROM_Z ─────────────── THRU_Z=∞)   proc [IN_Z ───────────── OUT_Z=∞)
@@ -54,6 +54,65 @@ UPDATE at businessDate=BD:
   new head row     :  business [BD ──────────────── ∞)   proc [txNow ──────── OUT_Z=∞)
   new left residual:  business [FROM_Z ─── BD)           proc [txNow ──────── OUT_Z=∞)
 ```
+
+## Writes resolve complete affected business ranges
+
+The object's business-date coordinate selects its starting view; it does not limit a mutation to
+that view's one physical row. `GenericBiTemporalDirector` asks the transaction's temporal container
+for every row overlapping the mutation's range:
+
+| Mutation | Business-time range |
+| --- | --- |
+| ordinary update | `[businessDate, infinity)` |
+| `updateUntil` | `[businessDate, until)` |
+| ordinary terminate | `[businessDate, infinity)` |
+
+The calls and predecessor handling are visible in
+[update](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/main/java/com/gs/fw/common/mithra/behavior/GenericBiTemporalDirector.java#L405-L503),
+[bounded update](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/main/java/com/gs/fw/common/mithra/behavior/GenericBiTemporalDirector.java#L1011-L1137),
+and [terminate](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/main/java/com/gs/fw/common/mithra/behavior/GenericBiTemporalDirector.java#L687-L754).
+
+`AbstractTemporalContainerWithBusinessDate.getObjectsForRange` checks its loaded-range knowledge.
+If that knowledge is insufficient, `getForDateRange` supplies additional persisted rows before the
+container selects and write-enrolls the overlapping in-transaction rows. The database query uses the
+logical key, business-interval overlap, and current processing-end. Cached state and resolving reads
+therefore supply predecessor payloads and boundaries for all affected segments; one caller token is
+not their substitute.
+[Container resolution](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/main/java/com/gs/fw/common/mithra/behavior/AbstractTemporalContainerWithBusinessDate.java#L221-L344),
+[range query](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/main/java/com/gs/fw/common/mithra/database/MithraAbstractDatedTransactionalDatabaseObject.java#L117-L201).
+
+Optimistic participation supports this multi-interval scope. Test definitions cover
+[updating two segments](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/test/java/com/gs/fw/common/mithra/test/TestDatedBitemporalOptimisticLocking.java#L837-L885),
+[a bounded update crossing segments while preserving residuals](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/test/java/com/gs/fw/common/mithra/test/TestDatedBitemporalOptimisticLocking.java#L2180-L2247),
+and [terminating multiple segments while retaining processing history](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/test/java/com/gs/fw/common/mithra/test/TestDatedBitemporalOptimisticLocking.java#L1031-L1107).
+These definitions were inspected, not executed, in the range-concurrency research pass.
+[Bitemporal concurrency scope](09-transactions-locking.md#bitemporal-concurrency-scope) distinguishes
+this mutation scope from physical-row gates, read locks, and isolation guarantees.
+
+## Rows created by the current transaction remain its own after flushing
+
+Physical flushing does not turn a transaction's new row into a predecessor requiring another
+processing-time revision. `InsertOperation` marks the object inserted after executing SQL;
+`InTransactionDatedTransactionalObject.isNewInThisTransaction()` includes that `INSERTED_STATE`,
+and subsequent updates preserve it. Its `needsTransactionalUpdate()` distinguishes an inserted
+row needing real UPDATE SQL from an insertion whose buffered values can still change
+([insert completion](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/main/java/com/gs/fw/common/mithra/transaction/InsertOperation.java#L34-L38),
+[own-transaction classification](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/main/java/com/gs/fw/common/mithra/transaction/InTransactionDatedTransactionalObject.java#L168-L170),
+[state transitions](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/main/java/com/gs/fw/common/mithra/transaction/InTransactionDatedTransactionalObject.java#L362-L380),
+[update eligibility](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/main/java/com/gs/fw/common/mithra/transaction/InTransactionDatedTransactionalObject.java#L455-L457)).
+
+For an ordinary update whose business start matches an own-transaction row with an open business
+end, `GenericBiTemporalDirector.update` changes its values in place; after an INSERT flush it
+buffers an UPDATE instead of closing and reopening processing time. When interval geometry changes,
+the director can cut the business end, insert successors, or delete/reinsert its own rows.
+`inactivateObject` deletes an own-transaction row rather than giving it a processing end equal to
+its processing start. These paths revise uncommitted state without making each physical flush a
+separate processing-time revision
+([ordinary update branch](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/main/java/com/gs/fw/common/mithra/behavior/GenericBiTemporalDirector.java#L442-L456),
+[own-row inactivation](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/main/java/com/gs/fw/common/mithra/behavior/GenericBiTemporalDirector.java#L301-L307)).
+A test performs bounded changes, flushes, then changes the same interval again before committing
+([test definition](https://github.com/goldmansachs/reladomo/blob/9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4/reladomo/src/test/java/com/gs/fw/common/mithra/test/TestDatedBitemporalOptimisticLocking.java#L2407-L2465)).
+The test was inspected, not executed; the ordinary-update SQL distinction above is source-derived.
 
 ## Generated DDL keys on the `to` columns, and author-declared indices may not name as-of columns
 
@@ -81,9 +140,10 @@ operational: the `to` columns are exactly what a mutation's WHERE clause pins.
 optimistic lock, and the as-of fragment is generated from the **to** columns alone
 (`generator/MithraObjectTypeWrapper.java:2219-2246`, rendered by
 `generator/templates/CommonDatedDatabaseObjectAbstract.jspi:24-25`); there is even a helper named
-`getPrimaryKeyWithAsOfToAttributeWhereSql()` (`:2204-2217`). Since every mutation closes the row
-whose `to` is infinity and inserts a replacement, keying the physical primary key on the same
-columns makes each UPDATE and DELETE a key hit. One consequence: with `infinityIsNull="true"` the
+`getPrimaryKeyWithAsOfToAttributeWhereSql()` (`:2204-2217`). An affected current-processing row can
+have a finite business-time end; each mutation binds that row's own end values. Keying the physical
+primary key on the same columns makes each UPDATE and DELETE a key hit. One consequence: with
+`infinityIsNull="true"` the
 `to` column is generated **nullable** (`:946-966`, specifically `:952`) — a nullable column inside
 the physical primary key — and the WHERE switches to `IS NULL` (`:2229-2237`).
 
