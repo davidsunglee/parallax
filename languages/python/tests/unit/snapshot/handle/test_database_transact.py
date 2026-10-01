@@ -12,9 +12,10 @@ abort, escaped transaction references, the retry classification matrix,
 including the requirement that a rollback-only commit refusal keeps its
 original cause's retriability, and the adoption every attempt makes from the
 Serving Model: which edition a transaction, a join, a retry, and a failure
-report, and what stays on its own type because it happened before adoption.
+report, which selection's strategy a keyed write's evidence settles under, and
+what stays on its own type because it happened before adoption.
 
-Everything a `Transaction` itself does is elsewhere: keyed verbs in
+Everything else a `Transaction` itself does is elsewhere: keyed verbs in
 `test_transaction_writes.py`, the `*_where` family in
 `test_transaction_predicate_writes.py`, participating reads in
 `test_transaction_reads.py`.
