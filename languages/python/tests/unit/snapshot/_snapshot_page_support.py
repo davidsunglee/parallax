@@ -1,10 +1,12 @@
-"""The shared sealed-Page fixture the materialization suites drive.
+"""The shared sealed-Page fixture and real-read conversion helpers the
+materialization suites drive.
 
-A read driver composes a Page by converting rows into a Page builder and
-writing each level's views as that level lands. These suites need the same
-composition without a database, so this builds one the same way — through
-``convert_deferred`` and ``PageBuilder`` — rather than hand-assembling rows that
-no driver would produce.
+A read driver composes a Page by converting provider rows through a bound read
+into a Page builder and writing each level's views as that level lands. These
+suites need the same composition without a database, so this builds one the same
+way — compiling a real read, binding it as a find binds it, and converting rows
+through ``PreparedRead.convert_row`` — rather than hand-assembling rows or levels
+that no driver would produce.
 
 ``materialize`` then publishes it through the typed read's own publication, which
 is what makes these suites cover the real seam: Root View, allocate, populate, and
@@ -17,11 +19,23 @@ carried by this MODULE's underscore. Never imported by production code.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import cast
 
+import pytest
+
 from parallax.core import DomainModel
-from parallax.core.base import UnknownFamilyTag
+from parallax.core.base import (
+    SQL_NULL,
+    Admission,
+    DocumentValue,
+    NeutralType,
+    PresentDocument,
+    SqlNull,
+    admits_stored_scalar,
+)
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
@@ -36,27 +50,33 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     entity_by_name,
 )
-from parallax.core.sql_gen._compile import AttributeReadContract
+from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
+from parallax.core.wire import WireValue, decode_canonical_wire
 from parallax.snapshot.handle._read import typed_publication
 from parallax.snapshot.materialize import (
     InvalidData,
     Page,
     PageBuilder,
+    _convert,
 )
-from parallax.snapshot.materialize._convert import LevelContext, convert_deferred
 from parallax.snapshot.materialize._page import ABSENT
-from parallax.snapshot.materialize._views import ROOT_LEVEL, SourceLevel, ViewSchema
+from parallax.snapshot.materialize._prepared import PreparedRead, bind
+from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
+from tests.unit._prepared_read_support import compiled_read
 
 __all__ = [
+    "ConversionCalls",
     "PageFixture",
-    "convert_mapping",
+    "RecordingObserver",
     "documents_of",
+    "driver_row",
     "identity_of",
     "invalid_record",
     "layout_of",
     "physical_members",
+    "recorded_conversion_dependencies",
     "rendered_members",
     "rendered_occurrence",
 ]
@@ -92,50 +112,90 @@ def documents_of(model: Metamodel, identity: EntityIdentity) -> tuple[ValueObjec
 
 
 def layout_of(model: Metamodel, identity: EntityIdentity) -> EntityLayout:
-    """``identity``'s member layout under ``model``, for a suite converting rows
-    without a connection to reach that model's own catalog through."""
+    """``identity``'s member layout under ``model``, for a suite reading converted
+    rows without a connection to reach that model's own catalog through."""
     return LayoutCatalog(model).entity(identity)
 
 
-def convert_mapping(
-    row: Mapping[str, object],
-    level: LevelContext,
-    builder: PageBuilder,
-    *,
-    source: SourceLevel = ROOT_LEVEL,
-    unknown_family_tag: UnknownFamilyTag | None = None,
-) -> int:
-    """Convert one row spelled by result key, laid out as a driver row's witness is.
+def driver_row(compiled: CompiledRead, columns: Mapping[str, object]) -> dict[str, object]:
+    """``columns`` as a database port hands them over: every document carrier
+    ``compiled`` projects arrives as a SQL-null or a present document."""
+    carriers = {member.storage.name for member in compiled.projected_documents}
+    if compiled.structured_column is not None:
+        carriers.add(compiled.structured_column)
+    return {key: _carried(value) if key in carriers else value for key, value in columns.items()}
 
-    An Attribute the row does not name reads ``ABSENT``; a projected Value Object
-    occurrence it does not name reads a stored null, as a projected document
-    Column the driver returned no value for does.
-    """
-    layout = level.layout
-    witness: list[object] = []
-    classifiable = 0
-    for position, attribute in enumerate(layout.attributes):
-        key = (
-            level.attribute_reads[position].result_key
-            if level.attribute_reads
-            else attribute.storage.name
-        )
-        witness.append(row.get(key, ABSENT))
-        classifiable |= (key in row) << position
-    for position, (occurrence, projected) in enumerate(
-        zip(layout.occurrences, level.projected_by_position, strict=True),
-        start=layout.attribute_count,
-    ):
-        witness.append(row.get(occurrence.storage.name) if projected else ABSENT)
-        classifiable |= (projected and occurrence.storage.name in row) << position
-    return convert_deferred(
-        tuple(witness),
-        level,
-        builder,
-        source=source,
-        classifiable=classifiable,
-        unknown_family_tag=unknown_family_tag,
-    )
+
+def _carried(value: object) -> object:
+    if value is None:
+        return SQL_NULL
+    if isinstance(value, (SqlNull, PresentDocument)):
+        return value
+    return PresentDocument(cast("DocumentValue", value))
+
+
+@dataclass(frozen=True, slots=True)
+class ConversionCalls:
+    """The stored scalars conversion decoded from canonical wire and admitted,
+    in call order."""
+
+    decoded: list[object] = field(default_factory=list[object])
+    admitted: list[object] = field(default_factory=list[object])
+
+
+@contextmanager
+def recorded_conversion_dependencies() -> Generator[ConversionCalls]:
+    """Record every wire decode and scalar admission conversion reaches, each
+    delegating to the original, patched only where the conversion module looks
+    them up — document classification's own use of the wire codec is untouched."""
+    calls = ConversionCalls()
+
+    def decoding(declared: NeutralType, raw: WireValue) -> object:
+        calls.decoded.append(raw)
+        return decode_canonical_wire(declared, raw)
+
+    def admitting(
+        value: object, declared: NeutralType, *, nullable: bool, temporal_end: bool
+    ) -> Admission:
+        calls.admitted.append(value)
+        return admits_stored_scalar(value, declared, nullable=nullable, temporal_end=temporal_end)
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(_convert, "decode_canonical_wire", decoding)
+        patched.setattr(_convert, "admits_stored_scalar", admitting)
+        yield calls
+
+
+class RecordingObserver:
+    """A materialization observer recording every cadence event in order."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, int]] = []
+
+    def prepared(self, levels: int) -> None:
+        self.events.append(("prepared", levels))
+
+    def statement_rendered(self, level: int) -> None:
+        self.events.append(("statement_rendered", level))
+
+    def statement_executed(self, level: int, rows: int) -> None:
+        del level
+        self.events.append(("statement_executed", rows))
+
+    def occurrences_reached(self, count: int) -> None:
+        self.events.append(("occurrences_reached", count))
+
+    def witnesses_compared(self, count: int) -> None:
+        self.events.append(("witnesses_compared", count))
+
+    def states_decoded(self) -> None:
+        self.events.append(("states_decoded", 1))
+
+    def states_shared(self) -> None:
+        self.events.append(("states_shared", 1))
+
+    def root_published(self, ordinal: int) -> None:
+        self.events.append(("root_published", ordinal))
 
 
 def rendered_members(layout: EntityLayout, values: tuple[object, ...]) -> dict[str, object]:
@@ -227,7 +287,7 @@ class PageFixture:
     holds both reads which one it is talking to.
     """
 
-    __slots__ = ("_builder", "_cataloged", "_domain", "_model", "_sealed")
+    __slots__ = ("_builder", "_cataloged", "_domain", "_model", "_reads", "_sealed")
 
     def __init__(
         self,
@@ -240,6 +300,7 @@ class PageFixture:
         self._model = model if model is not None else model_of(domain)
         self._cataloged = CatalogedModel(self._model)
         self._builder = PageBuilder(ViewSchema.of(*map(self._declared, views)))
+        self._reads: dict[str, tuple[CompiledRead, PreparedRead]] = {}
         self._sealed: tuple[tuple[tuple[int, ...], Pin], Page] | None = None
 
     def _declared(self, view: str | tuple[str, str]) -> RelationshipViewKey:
@@ -255,29 +316,17 @@ class PageFixture:
         return self._builder
 
     def node(self, entity: str, columns: Mapping[str, object]) -> int:
-        """Convert one host-checked row of ``entity`` as a read level would.
-
-        These downstream Page/publication suites intentionally author scalar
-        contradictions that a real constrained Column cannot return. Marking
-        every Attribute as host-checked keeps those fixtures about classification;
-        provider-normalized Column trust is covered at the prepared-read boundary.
-        """
-        identity = identity_of(self._model, entity)
-        layout = self._cataloged.layouts.entity(identity)
-        context = LevelContext(
-            layout,
-            documents_of(self._model, identity),
-            tuple(
-                AttributeReadContract(
-                    attribute,
-                    attribute.storage.name,
-                    temporal_end=True,
-                    encoded=False,
-                )
-                for attribute in layout.attributes
-            ),
+        """Convert one driver row of ``entity``, spelled by result key, through
+        that Entity's read bound once for this fixture, as a read level would."""
+        bound = self._reads.get(entity)
+        if bound is None:
+            compiled = compiled_read(self._model, entity)
+            bound = self._reads[entity] = (compiled, bind(self._cataloged, compiled))
+        compiled, prepared = bound
+        ref, _resolved, _document, _variant = prepared.convert_row(
+            driver_row(compiled, columns), self._builder, source=ROOT_LEVEL
         )
-        return convert_mapping(columns, context, self._builder)
+        return ref
 
     def layout_for(self, entity: str) -> EntityLayout:
         """``entity``'s member layout under this fixture's own accepted model."""

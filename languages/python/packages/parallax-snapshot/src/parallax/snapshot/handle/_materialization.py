@@ -291,9 +291,7 @@ class Materializer:
             self.observer.statement_executed(ROOT_LEVEL, len(rows))
             prepared = request.prepared or bind(request.model, request.compiled)
             builder = PageBuilder(ViewSchema.of(), _page_observer(self.observer))
-            converted = tuple(
-                prepared.convert_driver(row, builder, source=ROOT_LEVEL) for row in rows
-            )
+            converted = tuple(prepared.convert_row(row, builder, source=ROOT_LEVEL) for row in rows)
             return RowPublication(
                 tuple(item[3] for item in converted),
                 tuple(item[2] for item in converted),
@@ -372,7 +370,6 @@ class Materializer:
             root_read.prepared,
             _drain_rows(root_rows),
             observations,
-            plan.correlation_members(ROOT_LEVEL),
         )
         del root_rows
 
@@ -418,7 +415,6 @@ class Materializer:
                     fetch.prepared,
                     rows,
                     observations,
-                    plan.correlation_members(fetch.index + 1),
                 )
                 _read.attach_children(
                     builder, meta, includes, fetch.step, fetch.parents, child_refs

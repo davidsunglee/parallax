@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import InitVar, dataclass, field
 from operator import itemgetter
-from typing import Final, Protocol, cast
+from typing import Final, NamedTuple, Protocol, cast
 
 from parallax.core.base import (
     SQL_NULL,
@@ -26,7 +26,6 @@ from parallax.core.document_codec import (
 )
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
-    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     MemberIdentity,
@@ -39,7 +38,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
 from parallax.snapshot.materialize._evidence import freeze_evidence
-from parallax.snapshot.materialize._identity import claim_identity
 from parallax.snapshot.materialize._page import (
     ABSENT,
     LogicalKey,
@@ -52,11 +50,11 @@ from parallax.snapshot.materialize._views import SourceLevel
 
 __all__ = [
     "AttributeReadContract",
-    "LevelContext",
+    "BoundLevel",
     "SnapshotDecodingError",
     "build_positional_many",
     "build_positional_object",
-    "convert_deferred",
+    "register_reduced_row",
 ]
 
 
@@ -77,180 +75,143 @@ class AttributeReadContract(Protocol):
     def encoded(self) -> bool: ...
 
 
-@dataclass(frozen=True, slots=True)
-class LevelContext:
-    """What one row of one level converts under.
+@dataclass(frozen=True, slots=True, eq=False)
+class BoundLevel:
+    """What every row a prepared read resolves to one exact Entity converts under.
 
-    ``layout`` is the model-owned member layout of the exact Entity that row's
-    own compiled read resolved it to, and is where the applicable member set and
-    its order come from: it is fixed by the model, so a catalog derives it per
-    Entity and every row of this level shares the one it was answered rather
-    than re-resolving one per conversion.
-    ``concrete_entity`` is read off that layout rather than supplied beside it —
-    the exact Entity is a per-row fact under table-per-hierarchy, which is why it
-    travels here rather than being re-derived from a synthetic tag, and taking it
-    from the layout is what keeps a context from naming one Entity while laying
-    out another. ``documents`` is the resolved position's own `Document` tier
-    contributors, decided once where the projection was, so no level re-projects
-    a family superset of its own. ``attribute_reads`` carries each compiled
-    projection's own Attribute beside the driver key and decode contract the
-    statement chose for it, in ``layout.attributes`` order — the statement and
-    the layout derive their Attribute sequences from one position view, so a
-    contract is read at its Attribute's own position rather than looked up by
-    identity — and is empty for an Entity this read projected no column for,
-    whose Attributes each carry their own storage spelling. This keeps an
-    encoded result such as ``payload_hex`` attached to physical ``payload``.
+    ``layout`` is that Entity's model-owned member layout. ``attribute_reads``
+    carries the statement's contract for each of its Attributes in
+    ``layout.attributes`` order, read at the Attribute's own position, and is
+    empty for an Entity the read projected no column for, whose Attributes each
+    carry their own storage spelling. The remaining member sources align with
+    ``layout.members``.
 
-    ``projected_by_position`` is fixed here rather than per row and marks which
-    of ``layout.occurrences`` this read carried.
+    Only encoded result cells and temporal ends are host-checked: their storage
+    contract does not itself establish the managed value. Native scalar Columns
+    are accepted exactly as the provider normalized them, and document-resident
+    members are classified by their document codec rather than admitted.
 
-    ``host_checked`` is the Attribute-position subset whose storage contract does
-    not itself establish the managed value: encoded result cells and temporal
-    ends. Native scalar Columns outside that subset are accepted exactly as the
-    provider normalized them. Document-resident members are classified by their
-    document codec before this seam and therefore do not enter this tuple.
-
-    ``layout`` stays out of equality and hashing: ``concrete_entity`` already
-    distinguishes every context it distinguishes — two layouts for one exact
-    Entity are interchangeable — while comparing it would walk a whole shared
-    layout tree and holding it in the hash would cost this context the
-    hashability its scalar fields give it.
+    The judgment selections are fixed here, once per bound read. A reduced row's
+    host-checked identity positions, then its host-checked non-identity
+    correlation positions, are judged when the row is claimed, so its logical
+    key and routing values are ready for page assembly. ``payload_positions``
+    are processed only when a Root View needs the row's state; the correlations
+    among them reuse the verdict formed at the claim rather than being judged
+    again. Correlations and payload positions are both in attribute order, which
+    is what places each captured correlation finding at its own payload position
+    without a lookup.
     """
 
-    layout: EntityLayout = field(compare=False)
+    layout: EntityLayout
+    documents: InitVar[tuple[ValueObjectMetadata, ...]]
+    attribute_reads: tuple[AttributeReadContract, ...]
+    classified_members: frozenset[str]
+    result_ordinals: tuple[int | None, ...]
+    classifiers: tuple[Callable[[object], tuple[object, tuple[DocumentFinding, ...]]] | None, ...]
+    document_member_names: tuple[str | None, ...]
+    correlation_members: InitVar[tuple[MemberIdentity, ...]]
     concrete_entity: EntityIdentity = field(init=False)
-    documents: tuple[ValueObjectMetadata, ...] = ()
-    attribute_reads: tuple[AttributeReadContract, ...] = ()
-    classified_members: frozenset[str] = field(default_factory=frozenset[str])
-    result_ordinals: tuple[int | None, ...] = ()
-    classifiers: tuple[
-        Callable[[object], tuple[object, tuple[DocumentFinding, ...]]] | None, ...
-    ] = ()
-    document_member_names: tuple[str | None, ...] = ()
-    direct_row: Callable[[tuple[object, ...]], object] | None = field(
-        init=False, compare=False, repr=False
-    )
-    attribute_judgment_positions: tuple[int, ...] = field(init=False, compare=False, repr=False)
-    projected_by_position: tuple[bool, ...] = field(init=False, compare=False, repr=False)
-    host_checked: tuple[int, ...] = field(init=False, compare=False, repr=False)
-    host_checked_set: frozenset[int] = field(init=False, compare=False, repr=False)
-    identity_positions: tuple[int, ...] = field(init=False, compare=False, repr=False)
-    identity_position_set: frozenset[int] = field(init=False, compare=False, repr=False)
-    identity_passthrough: frozenset[int] = field(init=False, compare=False, repr=False)
-    requires_state_reduction: bool = field(init=False, compare=False, repr=False)
-    routing_members: tuple[MemberIdentity, ...] = field(default=(), compare=False, repr=False)
-    prepared_routing_positions: tuple[int, ...] = field(init=False, compare=False, repr=False)
+    projected_by_position: tuple[bool, ...] = field(init=False)
+    direct_row: Callable[[tuple[object, ...]], object] | None = field(init=False)
+    every_member_present: int = field(init=False)
+    eager_identity_positions: tuple[int, ...] = field(init=False)
+    eager_correlation_positions: tuple[int, ...] = field(init=False)
+    payload_positions: tuple[int, ...] = field(init=False)
+    requires_state_reduction: bool = field(init=False)
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "concrete_entity", self.layout.concrete)
-        projected = frozenset(member.storage.name for member in self.documents)
-        object.__setattr__(
-            self,
-            "projected_by_position",
-            tuple(occurrence.storage.name in projected for occurrence in self.layout.occurrences),
-        )
-        host_checked = tuple(
-            position
-            for position, attribute in enumerate(self.layout.attributes)
-            if (
-                self.attribute_reads
-                and (
-                    self.attribute_reads[position].encoded
-                    or self.attribute_reads[position].temporal_end
-                )
-            )
-            or (not self.attribute_reads and attribute.identity in self.layout.temporal_ends)
-        )
-        object.__setattr__(self, "host_checked", host_checked)
-        object.__setattr__(self, "host_checked_set", frozenset(host_checked))
-        identity_positions = tuple(
-            dict.fromkeys((*self.layout.primary_key, *self.layout.temporal_starts))
-        )
-        object.__setattr__(self, "identity_positions", identity_positions)
-        object.__setattr__(self, "identity_position_set", frozenset(identity_positions))
-        correlations = tuple(
-            position
-            for member in self.routing_members
-            if (position := self.layout.index_of.get(member)) is not None
-            and position < self.layout.attribute_count
-        )
-        object.__setattr__(
-            self,
-            "prepared_routing_positions",
-            tuple(dict.fromkeys((*identity_positions, *correlations))),
-        )
-        attribute_keys = tuple(
-            attribute.storage.name
-            if not self.attribute_reads
-            else self.attribute_reads[position].result_key
-            for position, attribute in enumerate(self.layout.attributes)
-        )
-        occurrence_keys = tuple(occurrence.storage.name for occurrence in self.layout.occurrences)
-        if self.result_ordinals and len(self.result_ordinals) != len(
-            (*attribute_keys, *occurrence_keys)
+    def __post_init__(
+        self,
+        documents: tuple[ValueObjectMetadata, ...],
+        correlation_members: tuple[MemberIdentity, ...],
+    ) -> None:
+        layout = self.layout
+        reads = self.attribute_reads
+        member_count = len(layout.members)
+        if (  # pragma: no cover - bind derives every member source from one key sequence
+            len(self.result_ordinals) != member_count
+            or len(self.classifiers) != member_count
+            or len(self.document_member_names) != member_count
         ):
-            raise ValueError("result ordinals must align with the level's members")
-        if self.document_member_names and len(self.document_member_names) != len(
-            (*attribute_keys, *occurrence_keys)
-        ):
-            raise ValueError("document member names must align with the level's members")
+            raise ValueError("a bound level's member sources must align with its members")
+        object.__setattr__(self, "concrete_entity", layout.concrete)
+        projected = frozenset(member.storage.name for member in documents)
+        projected_by_position = tuple(
+            occurrence.storage.name in projected for occurrence in layout.occurrences
+        )
+        object.__setattr__(self, "projected_by_position", projected_by_position)
         direct_ordinals = tuple(ordinal for ordinal in self.result_ordinals if ordinal is not None)
         object.__setattr__(
             self,
             "direct_row",
             itemgetter(*direct_ordinals)
-            if direct_ordinals and len(direct_ordinals) == len(self.result_ordinals)
+            if direct_ordinals and len(direct_ordinals) == member_count
             else None,
         )
-        object.__setattr__(
-            self,
-            "identity_passthrough",
-            frozenset(
-                position
-                for position in identity_positions
-                if position not in self.host_checked_set
-                and (*attribute_keys, *occurrence_keys)[position] not in self.classified_members
-            ),
+        object.__setattr__(self, "every_member_present", (1 << member_count) - 1)
+        host_checked = frozenset(
+            position
+            for position, attribute in enumerate(layout.attributes)
+            if (
+                reads[position].encoded or reads[position].temporal_end
+                if reads
+                else attribute.identity in layout.temporal_ends
+            )
         )
+        identity = frozenset((*layout.primary_key, *layout.temporal_starts))
+        eager_identity = tuple(
+            position
+            for position in dict.fromkeys((*layout.primary_key, *layout.temporal_starts))
+            if position in host_checked
+        )
+        object.__setattr__(self, "eager_identity_positions", eager_identity)
         object.__setattr__(
             self,
-            "attribute_judgment_positions",
+            "eager_correlation_positions",
             tuple(
-                position
-                for position in range(self.layout.attribute_count)
-                if position not in self.identity_position_set
-                and (
-                    position in self.host_checked_set
-                    or attribute_keys[position] in self.classified_members
+                sorted(
+                    {
+                        position
+                        for member in correlation_members
+                        if (position := layout.index_of.get(member)) in host_checked
+                        and position not in identity
+                    }
                 )
             ),
         )
+        payload = tuple(
+            position
+            for position in range(layout.attribute_count)
+            if position not in identity
+            and (position in host_checked or self.classifiers[position] is not None)
+        )
+        object.__setattr__(self, "payload_positions", payload)
         object.__setattr__(
             self,
             "requires_state_reduction",
             bool(self.classified_members)
-            or bool(self.attribute_judgment_positions)
-            or not self.identity_position_set.issubset(self.identity_passthrough)
-            or any(self.projected_by_position),
+            or bool(payload)
+            or bool(eager_identity)
+            or any(projected_by_position),
         )
 
-    def routing_positions(self, correlation_members: tuple[MemberIdentity, ...]) -> tuple[int, ...]:
-        if correlation_members == self.routing_members:
-            return self.prepared_routing_positions
-        correlations = tuple(
-            position
-            for member in correlation_members
-            if (position := self.layout.index_of.get(member)) is not None
-            and position < self.layout.attribute_count
-        )
-        return tuple(dict.fromkeys((*self.identity_positions, *correlations)))
+
+class IdentityClaim(NamedTuple):
+    """What a reduced row registers before its payload is judged: the logical key
+    formed from its judged identity, the routed values page assembly reads, and
+    the findings its identity and its correlations raised."""
+
+    key: LogicalKey | None
+    routed_values: tuple[object, ...]
+    identity_findings: tuple[StoredDataIssueInput, ...]
+    correlation_findings: tuple[StoredDataIssueInput, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class _DeferredRowDecoder:
+class _DeferredPayloadDecoder:
     witness: tuple[object, ...]
-    level: LevelContext
-    identity_values: tuple[object, ...]
+    level: BoundLevel
+    routed_values: tuple[object, ...]
+    correlation_findings: tuple[StoredDataIssueInput, ...]
     classifiable: int
     unknown_family_tag: UnknownFamilyTag | None
 
@@ -258,67 +219,40 @@ class _DeferredRowDecoder:
         values, findings, classified = _classify_payload(
             self.witness, self.level, self.classifiable
         )
-        return _decode_row(
+        return _decode_payload(
             values,
             self.level,
-            self.identity_values,
+            self.routed_values,
+            self.correlation_findings,
             findings,
             self.unknown_family_tag,
             classified,
         )
 
 
-def convert_deferred(
+def register_reduced_row(
     witness: tuple[object, ...],
-    level: LevelContext,
+    level: BoundLevel,
     builder: PageBuilder,
     *,
     source: SourceLevel,
     classifiable: int,
-    unknown_family_tag: UnknownFamilyTag | None = None,
-    correlation_members: tuple[AttributeIdentity, ...] = (),
+    unknown_family_tag: UnknownFamilyTag | None,
 ) -> int:
-    """Register one row's identity and exact witness in ``builder``, deferring
-    payload judgment, and answer the projection index the builder assigned.
+    """Claim one reduced row's identity now, register it in ``builder`` with its
+    payload deferred to the Root View that needs it, and answer the projection
+    index the builder assigned.
 
-    ``witness`` is positional, laid out by ``level.layout``: every applicable
-    Attribute, then every applicable top-level Value Object occurrence, with
-    ``ABSENT`` wherever the read carried no value. ``source`` is the plan level
-    the row was read at, a fact about where the projection lands rather than how
-    the row decodes, so it travels beside ``level``. ``classifiable`` marks, one
-    bit per position, the document members payload judgment classifies.
+    ``witness`` is positional, laid out by ``level.layout``, with ``ABSENT``
+    wherever the read carried no value. ``classifiable`` marks, one bit per
+    position, the members the row carried for document classification.
     """
-    if not level.requires_state_reduction and unknown_family_tag is None:
-        layout = level.layout
-        primary_key = witness[layout.primary_key[0]]
-        key = (
-            None
-            if primary_key is ABSENT
-            else LogicalKey(
-                layout.family,
-                primary_key,
-                tuple(witness[position] for position in layout.temporal_starts),
-            )
-        )
-        return builder.add_claim(
-            source,
-            layout,
-            key,
-            witness,
-            witness,
-            (),
-            witness,
-        )
-    claim = claim_identity(
+    claim = _claim_identity(witness, level, unknown_family_tag)
+    decoder = _DeferredPayloadDecoder(
         witness,
         level,
-        unknown_family_tag=unknown_family_tag,
-        correlation_members=correlation_members,
-    )
-    decoder = _DeferredRowDecoder(
-        witness,
-        level,
-        claim.identity_values,
+        claim.routed_values,
+        claim.correlation_findings,
         classifiable,
         unknown_family_tag,
     )
@@ -326,24 +260,62 @@ def convert_deferred(
         source,
         level.layout,
         claim.key,
-        claim.witness,
-        claim.routing_values,
-        claim.findings,
+        witness,
+        claim.routed_values,
+        claim.identity_findings,
         decoder,
     )
 
 
+def _claim_identity(
+    witness: tuple[object, ...],
+    level: BoundLevel,
+    unknown_family_tag: UnknownFamilyTag | None,
+) -> IdentityClaim:
+    routed, identity_findings = _judge(level.eager_identity_positions, witness, level, None, None)
+    routed, correlation_findings = _judge(
+        level.eager_correlation_positions, witness, level, routed, None
+    )
+    routed_values = witness if routed is None else tuple(routed)
+    layout = level.layout
+    key = (
+        None
+        if unknown_family_tag is not None
+        or any(routed_values[position] is ABSENT for position in layout.primary_key)
+        else LogicalKey(
+            layout.family,
+            routed_values[layout.primary_key[0]],
+            _values_at(routed_values, layout.temporal_starts),
+        )
+    )
+    return IdentityClaim(
+        key,
+        routed_values,
+        () if identity_findings is None else tuple(identity_findings),
+        () if correlation_findings is None else tuple(correlation_findings),
+    )
+
+
+def _values_at(values: Sequence[object], positions: tuple[int, ...]) -> tuple[object, ...]:
+    if not positions:
+        return ()
+    if len(positions) == 1:
+        return (values[positions[0]],)
+    return tuple(values[position] for position in positions)
+
+
 def _classify_payload(
     witness: tuple[object, ...],
-    level: LevelContext,
+    level: BoundLevel,
     classifiable: int,
-) -> tuple[tuple[object, ...], tuple[DocumentFinding, ...], frozenset[str]]:
+) -> tuple[tuple[object, ...], tuple[DocumentFinding, ...], int]:
+    """Classify each document member the row carried, answering the classified
+    values, the codec's findings, and the classified positions, one bit each."""
     if not level.classified_members:
-        return witness, (), frozenset()
+        return witness, (), 0
     values = list(witness)
     findings: list[DocumentFinding] = []
-    full = classifiable == (1 << len(witness)) - 1
-    classified: set[str] | None = None if full else set()
+    classified = 0
     for position, optional_classifier in enumerate(level.classifiers):
         if optional_classifier is None:
             continue
@@ -353,37 +325,25 @@ def _classify_payload(
         value, member_findings = optional_classifier(raw)
         values[position] = value
         findings.extend(member_findings)
-        if classified is not None:
-            key = (
-                (
-                    level.layout.attributes[position].storage.name
-                    if not level.attribute_reads
-                    else level.attribute_reads[position].result_key
-                )
-                if position < level.layout.attribute_count
-                else level.layout.occurrences[position - level.layout.attribute_count].storage.name
-            )
-            classified.add(key)
-    return (
-        tuple(values),
-        tuple(findings),
-        level.classified_members if classified is None else frozenset(classified),
-    )
+        classified |= 1 << position
+    return tuple(values), tuple(findings), classified
 
 
-def _decode_row(
-    raw_values: tuple[object, ...],
-    level: LevelContext,
-    identity_values: tuple[object, ...],
+def _decode_payload(
+    values: tuple[object, ...],
+    level: BoundLevel,
+    routed_values: tuple[object, ...],
+    correlation_findings: tuple[StoredDataIssueInput, ...],
     findings: tuple[DocumentFinding, ...],
     unknown_family_tag: UnknownFamilyTag | None,
-    classified_members: frozenset[str],
+    classified: int,
 ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
-    layout = level.layout
-    issues: list[StoredDataIssueInput] = [
-        _translate_finding(finding, level) for finding in findings
-    ]
+    issues: list[StoredDataIssueInput] | None = (
+        [_translate_finding(finding, level) for finding in findings] if findings else None
+    )
     if unknown_family_tag is not None:
+        if issues is None:
+            issues = []
         issues.append(
             StoredDataIssueInput(
                 "stored-data-family-tag-unknown",
@@ -392,71 +352,116 @@ def _decode_row(
             )
         )
     members: list[object] | None = None
-    identity_positions = level.identity_positions
-    for position, value in zip(identity_positions, identity_values, strict=True):
-        if value is not raw_values[position]:
+    for position in level.eager_identity_positions:
+        if routed_values[position] is not values[position]:
             if members is None:
-                members = list(raw_values)
-            members[position] = value
-    if level.attribute_judgment_positions:
-        members = _judge_attributes(raw_values, level, classified_members, issues, members)
+                members = list(values)
+            members[position] = routed_values[position]
+    members, issues = _judge(
+        level.payload_positions,
+        values,
+        level,
+        members,
+        issues,
+        routed_values=routed_values,
+        captured=correlation_findings,
+        classified=classified,
+    )
+    members, issues = _decode_occurrences(values, level, classified, members, issues)
+    return (
+        values if members is None else tuple(members),
+        () if issues is None else tuple(issues),
+    )
+
+
+def _decode_occurrences(
+    values: tuple[object, ...],
+    level: BoundLevel,
+    classified: int,
+    members: list[object] | None,
+    issues: list[StoredDataIssueInput] | None,
+) -> tuple[list[object] | None, list[StoredDataIssueInput] | None]:
+    layout = level.layout
     for occurrence_position, (occurrence, projected) in enumerate(
         zip(layout.occurrences, level.projected_by_position, strict=True),
         start=layout.attribute_count,
     ):
-        if not projected or (raw := raw_values[occurrence_position]) is ABSENT:
+        if not projected or (raw := values[occurrence_position]) is ABSENT:
             continue
         value, occurrence_findings = _occurrence(
             raw,
             occurrence,
-            outer_classified=occurrence.storage.name in classified_members,
+            outer_classified=bool(classified & (1 << occurrence_position)),
         )
-        issues.extend(
-            _occurrence_issue(finding, occurrence, level.concrete_entity)
-            for finding in occurrence_findings
-        )
+        if occurrence_findings:
+            if issues is None:
+                issues = []
+            issues.extend(
+                _occurrence_issue(finding, occurrence, level.concrete_entity)
+                for finding in occurrence_findings
+            )
         if value is not raw:
             if members is None:
-                members = list(raw_values)
+                members = list(values)
             members[occurrence_position] = value
-    return raw_values if members is None else tuple(members), tuple(issues)
+    return members, issues
 
 
-def _judge_attributes(
-    raw_values: tuple[object, ...],
-    level: LevelContext,
-    classified_members: frozenset[str],
-    issues: list[StoredDataIssueInput],
+# One branch per verdict source. It runs per selected cell per row, so the branches
+# stay inline rather than behind a per-cell call.
+def _judge(  # noqa: C901
+    selection: tuple[int, ...],
+    values: tuple[object, ...],
+    level: BoundLevel,
     members: list[object] | None,
-) -> list[object] | None:
-    """Judge each stored scalar the level judges, appending its issues and
-    answering ``members`` with every replaced value written into it, copied from
-    ``raw_values`` on the first replacement."""
+    issues: list[StoredDataIssueInput] | None,
+    *,
+    routed_values: tuple[object, ...] = (),
+    captured: tuple[StoredDataIssueInput, ...] = (),
+    classified: int = 0,
+) -> tuple[list[object] | None, list[StoredDataIssueInput] | None]:
+    """Judge ``values`` at each ``selection`` position, answering ``members`` with
+    every replaced value written into it, copied from ``values`` on the first
+    replacement, and ``issues`` with each new finding appended.
+
+    Given ``routed_values``, the level's eager correlation positions reuse the
+    value their claim routed and the finding it ``captured``, in attribute order;
+    a ``classified`` position takes its document codec's verdict; every other
+    position is a host-checked stored scalar, decoded and admitted here.
+    """
     layout = level.layout
     reads = level.attribute_reads
-    host_checked = level.host_checked_set
-    for position in level.attribute_judgment_positions:
+    reused = level.eager_correlation_positions if routed_values else ()
+    next_reused = 0
+    next_captured = 0
+    for position in selection:
         attribute = layout.attributes[position]
-        contract = reads[position] if reads else None
-        result_key = attribute.storage.name if contract is None else contract.result_key
-        raw = raw_values[position]
-        if raw is ABSENT:
+        raw = values[position]
+        if next_reused < len(reused) and reused[next_reused] == position:
+            next_reused += 1
+            value = routed_values[position]
+            if (
+                next_captured < len(captured)
+                and captured[next_captured].member == attribute.identity
+            ):
+                if issues is None:
+                    issues = []
+                issues.append(captured[next_captured])
+                next_captured += 1
+        elif raw is ABSENT:
             continue
-        if result_key in classified_members:
+        elif classified & (1 << position):
             value = (
                 ABSENT if raw is UNAVAILABLE or (raw is None and not attribute.nullable) else raw
             )
-        elif position not in host_checked:
-            continue
         else:
-            try:
-                value = (
-                    decode_canonical_wire(attribute.type, cast("WireValue", raw))
-                    if contract is not None and contract.encoded
-                    else raw
-                )
-            except WireDecodingError:
-                value = raw
+            contract = reads[position] if reads else None
+            value = raw
+            if raw is not None and contract is not None and contract.encoded:
+                try:
+                    value = decode_canonical_wire(attribute.type, cast("WireValue", raw))
+                except WireDecodingError:
+                    value = raw
             admission = admits_stored_scalar(
                 value,
                 attribute.type,
@@ -468,15 +473,17 @@ def _judge_attributes(
                 ),
             )
             if not admission.admitted:
+                if issues is None:
+                    issues = []
                 issues.append(
                     _attribute_issue(attribute, admission.rejected, level.concrete_entity)
                 )
-            value = value if admission.admitted else ABSENT
+                value = ABSENT
         if value is not raw:
             if members is None:
-                members = list(raw_values)
+                members = list(values)
             members[position] = value
-    return members
+    return members, issues
 
 
 def _attribute_issue(
@@ -553,7 +560,7 @@ def _occurrence(
     return value, classified.findings
 
 
-def _translate_finding(finding: DocumentFinding, level: LevelContext) -> StoredDataIssueInput:
+def _translate_finding(finding: DocumentFinding, level: BoundLevel) -> StoredDataIssueInput:
     """One Entity-document finding as the issue it publishes.
 
     A finding that resolves to a direct Entity Attribute publishes the empty

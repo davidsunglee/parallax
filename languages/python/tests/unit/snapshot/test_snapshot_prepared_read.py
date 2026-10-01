@@ -1,33 +1,27 @@
 """One compiled read bound once, and what its rows answer (m-snapshot-read).
 
 The production seam a read lane crosses: a compiled read and a cataloged model
-bind into a prepared read, and every row of that statement is materialized,
-converted, and observed through it. What a row carries into conversion — the
-concrete it resolved, the findings the transform raised, the members it already
-classified — is the compiled read's own provenance, so every case here drives a
-real ``compile_read`` rather than handing conversion a provenance no statement
-produced.
+bind into a prepared read, and every row of that statement is converted through
+``PreparedRead.convert_row`` and observed through it. What a row carries into
+conversion — the concrete it resolved, the findings the transform raised, the
+members it already classified — is the compiled read's own provenance, so every
+case here drives a real ``compile_read`` rather than handing conversion a
+provenance no statement produced.
 
-Three properties divide the suite. The levels exist before the rows do: a read
-whose position is one concrete can still answer a row of a sibling or of the
-family root, and the level that row converts under was derived at bind — one per
-Entity the read can resolve, all of them before the first row arrives. A
-classified member is translated rather than judged again, in each of the states
-the transform can leave it in. And the observation reads one row's physical
-columns under the same level, including the occurrences only the position's OTHER
-concretes ever store at.
+The levels exist before the rows do: a read whose position is one concrete can
+still answer a row of a sibling or of the family root. A tuple row and a
+result-keyed row of one statement convert to the same state, whether the level
+keeps its witness as its member row or reduces it. Identity, routing, and
+temporal coordinates are ready when a row is claimed; the rest of the payload is
+judged only when a Root View consumes it, and a correlation judged for routing is
+never judged again. A classified member is translated rather than judged again,
+in each of the states the transform can leave it in. And the observation reads one
+row's physical columns under the same level, including the occurrences only the
+position's OTHER concretes ever store at.
 
-Beside them, one cadence claim: over the report's own workload, the work fixed by
-a layout, a member declaration, or a Neutral Type no longer happens per row at
-all, and what scales with rows is the admission each unclassified stored cell
-owes. A cadence cannot be read off a result, so it and the bind-time claim above
-are the two here that patch a name inside the seam and count what it reaches,
-rather than grading what the seam published.
-
-Conversion itself is graded in `test_snapshot_conversion.py`, which drives
-``convert_deferred`` directly: the positional layout, the absent/null/empty
-vocabulary, every leaf type, and the issue each codec finding publishes are
-properties of that seam and are stated there.
+Where a guarantee is about when or how often a stored value is judged rather
+than about what was published, the case records conversion's own decoding and
+admission dependencies and counts what they reach.
 """
 
 from __future__ import annotations
@@ -36,44 +30,50 @@ import datetime as dt
 import decimal
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Final, cast
 
 import pytest
 
+from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Rel, ValueObject, attr, rel
 from parallax.core import predicate as oa
-from parallax.core.base import (
-    SQL_NULL,
-    Admission,
-    DocumentValue,
-    NeutralType,
-    PresentDocument,
-    admits_stored_scalar,
-)
+from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import MISSING
-from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
-from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._model import model_of
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    Metamodel,
+    ValueObjectAttributeIdentity,
+    ValueObjectIdentity,
+)
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.descriptor._records import (
     Attribute,
     DocumentLayout,
-    Entity,
     Inheritance,
     NestedValueObject,
-    ValueObject,
     ValueObjectAttribute,
 )
+from parallax.descriptor._records import (
+    Entity as DescriptorEntity,
+)
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
-from parallax.snapshot.materialize import PageBuilder, RootView, _convert, _identity
-from parallax.snapshot.materialize._identity import claim_identity
+from parallax.descriptor._records import ValueObject as DescriptorValueObject
+from parallax.snapshot.materialize import PageBuilder, RootView, _convert
 from parallax.snapshot.materialize._page import ABSENT, StoredDataIssueInput, page_rows
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
+from parallax.snapshot.materialize._publication import publication_issue
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, target
 from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit._document_layout_support import columns_model
+from tests.unit._prepared_read_support import bound_read, compiled_read
 from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
     OWNERS,
@@ -86,7 +86,11 @@ from tests.unit._snapshot_materialization_support import (
     read_plan,
     rows_per_level,
 )
-from tests.unit.snapshot._snapshot_page_support import physical_members, rendered_members
+from tests.unit.snapshot._snapshot_page_support import (
+    physical_members,
+    recorded_conversion_dependencies,
+    rendered_members,
+)
 
 ANIMAL = corpus_model("animal")
 SCALARS = corpus_model("scalars")
@@ -105,7 +109,7 @@ def _register_model() -> Metamodel:
     member can be in — and the required member is what makes a stored null
     distinguishable from a nullable one's.
     """
-    register = Entity(
+    register = DescriptorEntity(
         name="Register",
         table="register",
         layout=DocumentLayout(column="payload"),
@@ -116,7 +120,7 @@ def _register_model() -> Metamodel:
             Attribute(name="stamp", type="date", column="stamp", nullable=True),
         ),
         value_objects=(
-            ValueObject(
+            DescriptorValueObject(
                 name="marks",
                 column="marks",
                 multiplicity="many",
@@ -137,13 +141,13 @@ def _register_model() -> Metamodel:
 def _partial_family() -> Metamodel:
     """A table-per-hierarchy family this model composed only part of, so the
     shared table can hand back a row tagged for a sibling it never declared."""
-    root = Entity(
+    root = DescriptorEntity(
         name="Beast",
         table="beast",
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
         attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
     )
-    wolf = Entity(
+    wolf = DescriptorEntity(
         name="Wolf",
         inheritance=Inheritance(role="concrete-subtype", parent="Beast", tag_value="wolf"),
         attributes=(Attribute(name="howl", type="string", column="howl", nullable=True),),
@@ -155,17 +159,17 @@ def _craft_family() -> Metamodel:
     """A table-per-hierarchy family whose two concretes each declare one
     occurrence, in the two multiplicities — the shape a polymorphic position
     observes its own concrete's occurrence and its siblings' alike."""
-    root = Entity(
+    root = DescriptorEntity(
         name="Craft",
         table="craft",
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
         attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
     )
-    tug = Entity(
+    tug = DescriptorEntity(
         name="Tug",
         inheritance=Inheritance(role="concrete-subtype", parent="Craft", tag_value="tug"),
         value_objects=(
-            ValueObject(
+            DescriptorValueObject(
                 name="berth",
                 column="berth",
                 nullable=True,
@@ -173,11 +177,11 @@ def _craft_family() -> Metamodel:
             ),
         ),
     )
-    barge = Entity(
+    barge = DescriptorEntity(
         name="Barge",
         inheritance=Inheritance(role="concrete-subtype", parent="Craft", tag_value="barge"),
         value_objects=(
-            ValueObject(
+            DescriptorValueObject(
                 name="decks",
                 column="decks",
                 multiplicity="many",
@@ -189,7 +193,7 @@ def _craft_family() -> Metamodel:
 
 
 def _encoded_identity_model() -> Metamodel:
-    encoded = Entity(
+    encoded = DescriptorEntity(
         name="EncodedIdentity",
         table="encoded_identity",
         attributes=(
@@ -248,9 +252,7 @@ class _Converted:
 def _converted(prepared: PreparedRead, stored: Mapping[str, object]) -> _Converted:
     """One stored row through the whole prepared seam: convert and seal."""
     builder = PageBuilder(ViewSchema.of())
-    index, _resolved, _document, _variant = prepared.convert_driver(
-        stored, builder, source=ROOT_LEVEL
-    )
+    index, _resolved, _document, _variant = prepared.convert_row(stored, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     layout = rows.layouts[index]
@@ -263,9 +265,7 @@ def _converted(prepared: PreparedRead, stored: Mapping[str, object]) -> _Convert
 def _observed(prepared: PreparedRead, stored: Mapping[str, object]) -> dict[str, object]:
     """One stored row's shared Entity State viewed under physical storage keys."""
     builder = PageBuilder(ViewSchema.of())
-    index, _resolved, _document, _variant = prepared.convert_driver(
-        stored, builder, source=ROOT_LEVEL
-    )
+    index, _resolved, _document, _variant = prepared.convert_row(stored, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     root = RootView(page)
@@ -289,50 +289,24 @@ def _stored_decks() -> PresentDocument:
 # --------------------------------------------------------------------------- #
 # Every Entity a read can resolve has its level before a row names it.         #
 # --------------------------------------------------------------------------- #
-def _recording_levels(patched: pytest.MonkeyPatch, derived: list[EntityIdentity]) -> None:
-    """Record the exact Entity of every level the prepared seam builds, in build
-    order.
-
-    Patched on the name :func:`bind` and the per-row path both read, so a level
-    built anywhere in that seam is recorded — including one built on the row that
-    first reached an Entity.
-    """
-    level_context = _convert.LevelContext
-
-    def recording(*args: Any, **kwargs: Any) -> Any:
-        level = level_context(*args, **kwargs)
-        derived.append(level.concrete_entity)
-        return level
-
-    patched.setattr("parallax.snapshot.materialize._prepared.LevelContext", recording)
-
-
-def test_binding_derives_every_resolvable_level_and_no_row_derives_another() -> None:
-    # A level belongs to the compiled read, so all of them exist the moment bind
-    # returns: one per Entity the read can resolve, and none built afterwards.
-    # The narrowed family read is where the two halves are distinguishable — its
-    # position is one concrete while its rows can resolve to the whole family —
-    # and converting a row of the position and a row outside it adds nothing,
-    # which a level derived on first reach could not do.
+def test_a_narrowed_read_converts_rows_of_every_entity_it_can_resolve() -> None:
+    # A level belongs to the compiled read, so one exists for every Entity the
+    # read can resolve before any row arrives. The narrowed family read is where
+    # that is distinguishable — its position is one concrete while its rows can
+    # resolve to the whole family — and a row of the position and a row outside
+    # it each convert under their own concrete.
     compiled = _compiled(ANIMAL, "Animal", narrow_to=("Dog",))
-    derived: list[EntityIdentity] = []
-    with pytest.MonkeyPatch.context() as patched:
-        _recording_levels(patched, derived)
-        prepared = bind(CatalogedModel(ANIMAL), compiled)
-        at_bind = tuple(derived)
-        rex = _converted(
-            prepared,
-            {"id": 1, "kind": "dog", "name": "Rex", "owner_id": 10, "bark_volume": 3},
-        )
-        boar = _converted(
-            prepared,
-            {"id": 2, "kind": "boar", "name": "Bo", "owner_id": 10, "tusk_length": None},
-        )
-    assert set(at_bind) == set(compiled.resolvable)
-    assert len(at_bind) == len(set(compiled.resolvable))
-    assert {identity.name for identity in at_bind} >= {"Dog", "WildBoar"}
+    prepared = bind(CatalogedModel(ANIMAL), compiled)
+    rex = _converted(
+        prepared,
+        {"id": 1, "kind": "dog", "name": "Rex", "owner_id": 10, "bark_volume": 3},
+    )
+    boar = _converted(
+        prepared,
+        {"id": 2, "kind": "boar", "name": "Bo", "owner_id": 10, "tusk_length": None},
+    )
+    assert {identity.name for identity in compiled.resolvable} >= {"Dog", "WildBoar"}
     assert (rex.concrete.name, boar.concrete.name) == ("Dog", "WildBoar")
-    assert tuple(derived) == at_bind
 
 
 def test_a_sibling_outside_the_narrowed_position_converts_under_its_own_concrete() -> None:
@@ -472,27 +446,10 @@ def test_native_identity_and_document_members_need_no_scalar_admission() -> None
     # A direct primary-key Column is established by its installed SQL type and
     # constraint, while document members arrive classified by the document codec.
     # Neither reaches the host scalar-admission rule.
-    identity_admitted: list[object] = []
-    payload_admitted: list[object] = []
-
-    def _record(
-        value: object, declared: NeutralType, *, nullable: bool, temporal_end: bool
-    ) -> Admission:
-        identity_admitted.append(value)
-        return admits_stored_scalar(value, declared, nullable=nullable, temporal_end=temporal_end)
-
-    def _payload_record(
-        value: object, declared: NeutralType, *, nullable: bool, temporal_end: bool
-    ) -> Admission:
-        payload_admitted.append(value)
-        return admits_stored_scalar(value, declared, nullable=nullable, temporal_end=temporal_end)
-
-    with pytest.MonkeyPatch.context() as patched:
-        patched.setattr(_identity, "admits_stored_scalar", _record)
-        patched.setattr(_convert, "admits_stored_scalar", _payload_record)
+    with recorded_conversion_dependencies() as calls:
         node = _register(_ADA)
-    assert identity_admitted == []
-    assert payload_admitted == []
+    assert calls.admitted == []
+    assert calls.decoded == []
     assert set(node.members) == {"id", "label", "note", "stamp", "marks"}
 
 
@@ -512,73 +469,58 @@ def test_native_identity_and_document_members_need_no_scalar_admission() -> None
 def test_encoded_identity_is_decoded_before_logical_key_formation(
     raw: object, key: object, issue: str | None
 ) -> None:
-    compiled = _compiled(ENCODED_IDENTITY, "EncodedIdentity")
-    identity = target(ENCODED_IDENTITY, "EncodedIdentity").identity
-    layout = LayoutCatalog(ENCODED_IDENTITY).entity(identity)
-    contracts = compiled.attribute_reads(identity)
-    level = _convert.LevelContext(layout, attribute_reads=contracts)
-    claim = claim_identity((raw, *(ABSENT,) * (len(layout.members) - 1)), level)
+    builder = PageBuilder(ViewSchema.of())
+    index, _resolved, _document, _variant = _prepared(
+        ENCODED_IDENTITY, "EncodedIdentity"
+    ).convert_row({"id_hex": raw, "token_hex": None}, builder, source=ROOT_LEVEL)
+    claimed = builder.finish((index,), Pin())
+    stored_key = page_rows(claimed).keys[index]
+    root = RootView(claimed)
+    issues = root.invalid_roots[0].issues if root.roots == (None,) else root.issues(0)
 
-    assert (None if claim.key is None else claim.key.primary_key) == key
-    assert [finding.code for finding in claim.findings] == ([] if issue is None else [issue])
+    assert (None if stored_key is None else stored_key.primary_key) == key
+    assert [finding.code for finding in issues] == ([] if issue is None else [issue])
+
+
+def _encoded_member(name: str) -> AttributeIdentity:
+    return AttributeIdentity(target(ENCODED_IDENTITY, "EncodedIdentity").identity, name)
 
 
 def test_identity_routing_skips_an_absent_non_identity_cell() -> None:
-    identity = target(ENCODED_IDENTITY, "EncodedIdentity").identity
-    layout = LayoutCatalog(ENCODED_IDENTITY).entity(identity)
-    contracts = _compiled(ENCODED_IDENTITY, "EncodedIdentity").attribute_reads(identity)
-    level = _convert.LevelContext(layout, attribute_reads=contracts)
-    raw = ("0a1b", ABSENT)
-    claim = claim_identity(raw, level, correlation_members=(level.layout.attributes[1].identity,))
+    token = _encoded_member("token")
+    prepared = bound_read(ENCODED_IDENTITY, "EncodedIdentity", correlation_members=(token,))
+    builder = PageBuilder(ViewSchema.of())
+    index, *_ = prepared.convert_row({"id_hex": "0a1b"}, builder, source=ROOT_LEVEL)
 
-    assert claim.key is not None
-    assert claim.routing_values == (b"\x0a\x1b", ABSENT)
+    assert builder.member_value(index, _encoded_member("id")) == b"\x0a\x1b"
+    assert builder.member_value(index, token) is ABSENT
+    root = RootView(builder.finish((index,), Pin()))
+    assert root.issues(0) == ()
 
 
 def test_identity_routing_keeps_native_non_identity_cells_unchanged() -> None:
     identity = target(SCALARS, "ScalarThing").identity
-    layout = LayoutCatalog(SCALARS).entity(identity)
-    contracts = _compiled(SCALARS, "ScalarThing").attribute_reads(identity)
-    level = _convert.LevelContext(layout, attribute_reads=contracts)
-    attributes = {attribute.identity.name: attribute for attribute in layout.attributes}
-    raw_by_name: Mapping[str, object] = {"id": 1, "payload": "0a1b", "f32": 1.5}
-    values = (
-        *(raw_by_name.get(contract.attribute.identity.name) for contract in contracts),
-        *(ABSENT,) * len(layout.occurrences),
+    payload, f32 = AttributeIdentity(identity, "payload"), AttributeIdentity(identity, "f32")
+    prepared = bound_read(SCALARS, "ScalarThing", correlation_members=(payload, f32))
+    builder = PageBuilder(ViewSchema.of())
+    index, *_ = prepared.convert_row(
+        {"id": 1, "payload_hex": "0a1b", "f32": 1.5}, builder, source=ROOT_LEVEL
     )
 
-    claim = claim_identity(
-        values,
-        level,
-        correlation_members=(attributes["payload"].identity, attributes["f32"].identity),
-    )
-
-    assert claim.key is not None
-    assert claim.routing_values[layout.index_of[attributes["payload"].identity]] == b"\x0a\x1b"
-    assert claim.routing_values[layout.index_of[attributes["f32"].identity]] == 1.5
-
-
-def test_level_context_rejects_misaligned_precomputed_member_metadata() -> None:
-    identity = target(ENCODED_IDENTITY, "EncodedIdentity").identity
-    layout = LayoutCatalog(ENCODED_IDENTITY).entity(identity)
-    with pytest.raises(ValueError, match="result ordinals must align"):
-        _convert.LevelContext(layout, result_ordinals=(0,))
-    with pytest.raises(ValueError, match="document member names must align"):
-        _convert.LevelContext(layout, document_member_names=(None,))
+    assert builder.member_value(index, payload) == b"\x0a\x1b"
+    assert builder.member_value(index, f32) == 1.5
 
 
 def test_sql_null_in_a_nullable_encoded_column_bypasses_wire_decoding() -> None:
-    compiled = _compiled(ENCODED_IDENTITY, "EncodedIdentity")
-    identity = target(ENCODED_IDENTITY, "EncodedIdentity").identity
-    contracts = compiled.attribute_reads(identity)
-    stored = {
-        contract.result_key: "0a1b" if contract.attribute.identity.name == "id" else None
-        for contract in contracts
-    }
-    node = _converted(bind(CatalogedModel(ENCODED_IDENTITY), compiled), stored)
+    with recorded_conversion_dependencies() as calls:
+        node = _converted(
+            _prepared(ENCODED_IDENTITY, "EncodedIdentity"), {"id_hex": "0a1b", "token_hex": None}
+        )
 
     assert node.members == {"id": b"\x0a\x1b", "token": None}
     assert node.issues == ()
+    assert calls.decoded == ["0a1b"]
+    assert calls.admitted == [b"\x0a\x1b", None]
 
 
 # --------------------------------------------------------------------------- #
@@ -659,7 +601,7 @@ def test_a_document_row_is_observed_with_its_members_under_their_own_columns() -
 def test_a_row_publisher_views_a_projected_occurrence_in_place() -> None:
     prepared = _prepared(REGISTER, "Register")
     builder = PageBuilder(ViewSchema.of())
-    index, _resolved, _document, variant = prepared.convert_driver(
+    index, _resolved, _document, variant = prepared.convert_row(
         {"id": 1, "payload": _stored_document(_ADA)}, builder, source=ROOT_LEVEL
     )
     root = RootView(builder.finish((index,), Pin()))
@@ -675,6 +617,362 @@ def test_a_row_publisher_views_a_projected_occurrence_in_place() -> None:
         "founder",
         {"port": "Oslo"},
     )
+
+
+# --------------------------------------------------------------------------- #
+# A positional row and a result-keyed row of one statement are one state.      #
+# --------------------------------------------------------------------------- #
+_OPENED: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_VALID_FROM: Final = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+POSITION = corpus_model("position")
+ORDERS = corpus_model("orders")
+TWIN_COLUMNS = columns_model()
+
+
+def _position(**cells: object) -> dict[str, object]:
+    """One stored bitemporal `Position` row, current on both axes."""
+    return {
+        "pos_id": 1,
+        "acct_num": "A-1",
+        "val": decimal.Decimal("1.50"),
+        "from_z": _VALID_FROM,
+        "thru_z": INFINITY,
+        "in_z": _OPENED,
+        "out_z": INFINITY,
+        **cells,
+    }
+
+
+def _positional(model: Metamodel, entity: str, cells: Mapping[str, object]) -> Row:
+    """``cells`` laid out in the compiled read's own result order, as a port
+    returns a provider row."""
+    keys = compiled_read(model, entity).result_keys
+    assert set(cells) == set(keys)
+    return tuple(cells[key] for key in keys)
+
+
+@dataclass(frozen=True, slots=True)
+class _Delivered:
+    """What one converted row answers: its logical key, its judged members by
+    declared name, its issues, and the flat row it publishes."""
+
+    key: object
+    members: Mapping[str, Any]
+    issues: tuple[StoredDataIssueInput, ...]
+    flat: Mapping[str, object]
+
+
+def _delivered(model: Metamodel, entity: str, row: Row | Mapping[str, object]) -> _Delivered:
+    prepared = bound_read(model, entity)
+    builder = PageBuilder(ViewSchema.of())
+    index, resolved, _document, variant = prepared.convert_row(row, builder, source=ROOT_LEVEL)
+    page = builder.finish((index,), Pin())
+    key = page_rows(page).keys[index]
+    root = RootView(page)
+    values = root.member_values(0)
+    return _Delivered(
+        key,
+        rendered_members(root.layout(0), values),
+        root.issues(0),
+        prepared.row_publisher().publish(resolved, values, variant),
+    )
+
+
+@pytest.mark.parametrize(
+    ("model", "entity", "cells", "member", "value"),
+    [
+        pytest.param(
+            ORDERS,
+            "Order",
+            {
+                "id": 1,
+                "name": "Ada",
+                "sku": None,
+                "qty": 2,
+                "price": decimal.Decimal("1.50"),
+                "active": True,
+                "ordered_on": dt.date(2024, 1, 1),
+            },
+            "orderedOn",
+            dt.date(2024, 1, 1),
+            id="native-columns",
+        ),
+        pytest.param(
+            SCALARS,
+            "ScalarThing",
+            {
+                "id": 1,
+                "f32": 1.5,
+                "f64": 2.5,
+                "payload_hex": "0a1b",
+                "local_time": dt.time(9, 30),
+                "external_id": None,
+            },
+            "payload",
+            b"\x0a\x1b",
+            id="encoded-column",
+        ),
+        pytest.param(POSITION, "Position", _position(), "validEnd", INFINITY, id="bitemporal"),
+        pytest.param(
+            REGISTER,
+            "Register",
+            {"id": 1, "payload": PresentDocument(cast("DocumentValue", dict(_ADA)))},
+            "stamp",
+            dt.date(2026, 1, 15),
+            id="relational-document",
+        ),
+        pytest.param(TWIN_COLUMNS, "Marker", {"id": 5}, "id", 5, id="singleton-width"),
+    ],
+)
+def test_a_positional_and_a_result_keyed_row_convert_and_publish_alike(
+    model: Metamodel, entity: str, cells: Mapping[str, object], member: str, value: object
+) -> None:
+    # A port answers positional rows and a fake answers result-keyed ones, and
+    # a level either keeps a row's witness as its member row or reduces it. None
+    # of those choices is observable in the key, the judged members, the issues,
+    # or the published flat row.
+    positional = _delivered(model, entity, _positional(model, entity, cells))
+    keyed = _delivered(model, entity, cells)
+    assert positional == keyed
+    assert positional.key is not None
+    assert positional.members[member] == value
+    assert positional.issues == ()
+
+
+# --------------------------------------------------------------------------- #
+# Temporal identity: the axis starts key a row, and its ends are host-checked.  #
+# --------------------------------------------------------------------------- #
+def test_a_bitemporal_row_keys_by_its_axis_starts_and_admits_its_open_ends() -> None:
+    delivered = _delivered(POSITION, "Position", _positional(POSITION, "Position", _position()))
+    family = target(POSITION, "Position").identity
+    assert delivered.key == (family, 1, (_VALID_FROM, _OPENED))
+    assert (delivered.members["validEnd"], delivered.members["txEnd"]) == (INFINITY, INFINITY)
+    assert delivered.issues == ()
+
+
+@pytest.mark.parametrize(
+    ("column", "stored", "member", "code"),
+    [
+        pytest.param(
+            "thru_z", "not-an-instant", "validEnd", "stored-data-leaf-undecodable", id="malformed"
+        ),
+        pytest.param("out_z", None, "txEnd", "stored-data-attribute-null", id="null"),
+    ],
+)
+def test_a_rejected_temporal_end_is_diagnosed_once_its_state_is_judged(
+    column: str, stored: object, member: str, code: str
+) -> None:
+    builder = PageBuilder(ViewSchema.of())
+    index, *_ = bound_read(POSITION, "Position").convert_row(
+        _position(**{column: stored}), builder, source=ROOT_LEVEL
+    )
+    page = builder.finish((index,), Pin())
+    assert page_rows(page).keys[index] == (
+        target(POSITION, "Position").identity,
+        1,
+        (_VALID_FROM, _OPENED),
+    )
+    root = RootView(page)
+    entity = target(POSITION, "Position").identity
+    assert [(issue.code, issue.member, issue.stored_value) for issue in root.issues(0)] == [
+        (code, AttributeIdentity(entity, member), stored)
+    ]
+    assert member not in rendered_members(root.layout(0), root.member_values(0))
+
+
+def test_rows_share_a_logical_node_only_where_key_and_axis_starts_agree() -> None:
+    prepared = bound_read(POSITION, "Position")
+    builder = PageBuilder(ViewSchema.of())
+    refs = tuple(
+        prepared.convert_row(row, builder, source=ROOT_LEVEL)[0]
+        for row in (
+            _position(),
+            _position(),
+            _position(in_z=_OPENED + dt.timedelta(days=1)),
+            _position(pos_id=2),
+        )
+    )
+    rows = page_rows(builder.finish(refs, Pin()))
+    assert list(rows.logical_ids) == [0, 0, 1, 2]
+
+
+# --------------------------------------------------------------------------- #
+# Correlations: judged once when the row is claimed, reused by its payload.    #
+# --------------------------------------------------------------------------- #
+_NAMESPACE = "parallax.compatibility"
+
+
+class CorrelatedTerms(ValueObject):
+    label: Attr[str]
+
+
+class CorrelatedHolder(Entity, table="correlated_holder", namespace=_NAMESPACE):
+    id: Attr[bytes] = attr(primary_key=True)
+    holdings: Rel[tuple[CorrelatedHolding, ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "holder_id")
+    )
+
+
+class CorrelatedCustodian(Entity, table="correlated_custodian", namespace=_NAMESPACE):
+    id: Attr[bytes] = attr(primary_key=True)
+    holdings: Rel[tuple[CorrelatedHolding, ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "custodian_id")
+    )
+
+
+class CorrelatedHolding(Entity, table="correlated_holding", namespace=_NAMESPACE):
+    """Joined to two owners through non-key Bytes Columns, with an unrelated
+    encoded payload Column between them and a document Column after them."""
+
+    id: Attr[int] = attr(primary_key=True)
+    holder_id: Attr[bytes | None]
+    digest: Attr[bytes | None]
+    custodian_id: Attr[bytes | None]
+    terms: Attr[CorrelatedTerms | None]
+    holder: Rel[CorrelatedHolder | None] = rel(reverse_of="holdings")
+    custodian: Rel[CorrelatedCustodian | None] = rel(reverse_of="holdings")
+
+
+HOLDINGS = model_of(DomainModel(CorrelatedHolder, CorrelatedCustodian, CorrelatedHolding))
+_HOLDING = EntityIdentity(_NAMESPACE, "CorrelatedHolding")
+_HOLDER = AttributeIdentity(_HOLDING, "holderId")
+_DIGEST = AttributeIdentity(_HOLDING, "digest")
+_CUSTODIAN = AttributeIdentity(_HOLDING, "custodianId")
+_TERMS_LABEL = ValueObjectAttributeIdentity(ValueObjectIdentity(_HOLDING, ("terms",)), "label")
+
+
+def _holdings() -> PreparedRead:
+    """The holding level bound with its correlations named in reverse attribute
+    order, as a plan may select them."""
+    return bound_read(HOLDINGS, "CorrelatedHolding", correlation_members=(_CUSTODIAN, _HOLDER))
+
+
+def _holding(**cells: object) -> dict[str, object]:
+    return {
+        "id": 1,
+        "holder_id_hex": "a101",
+        "digest_hex": "d101",
+        "custodian_id_hex": "c101",
+        "terms": SQL_NULL,
+        **cells,
+    }
+
+
+def _consumed(row: Mapping[str, object]) -> RootView:
+    builder = PageBuilder(ViewSchema.of())
+    index, *_ = _holdings().convert_row(row, builder, source=ROOT_LEVEL)
+    return RootView(builder.finish((index,), Pin()))
+
+
+def test_a_correlation_is_judged_once_for_routing_and_reused_by_its_payload() -> None:
+    with recorded_conversion_dependencies() as calls:
+        builder = PageBuilder(ViewSchema.of())
+        index, *_ = _holdings().convert_row(_holding(), builder, source=ROOT_LEVEL)
+        assert builder.member_value(index, _HOLDER) == b"\xa1\x01"
+        assert builder.member_value(index, _CUSTODIAN) == b"\xc1\x01"
+        assert sorted(cast("list[str]", calls.decoded)) == ["a101", "c101"]
+        assert sorted(cast("list[bytes]", calls.admitted)) == [b"\xa1\x01", b"\xc1\x01"]
+
+        root = RootView(builder.finish((index,), Pin()))
+        members = rendered_members(root.layout(0), root.member_values(0))
+
+    assert sorted(cast("list[str]", calls.decoded)) == ["a101", "c101", "d101"]
+    assert sorted(cast("list[bytes]", calls.admitted)) == [
+        b"\xa1\x01",
+        b"\xc1\x01",
+        b"\xd1\x01",
+    ]
+    assert (members["holderId"], members["digest"], members["custodianId"]) == (
+        b"\xa1\x01",
+        b"\xd1\x01",
+        b"\xc1\x01",
+    )
+    assert root.issues(0) == ()
+
+
+@pytest.mark.parametrize(
+    ("stored", "routed", "issues"),
+    [
+        pytest.param("a101", b"\xa1\x01", [], id="accepted"),
+        pytest.param(None, None, [], id="null"),
+        pytest.param(ABSENT, ABSENT, [], id="absent"),
+        pytest.param("zz", ABSENT, [("stored-data-leaf-undecodable", "zz")], id="rejected"),
+    ],
+)
+def test_a_routed_correlation_is_visible_before_consumption_and_diagnosed_after(
+    stored: object, routed: object, issues: list[tuple[str, object]]
+) -> None:
+    # A rejected correlation routes as no value, exactly as an absent one does,
+    # yet only the rejection publishes a finding once the payload is consumed.
+    row = _holding(holder_id_hex=stored)
+    if stored is ABSENT:
+        del row["holder_id_hex"]
+    builder = PageBuilder(ViewSchema.of())
+    index, *_ = _holdings().convert_row(row, builder, source=ROOT_LEVEL)
+    assert builder.member_value(index, _HOLDER) is routed or (
+        builder.member_value(index, _HOLDER) == routed
+    )
+
+    root = RootView(builder.finish((index,), Pin()))
+    assert root.member_values(0)[root.layout(0).index_of[_HOLDER]] == routed
+    assert [
+        (issue.code, issue.stored_value) for issue in root.issues(0) if issue.member == _HOLDER
+    ] == issues
+
+
+def _diagnoses(root: RootView) -> list[tuple[object, ...]]:
+    return [(issue.code, issue.member, issue.path, issue.stored_value) for issue in root.issues(0)]
+
+
+def test_captured_correlation_findings_keep_their_attribute_positions_in_the_payload() -> None:
+    # Both correlations are judged when the row is claimed, the unrelated `digest`
+    # between them only when its state is consumed. Publication still lists every
+    # finding in its documented order — the document codec's first, then each
+    # Attribute at its own position — and the first of them is what refuses.
+    failing = _holding(
+        holder_id_hex="zz",
+        digest_hex="yy",
+        custodian_id_hex="xx",
+        terms=PresentDocument({"label": 7}),
+    )
+    root = _consumed(failing)
+    undecodable = "stored-data-leaf-undecodable"
+    assert _diagnoses(root) == [
+        (undecodable, _TERMS_LABEL, ("terms", "label"), 7),
+        (undecodable, _HOLDER, (), "zz"),
+        (undecodable, _DIGEST, (), "yy"),
+        (undecodable, _CUSTODIAN, (), "xx"),
+    ]
+    assert publication_issue(root) is root.issues(0)[0]
+
+    without_document = _consumed({**failing, "terms": SQL_NULL})
+    assert [member for _code, member, _path, _value in _diagnoses(without_document)] == [
+        _HOLDER,
+        _DIGEST,
+        _CUSTODIAN,
+    ]
+    refusal = publication_issue(without_document)
+    assert refusal is not None
+    assert refusal.member == _HOLDER
+
+
+def test_a_rejected_correlation_freezes_its_evidence_when_it_is_judged() -> None:
+    # The rejected value is captured at the routing verdict. A provider carrier
+    # mutated after the row was claimed cannot rewrite what the payload publishes.
+    rejected: list[object] = ["0a", {"k": "1b"}]
+    builder = PageBuilder(ViewSchema.of())
+    index, *_ = _holdings().convert_row(
+        _holding(holder_id_hex=rejected), builder, source=ROOT_LEVEL
+    )
+    cast("dict[str, object]", rejected[1])["k"] = "changed"
+    rejected.append("more")
+
+    root = RootView(builder.finish((index,), Pin()))
+    (issue,) = root.issues(0)
+    evidence = cast("tuple[object, ...]", issue.stored_value)
+    assert issue.member == _HOLDER
+    assert evidence == ("0a", {"k": "1b"})
+    assert isinstance(evidence[1], MappingProxyType)
 
 
 # --------------------------------------------------------------------------- #

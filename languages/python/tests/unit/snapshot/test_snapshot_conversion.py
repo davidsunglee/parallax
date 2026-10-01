@@ -7,9 +7,11 @@ that contradicts its declared type), scalar provenance, Page identity claims
 (family normalization, projection independence, and the table-per-concrete-subtype
 exception), and the whole converted row with its documents decoded.
 
-A row is POSITIONAL: every applicable member occupies its declared position and
-``ABSENT`` stands where the read carried nothing, so what the suite asserts of a
-member is what the row holds at that member's own position.
+Every row is a result-keyed driver row of a real compiled read, bound as a find
+binds it and converted through ``PreparedRead.convert_row``. A converted row is
+POSITIONAL: every applicable member occupies its declared position and ``ABSENT``
+stands where the read carried nothing, so what the suite asserts of a member is
+what the row holds at that member's own position.
 
 Conversion needs no Entity Class, so the suite drives accepted models straight
 from the corpus descriptors; Root View judgment and Entity construction live in
@@ -23,12 +25,12 @@ import decimal
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Any, cast
 
 import pytest
 
 from parallax.conformance import vo_models
+from parallax.core import predicate as oa
 from parallax.core.base import (
     BOOLEAN,
     BYTES,
@@ -37,6 +39,7 @@ from parallax.core.base import (
     FLOAT64,
     INT32,
     INT64,
+    SQL_NULL,
     STRING,
     TIME,
     TIMESTAMP,
@@ -44,10 +47,11 @@ from parallax.core.base import (
     Decimal,
     NeutralType,
     PresentDocument,
-    UnknownFamilyTag,
 )
-from parallax.core.document_codec import DocumentFinding, encode_leaf
-from parallax.core.entity._layout import EntityLayout
+from parallax.core.dialect import POSTGRES
+from parallax.core.document_codec import encode_leaf
+from parallax.core.entity._layout import CatalogedModel, EntityLayout
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -56,11 +60,13 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.sql_gen._compile import AttributeReadContract
+from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.descriptor._records import (
     Attribute,
+    DocumentLayout,
     Entity,
+    Inheritance,
     NestedValueObject,
     ValueObject,
     ValueObjectAttribute,
@@ -68,18 +74,19 @@ from parallax.descriptor._records import (
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.materialize import MISSING_STORED_VALUE, PageBuilder, RootView
-from parallax.snapshot.materialize._convert import LevelContext, convert_deferred
 from parallax.snapshot.materialize._page import ABSENT, LogicalKey, StoredDataIssueInput, page_rows
+from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._typed import typed_root
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
-from tests.unit._corpus_model_support import formed
+from tests._support.sql import compile_read
+from tests.unit._corpus_model_support import formed, target
 from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit._prepared_read_support import bound_read, compiled_read
+from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 from tests.unit.snapshot._snapshot_page_support import (
-    convert_mapping,
-    documents_of,
+    driver_row,
     identity_of,
-    layout_of,
     physical_members,
     rendered_occurrence,
 )
@@ -145,37 +152,18 @@ class _Projection:
         return self.key.family, self.key.primary_key
 
 
-def _context(model: Metamodel, entity: str) -> LevelContext:
-    identity = identity_of(model, entity)
-    return LevelContext(layout_of(model, identity), documents_of(model, identity))
+def _converted(model: Metamodel, entity: str, row: Mapping[str, object]) -> _Projection:
+    """``row``, spelled by result key, converted through ``entity``'s bound read."""
+    return _converted_by(compiled_read(model, entity), bound_read(model, entity), row)
 
 
-def _reads(
-    model: Metamodel, entity: str, *, encoded: Mapping[str, str] = MappingProxyType({})
-) -> tuple[AttributeReadContract, ...]:
-    """One contract per Attribute, at the position the layout gives that Attribute.
-
-    A compiled read answers its contracts in the layout's own Attribute order, so
-    a context built by hand carries a contract for every position too — one whose
-    result key is the Attribute's Column, except where ``encoded`` names the wire
-    alias the statement rendered instead.
-    """
-    return tuple(
-        AttributeReadContract(
-            attribute=attribute,
-            result_key=encoded.get(attribute.identity.name, attribute.storage.name),
-            temporal_end=False,
-            encoded=attribute.identity.name in encoded,
-        )
-        for attribute in layout_of(model, identity_of(model, entity)).attributes
-    )
-
-
-def _converted(
-    model: Metamodel, entity: str, row: dict[str, object], **provenance: Any
+def _converted_by(
+    compiled: CompiledRead, prepared: PreparedRead, row: Mapping[str, object]
 ) -> _Projection:
     builder = PageBuilder(ViewSchema.of())
-    index = convert_mapping(row, _context(model, entity), builder, **provenance)
+    index, _resolved, _document, _variant = prepared.convert_row(
+        driver_row(compiled, row), builder, source=ROOT_LEVEL
+    )
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     root = RootView(page)
@@ -185,41 +173,6 @@ def _converted(
         root.invalid_roots[0].issues if root.roots == (None,) else root.issues(0),
         rows.keys[index],
     )
-
-
-def _projection(context: LevelContext, row: dict[str, object]) -> _Projection:
-    """One row converted under a caller-built level context."""
-    builder = PageBuilder(ViewSchema.of())
-    index = convert_mapping(row, context, builder)
-    page = builder.finish((index,), Pin())
-    rows = page_rows(page)
-    root = RootView(page)
-    return _Projection(rows.layouts[index], root.member_values(0), root.issues(0), rows.keys[index])
-
-
-def _with_finding(
-    model: Metamodel, entity: str, row: dict[str, object], finding: DocumentFinding
-) -> _Projection:
-    """``row`` converted under a level whose document codec classified the
-    Attribute ``finding`` locates and reported ``finding`` for it."""
-    identity = identity_of(model, entity)
-    layout = layout_of(model, identity)
-    located = finding.path[0]
-
-    def classify(raw: object) -> tuple[object, tuple[DocumentFinding, ...]]:
-        return raw, (finding,)
-
-    context = LevelContext(
-        layout,
-        documents_of(model, identity),
-        classified_members=frozenset({str(located)}),
-        classifiers=tuple(
-            classify if attribute.storage.name == located else None
-            for attribute in layout.attributes
-        )
-        + (None,) * len(layout.occurrences),
-    )
-    return _projection(context, row)
 
 
 def _state_row(model: Metamodel, entity: str, row: dict[str, object]) -> dict[str, object]:
@@ -257,29 +210,6 @@ def _names(record: _Record) -> set[str]:
 
 
 # --------------------------------------------------------------------------- #
-# The level context is a value keyed by the level it converts.                 #
-# --------------------------------------------------------------------------- #
-def test_a_level_context_is_hashable_and_keyed_by_the_level_it_converts() -> None:
-    # The layout is a function of the model and the concrete Entity, so it
-    # distinguishes no two contexts and stays out of equality: two contexts over
-    # one level are one value however each reached its layout, and the context
-    # keeps the hashability its remaining fields give it.
-    order = _context(ORDERS, "Order")
-    again = _context(ORDERS, "Order")
-    assert order.layout is not again.layout
-    assert order == again
-    assert hash(order) == hash(again)
-    assert {order, again} == {order}
-    assert order != _context(ORDERS, "OrderItem")
-
-
-def test_a_level_context_refuses_result_ordinals_that_do_not_cover_its_members() -> None:
-    order = _context(ORDERS, "Order")
-    with pytest.raises(ValueError, match="result ordinals must align"):
-        LevelContext(order.layout, order.documents, result_ordinals=(0,))
-
-
-# --------------------------------------------------------------------------- #
 # Scalar provenance: physical columns become Attribute Identities, and only    #
 # columns this concrete actually declares contribute.                          #
 # --------------------------------------------------------------------------- #
@@ -295,17 +225,12 @@ def test_an_encoded_projection_key_decodes_into_its_logical_attribute() -> None:
     assert entity is not None
     payload = entity.attribute("payload")
     assert payload is not None
-    context = LevelContext(
-        layout_of(SCALARS, identity),
-        (),
-        _reads(SCALARS, "ScalarThing", encoded={"payload": "payload_hex"}),
-    )
-    node = _projection(context, {"payload_hex": "0a1b"})
+    node = _converted(SCALARS, "ScalarThing", {"id": 1, "payload_hex": "0a1b"})
     assert node.member(payload.identity) == b"\x0a\x1b"
 
     # An undecodable scalar records its issue AND leaves its own position absent,
     # so nothing downstream reads the raw stored spelling in its place.
-    invalid = _projection(context, {"payload_hex": "not-hex"})
+    invalid = _converted(SCALARS, "ScalarThing", {"id": 1, "payload_hex": "not-hex"})
     assert [issue.code for issue in invalid.issues] == ["stored-data-leaf-undecodable"]
     assert invalid.member(payload.identity) is ABSENT
 
@@ -703,7 +628,7 @@ def test_a_logical_key_is_family_normalized_for_a_concrete_subtype() -> None:
 
 
 def test_two_projections_of_one_row_key_alike_whichever_position_reached_it() -> None:
-    broad = _converted(ANIMAL, "Animal", {"id": 1, "name": "Rex", "owner_id": 10})
+    broad = _converted(ANIMAL, "Animal", {"id": 1, "kind": "dog", "name": "Rex", "owner_id": 10})
     narrowed = _converted(ANIMAL, "Dog", {"id": 1, "name": "Rex", "owner_id": 10})
     assert broad.logical_key() == narrowed.logical_key()
 
@@ -758,9 +683,9 @@ def test_the_builder_registers_the_first_projection_of_a_logical_key() -> None:
     # relationship correlation, which is what a back-reference level resolves against.
     # A single-column key resolves by its raw scalar, the spelling the layout's own rule gives it.
     builder = PageBuilder(ViewSchema.of())
-    context = _context(ORDERS, "Order")
-    first = convert_mapping({"id": 1, "name": "Ada"}, context, builder)
-    second = convert_mapping({"id": 1, "name": "Ada"}, context, builder)
+    prepared = bound_read(ORDERS, "Order")
+    first, *_ = prepared.convert_row({"id": 1, "name": "Ada"}, builder, source=ROOT_LEVEL)
+    second, *_ = prepared.convert_row({"id": 1, "name": "Ada"}, builder, source=ROOT_LEVEL)
     assert first != second
     assert builder.resolve(EntityIdentity(_NAMESPACE, "Order"), 1) == first
 
@@ -823,24 +748,6 @@ def test_a_whole_document_stored_in_a_kind_it_cannot_be_read_as_names_the_occurr
     )
 
 
-def test_a_projected_occurrence_with_no_available_raw_carrier_stays_absent() -> None:
-    context = _context(CUSTOMER, "Customer")
-    witness = tuple(
-        1 if attribute.identity.name == "id" else "Ada" for attribute in context.layout.attributes
-    ) + tuple(ABSENT for _occurrence in context.layout.occurrences)
-    builder = PageBuilder(ViewSchema.of())
-    ref = convert_deferred(
-        witness,
-        context,
-        builder,
-        source=ROOT_LEVEL,
-        classifiable=(1 << len(witness)) - 1,
-    )
-    page = builder.finish((ref,), Pin())
-    values = RootView(page).member_values(0)
-    assert values[context.layout.attribute_count] is ABSENT
-
-
 def test_a_member_the_read_did_not_carry_is_absent_rather_than_null() -> None:
     # A positional row cannot omit, so the distinction omission used to carry is
     # spelled: the member the read never projected reads ABSENT, and a nullable
@@ -861,7 +768,9 @@ def test_a_native_requested_root_key_is_not_reclassified(key: object) -> None:
     # constraint have admitted it. The provider-normalized value is therefore an
     # identity claim, not fresh input to the host's scalar codec.
     builder = PageBuilder(ViewSchema.of())
-    ref = convert_mapping({"id": key, "name": "Ada"}, _context(CUSTOMER, "Customer"), builder)
+    ref, *_ = bound_read(CUSTOMER, "Customer").convert_row(
+        {"id": key, "name": "Ada", "address": SQL_NULL}, builder, source=ROOT_LEVEL
+    )
     page = builder.finish((ref,), Pin())
     assert page_rows(page).roots == (ref,)
     view = RootView(page, 0)
@@ -875,21 +784,52 @@ def test_a_native_requested_root_key_is_not_reclassified(key: object) -> None:
     assert cast("Any", root).id == key
 
 
-@pytest.mark.parametrize(
-    ("finding", "code"),
-    [
-        (
-            DocumentFinding("leaf-undecodable", ("id",), "not-a-key"),
-            "stored-data-primary-key-undecodable",
+def _named(*, document: bool) -> Metamodel:
+    """One Entity whose required ``name`` is document-resident under ``document``
+    and its own native Column otherwise."""
+    named = Entity(
+        name="Named",
+        table="named",
+        layout=DocumentLayout(column="payload") if document else None,
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="name", type="string", column="name"),
         ),
-        (DocumentFinding("required-member-null", ("name",), None), "stored-data-attribute-null"),
+    )
+    return formed(DescriptorMetamodel(entities=(named,)))
+
+
+NAMED_DOCUMENT = _named(document=True)
+NAMED_COLUMNS = _named(document=False)
+_NAMED = EntityIdentity(None, "Named")
+
+
+@pytest.mark.parametrize(
+    ("model", "entity", "row", "code"),
+    [
+        pytest.param(
+            model_of(ENCODED_ORDERS),
+            "EncodedOrder",
+            {"id_hex": "not-a-key", "name": "Ada"},
+            "stored-data-primary-key-undecodable",
+            id="encoded-key",
+        ),
+        pytest.param(
+            NAMED_DOCUMENT,
+            "Named",
+            {"id": 1, "payload": {"name": None}},
+            "stored-data-attribute-null",
+            id="document-attribute",
+        ),
     ],
 )
-def test_entity_document_findings_use_attribute_specific_issue_codes(
-    finding: DocumentFinding, code: str
+def test_entity_attribute_findings_use_attribute_specific_issue_codes(
+    model: Metamodel, entity: str, row: dict[str, object], code: str
 ) -> None:
-    node = _with_finding(CUSTOMER, "Customer", {"id": 1, "name": "Ada"}, finding)
-    assert node.issues[0].code == code
+    # A rejected Entity Attribute is diagnosed by the attribute's own role rather
+    # than by the leaf vocabulary its carrier's codec speaks.
+    node = _converted(model, entity, row)
+    assert [issue.code for issue in node.issues] == [code]
 
 
 # --------------------------------------------------------------------------- #
@@ -901,16 +841,10 @@ _PHONES = ValueObjectIdentity(_CUSTOMER, ("address", "phones"))
 
 
 @pytest.mark.parametrize(
-    ("row", "provenance", "expected"),
+    ("row", "expected"),
     [
         (
-            {"id": 1, "name": "Ada"},
-            {"unknown_family_tag": UnknownFamilyTag("Unicorn")},
-            ("stored-data-family-tag-unknown", None, (), "Unicorn"),
-        ),
-        (
             {"id": 1, "name": "Ada", "address": {"city": "Oslo"}},
-            {},
             (
                 "stored-data-required-member-absent",
                 ValueObjectAttributeIdentity(_ADDRESS, "street"),
@@ -920,7 +854,6 @@ _PHONES = ValueObjectIdentity(_CUSTOMER, ("address", "phones"))
         ),
         (
             {"id": 1, "name": "Ada", "address": {"street": None, "city": "Oslo"}},
-            {},
             (
                 "stored-data-required-member-null",
                 ValueObjectAttributeIdentity(_ADDRESS, "street"),
@@ -930,7 +863,6 @@ _PHONES = ValueObjectIdentity(_CUSTOMER, ("address", "phones"))
         ),
         (
             {"id": 1, "name": "Ada", "address": {"street": "1 Park Ave", "geo": "unknown"}},
-            {},
             (
                 "stored-data-one-wrong-kind",
                 ValueObjectIdentity(_CUSTOMER, ("address", "geo")),
@@ -940,7 +872,6 @@ _PHONES = ValueObjectIdentity(_CUSTOMER, ("address", "phones"))
         ),
         (
             {"id": 1, "name": "Ada", "address": "not-an-object"},
-            {},
             ("stored-data-one-wrong-kind", _ADDRESS, ("address",), "not-an-object"),
         ),
         (
@@ -949,7 +880,6 @@ _PHONES = ValueObjectIdentity(_CUSTOMER, ("address", "phones"))
                 "name": "Ada",
                 "address": {"street": "1 Park Ave", "phones": {"type": "home"}},
             },
-            {},
             (
                 "stored-data-many-wrong-kind",
                 _PHONES,
@@ -966,7 +896,6 @@ _PHONES = ValueObjectIdentity(_CUSTOMER, ("address", "phones"))
                     "phones": [{"type": "home", "number": "555"}, {"number": 7}],
                 },
             },
-            {},
             (
                 "stored-data-leaf-undecodable",
                 ValueObjectAttributeIdentity(_PHONES, "number"),
@@ -976,7 +905,6 @@ _PHONES = ValueObjectIdentity(_CUSTOMER, ("address", "phones"))
         ),
     ],
     ids=[
-        "family-tag-unknown",
         "member-absent",
         "member-null",
         "one-wrong-kind",
@@ -987,7 +915,6 @@ _PHONES = ValueObjectIdentity(_CUSTOMER, ("address", "phones"))
 )
 def test_every_issue_carries_what_was_rejected_and_where_it_was_found(
     row: dict[str, object],
-    provenance: dict[str, Any],
     expected: tuple[str, object, tuple[object, ...], object],
 ) -> None:
     # The whole vocabulary, read as one table, because the two new fields only
@@ -996,8 +923,22 @@ def test_every_issue_carries_what_was_rejected_and_where_it_was_found(
     # member its identity already locates exactly, and an integer segment is an
     # array position that no member identity can express. A code that carried the
     # wrong one of either would read here as an ordinary row.
-    (issue,) = _converted(CUSTOMER, "Customer", row, **provenance).issues
+    (issue,) = _converted(CUSTOMER, "Customer", row).issues
     assert (issue.code, issue.member, issue.path, issue.stored_value) == expected
+
+
+def test_an_unknown_family_tag_carries_the_tag_it_could_not_resolve() -> None:
+    # The same evidence contract for the one issue no member owns: the stored
+    # tag itself, at no path, on the family root the row converted under.
+    (issue,) = _converted(
+        ANIMAL, "Animal", {"id": 1, "kind": "unicorn", "name": "Ada", "owner_id": 10}
+    ).issues
+    assert (issue.code, issue.member, issue.path, issue.stored_value) == (
+        "stored-data-family-tag-unknown",
+        None,
+        (),
+        "unicorn",
+    )
 
 
 def test_a_wrong_kind_parent_is_diagnosed_once_at_its_own_path() -> None:
@@ -1042,12 +983,7 @@ def test_a_mutable_provider_carrier_is_copied_out_of_the_evidence(view: bool) ->
     # evidence must therefore be detached from that mutable carrier.
     buffer = bytearray(b"\x0a\x1b")
     carrier: object = memoryview(buffer) if view else buffer
-    context = LevelContext(
-        layout_of(SCALARS, identity_of(SCALARS, "ScalarThing")),
-        (),
-        _reads(SCALARS, "ScalarThing", encoded={"payload": "payload_hex"}),
-    )
-    (issue,) = _projection(context, {"payload_hex": carrier}).issues
+    (issue,) = _converted(SCALARS, "ScalarThing", {"id": 1, "payload_hex": carrier}).issues
     del carrier
     buffer[0] = 0xFF
     assert issue.stored_value == b"\x0a\x1b"
@@ -1064,14 +1000,98 @@ def test_document_codec_findings_do_not_imply_native_column_reclassification() -
     # retains its diagnosis. A native Column is instead trusted after database
     # enforcement and provider normalization, so the host does not recreate the
     # same finding from its raw value.
-    document = _with_finding(
-        CUSTOMER,
-        "Customer",
-        {"id": 1, "name": "Ada"},
-        DocumentFinding("required-member-null", ("name",), None),
-    )
-    columns = _converted(CUSTOMER, "Customer", {"id": 1, "name": None})
+    document = _converted(NAMED_DOCUMENT, "Named", {"id": 1, "payload": {"name": None}})
+    columns = _converted(NAMED_COLUMNS, "Named", {"id": 1, "name": None})
     assert _diagnoses(document) == [
-        ("stored-data-attribute-null", AttributeIdentity(_CUSTOMER, "name"), (), None)
+        ("stored-data-attribute-null", AttributeIdentity(_NAMED, "name"), (), None)
     ]
     assert columns.issues == ()
+
+
+def _hull_family() -> Metamodel:
+    """A table-per-hierarchy family whose ROOT declares an occurrence. A read
+    narrowed to `Skiff` classifies that occurrence for its own position only, so
+    a `Barge` row outside the position, or a row tagged for a concrete the model
+    never composed, carries it unclassified."""
+    hull = Entity(
+        name="Hull",
+        table="hull",
+        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        value_objects=(
+            ValueObject(
+                name="profile",
+                column="profile",
+                nullable=True,
+                attributes=(ValueObjectAttribute(name="label", type="string"),),
+                value_objects=(
+                    NestedValueObject(
+                        name="origin",
+                        nullable=True,
+                        attributes=(ValueObjectAttribute(name="port", type="string"),),
+                    ),
+                    NestedValueObject(
+                        name="marks",
+                        multiplicity="many",
+                        attributes=(ValueObjectAttribute(name="tag", type="string"),),
+                    ),
+                ),
+            ),
+        ),
+    )
+    skiff = Entity(
+        name="Skiff",
+        inheritance=Inheritance(role="concrete-subtype", parent="Hull", tag_value="skiff"),
+        attributes=(Attribute(name="oars", type="int32", column="oars", nullable=True),),
+    )
+    barge = Entity(
+        name="Barge",
+        inheritance=Inheritance(role="concrete-subtype", parent="Hull", tag_value="barge"),
+        attributes=(Attribute(name="deck", type="int32", column="deck", nullable=True),),
+    )
+    return formed(DescriptorMetamodel(entities=(hull, skiff, barge)))
+
+
+HULL = _hull_family()
+_HULL_TO_SKIFF = compile_read(
+    oa.All(),
+    HULL,
+    POSTGRES,
+    target(HULL, "Hull"),
+    narrow_to=(target(HULL, "Skiff").identity,),
+    result_form="instance",
+)
+_HULL_TO_SKIFF_READ = bind(CatalogedModel(HULL), _HULL_TO_SKIFF)
+
+
+def _narrowed_hull(row: Mapping[str, object]) -> _Projection:
+    return _converted_by(_HULL_TO_SKIFF, _HULL_TO_SKIFF_READ, row)
+
+
+_HULL_PROFILE_LABEL = ValueObjectAttributeIdentity(
+    ValueObjectIdentity(EntityIdentity(None, "Hull"), ("profile",)), "label"
+)
+
+
+def test_an_occurrence_no_compiled_stage_classified_decodes_as_a_classified_one_does() -> None:
+    # Conversion decodes this occurrence itself, and has to answer exactly as the
+    # compiled classification does: an omitted nested One contributes nothing,
+    # an omitted Many is carried empty, and a leaf outside its declared type is
+    # diagnosed at its own path.
+    profile: dict[str, object] = {"label": "a"}
+    classified = _narrowed_hull({"id": 1, "kind": "skiff", "profile": profile})
+    sibling = _narrowed_hull({"id": 1, "kind": "barge", "profile": profile})
+    unknown = _narrowed_hull({"id": 1, "kind": "galley", "profile": profile})
+    assert (classified.concrete_entity.name, sibling.concrete_entity.name) == ("Skiff", "Barge")
+    for node in (classified, sibling, unknown):
+        assert _occurrence(node, "profile") == {"label": "a", "marks": ()}
+
+    invalid = _narrowed_hull({"id": 2, "kind": "barge", "profile": {"label": 7}})
+    assert _diagnoses(invalid) == [
+        ("stored-data-leaf-undecodable", _HULL_PROFILE_LABEL, ("profile", "label"), 7)
+    ]
+    unknown_invalid = _narrowed_hull({"id": 2, "kind": "galley", "profile": {"label": 7}})
+    assert _diagnoses(unknown_invalid) == [
+        ("stored-data-family-tag-unknown", None, (), "galley"),
+        ("stored-data-leaf-undecodable", _HULL_PROFILE_LABEL, ("profile", "label"), 7),
+    ]

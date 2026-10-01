@@ -98,9 +98,6 @@ class ReadPlan:
     def fetch_step(self, index: int) -> deep_fetch.FetchStep:
         return self._query_plan.fetch_steps[index]
 
-    def correlation_members(self, source: int) -> tuple[AttributeIdentity, ...]:
-        return self._correlations[source]
-
     def fetch_read(self, index: int, keys: list[ManagedValue]) -> tuple[CompiledRead, PreparedRead]:
         fetch = self._fetches[index]
         if fetch is None:

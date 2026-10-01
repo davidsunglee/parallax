@@ -66,9 +66,7 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Co
     compiled = compile_read(oa.All(), model, POSTGRES, entity(model, name), result_form="instance")
     prepared = bind(CatalogedModel(model), compiled)
     builder = PageBuilder(ViewSchema.of())
-    index, _resolved, _document, _variant = prepared.convert_driver(
-        stored, builder, source=ROOT_LEVEL
-    )
+    index, _resolved, _document, _variant = prepared.convert_row(stored, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     root = RootView(page)
