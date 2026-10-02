@@ -14,6 +14,7 @@ import datetime as dt
 import decimal
 import functools
 import re
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, cast
@@ -35,10 +36,8 @@ from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import (
     INFINITY,
     TIMESTAMP,
+    UUID,
     TemporalBound,
-)
-from parallax.core.base import (
-    Decimal as DecimalType,
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -2855,21 +2854,21 @@ def test_a_temporal_close_decodes_case_carriers_before_the_probe() -> None:
     assert isinstance(binds[3], dt.datetime)
 
 
-def test_a_decimal_temporal_key_requires_its_canonical_wire_string() -> None:
+def test_a_uuid_temporal_key_requires_its_canonical_wire_string() -> None:
     # Compatibility's standalone close has no generic prepared-write ingress, so
-    # its local declared-type preparation must accept canonical Decimal Wire and
+    # its local declared-type preparation must accept canonical Uuid Wire and
     # reject a JSON number before either value can become a planned key or bind.
-    entity = EntityIdentity("parallax.test", "DecimalTemporal")
+    entity = EntityIdentity("parallax.test", "UuidTemporal")
     model = form_metamodel(
         source(
             Declaration(
                 identity=entity,
-                container=Table("decimal_temporal"),
+                container=Table("uuid_temporal"),
                 attributes=(
                     attribute(
                         entity,
                         "id",
-                        type=DecimalType(6, 2),
+                        type=UUID,
                         primary_key=PrimaryKey(),
                     ),
                     attribute(entity, "txStart", type=TIMESTAMP),
@@ -2888,13 +2887,13 @@ def test_a_decimal_temporal_key_requires_its_canonical_wire_string() -> None:
     accepted = scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
         model,
         entity.canonical,
-        {"id": "12.30"},
+        {"id": "123e4567-e89b-12d3-a456-426614174000"},
         "2024-10-01T00:00:00+00:00",
         "2024-02-01T00:00:00+00:00",
         None,
         None,
     )
-    assert accepted.identity == (("id", decimal.Decimal("12.30")),)
+    assert accepted.identity == (("id", uuid.UUID("123e4567-e89b-12d3-a456-426614174000")),)
     with pytest.raises(EngineError, match="neutral-literal-type-mismatch"):
         scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             model,
@@ -2909,7 +2908,7 @@ def test_a_decimal_temporal_key_requires_its_canonical_wire_string() -> None:
         scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             model,
             entity.canonical,
-            {"id": "12.3"},
+            {"id": "123E4567-E89B-12D3-A456-426614174000"},
             "2024-10-01T00:00:00+00:00",
             "2024-02-01T00:00:00+00:00",
             None,

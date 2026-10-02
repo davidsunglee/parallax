@@ -1,0 +1,37 @@
+model: models/identifier-types.yaml
+tags: [m-relationship, m-object-query, m-deep-fetch, m-sql, m-wire, relationship, graph, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: Child binds come from parent results and the reverse resolves from the graph.
+lane: api-conformance
+when:
+  objectQuery:
+    target: parallax.compatibility.UuidParent
+    predicate: {all: {}}
+    includes:
+      - segments:
+          - {rel: parallax.compatibility.UuidParent.children}
+          - {rel: parallax.compatibility.UuidChild.parent}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from uuid_parent t0
+        mariadb: select t0.id, t0.label from uuid_parent t0
+    - sql:
+        postgres: select t0.id, t0.parent_id from uuid_child t0 where t0.parent_id = any(?) order by t0.id asc
+        mariadb: select t0.id, t0.parent_id from uuid_child t0 where t0.parent_id in (?) order by t0.id asc
+      binds:
+        postgres: [['123e4567-e89b-12d3-a456-426614174000']]
+        mariadb: ['123e4567-e89b-12d3-a456-426614174000']
+  referenceSql: select id, label from uuid_parent
+  graph:
+    UuidParent:
+      - id: '123e4567-e89b-12d3-a456-426614174000'
+        label: independent
+        children:
+          - id: '123e4567-e89b-12d3-a456-426614174001'
+            parentId: '123e4567-e89b-12d3-a456-426614174000'
+            parent: {id: '123e4567-e89b-12d3-a456-426614174000', label: independent}
+  roundTrips: 2

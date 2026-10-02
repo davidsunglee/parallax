@@ -154,13 +154,15 @@ _PROFILE_OWNER_MODEL = DomainModel(ProfileOwner)
 
 
 class EncodedParent(Entity, table="encoded_parent", namespace="parallax.compatibility"):
-    id: Attr[bytes] = attr(primary_key=True)
+    id: Attr[int] = attr(primary_key=True)
+    payload: Attr[bytes]
     children: Rel[tuple[EncodedChild, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "parent_id"))
 
 
 class EncodedChild(Entity, table="encoded_child", namespace="parallax.compatibility"):
     id: Attr[int] = attr(primary_key=True)
-    parent_id: Attr[bytes]
+    parent_id: Attr[int]
+    payload: Attr[bytes]
     parent: Rel[EncodedParent | None] = rel(reverse_of="children")
 
 
@@ -350,11 +352,11 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
     assert [_value(rows, ref, "OrderItem", "id") for ref in items] == [11]
 
 
-def test_encoded_relationship_keys_use_decoded_identity_for_gather_and_fanback() -> None:
+def test_encoded_payloads_preserve_integer_identity_gather_and_fanback() -> None:
     port = QueuePort(
         [
-            [{"id_hex": "0a1b"}],
-            [{"id": 7, "parent_id_hex": "0a1b"}],
+            [{"id": 1, "payload_hex": "0a1b"}],
+            [{"id": 7, "parent_id": 1, "payload_hex": "0c1d"}],
         ]
     )
     query = deserialize_query(
@@ -377,9 +379,32 @@ def test_encoded_relationship_keys_use_decoded_identity_for_gather_and_fanback()
     root = _root(result)
     (child,) = _refs(_view(rows, root, "children"))
 
-    assert port.executed[1][1][-1] == [b"\n\x1b"]
-    assert _value(rows, root, "EncodedParent", "id") == b"\n\x1b"
+    assert port.executed[1][1][-1] == [1]
+    assert _value(rows, root, "EncodedParent", "id") == 1
     assert _view(rows, child, "parent") == root
+    consumed = RootView(result.page)
+    parent_values = consumed.member_values(0)
+    child_values = consumed.member_values(1)
+    assert (
+        parent_values[
+            consumed.layout(0).index_of[
+                AttributeIdentity(
+                    EntityIdentity("parallax.compatibility", "EncodedParent"), "payload"
+                )
+            ]
+        ]
+        == b"\x0a\x1b"
+    )
+    assert (
+        child_values[
+            consumed.layout(1).index_of[
+                AttributeIdentity(
+                    EntityIdentity("parallax.compatibility", "EncodedChild"), "payload"
+                )
+            ]
+        ]
+        == b"\x0c\x1d"
+    )
 
 
 def test_dependency_ready_sibling_levels_share_one_pipeline_batch() -> None:

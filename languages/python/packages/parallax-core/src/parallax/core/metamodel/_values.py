@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Final
 
-from parallax.core.base import NeutralType, String
+from parallax.core.base import Int32, Int64, NeutralType, String, Uuid
 from parallax.core.metamodel._identities import (
     AttributeIdentity,
     AttributeReference,
@@ -375,8 +375,9 @@ class AttributeMetadata:
     and accepted Metadata reuses it. It duplicates neither its own name nor its
     Entity's container. A maximum length bounds text width, so it is either
     absent or a positive length on a String Attribute; a nonpositive length, or
-    one on any other type, raises :class:`ValueError`. Both constraints are local
-    to one Attribute, so no Rule Set owns them.
+    one on any other type, raises :class:`ValueError`. Ineligible primary-key
+    types and incompatible generation also raise :class:`ValueError` before
+    the Unresolved seam.
 
     ``framework_owned`` answers who supplies the value — the framework, never
     the caller — and is derived rather than authored, by
@@ -404,6 +405,20 @@ class AttributeMetadata:
             "definition",
             Leaf(name=self.identity.name, type=self.type, nullable=self.nullable),
         )
+        if isinstance(self.primary_key, PrimaryKey):
+            if isinstance(self.primary_key.generation, Max | Sequence):
+                if not isinstance(self.type, Int32 | Int64):
+                    raise ValueError(
+                        f"{self.identity.entity.canonical}.{self.identity.name}: "
+                        "Max and Sequence generation require Int32 or Int64, "
+                        f"not {self.type}"
+                    )
+            elif not isinstance(self.type, Int32 | Int64 | String | Uuid):
+                raise ValueError(
+                    f"{self.identity.entity.canonical}.{self.identity.name}: "
+                    "an application-assigned primary key requires "
+                    f"Int32, Int64, String, or Uuid, not {self.type}"
+                )
         if self.max_length is None:
             return
         if self.max_length < 1:

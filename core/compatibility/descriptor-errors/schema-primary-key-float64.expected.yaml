@@ -1,0 +1,4 @@
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - {path: [entity, attributes, 0, type], rule: enum}

@@ -75,8 +75,8 @@ from tests.unit.snapshot._snapshot_page_support import PageFixture, invalid_reco
 
 _NAMESPACE = "parallax.compatibility"
 
-_ORDER_ROW: dict[str, object] = {"id_hex": "01", "name": "Ada", "badge_hex": None, "address": None}
-_ITEM_ROW: dict[str, object] = {"id_hex": "0b", "order_id_hex": "01", "code_hex": "0c"}
+_ORDER_ROW: dict[str, object] = {"id": 1, "name": "Ada", "badge_hex": None, "address": None}
+_ITEM_ROW: dict[str, object] = {"id": 11, "order_id": 1, "code_hex": "0c"}
 _ITEMS = "parallax.compatibility.EncodedOrder.items"
 _ITEM_ORDER = "parallax.compatibility.EncodedOrderItem.order"
 _ITEM = EntityIdentity(_NAMESPACE, "EncodedOrderItem")
@@ -120,7 +120,7 @@ def test_an_invalid_included_node_invalidates_every_root_that_reaches_it() -> No
     # root may deliver a pruned or partly published tree.
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     first = fixture.node("EncodedOrder", _ORDER_ROW)
-    second = fixture.node("EncodedOrder", {**_ORDER_ROW, "id_hex": "02"})
+    second = fixture.node("EncodedOrder", {**_ORDER_ROW, "id": 2})
     shared = fixture.node("EncodedOrderItem", {**_ITEM_ROW, "code_hex": "not-hex"})
     fixture.attach(first, _ITEMS, (shared,))
     fixture.attach(second, _ITEMS, (shared,))
@@ -129,7 +129,7 @@ def test_an_invalid_included_node_invalidates_every_root_that_reaches_it() -> No
         "stored-data-leaf-undecodable",
         _ITEM,
         AttributeIdentity(_ITEM, "code"),
-        ObjectKey(_ITEM, (("id", b"\x0b"),)),
+        ObjectKey(_ITEM, (("id", 11),)),
         path=(),
         stored_value="not-hex",
     )
@@ -141,7 +141,7 @@ def test_an_invalid_included_node_invalidates_every_root_that_reaches_it() -> No
 def test_a_root_reaching_no_issue_stays_conforming_beside_an_invalid_sibling() -> None:
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     clean = fixture.node("EncodedOrder", _ORDER_ROW)
-    affected = fixture.node("EncodedOrder", {**_ORDER_ROW, "id_hex": "02"})
+    affected = fixture.node("EncodedOrder", {**_ORDER_ROW, "id": 2})
     fixture.attach(clean, _ITEMS, ())
     fixture.attach(
         affected,
@@ -149,7 +149,7 @@ def test_a_root_reaching_no_issue_stays_conforming_beside_an_invalid_sibling() -
         (
             fixture.node(
                 "EncodedOrderItem",
-                {**_ITEM_ROW, "id_hex": "0c", "order_id_hex": "02", "code_hex": "nope"},
+                {**_ITEM_ROW, "id": 12, "order_id": 2, "code_hex": "nope"},
             ),
         ),
     )
@@ -204,9 +204,9 @@ def test_a_node_a_conforming_root_also_reaches_stays_in_construction() -> None:
     # reaches are left out.
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     clean = fixture.node("EncodedOrder", _ORDER_ROW)
-    affected = fixture.node("EncodedOrder", {**_ORDER_ROW, "id_hex": "02"})
+    affected = fixture.node("EncodedOrder", {**_ORDER_ROW, "id": 2})
     shared = fixture.node("EncodedOrderItem", _ITEM_ROW)
-    broken = fixture.node("EncodedOrderItem", {**_ITEM_ROW, "id_hex": "0c", "code_hex": "not-hex"})
+    broken = fixture.node("EncodedOrderItem", {**_ITEM_ROW, "id": 12, "code_hex": "not-hex"})
     fixture.attach(clean, _ITEMS, (shared,))
     fixture.attach(affected, _ITEMS, (shared, broken))
 
@@ -214,7 +214,7 @@ def test_a_node_a_conforming_root_also_reaches_stays_in_construction() -> None:
     assert classification.excluded == frozenset({2, 3})
     published, invalid = fixture.materialize(clean, affected)
     order = cast("EncodedOrder", published)
-    assert order.id == b"\x01"
+    assert order.id == 1
     assert len(order.items) == 1
     assert invalid_record(invalid).data is None
 
@@ -369,7 +369,7 @@ def test_a_loaded_to_one_view_carries_attribution_to_its_parent() -> None:
 
     published = invalid_record(fixture.materialize(item)[0])
     assert published.data is None
-    assert published.object_key == ObjectKey(_ITEM, (("id", b"\x0b"),))
+    assert published.object_key == ObjectKey(_ITEM, (("id", 11),))
 
 
 # --------------------------------------------------------------------------- #

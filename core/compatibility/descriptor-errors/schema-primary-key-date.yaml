@@ -1,0 +1,5 @@
+entity:
+  name: Identifier
+  table: identifier
+  attributes:
+    - {name: id, type: date, primaryKey: true}

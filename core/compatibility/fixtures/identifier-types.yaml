@@ -1,0 +1,16 @@
+parallax.compatibility.Int32Parent:
+  - {id: 7, label: bounded}
+parallax.compatibility.Int32Child:
+  - {id: 11, parentId: 7}
+parallax.compatibility.Int64Parent:
+  - {id: 1099511627776, label: wide}
+parallax.compatibility.Int64Child:
+  - {id: 1099511627777, parentId: 1099511627776}
+parallax.compatibility.StringParent:
+  - {id: external-A, label: external}
+parallax.compatibility.StringChild:
+  - {id: child-A, parentId: external-A}
+parallax.compatibility.UuidParent:
+  - {id: '123e4567-e89b-12d3-a456-426614174000', label: independent}
+parallax.compatibility.UuidChild:
+  - {id: '123e4567-e89b-12d3-a456-426614174001', parentId: '123e4567-e89b-12d3-a456-426614174000'}

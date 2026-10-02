@@ -235,6 +235,16 @@
           }
         },
         {
+          "$comment": "Primary-key eligibility (m-metamodel) applies only when primaryKey is explicitly true; ordinary scalar attributes remain unrestricted.",
+          "if": {
+            "required": ["primaryKey"],
+            "properties": { "primaryKey": { "const": true } }
+          },
+          "then": {
+            "properties": { "type": { "enum": ["int32", "int64", "string", "uuid"] } }
+          }
+        },
+        {
           "$comment": "Explicit optimistic-lock version (m-opt-lock / DQ8b): an attribute-level `optimisticLocking: true` version is derived — initialized to `1` on insert and advanced to `observed + 1` on every update, gated in optimistic mode with `and <col> = ?` — so it MUST be an integral type (`int32`/`int64`). A temporal Entity locks via its Transaction-Time start (`txStart`, physically `in_z`) instead and declares no explicit version Attribute (the Entity-level composition rule above forbids the combination), so this restriction never lands on a timestamp column.",
           "if": {
             "required": ["optimisticLocking"],
@@ -245,7 +255,7 @@
           }
         },
         {
-          "$comment": "Generated primary keys are integral (m-pk-gen): `max` allocates max(col)+1 and `sequence` advances an integer registry counter, so both are legal only on an `int32`/`int64` attribute. `application-assigned` stays unrestricted — the application may supply keys of any declared type.",
+          "$comment": "Generated primary keys are integral (m-pk-gen): `max` allocates max(col)+1 and `sequence` advances an integer registry counter, so both are legal only on an `int32`/`int64` attribute. Application-assigned keys follow m-metamodel eligibility.",
           "if": {
             "required": ["pkGeneration"],
             "properties": {

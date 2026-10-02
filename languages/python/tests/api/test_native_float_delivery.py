@@ -2,9 +2,9 @@
 
 A Float32 cell must arrive as the binary32 value the server stored, not as the
 nearest binary64 to its shortest spelling. The carrier is more than a displayed
-value: it is the coordinate a stream resumes after, the identity a locking
-stream and a keyed write address, the value an included child correlates on,
-and the predecessor an acquiring write weighs its assignment against. Expected
+value: it is the coordinate a stream resumes after, a payload retained by locking
+streams and keyed writes, and the predecessor an acquiring write weighs its
+assignment against. Included graphs correlate through integral identities. Expected
 values come from independent binary32 oracles, never from a float parse.
 """
 
@@ -74,13 +74,15 @@ class Plot(Entity, table="nf_plot", namespace=_NAMESPACE):
 
 
 class Marker(Entity, table="nf_marker", namespace=_NAMESPACE):
-    id: Attr[float] = attr(type=Float32, primary_key=True)
+    id: Attr[int] = attr(primary_key=True)
+    coordinate: Attr[float] = attr(type=Float32)
     rank: Attr[int | None]
     name: Attr[str]
 
 
 class Parent(Entity, table="nf_parent", namespace=_NAMESPACE):
-    id: Attr[float] = attr(type=Float32, primary_key=True)
+    id: Attr[int] = attr(primary_key=True)
+    coordinate: Attr[float] = attr(type=Float32)
     children: Rel[tuple[Child, ...]] = rel(
         cardinality=ONE_TO_MANY, join=("id", "owner"), dependent=True
     )
@@ -88,7 +90,7 @@ class Parent(Entity, table="nf_parent", namespace=_NAMESPACE):
 
 class Child(Entity, table="nf_child", namespace=_NAMESPACE):
     id: Attr[int] = attr(primary_key=True)
-    owner: Attr[float] = attr(type=Float32)
+    owner: Attr[int]
     value: Attr[float] = attr(type=Float32)
 
 
@@ -426,7 +428,7 @@ def test_restating_a_value_object_float32_leaf_as_read_is_a_no_op(
 # Identity, continuation, correlation, and family unions                       #
 # --------------------------------------------------------------------------- #
 
-# Float32 keys with signed values, both midpoint neighbours, a duplicate, and
+# Float32 coordinates with signed values, both midpoint neighbours, a duplicate, and
 # each width edge.
 _KEYS: tuple[float, ...] = tuple(
     _stored32(value)
@@ -451,7 +453,7 @@ def _identity(representation: Representation, value: float) -> float:
     return _wire32(value) if representation == "wire" else value
 
 
-# Identities whose shortest spelling parses onto a binary64 midpoint, and others.
+# Coordinates whose shortest spelling parses onto a binary64 midpoint, and others.
 _MIDPOINT_IDENTITIES = (_MIDPOINT, _ABOVE_MIDPOINT, -_MIDPOINT, -_ABOVE_MIDPOINT)
 _ORDINARY_IDENTITIES = tuple(key for key in _KEYS if key not in _MIDPOINT_IDENTITIES)
 _IDENTITY_CASES = [
@@ -464,12 +466,13 @@ _IDENTITY_CASES = [
 
 def _lock_and_update_each(
     db: ScopedDatabase, representation: Representation, identities: tuple[float, ...]
-) -> tuple[dict[float, int | None], list[Any]]:
+) -> tuple[dict[int, int | None], list[Any]]:
     ranks = islice(cycle((2, 1, None, 1, None, 3)), len(identities))
-    ranked = dict(zip(identities, ranks, strict=True))
+    ranked = dict(zip(range(1, len(identities) + 1), ranks, strict=True))
     db.transact(
         lambda tx: [
-            tx.insert(Marker(id=key, rank=rank, name="initial")) for key, rank in ranked.items()
+            tx.insert(Marker(id=key, coordinate=coordinate, rank=rank, name="initial"))
+            for (key, rank), coordinate in zip(ranked.items(), identities, strict=True)
         ]
     )
 
@@ -490,29 +493,32 @@ def _lock_and_update_each(
 
 
 @pytest.mark.parametrize(("representation", "identities"), _IDENTITY_CASES)
-def test_a_locking_stream_in_nullable_order_yields_each_float32_identity_once(
+def test_a_locking_stream_in_nullable_order_yields_each_identity_and_float32_payload_once(
     profile_run: Any, representation: Representation, identities: tuple[float, ...]
 ) -> None:
     ranked, rows = _lock_and_update_each(_served(profile_run), representation, identities)
 
     observed = [_field(row, "id") for row in rows]
-    expected = {_identity(representation, key): rank for key, rank in ranked.items()}
-    assert Counter(map(_bits, observed)) == Counter(map(_bits, expected))
+    expected = ranked
+    assert Counter(observed) == Counter(expected.keys())
     assert [expected[key] for key in observed] == sorted(
         ranked.values(), key=lambda rank: (rank is None, rank or 0)
+    )
+    assert Counter(_bits(_field(row, "coordinate")) for row in rows) == Counter(
+        _bits(_identity(representation, coordinate)) for coordinate in identities
     )
 
 
 @pytest.mark.parametrize(("representation", "identities"), _IDENTITY_CASES)
-def test_a_keyed_update_of_each_locked_float32_identity_updates_that_identity(
+def test_a_keyed_update_of_each_locked_identity_retains_its_float32_payload(
     profile_run: Any, representation: Representation, identities: tuple[float, ...]
 ) -> None:
     db = _served(profile_run)
     _lock_and_update_each(db, representation, identities)
 
     stored = db.find(Marker.where(Marker.all)).results()
-    assert Counter((_bits(row.id), row.name) for row in stored) == Counter(
-        (_bits(key), "updated") for key in identities
+    assert Counter((row.id, _bits(row.coordinate), row.name) for row in stored) == Counter(
+        (key, _bits(coordinate), "updated") for key, coordinate in enumerate(identities, start=1)
     )
 
 
@@ -562,17 +568,17 @@ def test_a_stream_ordered_by_a_float32_key_yields_every_root_exactly_once(
 
 
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
-def test_included_children_correlate_on_a_float32_parent_identity(
+def test_included_children_correlate_on_integral_identities_with_float32_payloads(
     profile_run: Any, representation: Representation
 ) -> None:
     db = _served(profile_run)
     parents = (_stored32(1.2), _MIDPOINT, _ABOVE_MIDPOINT, -_MIDPOINT, _SMALLEST_SUBNORMAL)
-    children = {parent: (_LARGEST_SUBNORMAL, -parent) for parent in parents}
+    children = {key: (_LARGEST_SUBNORMAL, -parent) for key, parent in enumerate(parents, start=1)}
 
     def insert(tx: Transaction) -> None:
         key = 0
         for parent, values in children.items():
-            tx.insert(Parent(id=parent))
+            tx.insert(Parent(id=parent, coordinate=parents[parent - 1]))
             for value in values:
                 key += 1
                 tx.insert(Child(id=key, owner=parent, value=value))
@@ -598,20 +604,19 @@ def test_included_children_correlate_on_a_float32_parent_identity(
 
     expected = [
         (
-            _bits(_identity(representation, parent)),
-            sorted(
-                (_bits(_identity(representation, parent)), _bits(_identity(representation, value)))
-                for value in children[parent]
-            ),
+            parent,
+            _bits(_identity(representation, parents[parent - 1])),
+            sorted((parent, _bits(_identity(representation, value))) for value in children[parent]),
         )
-        for parent in sorted(parents)
+        for parent in sorted(children)
     ]
     for rows in read:
         observed = [
             (
-                _bits(_field(row, "id")),
+                _field(row, "id"),
+                _bits(_field(row, "coordinate")),
                 sorted(
-                    (_bits(_field(child, "owner")), _bits(_field(child, "value")))
+                    (_field(child, "owner"), _bits(_field(child, "value")))
                     for child in _field(row, "children")
                 ),
             )
@@ -628,8 +633,8 @@ def test_rendering_an_include_page_calls_no_wire_codec(
 
     def insert(tx: Transaction) -> None:
         for key, parent in enumerate(parents, start=1):
-            tx.insert(Parent(id=parent))
-            tx.insert(Child(id=key, owner=parent, value=parent))
+            tx.insert(Parent(id=key, coordinate=parent))
+            tx.insert(Child(id=key, owner=key, value=parent))
 
     db.transact(insert)
 

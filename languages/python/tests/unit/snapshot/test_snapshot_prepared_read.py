@@ -4,9 +4,10 @@ The production seam a read lane crosses: a compiled read and a cataloged model
 bind into a prepared read, and every row of that statement is converted through
 ``PreparedRead.convert_row`` and observed through it. What a row carries into
 conversion — the concrete it resolved, the findings the transform raised, the
-members it already classified — is the compiled read's own provenance, so every
-case here drives a real ``compile_read`` rather than handing conversion a
-provenance no statement produced.
+members it already classified — is the compiled read's own provenance, so
+normally compiled payload cases drive a real ``compile_read``. Encoded UUID
+identity cases instead grade the generic compiled-read consumer contract; the
+Postgres compiler delivers UUID keys natively.
 
 The levels exist before the rows do: a read whose position is one concrete can
 still answer a row of a sibling or of the family root. A tuple row and a
@@ -87,6 +88,12 @@ from tests.unit._snapshot_materialization_support import (
     query,
     read_plan,
     rows_per_level,
+)
+from tests.unit.snapshot._encoded_identity_read import (
+    ENCODED_IDENTITY,
+    KEY,
+    KEY_TEXT,
+    encoded_identity_read,
 )
 from tests.unit.snapshot._snapshot_page_support import (
     physical_members,
@@ -194,22 +201,9 @@ def _craft_family() -> Metamodel:
     return formed(DescriptorMetamodel(entities=(root, tug, barge)))
 
 
-def _encoded_identity_model() -> Metamodel:
-    encoded = DescriptorEntity(
-        name="EncodedIdentity",
-        table="encoded_identity",
-        attributes=(
-            Attribute(name="id", type="bytes", column="id", primary_key=True),
-            Attribute(name="token", type="bytes", column="token", nullable=True),
-        ),
-    )
-    return formed(DescriptorMetamodel(entities=(encoded,)))
-
-
 REGISTER = _register_model()
 BEAST = _partial_family()
 CRAFT = _craft_family()
-ENCODED_IDENTITY = _encoded_identity_model()
 
 
 # --------------------------------------------------------------------------- #
@@ -458,10 +452,16 @@ def test_native_identity_and_document_members_need_no_scalar_admission() -> None
 @pytest.mark.parametrize(
     ("raw", "key", "issue"),
     [
-        pytest.param("0a1b", b"\x0a\x1b", None, id="canonical-wire"),
+        pytest.param(KEY_TEXT, KEY, None, id="canonical-wire"),
         pytest.param(None, None, "stored-data-primary-key-null", id="sql-null"),
         pytest.param(
-            "not-hex",
+            "not-a-uuid",
+            None,
+            "stored-data-primary-key-undecodable",
+            id="malformed-wire",
+        ),
+        pytest.param(
+            KEY_TEXT.upper(),
             None,
             "stored-data-primary-key-undecodable",
             id="noncanonical-wire",
@@ -472,9 +472,9 @@ def test_encoded_identity_is_decoded_before_logical_key_formation(
     raw: object, key: object, issue: str | None
 ) -> None:
     builder = PageBuilder(ViewSchema.of())
-    index, _resolved, _document, _variant = _prepared(
-        ENCODED_IDENTITY, "EncodedIdentity"
-    ).convert_row({"id_hex": raw, "token_hex": None}, builder, source=ROOT_LEVEL)
+    index, _resolved, _document, _variant = encoded_identity_read().convert_row(
+        {"id_wire": raw, "token_hex": None}, builder, source=ROOT_LEVEL
+    )
     claimed = builder.finish((index,), Pin())
     stored_key = page_rows(claimed).keys[index]
     root = RootView(claimed)
@@ -492,9 +492,9 @@ def test_identity_routing_skips_an_absent_non_identity_cell() -> None:
     token = _encoded_member("token")
     prepared = bound_read(ENCODED_IDENTITY, "EncodedIdentity", correlation_members=(token,))
     builder = PageBuilder(ViewSchema.of())
-    index, *_ = prepared.convert_row({"id_hex": "0a1b"}, builder, source=ROOT_LEVEL)
+    index, *_ = prepared.convert_row({"id": KEY}, builder, source=ROOT_LEVEL)
 
-    assert builder.member_value(index, _encoded_member("id")) == b"\x0a\x1b"
+    assert builder.member_value(index, _encoded_member("id")) == KEY
     assert builder.member_value(index, token) is ABSENT
     root = RootView(builder.finish((index,), Pin()))
     assert root.issues(0) == ()
@@ -516,13 +516,13 @@ def test_identity_routing_keeps_native_non_identity_cells_unchanged() -> None:
 def test_sql_null_in_a_nullable_encoded_column_bypasses_wire_decoding() -> None:
     with recorded_conversion_dependencies() as calls:
         node = _converted(
-            _prepared(ENCODED_IDENTITY, "EncodedIdentity"), {"id_hex": "0a1b", "token_hex": None}
+            _prepared(ENCODED_IDENTITY, "EncodedIdentity"), {"id": KEY, "token_hex": None}
         )
 
-    assert node.members == {"id": b"\x0a\x1b", "token": None}
+    assert node.members == {"id": KEY, "token": None, "address": None}
     assert node.issues == ()
-    assert calls.decoded == ["0a1b"]
-    assert calls.admitted == [b"\x0a\x1b", None]
+    assert calls.decoded == []
+    assert calls.admitted == [None]
 
 
 # --------------------------------------------------------------------------- #
@@ -891,7 +891,7 @@ def test_rows_share_a_logical_node_only_where_key_and_axis_starts_agree() -> Non
 
 
 # --------------------------------------------------------------------------- #
-# Correlations: judged once when the row is claimed, reused by its payload.    #
+# Native correlations route before deferred payload conversion.               #
 # --------------------------------------------------------------------------- #
 _NAMESPACE = "parallax.compatibility"
 
@@ -901,27 +901,27 @@ class CorrelatedTerms(ValueObject):
 
 
 class CorrelatedHolder(Entity, table="correlated_holder", namespace=_NAMESPACE):
-    id: Attr[bytes] = attr(primary_key=True)
+    id: Attr[int] = attr(primary_key=True)
     holdings: Rel[tuple[CorrelatedHolding, ...]] = rel(
         cardinality=ONE_TO_MANY, join=("id", "holder_id")
     )
 
 
 class CorrelatedCustodian(Entity, table="correlated_custodian", namespace=_NAMESPACE):
-    id: Attr[bytes] = attr(primary_key=True)
+    id: Attr[int] = attr(primary_key=True)
     holdings: Rel[tuple[CorrelatedHolding, ...]] = rel(
         cardinality=ONE_TO_MANY, join=("id", "custodian_id")
     )
 
 
 class CorrelatedHolding(Entity, table="correlated_holding", namespace=_NAMESPACE):
-    """Joined to two owners through non-key Bytes Columns, with an unrelated
+    """Joined to two owners through integral Columns, with an unrelated
     encoded payload Column between them and a document Column after them."""
 
     id: Attr[int] = attr(primary_key=True)
-    holder_id: Attr[bytes | None]
+    holder_id: Attr[int | None]
     digest: Attr[bytes | None]
-    custodian_id: Attr[bytes | None]
+    custodian_id: Attr[int | None]
     terms: Attr[CorrelatedTerms | None]
     holder: Rel[CorrelatedHolder | None] = rel(reverse_of="holdings")
     custodian: Rel[CorrelatedCustodian | None] = rel(reverse_of="holdings")
@@ -944,9 +944,9 @@ def _holdings() -> PreparedRead:
 def _holding(**cells: object) -> dict[str, object]:
     return {
         "id": 1,
-        "holder_id_hex": "a101",
+        "holder_id": 101,
         "digest_hex": "d101",
-        "custodian_id_hex": "c101",
+        "custodian_id": 201,
         "terms": SQL_NULL,
         **cells,
     }
@@ -958,49 +958,42 @@ def _consumed(row: Mapping[str, object]) -> RootView:
     return RootView(builder.finish((index,), Pin()))
 
 
-def test_a_correlation_is_judged_once_for_routing_and_reused_by_its_payload() -> None:
+def test_native_correlations_are_reused_without_scalar_admission() -> None:
     with recorded_conversion_dependencies() as calls:
         builder = PageBuilder(ViewSchema.of())
         index, *_ = _holdings().convert_row(_holding(), builder, source=ROOT_LEVEL)
-        assert builder.member_value(index, _HOLDER) == b"\xa1\x01"
-        assert builder.member_value(index, _CUSTODIAN) == b"\xc1\x01"
-        assert sorted(cast("list[str]", calls.decoded)) == ["a101", "c101"]
-        assert sorted(cast("list[bytes]", calls.admitted)) == [b"\xa1\x01", b"\xc1\x01"]
+        assert builder.member_value(index, _HOLDER) == 101
+        assert builder.member_value(index, _CUSTODIAN) == 201
+        assert calls.decoded == []
+        assert calls.admitted == []
 
         root = RootView(builder.finish((index,), Pin()))
         members = rendered_members(root.layout(0), root.member_values(0))
 
-    assert sorted(cast("list[str]", calls.decoded)) == ["a101", "c101", "d101"]
-    assert sorted(cast("list[bytes]", calls.admitted)) == [
-        b"\xa1\x01",
-        b"\xc1\x01",
-        b"\xd1\x01",
-    ]
+    assert calls.decoded == ["d101"]
+    assert calls.admitted == [b"\xd1\x01"]
     assert (members["holderId"], members["digest"], members["custodianId"]) == (
-        b"\xa1\x01",
+        101,
         b"\xd1\x01",
-        b"\xc1\x01",
+        201,
     )
     assert root.issues(0) == ()
 
 
 @pytest.mark.parametrize(
-    ("stored", "routed", "issues"),
+    ("stored", "routed"),
     [
-        pytest.param("a101", b"\xa1\x01", [], id="accepted"),
-        pytest.param(None, None, [], id="null"),
-        pytest.param(ABSENT, ABSENT, [], id="absent"),
-        pytest.param("zz", ABSENT, [("stored-data-leaf-undecodable", "zz")], id="rejected"),
+        pytest.param(101, 101, id="accepted"),
+        pytest.param(None, None, id="null"),
+        pytest.param(ABSENT, ABSENT, id="absent"),
     ],
 )
-def test_a_routed_correlation_is_visible_before_consumption_and_diagnosed_after(
-    stored: object, routed: object, issues: list[tuple[str, object]]
+def test_native_correlation_presence_is_retained_through_payload_consumption(
+    stored: object, routed: object
 ) -> None:
-    # A rejected correlation routes as no value, exactly as an absent one does,
-    # yet only the rejection publishes a finding once the payload is consumed.
-    row = _holding(holder_id_hex=stored)
+    row = _holding(holder_id=stored)
     if stored is ABSENT:
-        del row["holder_id_hex"]
+        del row["holder_id"]
     builder = PageBuilder(ViewSchema.of())
     index, *_ = _holdings().convert_row(row, builder, source=ROOT_LEVEL)
     assert builder.member_value(index, _HOLDER) is routed or (
@@ -1011,60 +1004,46 @@ def test_a_routed_correlation_is_visible_before_consumption_and_diagnosed_after(
     assert root.member_values(0)[root.layout(0).index_of[_HOLDER]] == routed
     assert [
         (issue.code, issue.stored_value) for issue in root.issues(0) if issue.member == _HOLDER
-    ] == issues
+    ] == []
 
 
 def _diagnoses(root: RootView) -> list[tuple[object, ...]]:
     return [(issue.code, issue.member, issue.path, issue.stored_value) for issue in root.issues(0)]
 
 
-def test_captured_correlation_findings_keep_their_attribute_positions_in_the_payload() -> None:
-    # Both correlations are judged when the row is claimed, the unrelated `digest`
-    # between them only when its state is consumed. Publication still lists every
-    # finding in its documented order — the document codec's first, then each
-    # Attribute at its own position — and the first of them is what refuses.
+def test_payload_findings_keep_their_attribute_positions_after_native_routing() -> None:
     failing = _holding(
-        holder_id_hex="zz",
         digest_hex="yy",
-        custodian_id_hex="xx",
         terms=PresentDocument({"label": 7}),
     )
     root = _consumed(failing)
     undecodable = "stored-data-leaf-undecodable"
     assert _diagnoses(root) == [
         (undecodable, _TERMS_LABEL, ("terms", "label"), 7),
-        (undecodable, _HOLDER, (), "zz"),
         (undecodable, _DIGEST, (), "yy"),
-        (undecodable, _CUSTODIAN, (), "xx"),
     ]
     assert publication_issue(root) is root.issues(0)[0]
 
     without_document = _consumed({**failing, "terms": SQL_NULL})
     assert [member for _code, member, _path, _value in _diagnoses(without_document)] == [
-        _HOLDER,
         _DIGEST,
-        _CUSTODIAN,
     ]
     refusal = publication_issue(without_document)
     assert refusal is not None
-    assert refusal.member == _HOLDER
+    assert refusal.member == _DIGEST
 
 
-def test_a_rejected_correlation_freezes_its_evidence_when_it_is_judged() -> None:
-    # The rejected value is captured at the routing verdict. A provider carrier
-    # mutated after the row was claimed cannot rewrite what the payload publishes.
+def test_a_rejected_payload_freezes_its_evidence_when_it_is_judged() -> None:
     rejected: list[object] = ["0a", {"k": "1b"}]
     builder = PageBuilder(ViewSchema.of())
-    index, *_ = _holdings().convert_row(
-        _holding(holder_id_hex=rejected), builder, source=ROOT_LEVEL
-    )
+    index, *_ = _holdings().convert_row(_holding(digest_hex=rejected), builder, source=ROOT_LEVEL)
+    root = RootView(builder.finish((index,), Pin()))
     cast("dict[str, object]", rejected[1])["k"] = "changed"
     rejected.append("more")
 
-    root = RootView(builder.finish((index,), Pin()))
     (issue,) = root.issues(0)
     evidence = cast("tuple[object, ...]", issue.stored_value)
-    assert issue.member == _HOLDER
+    assert issue.member == _DIGEST
     assert evidence == ("0a", {"k": "1b"})
     assert isinstance(evidence[1], MappingProxyType)
 
@@ -1072,13 +1051,13 @@ def test_a_rejected_correlation_freezes_its_evidence_when_it_is_judged() -> None
 @pytest.mark.parametrize(
     ("holders", "atomic"),
     [
-        pytest.param(("a101", "b202"), False, id="streamed"),
-        pytest.param(("a101", "b202"), True, id="atomic"),
-        pytest.param(("a101", "b202", "a101"), True, id="atomic-releasing-at-last-use"),
+        pytest.param((101, 202), False, id="streamed"),
+        pytest.param((101, 202), True, id="atomic"),
+        pytest.param((101, 202, 101), True, id="atomic-releasing-at-last-use"),
     ],
 )
-def test_a_keyless_holding_keeps_its_captured_finding_for_every_holder_reaching_it(
-    holders: tuple[str, ...], atomic: bool
+def test_a_keyless_holding_keeps_its_payload_finding_for_every_holder_reaching_it(
+    holders: tuple[int, ...], atomic: bool
 ) -> None:
     # A holding read without its key claims no logical node, so every holder
     # reaching it judges its payload again, after the first holder's release.
@@ -1088,12 +1067,12 @@ def test_a_keyless_holding_keeps_its_captured_finding_for_every_holder_reaching_
         RelationshipIdentity(EntityIdentity(_NAMESPACE, "CorrelatedHolder"), "holdings")
     )
     builder = PageBuilder(ViewSchema.of(holdings))
-    keyless = _holding(holder_id_hex="zz")
+    keyless = _holding(digest_hex="zz")
     del keyless["id"]
     holding, *_ = _holdings().convert_row(keyless, builder, source=ROOT_LEVEL)
     holder_read = bound_read(HOLDINGS, "CorrelatedHolder")
     roots = tuple(
-        holder_read.convert_row({"id_hex": key}, builder, source=ROOT_LEVEL)[0] for key in holders
+        holder_read.convert_row({"id": key}, builder, source=ROOT_LEVEL)[0] for key in holders
     )
     for root in roots:
         builder.write_view(root, holdings, (holding,))
@@ -1110,8 +1089,8 @@ def test_a_keyless_holding_keeps_its_captured_finding_for_every_holder_reaching_
 
     assert published == [
         (
-            {"digest": b"\xd1\x01", "custodianId": b"\xc1\x01", "terms": None},
-            [("stored-data-leaf-undecodable", _HOLDER, "zz")],
+            {"holderId": 101, "custodianId": 201, "terms": None},
+            [("stored-data-leaf-undecodable", _DIGEST, "zz")],
         )
     ] * len(holders)
 

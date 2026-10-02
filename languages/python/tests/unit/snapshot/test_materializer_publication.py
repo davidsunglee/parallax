@@ -42,19 +42,15 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core import predicate as oa
+from parallax.core.base import PresentDocument
 from parallax.core.deep_fetch import RelationshipViewKey
-from parallax.core.dialect import POSTGRES
 from parallax.core.entity import GraphConstructionError, RelationshipPath
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     RelationshipIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
-    entity_by_name,
 )
 from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Pin
@@ -74,13 +70,18 @@ from parallax.snapshot.materialize._page import (
     page_rows,
     stored_order_key,
 )
-from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._publication import publication_issue
 from parallax.snapshot.materialize._root import _member_order  # pyright: ignore[reportPrivateUsage]
 from parallax.snapshot.materialize._wire import EntityReader
 from tests._support import snapshot_models as sm
 from tests._support.model_capabilities import graph_construction_for
-from tests._support.sql import compile_read
+from tests.unit.snapshot._encoded_identity_read import (
+    ENCODED_IDENTITY,
+    KEY_TEXT,
+    OTHER_KEY_TEXT,
+    encoded_identity_page,
+    encoded_identity_read,
+)
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS, EncodedOrder
 from tests.unit.snapshot._snapshot_page_support import (
     PageFixture,
@@ -118,12 +119,12 @@ _DOG_ROW: dict[str, object] = {
     "bark_volume": 7,
 }
 _ENCODED_ORDER_ROW: dict[str, object] = {
-    "id_hex": "01",
+    "id": 1,
     "name": "Ada",
     "badge_hex": None,
     "address": None,
 }
-_ENCODED_ITEM_ROW: dict[str, object] = {"id_hex": "0b", "order_id_hex": "01", "code_hex": "0c"}
+_ENCODED_ITEM_ROW: dict[str, object] = {"id": 11, "order_id": 1, "code_hex": "0c"}
 _ENCODED_ITEMS = "parallax.compatibility.EncodedOrder.items"
 _ENCODED_ITEMS_BY_CODE = "parallax.compatibility.EncodedOrder.itemsByCode"
 _ENCODED_ORDER = EntityIdentity(_NAMESPACE, "EncodedOrder")
@@ -237,24 +238,19 @@ def test_an_invalid_root_preserves_its_result_position_without_allocating_a_node
     # The keyless row sits BETWEEN two valid ones, so the hole it leaves is a
     # result position rather than a truncation, and the two survivors keep the
     # allocation indices their own walk order gives them.
-    fixture = PageFixture(ENCODED_ORDERS)
-    first = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
-    keyless = fixture.node("EncodedOrder", {**_ENCODED_ORDER_ROW, "id_hex": None})
-    second = fixture.node("EncodedOrder", {**_ENCODED_ORDER_ROW, "id_hex": "02", "name": "Linus"})
-
-    root_view = RootView(fixture.page(first, keyless, second))
+    root_view = RootView(
+        encoded_identity_page({"id_wire": KEY_TEXT}, {"id_wire": None}, {"id_wire": OTHER_KEY_TEXT})
+    )
     assert root_view.roots == (0, None, 1)
     assert [issue.code for record in root_view.invalid_roots for issue in record.issues] == [
         "stored-data-primary-key-null"
     ]
     assert [record.ordinal for record in root_view.invalid_roots] == [1]
-    assert root_view.order == (_ENCODED_ORDER, _ENCODED_ORDER)
+    assert [entity.name for entity in root_view.order] == ["EncodedIdentity", "EncodedIdentity"]
 
 
 def test_publication_issue_reads_the_first_invalid_root_issue() -> None:
-    fixture = PageFixture(ENCODED_ORDERS)
-    keyless = fixture.node("EncodedOrder", {**_ENCODED_ORDER_ROW, "id_hex": None})
-    root_view = RootView(fixture.page(keyless))
+    root_view = RootView(encoded_identity_page({"id_wire": None}))
     assert publication_issue(root_view) is root_view.invalid_roots[0].issues[0]
 
 
@@ -262,13 +258,9 @@ def test_flat_publication_preserves_a_classified_result_position() -> None:
     # Row publication has no record carrier of its own, so it publishes the same
     # InvalidData position the shared Page judgment produced rather than flattening
     # diagnostic state into an ordinary mapping.
-    fixture = PageFixture(ENCODED_ORDERS)
-    keyless = fixture.node("EncodedOrder", {**_ENCODED_ORDER_ROW, "id_hex": None})
-    stage = RowPublication((None,), (None,), fixture.page(keyless))
-    meta = model_of(ENCODED_ORDERS)
-    order = entity_by_name(meta, "EncodedOrder")
-    assert order is not None
-    prepared = bind(CatalogedModel(meta), compile_read(oa.All(), meta, POSTGRES, order))
+    stage = RowPublication((None,), (None,), encoded_identity_page({"id_wire": None}))
+    meta = ENCODED_IDENTITY
+    prepared = encoded_identity_read()
 
     (published,) = _published_rows(stage, meta, prepared.row_publisher())
 
@@ -276,17 +268,14 @@ def test_flat_publication_preserves_a_classified_result_position() -> None:
 
 
 def test_a_keyless_root_with_rejected_structured_evidence_dedupes_in_band() -> None:
-    fixture = PageFixture(ENCODED_ORDERS)
-    keyless = fixture.node(
-        "EncodedOrder",
+    page = encoded_identity_page(
         {
-            **_ENCODED_ORDER_ROW,
-            "id_hex": None,
-            "address": {"street": "1 Park Ave", "phones": {"type": "home"}},
+            "id_wire": None,
+            "address": PresentDocument({"street": "1 Park Ave", "phones": {"type": "home"}}),
         },
     )
 
-    root = RootView(fixture.page(keyless))
+    root = RootView(page)
 
     assert root.roots == (None,)
     assert [issue.code for issue in root.invalid_roots[0].issues] == [
@@ -312,10 +301,7 @@ def test_an_invalid_root_ordinal_is_its_result_position_by_construction() -> Non
     # A caller never spells one: sealing derives the ordinal from the position
     # the root occupies, so the mismatch a whole-Page validation pass used to
     # look for is unrepresentable rather than checked.
-    fixture = PageFixture(ENCODED_ORDERS)
-    valid = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
-    keyless = fixture.node("EncodedOrder", {**_ENCODED_ORDER_ROW, "id_hex": None})
-    root_view = RootView(fixture.page(valid, keyless))
+    root_view = RootView(encoded_identity_page({"id_wire": KEY_TEXT}, {"id_wire": None}))
     assert [record.ordinal for record in root_view.invalid_roots] == [1]
 
 
@@ -398,7 +384,7 @@ def test_each_to_many_view_keeps_its_own_order_through_the_root_view() -> None:
 
 
 def test_unequal_scalar_witnesses_refuse_before_any_payload_decode() -> None:
-    # Each item's encoded key is judged when it is claimed, but its encoded
+    # Each item's native key is trusted when claimed, while its encoded
     # `code` is payload: judging it waits for the Root View, which refuses the
     # unequal witnesses before decoding either.
     items, by_code = _ENCODED_ITEMS, _ENCODED_ITEMS_BY_CODE
@@ -412,10 +398,10 @@ def test_unequal_scalar_witnesses_refuse_before_any_payload_decode() -> None:
             fixture.attach(order, items, (first,))
             fixture.attach(order, by_code, (second,))
             page = fixture.page(order)
-            assert sorted(cast("list[str]", calls.decoded)) == ["01", "0b", "0b"]
+            assert sorted(cast("list[str]", calls.decoded)) == []
             with pytest.raises(SnapshotConsistencyError) as raised:
                 RootView(page)
-            assert sorted(cast("list[str]", calls.decoded)) == ["01", "0b", "0b"]
+            assert sorted(cast("list[str]", calls.decoded)) == []
         assert _judged_state_count(page) == 0
         return raised.value
 
@@ -649,7 +635,7 @@ def test_an_invalid_descendant_classifies_the_reachable_root() -> None:
     assert {(issue.code, issue.member) for issue in published.issues} == {
         ("stored-data-leaf-undecodable", AttributeIdentity(_ENCODED_ITEM, "code"))
     }
-    assert published.object_key == ObjectKey(_ENCODED_ORDER, (("id", b"\x01"),))
+    assert published.object_key == ObjectKey(_ENCODED_ORDER, (("id", 1),))
 
 
 def test_an_unrequested_invalid_projection_does_not_refuse_a_clean_root() -> None:
@@ -661,21 +647,14 @@ def test_an_unrequested_invalid_projection_does_not_refuse_a_clean_root() -> Non
     assert isinstance(root, EncodedOrder)
 
 
-def test_an_invalid_descendant_key_never_enters_logical_identity() -> None:
-    # A child with no usable primary key remains a classified projection rather
-    # than being shared under a synthetic `(None,)` logical key.
-    fixture = PageFixture(ENCODED_ORDERS, _ENCODED_ITEMS)
-    order = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
-    invalid = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "id_hex": None})
-    fixture.attach(order, _ENCODED_ITEMS, (invalid,))
-
-    root_view = RootView(fixture.page(order))
-    item = _sole_node(root_view, "EncodedOrderItem")
-    assert [issue.code for issue in root_view.issues(item)] == ["stored-data-primary-key-null"]
-    published = invalid_record(fixture.materialize(order)[0])
+def test_an_invalid_encoded_key_publishes_no_logical_identity() -> None:
+    page = encoded_identity_page({"id_wire": None})
+    assert page_rows(page).keys[0] is None
+    stage = RowPublication((None,), (None,), page)
+    (record,) = _published_rows(stage, ENCODED_IDENTITY, encoded_identity_read().row_publisher())
+    published = invalid_record(record)
     assert published.data is None
-    # The child's own identity never decoded, so its diagnosis locates no object
-    # while the root's record still locates the result position it invalidated.
+    assert [issue.code for issue in published.issues] == ["stored-data-primary-key-null"]
     assert [issue.object_key for issue in published.issues] == [None]
 
 
@@ -1105,7 +1084,7 @@ def test_a_sealed_builder_holds_none_of_what_it_accumulated() -> None:
     # held to this without the case being remembered.
     fixture = PageFixture(ENCODED_ORDERS, _ENCODED_ITEMS)
     order = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
-    item = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "id_hex": "not-hex"})
+    item = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "code_hex": "not-hex"})
     fixture.attach(order, _ENCODED_ITEMS, (item,))
     builder = fixture.builder
     kept = ("_schema", "_sealed")
@@ -1134,9 +1113,9 @@ def test_every_root_view_accessor_answers_the_identical_object_on_a_second_call(
     fixture = PageFixture(ENCODED_ORDERS, _ENCODED_ITEMS)
     order = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
     first = fixture.node("EncodedOrderItem", _ENCODED_ITEM_ROW)
-    second = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "id_hex": "0c"})
+    second = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "id": 12})
     duplicate = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
-    keyless = fixture.node("EncodedOrder", {**_ENCODED_ORDER_ROW, "id_hex": None})
+    keyless = encoded_identity_read().convert_row({"id_wire": None}, fixture.builder, source=0)[0]
     fixture.attach(order, _ENCODED_ITEMS, (first, second))
     root_view = RootView(fixture.page(order, keyless, duplicate))
 
@@ -1184,13 +1163,11 @@ def test_two_unreadable_projections_of_one_row_never_share_with_each_other() -> 
     # An invalid key short-circuits identity entirely, so a second read of the
     # identical unreadable row is a second logical node rather than the same one
     # diagnosed twice — which is what keeps each physical finding attributable.
-    fixture = PageFixture(ENCODED_ORDERS)
-    unreadable = {**_ENCODED_ORDER_ROW, "id_hex": None}
-    first = fixture.node("EncodedOrder", unreadable)
-    second = fixture.node("EncodedOrder", unreadable)
-    readable = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
-    again = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
-    root_view = RootView(fixture.page(first, second, readable, again))
+    root_view = RootView(
+        encoded_identity_page(
+            {"id_wire": None}, {"id_wire": None}, {"id_wire": KEY_TEXT}, {"id_wire": KEY_TEXT}
+        )
+    )
     # Both unreadable roots are invalid-root holes, and the two readable ones
     # collapse onto one allocation — so the Root View allocated one node, not three.
     assert root_view.roots == (None, None, 0, 0)

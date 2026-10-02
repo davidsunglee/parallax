@@ -1,0 +1,35 @@
+model: models/identifier-types.yaml
+tags: [m-relationship, m-object-query, m-deep-fetch, m-sql, m-wire, relationship, graph, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: Child binds come from parent results and the reverse resolves from the graph.
+lane: api-conformance
+when:
+  objectQuery:
+    target: parallax.compatibility.StringParent
+    predicate: {all: {}}
+    includes:
+      - segments:
+          - {rel: parallax.compatibility.StringParent.children}
+          - {rel: parallax.compatibility.StringChild.parent}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from string_parent t0
+        mariadb: select t0.id, t0.label from string_parent t0
+    - sql:
+        postgres: select t0.id, t0.parent_id from string_child t0 where t0.parent_id = any(?) order by t0.id asc
+        mariadb: select t0.id, t0.parent_id from string_child t0 where t0.parent_id in (?) order by t0.id asc
+      binds: {postgres: [[external-A]], mariadb: [external-A]}
+  referenceSql: select id, label from string_parent
+  graph:
+    StringParent:
+      - id: external-A
+        label: external
+        children:
+          - id: child-A
+            parentId: external-A
+            parent: {id: external-A, label: external}
+  roundTrips: 2

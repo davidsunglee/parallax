@@ -18,6 +18,7 @@ from parallax.snapshot.materialize._page import page_rows, root_last_uses
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import bound_read
+from tests.unit.snapshot._encoded_identity_read import encoded_identity_page
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 from tests.unit.snapshot._snapshot_page_support import (
     PageFixture,
@@ -44,7 +45,12 @@ def _order(order_id: object, name: str = "Ada") -> dict[str, object]:
 
 
 def _encoded_order(key: str | None, name: str = "Ada", badge: str = "0f") -> dict[str, object]:
-    return {"id_hex": key, "name": name, "badge_hex": badge, "address": SQL_NULL}
+    return {
+        "id": int(key) if key is not None else None,
+        "name": name,
+        "badge_hex": badge,
+        "address": SQL_NULL,
+    }
 
 
 def _page(
@@ -65,12 +71,12 @@ def test_equal_witnesses_decode_once_and_share_one_page_state() -> None:
         page, _roots = _page(
             ((ROOT_LEVEL, _encoded_order("01")), (ROOT_LEVEL, _encoded_order("01")))
         )
-        assert calls.decoded == ["01", "01"]
+        assert calls.decoded == []
 
         first = RootView(cast("Any", page), 0)
         second = RootView(cast("Any", page), 1)
 
-    assert calls.decoded == ["01", "01", "0f"]
+    assert calls.decoded == ["0f"]
     assert len(page_rows(page).judged_states.group(0)) == 1
     assert first.member_values(0) is second.member_values(0)
 
@@ -88,8 +94,8 @@ def test_separate_roots_may_store_unequal_witnesses_for_one_logical_key() -> Non
 
 def test_keyless_occurrences_are_judged_only_when_their_root_is_requested() -> None:
     with recorded_conversion_dependencies() as calls:
-        page, _roots = _page(
-            ((0, _encoded_order(None, badge="0e")), (0, _encoded_order(None, badge="0f")))
+        page = encoded_identity_page(
+            {"id_wire": None, "token_hex": "0e"}, {"id_wire": None, "token_hex": "0f"}
         )
         assert calls.decoded == []
         assert page_rows(cast("Any", page)).roots == (0, 1)
