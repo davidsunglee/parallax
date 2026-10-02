@@ -2569,8 +2569,27 @@
       "valueObject": {}
     }
   },
-  "models/float32-key.yaml": {
-    "parallax.compatibility.Buoy": {
+  "models/grade.yaml": {
+    "parallax.compatibility.Grade": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "ordinal": "order"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/identifier-types.yaml": {
+    "parallax.compatibility.Int32Child": {
+      "attribute": {
+        "id": "id",
+        "parentId": "parent_id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Int32Parent": {
       "attribute": {
         "id": "id",
         "label": "label"
@@ -2578,22 +2597,50 @@
       "documentPath": {},
       "valueObject": {}
     },
-    "parallax.compatibility.BuoyPing": {
+    "parallax.compatibility.Int64Child": {
       "attribute": {
-        "buoyId": "buoy_id",
         "id": "id",
-        "strength": "strength"
+        "parentId": "parent_id"
       },
       "documentPath": {},
       "valueObject": {}
-    }
-  },
-  "models/grade.yaml": {
-    "parallax.compatibility.Grade": {
+    },
+    "parallax.compatibility.Int64Parent": {
       "attribute": {
         "id": "id",
-        "label": "label",
-        "ordinal": "order"
+        "label": "label"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.StringChild": {
+      "attribute": {
+        "id": "id",
+        "parentId": "parent_id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.StringParent": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.UuidChild": {
+      "attribute": {
+        "id": "id",
+        "parentId": "parent_id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.UuidParent": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
       },
       "documentPath": {},
       "valueObject": {}

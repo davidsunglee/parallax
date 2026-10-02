@@ -50,7 +50,6 @@ from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
-    AttributePrimaryKey,
     AttributeReference,
     Column,
     DerivedAxis,
@@ -59,7 +58,6 @@ from parallax.core.metamodel import (
     ExactEntityReference,
     IndexIdentity,
     IndexMetadata,
-    Max,
     MemberShape,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
@@ -68,7 +66,6 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     RelationshipReference,
     RelativeEntityReference,
-    Sequence,
     StorageContainer,
     StorageLayout,
     Table,
@@ -1206,7 +1203,6 @@ def _build_entity(
             )
         if attr_spec.primary_key is not NOT_PRIMARY_KEY:
             pk_py.add(py_name)
-            _reject_incompatible_generation(attr_spec.primary_key, shape.base, where)
         attribute = _attribute(identity, canonical, column, attr_spec, shape, where)
         attributes.append(attribute)
         members[canonical] = attribute
@@ -1498,11 +1494,7 @@ def _attribute(
     shape: _Shape,
     where: str,
 ) -> AttributeMetadata:
-    """One scalar Attribute, with the value layer's own refusals reclassified.
-
-    Attribute Metadata refuses a bounded length on a non-text member, which is a
-    declaration-context defect rather than an internal failure.
-    """
+    """One scalar Attribute, with local invariant failures translated to declaration errors."""
     try:
         return AttributeMetadata(
             identity=AttributeIdentity(identity, canonical),
@@ -1965,18 +1957,6 @@ def _derived_axes(axes: tuple[TemporalDimension, ...]) -> tuple[DerivedAxis, ...
     reach the one derivation both frontends share.
     """
     return derive_temporal_structure(temporality_profile(axes))
-
-
-def _reject_incompatible_generation(
-    primary_key: AttributePrimaryKey, base: object, where: str
-) -> None:
-    """A generating strategy needs an integral member (m-pk-gen)."""
-    generation = getattr(primary_key, "generation", None)
-    if isinstance(generation, (Max, Sequence)) and base is not int:
-        raise EntityDefinitionError(
-            code="entity-option-context-invalid",
-            message=f"{where}: Max and Sequence generation require an integer member",
-        )
 
 
 def _relationship(

@@ -51,7 +51,6 @@ from parallax.core.base import (
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import encode_leaf
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
-from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -83,7 +82,7 @@ from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, target
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import bound_read, compiled_read
-from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
+from tests.unit.snapshot._encoded_identity_read import encoded_identity_page
 from tests.unit.snapshot._snapshot_page_support import (
     driver_row,
     identity_of,
@@ -808,13 +807,6 @@ _NAMED = EntityIdentity(None, "Named")
     ("model", "entity", "row", "code"),
     [
         pytest.param(
-            model_of(ENCODED_ORDERS),
-            "EncodedOrder",
-            {"id_hex": "not-a-key", "name": "Ada"},
-            "stored-data-primary-key-undecodable",
-            id="encoded-key",
-        ),
-        pytest.param(
             NAMED_DOCUMENT,
             "Named",
             {"id": 1, "payload": {"name": None}},
@@ -830,6 +822,15 @@ def test_entity_attribute_findings_use_attribute_specific_issue_codes(
     # than by the leaf vocabulary its carrier's codec speaks.
     node = _converted(model, entity, row)
     assert [issue.code for issue in node.issues] == [code]
+
+
+def test_encoded_identifier_findings_use_the_primary_key_issue_code() -> None:
+    page = encoded_identity_page({"id_wire": "not-a-key"})
+    root = RootView(page)
+    assert [issue.code for record in root.invalid_roots for issue in record.issues] == [
+        "stored-data-primary-key-undecodable"
+    ]
+    assert page_rows(page).keys[0] is None
 
 
 # --------------------------------------------------------------------------- #

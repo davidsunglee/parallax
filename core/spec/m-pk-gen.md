@@ -28,13 +28,9 @@ sum prevents a non-primary-key Attribute from carrying a generation strategy.
 `Max` and `Sequence` are legal only on an `Int32` or `Int64` Attribute:
 `max` allocates `max(col)+1` and `sequence` advances an integer registry
 counter, so a non-integral generated key has no meaning.
-`ApplicationAssigned` is unrestricted — the application may supply keys of
-any declared type.
+`ApplicationAssigned` follows [Metamodel key eligibility](m-metamodel.md#attributes-and-primary-keys).
 
-Invalid generator states are unconstructible in normalized Metadata: the
-descriptor schema or language declaration frontend rejects them before the
-Unresolved Metamodel seam — the schema through its attribute `type`
-conditional in the schema phase, a language frontend at class creation.
+Invalid generator/type combinations are unconstructible in normalized Attribute Metadata before the Unresolved Metamodel seam. Public descriptors reject them through the schema's attribute `type` conditional; native language declarations translate construction failure at their declaration boundary.
 Sequence defaults are resolved there as well (`batchSize`, `initialValue`,
 and `incrementSize` default to `1`, fixed by the schema).
 `m-pk-gen` therefore contributes no Model Formation Rule Set, Issue Code, or

@@ -29,6 +29,7 @@ from types import MappingProxyType
 from parallax.conformance.animal_owner import ANIMAL_MODEL
 from parallax.conformance.edit_models import NOTE_MODEL
 from parallax.conformance.graph_models import POLICY_MODEL
+from parallax.conformance.identifier_models import IDENTIFIER_TYPES
 from parallax.conformance.read_models import (
     BALANCE_MODEL,
     DOCUMENT_MODEL,
@@ -518,6 +519,7 @@ DOCUMENT_LAYOUT_MODEL = DomainModel(
 )
 
 MIRRORED: list[tuple[str, DomainModel]] = [
+    ("identifier-types", IDENTIFIER_TYPES),
     ("account", ACCOUNT_MODEL),
     ("pk-max", PK_MAX_MODEL),
     ("person", PERSON_MODEL),
@@ -704,11 +706,6 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "event": (
             "no mirror authored; the only construct it adds over the mirrored `account` is a "
             "plain `timestamp` member outside an as-of axis"
-        ),
-        "float32-key": (
-            "no mirror authored; a float32 primary key and a one-to-many join over it "
-            "are the declarations mirrored models already make at other scalar types, so "
-            "the model adds no class-frontend construct"
         ),
         "grade": (
             "no mirror authored; its subject is a reserved word appearing as a physical column "

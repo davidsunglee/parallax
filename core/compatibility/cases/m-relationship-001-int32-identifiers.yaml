@@ -1,0 +1,35 @@
+model: models/identifier-types.yaml
+tags: [m-relationship, m-object-query, m-deep-fetch, m-sql, m-wire, relationship, graph, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: Child binds come from parent results and the reverse resolves from the graph.
+lane: api-conformance
+when:
+  objectQuery:
+    target: parallax.compatibility.Int32Parent
+    predicate: {all: {}}
+    includes:
+      - segments:
+          - {rel: parallax.compatibility.Int32Parent.children}
+          - {rel: parallax.compatibility.Int32Child.parent}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from int32_parent t0
+        mariadb: select t0.id, t0.label from int32_parent t0
+    - sql:
+        postgres: select t0.id, t0.parent_id from int32_child t0 where t0.parent_id = any(?) order by t0.id asc
+        mariadb: select t0.id, t0.parent_id from int32_child t0 where t0.parent_id in (?) order by t0.id asc
+      binds: {postgres: [[7]], mariadb: [7]}
+  referenceSql: select id, label from int32_parent
+  graph:
+    Int32Parent:
+      - id: 7
+        label: bounded
+        children:
+          - id: 11
+            parentId: 7
+            parent: {id: 7, label: bounded}
+  roundTrips: 2

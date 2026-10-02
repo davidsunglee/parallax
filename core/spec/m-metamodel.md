@@ -487,6 +487,10 @@ non-primary-key attribute cannot carry a meaningless ApplicationAssigned,
 Max, or Sequence value. Frontends normalize an omitted generator on a declared
 primary key to `PrimaryKey(ApplicationAssigned)`.
 
+An application-assigned primary key MUST have exactly one of the declared scalar types Int32, Int64, String, or Uuid. Boolean, Float32, Float64, Decimal, Bytes, Date, Time, and Timestamp remain valid ordinary scalar attributes but cannot be primary keys. Structured values and collections cannot be primary keys. Max and Sequence require Int32 or Int64 as specified by [Primary-Key Generation](m-pk-gen.md); Uuid eligibility introduces no framework UUID generator.
+
+These reference-free key invariants hold at normalized Attribute construction, before the Unresolved Metamodel seam. This policy does not add a primary-key nullability restriction or change the single-attribute key model.
+
 `framework_owned` is **derived, never authored**. It answers who supplies the
 value — the framework, never the caller — and is true exactly when the
 attribute carries `optimistic_locking`, or its `identity` appears as the

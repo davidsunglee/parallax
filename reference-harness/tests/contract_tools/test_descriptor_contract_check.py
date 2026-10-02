@@ -351,8 +351,10 @@ def test_unserializable_model_is_reported(tmp_path: Path) -> None:
         "  table: reading\n"
         "  attributes:\n"
         "    - name: id\n"
-        "      type: date\n"
+        "      type: int64\n"
         "      primaryKey: true\n"
+        "    - name: day\n"
+        "      type: date\n"
         "      default: 2024-01-01\n",
         encoding="utf-8",
     )

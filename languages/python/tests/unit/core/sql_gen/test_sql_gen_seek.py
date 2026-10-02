@@ -442,18 +442,6 @@ _SEEK_SPELLED_MEMBER: Final = _records.Metamodel(
     )
 )
 
-_ENCODED_KEY: Final = _records.Metamodel(
-    entities=(
-        _records.Entity(
-            name="EncodedKey",
-            table="encoded_key",
-            attributes=(
-                _records.Attribute(name="id", type="bytes", column="id", primary_key=True),
-            ),
-        ),
-    )
-)
-
 
 def test_a_document_resident_leading_term_hoists_no_range() -> None:
     # `rank` is declared non-nullable and lives at a Document Path, so its
@@ -476,26 +464,6 @@ def test_a_document_resident_leading_term_hoists_no_range() -> None:
         "or (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? "
         "and (t0.id > ? or t0.id is null)))"
     )
-
-
-def test_an_encoded_physical_identity_joins_in_its_lossless_result_form() -> None:
-    # A bytes primary key reaches the derived relation as id_hex while the base
-    # table still stores bytea. The outer join renders the same encoding expression
-    # on t0, places that expression's structural bind after both arms and before
-    # the outer cap, and locks the base alias without changing result ordinals.
-    model = formed(_ENCODED_KEY)
-    key = b"\x01"
-    statement = _lowered(
-        model,
-        _planned(model, "EncodedKey").after(ContinuationCoordinate((key,)), limit=2),
-        lock="locking",
-    )
-
-    assert (
-        ")) u join encoded_key t0 on u.id_hex = encode(t0.id, ?) "
-        "order by u.parallax_seek_0 asc limit ? for share of t0"
-    ) in statement.sql
-    assert statement.binds == ("hex", key, key, 2, "hex", 2, "hex", 2)
 
 
 def test_a_coordinate_is_read_only_off_a_row_of_the_projected_arity() -> None:

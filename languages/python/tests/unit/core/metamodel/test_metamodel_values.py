@@ -221,6 +221,71 @@ def test_a_generation_is_reachable_only_through_the_primary_key_branch() -> None
     assert not hasattr(NOT_PRIMARY_KEY, "generation")
 
 
+_IDENTIFIERS = (base.INT32, base.INT64, base.STRING, base.UUID)
+_NON_IDENTIFIERS = (
+    base.BOOLEAN,
+    base.FLOAT32,
+    base.FLOAT64,
+    base.Decimal(18, 2),
+    base.BYTES,
+    base.DATE,
+    base.TIME,
+    base.TIMESTAMP,
+)
+
+
+@pytest.mark.parametrize("declared", _IDENTIFIERS)
+@pytest.mark.parametrize("generation", [APPLICATION_ASSIGNED, MAX, Sequence("identifiers")])
+def test_key_construction_selects_its_generation_policy(
+    declared: base.NeutralType, generation: ApplicationAssigned | Max | Sequence
+) -> None:
+    identity = AttributeIdentity(_ORDERS, "id")
+    if generation != APPLICATION_ASSIGNED and declared not in (base.INT32, base.INT64):
+        with pytest.raises(ValueError, match="generation"):
+            AttributeMetadata(identity, declared, Column("id"), primary_key=PrimaryKey(generation))
+    else:
+        attribute = AttributeMetadata(
+            identity, declared, Column("id"), primary_key=PrimaryKey(generation), nullable=True
+        )
+        assert attribute.primary_key == PrimaryKey(generation)
+        assert attribute.definition.type == declared
+        assert attribute.definition.nullable is True
+        assert attribute.max_length is None
+
+
+@pytest.mark.parametrize("declared", _NON_IDENTIFIERS)
+@pytest.mark.parametrize("generation", [APPLICATION_ASSIGNED, MAX, Sequence("identifiers")])
+def test_ineligible_keys_fail_without_a_length_bound(
+    declared: base.NeutralType, generation: ApplicationAssigned | Max | Sequence
+) -> None:
+    identity = AttributeIdentity(_ORDERS, "id")
+    with pytest.raises(ValueError) as caught:
+        AttributeMetadata(identity, declared, Column("id"), primary_key=PrimaryKey(generation))
+    assert f"{identity.entity.canonical}.{identity.name}" in str(caught.value)
+    assert repr(declared) in str(caught.value)
+    assert ("generation" in str(caught.value)) is (generation != APPLICATION_ASSIGNED)
+
+
+@pytest.mark.parametrize("declared", _NON_IDENTIFIERS)
+def test_non_key_scalar_construction_remains_unrestricted(declared: base.NeutralType) -> None:
+    attribute = AttributeMetadata(AttributeIdentity(_ORDERS, "value"), declared, Column("value"))
+    assert attribute.primary_key == NOT_PRIMARY_KEY
+    assert attribute.definition.type == declared
+
+
+def test_identifier_eligibility_preserves_string_length_and_leaf_derivation() -> None:
+    identity = AttributeIdentity(_ORDERS, "id")
+    attribute = AttributeMetadata(
+        identity, base.STRING, Column("id"), primary_key=PrimaryKey(), max_length=12
+    )
+    assert attribute.definition.name == "id"
+    assert attribute.max_length == 12
+    with pytest.raises(ValueError, match="positive"):
+        AttributeMetadata(
+            identity, base.STRING, Column("id"), primary_key=PrimaryKey(), max_length=0
+        )
+
+
 def test_the_ordering_and_axis_vocabularies_are_closed() -> None:
     assert [direction.name for direction in SortDirection] == ["ASCENDING", "DESCENDING"]
     assert [mode.name for mode in PersistenceMode] == ["READ_WRITE", "READ_ONLY"]

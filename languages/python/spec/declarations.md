@@ -62,6 +62,8 @@ families. Decimal requires both `precision=` and `scale=`. `primary_key=True`
 means application-assigned; `MAX` and `Sequence(...)` imply an integer primary
 key. No free-form JSON member annotation exists.
 
+Ineligible key types and incompatible generation fail at class creation with `EntityDefinitionError` and code `entity-option-context-invalid`, before a `DomainModel` can be constructed. Eligibility belongs to the [Metamodel](../../../core/spec/m-metamodel.md#attributes-and-primary-keys). Public descriptor inputs reject serialized key-policy violations in the schema phase instead.
+
 `Rel[T]` requires `rel(...)`. Its defining form names `cardinality`, `join`,
 optional `dependent`, `order_by`, and `name`; its reverse form names
 `reverse_of`, optional `order_by`, and `name`. Mixing the forms is refused.

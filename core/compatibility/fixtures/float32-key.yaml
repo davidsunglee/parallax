@@ -1,7 +1,0 @@
-parallax.compatibility.Buoy:
-  - { id: 1.2, label: North }
-  - { id: 0.1, label: South }
-parallax.compatibility.BuoyPing:
-  - { id: 1, buoyId: 1.2, strength: 7 }
-  - { id: 2, buoyId: 1.2, strength: 3 }
-  - { id: 3, buoyId: 0.1, strength: 5 }

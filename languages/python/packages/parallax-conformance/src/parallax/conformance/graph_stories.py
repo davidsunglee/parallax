@@ -9,6 +9,12 @@ from typing import Any
 
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.graph_models import Coverage, Policy
+from parallax.conformance.identifier_models import (
+    Int32Parent,
+    Int64Parent,
+    StringParent,
+    UuidParent,
+)
 from parallax.conformance.read_models import (
     Animal,
     Balance,
@@ -455,7 +461,27 @@ def _snapshot_read_025_clock() -> Clock:
     return ScriptedClock([dt.datetime(2024, 7, 1, tzinfo=dt.UTC)])
 
 
+def int32_identifiers(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(Int32Parent.where(Int32Parent.all).include(Int32Parent.children.parent))
+
+
+def int64_identifiers(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(Int64Parent.where(Int64Parent.all).include(Int64Parent.children.parent))
+
+
+def string_identifiers(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(StringParent.where(StringParent.all).include(StringParent.children.parent))
+
+
+def uuid_identifiers(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(UuidParent.where(UuidParent.all).include(UuidParent.children.parent))
+
+
 GRAPH_STORIES: tuple[GraphStory, ...] = (
+    GraphStory("m-relationship-001", "Int32 identifiers", "identifier-types", int32_identifiers),
+    GraphStory("m-relationship-002", "Int64 identifiers", "identifier-types", int64_identifiers),
+    GraphStory("m-relationship-003", "String identifiers", "identifier-types", string_identifiers),
+    GraphStory("m-relationship-004", "Uuid identifiers", "identifier-types", uuid_identifiers),
     GraphStory(
         "m-snapshot-read-001",
         "Diamond identity: two include paths reaching the same rows share one node",

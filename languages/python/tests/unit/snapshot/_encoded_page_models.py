@@ -29,10 +29,10 @@ _NAMESPACE = "parallax.compatibility"
 
 
 class EncodedOrder(Entity, table="encoded_order", namespace=_NAMESPACE):
-    """An order keyed by a Bytes Column, with two sibling item relationships over
+    """An order with Bytes payloads and two sibling item relationships over
     one join so a single item row can be reached through two projections."""
 
-    id: Attr[bytes] = attr(primary_key=True)
+    id: Attr[int] = attr(primary_key=True)
     name: Attr[str]
     badge: Attr[bytes | None]
     address: Attr[Address | None]
@@ -43,10 +43,10 @@ class EncodedOrder(Entity, table="encoded_order", namespace=_NAMESPACE):
 
 
 class EncodedOrderItem(Entity, table="encoded_order_item", namespace=_NAMESPACE):
-    """An item keyed by a Bytes Column whose required ``code`` is a Bytes Column too."""
+    """An item whose required ``code`` is a Bytes Column."""
 
-    id: Attr[bytes] = attr(primary_key=True)
-    order_id: Attr[bytes]
+    id: Attr[int] = attr(primary_key=True)
+    order_id: Attr[int]
     code: Attr[bytes]
     order: Rel[EncodedOrder | None] = rel(reverse_of="items")
 

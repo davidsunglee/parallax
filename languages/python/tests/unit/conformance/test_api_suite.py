@@ -120,6 +120,7 @@ def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
 # a module-wide reason.
 _BUCKET_FREE_MODULES: frozenset[str] = frozenset(
     {
+        "m-relationship",
         "m-execution-lifecycle",
         "m-execution-authority",
         "m-edit",
