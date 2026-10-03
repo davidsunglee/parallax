@@ -41,7 +41,9 @@ from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.predicate._validated import (
     ValidatedOperands,
     ValidatedPredicate,
+    conjunction,
     deferred_membership,
+    managed_comparison,
 )
 from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
@@ -563,7 +565,7 @@ def test_postgres_child_template_binds_the_gathered_list_under_the_template_meta
 
     rendered = template.render(keys).statement
 
-    assert rendered.binds[template.bind_index] is keys
+    assert rendered.binds[0] is keys
     assert rendered.typed_bind_spans is template.compiled.statement.typed_bind_spans
     assert rendered.wire_bind_overrides is template.compiled.statement.wire_bind_overrides
 
@@ -588,7 +590,7 @@ def test_child_template_projects_each_float32_key_to_its_canonical_wire_value(
 
     rendered = template.render([narrowed(1.2), narrowed(0.1)])
 
-    assert rendered.statement.wire_binds()[template.bind_index :] == projected
+    assert rendered.statement.wire_binds()[-len(projected) :] == projected
 
 
 @pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
@@ -602,7 +604,8 @@ def test_child_template_refuses_an_empty_set_that_should_issue_no_statement() ->
         _child_template(POSTGRES).render([])
 
 
-def test_child_template_refuses_a_query_without_one_deferred_key_set() -> None:
+@pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
+def test_child_template_refuses_a_query_without_one_deferred_key_set(dialect: Dialect) -> None:
     entity = target(ACCOUNT, "Account")
     query = deep_fetch.ValidatedEntityQuery(
         target=entity.identity,
@@ -612,7 +615,86 @@ def test_child_template_refuses_a_query_without_one_deferred_key_set() -> None:
     )
 
     with pytest.raises(SqlGenError, match="exactly one deferred key set"):
-        sql_compile.compile_template(query, ACCOUNT, POSTGRES)
+        sql_compile.compile_template(query, ACCOUNT, dialect)
+
+
+@pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
+def test_child_template_refuses_distinct_markers_even_when_their_types_match(
+    dialect: Dialect,
+) -> None:
+    entity = target(ORDERS, "OrderItem")
+    member = entity.attribute("orderId")
+    assert member is not None
+    query = deep_fetch.ValidatedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        validated_predicate=conjunction(
+            deferred_membership(attr="OrderItem.orderId", member=member),
+            deferred_membership(attr="OrderItem.orderId", member=member),
+        ),
+        projection=deep_fetch.ResolvedReadProjection((), False),
+    )
+    with pytest.raises(SqlGenError, match="exactly one deferred key set"):
+        sql_compile.compile_template(query, ORDERS, dialect)
+
+
+@pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
+@pytest.mark.parametrize("narrow", [False, True], ids=["three-branches", "single-branch"])
+def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
+    dialect: Dialect, narrow: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    meta = model("document")
+    entity = target(meta, "Document")
+    member = entity.attribute("folderId")
+    title = entity.attribute("title")
+    assert member is not None and title is not None
+    query = deep_fetch.ValidatedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        validated_predicate=conjunction(
+            managed_comparison(op="eq", attr="Document.title", member=title, value="before"),
+            deferred_membership(attr="Document.folderId", member=member),
+            managed_comparison(op="notEq", attr="Document.title", member=title, value="after"),
+        ),
+        narrow_to=(target(meta, "Invoice").identity,) if narrow else None,
+        limit=7,
+        projection=deep_fetch.ResolvedReadProjection((), False),
+    )
+    template = sql_compile.compile_template(query, meta, dialect, result_form="instance")
+    original = template.compiled.statement
+
+    def forbidden(*args: object, **kwargs: object) -> Any:
+        raise AssertionError("render must reuse prepared access and assemble only once")
+
+    monkeypatch.setattr(sql_compile, "compile_read", forbidden)
+    monkeypatch.setattr(LoweredStatement, "defer_keys", forbidden)
+    monkeypatch.setattr(LoweredStatement, "replace_bind", forbidden)
+    for keys in ([10], [10, 20, 30], [40, 50]):
+        original_keys = tuple(keys)
+        gathered = cast("list[ManagedValue]", keys)
+        rendered = template.render(gathered)
+        branches = 1 if narrow else 3
+        key_binds: tuple[object, ...] = (keys,) if dialect.name == "postgres" else tuple(keys)
+        assert rendered.statement.binds == ("before", *key_binds, "after") * branches + (7,)
+        assert rendered.statement.wire_binds() == rendered.statement.binds
+        membership = (
+            "t0.folder_id = any(?)"
+            if dialect.name == "postgres"
+            else f"t0.folder_id in ({', '.join('?' for _ in keys)})"
+        )
+        assert rendered.statement.sql.count(membership) == branches
+        assert rendered.statement.sql.count("union all") == branches - 1
+        assert "__parallax_deferred_keys__" not in rendered.statement.sql
+        assert rendered.statement.is_compiler_proven
+        assert rendered.result_keys == template.compiled.result_keys
+        assert rendered.document_reads == template.compiled.document_reads
+        assert rendered.resolved_position == template.compiled.resolved_position
+        assert rendered.statement.sql.endswith("limit ?")
+        if dialect.name == "postgres":
+            assert all(rendered.statement.binds[1 + 3 * index] is keys for index in range(branches))
+            assert rendered.statement.typed_bind_spans is original.typed_bind_spans
+        assert tuple(keys) == original_keys
+    assert template.compiled.statement is original
 
 
 @pytest.mark.parametrize(

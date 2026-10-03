@@ -185,7 +185,7 @@ A case is one of **eleven shapes**, named by the required top-level `shape`:
 - **`rejected`** — a schema-valid `when.objectQuery`, a `when.write`, **or** an
   inline `when.model` a model-aware validator MUST refuse **before any SQL**,
   naming the violated normative rule in `then.rejectedRule` (`m-value-object` /
-  `m-predicate` / `m-inheritance` / `m-storage-layout` / `m-unit-work` negative
+  `m-predicate` / `m-inheritance` / `m-storage-layout` / `m-relationship` / `m-unit-work` negative
   validation, carrying no golden SQL —
   see *Rejected cases*, below).
 - **`evolution`** — the complete difference between the two accepted models
@@ -381,7 +381,7 @@ in decimal space under any authored `tolerance`.
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
 | `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` (or temporal close) operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
 | `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete`; ignored for a temporal target, whose conflict write is always the milestone close |
-| `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — either a standalone/table-level defect or a cross-entity family invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
+| `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — a standalone/table-level defect, cross-entity family invariant, or relationship join type mismatch a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.evolve` | `when` | evolution | the two accepted models the case evolves between: `earlier`, a model descriptor path or the explicit fresh-provisioning sentinel `null`, and `later`, a model descriptor path. It is an `evolution` case's ONLY `when` member (see *Evolution cases*, below) |
 | `when.uow` | `when` | no | the transaction options the action's outer invocation EXPLICITLY requests (`concurrency: locking \| optimistic`, `maxRetries`, `retryOptimisticConflicts`, `isolation`); a field the case omits is omitted at the invocation and resolves to the Database Root's configured default — `given.databaseOptions`, else the built-in (`m-unit-work`, `m-auto-retry`, `m-db-port`) — and no field may be `null`; `concurrency` is the requested Concurrency Preference, not a claim that every Entity uses one strategy; descriptive apart from `isolation` |
 | `when.uow.isolation` | `when.uow` | no | the portable Isolation Level (`m-db-port`) every held session or `uow` group the case opens is opened at — `read-committed` \| `repeatable-read` \| `serializable`, the core serialized values. **Prescriptive**: the harness opens each held session at it through the provider seam, and an API Conformance Suite passes it to each group's own transaction. Omitted means the invocation requests the Database Root's configured default (`given.databaseOptions.isolation`, built-in `read-committed`), which the harness resolves the same way for the sessions it holds. A case never names an engine's own level or a session variable |
@@ -2190,7 +2190,7 @@ compatibility harness validates `then.executionLifecycle` without producing
 events of its own; each language grades it through the conformance adapter's
 identically shaped `executionLifecycle` observation (`m-conformance-adapter`).
 
-### Rejected cases (`m-value-object` / `m-predicate` / `m-inheritance` / `m-storage-layout` / `m-unit-work`)
+### Rejected cases (`m-value-object` / `m-predicate` / `m-inheritance` / `m-storage-layout` / `m-relationship` / `m-unit-work`)
 
 A **rejected** case proves a **negative**: that a model-aware validator refuses an
 invalid input **before any SQL is emitted** (resolved question 7). It carries the
@@ -2405,9 +2405,9 @@ temporal profile rather than against any row's contents):
   on whether its target is temporal, which the schema cannot see, so the neutral
   schema states the general one-or-more bound and this decides it.
 
-**Model** rules (accepted-model formation — foundational, Inheritance, and
-Storage Layout invariants that per-entity schema validation cannot express,
+**Model** rules (accepted-model formation — foundational, Inheritance, Storage Layout, and Relationship invariants that per-entity schema validation cannot express,
 carried inline under `when.model`):
+`relationship-join-type-mismatch`: a defining join's resolved endpoints have unequal declared neutral types (see `m-relationship`),
 `metamodel-index-identity-duplicate`: two Indices of one Entity bear one name,
 counting the derived primary-key Index a frontend hands over
 (see `m-metamodel`),

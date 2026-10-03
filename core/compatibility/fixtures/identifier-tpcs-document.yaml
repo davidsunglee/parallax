@@ -1,0 +1,5 @@
+parallax.compatibility.UuidLeaf:
+  - {id: '00000000-0000-0000-0000-000000000001', label: inherited}
+parallax.compatibility.UuidLink:
+  - {id: '00000000-0000-0000-0000-000000000002', parentId: '00000000-0000-0000-0000-000000000001', label: child}
+  - {id: '00000000-0000-0000-0000-000000000003', parentId: null, label: orphan}

@@ -32,8 +32,13 @@ from parallax.core.object_query._validated import (
     ValidatedSeek,
 )
 from parallax.core.predicate import Narrow, Or
-from parallax.core.predicate._validated import DeferredKeySet, ValidatedPredicate
-from parallax.core.sql_gen._context import LoweredStatement, SqlGenError, StatementBuilder
+from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.sql_gen._context import (
+    DeferredKeyTemplate,
+    LoweredStatement,
+    SqlGenError,
+    StatementBuilder,
+)
 from parallax.core.sql_gen._context import table_layout as _table_layout
 
 # The family LANE of this compiler — distinct from `parallax.core.inheritance`
@@ -369,24 +374,12 @@ class CompiledTemplate:
     """One compiled child read whose parent key set is supplied per execution."""
 
     compiled: CompiledRead
-    bind_index: int
-    postgres_array: bool
+    _keys: DeferredKeyTemplate
 
     def render(self, keys: list[ManagedValue]) -> CompiledRead:
         """Bind ``keys``; the Postgres array bind is the list itself, so the caller
         hands it over and must not mutate it afterwards."""
-        if not keys:
-            raise SqlGenError("a child read template requires at least one gathered key")
-        if self.postgres_array:
-            statement = self.compiled.statement.replace_bind(self.bind_index, (keys,))
-        else:
-            holes = ", ".join("?" for _ in keys)
-            statement = self.compiled.statement.replace_bind(self.bind_index, keys)
-            statement = replace(
-                statement,
-                sql=statement.sql.replace("__parallax_deferred_keys__", holes),
-            )
-        return replace(self.compiled, statement=statement)
+        return replace(self.compiled, statement=self._keys.render(keys))
 
 
 def compile_template(
@@ -399,14 +392,9 @@ def compile_template(
 ) -> CompiledTemplate:
     """Compile a child read once, deferring only its gathered parent keys."""
     compiled = compile_read(query, model, dialect, result_form=result_form, lock=lock)
-    indexes = tuple(
-        index
-        for index, bind in enumerate(compiled.statement.binds)
-        if isinstance(bind, DeferredKeySet)
+    return CompiledTemplate(
+        compiled, compiled.statement.defer_keys(postgres_array=dialect.name == "postgres")
     )
-    if len(indexes) != 1:
-        raise SqlGenError("a child read template must carry exactly one deferred key set")
-    return CompiledTemplate(compiled, indexes[0], dialect.name == "postgres")
 
 
 def _projection(

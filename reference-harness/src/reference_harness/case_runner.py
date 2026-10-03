@@ -107,6 +107,8 @@ from .predicate_write_validate import (
 )
 from .providers import Catalog, DatabaseProvider
 from .provisioning import apply_given, provision, provision_empty
+from .relationship import MODEL_REJECTED_RULES as RELATIONSHIP_MODEL_REJECTED_RULES
+from .relationship import validate_relationship_types
 from .sql_normalize import normalize
 from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
@@ -156,7 +158,7 @@ def _write_column_order(case: Case, entity: Entity) -> tuple[str, ...]:
 
 
 # The full pre-SQL rejection vocabulary spans value objects, queries,
-# inheritance, storage layout, writes, and keyed-instruction shape. The
+# inheritance, storage layout, relationships, writes, and keyed-instruction shape. The
 # compatibility-case schema's `rejectedRule` enum is the source of truth; these
 # sets MUST stay in lockstep with it.
 ALL_REJECTED_RULES = (
@@ -164,6 +166,7 @@ ALL_REJECTED_RULES = (
     | METAMODEL_MODEL_REJECTED_RULES
     | MODEL_REJECTED_RULES
     | STORAGE_LAYOUT_MODEL_REJECTED_RULES
+    | RELATIONSHIP_MODEL_REJECTED_RULES
     | PREDICATE_REJECTED_RULES
     | WRITE_REJECTED_RULES
     | KEYED_WRITE_REJECTED_RULES
@@ -680,7 +683,8 @@ def _assert_rejected(case: Case) -> None:
     models run the foundational
     ``validate_index_identities`` before the semantic rule sets — Inheritance's
     ``validate_family`` and Storage Layout’s ``validate_storage_layout``, including
-    standalone Table ownership and Column claims. The referenced top-level model
+    standalone Table ownership and Column claims, then defining-join type equality.
+    The referenced top-level model
     remains valid and loadable.
 
     The raised rule must match exactly. No rejected variant reaches dialect
@@ -728,6 +732,7 @@ def _assert_rejected(case: Case) -> None:
             validate_index_identities(inline_entities)
             validate_family(inline_model)
             validate_storage_layout(inline_entities)
+            validate_relationship_types(inline_entities)
         else:  # pragma: no cover - guarded by _assert_schema
             raise CaseFailure(
                 f"{case.path.name}: rejected case needs when.objectQuery / when.write / when.model"

@@ -385,7 +385,6 @@ class _PlanBuilder:
         if existing is not None:
             return existing
 
-        family = _entity_view(self.families, related_entity.identity).root
         to_many = direction.cardinality is Cardinality.ONE_TO_MANY
         is_back_reference = not to_many and _is_inverse_edge(
             self._arrivals.get(parent_id), direction
@@ -412,11 +411,12 @@ class _PlanBuilder:
         parent_position = 0 if parent_id == _ROOT_ID else parent_id + 1
 
         if is_back_reference:
+            target_view = _entity_view(self.families, position[0])
             step: FetchStep = BackReferenceFetchStep(
                 position=position_id,
                 parent=parent_ref,
                 owner=owner,
-                family=family,
+                family=target_view.root,
             )
         else:
             child_target = position[0] if len(position) == 1 else direction.join.target.entity

@@ -71,6 +71,21 @@ def test_partition_report_is_a_clean_full_partition() -> None:
     assert report.exercised | report.skipped == report.active
 
 
+def test_relationship_primary_cases_have_only_case_scoped_refusals() -> None:
+    cases = {
+        case.case_id: case
+        for case in api_suite.active_slice()
+        if case.primary_module == "m-relationship"
+    }
+    rejected = {"m-relationship-005", "m-relationship-006", "m-relationship-007"}
+    assert {case_id for case_id, case in cases.items() if case.shape == "rejected"} == rejected
+    assert cases.keys() & api_suite.CASE_SKIP_REASONS.keys() == rejected
+    assert "m-relationship" not in api_suite.SKIP_REASONS
+    assert cases.keys() - rejected == {
+        story.case_id for story in GRAPH_STORIES if story.case_id in cases
+    }
+
+
 def test_build_skips_uses_the_reviewed_registry_reason() -> None:
     active = [_case("m-predicate-900", "m-predicate")]
     skips = api_suite.build_skips(active, [], {"m-predicate": "reviewed reason"})

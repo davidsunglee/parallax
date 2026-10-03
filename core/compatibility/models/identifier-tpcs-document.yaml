@@ -1,0 +1,27 @@
+entities:
+  - name: UuidRoot
+    namespace: parallax.compatibility
+    layout: {document: {column: payload}}
+    inheritance: {role: root, strategy: table-per-concrete-subtype}
+    attributes:
+      - {name: id, type: uuid, primaryKey: true}
+      - {name: label, type: string}
+  - name: UuidLeaf
+    namespace: parallax.compatibility
+    table: uuid_leaf
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.UuidRoot}
+    relationships:
+      - name: children
+        cardinality: one-to-many
+        join: {source: id, target: {entity: parallax.compatibility.UuidLink, attribute: parentId}}
+        orderBy: [{attribute: id}]
+  - name: UuidLink
+    namespace: parallax.compatibility
+    table: uuid_link
+    layout: {document: {column: payload}}
+    attributes:
+      - {name: id, type: uuid, primaryKey: true}
+      - {name: parentId, type: uuid, nullable: true}
+      - {name: label, type: string}
+    relationships:
+      - {name: parent, reverseOf: parallax.compatibility.UuidLeaf.children}

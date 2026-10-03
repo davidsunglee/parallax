@@ -12,7 +12,9 @@ from parallax.conformance.graph_models import Coverage, Policy
 from parallax.conformance.identifier_models import (
     Int32Parent,
     Int64Parent,
+    StringLeaf,
     StringParent,
+    UuidLeaf,
     UuidParent,
 )
 from parallax.conformance.read_models import (
@@ -477,7 +479,27 @@ def uuid_identifiers(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(UuidParent.where(UuidParent.all).include(UuidParent.children.parent))
 
 
+def inherited_string_document(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(StringLeaf.where(StringLeaf.all).include(StringLeaf.children.parent))
+
+
+def inherited_uuid_document(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(UuidLeaf.where(UuidLeaf.all).include(UuidLeaf.children.parent))
+
+
 GRAPH_STORIES: tuple[GraphStory, ...] = (
+    GraphStory(
+        "m-relationship-008",
+        "Inherited String Document graph",
+        "identifier-tph-document",
+        inherited_string_document,
+    ),
+    GraphStory(
+        "m-relationship-009",
+        "Inherited Uuid Document graph",
+        "identifier-tpcs-document",
+        inherited_uuid_document,
+    ),
     GraphStory("m-relationship-001", "Int32 identifiers", "identifier-types", int32_identifiers),
     GraphStory("m-relationship-002", "Int64 identifiers", "identifier-types", int64_identifiers),
     GraphStory("m-relationship-003", "String identifiers", "identifier-types", string_identifiers),

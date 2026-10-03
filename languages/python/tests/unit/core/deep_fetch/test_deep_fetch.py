@@ -47,6 +47,7 @@ from parallax.core.predicate import (
     Narrow,
     PredicateNode,
 )
+from parallax.core.predicate._validated import DeferredKeySet
 from parallax.core.sql_gen._compile import compile_template
 from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
@@ -117,7 +118,12 @@ def _rendered_keys(
     """The key-set bind ``step``'s compiled child read carries once ``keys`` are
     rendered into it."""
     template = compile_template(step.query_template(), model, POSTGRES, result_form="instance")
-    return template.render(keys).statement.binds[template.bind_index]
+    (index,) = (
+        index
+        for index, value in enumerate(template.compiled.statement.binds)
+        if isinstance(value, DeferredKeySet)
+    )
+    return template.render(keys).statement.binds[index]
 
 
 def _back_reference_step(
@@ -803,6 +809,68 @@ _SHELTER_MODEL = {
 _SHELTER = models.accepted_model(_SHELTER_MODEL)
 
 
+_ABSTRACT_TPCS_BACK_REFERENCE_MODEL = {
+    "entities": [
+        {
+            "name": "AbstractParent",
+            "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+            "attributes": [
+                {
+                    "name": "id",
+                    "type": "int64",
+                    "column": "id",
+                    "primaryKey": True,
+                    "pkGeneration": "application-assigned",
+                }
+            ],
+            "relationships": [
+                {
+                    "name": "children",
+                    "cardinality": "one-to-many",
+                    "join": {
+                        "source": "id",
+                        "target": {"entity": "Child", "attribute": "parentId"},
+                    },
+                }
+            ],
+        },
+        {
+            "name": "ConcreteParent",
+            "table": "concrete_parent",
+            "inheritance": {"role": "concrete-subtype", "parent": "AbstractParent"},
+        },
+        {
+            "name": "OtherParent",
+            "table": "other_parent",
+            "inheritance": {"role": "concrete-subtype", "parent": "AbstractParent"},
+        },
+        {
+            "name": "Child",
+            "table": "child",
+            "attributes": [
+                {
+                    "name": "id",
+                    "type": "int64",
+                    "column": "id",
+                    "primaryKey": True,
+                    "pkGeneration": "application-assigned",
+                },
+                {
+                    "name": "parentId",
+                    "type": "int64",
+                    "column": "parent_id",
+                    "nullable": True,
+                },
+            ],
+            "relationships": [
+                {"name": "parent", "reverseOf": "AbstractParent.children"},
+            ],
+        },
+    ]
+}
+_ABSTRACT_TPCS_BACK_REFERENCE = models.accepted_model(_ABSTRACT_TPCS_BACK_REFERENCE_MODEL)
+
+
 def test_a_child_side_correlation_column_is_resolved_at_the_addressed_position() -> None:
     plan = _plan(_SHELTER, "Keeper", (_path(_seg("Keeper.kennels")),))
     kennels = _query_step(plan)
@@ -852,6 +920,66 @@ def test_back_reference_hop_is_detected() -> None:
     assert isinstance(order, deep_fetch.BackReferenceFetchStep)
     assert order.family == EntityIdentity("parallax.compatibility", "Order")
     assert order.owner.column == "order_id"
+
+
+@pytest.mark.parametrize(
+    ("model_name", "prefix", "expected_family"),
+    [
+        ("identifier-tph-document", "String", "StringRoot"),
+        ("identifier-tpcs-document", "Uuid", "UuidRoot"),
+    ],
+)
+@pytest.mark.parametrize("target_position", ["Leaf", "Root", "Link"])
+def test_inherited_back_reference_uses_the_ancestor_key_namespace(
+    model_name: str, prefix: str, expected_family: str, target_position: str
+) -> None:
+    model = accepted_model(model_name)
+    leaf = f"{prefix}Leaf"
+    link = f"{prefix}Link"
+    segments = (_seg(f"{leaf}.children"), _seg(f"{link}.parent"))
+    if target_position == "Link":
+        segments = (_seg(f"{link}.parent"), *segments)
+    path = _path(*segments, narrow=(leaf,) if target_position == "Root" else None)
+    plan = _plan(model, f"{prefix}{target_position}", (path,))
+    back_reference = _back_reference_step(plan, len(segments) - 1)
+
+    assert back_reference.family == EntityIdentity("parallax.compatibility", expected_family)
+    assert back_reference.owner.identity == AttributeIdentity(
+        EntityIdentity("parallax.compatibility", link), "parentId"
+    )
+    assert back_reference.owner.column == "parent_id"
+    assert back_reference.parent == deep_fetch.LevelRef(len(segments) - 2)
+    assert _position(plan, back_reference).target == (
+        EntityIdentity("parallax.compatibility", leaf),
+    )
+    assert sum(isinstance(step, deep_fetch.QueryFetchStep) for step in plan.fetch_steps) == (
+        len(segments) - 1
+    )
+    assert not hasattr(back_reference, "query_template")
+
+
+@pytest.mark.parametrize("target_position", ["ConcreteParent", "AbstractParent", "Child"])
+def test_abstract_declared_tpcs_back_reference_uses_the_logical_family(
+    target_position: str,
+) -> None:
+    parent = _seg("Child.parent", ("ConcreteParent",))
+    segments = (_seg("AbstractParent.children"), parent)
+    guard = None
+    if target_position == "AbstractParent":
+        guard = _guard("ConcreteParent")
+    elif target_position == "Child":
+        segments = (parent, *segments)
+    plan = _plan(
+        _ABSTRACT_TPCS_BACK_REFERENCE,
+        target_position,
+        (_path(*segments, narrow=guard),),
+    )
+    back_reference = _back_reference_step(plan, len(segments) - 1)
+
+    assert back_reference.family == EntityIdentity(None, "AbstractParent")
+    assert _position(plan, back_reference).target == (EntityIdentity(None, "ConcreteParent"),)
+    assert back_reference.parent == deep_fetch.LevelRef(len(segments) - 2)
+    assert not hasattr(back_reference, "query_template")
 
 
 def test_the_inverse_edge_is_recognized_below_the_first_level_too() -> None:

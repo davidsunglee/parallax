@@ -1,0 +1,27 @@
+entities:
+  - name: StringRoot
+    namespace: parallax.compatibility
+    table: string_family
+    layout: {document: {column: payload}}
+    inheritance: {role: root, strategy: table-per-hierarchy, tag: {column: kind}}
+    attributes:
+      - {name: id, type: string, primaryKey: true}
+      - {name: label, type: string}
+  - name: StringLeaf
+    namespace: parallax.compatibility
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.StringRoot, tagValue: leaf}
+    relationships:
+      - name: children
+        cardinality: one-to-many
+        join: {source: id, target: {entity: parallax.compatibility.StringLink, attribute: parentId}}
+        orderBy: [{attribute: id}]
+  - name: StringLink
+    namespace: parallax.compatibility
+    table: string_link
+    layout: {document: {column: payload}}
+    attributes:
+      - {name: id, type: string, primaryKey: true}
+      - {name: parentId, type: string, nullable: true}
+      - {name: label, type: string}
+    relationships:
+      - {name: parent, reverseOf: parallax.compatibility.StringLeaf.children}

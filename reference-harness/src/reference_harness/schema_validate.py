@@ -65,6 +65,7 @@ from .predicate_write_validate import (
 )
 from .providers import DIALECT_CATALOG
 from .query_references import collect_query_reference_classes
+from .relationship import validate_relationship_types
 from .schemas import build_registry, load_schemas
 from .storage_layout import validate_storage_layout
 from .temporal_selection_validate import validate_temporal_selections
@@ -1076,6 +1077,7 @@ def _validate_models(
             validate_index_identities(entity_defs)
             validate_family_defs(entity_defs)
             validate_storage_layout(entity_defs)
+            validate_relationship_types(entity_defs)
         except RejectionError as exc:
             errors.append(f"model {model_path.name}: {exc.rule}: {exc.detail}")
     return families, model_entities

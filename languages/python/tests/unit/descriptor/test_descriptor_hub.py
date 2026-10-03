@@ -219,6 +219,23 @@ def test_a_semantic_model_rule_fails_last_and_is_not_a_descriptor_error() -> Non
     assert not isinstance(caught.value, DescriptorError)
 
 
+@pytest.mark.parametrize("door", ["document", "json", "yaml"])
+def test_schema_valid_join_type_mismatch_reaches_shared_formation(door: str) -> None:
+    text = _YAML.replace(
+        "name: authorId\n        type: int64", "name: authorId\n        type: int32"
+    )
+    document = cast("Mapping[str, object]", yaml.safe_load(text))
+    with pytest.raises(MetamodelValidationError) as failure:
+        if door == "document":
+            domain_model_from_document(document)
+        elif door == "json":
+            domain_model_from_json(json.dumps(document))
+        else:
+            domain_model_from_yaml(text)
+    assert not isinstance(failure.value, DescriptorError)
+    assert [issue.code for issue in failure.value.issues] == ["relationship-join-type-mismatch"]
+
+
 # --------------------------------------------------------------------------- #
 # Export over both frontends.                                                 #
 # --------------------------------------------------------------------------- #

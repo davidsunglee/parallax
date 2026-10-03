@@ -28,6 +28,7 @@ __all__ = [
     "EntityState",
     "InvalidRootInput",
     "LogicalKey",
+    "LogicalReference",
     "Page",
     "PageBuilder",
     "PageRows",
@@ -121,6 +122,17 @@ class EntityState(NamedTuple):
 
     member_row: tuple[object, ...]
     findings: tuple[StoredDataIssueInput, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LogicalReference:
+    """An inverse's coordinate-distinct logical claims, restricted to targets
+    admitted by its include position. It names only already-reachable nodes;
+    Root View allocation resolves it without extending reachability."""
+
+    logicals: tuple[int, ...]
+    admits: frozenset[EntityIdentity]
+    to_many: bool = False
 
 
 class PayloadDecoder(Protocol):
@@ -495,7 +507,11 @@ def root_last_uses(page: Page) -> tuple[array[int], array[int]]:
             ):
                 if isinstance(value, tuple):
                     pending.extend(cast("tuple[int, ...]", value))
-                elif value is not None and value is not ABSENT:
+                elif (
+                    value is not None
+                    and value is not ABSENT
+                    and not isinstance(value, LogicalReference)
+                ):
                     pending.append(cast("int", value))
     return projection_last, logical_last
 
@@ -537,16 +553,15 @@ class PageBuilder:
     appended with :meth:`add_claim`, a level's fan-back is recorded with
     :meth:`write_view`, and :meth:`finish` publishes the lot. It also
     **answers** three questions about rows it already holds —
-    :meth:`member_value`, :meth:`concrete_of`, and :meth:`resolve` —
-    because a read level gathers its keys, filters its parents, and resolves a
-    back-reference against exactly those rows, and until finishing nothing else
+    :meth:`member_value`, :meth:`concrete_of`, and :meth:`reference` —
+    because a read level gathers its keys, filters its parents, and records an
+    inverse's logical claims against exactly those rows, and until finishing nothing else
     holds them. Nothing beyond that fan-out may reach for the three.
 
-    Page-local identity resolution promises projection reuse within one builder
-    and never beyond it, so the builder is the unit a caller chooses: eager and
-    milestone-set reads each give their whole flat result one Page. The FIRST
-    projection registered for a logical key is the one a later back-reference
-    resolves to.
+    Page-local identity groups claims within one builder and never beyond it,
+    so the builder is the unit a caller chooses: eager and milestone-set reads
+    each give their whole flat result one Page. Inverse references retain logical
+    claim IDs, not a page-global projection winner.
 
     Relationship views accumulate beside the rows rather than inside them,
     because a parent's views are only known once its child level lands and the
@@ -597,7 +612,9 @@ class PageBuilder:
         self._slots: list[SourceViewLayout] = []
         self._views: list[list[object] | tuple[()]] = []
         self._overwritten_edges: dict[int, list[object]] = {}
-        self._identity: dict[LogicalKey, int] = {}
+        self._identity: dict[
+            tuple[EntityIdentity, object], int | dict[tuple[object, ...], int]
+        ] = {}
         self._first: list[int] = []
         self._claims: list[int | list[int]] = []
         self._decoders: dict[int, PayloadDecoder | None] = {}
@@ -637,11 +654,24 @@ class PageBuilder:
             self._last_layout = layout
             self._last_slots = slots
         projection = len(self._layouts)
-        existing = None if key is None else self._identity.get(key)
+        identity = None if key is None else (key.family, key.primary_key)
+        coordinates = None if identity is None else self._identity.get(identity)
+        if isinstance(coordinates, dict):
+            assert key is not None
+            existing = coordinates.get(key.coordinates)
+        else:
+            existing = coordinates
         if existing is None:
             logical = self._fresh(projection)
-            if key is not None:
-                self._identity[key] = logical
+            if identity is not None and key is not None:
+                if key.coordinates:
+                    if coordinates is None:
+                        coordinates = {}
+                        self._identity[identity] = coordinates
+                    assert isinstance(coordinates, dict)
+                    coordinates[key.coordinates] = logical
+                else:
+                    self._identity[identity] = logical
         else:
             logical = existing
             key = self._keys[self._first[logical]]
@@ -689,8 +719,9 @@ class PageBuilder:
         """Record one relationship view on an already-added projection.
 
         ``value`` is ``None`` for loaded-null, a projection index for a loaded
-        to-one, and a tuple of them — empty included — for a loaded to-many. A
-        slot never written stays :data:`ABSENT`, which is unloaded — what a
+        to-one, a tuple of them — empty included — for a loaded to-many, or a
+        :class:`LogicalReference` for an inverse awaiting root-local resolution.
+        A slot never written stays :data:`ABSENT`, which is unloaded — what a
         path-root guard leaves behind when it excludes a parent from a level.
 
         Named by view rather than by position, so a fan-back never learns about
@@ -821,19 +852,37 @@ class PageBuilder:
         self._require_open()
         return self._layouts[projection].concrete
 
-    def resolve(self, family: EntityIdentity, key: object) -> int | None:
-        """The first projection registered under ``(family, key)``, if any — how a
-        back-reference level reaches an ancestor it issues no query for."""
+    def reference(
+        self,
+        family: EntityIdentity,
+        key: object,
+        admits: frozenset[EntityIdentity],
+        *,
+        to_many: bool = False,
+    ) -> LogicalReference | None:
+        """The coordinate-distinct claims registered under ``(family, key)``,
+        deferred to the Root View's canonical reachable allocation."""
         self._require_open()
-        logical = next(
-            (
-                value
-                for identity, value in self._identity.items()
-                if identity.family == family and identity.primary_key == key
-            ),
-            None,
-        )
-        return None if logical is None else self._first[logical]
+        coordinates = self._identity.get((family, key))
+        if coordinates is None:
+            return None
+        logicals = (coordinates,) if isinstance(coordinates, int) else tuple(coordinates.values())
+        return LogicalReference(logicals, admits, to_many)
+
+    def write_to_one(
+        self, projection: int, view: RelationshipViewKey, candidates: Sequence[int]
+    ) -> None:
+        """Carry every witness of the selected logical target into root-local
+        conflict judgment without changing selection among distinct targets."""
+        if not candidates:
+            self.write_view(projection, view, None)
+            return
+        first = candidates[0]
+        logical = self._logical_ids[first]
+        for candidate in reversed(candidates[1:]):
+            if self._logical_ids[candidate] == logical:
+                self.write_view(projection, view, candidate)
+        self.write_view(projection, view, first)
 
     def _fresh(self, projection: int) -> int:
         logical = len(self._first)
@@ -848,7 +897,7 @@ class PageBuilder:
 
 def _require_edge(value: object, count: int) -> None:
     """Refuse a relationship view value no sealed Page could resolve."""
-    if value is None:
+    if value is None or isinstance(value, LogicalReference):
         return
     if isinstance(value, tuple):
         for element in cast("tuple[object, ...]", value):

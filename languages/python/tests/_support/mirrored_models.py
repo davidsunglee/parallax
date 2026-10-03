@@ -29,7 +29,11 @@ from types import MappingProxyType
 from parallax.conformance.animal_owner import ANIMAL_MODEL
 from parallax.conformance.edit_models import NOTE_MODEL
 from parallax.conformance.graph_models import POLICY_MODEL
-from parallax.conformance.identifier_models import IDENTIFIER_TYPES
+from parallax.conformance.identifier_models import (
+    IDENTIFIER_TPCS_DOCUMENT,
+    IDENTIFIER_TPH_DOCUMENT,
+    IDENTIFIER_TYPES,
+)
 from parallax.conformance.read_models import (
     BALANCE_MODEL,
     DOCUMENT_MODEL,
@@ -520,6 +524,8 @@ DOCUMENT_LAYOUT_MODEL = DomainModel(
 
 MIRRORED: list[tuple[str, DomainModel]] = [
     ("identifier-types", IDENTIFIER_TYPES),
+    ("identifier-tph-document", IDENTIFIER_TPH_DOCUMENT),
+    ("identifier-tpcs-document", IDENTIFIER_TPCS_DOCUMENT),
     ("account", ACCOUNT_MODEL),
     ("pk-max", PK_MAX_MODEL),
     ("person", PERSON_MODEL),

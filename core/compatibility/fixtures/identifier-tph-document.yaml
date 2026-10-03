@@ -1,0 +1,5 @@
+parallax.compatibility.StringLeaf:
+  - {id: inherited-A, label: inherited}
+parallax.compatibility.StringLink:
+  - {id: link-A, parentId: inherited-A, label: child}
+  - {id: orphan-A, parentId: null, label: orphan}

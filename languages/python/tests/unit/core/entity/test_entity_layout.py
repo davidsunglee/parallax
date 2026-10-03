@@ -284,9 +284,11 @@ def test_an_inheritance_participant_normalizes_its_family_to_the_root() -> None:
     assert layout.family == _identity("Animal")
 
 
-def test_a_table_per_concrete_subtype_participant_keeps_its_own_identity() -> None:
+def test_a_table_per_concrete_subtype_participant_normalizes_its_logical_family() -> None:
     catalog = LayoutCatalog(corpus_model("rate"))
-    assert catalog.entity(_identity("DepositRate")).family == _identity("DepositRate")
+    deposit = catalog.entity(_identity("DepositRate"))
+    assert deposit.concrete == _identity("DepositRate")
+    assert deposit.family == _identity("Rate")
     assert catalog.entity(_identity("Rate")).family == _identity("Rate")
 
 

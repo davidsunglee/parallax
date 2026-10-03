@@ -10,7 +10,41 @@ namespace segment as the Entity and resolves to the wrong Entity in silence.
 
 from __future__ import annotations
 
-__all__ = ["entity_spelling", "split_reference"]
+from typing import Any
+
+__all__ = ["entity_identity", "entity_spelling", "resolve_definition", "split_reference"]
+
+
+def entity_identity(definition: dict[str, Any]) -> str:
+    namespace = definition.get("namespace")
+    return definition["name"] if namespace is None else f"{namespace}.{definition['name']}"
+
+
+def resolve_definition(
+    entity_defs: list[dict[str, Any]], owner: dict[str, Any], reference: str
+) -> dict[str, Any]:
+    """Resolve an exact or owner-relative Entity reference without global fallback."""
+    if "." in reference:
+        identity = reference
+    else:
+        namespace = owner.get("namespace")
+        identity = reference if namespace is None else f"{namespace}.{reference}"
+    try:
+        return _definition_index(entity_defs)[identity]
+    except KeyError as exc:
+        raise KeyError(f"{entity_identity(owner)} references unknown entity {reference!r}") from exc
+
+
+def _definition_index(entity_defs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    result = {entity_identity(definition): definition for definition in entity_defs}
+    local_counts: dict[str, int] = {}
+    for definition in entity_defs:
+        name = definition["name"]
+        local_counts[name] = local_counts.get(name, 0) + 1
+    for definition in entity_defs:
+        if local_counts[definition["name"]] == 1:
+            result[definition["name"]] = definition
+    return result
 
 
 def split_reference(spelling: str) -> tuple[str | None, tuple[str, ...]]:
