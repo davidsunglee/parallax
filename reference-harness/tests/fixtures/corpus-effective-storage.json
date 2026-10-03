@@ -2580,6 +2580,60 @@
       "valueObject": {}
     }
   },
+  "models/identifier-tpcs-document.yaml": {
+    "parallax.compatibility.UuidLeaf": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.UuidLink": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "parentId": "parent_id"
+      },
+      "documentPath": {
+        "label": "payload:label"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.UuidRoot": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/identifier-tph-document.yaml": {
+    "parallax.compatibility.StringLeaf": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.StringLink": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "parentId": "parent_id"
+      },
+      "documentPath": {
+        "label": "payload:label"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.StringRoot": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "documentPath": {
+        "label": "payload:label"
+      },
+      "valueObject": {}
+    }
+  },
   "models/identifier-types.yaml": {
     "parallax.compatibility.Int32Child": {
       "attribute": {

@@ -18,6 +18,7 @@ from parallax.snapshot.materialize._page import (
     EntityState,
     InvalidRootInput,
     LogicalKey,
+    LogicalReference,
     Page,
     PageRows,
     StoredDataIssueInput,
@@ -122,10 +123,7 @@ class RootView:
         self._invalid_roots = ()
         self._roots = tuple(None if root is None else self._resolved[root] for root in root_indices)
         self._order = tuple(layout.concrete for layout in self._layouts)
-        self._view_rows = tuple(
-            () if row is None else tuple(self._allocation(value) for value in row)
-            for row in winners
-        )
+        self._view_rows = tuple(() if row is None else tuple(row) for row in winners)
         self._winner = tuple(self._winner)  # pyright: ignore[reportAttributeAccessIssue]
         self._layouts = tuple(self._layouts)  # pyright: ignore[reportAttributeAccessIssue]
         self._states = tuple(self._states)  # pyright: ignore[reportAttributeAccessIssue]
@@ -323,6 +321,7 @@ class RootView:
     ) -> None:
         """Allocate one node per reached projection, each the only claimant of
         its logical occurrence, and carry its view values into that node."""
+        root_nodes: dict[int, int] = {}
         for projection in reachable:
             state = None if defer_states else self._state(projection)
             index = len(self._winner)
@@ -339,6 +338,7 @@ class RootView:
             )
             winners.append(carried_views)
             self._resolved[projection] = index
+            root_nodes[rows.logical_ids[projection]] = index
         for projection in reachable:
             index = self._resolved[projection]
             values = rows.view_rows[projection]
@@ -349,7 +349,7 @@ class RootView:
             for slot, value in enumerate(values):
                 root_view_slot = to_root_view[slot]
                 if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
-                    carried_views[root_view_slot] = value
+                    carried_views[root_view_slot] = self._allocation(value, root_nodes)
 
     # Called once per root row by the constructor's per-root allocation loop, which the
     # Snapshot materialization instruments measure; every split, including sharing the
@@ -413,7 +413,7 @@ class RootView:
             for slot, value in enumerate(values):
                 root_view_slot = to_root_view[slot]
                 if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
-                    carried_views[root_view_slot] = value
+                    carried_views[root_view_slot] = self._allocation(value, root_nodes)
 
     def _reachable(self, roots: list[int]) -> tuple[int, ...]:
         """Projection preorder from the roots through every reached logical
@@ -434,7 +434,11 @@ class RootView:
             for value in reversed(edges):
                 if isinstance(value, tuple):
                     pending.extend(reversed(cast("tuple[int, ...]", value)))
-                elif value is not None and value is not ABSENT:
+                elif (
+                    value is not None
+                    and value is not ABSENT
+                    and not isinstance(value, LogicalReference)
+                ):
                     pending.append(value)  # pyright: ignore[reportArgumentType]
         return tuple(order)
 
@@ -551,13 +555,28 @@ class RootView:
             occurrences=cast("tuple[tuple[int, int], tuple[int, int]]", positions),
         )
 
-    def _allocation(self, value: object) -> object:
-        """One view value's projection references as allocation indices."""
+    def _allocation(self, value: object, root_nodes: Mapping[int, int]) -> object:
+        """Translate one view against only this root's reachable allocations."""
         if value is None or value is ABSENT:
             return value
+        if isinstance(value, LogicalReference):
+            admitted = tuple(
+                node
+                for logical in value.logicals
+                if (node := root_nodes.get(logical)) is not None
+                and self._layouts[node].concrete in value.admits
+            )
+            if value.to_many:
+                return admitted
+            # Include-bearing reads pin propagated temporal axes; milestone scans have no includes.
+            assert len(admitted) <= 1
+            return admitted[0] if admitted else None
         if isinstance(value, tuple):
-            return tuple(self._resolved[child] for child in cast("tuple[int, ...]", value))
-        return self._resolved[cast("int", value)]
+            return tuple(
+                root_nodes[cast("PageRows", self._rows).logical_ids[child]]
+                for child in cast("tuple[int, ...]", value)
+            )
+        return root_nodes[cast("PageRows", self._rows).logical_ids[cast("int", value)]]
 
 
 def _member_order(

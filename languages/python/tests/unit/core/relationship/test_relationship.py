@@ -12,7 +12,7 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
-from parallax.core.base import INT64, STRING
+from parallax.core.base import INT32, INT64, STRING, UUID, Decimal, NeutralType
 from parallax.core.metamodel import (
     METAMODEL_MODULE,
     NOT_PRIMARY_KEY,
@@ -83,6 +83,7 @@ from parallax.core.relationship._rules import (
     DEFINING_DUPLICATE,
     JOIN_SOURCE_INVALID,
     JOIN_TARGET_INVALID,
+    JOIN_TYPE_MISMATCH,
     ORDER_ATTRIBUTE_INVALID,
     ORDER_ON_TO_ONE,
     REVERSE_CYCLE,
@@ -151,7 +152,7 @@ def _reverse(
 def _orders(
     order_relationships: tuple[UnresolvedRelationshipDeclaration, ...] = (),
     item_relationships: tuple[UnresolvedRelationshipDeclaration, ...] = (),
-) -> tuple[UnresolvedEntityDeclaration, ...]:
+) -> tuple[Declaration, Declaration, Declaration]:
     """An Order/Item/Tag model whose relationship declarations the caller supplies."""
     return (
         Declaration(
@@ -293,6 +294,7 @@ def test_the_owned_issue_code_set_is_closed() -> None:
         "relationship-defining-duplicate",
         "relationship-join-source-invalid",
         "relationship-join-target-invalid",
+        "relationship-join-type-mismatch",
         "relationship-order-attribute-invalid",
         "relationship-order-on-to-one",
         "relationship-reverse-cycle",
@@ -648,6 +650,128 @@ def test_a_valid_model_reports_nothing() -> None:
     assert _codes(*_orders((_ITEMS,), (_ORDER_OF_ITEM,))) == []
 
 
+@pytest.mark.parametrize("type", [INT32, INT64, STRING, UUID])
+def test_exactly_matching_identifier_types_compile_both_directions(type: NeutralType) -> None:
+    order, item, tag = _orders((_ITEMS,), (_ORDER_OF_ITEM,))
+    order = dataclasses.replace(
+        order,
+        attributes=(
+            dataclasses.replace(key(_ORDER), type=type),
+            attribute(_ORDER, "sku", type=STRING),
+        ),
+    )
+    item = dataclasses.replace(
+        item,
+        attributes=(
+            key(_ITEM),
+            dataclasses.replace(attribute(_ITEM, "orderId", type=type), nullable=True),
+            attribute(_ITEM, "sku", type=STRING),
+        ),
+    )
+    facet = _facet(order, item, tag)
+    defining = _direction(facet, RelationshipIdentity(_ORDER, "items"))
+    reverse = _direction(facet, RelationshipIdentity(_ITEM, "order"))
+    assert reverse.join.source == defining.join.target
+    assert reverse.join.target == defining.join.source
+
+
+@pytest.mark.parametrize(("left", "right"), [(INT32, INT64), (STRING, UUID), (UUID, STRING)])
+def test_mismatch_names_the_defining_join_once_even_with_a_reverse(
+    left: NeutralType, right: NeutralType
+) -> None:
+    order, item, tag = _orders((_ITEMS,), (_ORDER_OF_ITEM,))
+    order = dataclasses.replace(
+        order,
+        attributes=(
+            dataclasses.replace(key(_ORDER), type=left),
+            attribute(_ORDER, "sku", type=STRING),
+        ),
+    )
+    item = dataclasses.replace(
+        item,
+        attributes=(
+            key(_ITEM),
+            attribute(_ITEM, "orderId", type=right),
+            attribute(_ITEM, "sku", type=STRING),
+        ),
+    )
+    with pytest.raises(MetamodelValidationError) as failure:
+        form_metamodel(source(order, item, tag))
+    (issue,) = failure.value.issues
+    assert issue.code == JOIN_TYPE_MISMATCH
+    assert issue.location == RelationshipLocation(RelationshipIdentity(_ORDER, "items"))
+    assert issue.related == (
+        AttributeLocation(AttributeIdentity(_ORDER, "id")),
+        AttributeLocation(AttributeIdentity(_ITEM, "orderId")),
+    )
+    assert all(
+        fact in issue.message for fact in (_ORDER.canonical, _ITEM.canonical, str(left), str(right))
+    )
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "mismatch"),
+    [(Decimal(18, 2), Decimal(18, 2), False), (Decimal(18, 2), Decimal(18, 4), True)],
+)
+def test_declared_decimal_parameters_compare_as_values_on_ordinary_endpoints(
+    left: NeutralType, right: NeutralType, mismatch: bool
+) -> None:
+    join = _defining(
+        _ORDER,
+        "items",
+        join_source=AttributeIdentity(_ORDER, "sku"),
+        target=_ITEM,
+        target_attribute="sku",
+    )
+    order, item, tag = _orders((join,))
+    order = dataclasses.replace(
+        order, attributes=(key(_ORDER), attribute(_ORDER, "sku", type=left))
+    )
+    item = dataclasses.replace(item, attributes=(key(_ITEM), attribute(_ITEM, "sku", type=right)))
+    assert set(_codes(order, item, tag)) == (
+        {CARDINALITY_JOIN_MISMATCH, JOIN_TYPE_MISMATCH} if mismatch else {CARDINALITY_JOIN_MISMATCH}
+    )
+
+
+def test_type_cardinality_and_ordering_defects_aggregate_in_canonical_order() -> None:
+    join = _defining(
+        _ORDER,
+        "item",
+        cardinality=Cardinality.ONE_TO_ONE,
+        join_source=AttributeIdentity(_ORDER, "sku"),
+        target=_ITEM,
+        target_attribute="orderId",
+        order_by=(UnresolvedRelationshipOrder("sku"),),
+    )
+    with pytest.raises(MetamodelValidationError) as failure:
+        form_metamodel(source(*_orders((join,))))
+    assert [issue.code for issue in failure.value.issues] == [
+        CARDINALITY_JOIN_MISMATCH,
+        JOIN_TYPE_MISMATCH,
+        ORDER_ON_TO_ONE,
+    ]
+
+
+def test_foundational_missing_target_prevents_a_type_verdict() -> None:
+    join = _defining(_ORDER, "items", target=identity("Absent"), target_attribute="id")
+    with pytest.raises(MetamodelValidationError) as failure:
+        form_metamodel(source(*_orders((join,))))
+    assert failure.value.issues
+    assert all(issue.code not in ISSUE_CODES for issue in failure.value.issues)
+
+
+def test_inherited_type_mismatch_keeps_the_addressed_source_identity() -> None:
+    text = _INHERITED_SOURCE.replace("name: memoId, type: int64", "name: memoId, type: int32")
+    with pytest.raises(MetamodelValidationError) as failure:
+        _formed(text)
+    (issue,) = failure.value.issues
+    assert issue.code == JOIN_TYPE_MISMATCH
+    assert issue.related == (
+        AttributeLocation(AttributeIdentity(identity("Memo"), "id")),
+        AttributeLocation(AttributeIdentity(identity("Tag"), "memoId")),
+    )
+
+
 def test_a_join_source_naming_no_local_attribute_is_rejected() -> None:
     absent = _defining(
         _ORDER,
@@ -732,13 +856,13 @@ def test_a_cardinality_no_key_side_can_identify_is_rejected() -> None:
         "items",
         join_source=AttributeIdentity(_ORDER, "sku"),
         target=_ITEM,
-        target_attribute="orderId",
+        target_attribute="sku",
     )
     (issue,) = _issues(*_orders((unkeyed,)))
     assert issue.code == CARDINALITY_JOIN_MISMATCH
     assert issue.related == (
         AttributeLocation(AttributeIdentity(_ORDER, "sku")),
-        AttributeLocation(AttributeIdentity(_ITEM, "orderId")),
+        AttributeLocation(AttributeIdentity(_ITEM, "sku")),
     )
 
 
@@ -1060,7 +1184,7 @@ def test_every_defect_of_one_model_is_reported_together() -> None:
     )
     itself = _reverse(_ITEM, "tag", peer=_ITEM, peer_name="tag")
     assert sorted(_codes(*_orders((unkeyed,), (itself,)))) == sorted(
-        [CARDINALITY_JOIN_MISMATCH, REVERSE_CYCLE]
+        [CARDINALITY_JOIN_MISMATCH, JOIN_TYPE_MISMATCH, REVERSE_CYCLE]
     )
 
 

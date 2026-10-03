@@ -44,6 +44,8 @@ CARDINALITY_JOIN_MISMATCH: Final[IssueCode] = "relationship-cardinality-join-mis
 """Neither side the cardinality declares to be One is joined on its Entity's
 primary key, so the join cannot identify the single row that side promises."""
 
+JOIN_TYPE_MISMATCH: Final[IssueCode] = "relationship-join-type-mismatch"
+
 REVERSE_CYCLE: Final[IssueCode] = "relationship-reverse-cycle"
 """Following a reverse declaration's peers reaches no defining declaration
 because the chain closes on itself, directly or through other reverses."""
@@ -74,6 +76,7 @@ ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
     {
         JOIN_SOURCE_INVALID,
         JOIN_TARGET_INVALID,
+        JOIN_TYPE_MISMATCH,
         CARDINALITY_JOIN_MISMATCH,
         REVERSE_CYCLE,
         REVERSE_NOT_DEFINING,
@@ -162,6 +165,19 @@ def _defining_issues(
                 location,
                 (AttributeLocation(join.target),),
                 message=(f"the join target names no Attribute of {join.target.entity.canonical!r}"),
+            )
+        )
+    if source is not None and target is not None and source.type != target.type:
+        issues.append(
+            MetamodelIssue(
+                JOIN_TYPE_MISMATCH,
+                location,
+                (AttributeLocation(join.source), AttributeLocation(join.target)),
+                message=(
+                    f"{join.source.entity.canonical}.{join.source.name} ({source.type}) and "
+                    f"{join.target.entity.canonical}.{join.target.name} ({target.type}) "
+                    "have unequal declared neutral types"
+                ),
             )
         )
     if (

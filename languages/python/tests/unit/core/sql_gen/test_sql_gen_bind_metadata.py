@@ -9,7 +9,7 @@ import pytest
 
 from parallax.core import inheritance, storage_layout
 from parallax.core import predicate as predicate_algebra
-from parallax.core.base import DATE, FLOAT32, INFINITY, STRING
+from parallax.core.base import DATE, FLOAT32, INFINITY, INT64, STRING, ManagedValue
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
 from parallax.core.predicate._validated import DeferredKeySet, ValidatedPredicate
@@ -200,6 +200,92 @@ def test_an_array_key_set_reuses_the_statement_metadata_and_holds_the_keys_by_re
     assert rendered.wire_bind_overrides is statement.wire_bind_overrides
     assert rendered.typed_bind_spans[1] == _TypedBindSpan(1, 2, FLOAT32, "MANAGED_ARRAY")
     assert rendered.wire_binds() == ("before", [1.2, 0.1, 3.4], "infinity")
+
+
+@pytest.mark.parametrize("postgres_array", [False, True], ids=["mariadb", "postgres"])
+def test_multiple_key_occurrences_transform_surrounding_metadata_once(
+    postgres_array: bool,
+) -> None:
+    builder = _builder()
+    marker = DeferredKeySet(INT64)
+    builder.bind_framework("leading-driver", wire_value="leading-wire")
+    builder.bind_managed(100, INT64)
+    bind_keys = builder.bind_managed_array if postgres_array else builder.bind_managed
+    bind_keys(marker, INT64)
+    builder.bind_managed(200, INT64)
+    builder.bind_framework("middle-driver", wire_value=None)
+    bind_keys(marker, INT64)
+    bind_keys(marker, INT64)
+    builder.bind_comparison_text("tail", STRING)
+    builder.bind_framework("trailing-driver", wire_value="trailing-wire")
+    builder.bind_typed_rows((("a",), ("b",)), ((STRING, "MANAGED"),))
+    member = "any(?)" if postgres_array else "(__parallax_deferred_keys__)"
+    statement = builder.finish(f"select ?, ?, {member}, ?, ?, {member}, {member}, ?, ?, ?, ?")
+    template = statement.defer_keys(postgres_array=postgres_array)
+    indexes = (2, 5, 6)
+    keys: list[ManagedValue] = [10, 20, 30]
+    rendered = template.render(keys)
+    values: tuple[object, ...] = (keys,) if postgres_array else tuple(keys)
+    assert rendered.binds == (
+        "leading-driver",
+        100,
+        *values,
+        200,
+        "middle-driver",
+        *values,
+        *values,
+        "tail",
+        "trailing-driver",
+        "a",
+        "b",
+    )
+    assert rendered.wire_binds() == (
+        "leading-wire",
+        100,
+        *values,
+        200,
+        None,
+        *values,
+        *values,
+        "tail",
+        "trailing-wire",
+        "a",
+        "b",
+    )
+    assert rendered.is_compiler_proven
+    if postgres_array:
+        assert rendered.typed_bind_spans is statement.typed_bind_spans
+        assert rendered.wire_bind_overrides is statement.wire_bind_overrides
+        assert all(rendered.binds[index] is keys for index in indexes)
+    else:
+        assert rendered.typed_bind_spans == (
+            _TypedBindSpan(1, 6, INT64, "MANAGED"),
+            _TypedBindSpan(7, 13, INT64, "MANAGED"),
+            _TypedBindSpan(13, 14, STRING, "COMPARISON_TEXT"),
+            _RepeatedTypedBindSpan(15, 1, 1, 2, STRING, "MANAGED"),
+        )
+        assert rendered.wire_bind_overrides == (
+            _WireBindOverride(0, "leading-wire"),
+            _WireBindOverride(6, None),
+            _WireBindOverride(14, "trailing-wire"),
+        )
+    assert keys == [10, 20, 30]
+    assert statement.binds[2] is statement.binds[5] is statement.binds[6] is marker
+    again = template.render([40])
+    assert again.typed_bind_spans is statement.typed_bind_spans
+    assert again.wire_bind_overrides is statement.wire_bind_overrides
+    assert rendered.binds != again.binds
+
+
+def test_a_deferred_set_cannot_be_inserted_into_repeated_write_row_metadata() -> None:
+    marker = DeferredKeySet(STRING)
+    statement = LoweredStatement(
+        "",
+        (marker, "a"),
+        (_RepeatedTypedBindSpan(0, 1, 1, 2, STRING, "MANAGED"),),
+    )
+    with pytest.raises(SqlGenError, match="repeated row-bind metadata"):
+        statement.defer_keys(postgres_array=False)
 
 
 @pytest.mark.parametrize("form", ["MANAGED", "MANAGED_ARRAY"])

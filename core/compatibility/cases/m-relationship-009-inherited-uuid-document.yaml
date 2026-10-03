@@ -1,0 +1,39 @@
+model: models/identifier-tpcs-document.yaml
+tags: [m-relationship, m-inheritance, m-storage-layout, m-deep-fetch, m-sql, m-wire, relationship, graph, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: Child binds come from inherited parent identities and the reverse resolves from the graph.
+lane: api-conformance
+when:
+  objectQuery:
+    target: parallax.compatibility.UuidLeaf
+    predicate: {all: {}}
+    includes:
+      - segments:
+          - {rel: parallax.compatibility.UuidLeaf.children}
+          - {rel: parallax.compatibility.UuidLink.parent}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, not t0.payload is null, t0.payload from uuid_leaf t0
+        mariadb: select t0.id, not t0.payload is null, t0.payload from uuid_leaf t0
+    - sql:
+        postgres: select t0.id, t0.parent_id, not t0.payload is null, t0.payload from uuid_link t0 where t0.parent_id = any(?) order by t0.id asc
+        mariadb: select t0.id, t0.parent_id, not t0.payload is null, t0.payload from uuid_link t0 where t0.parent_id in (?) order by t0.id asc
+      binds:
+        postgres: [['00000000-0000-0000-0000-000000000001']]
+        mariadb: ['00000000-0000-0000-0000-000000000001']
+  referenceSql: select id, payload from uuid_leaf
+  graph:
+    UuidLeaf:
+      - id: '00000000-0000-0000-0000-000000000001'
+        label: inherited
+        familyVariant: UuidLeaf
+        children:
+          - id: '00000000-0000-0000-0000-000000000002'
+            parentId: '00000000-0000-0000-0000-000000000001'
+            label: child
+            parent: {id: '00000000-0000-0000-0000-000000000001', label: inherited, familyVariant: UuidLeaf}
+  roundTrips: 2

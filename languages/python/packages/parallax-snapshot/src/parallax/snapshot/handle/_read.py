@@ -860,11 +860,10 @@ def attach_children(
         buckets.setdefault(builder.member_value(child, related), []).append(child)
     for parent in parents:
         matched = buckets.get(builder.member_value(parent, owner), [])
-        builder.write_view(
-            parent,
-            position.view,
-            tuple(matched) if position.to_many else (matched[0] if matched else None),
-        )
+        if position.to_many:
+            builder.write_view(parent, position.view, tuple(matched))
+        else:
+            builder.write_to_one(parent, position.view, matched)
 
 
 def attach_empty(
@@ -893,11 +892,12 @@ def attach_back_reference(
     step: deep_fetch.BackReferenceFetchStep,
     parents: tuple[int, ...],
 ) -> None:
-    """Resolve an ancestor-revisit level against the scope's own identity map.
+    """Record an ancestor-revisit level for root-local identity resolution.
 
     A back-reference issues no SQL: m-case-format's "Back-reference cycles"
     guarantees the ancestor is already converted, so the parent's own correlation
-    member names a projection this builder has already registered.
+    member names logical claims this builder has already registered. The Root
+    View selects only its own reachable canonical claim and target admission.
 
     An absent correlation member and a stored null both resolve nothing, and both
     leave the loaded-empty or loaded-null result behind: a parent that names no
@@ -906,12 +906,13 @@ def attach_back_reference(
     position = tree.position(step.position)
     assert position.view is not None
     owner = correlation_member(meta, step.owner.identity)
+    admitted = frozenset(position.target)
     for parent in parents:
         key = builder.member_value(parent, owner)
         if key is None or key is ABSENT:
             builder.write_view(parent, position.view, () if position.to_many else None)
             continue
-        referenced = builder.resolve(step.family, key)
+        referenced = builder.reference(step.family, key, admitted, to_many=position.to_many)
         if referenced is None:  # pragma: no cover - guards a malformed plan
             raise ValueError(
                 f"back-reference {position.view.relationship.name!r}: no already-converted "
@@ -921,7 +922,7 @@ def attach_back_reference(
         builder.write_view(
             parent,
             position.view,
-            (referenced,) if position.to_many else referenced,
+            referenced,
         )
 
 

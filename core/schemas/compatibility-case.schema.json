@@ -719,7 +719,7 @@
           "$ref": "object-query.schema.json#"
         },
         "model": {
-          "description": "rejected cases only (accepted-model formation, including m-inheritance / m-storage-layout, resolved Q3). An INLINE model descriptor document (an instance of metamodel.schema.json) carrying an accepted-model formation defect a model-aware semantic validator MUST reject before any SQL. This includes cross-entity inheritance-family invariants, a second independent owner of one structural Table, physical-column collisions within a uniquely owned Table, and rendered-key collisions that per-entity schema validation cannot express. Kept inline (never in the shared `models/` registry) so an invalid model cannot break sibling cases that load real models; round-tripped through descriptor serde before semantic validation asserts `then.rejectedRule`.",
+          "description": "rejected cases only (accepted-model formation, including m-inheritance / m-storage-layout / m-relationship). An INLINE model descriptor document (an instance of metamodel.schema.json) carrying an accepted-model formation defect a model-aware semantic validator MUST reject before any SQL. This includes cross-entity inheritance-family invariants, a second independent owner of one structural Table, physical-column collisions within a uniquely owned Table, rendered-key collisions, and unequal declared defining-join endpoint types that per-entity schema validation cannot express. Kept inline (never in the shared `models/` registry) so an invalid model cannot break sibling cases that load real models; round-tripped through descriptor serde before semantic validation asserts `then.rejectedRule`.",
           "type": "object"
         },
         "evolve": {
@@ -1623,6 +1623,7 @@
             "storage-layout-column-collision",
             "storage-layout-document-member-column-override",
             "storage-layout-index-over-document-member",
+            "relationship-join-type-mismatch",
             "inheritance-materialization-key-collision",
             "subtype-selection-duplicate-alternative",
             "subtype-selection-overlapping-alternatives",

@@ -1,0 +1,23 @@
+model: models/identifier-types.yaml
+tags: [m-relationship, m-model-formation, relationship, rejected, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Parent
+        table: parent
+        attributes:
+          - {name: id, type: int32, primaryKey: true}
+        relationships:
+          - name: children
+            cardinality: one-to-many
+            join: {source: id, target: {entity: Child, attribute: parentId}}
+      - name: Child
+        table: child
+        attributes:
+          - {name: id, type: int64, primaryKey: true}
+          - {name: parentId, type: int64}
+        relationships:
+          - {name: parent, reverseOf: Parent.children}
+then:
+  rejectedRule: relationship-join-type-mismatch

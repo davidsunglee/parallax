@@ -12,7 +12,7 @@ when:
       table: contact
       attributes:
         - { name: id, type: int64, primaryKey: true }
-        - { name: managerCode, type: string, column: manager }
+        - { name: managerCode, type: int64, column: manager }
       relationships:
         - name: manager
           cardinality: many-to-one

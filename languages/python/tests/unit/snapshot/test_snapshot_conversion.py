@@ -4,8 +4,8 @@ Exercises `parallax.snapshot.materialize`'s conversion seam independently of the
 Docker-gated compile/run sweeps: value-object document decoding (declared-shape
 projection, the absence-collapse vocabulary, the refusal shape for stored data
 that contradicts its declared type), scalar provenance, Page identity claims
-(family normalization, projection independence, and the table-per-concrete-subtype
-exception), and the whole converted row with its documents decoded.
+    (family normalization and projection independence), and the whole converted
+    row with its documents decoded.
 
 Every row is a result-keyed driver row of a real compiled read, bound as a find
 binds it and converted through ``PreparedRead.convert_row``. A converted row is
@@ -619,7 +619,6 @@ def test_a_top_level_many_cardinality_value_object_converts_to_a_record_tuple() 
 
 # --------------------------------------------------------------------------- #
 # Page identity claims: family normalization and projection independence.       #
-# Table-per-concrete-subtype remains the family-normalization exception.       #
 # --------------------------------------------------------------------------- #
 def test_a_logical_key_is_family_normalized_for_a_concrete_subtype() -> None:
     node = _converted(ANIMAL, "Dog", {"id": 1, "name": "Rex", "owner_id": 10, "bark_volume": 7})
@@ -646,13 +645,9 @@ _INVOICE_ROW: dict[str, object] = {
 }
 
 
-def test_table_per_concrete_subtype_keys_by_the_rows_own_concrete() -> None:
-    # Each concrete owns its own physical table with its own primary-key
-    # namespace (m-inheritance-109's own fixture: "Primary keys are per-table, so
-    # id 1 recurs across Invoice/Receipt/Memo"), so normalizing to the family root
-    # would conflate two DIFFERENT rows that merely share a key value.
+def test_table_per_concrete_subtype_keys_by_the_logical_family() -> None:
     invoice = _converted(DOCUMENT, "Invoice", _INVOICE_ROW)
-    assert invoice.logical_key() == (EntityIdentity(_NAMESPACE, "Invoice"), 1)
+    assert invoice.logical_key() == (EntityIdentity(_NAMESPACE, "Document"), 1)
 
 
 def test_a_narrowed_abstract_read_and_a_direct_concrete_read_key_alike() -> None:
@@ -677,20 +672,23 @@ def test_a_key_less_entity_never_forms() -> None:
         formed(DescriptorMetamodel(entities=(entity,)))
 
 
-def test_the_builder_registers_the_first_projection_of_a_logical_key() -> None:
-    # Page construction registers the FIRST projection carrying a key for
-    # relationship correlation, which is what a back-reference level resolves against.
-    # A single-column key resolves by its raw scalar, the spelling the layout's own rule gives it.
+def test_the_builder_references_the_logical_claim_not_a_projection_winner() -> None:
     builder = PageBuilder(ViewSchema.of())
     prepared = bound_read(ORDERS, "Order")
     first, *_ = prepared.convert_row({"id": 1, "name": "Ada"}, builder, source=ROOT_LEVEL)
     second, *_ = prepared.convert_row({"id": 1, "name": "Ada"}, builder, source=ROOT_LEVEL)
     assert first != second
-    assert builder.resolve(EntityIdentity(_NAMESPACE, "Order"), 1) == first
+    family = EntityIdentity(_NAMESPACE, "Order")
+    reference = builder.reference(family, 1, frozenset({family}))
+    assert reference is not None
+    page = builder.finish((first, second), Pin())
+    assert reference.logicals == (page_rows(page).logical_ids[first],)
+    assert page_rows(page).logical_ids[first] == page_rows(page).logical_ids[second]
 
 
 def test_the_builder_answers_nothing_for_a_key_it_never_registered() -> None:
-    assert PageBuilder(ViewSchema.of()).resolve(EntityIdentity(_NAMESPACE, "Order"), 999) is None
+    family = EntityIdentity(_NAMESPACE, "Order")
+    assert PageBuilder(ViewSchema.of()).reference(family, 999, frozenset({family})) is None
 
 
 # --------------------------------------------------------------------------- #

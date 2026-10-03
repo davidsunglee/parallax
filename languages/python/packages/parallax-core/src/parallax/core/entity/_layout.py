@@ -19,7 +19,6 @@ from parallax.core.metamodel import (
     Metamodel,
     Multiplicity,
     RelationshipIdentity,
-    TablePerConcreteSubtype,
     ValueObjectMetadata,
 )
 from parallax.core.relationship import RelationshipMetadata
@@ -50,8 +49,7 @@ class EntityLayout:
     """Member rows contain ancestry-ordered Attributes, then Value Objects.
 
     ``primary_key`` locates the family's key Attribute in that row. ``family``
-    is the family root except for table-per-concrete-subtype, whose concrete
-    classes have independent key namespaces. Relationship positions use whole
+    is the logical family root under either storage strategy. Relationship positions use whole
     identities and ancestry-first declaration order. ``family_variant`` is
     qualified only when concrete local names collide; standalone Entities have
     none.
@@ -163,11 +161,7 @@ class LayoutCatalog:
         relationships = tuple(direction.identity for direction in navigable)
         return EntityLayout(
             concrete=identity,
-            family=(
-                identity
-                if isinstance(position.strategy, TablePerConcreteSubtype)
-                else position.root
-            ),
+            family=position.root,
             member_selection=selection,
             temporal_ends=self._temporal_ends(position.root),
             relationships=relationships,

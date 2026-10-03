@@ -6915,6 +6915,148 @@
       ]
     }
   },
+  "models/identifier-tpcs-document.yaml": {
+    "uuid_leaf": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.UuidLeaf"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.UuidRoot.id",
+          "declaringOwner": "parallax.compatibility.UuidRoot",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.UuidLeaf"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.UuidRoot",
+          "declaringOwner": "parallax.compatibility.UuidRoot",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "uuid_link": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.UuidLink"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.UuidLink.id",
+          "declaringOwner": "parallax.compatibility.UuidLink",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.UuidLink"
+          ],
+          "column": "parent_id",
+          "contributor": "attribute:parallax.compatibility.UuidLink.parentId",
+          "declaringOwner": "parallax.compatibility.UuidLink",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.UuidLink"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.UuidLink",
+          "declaringOwner": "parallax.compatibility.UuidLink",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/identifier-tph-document.yaml": {
+    "string_family": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.StringLeaf"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.StringRoot.id",
+          "declaringOwner": "parallax.compatibility.StringRoot",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.StringLeaf"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.StringRoot",
+          "declaringOwner": "parallax.compatibility.StringRoot",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.StringLeaf"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.StringRoot",
+          "declaringOwner": "parallax.compatibility.StringRoot",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "string_link": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.StringLink"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.StringLink.id",
+          "declaringOwner": "parallax.compatibility.StringLink",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.StringLink"
+          ],
+          "column": "parent_id",
+          "contributor": "attribute:parallax.compatibility.StringLink.parentId",
+          "declaringOwner": "parallax.compatibility.StringLink",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.StringLink"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.StringLink",
+          "declaringOwner": "parallax.compatibility.StringLink",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/identifier-types.yaml": {
     "int32_child": {
       "columns": [

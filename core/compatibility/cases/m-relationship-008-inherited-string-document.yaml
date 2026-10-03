@@ -1,0 +1,38 @@
+model: models/identifier-tph-document.yaml
+tags: [m-relationship, m-inheritance, m-storage-layout, m-deep-fetch, m-sql, m-wire, relationship, graph, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: Child binds come from inherited parent identities and the reverse resolves from the graph.
+lane: api-conformance
+when:
+  objectQuery:
+    target: parallax.compatibility.StringLeaf
+    predicate: {all: {}}
+    includes:
+      - segments:
+          - {rel: parallax.compatibility.StringLeaf.children}
+          - {rel: parallax.compatibility.StringLink.parent}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, not t0.payload is null, t0.payload from string_family t0 where t0.kind = ?
+        mariadb: select t0.id, not t0.payload is null, t0.payload from string_family t0 where t0.kind = ?
+      binds: [leaf]
+    - sql:
+        postgres: select t0.id, t0.parent_id, not t0.payload is null, t0.payload from string_link t0 where t0.parent_id = any(?) order by t0.id asc
+        mariadb: select t0.id, t0.parent_id, not t0.payload is null, t0.payload from string_link t0 where t0.parent_id in (?) order by t0.id asc
+      binds: {postgres: [[inherited-A]], mariadb: [inherited-A]}
+  referenceSql: select id, kind, payload from string_family where kind = 'leaf'
+  graph:
+    StringLeaf:
+      - id: inherited-A
+        label: inherited
+        familyVariant: StringLeaf
+        children:
+          - id: link-A
+            parentId: inherited-A
+            label: child
+            parent: {id: inherited-A, label: inherited, familyVariant: StringLeaf}
+  roundTrips: 2

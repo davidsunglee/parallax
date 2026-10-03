@@ -377,12 +377,14 @@ def test_encoded_payloads_preserve_integer_identity_gather_and_fanback() -> None
     result = _find(query, model_of(_ENCODED_RELATIONSHIP_MODEL), port)
     rows = _rows(result.page)
     root = _root(result)
-    (child,) = _refs(_view(rows, root, "children"))
+    assert len(_refs(_view(rows, root, "children"))) == 1
 
     assert port.executed[1][1][-1] == [1]
     assert _value(rows, root, "EncodedParent", "id") == 1
-    assert _view(rows, child, "parent") == root
     consumed = RootView(result.page)
+    assert (
+        consumed.view(1, consumed.view_layout(1).index_of[_view_key("EncodedChild", "parent")]) == 0
+    )
     parent_values = consumed.member_values(0)
     child_values = consumed.member_values(1)
     assert (
@@ -520,8 +522,9 @@ def test_find_back_reference_level_issues_no_additional_statement() -> None:
     result = _find(query, ORDERS, port)
     assert len(port.executed) == 2  # the back-reference costs nothing
     rows = _rows(result.page)
-    (item,) = _refs(_view(rows, _root(result), "items"))
-    assert _view(rows, item, "order") == rows.roots[0]
+    assert len(_refs(_view(rows, _root(result), "items"))) == 1
+    consumed = RootView(result.page)
+    assert consumed.view(1, consumed.view_layout(1).index_of[_view_key("OrderItem", "order")]) == 0
 
 
 @pytest.mark.parametrize(

@@ -1404,7 +1404,16 @@ _WIRE_EDIT_OCCURRENCE_REASON: Final[str] = (
     "suite would not add a developer surface"
 )
 
+_RELATIONSHIP_FORMATION_REASON: Final[str] = (
+    "inline model-formation refusals have no standalone GraphStory; "
+    "tests/api/test_identifier_types.py exercises the public Typed/descriptor "
+    "negative matrix and detailed issues"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
+    "m-relationship-005": _RELATIONSHIP_FORMATION_REASON,
+    "m-relationship-006": _RELATIONSHIP_FORMATION_REASON,
+    "m-relationship-007": _RELATIONSHIP_FORMATION_REASON,
     # -- m-edit: portable Wire adapter, independently run-graded -------------- #
     "m-edit-010": _WIRE_EDIT_OCCURRENCE_REASON,
     "m-edit-011": _WIRE_EDIT_OCCURRENCE_REASON,

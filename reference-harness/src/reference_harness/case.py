@@ -25,46 +25,12 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 from .corpus_yaml import read_corpus_yaml
 from .naming import default_column_name
+from .references import entity_identity as _entity_identity
+from .references import resolve_definition as _resolve_definition
 from .temporality import derive_temporal_structure, temporal_axes
 
 if TYPE_CHECKING:
     from .storage_layout import StorageLayout
-
-
-def _entity_identity(definition: dict[str, Any]) -> str:
-    """Return one definition's canonical Entity spelling."""
-    namespace = definition.get("namespace")
-    return definition["name"] if namespace is None else f"{namespace}.{definition['name']}"
-
-
-def _definition_index(entity_defs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Index exact Entity identities and only unambiguous local aliases."""
-    result = {_entity_identity(definition): definition for definition in entity_defs}
-    local_counts: dict[str, int] = {}
-    for definition in entity_defs:
-        name = definition["name"]
-        local_counts[name] = local_counts.get(name, 0) + 1
-    for definition in entity_defs:
-        if local_counts[definition["name"]] == 1:
-            result[definition["name"]] = definition
-    return result
-
-
-def _resolve_definition(
-    entity_defs: list[dict[str, Any]], owner: dict[str, Any], reference: str
-) -> dict[str, Any]:
-    """Resolve an exact or owner-relative Entity reference without global fallback."""
-    if "." in reference:
-        identity = reference
-    else:
-        namespace = owner.get("namespace")
-        identity = reference if namespace is None else f"{namespace}.{reference}"
-    try:
-        return _definition_index(entity_defs)[identity]
-    except KeyError as exc:
-        raise KeyError(
-            f"{_entity_identity(owner)} references unknown entity {reference!r}"
-        ) from exc
 
 
 def _compile_attribute(attribute: dict[str, Any]) -> dict[str, Any]:

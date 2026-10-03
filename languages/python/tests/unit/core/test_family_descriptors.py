@@ -71,6 +71,8 @@ _FAMILIES: Final[tuple[str, ...]] = (
     "evolution-rowless-member-v2",
     "evolution-rowless-position-v1",
     "evolution-rowless-position-v2",
+    "identifier-tpcs-document",
+    "identifier-tph-document",
     "instrument",
     "materialization-key-compatibility",
     "materialization-stress-columns",
