@@ -121,7 +121,8 @@ def unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
 
     A caller-addressed entry resolves no source either. Under Locking it owes
     one acquisition of each object it writes instead, which a second write of
-    the same object reuses.
+    the same object reuses. A temporal one also owes the read of the coverage
+    its window reaches, which its flush makes once per object.
 
     Targets are counted by their canonical spelling, so two entries naming one
     Entity two ways owe one read between them.
@@ -129,10 +130,14 @@ def unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
     opened: set[tuple[str, tuple[Any, ...]]] = set()
     needed: set[str] = set()
     acquired: set[tuple[str, tuple[Any, ...]]] = set()
+    covered: set[tuple[str, tuple[Any, ...]]] = set()
     for entry in entries:
         if entry.get("target"):
-            if _acquires(case, _entry_entity(case, entry)):
+            entity = _entry_entity(case, entry)
+            if _acquires(case, entity):
                 acquired.update(_entry_object_keys(case, entry))
+            if entity.is_temporal:
+                covered.update(_entry_object_keys(case, entry))
             continue
         mutation = entry.get("mutation")
         if mutation in OPENING_MUTATIONS:
@@ -145,7 +150,7 @@ def unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
             continue
         if any(key not in opened for key in _entry_object_keys(case, entry)):
             needed.add(entity.canonical_name)
-    return len(needed) + len(acquired)
+    return len(needed) + len(acquired) + len(covered)
 
 
 def _acquires(case: Case, entity: Entity) -> bool:

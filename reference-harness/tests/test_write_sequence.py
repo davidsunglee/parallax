@@ -167,6 +167,21 @@ def test_a_target_step_owes_a_read_only_where_it_is_acquired() -> None:
     assert unit_resolving_reads(unversioned, [wallet]) == 1
 
 
+def test_a_temporal_target_step_owes_its_coverage_read_and_under_locking_its_acquisition() -> None:
+    entry = {
+        "mutation": "update",
+        "entity": "parallax.compatibility.Balance",
+        "rows": [{"id": 1, "value": "1.00"}],
+        "target": True,
+    }
+
+    def case(raw: dict) -> Case:
+        return Case(path=Path("synthetic.yaml"), raw=raw, model=_balance_model())
+
+    assert unit_resolving_reads(case({}), [entry, entry]) == 1
+    assert unit_resolving_reads(case({"when": {"uow": {"concurrency": "locking"}}}), [entry]) == 2
+
+
 def _non_temporal_row_step(case) -> dict | None:
     """The first non-temporal write step that carries a neutral write input (①)."""
     for step in case.write_sequence:

@@ -47,7 +47,6 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests.unit._transact_support import (
-    BALANCE,
     FIND_SQL_LOCKED,
     FIND_SQL_UNLOCKED,
     FIXED,
@@ -761,17 +760,6 @@ def test_a_typed_replacement_of_a_read_value_is_addressed_by_its_key_alone() -> 
         ReadCall(FIND_SQL_UNLOCKED, (1,)),
         WriteCall(_GATED, ("Bo", Decimal("100.00"), 8, 1, 7)),
     ]
-
-
-def test_a_target_write_of_a_temporal_entity_is_not_supported_yet() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: Transaction) -> None:
-        with pytest.raises(WriteInstructionError, match="temporal target are not supported yet"):
-            tx.wire.update("Balance", {"id": 1, "acctNum": "D"}, if_tx_start=FIXED)
-
-    db_for(BALANCE, port).transact(fn)
-    assert _calls(port) == []
 
 
 def test_a_subtype_target_write_is_guarded_by_its_tag_and_refuses_a_sibling_member() -> None:

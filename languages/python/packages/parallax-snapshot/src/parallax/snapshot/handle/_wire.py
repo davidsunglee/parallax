@@ -202,10 +202,13 @@ class WireTransactionView(WireDatabaseView):
         Handed an Entity spelling instead, the update is a patch of the existing
         object ``changes``'s primary-key entries name, and every other entry is
         assigned, a value equal to the stored one included. The condition is
-        the caller's revision argument, on the terms ``tx.replace`` states: a
-        versioned Entity requires ``if_version``, an unversioned one takes
-        none. A change set naming nothing but the key is validated and then
-        dropped, with no database work at all — no existence or revision check.
+        the caller's revision argument, and the window its own bounds, on the
+        terms ``tx.replace`` states. A Bitemporal patch assigns its members to
+        each existing interval of its window, every interval keeping what it
+        does not assign, and leaves gaps and coverage after a scheduled
+        termination absent. A change set naming nothing but the key is
+        validated and then dropped, with no database work at all — no existence
+        or revision check.
         """
         if isinstance(target, str):
             mutation, bound = window_mutation("update", "updateUntil", until)

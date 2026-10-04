@@ -14,8 +14,8 @@ from parallax.core.unit_work.temporal import (
     is_open_bound,
 )
 
-_JAN, _MAR, _JUN, _SEP, _NOV, _DEC = (
-    dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 6, 9, 11, 12)
+_JAN, _FEB, _MAR, _JUN, _SEP, _NOV, _DEC = (
+    dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 2, 3, 6, 9, 11, 12)
 )
 
 
@@ -102,3 +102,69 @@ def test_a_transaction_time_only_transform_spans_the_whole_axis() -> None:
     destroyed = assigned.then(valid_from=None, until=None, assigned=None)
     assert destroyed.pieces(None, None) == ()
     assert not destroyed.assigns
+
+
+_REPLACED = {"amount": 300, "label": None}
+
+
+def test_a_replacement_takes_every_gap_of_its_extent_and_a_patch_none() -> None:
+    replaced = EMPTY_TRANSFORM.then(valid_from=_MAR, until=_DEC, assigned=_REPLACED, replaces=True)
+    coverage = ((_JAN, _JUN), (_SEP, _NOV))
+    assert replaced.gaps(coverage) == (
+        BoundPiece(_JUN, _SEP, _REPLACED),
+        BoundPiece(_NOV, _DEC, _REPLACED),
+    )
+    assert replaced.pieces(_JAN, _JUN) == (
+        BoundPiece(_JAN, _MAR, None),
+        BoundPiece(_MAR, _JUN, _REPLACED),
+    )
+    patched = EMPTY_TRANSFORM.then(valid_from=_MAR, until=_DEC, assigned={"amount": 1})
+    assert patched.gaps(coverage) == ()
+
+
+def test_an_unbounded_replacement_fills_after_the_last_coverage_ends() -> None:
+    replaced = EMPTY_TRANSFORM.then(valid_from=_MAR, until=None, assigned=_REPLACED, replaces=True)
+    (tail,) = replaced.gaps(((_JAN, _JUN),))
+    assert (tail.start, tail.assigned) == (_JUN, _REPLACED)
+    assert is_open_bound(tail.end)
+    assert replaced.gaps(((_JAN, INFINITY),)) == ()
+
+
+def test_a_later_assignment_keeps_the_replacement_extent_and_overlays_its_gaps() -> None:
+    transform = EMPTY_TRANSFORM.then(
+        valid_from=_MAR, until=_DEC, assigned=_REPLACED, replaces=True
+    ).then(valid_from=_MAR, until=_DEC, assigned={"label": "patched"})
+    assert transform.gaps(((_JAN, _JUN),)) == (
+        BoundPiece(_JUN, _DEC, {"amount": 300, "label": "patched"}),
+    )
+
+
+def test_a_replacement_over_earlier_assignments_discards_their_values() -> None:
+    transform = EMPTY_TRANSFORM.then(valid_from=_MAR, until=_DEC, assigned={"note": "a"}).then(
+        valid_from=_MAR, until=_DEC, assigned=_REPLACED, replaces=True
+    )
+    assert transform.segments == (TemporalSegment(_MAR, _DEC, _REPLACED, fills=True),)
+
+
+def test_a_destruction_ends_a_replacement_extent_without_creating_coverage() -> None:
+    transform = EMPTY_TRANSFORM.then(
+        valid_from=_MAR, until=_DEC, assigned=_REPLACED, replaces=True
+    ).then(valid_from=_MAR, until=_DEC, assigned=None)
+    assert transform.gaps(((_JAN, _JUN),)) == ()
+    assert transform.pieces(_JAN, _JUN) == (BoundPiece(_JAN, _MAR, None),)
+
+
+def test_a_transaction_time_only_replacement_has_no_gap_to_fill() -> None:
+    replaced = EMPTY_TRANSFORM.then(valid_from=None, until=None, assigned=_REPLACED, replaces=True)
+    assert replaced.gaps(()) == ()
+    assert replaced.pieces(None, None) == (BoundPiece(None, None, _REPLACED),)
+
+
+def test_a_gap_is_read_only_off_the_coverage_inside_the_replacement_extent() -> None:
+    replaced = EMPTY_TRANSFORM.then(valid_from=_MAR, until=_JUN, assigned=_REPLACED, replaces=True)
+    april, may, july = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (4, 5, 7))
+    coverage = ((_JAN, _FEB), (april, may), (july, _SEP), (_NOV, _DEC))
+    assert replaced.gaps(coverage) == (
+        BoundPiece(_MAR, april, _REPLACED),
+        BoundPiece(may, _JUN, _REPLACED),
+    )

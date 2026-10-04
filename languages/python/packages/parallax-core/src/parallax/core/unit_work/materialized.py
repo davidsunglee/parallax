@@ -14,6 +14,7 @@ from parallax.core.unit_work.columns import ChunkedColumnBuilder, ColumnSlice, w
 from parallax.core.unit_work.instructions import (
     INSERT_MUTATIONS,
     UPDATE_MUTATIONS,
+    ExpectedTxStart,
     ExpectedVersion,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
@@ -68,6 +69,7 @@ __all__ = [
     "composed_temporal_write",
     "group_state_keys",
     "target_write",
+    "temporal_contribution",
 ]
 
 
@@ -373,17 +375,20 @@ class TargetKeyedWrite:
 
     ``scope`` is the claim scope that condition names — the exact version a
     versioned object is required to stand at, or the object itself when it is
-    unversioned — which is the scope an observed write of the same state takes,
-    so the two compose there. ``claims`` are the retained observations of
-    observed writes composed into this one, which its completion spends; the
-    caller's condition stays whatever values survive, and a destruction
-    superseding the write keeps it too.
+    unversioned or temporal — which is the scope an observed write of the same
+    state takes, so the two compose there; a temporal object's writes compose by
+    object instead. ``claims`` are the retained observations of observed writes
+    composed into a Non-Temporal one, which its completion spends; the caller's
+    condition stays whatever values survive, and a destruction superseding the
+    write keeps it too. ``replaces`` says the row states a complete writable
+    state, whose window a temporal replacement fills.
     """
 
     instruction: PreparedKeyedWrite
     expectation: TargetExpectation
     scope: VersionedStateKey | ObjectKey
     claims: tuple[RetainedObservation, ...] = ()
+    replaces: bool = False
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS or len(self.instruction.rows) != 1:
@@ -411,6 +416,7 @@ def target_write(
             if isinstance(expectation, ExpectedVersion)
             else key
         ),
+        replaces=prepared.replaces,
     )
 
 
@@ -462,18 +468,21 @@ class TemporalContribution:
     its source condition and requested window, not its values.
 
     ``observation`` is the evidence an observed write settles against and
-    ``claim`` its retained form, which successful completion spends. A write an
-    admitted insertion authorized has neither: its condition is the coverage at
-    its window's start, the insertion's own anchor, which execution requires.
-    Values the write assigned live in the composed transform, where a later
-    write may overwrite them; the condition stays required whatever happens to
-    them.
+    ``claim`` its retained form, which successful completion spends. A write a
+    caller addressed has neither, and ``condition`` is the Transaction-Time
+    start its caller requires of the coverage at its window's start. A write an
+    admitted insertion authorized has none of the three: its condition is the
+    coverage at its window's start, the insertion's own anchor, which execution
+    requires. Values the write assigned live in the composed transform, where a
+    later write may overwrite them; the condition stays required whatever
+    happens to them.
     """
 
     kind: Literal["assignment", "destructive"]
     bounds: PreparedTemporalBounds
     observation: WriteObservation | None
     claim: RetainedObservation | None
+    condition: ExpectedTxStart | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,19 +507,22 @@ class ComposedTemporalWrite:
         return self.transform.assigns
 
 
-type TemporalKeyedWrite = ObservedKeyedWrite | InsertionKeyedWrite
+type TemporalKeyedWrite = ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
 """One keyed write of a temporal object that composes with that object's other
-pending writes: an observed one, or one an admitted insertion authorized."""
+pending writes: an observed one, one an admitted insertion authorized, or one a
+caller addressed."""
 
 
 def temporal_contribution(item: TemporalKeyedWrite) -> TemporalContribution:
     """``item``'s lasting part once composed."""
     observed = isinstance(item, ObservedKeyedWrite)
+    expectation = item.expectation if isinstance(item, TargetKeyedWrite) else None
     return TemporalContribution(
         kind="assignment" if item.instruction.mutation in UPDATE_MUTATIONS else "destructive",
         bounds=item.instruction.bounds,
         observation=item.observation if observed else None,
         claim=item.claim if observed else None,
+        condition=expectation if isinstance(expectation, ExpectedTxStart) else None,
     )
 
 
@@ -522,15 +534,22 @@ def composed_temporal_write(
 
     The arriving write's values replace earlier ones per member inside its own
     window and destroy coverage there if it is destructive; every earlier
-    condition stays.
+    condition stays. A caller's condition already held over the same window
+    adds nothing to keep.
     """
     if not isinstance(held, ComposedTemporalWrite):
         held = _composed(held, key_name)
+    contribution = temporal_contribution(arriving)
+    contributions = held.contributions
+    if contribution.condition is None or contribution not in contributions:
+        contributions = (*contributions, contribution)
     return ComposedTemporalWrite(
         target=held.target,
         key=held.key,
-        contributions=(*held.contributions, temporal_contribution(arriving)),
-        transform=_composed_transform(held.transform, arriving.instruction, key_name),
+        contributions=contributions,
+        transform=_composed_transform(
+            held.transform, arriving.instruction, key_name, replaces=_replaces(arriving)
+        ),
     )
 
 
@@ -540,8 +559,14 @@ def _composed(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalWrite:
         target=item.instruction.target,
         key={key_name: row[key_name]},
         contributions=(temporal_contribution(item),),
-        transform=_composed_transform(EMPTY_TRANSFORM, item.instruction, key_name),
+        transform=_composed_transform(
+            EMPTY_TRANSFORM, item.instruction, key_name, replaces=_replaces(item)
+        ),
     )
+
+
+def _replaces(item: TemporalKeyedWrite) -> bool:
+    return isinstance(item, TargetKeyedWrite) and item.replaces
 
 
 def composed_alone(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalWrite:
@@ -550,7 +575,11 @@ def composed_alone(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalW
 
 
 def _composed_transform(
-    transform: TemporalTransform, instruction: PreparedKeyedWrite, key_name: str
+    transform: TemporalTransform,
+    instruction: PreparedKeyedWrite,
+    key_name: str,
+    *,
+    replaces: bool = False,
 ) -> TemporalTransform:
     bounds = instruction.bounds
     assigned = (
@@ -558,7 +587,9 @@ def _composed_transform(
         if instruction.mutation in UPDATE_MUTATIONS
         else None
     )
-    return transform.then(valid_from=bounds.valid_from, until=bounds.until, assigned=assigned)
+    return transform.then(
+        valid_from=bounds.valid_from, until=bounds.until, assigned=assigned, replaces=replaces
+    )
 
 
 @dataclass(frozen=True, slots=True)

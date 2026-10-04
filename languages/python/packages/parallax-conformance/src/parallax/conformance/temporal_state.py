@@ -363,11 +363,18 @@ class TemporalShadow:
         self, model: Metamodel, acquisition: RangeAcquisition
     ) -> tuple[PredecessorRow, ...]:
         """The tracked current milestones of ``acquisition``'s object that
-        overlap its Valid-Time window — what the execution's own coverage read
-        returns from the rows this tracker accounts for."""
+        overlap its Valid-Time window, or all of them where it has none — what
+        the execution's own coverage read returns from the rows this tracker
+        accounts for."""
         entity = acquisition.entity
-        valid_start, valid_end = _axis_names(model, entity, TemporalDimension.VALID_TIME)
         identity = (entity.identity.name, (acquisition.key_value,))
+        if acquisition.valid_from is None:
+            return tuple(
+                observation.predecessor
+                for key, observation in self._current.items()
+                if key[:2] == identity
+            )
+        valid_start, valid_end = _axis_names(model, entity, TemporalDimension.VALID_TIME)
         window_start = _coordinate(acquisition.valid_from)
         window_end = None if acquisition.until is None else _coordinate(acquisition.until)
         covered: list[PredecessorRow] = []
