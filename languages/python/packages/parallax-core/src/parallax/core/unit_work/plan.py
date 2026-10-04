@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 import bisect
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Final, Protocol
 
-from parallax.core.unit_work.planned import PlannedWrite
+from parallax.core.metamodel import EntityIdentity
+from parallax.core.unit_work.planned import INFINITY, PlannedWrite, TemporalUpperBound
+from parallax.core.unit_work.planner import ObservedStateKey
+from parallax.core.unit_work.retain import RetainedObservation
 
-__all__ = ["PlannedSteps", "StepSegment", "WritePlan", "eager_segment"]
+__all__ = [
+    "NO_OWNERSHIP",
+    "OPEN_BITEMPORAL_ENDS",
+    "TRANSACTION_TIME_ENDS",
+    "ExecutionUnit",
+    "OwnedEndpoint",
+    "Ownership",
+    "PlannedSteps",
+    "StepSegment",
+    "WritePlan",
+    "eager_segment",
+]
 
 
 class StepSegment(Protocol):
@@ -95,12 +109,106 @@ class PlannedSteps:
 
 
 @dataclass(frozen=True, slots=True)
+class OwnedEndpoint:
+    """One temporal row's complete physical address: its Entity, its family
+    primary-key values in key order, and one exclusive upper bound per As-Of
+    Axis in canonical axis order.
+
+    Axis starts and payload are not part of it, so a same-address revision
+    leaves the endpoint unchanged.
+    """
+
+    entity: EntityIdentity
+    key: tuple[object, ...]
+    ends: tuple[TemporalUpperBound, ...]
+
+
+TRANSACTION_TIME_ENDS: Final[tuple[TemporalUpperBound, ...]] = (INFINITY,)
+"""The ends of every current Transaction-Time-Only row."""
+
+OPEN_BITEMPORAL_ENDS: Final[tuple[TemporalUpperBound, ...]] = (INFINITY, INFINITY)
+"""The ends of a current Bitemporal row whose Valid Time runs on without end."""
+
+
+class Ownership(Protocol):
+    """Read-only access to the rows the planning attempt opened successfully.
+
+    Ownership is the attempt's own record of executed openings, never an
+    inference from a row's Transaction-Time start equalling the attempt's
+    instant.
+    """
+
+    def owns(self, endpoint: OwnedEndpoint, /) -> bool: ...
+
+    def owns_any(self, entity: EntityIdentity, /) -> bool:
+        """Whether any owned row is an object of ``entity``."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class _NoOwnership:
+    def owns(self, endpoint: OwnedEndpoint, /) -> bool:
+        del endpoint
+        return False
+
+    def owns_any(self, entity: EntityIdentity, /) -> bool:
+        del entity
+        return False
+
+
+NO_OWNERSHIP: Final[Ownership] = _NoOwnership()
+"""The ownership of an attempt that has opened nothing."""
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionUnit:
+    """One execution unit of a Write Plan and what its success publishes.
+
+    A unit spans the plan's steps up to the exclusive offset ``end``, after the
+    previous unit's. Its facts are applied only once every one of its steps has
+    succeeded, and before any later unit executes: the claim it spends, the
+    observed states it changed — the claim's own state among them — and the
+    owned rows it removed and opened. Removals are retired before openings are
+    registered, so a row removed and reopened at one address remains owned.
+    """
+
+    end: int
+    claim: RetainedObservation | None = None
+    changed: Iterable[ObservedStateKey] = ()
+    removed: Iterable[OwnedEndpoint] = ()
+    opened: Iterable[OwnedEndpoint] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class WritePlan:
     """One flush's finalized, execution-ordered steps.
 
     An empty :class:`PlannedSteps` is the one canonical result for complete
     cancellation or known no-op elimination; there is no empty-plan sentinel and
     no second result variant.
+
+    ``units`` partitions ``steps`` into execution units, in order and ending
+    where the steps end; a plan given none forms one unit of every step, which
+    publishes nothing beyond its steps' own effects.
     """
 
     steps: PlannedSteps = PlannedSteps()
+    units: tuple[ExecutionUnit, ...] = ()
+
+    def __post_init__(self) -> None:
+        length = len(self.steps)
+        units = self.units
+        if not units:
+            if length:
+                object.__setattr__(self, "units", (ExecutionUnit(end=length),))
+            return
+        previous = 0
+        for unit in units:
+            if unit.end < previous:
+                raise ValueError("a Write Plan's execution units follow its steps in order")
+            previous = unit.end
+        if previous != length:
+            raise ValueError(
+                f"a Write Plan's execution units end where its {length} step(s) end, not at "
+                f"{previous}"
+            )

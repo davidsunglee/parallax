@@ -56,6 +56,7 @@ from parallax.core.unit_work import (
     WriteBatchTrigger,
     WriteEvidenceError,
     WritePlan,
+    WritePlanningError,
     active_unit_of_work,
     buffered_write,
     observed_state_key,
@@ -67,6 +68,7 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core.unit_work.materialized import ObservedKeyedWrite
+from parallax.core.unit_work.plan import ExecutionUnit
 from parallax.core.unit_work.planned import PlannedClose, PlannedUpdate
 from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.core.unit_work.uow import EscapedTransactionError, FlushExecutor, WriteBatchOpening
@@ -93,12 +95,20 @@ class _Recorder:
         self.plans: list[WritePlan] = []
         self.triggers: list[WriteBatchTrigger] = []
 
-    def __call__(self, plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
+    def __call__(
+        self,
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        completed: Callable[[ExecutionUnit], None],
+    ) -> None:
         self.plans.append(plan)
         self.triggers.append(trigger)
 
 
-def _noop(plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
+def _noop(
+    plan: WritePlan, *, trigger: WriteBatchTrigger, completed: Callable[[ExecutionUnit], None]
+) -> None:
     return None
 
 
@@ -234,9 +244,11 @@ def test_read_force_flushes_pending_writes_first() -> None:
     order: list[str] = []
     recorder = _Recorder()
 
-    def executor(plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
+    def executor(
+        plan: WritePlan, *, trigger: WriteBatchTrigger, completed: Callable[[ExecutionUnit], None]
+    ) -> None:
         order.append("flush")
-        recorder(plan, trigger=trigger)
+        recorder(plan, trigger=trigger, completed=completed)
 
     def body(tx: UnitOfWork) -> str:
         tx.buffer(_account_insert(9))
@@ -586,7 +598,9 @@ def _opener(order: list[str]) -> WriteBatchOpening:
 def test_each_batch_is_a_scope_around_its_own_planning_and_execution() -> None:
     order: list[str] = []
 
-    def executor(plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
+    def executor(
+        plan: WritePlan, *, trigger: WriteBatchTrigger, completed: Callable[[ExecutionUnit], None]
+    ) -> None:
         order.append(f"executed:{trigger}")
 
     def body(tx: UnitOfWork) -> None:
@@ -1000,3 +1014,205 @@ def test_a_destructive_write_after_the_insert_flushed_cancels_nothing() -> None:
 
     _run(body, executor=recorder)
     assert _step_kinds(recorder) == ["PlannedInsert", "PlannedDelete"]
+
+
+# --------------------------------------------------------------------------- #
+# Execution units: completion, ownership, freshness and failure containment.  #
+# --------------------------------------------------------------------------- #
+def _balance_insert(key: int) -> PreparedKeyedWrite:
+    return _prepared_keyed(
+        KeyedWrite("insert", "Balance", ({"id": key, "acctNum": "A", "value": Decimal("1.00")},)),
+        _BALANCE,
+    )
+
+
+def _balance_update_from(key: int, tx_start: object) -> BufferItem:
+    members = _balance_members(key, tx_start)
+    observation = TemporalObservation(predecessor=PredecessorRow(members))
+    state = observed_state_key(
+        corpus_object_key("Balance", ("id", key)),
+        observation,
+        _balance_shape(),
+    )
+    return buffered_write(
+        _prepared_keyed(
+            KeyedWrite("update", "Balance", ({"id": key, "value": Decimal("2.00")},)), _BALANCE
+        ),
+        RetainedObservation(state, observation, None),
+        change=_VALUE_CHANGED,
+    )
+
+
+def _balance_shape() -> temporal_read.TemporalShape:
+    shape = temporal_read.view(_BALANCE).shape(corpus_object_key("Balance", ("id", 1)).entity)
+    assert shape is not None
+    return shape
+
+
+def test_a_row_an_earlier_flush_opened_is_revised_rather_than_closed() -> None:
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_balance_insert(1))
+        uow.read(lambda: None)
+        uow.buffer(_balance_update_from(1, _FIXED))
+
+    _run(body, meta=_BALANCE, executor=recorder)
+    assert _step_kinds(recorder) == ["PlannedInsert", "PlannedTemporalRevision"]
+
+
+def _balance_terminate_from(key: int, tx_start: object) -> BufferItem:
+    members = _balance_members(key, tx_start)
+    observation = TemporalObservation(predecessor=PredecessorRow(members))
+    state = observed_state_key(
+        corpus_object_key("Balance", ("id", key)), observation, _balance_shape()
+    )
+    return buffered_write(
+        _prepared_keyed(KeyedWrite("terminate", "Balance", ({"id": key},)), _BALANCE),
+        RetainedObservation(state, observation, None),
+    )
+
+
+def test_a_row_its_unit_removed_is_no_longer_owned() -> None:
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_balance_insert(1))
+        uow.buffer(_balance_insert(2))
+        uow.read(lambda: None)
+        uow.buffer(_balance_terminate_from(1, _FIXED))
+        uow.read(lambda: None)
+        uow.buffer(_balance_terminate_from(2, _FIXED))
+        uow.read(lambda: None)
+        # Both owned rows are gone, so a row read at the attempt's instant now
+        # is one the attempt does not own.
+        uow.buffer(_balance_update_from(1, _FIXED))
+
+    _run(body, meta=_BALANCE, executor=recorder)
+    assert _step_kinds(recorder) == [
+        "PlannedInsert",
+        "PlannedInsert",
+        "PlannedTemporalRemoval",
+        "PlannedTemporalRemoval",
+        "PlannedClose",
+        "PlannedInsert",
+    ]
+
+
+def test_a_row_whose_start_is_the_attempts_instant_is_not_owned_without_its_opening() -> None:
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_balance_update_from(1, _FIXED))
+
+    _run(body, meta=_BALANCE, executor=recorder)
+    assert _step_kinds(recorder) == ["PlannedClose", "PlannedInsert"]
+
+
+def test_each_unit_spends_its_evidence_before_the_next_unit_executes() -> None:
+    first = _account_write("update", 1, 7)
+    second = _account_write("update", 2, 3)
+    assert isinstance(first, ObservedKeyedWrite) and isinstance(second, ObservedKeyedWrite)
+    claims = (first.claim, second.claim)
+    seen: list[tuple[bool, ...]] = []
+
+    def executor(
+        plan: WritePlan, *, trigger: WriteBatchTrigger, completed: Callable[[ExecutionUnit], None]
+    ) -> None:
+        for unit in plan.units:
+            seen.append(tuple(claim is not None and claim.consumed for claim in claims))
+            completed(unit)
+        seen.append(tuple(claim is not None and claim.consumed for claim in claims))
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(first)
+        uow.buffer(second)
+
+    _run(body, executor=executor)
+    assert seen == [(False, False), (True, False), (True, True)]
+
+
+def test_a_unit_reported_out_of_order_dooms_the_attempt() -> None:
+    def executor(
+        plan: WritePlan, *, trigger: WriteBatchTrigger, completed: Callable[[ExecutionUnit], None]
+    ) -> None:
+        completed(plan.units[1])
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_account_write("update", 1, 7))
+        uow.buffer(_account_write("update", 2, 3))
+        with pytest.raises(UnitOfWorkError, match="out of order"):
+            uow.read(lambda: None)
+
+    with pytest.raises(RollbackOnlyError):
+        _run(body, executor=executor)
+
+
+def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
+    failure = RuntimeError("the statement failed")
+    claimed = _account_write("update", 1, 7)
+    assert isinstance(claimed, ObservedKeyedWrite) and claimed.claim is not None
+
+    def executor(
+        plan: WritePlan, *, trigger: WriteBatchTrigger, completed: Callable[[ExecutionUnit], None]
+    ) -> None:
+        raise failure
+
+    def body(uow: UnitOfWork) -> str:
+        uow.buffer(claimed)
+        with pytest.raises(RuntimeError, match="the statement failed"):
+            uow.read(lambda: None)
+        with pytest.raises(RollbackOnlyError) as refused:
+            uow.read(lambda: None)
+        assert refused.value.__cause__ is failure
+        with pytest.raises(RollbackOnlyError):
+            uow.buffer(_account_insert(5))
+        return "withheld"
+
+    with pytest.raises(RollbackOnlyError) as exc:
+        _run(body, executor=executor)
+    assert exc.value.__cause__ is failure
+    assert claimed.claim is not None and not claimed.claim.consumed
+
+
+def test_a_planning_refusal_leaves_the_attempt_usable() -> None:
+    bare_close = _prepared_keyed(
+        KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("2.00")},)), _BALANCE
+    )
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(bare_close)
+        with pytest.raises(WritePlanningError):
+            uow.read(lambda: None)
+        assert uow.read(lambda: "still usable") == "still usable"
+
+    # The refused write is still buffered, so the commit flush refuses it again
+    # rather than the attempt being doomed.
+    with pytest.raises(WritePlanningError):
+        _run(body, meta=_BALANCE)
+
+
+def test_evidence_built_from_a_read_that_predates_an_own_change_is_invalidated() -> None:
+    def fresh_observation(key: int) -> RetainedObservation:
+        return RetainedObservation(
+            _balance_state(key),
+            TemporalObservation(predecessor=PredecessorRow(_balance_members(key))),
+            None,
+        )
+
+    def body(uow: UnitOfWork) -> None:
+        read_at = uow.freshness
+        unsubmitted = uow.retain(fresh_observation(1))
+        unaffected = uow.retain(fresh_observation(2))
+        uow.buffer(_balance_update(1))
+        assert not unsubmitted.invalidated
+        uow.read(lambda: None)
+        assert unsubmitted.invalidated and not unsubmitted.consumed
+        assert not unaffected.invalidated
+        late = uow.retain(fresh_observation(1), read_at=read_at)
+        assert late.invalidated
+        fresh = uow.retain(fresh_observation(1))
+        assert not fresh.invalidated
+        assert uow.retain(fresh_observation(1)) is fresh
+
+    _run(body, meta=_BALANCE)

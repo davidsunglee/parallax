@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 from enum import Enum
 from itertools import islice
@@ -10,7 +10,7 @@ from typing import Final, Literal, Protocol
 from weakref import WeakValueDictionary
 
 from parallax.core import inheritance
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.unit_work.claims import (
     SELECTION_INTENT,
     ClaimScope,
@@ -25,6 +25,8 @@ from parallax.core.unit_work.instructions import (
     DESTRUCTIVE_MUTATIONS,
     INSERT_MUTATIONS,
     KeyedMutation,
+    PreparedKeyedWrite,
+    PreparedTemporalBounds,
 )
 from parallax.core.unit_work.materialized import (
     BufferItem,
@@ -34,7 +36,7 @@ from parallax.core.unit_work.materialized import (
     buffered_instruction,
     group_state_keys,
 )
-from parallax.core.unit_work.plan import WritePlan
+from parallax.core.unit_work.plan import ExecutionUnit, OwnedEndpoint, WritePlan
 from parallax.core.unit_work.planner import (
     ObjectKey,
     ObservedStateKey,
@@ -83,9 +85,21 @@ class FlushExecutor(Protocol):
     unit of work is the only participant that knows why it flushed, and an
     observer downstream would otherwise have to reconstruct the reason from the
     order it saw batches arrive in.
+
+    ``completed`` is called with each of the plan's execution units, in order,
+    as soon as every step of that unit has executed and been enforced, and
+    before any step of a later unit executes. A normal return reports every
+    unit not yet reported; an exception reports none after it.
     """
 
-    def __call__(self, plan: WritePlan, /, *, trigger: WriteBatchTrigger) -> None: ...
+    def __call__(
+        self,
+        plan: WritePlan,
+        /,
+        *,
+        trigger: WriteBatchTrigger,
+        completed: Callable[[ExecutionUnit], None],
+    ) -> None: ...
 
 
 class WriteBatchScope(Protocol):
@@ -218,6 +232,88 @@ class TransactionSettings:
     concurrency: Concurrency = "optimistic"
 
 
+class _TargetRecord:
+    """What one attempt holds about one object it inserts.
+
+    ``pending_insert`` lasts until the next flush. The admitted insertion —
+    ``opener``, the opaque label of the interface that opened it, kept for its
+    caller's diagnostics, and the ``bounds`` it was admitted with — lasts until
+    the attempt ends or a cancelling destructive write retires it. A record
+    exists only while one of them holds.
+    """
+
+    __slots__ = ("bounds", "opener", "pending_insert")
+
+    def __init__(self, opener: Hashable | None, bounds: PreparedTemporalBounds) -> None:
+        self.pending_insert = True
+        self.opener = opener
+        self.bounds = bounds
+
+
+class _TargetWriteState:
+    """The attempt's write-owned facts about the objects it writes.
+
+    Each target's still-unflushed insert and admitted insertion, and every
+    current temporal row the attempt successfully opened, by complete physical
+    address. Reads never add to it, so its size follows what the attempt wrote
+    rather than what it read.
+    """
+
+    __slots__ = ("_endpoints", "_owning", "_records")
+
+    def __init__(self) -> None:
+        self._records: dict[ObjectKey, _TargetRecord] = {}
+        self._endpoints: set[OwnedEndpoint] = set()
+        # Every Entity some owned row has been an object of, so a group of an
+        # Entity the attempt never opened a row of is planned without a
+        # per-row check. It only grows; an Entity whose rows were all removed
+        # merely keeps its groups on the per-row path.
+        self._owning: set[EntityIdentity] = set()
+
+    def owns(self, endpoint: OwnedEndpoint, /) -> bool:
+        return endpoint in self._endpoints
+
+    def owns_any(self, entity: EntityIdentity, /) -> bool:
+        return entity in self._owning
+
+    def opened_by(self, target: ObjectKey) -> Hashable | None:
+        record = self._records.get(target)
+        return None if record is None else record.opener
+
+    def has_pending_insert(self, target: ObjectKey) -> bool:
+        record = self._records.get(target)
+        return record is not None and record.pending_insert
+
+    def open_insert(
+        self, target: ObjectKey, opener: Hashable | None, bounds: PreparedTemporalBounds
+    ) -> None:
+        self._records[target] = _TargetRecord(opener, bounds)
+
+    def cancel_insert(self, target: ObjectKey) -> None:
+        del self._records[target]
+
+    def end_flush(self) -> None:
+        records = self._records
+        for target in [target for target, record in records.items() if record.pending_insert]:
+            record = records[target]
+            if record.opener is None:
+                del records[target]
+            else:
+                record.pending_insert = False
+
+    def register(self, endpoint: OwnedEndpoint) -> None:
+        self._endpoints.add(endpoint)
+        self._owning.add(endpoint.entity)
+
+    def retire(self, endpoint: OwnedEndpoint) -> None:
+        self._endpoints.remove(endpoint)  # planning removes only a row this attempt owns
+
+    def clear(self) -> None:
+        self._records.clear()
+        self._endpoints.clear()
+        self._owning.clear()
+
+
 class UnitOfWork:
     """The buffering, observing, flushing transaction scope (m-unit-work).
 
@@ -230,15 +326,19 @@ class UnitOfWork:
     __slots__ = (
         "_actor_identity",
         "_buffer",
+        "_changed",
         "_claims",
         "_closed",
         "_evidence_policy_for",
+        "_freshness",
         "_observations",
         "_participation",
-        "_pending_inserts",
         "_planner",
+        "_reported",
+        "_reporting",
         "_rollback_cause",
         "_rollback_only",
+        "_targets",
         "_transaction_instant",
         "clock",
         "companion",
@@ -294,12 +394,13 @@ class UnitOfWork:
         # a flush spends what it planned, so what a later write may claim
         # is decided by what is still pending.
         self._claims = ClaimTable()
-        # The objects the buffer currently holds an unflushed insert of: the
-        # planner's own `pending_insert` map, kept live as writes arrive instead
-        # of rebuilt when they are planned. `buffer` and `_coalesce` read the
-        # SAME two mutation families over the same object key, so the outcome a
-        # verb is told cannot disagree with what the flush does with the pair.
-        self._pending_inserts: set[ObjectKey] = set()
+        # What this attempt holds about each object it writes: an unflushed
+        # insert — the planner's own `pending_insert` map, kept live as writes
+        # arrive, over the SAME two mutation families and object key `_coalesce`
+        # reads, so the outcome a verb is told cannot disagree with what the
+        # flush does with the pair — its admitted insertion, and the current
+        # temporal rows it opened.
+        self._targets = _TargetWriteState()
         # The ledger is an INDEX, not an owner: a retained observation lives as
         # long as some source value or buffered write reaches it, and this entry
         # disappears with the last of them (`m-unit-work` "Observation lifetime").
@@ -309,6 +410,16 @@ class UnitOfWork:
         self._observations: WeakValueDictionary[ObservedStateKey, RetainedObservation] = (
             WeakValueDictionary()
         )
+        # How many execution units have changed an observed state so far, and
+        # the count at which each changed state last changed. A read captures
+        # the count when it runs, so evidence it builds later, from rows it
+        # already holds, is known to predate any change completed in between.
+        self._freshness = 0
+        self._changed: dict[ObservedStateKey, int] = {}
+        # The units of the plan the executor is running, and how many of them
+        # it has reported.
+        self._reporting: tuple[ExecutionUnit, ...] = ()
+        self._reported = 0
         # This scope's participation identity: what a read of THIS unit of work
         # stamps on the values it produces, and what an effective-Locking write
         # tests its source against.
@@ -330,7 +441,7 @@ class UnitOfWork:
         self._ensure_open()
         return self._participation
 
-    def buffer(self, item: BufferItem) -> BufferOutcome:
+    def buffer(self, item: BufferItem, *, opener: Hashable | None = None) -> BufferOutcome:
         """Admit ``item``'s claim and buffer it for flush at the unit-of-work
         boundary — all of it, or nothing.
 
@@ -356,6 +467,10 @@ class UnitOfWork:
         insert records the object it opens, and a destructive write of an object
         whose insert is still unflushed cancels that pair — recognized when the
         pair is complete rather than when it is planned.
+
+        ``opener`` labels an insert's admission with the interface that opened
+        it, which :meth:`opened_by` answers until the attempt ends or a
+        cancelling destructive write retires the admission.
         """
         self._ensure_open()
         instruction = buffered_instruction(item)
@@ -366,12 +481,29 @@ class UnitOfWork:
             self._claim_keyed(item, key)
         self._buffer.append(item)
         mutation = instruction.mutation
+        targets = self._targets
         if key is not None and mutation in INSERT_MUTATIONS:
-            self._pending_inserts.add(key)
-        elif key in self._pending_inserts and mutation in DESTRUCTIVE_MUTATIONS:
-            self._pending_inserts.discard(key)
+            assert isinstance(instruction, PreparedKeyedWrite)  # only a keyed write inserts
+            targets.open_insert(key, opener, instruction.bounds)
+        elif (
+            key is not None
+            and mutation in DESTRUCTIVE_MUTATIONS
+            and targets.has_pending_insert(key)
+        ):
+            targets.cancel_insert(key)
             return BufferOutcome.CANCELLED_PENDING_INSERT
         return BufferOutcome.BUFFERED
+
+    def opened_by(self, target: ObjectKey | None) -> Hashable | None:
+        """The label an admitted insertion of ``target`` was buffered with, or
+        ``None`` where this attempt holds no such insertion.
+
+        An admission outlives the flush that executes its insert and ends with
+        the attempt, or when a destructive write cancels the still-pending
+        insert. ``None`` names no object and is never held.
+        """
+        self._ensure_open()
+        return None if target is None else self._targets.opened_by(target)
 
     def _addressed_object(self, item: BufferItem) -> ObjectKey | None:
         """The one object ``item`` addresses where buffering needs it — to claim
@@ -484,8 +616,9 @@ class UnitOfWork:
           observation IS the evidence, and a standalone read's source carries it
           exactly as a participating read's does.
 
-        Evidence a successful flush already spent is refused under BOTH
-        strategies: consumption says the state the source observed is no longer
+        Evidence a successful flush already spent, or describing a state a
+        later successful change of this transaction replaced, is refused under
+        BOTH strategies: either way the state the source observed is no longer
         the stored state, and a held lock does not restore it.
         """
         self._ensure_open()
@@ -525,9 +658,29 @@ class UnitOfWork:
                 ),
                 object_key=object_key,
             )
+        if observation is not None and observation.invalidated:
+            raise WriteEvidenceError(
+                code="write-evidence-consumed",
+                message=(
+                    f"{identity}: this transaction has since changed the state this value "
+                    "observed, so its evidence no longer describes the stored row; read the row "
+                    "again and write what that read returns"
+                ),
+                object_key=object_key,
+            )
         return settled
 
-    def retain(self, observation: RetainedObservation) -> RetainedObservation:
+    @property
+    def freshness(self) -> int:
+        """What a read captures when it runs, so that evidence it builds later
+        from the rows it holds is judged against the state those rows had
+        (:meth:`retain`)."""
+        self._ensure_open()
+        return self._freshness
+
+    def retain(
+        self, observation: RetainedObservation, /, *, read_at: int | None = None
+    ) -> RetainedObservation:
         """Index ``observation`` under the state it observed, answering the
         evidence this unit of work already holds for that state where it holds
         any.
@@ -537,12 +690,23 @@ class UnitOfWork:
         within a transaction however many reads reach it — the same rule
         graph aliases already follow. A state whose evidence a flush has spent
         is not reused: the row has moved on, so a fresh read is fresh evidence.
+
+        ``read_at`` is the :attr:`freshness` the producing read captured, by
+        default now. Evidence built from a read that ran before a later
+        successful change of the same state is answered invalidated and never
+        indexed: its rows describe a state this attempt has since replaced.
         """
         self._ensure_open()
-        held = self._observations.get(observation.key)
-        if held is not None and not held.consumed:
+        key = observation.key
+        log = self._changed
+        changed = log.get(key) if log else None
+        if changed is not None and changed > (self._freshness if read_at is None else read_at):
+            observation.invalidate()
+            return observation
+        held = self._observations.get(key)
+        if held is not None and not held.consumed and not held.invalidated:
             return held
-        self._observations[observation.key] = observation
+        self._observations[key] = observation
         return observation
 
     def read[T](self, read_fn: Callable[[], T]) -> T:
@@ -568,14 +732,21 @@ class UnitOfWork:
         planning refusal is inside the batch rather than beside it and a batch
         planning reduces to no DML at all still ends the way it began.
 
-        Evidence is spent AFTER the executor returns, and only by the writes that
-        survived finalization: a buffered intent coalesced away or eliminated as
-        a no-op leaves its evidence eligible, because no write of it reached the
-        database — even where a sibling write in the same batch did. Finalization
-        is what names those survivors' claims, since it alone knows which items
-        it retired, and it names each one once however many surviving writes
-        settled against it. A flush that fails aborts the transaction, so
-        evidence needs no restoring.
+        Each execution unit of the plan completes as soon as its steps succeed,
+        before the next unit executes: it spends the evidence its surviving
+        writes settled against, invalidates evidence of the states it changed,
+        retires the owned rows it removed, and registers the rows it opened. A
+        buffered intent coalesced away or eliminated as a no-op leaves its
+        evidence eligible, because no write of it reached the database — even
+        where a sibling write in the same batch did. Finalization is what names
+        those survivors' claims, since it alone knows which items it retired,
+        and it names each one once however many surviving writes settled against
+        it.
+
+        A failure while executing, enforcing, or completing marks the
+        transaction rollback-only before it propagates, so a caller that catches
+        it can do no further work and cannot commit. A planning refusal precedes
+        execution and leaves the transaction usable.
 
         The claims the buffer took travel out with it: what a later write may
         claim is decided by what is still pending, and after a flush nothing is.
@@ -591,20 +762,74 @@ class UnitOfWork:
             self._flush_buffer(trigger)
 
     def _flush_buffer(self, trigger: WriteBatchTrigger) -> None:
-        """Plan the buffer, execute what survived, and spend the survivors' claims."""
+        """Plan the buffer, execute what survived, and complete each execution
+        unit as it succeeds."""
         request = PlanningRequest(
             actor_identity=self._actor_identity,
             transaction_instant=self._transaction_instant,
             concurrency=self.settings.concurrency,
             buffered_writes=tuple(self._buffer),
+            ownership=self._targets,
         )
         finalized = self._planner.finalize(request)
         self._buffer.clear()
         self._claims.clear()
-        self._pending_inserts.clear()
-        self.flush_executor(finalized.plan, trigger=trigger)
-        for claim in finalized.claims:
+        self._targets.end_flush()
+        units = finalized.plan.units
+        self._reporting = units
+        self._reported = 0
+        try:
+            self.flush_executor(finalized.plan, trigger=trigger, completed=self._report)
+            for unit in units[self._reported :]:
+                self._complete(unit)
+        except BaseException as failure:
+            self.mark_rollback_only(failure)
+            raise
+        finally:
+            self._reporting = ()
+
+    def _report(self, unit: ExecutionUnit) -> None:
+        """Complete ``unit`` as the executor reports it, in the plan's order."""
+        reported = self._reported
+        units = self._reporting
+        if reported >= len(units) or unit is not units[reported]:
+            raise UnitOfWorkError(
+                "an execution unit was reported out of order, or was not one of the plan's"
+            )
+        self._reported = reported + 1
+        self._complete(unit)
+
+    def _complete(self, unit: ExecutionUnit) -> None:
+        """Publish one successful execution unit's effects.
+
+        Evidence the unit's writes settled against is spent; live evidence of
+        every state it changed is invalidated and the change recorded, so a read
+        that ran before it cannot later build eligible evidence of that state;
+        then the owned rows it removed are retired before the rows it opened are
+        registered.
+        """
+        stamp = self._freshness + 1
+        claim = unit.claim
+        changed_any = claim is not None
+        if claim is not None:
             claim.consume()
+            self._invalidate(claim.key, stamp)
+        for key in unit.changed:
+            changed_any = True
+            self._invalidate(key, stamp)
+        if changed_any:
+            self._freshness = stamp
+        targets = self._targets
+        for endpoint in unit.removed:
+            targets.retire(endpoint)
+        for endpoint in unit.opened:
+            targets.register(endpoint)
+
+    def _invalidate(self, key: ObservedStateKey, stamp: int) -> None:
+        held = self._observations.get(key)
+        if held is not None:
+            held.invalidate()
+        self._changed[key] = stamp
 
     def mark_rollback_only(self, cause: BaseException) -> None:
         """Doom the transaction: commit will be refused. The first cause is kept."""
@@ -624,6 +849,10 @@ class UnitOfWork:
             raise EscapedTransactionError(
                 "the unit of work has ended; a reference escaped its scope"
             )
+        if self._rollback_only:
+            raise RollbackOnlyError(
+                "the transaction is rollback-only; it accepts no further work"
+            ) from self._rollback_cause
 
     def _discard(self) -> None:
         # Abort: drop buffered + force-flushed in-memory state. The DB rollback the
@@ -632,8 +861,9 @@ class UnitOfWork:
         # survives, so evidence a later scope is handed is still about stored state.
         self._buffer.clear()
         self._claims.clear()
-        self._pending_inserts.clear()
+        self._targets.clear()
         self._observations.clear()
+        self._changed.clear()
 
     def run_outermost[T](self, body: Callable[[UnitOfWork], T]) -> T:
         """Run ``body`` as the outermost frame: commit (flush) on success, else abort.

@@ -53,6 +53,8 @@ from parallax.core.unit_work.planned import (
     PlannedAssignments,
     PlannedDelete,
     PlannedRow,
+    PlannedTemporalRemoval,
+    PlannedTemporalRevision,
     PlannedUpdate,
     Shortfall,
     TemporalConcurrency,
@@ -148,6 +150,30 @@ def _close(shortfall: Shortfall = STALE_WRITE) -> PlannedClose:
     )
 
 
+def _revision(shortfall: Shortfall = STALE_WRITE) -> PlannedTemporalRevision:
+    return PlannedTemporalRevision(
+        entity=_ACCOUNT,
+        target=_CURRENT_SLOT,
+        assignments=_RENAME,
+        concurrency=_CLOSE_CONCURRENCY[shortfall],
+        affected_rows=ExactCount(expected=1, on_shortfall=shortfall),
+    )
+
+
+def _removal(shortfall: Shortfall = STALE_WRITE) -> PlannedTemporalRemoval:
+    return PlannedTemporalRemoval(
+        entity=_ACCOUNT,
+        target=_CURRENT_SLOT,
+        concurrency=_CLOSE_CONCURRENCY[shortfall],
+        affected_rows=ExactCount(expected=1, on_shortfall=shortfall),
+    )
+
+
+_MILESTONE_STEPS = pytest.mark.parametrize(
+    "build", [_close, _revision, _removal], ids=["close", "revision", "removal"]
+)
+
+
 def _insert() -> PlannedInsert:
     return PlannedInsert(
         entity=_ACCOUNT,
@@ -164,10 +190,13 @@ def test_a_keyed_shortfall_raises_the_error_its_own_tag_names(
         enforce_affected_rows(build(shortfall), 0)
 
 
+@_MILESTONE_STEPS
 @pytest.mark.parametrize("shortfall", list(_CLOSE_CONCURRENCY), ids=lambda tag: type(tag).__name__)
-def test_a_milestone_shortfall_raises_the_error_its_own_tag_names(shortfall: Shortfall) -> None:
+def test_a_milestone_shortfall_raises_the_error_its_own_tag_names(
+    build: Callable[[Shortfall], PlannedStep], shortfall: Shortfall
+) -> None:
     with pytest.raises(_SHORTFALL_ERRORS[shortfall]):
-        enforce_affected_rows(_close(shortfall), 0)
+        enforce_affected_rows(build(shortfall), 0)
 
 
 def test_a_multi_key_target_is_enforced_against_its_aggregate_count() -> None:
@@ -189,10 +218,13 @@ def test_an_excess_over_a_multi_key_count_is_cardinality_corruption() -> None:
         enforce_affected_rows(_delete(target=_THREE_KEYS), 4)
 
 
+@_MILESTONE_STEPS
 @pytest.mark.parametrize("shortfall", list(_CLOSE_CONCURRENCY), ids=lambda tag: type(tag).__name__)
-def test_an_excess_over_a_milestone_count_is_cardinality_corruption(shortfall: Shortfall) -> None:
+def test_an_excess_over_a_milestone_count_is_cardinality_corruption(
+    build: Callable[[Shortfall], PlannedStep], shortfall: Shortfall
+) -> None:
     with pytest.raises(CardinalityCorruptionError):
-        enforce_affected_rows(_close(shortfall), 2)
+        enforce_affected_rows(build(shortfall), 2)
 
 
 @pytest.mark.parametrize("actual", [0, 1, 3])

@@ -104,6 +104,15 @@ erases that write — the flush never escapes the transaction it belongs to. An
 implementation **MUST NOT** satisfy read-your-own-writes with a flush that survives
 the abort.
 
+A failure while a flush **executes** its Write Plan — a database error, an
+affected-row shortfall, or a failure applying a completed unit (*Execution
+units*, below) — **dooms** the attempt before it propagates, whichever operation
+triggered the flush. A doomed attempt accepts no further reads, writes, or
+flushes, refuses commit, withholds the callback's return value, and rolls back,
+even when the callback caught the failure and returned normally; the first
+cause is retained. A refusal raised while a write is prepared, admitted, or
+planned precedes execution and does not doom the attempt.
+
 The suite proves this with a **rollback scenario**: a find, a write step whose
 golden DML is applied and then **rolled back**, and the *same* find re-issued —
 which **MUST** re-resolve and observe the **original** rows, never the aborted
@@ -370,12 +379,18 @@ finalize(
         transaction_instant:  TransactionInstant,
         concurrency_preference: ConcurrencyPreference,
         buffered_writes:      BufferedWrites,
+        ownership:            AttemptOwnership,
     )
 ) -> WritePlanningResult(
         plan:   WritePlan,
         claims: RetainedObservations,
      )
 ```
+
+**Attempt Ownership** is a read-only view of the current temporal rows the
+attempt's own successful execution units opened (*Rows the attempt opened*,
+below). Planning reads it to decide what a temporal mutation does to its
+predecessor; it never changes it.
 
 A **Write Planning Result** carries the execution-ordered Write Plan together
 with the deduplicated retained claims its **surviving** writes settled against,
@@ -469,9 +484,12 @@ fact about a settled write is decided twice.
 ### Write Plan and Planned Steps
 
 ```text
-WritePlan(steps: PlannedSteps)
+WritePlan(steps: PlannedSteps, units: ExecutionUnits)
 
 PlannedSteps: an immutable ordered logical sequence of Planned Writes
+ExecutionUnits: an ordered partition of those steps, each unit with the
+    claims it spends, the Observed States it changes, and the attempt-owned
+    rows it removes and opens
 ```
 
 A **Write Plan** is the immutable, **execution-ordered** result of one planning
@@ -503,6 +521,10 @@ semantics already decided.
   runs and expose stable immutable views during iteration rather than allocating
   one container per step; every exposed view is immutable and stable, and equal
   views need not have object identity.
+- Each settled write — one keyed write with its expanded temporal topology, one
+  batch, one readless predicate write, or one Materialized Write Group — is one
+  **execution unit**. A unit's completion facts are produced values like its
+  steps, and a group's MAY be read on demand from the group's compact evidence.
 - A packed run of a Materialized Write Group's rows MAY be held **compactly** —
   the group's own aligned evidence beside the facts settlement decided for the
   whole group — and its step access reads those two and nothing else. It
@@ -511,6 +533,27 @@ semantics already decided.
   re-derive the applicable member set: every one of those was answered while the
   plan was being made. Reading one settled row's cells through an index a facet
   compiled when the model was accepted is not a re-derivation.
+
+### Execution units complete before later work runs
+
+The executor runs a Write Plan's steps in order and reports each execution unit
+as soon as every step of that unit has executed and its effect has been
+enforced, before any step of a later unit runs. The unit of work then completes
+the unit synchronously:
+
+```text
+spend the evidence the unit's surviving writes settled against
+invalidate evidence of every Observed State the unit changed
+retire the attempt-owned rows the unit removed
+register the rows the unit opened
+```
+
+Removals are retired before openings are registered, so a row removed and
+reopened at one physical address remains owned. Nothing is published for a
+unit whose steps did not all succeed; such a failure dooms the attempt
+(*Abort*). Completion therefore happens per unit, not at the end of the flush:
+a later unit, and any read the flush serves, observes the earlier units'
+published effects.
 
 ## The Planned Write algebra
 
@@ -524,6 +567,8 @@ PlannedWrite =
   | PlannedUpdate(entity, target, assignments, concurrency, affected_rows)
   | PlannedClose(entity, target, assignments, cause, concurrency, affected_rows)
   | PlannedDelete(entity, target, concurrency, affected_rows)
+  | PlannedTemporalRevision(entity, target, assignments, concurrency, affected_rows)
+  | PlannedTemporalRemoval(entity, target, concurrency, affected_rows)
 ```
 
 The algebra is **semantic and Attribute-keyed**. It contains no SQL, dialect
@@ -537,13 +582,21 @@ object, driver value, physical column name, property name, or SQL ordering.
 - **Planned Update** revises existing Non-Temporal rows in place. Its
   assignments are uniform across every row its target selects; differing per-key
   assignments remain distinct steps. A Milestone Target is prohibited — a
-  temporal change expands into Planned Close plus Planned Insert successors and
-  never survives as a Planned Update.
+  temporal change is a temporal step, never a Planned Update.
 - **Planned Close** closes one current temporal milestone. Its assignments carry
   the Transaction-Time end. Its expected effect is always exactly one row.
 - **Planned Delete** is physical row deletion. It carries no row, assignments,
   predecessor, Insert Origin, or Close Cause, and a Milestone Target is
-  prohibited: represented-state absence is a Planned Close, not a delete.
+  prohibited: represented-state absence is a temporal step, not a delete.
+- **Planned Temporal Revision** revises one current milestone the attempt itself
+  opened, in place at its complete physical address. Its assignments carry
+  writable payload and, on a Bitemporal row, a moved Valid-Time start; they never
+  carry the logical key, an axis end, or the Transaction-Time start. Its expected
+  effect is exactly one row.
+- **Planned Temporal Removal** physically removes one current milestone the
+  attempt itself opened. Its expected effect is exactly one row. It removes
+  uncommitted state of the attempt's own: a milestone that existed before the
+  attempt is never revised or removed, only closed (*Rows the attempt opened*).
 
 ### Insert Origin and Close Cause
 
@@ -657,10 +710,11 @@ TemporalUpperBound = Finite(Instant) | Infinity
   observation, pin, concurrency data, or barrier flag. Its presence already
   implies `Unversioned`, `AnyCount`, and barrier behavior; mutation lowering never
   fabricates an Object Query around it.
-- A **Milestone Target** addresses the current milestone slot: one complete key
-  tuple plus one write-required **exclusive upper bound per As-Of Axis** — the
-  observed predecessor's Valid-Time end where that axis exists, and invariant
-  `Infinity` for Transaction Time. It contains no axis start, gate, observation,
+- A **Milestone Target** addresses the current milestone slot a close,
+  revision, or removal acts on: one complete key tuple plus one write-required
+  **exclusive upper bound per As-Of Axis** — the observed predecessor's
+  Valid-Time end where that axis exists, and invariant `Infinity` for
+  Transaction Time. That tuple is the row's complete **physical address**. It contains no axis start, gate, observation,
   or Effective Concurrency Strategy, and it is **identical under both strategies**
   (ADR 0046). Only the gate differs.
 
@@ -745,11 +799,21 @@ Three rules follow, and an implementation **MUST** exhibit all three:
   upgrades or overwrites the evidence an older live value carries. Two reads that
   resolve to **one** observed state within a transaction share **one** retained
   observation, exactly as two graph positions reaching one node do.
-- **A successful flush consumes.** Every observation a surviving write used is
-  spent when that write's flush succeeds, and a value still tied to a spent
-  observation cannot drive another write — the caller must read again. Work
-  eliminated before any DML consumes nothing, and a failed flush aborts the
-  transaction, so nothing needs restoring.
+- **A successful execution unit consumes.** Every observation a surviving write
+  used is spent when that write's execution unit completes, and a value still
+  tied to a spent observation cannot drive another write — the caller must read
+  again. Work eliminated before any DML consumes nothing, and a failed flush
+  dooms the attempt, so nothing needs restoring.
+- **An own change invalidates.** When an execution unit successfully revises,
+  closes, or removes an observed state, every observation of that state the
+  attempt's reads produced becomes ineligible for further writes, even one no
+  write used and even when the changed row keeps its address and revision
+  token. The rule is judged against the state the rows had **when the read
+  acquired them**: evidence built later from an earlier read's rows is
+  ineligible too. A read after the change observes fresh, eligible evidence.
+  Invalidation is per Observed State — an unaffected rectangle of the same
+  object stays eligible — and is distinct from consumption. It moves one way and
+  survives the attempt, exactly as consumption does.
 
 Absence is **structural**:
 
@@ -1163,6 +1227,39 @@ The observable contract:
 The Transaction Instant is planning and flush context. It **MUST NOT** become a
 durable Write Instruction field, and it **MUST NOT** survive in a Write Plan:
 every step that needed it already carries the resulting concrete value.
+
+### Rows the attempt opened
+
+Because every flush of one attempt stamps one instant, a later write in the same
+attempt can address a current temporal row an earlier flush of that attempt
+opened. Such a row has no history to preserve, and closing it would leave an
+empty `[T, T)` interval whose physical address collides with the row the
+earlier flush closed. The attempt therefore records, by complete physical
+address, every current row its successful execution units open — keyed inserts,
+temporal successors, and the successors of Materialized Write Groups alike —
+and retires a row from that record when a unit removes it. Reads record nothing.
+The record survives flushes and joined scopes, ends at commit or rollback, and
+starts empty on retry.
+
+For each temporal mutation's predecessor, the planner derives the mutation's
+**nonempty** successors once and then:
+
+```text
+predecessor existed before the attempt -> close it once; open the successors
+predecessor the attempt opened:
+  exactly one successor keeps its complete physical address
+      -> revise the row in place into that successor; open the others
+  otherwise
+      -> remove the row; open every successor
+```
+
+Ownership is the attempt's record alone. A Transaction-Time start equal to the
+attempt's instant **MUST NOT** be read as ownership — clocks may repeat an
+instant across attempts — and no axis end is moved to make a successor match,
+nor is a successor matched against any predecessor but its own. A milestone
+that existed before the attempt is never revised in place or removed, so its
+history stays immutable. The attempt's single Transaction Instant is preserved:
+a revised or reopened row keeps `T` as its Transaction-Time start.
 
 ## Actor Identity
 

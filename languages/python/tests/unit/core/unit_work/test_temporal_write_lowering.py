@@ -61,6 +61,7 @@ from parallax.core.unit_work import (
     WritePlanningError,
     run_unit_of_work,
 )
+from parallax.core.unit_work.plan import OwnedEndpoint
 from parallax.core.unit_work.planned import (
     INFINITY,
     OPTIMISTIC_CONFLICT,
@@ -71,6 +72,8 @@ from parallax.core.unit_work.planned import (
     ExactCount,
     Finite,
     NewLineage,
+    PlannedTemporalRemoval,
+    PlannedTemporalRevision,
     TemporalGate,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
@@ -101,7 +104,7 @@ from tests.unit._transact_support import (
 )
 
 
-def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
+def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger, completed: object) -> None:
     """A flush sink for a test that never flushes."""
     return None
 
@@ -1587,3 +1590,266 @@ def test_a_facet_refuses_a_verb_it_owns_no_topology_for(
     # either facet itself carries.
     with pytest.raises(txtime_write.TemporalPlanningError, match=facet):
         strategy.topology("delete")
+
+
+# --------------------------------------------------------------------------- #
+# Rows the attempt opened: revised or removed at their address, never closed.   #
+# --------------------------------------------------------------------------- #
+@dataclasses.dataclass(frozen=True)
+class _Owns:
+    """An attempt that opened exactly ``endpoints``."""
+
+    endpoints: frozenset[OwnedEndpoint]
+
+    def owns(self, endpoint: OwnedEndpoint, /) -> bool:
+        return endpoint in self.endpoints
+
+    def owns_any(self, entity: EntityIdentity, /) -> bool:
+        return any(endpoint.entity == entity for endpoint in self.endpoints)
+
+
+_T = "2024-07-01T00:00:00+00:00"
+_BALANCE_ID = EntityIdentity("parallax.compatibility", "Balance")
+_POSITION_ID = EntityIdentity("parallax.compatibility", "Position")
+
+
+def _owning(entity: EntityIdentity, *ends: object) -> _Owns:
+    return _Owns(
+        frozenset(
+            {
+                OwnedEndpoint(
+                    entity,
+                    (1,),
+                    tuple(INFINITY if end is None else Finite(instant=end) for end in ends),
+                )
+            }
+        )
+    )
+
+
+def _own_balance() -> _Owns:
+    return _owning(_BALANCE_ID, None)
+
+
+def _own_position(valid_end: dt.datetime | None = None) -> _Owns:
+    return _owning(_POSITION_ID, valid_end, None)
+
+
+def _owned_lowering(
+    instruction: KeyedWrite,
+    meta: Metamodel,
+    observation: WriteObservation,
+    ownership: _Owns,
+    *,
+    concurrency: Concurrency = "locking",
+) -> list[tuple[PlannedStep, tuple[str, tuple[object, ...]]]]:
+    return [
+        (step, (statement.sql, statement.binds))
+        for step, statement in lower_instruction_steps(
+            instruction,
+            formed(meta),
+            POSTGRES,
+            concurrency,
+            instant_at(_T),
+            observation=observation,
+            ownership=ownership,
+        )
+    ]
+
+
+def test_an_owned_transaction_time_row_is_revised_in_place_at_its_address() -> None:
+    update = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("175.00")},))
+    observation = _observed(tx_start=_T, payload={"id": 1, "acctNum": "A", "value": 150})
+    lowered = _owned_lowering(update, BALANCE, observation, _own_balance())
+    assert [type(step) for step, _ in lowered] == [PlannedTemporalRevision]
+    assert [statement for _, statement in lowered] == [
+        ("update balance set val = ? where bal_id = ? and out_z = ?", (175.00, 1, "infinity"))
+    ]
+
+
+def test_an_owned_revision_gates_on_its_observed_start_under_optimistic() -> None:
+    update = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("175.00")},))
+    observation = _observed(tx_start=_T, payload={"id": 1, "acctNum": "A", "value": 150})
+    lowered = _owned_lowering(
+        update, BALANCE, observation, _own_balance(), concurrency="optimistic"
+    )
+    (step, statement) = lowered[0]
+    assert isinstance(step, PlannedTemporalRevision)
+    assert step.affected_rows == ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT)
+    assert statement == (
+        "update balance set val = ? where bal_id = ? and out_z = ? and in_z = ?",
+        (175.00, 1, "infinity", _instant(_T)),
+    )
+
+
+def test_terminating_an_owned_transaction_time_row_removes_it() -> None:
+    terminate = KeyedWrite("terminate", "Balance", ({"id": 1},))
+    lowered = _owned_lowering(terminate, BALANCE, _observed(tx_start=_T), _own_balance())
+    assert [type(step) for step, _ in lowered] == [PlannedTemporalRemoval]
+    assert [statement for _, statement in lowered] == [
+        ("delete from balance where bal_id = ? and out_z = ?", (1, "infinity"))
+    ]
+
+
+def test_a_row_whose_start_equals_the_instant_is_closed_unless_the_attempt_opened_it() -> None:
+    # A row an earlier attempt committed at the same instant — a repeating clock —
+    # carries `in_z = T` too; only the attempt's own record makes a row owned.
+    update = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("175.00")},))
+    observation = _observed(tx_start=_T, payload={"id": 1, "acctNum": "A", "value": 150})
+    assert [type(step) for step in _finalize(update, BALANCE, _T, observation=observation)] == [
+        PlannedClose,
+        PlannedInsert,
+    ]
+
+
+def _owned_position(valid_start: str, valid_end: str = "infinity") -> TemporalObservation:
+    return _observed(tx_start=_T, valid_start=valid_start, valid_end=valid_end, payload=_R1_PAYLOAD)
+
+
+def _position_row(value: float, start: str, end: str | None) -> tuple[object, ...]:
+    return (
+        1,
+        "A",
+        value,
+        _instant(start),
+        OPEN_BOUND if end is None else _instant(end),
+        _instant(_T),
+        "infinity",
+    )
+
+
+_POSITION_INSERT = (
+    "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
+    "values (?, ?, ?, ?, ?, ?, ?)"
+)
+_JAN = "2024-01-01T00:00:00+00:00"
+_MAR = "2024-03-01T00:00:00+00:00"
+_JUN = "2024-06-01T00:00:00+00:00"
+_DEC = "2024-12-01T00:00:00+00:00"
+
+
+def test_an_owned_suffix_update_revises_the_retained_end_and_inserts_the_head() -> None:
+    update = KeyedWrite(
+        "update", "Position", ({"id": 1, "value": Decimal("200.00")},), valid_from=_instant(_MAR)
+    )
+    lowered = _owned_lowering(update, POSITION, _owned_position(_JAN), _own_position())
+    assert [type(step) for step, _ in lowered] == [PlannedTemporalRevision, PlannedInsert]
+    assert [statement for _, statement in lowered] == [
+        (
+            "update position set val = ?, from_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
+            (200.00, _instant(_MAR), 1, "infinity", "infinity"),
+        ),
+        (_POSITION_INSERT, _position_row(100.00, _JAN, _MAR)),
+    ]
+
+
+def test_an_owned_whole_rectangle_value_change_is_one_revision() -> None:
+    # The head would cover no Valid Time, so it is not opened at all.
+    update = KeyedWrite(
+        "update", "Position", ({"id": 1, "value": Decimal("200.00")},), valid_from=_instant(_JAN)
+    )
+    lowered = _owned_lowering(update, POSITION, _owned_position(_JAN), _own_position())
+    assert [statement for _, statement in lowered] == [
+        (
+            "update position set val = ? where pos_id = ? and thru_z = ? and out_z = ?",
+            (200.00, 1, "infinity", "infinity"),
+        )
+    ]
+
+
+def test_an_owned_interior_correction_moves_the_tail_start_and_inserts_head_and_middle() -> None:
+    update_until = KeyedWrite(
+        "updateUntil",
+        "Position",
+        ({"id": 1, "value": Decimal("200.00")},),
+        valid_from=_instant(_MAR),
+        until=_instant(_JUN),
+    )
+    lowered = _owned_lowering(
+        update_until, POSITION, _owned_position(_JAN, _DEC), _own_position(_instant(_DEC))
+    )
+    assert [type(step) for step, _ in lowered] == [
+        PlannedTemporalRevision,
+        PlannedInsert,
+        PlannedInsert,
+    ]
+    assert [statement for _, statement in lowered] == [
+        (
+            "update position set from_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
+            (_instant(_JUN), 1, _instant(_DEC), "infinity"),
+        ),
+        (_POSITION_INSERT, _position_row(100.00, _JAN, _MAR)),
+        (_POSITION_INSERT, _position_row(200.00, _MAR, _JUN)),
+    ]
+
+
+def test_an_owned_bounded_termination_keeps_the_tail_and_inserts_the_head() -> None:
+    terminate_until = KeyedWrite(
+        "terminateUntil",
+        "Position",
+        ({"id": 1},),
+        valid_from=_instant(_MAR),
+        until=_instant(_JUN),
+    )
+    lowered = _owned_lowering(terminate_until, POSITION, _owned_position(_JAN), _own_position())
+    assert [statement for _, statement in lowered] == [
+        (
+            "update position set from_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
+            (_instant(_JUN), 1, "infinity", "infinity"),
+        ),
+        (_POSITION_INSERT, _position_row(100.00, _JAN, _MAR)),
+    ]
+
+
+def test_an_owned_unbounded_termination_removes_the_row_and_inserts_its_head() -> None:
+    # No successor keeps the row's own Valid-Time end, so nothing is moved to
+    # make one: the row is removed and its head opened at its own address.
+    terminate = KeyedWrite("terminate", "Position", ({"id": 1},), valid_from=_instant(_MAR))
+    lowered = _owned_lowering(terminate, POSITION, _owned_position(_JAN), _own_position())
+    assert [type(step) for step, _ in lowered] == [PlannedTemporalRemoval, PlannedInsert]
+    assert [statement for _, statement in lowered] == [
+        (
+            "delete from position where pos_id = ? and thru_z = ? and out_z = ?",
+            (1, "infinity", "infinity"),
+        ),
+        (_POSITION_INSERT, _position_row(100.00, _JAN, _MAR)),
+    ]
+
+
+def test_terminating_a_whole_owned_rectangle_removes_it_and_opens_nothing() -> None:
+    terminate = KeyedWrite("terminate", "Position", ({"id": 1},), valid_from=_instant(_JAN))
+    lowered = _owned_lowering(terminate, POSITION, _owned_position(_JAN), _own_position())
+    assert [statement for _, statement in lowered] == [
+        (
+            "delete from position where pos_id = ? and thru_z = ? and out_z = ?",
+            (1, "infinity", "infinity"),
+        )
+    ]
+
+
+def test_terminating_an_owned_rectangle_at_its_own_end_changes_nothing() -> None:
+    # The terminated window starts where the rectangle already ends, so its one
+    # successor is the whole rectangle at its own address with nothing moved:
+    # there is nothing to revise, remove, or open.
+    terminate = KeyedWrite("terminate", "Position", ({"id": 1},), valid_from=_instant(_DEC))
+    lowered = _owned_lowering(
+        terminate, POSITION, _owned_position(_JAN, _DEC), _own_position(_instant(_DEC))
+    )
+    assert lowered == []
+
+
+def test_a_pre_attempt_rectangle_is_closed_and_opens_only_nonempty_successors() -> None:
+    update = KeyedWrite(
+        "update", "Position", ({"id": 1, "value": Decimal("200.00")},), valid_from=_instant(_JAN)
+    )
+    observation = _observed(
+        tx_start=_JAN, valid_start=_JAN, valid_end="infinity", payload=_R1_PAYLOAD
+    )
+    statements = _lower(update, POSITION, _T, observation=observation)
+    assert statements == [
+        (
+            "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
+            (_instant(_T), 1, "infinity", "infinity"),
+        ),
+        (_POSITION_INSERT, _position_row(200.00, _JAN, None)),
+    ]

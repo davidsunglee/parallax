@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import bisect
 import datetime as dt
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Final, cast
 
@@ -26,7 +27,12 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     entity_by_name,
 )
-from parallax.core.temporal_read import Bitemporal, TemporalFacet, TransactionTimeOnly
+from parallax.core.temporal_read import (
+    NON_TEMPORAL,
+    Bitemporal,
+    TemporalFacet,
+    TransactionTimeOnly,
+)
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.columns import ColumnSlice
 from parallax.core.unit_work.instructions import (
@@ -37,6 +43,7 @@ from parallax.core.unit_work.instructions import (
     PreparedWrite,
 )
 from parallax.core.unit_work.materialized import (
+    GroupStates,
     MaterializedWriteGroup,
     ObservedKeyedWrite,
     PredecessorRows,
@@ -47,7 +54,18 @@ from parallax.core.unit_work.observe import (
     TemporalObservation,
     WriteObservation,
 )
-from parallax.core.unit_work.plan import PlannedSteps, StepSegment, WritePlan, eager_segment
+from parallax.core.unit_work.plan import (
+    NO_OWNERSHIP,
+    OPEN_BITEMPORAL_ENDS,
+    TRANSACTION_TIME_ENDS,
+    ExecutionUnit,
+    OwnedEndpoint,
+    Ownership,
+    PlannedSteps,
+    StepSegment,
+    WritePlan,
+    eager_segment,
+)
 from parallax.core.unit_work.planned import (
     ANY_COUNT,
     INFINITY,
@@ -62,6 +80,7 @@ from parallax.core.unit_work.planned import (
     Finite,
     InsertEntry,
     KeyTarget,
+    MaxPlusOne,
     MilestoneTarget,
     NonTemporalConcurrency,
     PlannedAssignments,
@@ -69,6 +88,8 @@ from parallax.core.unit_work.planned import (
     PlannedDelete,
     PlannedInsert,
     PlannedRow,
+    PlannedTemporalRemoval,
+    PlannedTemporalRevision,
     PlannedUpdate,
     PlannedValue,
     SelfIncrement,
@@ -84,6 +105,7 @@ from parallax.core.unit_work.planned import (
     shortfall_for,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
+from parallax.core.unit_work.planner import ObservedStateKey
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
     ActorIdentity,
@@ -100,6 +122,7 @@ from parallax.core.unit_work.temporal import (
     ResolvedSuccessor,
     bind_successor,
     resolve_successors,
+    successor_bounds,
 )
 from parallax.core.unit_work.write_validate import WriteRejectedError
 
@@ -187,6 +210,16 @@ class _SettledClose:
     key_attributes: tuple[AttributeIdentity, ...]
     gate_start_attribute: AttributeIdentity
     gated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _Settled:
+    """One settled mutation's steps and the owned rows its success removes and
+    opens."""
+
+    steps: tuple[PlannedStep, ...]
+    opened: tuple[OwnedEndpoint, ...] = ()
+    removed: tuple[OwnedEndpoint, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,6 +370,7 @@ class WriteSettlement:
         concurrency: Concurrency,
         actor_identity: ActorIdentity,
         transaction_instant: TransactionInstant,
+        ownership: Ownership = NO_OWNERSHIP,
     ) -> WritePlanningResult:
         """The whole ordered sequence as one Write Planning Result.
 
@@ -367,10 +401,18 @@ class WriteSettlement:
         ``actor_identity`` is passed to the audit port and never inspected
         here; ``transaction_instant`` is threaded unevaluated until a surviving
         temporal write needs it.
+
+        Each ordered item settles into one execution unit, which records what
+        its success changes: the claim it spends, the observed state it
+        revises, and the rows it removes and opens. ``ownership`` answers which
+        current rows this attempt already opened, so a write against one of
+        them revises or removes that row instead of closing it into history.
         """
         segments: list[StepSegment] = []
         pending: list[PlannedStep] = []
         claims: dict[RetainedObservation, None] = {}
+        units: list[ExecutionUnit] = []
+        count = 0
 
         def flush_pending() -> None:
             if pending:
@@ -380,20 +422,25 @@ class WriteSettlement:
         for item in ordered_writes:
             if isinstance(item, MaterializedWriteGroup):
                 flush_pending()
-                segments.append(self._settle_group(item, concurrency, transaction_instant))
+                segment = self._settle_group(item, concurrency, transaction_instant, ownership)
+                segments.append(segment)
+                count += len(segment)
+                units.append(segment.unit(count))
                 continue
-            instruction, observation, effective = (
+            instruction, observation, claim, effective = (
                 (
                     item.instruction,
                     item.observation,
+                    item.claim,
                     None if item.change is None else item.change.effective,
                 )
                 if isinstance(item, ObservedKeyedWrite)
-                else (item, None, None)
+                else (item, None, None, None)
             )
-            for step in self._settle(
-                instruction, observation, effective, concurrency, transaction_instant
-            ):
+            settled = self._settle(
+                instruction, observation, effective, concurrency, transaction_instant, ownership
+            )
+            for step in settled.steps:
                 pending.append(
                     self._audit.decorate(
                         step,
@@ -401,10 +448,18 @@ class WriteSettlement:
                         transaction_instant=transaction_instant,
                     )
                 )
-            if isinstance(item, ObservedKeyedWrite) and item.claim is not None:
-                claims.setdefault(item.claim, None)
+            count += len(settled.steps)
+            if claim is not None:
+                claims.setdefault(claim, None)
+            units.append(
+                ExecutionUnit(
+                    end=count, claim=claim, removed=settled.removed, opened=settled.opened
+                )
+            )
         flush_pending()
-        return WritePlanningResult(WritePlan(steps=PlannedSteps(tuple(segments))), tuple(claims))
+        return WritePlanningResult(
+            WritePlan(steps=PlannedSteps(tuple(segments)), units=tuple(units)), tuple(claims)
+        )
 
     # Stages 5, 6, 7: validate the observation the item arrived carrying, #
 
@@ -415,9 +470,10 @@ class WriteSettlement:
         effective: frozenset[str] | None,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
-    ) -> tuple[PlannedStep, ...]:
+        ownership: Ownership,
+    ) -> _Settled:
         if isinstance(instruction, PreparedPredicateWrite):
-            return self._settle_predicate(instruction)
+            return _Settled(self._settle_predicate(instruction))
         entity = instruction.target
         shape = self._temporal_facet.shape(entity.identity)
         if isinstance(shape, TransactionTimeOnly | Bitemporal):
@@ -429,35 +485,38 @@ class WriteSettlement:
                 effective,
                 concurrency,
                 tx_instant,
+                ownership,
             )
         facts = self._non_temporal_facts(entity)
         if instruction.mutation == "insert":
-            return (self._settle_insert(facts, instruction),)
+            return _Settled((self._settle_insert(facts, instruction),))
         addressed = self._addressed_facts(facts, concurrency)
         observed_version = self._observed_version(
             entity, instruction, facts.version_attribute, observation
         )
-        return (
-            _non_temporal_step(
-                facts,
-                addressed,
-                emission=(
-                    _DELETION
-                    if instruction.mutation == "delete"
-                    else _Revision(
-                        _addressed_assignments(facts, addressed, instruction.rows[0]),
-                        self._version_overlay(facts.version_attribute),
-                    )
+        return _Settled(
+            (
+                _non_temporal_step(
+                    facts,
+                    addressed,
+                    emission=(
+                        _DELETION
+                        if instruction.mutation == "delete"
+                        else _Revision(
+                            _addressed_assignments(facts, addressed, instruction.rows[0]),
+                            self._version_overlay(facts.version_attribute),
+                        )
+                    ),
+                    key_rows=instruction.rows,
+                    observed_version=observed_version,
+                    # One addressed instruction is ONE step however many keys it
+                    # addresses, so its expectation is the whole batch's (ADR 0044)
+                    # rather than a per-row one.
+                    affected_rows=ExactCount(
+                        expected=len(instruction.rows), on_shortfall=addressed.shortfall
+                    ),
                 ),
-                key_rows=instruction.rows,
-                observed_version=observed_version,
-                # One addressed instruction is ONE step however many keys it
-                # addresses, so its expectation is the whole batch's (ADR 0044)
-                # rather than a per-row one.
-                affected_rows=ExactCount(
-                    expected=len(instruction.rows), on_shortfall=addressed.shortfall
-                ),
-            ),
+            )
         )
 
     def _settle_predicate(self, instruction: PreparedPredicateWrite) -> tuple[PlannedStep, ...]:
@@ -591,8 +650,10 @@ class WriteSettlement:
         effective: frozenset[str] | None,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
-    ) -> tuple[PlannedStep, ...]:
-        """One temporal mutation as its close and its successors, in that order.
+        ownership: Ownership,
+    ) -> _Settled:
+        """One temporal mutation as the effects on its predecessor and its
+        successors, in that order.
 
         Preparation admits a temporal keyed instruction with exactly one row
         (`m-unit-work`), since each row of a milestone chain opens its own
@@ -601,6 +662,12 @@ class WriteSettlement:
         A changed successor overlays only the members ``effective`` names, which
         its producer classified against the values its source observed; an
         observed update always carries that classification, so none is made here.
+
+        A predecessor that existed before this attempt is closed and every
+        nonempty successor opened. One this attempt opened itself is never
+        closed into history: it is revised in place when exactly one successor
+        keeps its complete physical address, and removed otherwise
+        (:func:`_dispose`).
         """
         observed = observation if isinstance(observation, TemporalObservation) else None
         facts = self._temporal_facts(
@@ -635,26 +702,7 @@ class WriteSettlement:
             )
             else _effective_positions(facts, row, effective)
         )
-        steps: list[PlannedStep] = []
-        close = facts.close
-        if close is not None:
-            assert predecessor is not None  # a closing topology refuses an unobserved mutation
-            steps.append(
-                _close_step(
-                    facts,
-                    close,
-                    key_values=_key_tuple(entity, close.key_attributes, row),
-                    observed_valid_end=(
-                        predecessor.cell(facts.shape.valid_time.end_attribute)
-                        if isinstance(facts.shape, Bitemporal)
-                        else None
-                    ),
-                    observed_gate_start=(
-                        predecessor.cell(close.gate_start_attribute) if close.gated else None
-                    ),
-                )
-            )
-        steps.extend(
+        successors = tuple(
             _successor_step(
                 facts,
                 resolved,
@@ -665,7 +713,24 @@ class WriteSettlement:
             )
             for resolved in facts.resolved_successors
         )
-        return tuple(steps)
+        close = facts.close
+        if close is None:
+            return _Settled(successors, opened=_openings(facts, successors))
+        assert predecessor is not None  # a closing topology refuses an unobserved mutation
+        closing = _close_step(
+            facts,
+            close,
+            key_values=_key_tuple(entity, close.key_attributes, row),
+            observed_valid_end=(
+                predecessor.cell(facts.shape.valid_time.end_attribute)
+                if isinstance(facts.shape, Bitemporal)
+                else None
+            ),
+            observed_gate_start=(
+                predecessor.cell(close.gate_start_attribute) if close.gated else None
+            ),
+        )
+        return _dispose(facts, closing, successors, predecessor, ownership)
 
     def _temporal_facts(
         self,
@@ -774,7 +839,8 @@ class WriteSettlement:
         group: MaterializedWriteGroup,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
-    ) -> StepSegment:
+        ownership: Ownership,
+    ) -> _GroupSegment:
         """One Materialized Write Group as one already-settled segment.
 
         Every group-wide semantic fact — the temporal topology, the gate and
@@ -789,7 +855,9 @@ class WriteSettlement:
         entity = group.mutation.selection.target
         shape = self._temporal_facet.shape(entity.identity)
         if isinstance(shape, TransactionTimeOnly | Bitemporal):
-            return self._settle_temporal_group(group, entity, shape, concurrency, tx_instant)
+            return self._settle_temporal_group(
+                group, entity, shape, concurrency, tx_instant, ownership
+            )
         return self._settle_versioned_group(group, entity, concurrency)
 
     def _settle_versioned_group(
@@ -797,7 +865,7 @@ class WriteSettlement:
         group: MaterializedWriteGroup,
         entity: EntityMetadata,
         concurrency: Concurrency,
-    ) -> StepSegment:
+    ) -> _MaterializedNonTemporalSegment:
         """A versioned (non-temporal) Materialized Write Group's segment.
 
         The group's facts are settled through the same
@@ -845,6 +913,9 @@ class WriteSettlement:
             # One resolved row is one independently gated step, so every row of
             # the group shares this one expectation rather than building its own.
             affected_rows=ExactCount(expected=1, on_shortfall=addressed.shortfall),
+            changed=GroupStates(
+                entity.identity, facts.view.primary_key.identity.name, evidence, NON_TEMPORAL
+            ),
         )
 
     def _settle_temporal_group(
@@ -854,7 +925,8 @@ class WriteSettlement:
         shape: TransactionTimeOnly | Bitemporal,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
-    ) -> StepSegment:
+        ownership: Ownership,
+    ) -> _MaterializedTemporalSegment:
         """A temporal Materialized Write Group's segment.
 
         The group's facts are settled through the same
@@ -873,6 +945,12 @@ class WriteSettlement:
         and the changed step overlays only the members it answers as effective
         for that row (`m-unit-work` "Comparing an assigned member"). A single
         assignment was already judged effective when the row was selected.
+
+        A selected row this attempt opened itself is revised or removed rather
+        than closed, and an empty successor is not opened, exactly as for a
+        keyed write's own predecessor (:func:`_dispose`). Only a group with such
+        a row lays its rows out one by one; every other group keeps one uniform
+        step count per row.
         """
         evidence = group.evidence
         assert isinstance(evidence, PredecessorRows)
@@ -897,7 +975,7 @@ class WriteSettlement:
             entity, assignments, "insert"
         )
         selection = evidence.selection
-        return _MaterializedTemporalSegment(
+        segment = _MaterializedTemporalSegment(
             facts=facts,
             close=close,
             evidence=evidence,
@@ -919,7 +997,11 @@ class WriteSettlement:
                 else None
             ),
             steps_per_row=1 + len(facts.resolved_successors),
+            changed=GroupStates(
+                entity.identity, facts.view.primary_key.identity.name, evidence, shape
+            ),
         )
+        return segment.with_layout(ownership)
 
 
 @dataclass(frozen=True, slots=True)
@@ -954,9 +1036,14 @@ class _MaterializedNonTemporalSegment:
     versions: ColumnSlice[int]
     emission: _NonTemporalEmission
     affected_rows: AffectedRows
+    changed: Iterable[ObservedStateKey]
 
     def __len__(self) -> int:
         return len(self.versions)
+
+    def unit(self, end: int) -> ExecutionUnit:
+        """The execution unit this segment's steps form, ending at ``end``."""
+        return ExecutionUnit(end=end, changed=self.changed)
 
     def step(self, index: int) -> PlannedStep:
         return _non_temporal_step(
@@ -967,6 +1054,42 @@ class _MaterializedNonTemporalSegment:
             observed_version=self.versions[index],
             affected_rows=self.affected_rows,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _RowLayout:
+    """How one selected row's steps are laid out when they differ from the
+    uniform close and every successor.
+
+    ``kept`` is the successor position an owned row is revised in place into,
+    and ``revises`` whether that revision assigns anything; an owned row with no
+    kept successor is removed; a row that existed before the attempt has
+    neither and is closed. ``opened`` is the successor positions opened, in
+    order — every nonempty one but ``kept``.
+    """
+
+    owned: bool
+    kept: int | None
+    revises: bool
+    opened: tuple[int, ...]
+
+    @property
+    def steps(self) -> int:
+        return (0 if self.kept is not None and not self.revises else 1) + len(self.opened)
+
+
+@dataclass(frozen=True, slots=True)
+class _GroupLayout:
+    """Where each selected row's steps start, for a group some of whose rows
+    the attempt opened itself or open an empty successor.
+
+    ``rows`` holds a :class:`_RowLayout` for such a row and ``None`` for a row
+    that keeps the uniform close and every successor.
+    """
+
+    rows: tuple[_RowLayout | None, ...]
+    offsets: tuple[int, ...]
+    length: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -984,12 +1107,15 @@ class _MaterializedTemporalSegment:
     primitives an eagerly settled temporal instruction composes; a close reads
     its row's cells by position and resolves no Predecessor Row.
 
-    ``steps_per_row`` is invariant across the group — every row shares the
-    same authored mutation and therefore the same topology — so a flat step
-    index maps to (row, sub-step) by simple division. The one thing kept
-    between accesses is a row's Predecessor Row while more of its successors
-    follow, so the successors of a row, asked for in turn, share the one
-    recursively immutable copy of its document they bind and patch.
+    ``steps_per_row`` is invariant across the group's rows that existed before
+    the attempt — every row shares the same authored mutation and therefore the
+    same topology — so without a ``layout`` a flat step index maps to (row,
+    sub-step) by simple division. A ``layout`` exists only when the attempt
+    owns some selected row, whose revision or removal takes its own step count.
+    The one thing kept between accesses is a row's Predecessor Row while more
+    of its successors follow, so the successors of a row, asked for in turn,
+    share the one recursively immutable copy of its document they bind and
+    patch.
     """
 
     facts: _TemporalFacts
@@ -1001,41 +1127,215 @@ class _MaterializedTemporalSegment:
     gate_position: int | None
     valid_end_position: int | None
     steps_per_row: int
+    changed: Iterable[ObservedStateKey]
+    layout: _GroupLayout | None = None
     _bound: tuple[int, PredecessorRow] | None = field(
         default=None, init=False, repr=False, compare=False
     )
 
     def __len__(self) -> int:
-        return len(self.evidence) * self.steps_per_row
+        layout = self.layout
+        return len(self.evidence) * self.steps_per_row if layout is None else layout.length
 
     def step(self, index: int) -> PlannedStep:
-        row_index, sub_step = divmod(index, self.steps_per_row)
+        layout = self.layout
+        if layout is None:
+            return self._row_step(*divmod(index, self.steps_per_row))
+        row_index = bisect.bisect_right(layout.offsets, index) - 1
+        sub_step = index - layout.offsets[row_index]
+        row = layout.rows[row_index]
+        if row is None:
+            return self._row_step(row_index, sub_step)
+        return self._laid_out_step(row_index, row, sub_step)
+
+    def unit(self, end: int) -> ExecutionUnit:
+        """The execution unit this segment's steps form, ending at ``end``."""
+        return ExecutionUnit(
+            end=end,
+            changed=self.changed,
+            removed=_GroupRemovals(self),
+            opened=_GroupOpenings(self),
+        )
+
+    def with_layout(self, ownership: Ownership) -> _MaterializedTemporalSegment:
+        """This segment laid out row by row, when some selected row is one the
+        attempt opened (``ownership``) or opens an empty successor; otherwise
+        this segment itself, whose rows all take the uniform steps."""
+        facts = self.facts
+        owning = ownership.owns_any(facts.entity.identity)
+        if not owning and not isinstance(facts.shape, Bitemporal):
+            return self
+        rows = range(len(self.evidence))
+        if not any(self._row_layout(row, ownership, owning) is not None for row in rows):
+            return self
+        layouts = tuple(self._row_layout(row, ownership, owning) for row in rows)
+        offsets: list[int] = []
+        length = 0
+        for layout in layouts:
+            offsets.append(length)
+            length += self.steps_per_row if layout is None else layout.steps
+        return replace(
+            self, layout=_GroupLayout(rows=layouts, offsets=tuple(offsets), length=length)
+        )
+
+    def _row_layout(self, row_index: int, ownership: Ownership, owning: bool) -> _RowLayout | None:
+        positions = range(len(self.facts.resolved_successors))
+        own = self.endpoint(row_index) if owning else None
+        if own is None or not ownership.owns(own):
+            if not any(self._opens_empty(row_index, position) for position in positions):
+                return None
+            return _RowLayout(
+                owned=False,
+                kept=None,
+                revises=False,
+                opened=tuple(
+                    position for position in positions if not self._opens_empty(row_index, position)
+                ),
+            )
+        nonempty = tuple(
+            position for position in positions if not self._opens_empty(row_index, position)
+        )
+        predecessor = self._predecessor(row_index, keep=False)
+        pieces = tuple(self._successor(row_index, position, predecessor) for position in nonempty)
+        kept = _kept(self.facts, own, pieces)
+        return _RowLayout(
+            owned=True,
+            kept=None if kept is None else nonempty[kept],
+            revises=kept is not None
+            and _revision_assignments(self.facts, pieces[kept].entries[0], predecessor) is not None,
+            opened=tuple(
+                position for index, position in enumerate(nonempty) if kept is None or index != kept
+            ),
+        )
+
+    def opened_positions(self, row_index: int) -> tuple[int, ...]:
+        """The successor positions the steps of row ``row_index`` open."""
+        layout = self.layout
+        row = None if layout is None else layout.rows[row_index]
+        if row is None:
+            return tuple(range(len(self.facts.resolved_successors)))
+        return row.opened
+
+    def removes(self, row_index: int) -> bool:
+        """Whether the steps of row ``row_index`` remove an owned row."""
+        layout = self.layout
+        row = None if layout is None else layout.rows[row_index]
+        return row is not None and row.owned and row.kept is None
+
+    def endpoint(self, row_index: int) -> OwnedEndpoint:
+        """The complete physical address of selected row ``row_index``."""
+        evidence = self.evidence
+        valid_end_position = self.valid_end_position
+        return OwnedEndpoint(
+            self.facts.entity.identity,
+            (evidence.key(row_index),),
+            TRANSACTION_TIME_ENDS
+            if valid_end_position is None
+            else _bitemporal_ends(evidence.rows[row_index][valid_end_position]),
+        )
+
+    def opened_endpoint(self, row_index: int, position: int) -> OwnedEndpoint:
+        """The complete physical address the successor at ``position`` of row
+        ``row_index`` opens, read from the bounds it binds rather than from a
+        built row."""
+        ends = TRANSACTION_TIME_ENDS
+        if isinstance(self.facts.shape, Bitemporal):
+            _start, end = self._bounds(row_index, position)
+            ends = _bitemporal_ends(end)
+        return OwnedEndpoint(self.facts.entity.identity, (self.evidence.key(row_index),), ends)
+
+    def _opens_empty(self, row_index: int, position: int) -> bool:
+        if not isinstance(self.facts.shape, Bitemporal):
+            return False
+        start, end = self._bounds(row_index, position)
+        return not _is_open(end) and end == start
+
+    def _bounds(self, row_index: int, position: int) -> tuple[object, object]:
+        shape = self.facts.shape
+        assert isinstance(shape, Bitemporal)  # only a Bitemporal successor binds a window
         evidence = self.evidence
         row = evidence.rows[row_index]
+        start_position = evidence.selection.position(shape.valid_time.start_attribute)
+        end_position = self.valid_end_position
+        assert start_position is not None and end_position is not None
+        return successor_bounds(
+            self.facts.resolved_successors[position],
+            predecessor_start=row[start_position],
+            predecessor_end=row[end_position],
+        )
+
+    def _closing(self, row_index: int) -> PlannedClose:
+        evidence = self.evidence
+        row = evidence.rows[row_index]
+        gate_position = self.gate_position
+        valid_end_position = self.valid_end_position
+        return _close_step(
+            self.facts,
+            self.close,
+            key_values=(row[evidence.key_position],),
+            observed_valid_end=None if valid_end_position is None else row[valid_end_position],
+            observed_gate_start=None if gate_position is None else row[gate_position],
+        )
+
+    def _row_step(self, row_index: int, sub_step: int) -> PlannedStep:
         if sub_step == 0:
-            gate_position = self.gate_position
-            valid_end_position = self.valid_end_position
-            return _close_step(
-                self.facts,
-                self.close,
-                key_values=(row[evidence.key_position],),
-                observed_valid_end=None if valid_end_position is None else row[valid_end_position],
-                observed_gate_start=None if gate_position is None else row[gate_position],
-            )
+            return self._closing(row_index)
+        predecessor = self._predecessor(row_index, keep=sub_step < self.steps_per_row - 1)
+        return self._successor(row_index, sub_step - 1, predecessor)
+
+    def _laid_out_step(self, row_index: int, row: _RowLayout, sub_step: int) -> PlannedStep:
+        predecessor = self._predecessor(row_index, keep=True)
+        if not row.owned:
+            if sub_step == 0:
+                return self._closing(row_index)
+            return self._successor(row_index, row.opened[sub_step - 1], predecessor)
+        owned = row
+        if owned.kept is None:
+            if sub_step == 0:
+                closing = self._closing(row_index)
+                return PlannedTemporalRemoval(
+                    entity=closing.entity,
+                    target=closing.target,
+                    concurrency=closing.concurrency,
+                    affected_rows=closing.affected_rows,
+                )
+            return self._successor(row_index, owned.opened[sub_step - 1], predecessor)
+        if owned.revises:
+            if sub_step == 0:
+                closing = self._closing(row_index)
+                piece = self._successor(row_index, owned.kept, predecessor)
+                assignments = _revision_assignments(self.facts, piece.entries[0], predecessor)
+                assert assignments is not None  # laid out as a revision that assigns
+                return PlannedTemporalRevision(
+                    entity=closing.entity,
+                    target=closing.target,
+                    assignments=assignments,
+                    concurrency=closing.concurrency,
+                    affected_rows=closing.affected_rows,
+                )
+            sub_step -= 1
+        return self._successor(row_index, owned.opened[sub_step], predecessor)
+
+    def _predecessor(self, row_index: int, *, keep: bool) -> PredecessorRow:
         bound = self._bound
         if bound is not None and bound[0] == row_index:
-            predecessor = bound[1]
-        else:
-            document = evidence.document(row_index)
-            predecessor = PredecessorRow.over_row(
-                evidence.selection,
-                row,
-                None if document is None else retain_document_value(document),
-                evidence.absent,
-            )
-            if sub_step < self.steps_per_row - 1:
-                object.__setattr__(self, "_bound", (row_index, predecessor))
-        resolved = self.facts.resolved_successors[sub_step - 1]
+            return bound[1]
+        evidence = self.evidence
+        document = evidence.document(row_index)
+        predecessor = PredecessorRow.over_row(
+            evidence.selection,
+            evidence.rows[row_index],
+            None if document is None else retain_document_value(document),
+            evidence.absent,
+        )
+        if keep:
+            object.__setattr__(self, "_bound", (row_index, predecessor))
+        return predecessor
+
+    def _successor(
+        self, row_index: int, position: int, predecessor: PredecessorRow
+    ) -> PlannedInsert:
+        resolved = self.facts.resolved_successors[position]
         change = self.change
         return _successor_step(
             self.facts,
@@ -1044,11 +1344,43 @@ class _MaterializedTemporalSegment:
             self.authored_value_objects,
             predecessor,
             effective=(
-                change.effective_positions(row)
+                change.effective_positions(self.evidence.rows[row_index])
                 if change is not None and isinstance(resolved.state, ChangedState)
                 else None
             ),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _GroupOpenings:
+    """Every row a temporal group's steps open, read on demand."""
+
+    segment: _MaterializedTemporalSegment
+
+    def __iter__(self) -> Iterator[OwnedEndpoint]:
+        segment = self.segment
+        for row_index in range(len(segment.evidence)):
+            for position in segment.opened_positions(row_index):
+                yield segment.opened_endpoint(row_index, position)
+
+
+@dataclass(frozen=True, slots=True)
+class _GroupRemovals:
+    """Every owned row a temporal group's steps remove, read on demand."""
+
+    segment: _MaterializedTemporalSegment
+
+    def __iter__(self) -> Iterator[OwnedEndpoint]:
+        segment = self.segment
+        layout = segment.layout
+        if layout is None:
+            return
+        for row_index in range(len(segment.evidence)):
+            if segment.removes(row_index):
+                yield segment.endpoint(row_index)
+
+
+type _GroupSegment = _MaterializedNonTemporalSegment | _MaterializedTemporalSegment
 
 
 def _close_step(
@@ -1138,6 +1470,167 @@ def _successor_step(
         predecessor=predecessor,
     )
     return PlannedInsert(entity=facts.entity.identity, entries=(entry,))
+
+
+def _dispose(
+    facts: _TemporalFacts,
+    closing: PlannedClose,
+    successors: Sequence[PlannedInsert],
+    predecessor: PredecessorRow,
+    ownership: Ownership,
+) -> _Settled:
+    """The effects one temporal mutation has on its observed predecessor, and
+    the successors it opens.
+
+    Only nonempty successors are opened. A predecessor that existed before
+    this attempt is closed, which preserves it as history. A predecessor this
+    attempt opened has no history to preserve: when exactly one successor keeps
+    its complete physical address — the logical key and every axis end — the
+    row is revised in place at that address and the other successors are
+    opened; otherwise the row is removed and every successor opened. Address
+    equality is the whole correspondence: no end coordinate is moved to force
+    reuse, and no payload comparison or Transaction-Time start decides it.
+    """
+    pieces = tuple(successor for successor in successors if not _is_empty(facts, successor))
+    own = _target_endpoint(facts, closing.target)
+    if not ownership.owns(own):
+        return _Settled((closing, *pieces), opened=_openings(facts, pieces))
+    kept = _kept(facts, own, pieces)
+    if kept is not None:
+        piece = pieces[kept]
+        others = tuple(other for other in pieces if other is not piece)
+        assignments = _revision_assignments(facts, piece.entries[0], predecessor)
+        steps: tuple[PlannedStep, ...] = others
+        if assignments is not None:
+            steps = (
+                PlannedTemporalRevision(
+                    entity=closing.entity,
+                    target=closing.target,
+                    assignments=assignments,
+                    concurrency=closing.concurrency,
+                    affected_rows=closing.affected_rows,
+                ),
+                *others,
+            )
+        return _Settled(steps, opened=_openings(facts, others))
+    removal = PlannedTemporalRemoval(
+        entity=closing.entity,
+        target=closing.target,
+        concurrency=closing.concurrency,
+        affected_rows=closing.affected_rows,
+    )
+    return _Settled((removal, *pieces), opened=_openings(facts, pieces), removed=(own,))
+
+
+def _kept(facts: _TemporalFacts, own: OwnedEndpoint, pieces: Sequence[PlannedInsert]) -> int | None:
+    """The position of the one piece that keeps the owned row's complete
+    physical address, or ``None`` unless exactly one does."""
+    kept = [
+        position
+        for position, piece in enumerate(pieces)
+        if _entry_endpoint(facts, piece.entries[0]) == own
+    ]
+    return kept[0] if len(kept) == 1 else None
+
+
+def _revision_assignments(
+    facts: _TemporalFacts, entry: InsertEntry, predecessor: PredecessorRow
+) -> PlannedAssignments | None:
+    """What revising ``predecessor`` in place into ``entry``'s state assigns.
+
+    Every member ``entry`` does not carry as the predecessor's own cell, plus a
+    moved Valid-Time start. The key, every axis end, and the Transaction-Time
+    start belong to the address the revision preserves. ``None`` when nothing
+    differs.
+    """
+    shape = facts.shape
+    preserved = {
+        facts.view.primary_key.identity,
+        shape.transaction_time.start_attribute,
+        shape.transaction_time.end_attribute,
+    }
+    valid_start: AttributeIdentity | None = None
+    if isinstance(shape, Bitemporal):
+        preserved.add(shape.valid_time.end_attribute)
+        valid_start = shape.valid_time.start_attribute
+    attributes: dict[AttributeIdentity, PlannedValue] = {}
+    for identity, value in entry.row.attributes.items():
+        if identity in preserved:
+            continue
+        if identity == valid_start:
+            if value != predecessor.cell(identity):
+                attributes[identity] = value
+        elif not predecessor.carries(identity, value):
+            attributes[identity] = value
+    value_objects = {
+        identity: value
+        for identity, value in entry.row.value_objects.items()
+        if not predecessor.carries(identity, value)
+    }
+    if not attributes and not value_objects:
+        return None
+    return adopt_planned_assignments(attributes, value_objects)
+
+
+def _openings(facts: _TemporalFacts, inserts: Sequence[PlannedInsert]) -> tuple[OwnedEndpoint, ...]:
+    """The physical address of every row ``inserts`` open whose key is known.
+
+    A row whose key the database allocates has no address this attempt can
+    name before it executes, so it is opened without being recorded.
+    """
+    openings: list[OwnedEndpoint] = []
+    for insert in inserts:
+        for entry in insert.entries:
+            endpoint = _entry_endpoint(facts, entry)
+            if endpoint is not None:
+                openings.append(endpoint)
+    return tuple(openings)
+
+
+def _entry_endpoint(facts: _TemporalFacts, entry: InsertEntry) -> OwnedEndpoint | None:
+    """The complete physical address of the row ``entry`` opens, or ``None``
+    when its key is allocated by the database."""
+    attributes = entry.row.attributes
+    value = attributes.get(facts.view.primary_key.identity)
+    if value is None or isinstance(value, MaxPlusOne):
+        return None
+    shape = facts.shape
+    ends = TRANSACTION_TIME_ENDS
+    if isinstance(shape, Bitemporal):
+        ends = _bitemporal_ends(attributes[shape.valid_time.end_attribute])
+    return OwnedEndpoint(facts.entity.identity, (value,), ends)
+
+
+def _target_endpoint(facts: _TemporalFacts, target: MilestoneTarget) -> OwnedEndpoint:
+    """The complete physical address a Milestone Target names."""
+    return OwnedEndpoint(facts.entity.identity, target.key_values, target.end_values)
+
+
+def _bitemporal_ends(valid_end: object) -> tuple[TemporalUpperBound, ...]:
+    """A current Bitemporal row's ends, from its Valid-Time end cell."""
+    if _is_open(valid_end):
+        return OPEN_BITEMPORAL_ENDS
+    return (Finite(instant=valid_end), INFINITY)
+
+
+def _is_open(bound: object) -> bool:
+    """Whether one axis end cell is the open upper bound."""
+    return bound == INFINITY_LITERAL or bound is TemporalBound.INFINITY
+
+
+def _is_empty(facts: _TemporalFacts, successor: PlannedInsert) -> bool:
+    """Whether ``successor`` covers no Valid Time at all.
+
+    A Transaction-Time-Only successor always covers its whole axis. A
+    Bitemporal one is empty when its finite end equals its start, as a head
+    whose mutation starts exactly where the predecessor does.
+    """
+    shape = facts.shape
+    if not isinstance(shape, Bitemporal):
+        return False
+    row = successor.entries[0].row.attributes
+    end = row[shape.valid_time.end_attribute]
+    return not _is_open(end) and end == row[shape.valid_time.start_attribute]
 
 
 def _effective_positions(
@@ -1514,16 +2007,14 @@ def _end_values(
     bounded sibling.
     """
     if isinstance(shape, TransactionTimeOnly):
-        return (INFINITY,)
+        return TRANSACTION_TIME_ENDS
     if observed_valid_end is None:
         raise WritePlanningError(
             f"bitemporal close on {entity.identity.name!r}: no observed Valid-Time end "
             "supplied — a Bitemporal milestone address needs one exclusive upper bound "
             "per As-Of Axis (m-bitemp-write 'Address and gate are separate')"
         )
-    if observed_valid_end == INFINITY_LITERAL or observed_valid_end is TemporalBound.INFINITY:
-        return (INFINITY, INFINITY)
-    return (Finite(instant=observed_valid_end), INFINITY)
+    return _bitemporal_ends(observed_valid_end)
 
 
 def _gate_axis(

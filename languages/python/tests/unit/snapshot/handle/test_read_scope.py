@@ -131,7 +131,14 @@ class _Ledger:
     def participation(self) -> ParticipationToken:
         return self._participation
 
-    def retain(self, observation: RetainedObservation, /) -> RetainedObservation:
+    @property
+    def freshness(self) -> int:
+        return 0
+
+    def retain(
+        self, observation: RetainedObservation, /, *, read_at: int | None = None
+    ) -> RetainedObservation:
+        del read_at
         self.retained.append(observation)
         return observation
 

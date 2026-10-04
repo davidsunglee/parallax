@@ -62,6 +62,8 @@ from parallax.core.unit_work.planned import (
     PlannedClose,
     PlannedDelete,
     PlannedInsert,
+    PlannedTemporalRemoval,
+    PlannedTemporalRevision,
     PlannedUpdate,
     PlannedWrite,
     SelfIncrement,
@@ -132,10 +134,12 @@ def compile_write_step(step: PlannedWrite, meta: Metamodel, dialect: Dialect) ->
             return _lower_insert(step, meta, dialect)
         case PlannedUpdate():
             return _lower_update(step, meta, dialect)
-        case PlannedClose():
-            return _lower_close(step, meta, dialect)
+        case PlannedClose() | PlannedTemporalRevision():
+            return _lower_milestone_update(step, meta, dialect)
         case PlannedDelete():
             return _lower_delete(step, meta, dialect)
+        case PlannedTemporalRemoval():
+            return _lower_milestone_removal(step, meta, dialect)
 
 
 def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
@@ -229,14 +233,18 @@ def _lower_update(step: PlannedUpdate, meta: Metamodel, dialect: Dialect) -> Low
     )
 
 
-def _lower_close(step: PlannedClose, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
-    """`update <table> set <axis end> = ? where <milestone target>[ and <gate>]`.
+def _lower_milestone_update(
+    step: PlannedClose | PlannedTemporalRevision, meta: Metamodel, dialect: Dialect
+) -> LoweredStatement:
+    """`update <table> set <assignments> where <milestone target>[ and <gate>]`.
 
-    Physically this is an update whose target happens to be a milestone slot:
-    the address renders the key, then the table-per-hierarchy tag guard, then
-    one exclusive upper bound per As-Of Axis in canonical order, and only the
-    gate follows — binding last, exactly as a version gate does one clause
-    family over.
+    Physically a close and an owned revision are updates whose target happens to
+    be a milestone slot: the address renders the key, then the
+    table-per-hierarchy tag guard, then one exclusive upper bound per As-Of Axis
+    in canonical order, and only the gate follows — binding last, exactly as a
+    version gate does one clause family over. A close assigns the
+    Transaction-Time end alone; a revision assigns payload and, where it moves,
+    the Valid-Time start.
     """
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
@@ -247,6 +255,18 @@ def _lower_close(step: PlannedClose, meta: Metamodel, dialect: Dialect) -> Lower
     return ctx.finish(
         f"update {view.layout.table.name} set {assignment_sql} where {where_sql}{gate_sql}"
     )
+
+
+def _lower_milestone_removal(
+    step: PlannedTemporalRemoval, meta: Metamodel, dialect: Dialect
+) -> LoweredStatement:
+    """`delete from <table> where <milestone target>[ and <gate>]`."""
+    entity = _entity(meta, step.entity)
+    view = _layout(meta, entity)
+    ctx = _ctx(meta, dialect)
+    where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
+    gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
+    return ctx.finish(f"delete from {view.layout.table.name} where {where_sql}{gate_sql}")
 
 
 def _lower_delete(step: PlannedDelete, meta: Metamodel, dialect: Dialect) -> LoweredStatement:

@@ -59,6 +59,14 @@ invariant. `m-txtime-write-002` and `-005` assert the resulting milestone rows �
 leaves no current row while deleting nothing; `m-identity-map-010` and
 `m-bitemp-write-016` assert the refusal at the mutation surface.
 
+A current row the **same attempt** opened is not yet part of that past: no
+committed state records it, and closing it at the attempt's one instant would
+leave an empty `[txInstant, txInstant)` milestone whose physical key collides
+with the row the attempt's earlier flush closed. A later write of the attempt
+therefore revises or removes such a row instead of closing it (*A row the
+attempt opened*, below), and the milestone it superseded keeps its closed
+history unchanged.
+
 The administrative operations that would widen this invariant are
 `m-bitemp-write`'s MAY-tier `insertForRecovery`, `purge`, and
 `inactivateForArchiving` — they write verbatim milestone bounds or physically
@@ -66,6 +74,25 @@ delete a milestone chain, and they sit outside the required parity surface.
 Naming them here is non-normative and licenses nothing: providing one widens the
 invariant deliberately, wherever that operation is specified, rather than taking
 an exception this invariant admits.
+
+### A row the attempt opened
+
+Within one attempt, a write whose observed current row was opened by that
+attempt's own earlier flush — by an `insert` or as an `update`'s chained row —
+addresses the row by the same Milestone Target and keeps its
+`in_z = txInstant` (`m-unit-work` *Rows the attempt opened*):
+
+| Mutation of a row the attempt opened | Observable SQL sequence |
+|---|---|
+| **update** | revise the row in place: `update … set <changed members> where pk and out_z = ?` (`[infinity]`), chaining nothing |
+| **terminate** | remove the row: `delete from … where pk and out_z = ?` (`[infinity]`) |
+
+Under Optimistic the address is followed by the observed-`in_z` gate exactly as
+a close's is. Ownership is the attempt's record of what it opened, never an
+`in_z` that happens to equal `txInstant`: a row an earlier attempt committed at
+the same instant is closed as usual. After the attempt, the Transaction-Time
+history holds each pre-attempt milestone closed once and one current row per
+key, with no empty interval.
 
 ### Composition with inheritance
 
@@ -120,9 +147,11 @@ planner applies across the resolved group, so the description's size does not
 grow with the result set. An implementation **MUST NOT** expose a milestone plan,
 a milestone step, or a per-row expansion value on any cross-module interface: the
 planner expands the description in place, at the mutation's already-decided
-position (ADR 0045), into one Planned Close followed immediately by its Planned
-Insert successors. Adjacency in the Write Plan is the only surviving evidence
-that those steps belong together — there is no group, wrapper, or identifier.
+position (ADR 0045), into the predecessor's effect — one Planned Close, or for a
+row the attempt opened a Planned Temporal Revision or Removal — followed
+immediately by its Planned Insert successors. Adjacency in the Write Plan is the
+only surviving evidence that those steps belong together — there is no group,
+wrapper, or identifier.
 
 ## The close addresses a Milestone Target
 

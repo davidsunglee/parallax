@@ -103,8 +103,14 @@ Unit-of-Work detection, root ownership, rollback-only state, actor equality,
 then explicit option equality. Authority and option preflight refusals leave a
 healthy transaction usable when caught. A joined callback failure marks the
 outer transaction rollback-only before escaping; catching it cannot permit a
-commit. `RollbackOnlyError` refuses further joining callbacks with the original
-cause. Transaction references are not thread-safe and execution through an
+commit. A failure while a flush executes — a database error or an affected-row
+`WriteEffectError`, whether the flush served a dependent read or a commit —
+likewise marks the transaction rollback-only before it escapes the operation
+that triggered the flush. Once rollback-only, every further read, write, or
+joining callback raises `RollbackOnlyError` with the original cause, and a
+callback that caught the failure and returned normally still rolls back with its
+result withheld. Preparation, evidence, and planning refusals raised by a write
+verb leave the transaction usable when caught. Transaction references are not thread-safe and execution through an
 escaped reference after the invocation ends is refused.
 
 An ordinary failure escaping an adopted outer transaction or standalone read

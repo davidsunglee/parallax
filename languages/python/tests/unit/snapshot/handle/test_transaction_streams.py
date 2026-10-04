@@ -178,6 +178,38 @@ def test_a_write_buffered_mid_delivery_reaches_the_database_before_the_next_page
     assert port.calls[2] == WriteCall(_UPDATE_SQL, (Decimal("125.00"), 2, 1, 1))
 
 
+def test_a_root_its_page_fetched_before_an_own_change_cannot_write_from_that_state() -> None:
+    # The page captured its rows' state when it ran. A later write of this
+    # transaction changes the second root's state before that root's evidence
+    # is ever built, so the root still delivered from the earlier page cannot
+    # license a write that would carry its stale values forward.
+    port = ScriptedAdapter(
+        Transact(
+            *paged_reads([_account_row(1), _account_row(2)], size=2),
+            Read(rows=[_account_row(2)]),
+            Write(),
+            Read(rows=[{**_account_row(2, balance="150.00"), "version": 2}]),
+        )
+    )
+    refusals: list[str] = []
+
+    def fn(tx: Transaction) -> None:
+        with tx.stream(_accounts(), batch_size=2) as stream:
+            for account in stream:
+                if account.id == 1:
+                    other = tx.find(mm.Account.where(mm.Account.id == 2)).result()
+                    tx.update(other.edit(balance=Decimal("150.00")))
+                    tx.find(mm.Account.where(mm.Account.id == 2)).result()
+                    continue
+                with pytest.raises(WriteEvidenceError) as refused:
+                    tx.update(account.edit(balance=Decimal("175.00")))
+                refusals.append(refused.value.code)
+
+    account_db(port).transact(fn, concurrency="optimistic")
+    assert refusals == ["write-evidence-consumed"]
+    assert sum(isinstance(call, WriteCall) for call in port.calls) == 1
+
+
 def test_a_read_only_delivery_emits_no_dml_at_all() -> None:
     # An empty buffer is one truthiness check, so a loop that writes nothing pays
     # nothing for the per-page flush — no DML, and no Write Batch to open.

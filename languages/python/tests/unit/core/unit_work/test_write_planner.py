@@ -96,6 +96,7 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core.unit_work.materialized import ObjectClaimedWrite, ObservedKeyedWrite
+from parallax.core.unit_work.plan import OwnedEndpoint
 from parallax.core.unit_work.planned import (
     ANY_COUNT,
     MAX_PLUS_ONE,
@@ -106,16 +107,19 @@ from parallax.core.unit_work.planned import (
     UNVERSIONED,
     ChangedFrom,
     ExactCount,
+    Finite,
     KeyTarget,
     PlannedDelete,
     PlannedRow,
     PlannedUpdate,
     PlannedWrite,
     TemporalGate,
+    TemporalUpperBound,
     ValidatedMutationSelection,
     Versioned,
     VersionGate,
 )
+from parallax.core.unit_work.planned import INFINITY as OPEN_END
 from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.core.unit_work.strategy import ActorIdentity
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
@@ -2662,3 +2666,147 @@ def test_a_surviving_row_overlays_an_effective_value_object_and_carries_a_restor
         for assignment in group.mutation.managed_assignments
         if not isinstance(assignment.member, AttributeMetadata)
     )
+
+
+# --------------------------------------------------------------------------- #
+# A Materialized Write Group over rows the attempt opened revises or removes   #
+# each such row at its address, and never opens an empty successor.          #
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class _GroupOwnership:
+    """An attempt that opened exactly ``endpoints``."""
+
+    endpoints: frozenset[OwnedEndpoint]
+
+    def owns(self, endpoint: OwnedEndpoint, /) -> bool:
+        return endpoint in self.endpoints
+
+    def owns_any(self, entity: EntityIdentity, /) -> bool:
+        return any(endpoint.entity == entity for endpoint in self.endpoints)
+
+
+def _endpoint(entity: str, key: int, *ends: TemporalUpperBound) -> OwnedEndpoint:
+    return OwnedEndpoint(corpus_object_key(entity, ("id", key)).entity, (key,), ends)
+
+
+def _open_ends(entity: str) -> tuple[TemporalUpperBound, ...]:
+    return (OPEN_END, OPEN_END) if entity == "Position" else (OPEN_END,)
+
+
+def _planned_group(
+    entity: str, mutation: PredicateMutation, *, owned: tuple[int, ...] = ()
+) -> WritePlan:
+    model = _POSITION if entity == "Position" else _BALANCE
+    ownership = _GroupOwnership(
+        frozenset(_endpoint(entity, key, *_open_ends(entity)) for key in owned)
+    )
+    return (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                actor_identity=TEST_ACTOR_IDENTITY,
+                transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+                concurrency="locking",
+                buffered_writes=[_temporal_topology_group(model, entity, mutation)],
+                ownership=ownership,
+            )
+        )
+        .plan
+    )
+
+
+@pytest.mark.parametrize(
+    ("entity", "mutation", "row_two"),
+    [
+        ("Balance", "terminate", ["PlannedTemporalRemoval"]),
+        ("Balance", "update", ["PlannedTemporalRevision"]),
+        ("Position", "update", ["PlannedTemporalRevision", "PlannedInsert"]),
+        ("Position", "terminate", ["PlannedTemporalRemoval", "PlannedInsert"]),
+        ("Position", "updateUntil", ["PlannedTemporalRevision", "PlannedInsert", "PlannedInsert"]),
+        ("Position", "terminateUntil", ["PlannedTemporalRevision", "PlannedInsert"]),
+    ],
+)
+def test_a_group_rewrites_only_the_selected_rows_the_attempt_opened(
+    entity: str, mutation: PredicateMutation, row_two: list[str]
+) -> None:
+    uniform = [type(step).__name__ for step in _planned_group(entity, mutation).steps]
+    per_row = len(uniform) // 3
+    plan = _planned_group(entity, mutation, owned=(2,))
+    assert [type(step).__name__ for step in plan.steps] == [
+        *uniform[:per_row],
+        *row_two,
+        *uniform[2 * per_row :],
+    ]
+    for index in range(len(plan.steps)):
+        assert plan.steps[index] == list(plan.steps)[index]
+
+
+def test_a_group_unit_records_what_its_rows_remove_and_open() -> None:
+    (unit,) = _planned_group("Position", "terminate", owned=(2,)).units
+    head_end = Finite(instant=_WINDOW_FROM)
+    assert list(unit.removed) == [_endpoint("Position", 2, OPEN_END, OPEN_END)]
+    assert list(unit.opened) == [
+        _endpoint("Position", key, head_end, OPEN_END) for key in (1, 2, 3)
+    ]
+    assert [state.object for state in unit.changed] == [
+        corpus_object_key("Position", ("id", key)) for key in (1, 2, 3)
+    ]
+
+
+def test_a_transaction_time_group_unit_opens_one_current_row_per_rewritten_row() -> None:
+    (unit,) = _planned_group("Balance", "update", owned=(2,)).units
+    assert list(unit.removed) == []
+    assert list(unit.opened) == [_endpoint("Balance", key, OPEN_END) for key in (1, 3)]
+
+
+def test_a_group_of_rows_the_attempt_never_opened_keeps_its_uniform_layout() -> None:
+    (unit,) = _planned_group("Position", "update").units
+    assert list(unit.removed) == []
+    assert len(list(unit.opened)) == 6
+
+
+def test_a_group_never_opens_a_successor_that_covers_no_valid_time() -> None:
+    model = _POSITION
+    group = temporal_group(
+        PredicateWrite(
+            "update",
+            PredicateSelection(
+                "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
+            ),
+            (WriteAssignment("Position.value", Decimal("9.00")),),
+            _OPENED_AT,
+        ),
+        model,
+        [
+            {
+                "id": key,
+                "acctNum": "A",
+                "value": Decimal("1.00"),
+                "validStart": start,
+                "validEnd": INFINITY,
+                "txStart": _OPENED_AT,
+                "txEnd": INFINITY,
+            }
+            for key, start in ((1, _OPENED_AT), (2, dt.datetime(2023, 1, 1, tzinfo=dt.UTC)))
+        ],
+    )
+    plan = (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                actor_identity=TEST_ACTOR_IDENTITY,
+                transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+                concurrency="locking",
+                buffered_writes=[group],
+            )
+        )
+        .plan
+    )
+    # Row 1 starts where the update does, so it has no head; row 2 keeps one.
+    assert [type(step).__name__ for step in plan.steps] == [
+        "PlannedClose",
+        "PlannedInsert",
+        "PlannedClose",
+        "PlannedInsert",
+        "PlannedInsert",
+    ]

@@ -27,6 +27,7 @@ from parallax.core.unit_work.materialized import (
     buffered_instruction,
 )
 from parallax.core.unit_work.observe import WriteObservation
+from parallax.core.unit_work.plan import NO_OWNERSHIP, Ownership
 from parallax.core.unit_work.planner import ObjectKey, resolve_object_key
 from parallax.core.unit_work.strategy import (
     ActorIdentity,
@@ -57,12 +58,16 @@ class PlanningRequest:
     Keyword-only and Actor Identity first: planning occurs under already
     captured Execution Authority, and field order emphasizes that without
     making it a positional API.
+
+    ``ownership`` answers which current temporal rows the planning attempt
+    already opened; planning reads it and never changes it.
     """
 
     actor_identity: ActorIdentity
     transaction_instant: TransactionInstant
     concurrency: Concurrency
     buffered_writes: BufferedWrites
+    ownership: Ownership = NO_OWNERSHIP
 
 
 class WritePlanner:
@@ -148,6 +153,7 @@ class WritePlanner:
             concurrency=request.concurrency,
             actor_identity=request.actor_identity,
             transaction_instant=request.transaction_instant,
+            ownership=request.ownership,
         )
 
     def _coalesce(self, buffer: BufferedWrites) -> list[OrderedWrite]:

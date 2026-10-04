@@ -36,6 +36,10 @@ class _DeferredReadEvidence(Protocol):
     def observation(self) -> RetainedObservation: ...
 
 
+_CONSUMED: Final = 1
+_INVALIDATED: Final = 2
+
+
 class RetainedObservation:
     """One observed state's evidence, owned by the values that observed it.
 
@@ -43,14 +47,14 @@ class RetainedObservation:
     evidence itself, and ``participation`` the unit of work whose read produced
     it — absent for a standalone read, which participates in nothing.
 
-    :attr:`consumed` is the one mutable fact, and it moves one way. It lives on
-    this shared object rather than in a transaction-side set because consumption
-    must OUTLIVE the flushing transaction: a later transaction handed the same
-    still-live source must be refused, and a set that died with the flush could
-    not say so.
+    :attr:`consumed` and :attr:`invalidated` are the two mutable facts, and each
+    moves one way. They live on this shared object rather than in a
+    transaction-side set because both must OUTLIVE the transaction that set
+    them: a later transaction handed the same still-live source must be refused,
+    and a set that died with the flush could not say so.
     """
 
-    __slots__ = ("__weakref__", "_consumed", "evidence", "key", "participation")
+    __slots__ = ("__weakref__", "_spent", "evidence", "key", "participation")
 
     def __init__(
         self,
@@ -61,7 +65,9 @@ class RetainedObservation:
         self.key: Final = key
         self.evidence: Final = evidence
         self.participation: Final = participation
-        self._consumed = False
+        # Both one-way facts in one slot, since every retained read pays for it:
+        # `_CONSUMED` and `_INVALIDATED` bits.
+        self._spent = 0
 
     @property
     def consumed(self) -> bool:
@@ -71,11 +77,27 @@ class RetainedObservation:
         carries is authority, because the state it observed is not the stored
         state any more.
         """
-        return self._consumed
+        return bool(self._spent & _CONSUMED)
 
     def consume(self) -> None:
         """Spend this evidence, at the successful flush of a write that used it."""
-        self._consumed = True
+        self._spent |= _CONSUMED
+
+    @property
+    def invalidated(self) -> bool:
+        """Whether a successful change of this transaction's own has since
+        revised, closed, or removed the state this evidence describes.
+
+        Distinct from consumption, which records that a write spent this
+        evidence: an observation no write ever used is still invalidated when
+        another write changes its state, even when the changed row keeps the
+        same address and revision token.
+        """
+        return bool(self._spent & _INVALIDATED)
+
+    def invalidate(self) -> None:
+        """Record that a successful own change replaced the observed state."""
+        self._spent |= _INVALIDATED
 
 
 class ReadOrigin:
