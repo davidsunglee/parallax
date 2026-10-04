@@ -2,9 +2,9 @@
 
 `write-instruction.schema.json` is the write-side analogue of
 `object-query.schema.json`: the canonical, axis-explicit vocabulary a unit of work
-buffers. These tests pin the two instruction shapes (keyed + predicate), the
-axis-explicit Valid-Time bounds, the absence of a Transaction-Time-instant field, and the
-verb / bound conditionals.
+buffers. These tests pin the three instruction shapes (keyed, predicate, and
+caller-addressed), the axis-explicit Valid-Time bounds, the absence of a
+Transaction-Time-instant field, and the verb / bound conditionals.
 """
 
 from __future__ import annotations
@@ -194,6 +194,40 @@ def test_predicate_until_requires_both_valid_time_bounds() -> None:
     assert _valid(doc)
     assert not _valid({key: value for key, value in doc.items() if key != "until"})
     assert not _valid({key: value for key, value in doc.items() if key != "validFrom"})
+
+
+# --- caller-addressed (target) instructions ------------------------------------
+
+
+def test_target_patch_and_replacement_carry_one_row_and_their_callers_revision() -> None:
+    patch = {"mutation": "update", "entity": "Account", "row": {"id": 1}, "ifVersion": 3}
+    assert _valid(patch)
+    assert _valid({**patch, "mutation": "replace"})
+    assert _valid(
+        {
+            "mutation": "update",
+            "entity": "Balance",
+            "row": {"id": 1, "value": 150.0},
+            "ifTxStart": "2024-01-01T00:00:00+00:00",
+        }
+    )
+    assert not _valid({**patch, "ifTxStart": "2024-01-01T00:00:00+00:00"})
+    assert not _valid({**patch, "row": {"id": 1, "observedVersion": 3}})
+    assert not _valid({**patch, "mutation": "delete"})
+
+
+def test_target_until_requires_both_valid_time_bounds() -> None:
+    doc = {
+        "mutation": "replaceUntil",
+        "entity": "Position",
+        "row": {"id": 1, "value": 150.0},
+        "ifTxStart": "2024-01-01T00:00:00+00:00",
+        "validFrom": "2024-03-01T00:00:00+00:00",
+        "until": "2024-09-01T00:00:00+00:00",
+    }
+    assert _valid(doc)
+    assert not _valid({key: value for key, value in doc.items() if key != "validFrom"})
+    assert not _valid({**doc, "mutation": "replace"})
 
 
 def test_instruction_rejects_unknown_top_level_key() -> None:

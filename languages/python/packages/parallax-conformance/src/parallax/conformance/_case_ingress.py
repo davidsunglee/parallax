@@ -58,7 +58,7 @@ def prepare_case_write(
     form. This seam encodes only those, using the declared member type; authored
     JSON values, structural defects, and semantic defects reach
     ``prepare_wire_write`` unchanged for it to decode, classify, validate, freeze,
-    and retain in its ``PreparedWrite`` result.
+    and retain in its prepared result.
     """
     return instructions.prepare_wire_write(_normalize_instruction(instruction, model), model)
 

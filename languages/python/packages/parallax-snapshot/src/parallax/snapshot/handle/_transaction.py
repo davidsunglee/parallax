@@ -73,10 +73,11 @@ class Transaction:
     :meth:`read_rows` is the values lane over this same transaction — a
     first-party row-form read, not a third public result format. There is no
     write peer of it: every write, first-party callers included, is stated
-    through the keyed and predicate verbs, Typed or Wire — an existing row
-    addressed by a value this store published, from a read or from the insert
-    that opened the row, a fresh row by the payload an insert opens it with, and
-    a set by a selection plus its assignments.
+    through the keyed, predicate, and caller-addressed verbs, Typed or Wire — an
+    existing row addressed by a value this store published, from a read or from
+    the insert that opened the row, a fresh row by the payload an insert opens it
+    with, a set by a selection plus its assignments, and an existing object by
+    its key under the revision its caller states.
     """
 
     __slots__ = (

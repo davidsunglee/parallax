@@ -43,7 +43,11 @@ from parallax.core.temporal_read import (
 )
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.columns import ColumnSlice
-from parallax.core.unit_work.effects import MissingTargetError, WritePreconditionError
+from parallax.core.unit_work.effects import (
+    CardinalityCorruptionError,
+    MissingTargetError,
+    WritePreconditionError,
+)
 from parallax.core.unit_work.instructions import (
     PreparedAssignment,
     PreparedKeyedWrite,
@@ -2602,6 +2606,12 @@ def _original(
     return _Original(predecessor=predecessor, state=state, start=None, end=None)
 
 
+def _contains(at: object | None, original: _Original) -> bool:
+    """Whether ``original`` holds ``at`` — the current row itself where ``at`` is
+    ``None`` on a Transaction-Time-Only object."""
+    return at is None or (not precedes(at, original.start) and precedes(at, original.end))
+
+
 def _overlapping(first: _Original, second: _Original) -> bool:
     if first.start is None or second.start is None:
         return True
@@ -2716,8 +2726,10 @@ class _RangeBinding:
             for original in originals
         ):
             return
-        target = KeyTarget(key_attributes=(self.key_attribute,), key_values=((self.key_value,),))
-        raise MissingTargetError(self.facts.entity.identity, target, 1, 0)
+        raise MissingTargetError(self.facts.entity.identity, self._key_target(), 1, 0)
+
+    def _key_target(self) -> KeyTarget:
+        return KeyTarget(key_attributes=(self.key_attribute,), key_values=((self.key_value,),))
 
     def _require_start(self, originals: Sequence[_Original]) -> _Original | None:
         """The original a caller-addressed range starts from, once the coverage
@@ -2726,14 +2738,8 @@ class _RangeBinding:
         condition = self.condition
         if condition is None:
             return None
-        at = condition.at
         start = next(
-            (
-                original
-                for original in originals
-                if at is None or (not precedes(at, original.start) and precedes(at, original.end))
-            ),
-            None,
+            (original for original in originals if _contains(condition.at, original)), None
         )
         tx_start = self.facts.shape.transaction_time.start_attribute
         if start is None or normalize_instant(
@@ -2771,16 +2777,29 @@ class _RangeBinding:
         known: Sequence[_Original],
     ) -> tuple[_Original, ...]:
         """``known`` together with each acquired row at an address none of them
-        holds, ordered by start."""
+        holds, ordered by start.
+
+        A caller-addressed range's start names one current row, so acquired rows
+        of which more than one holds that start are Cardinality Corruption — an
+        invariant failure that outranks the caller's precondition.
+        """
         if rows is None:
             return tuple(known)
+        condition = self.condition
         ends = {_bitemporal_ends(original.end) for original in known}
         merged = list(known)
+        starting = 0
         for predecessor in _acquired_predecessors(rows):
             original = _original(self.facts, self.object_key, predecessor, None)
+            if condition is not None and _contains(condition.at, original):
+                starting += 1
             if _bitemporal_ends(original.end) in ends:
                 continue
             merged.append(original)
+        if starting > 1:
+            raise CardinalityCorruptionError(
+                self.facts.entity.identity, self._key_target(), 1, starting
+            )
         merged.sort(key=_original_order)
         return tuple(merged)
 

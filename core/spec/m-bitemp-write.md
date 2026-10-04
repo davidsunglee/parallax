@@ -173,7 +173,8 @@ Every inactivation precedes every opening, the starting rectangle's first; a
 replacement's opened gaps follow the pieces of the rectangles it inactivates.
 Where the flush's read shows no rectangle containing `validFrom`, or one at
 another `in_z`, the write is the caller's failed precondition before any
-statement executes. Under Optimistic the starting rectangle's inactivation gates
+statement executes; where it shows more than one containing `validFrom`, the
+write fails sooner, as Cardinality Corruption (`m-unit-work`). Under Optimistic the starting rectangle's inactivation gates
 on the stated `ifTxStart`, and its shortfall is that failed precondition; every
 later rectangle's gates on its own `in_z`, and its shortfall is an ordinary
 conflict. Under Locking the starting rectangle was read under the shared lock

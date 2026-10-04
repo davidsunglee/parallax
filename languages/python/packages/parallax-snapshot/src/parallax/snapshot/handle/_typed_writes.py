@@ -370,8 +370,9 @@ def typed_target_write(
     if_tx_start: dt.datetime | None,
 ) -> None:
     """The Typed entry to the caller-addressed write lane: ``instance``'s
-    every populated member as the row a :class:`~parallax.core.unit_work.TargetWrite`
-    states, beside the caller's own revision arguments.
+    every populated writable member as the row a
+    :class:`~parallax.core.unit_work.TargetWrite` states, beside the caller's own
+    revision arguments.
 
     What produced the instance is not asked: the write addresses the object its
     key names, under the condition its caller states, so neither a read's
@@ -383,7 +384,7 @@ def typed_target_write(
     instruction = TargetWrite(
         mutation,
         entity.identity.canonical,
-        codec.full_row(instance),
+        codec.writable_row(instance),
         if_version,
         if_tx_start,
         valid_from,

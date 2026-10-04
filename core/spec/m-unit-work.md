@@ -129,8 +129,8 @@ observes the original, pre-transaction rows.
 
 ## Write instruction vocabulary
 
-Every write a unit of work buffers — from any frontend, keyed or predicate-selected
-— is a neutral **write instruction**, the write-side analogue of the Object
+Every write a unit of work buffers — from any frontend, of any shape below — is a
+neutral **write instruction**, the write-side analogue of the Object
 Query. The canonical, language-neutral shapes are hosted in
 [`write-instruction.schema.json`](../schemas/write-instruction.schema.json), mirroring
 how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
@@ -150,8 +150,9 @@ The embedded predicate is a canonical `m-predicate` node, legal vocabulary here
 because `m-unit-work` already depends on `m-predicate` (the dependency-graph edge);
 the write instruction is the sole place the write side reaches the algebra.
 
-**How a write instruction spells the Entity it addresses.** A keyed instruction's
-`entity`, a predicate-selected instruction's `target.entity`, and the Entity prefix
+**How a write instruction spells the Entity it addresses.** A keyed or
+caller-addressed instruction's `entity`, a predicate-selected instruction's
+`target.entity`, and the Entity prefix
 of every `assignments[].attr` all carry an Entity spelling, and all three obey
 `m-metamodel`'s identifier constraint and parse rule: an Entity's local name begins
 capitalized, every namespace segment is lowercase, every member identifier is
@@ -220,8 +221,8 @@ is never a Planned Write, and a Planned Write is never serialized back into one.
 
 ### Serialized write elaboration
 
-A serialized keyed row or predicate-selected assignment is structural input, not
-a planned value. After resolving the exact target Entity and member identity, the
+A serialized keyed or caller-addressed row, or a predicate-selected assignment, is
+structural input, not a planned value. After resolving the exact target Entity and member identity, the
 write frontend calls `m-wire.decodeWire(member.neutralType, literal)` exactly
 once for each non-null authored leaf. Null is handled by the member's nullability
 rule and is never passed to the Neutral Wire Codec. Recursive Value Object
@@ -235,7 +236,7 @@ canonical member identity and document path. The previous
 members, wrong document carriers, multiplicity violations, missing required
 members, nullability, and other structural failures retain their existing rules.
 
-Two producer operations converge on the same private immutable `PreparedWrite`
+Two producer operations converge on the same private immutable prepared-write
 algebra, and they are the one admissibility judgment every ingress crosses. Each
 resolves the target first and judges whether it admits the write: a temporal
 target refuses `delete`; the window must be stated as the verb's form requires,
@@ -483,7 +484,7 @@ Submission follows the target Entity's Effective Concurrency Strategy:
   pending write and publishes nothing. The stated revision is compared with the
   row that acquisition holds; a row standing at another revision, or no row, is
   a failed precondition refused at the call, leaving the pending writes as they
-  were. The write itself is ungated. An unversioned target takes this path under
+  were, and more than one row is Cardinality Corruption. The write itself is ungated. An unversioned target takes this path under
   either preference, and a missing row is its ordinary missing target at flush.
   A temporal target's state is the milestone its stated start and its
   `validFrom` name, so a live read hits only where `validFrom` is that

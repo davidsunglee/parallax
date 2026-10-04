@@ -111,7 +111,8 @@ row is read inside the flush that writes it, and is closed and chained as an
 `update` is — a patch's chained row keeps every member it does not assign, a
 replacement's states the complete writable state. Where that read finds no
 current row, or one at another `in_z`, the write is its caller's failed
-precondition before any statement executes. Under Optimistic the close's gate
+precondition before any statement executes; where it finds more than one current
+row, the write fails sooner, as Cardinality Corruption (`m-unit-work`). Under Optimistic the close's gate
 binds the stated `ifTxStart` rather than an observation, and its zero-row
 shortfall is that failed precondition, never a retriable conflict. Under Locking
 the current row was read under the shared lock at submission and is read under

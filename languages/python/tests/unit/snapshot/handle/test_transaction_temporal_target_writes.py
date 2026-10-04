@@ -659,6 +659,26 @@ def test_an_invariant_failure_of_the_start_outranks_the_callers_precondition() -
         _db(port).transact(lambda tx: _patch(tx, value="150.00"))
 
 
+@_STRATEGIES
+def test_two_current_rows_at_the_start_are_corruption_before_any_write(
+    concurrency: _Concurrency,
+) -> None:
+    overlapping = [_rectangle(_JAN, INFINITY_INSTANT), _rectangle(_FEB, _JUN, tx_start=_T1)]
+    port = ScriptedAdapter(Transact(Read(rows=overlapping)))
+    attempts = 0
+
+    def fn(tx: Transaction) -> None:
+        nonlocal attempts
+        attempts += 1
+        _patch(tx, value="150.00")
+
+    with raises_contextualized(CardinalityCorruptionError) as corrupt:
+        _db(port).transact(fn, concurrency=concurrency, retry_optimistic_conflicts=True)
+    assert (corrupt.value.expected, corrupt.value.actual) == (1, 2)
+    assert attempts == 1
+    assert _writes(port) == []
+
+
 def test_a_database_error_at_the_start_is_the_databases_not_the_callers() -> None:
     port = ScriptedAdapter(
         Transact(
