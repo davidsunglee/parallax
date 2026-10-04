@@ -102,6 +102,7 @@ from tests.unit._transact_support import (
     WherePosition,
     db_for,
 )
+from tests.unit.core.unit_work._ownership_support import OpenedRows
 
 
 def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger, completed: object) -> None:
@@ -1595,26 +1596,13 @@ def test_a_facet_refuses_a_verb_it_owns_no_topology_for(
 # --------------------------------------------------------------------------- #
 # Rows the attempt opened: revised or removed at their address, never closed.   #
 # --------------------------------------------------------------------------- #
-@dataclasses.dataclass(frozen=True)
-class _Owns:
-    """An attempt that opened exactly ``endpoints``."""
-
-    endpoints: frozenset[OwnedEndpoint]
-
-    def owns(self, endpoint: OwnedEndpoint, /) -> bool:
-        return endpoint in self.endpoints
-
-    def owns_any(self, entity: EntityIdentity, /) -> bool:
-        return any(endpoint.entity == entity for endpoint in self.endpoints)
-
-
 _T = "2024-07-01T00:00:00+00:00"
 _BALANCE_ID = EntityIdentity("parallax.compatibility", "Balance")
 _POSITION_ID = EntityIdentity("parallax.compatibility", "Position")
 
 
-def _owning(entity: EntityIdentity, *ends: object) -> _Owns:
-    return _Owns(
+def _owning(entity: EntityIdentity, *ends: object) -> OpenedRows:
+    return OpenedRows(
         frozenset(
             {
                 OwnedEndpoint(
@@ -1627,11 +1615,11 @@ def _owning(entity: EntityIdentity, *ends: object) -> _Owns:
     )
 
 
-def _own_balance() -> _Owns:
+def _own_balance() -> OpenedRows:
     return _owning(_BALANCE_ID, None)
 
 
-def _own_position(valid_end: dt.datetime | None = None) -> _Owns:
+def _own_position(valid_end: dt.datetime | None = None) -> OpenedRows:
     return _owning(_POSITION_ID, valid_end, None)
 
 
@@ -1639,7 +1627,7 @@ def _owned_lowering(
     instruction: KeyedWrite,
     meta: Metamodel,
     observation: WriteObservation,
-    ownership: _Owns,
+    ownership: OpenedRows,
     *,
     concurrency: Concurrency = "locking",
 ) -> list[tuple[PlannedStep, tuple[str, tuple[object, ...]]]]:

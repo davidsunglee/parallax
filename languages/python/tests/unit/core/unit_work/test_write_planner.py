@@ -134,6 +134,7 @@ from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 from tests.unit._positional_row_support import positional_row
 from tests.unit._temporal_group_support import temporal_group
+from tests.unit.core.unit_work._ownership_support import OpenedRows
 
 _MODELS = corpus_records()
 _ACCOUNT = corpus_model("account")
@@ -2105,14 +2106,14 @@ def test_provenance_decorates_the_topology_temporal_expansion_produced(
     assert all(step is decorated for step, decorated in zip(steps, audit.decorated, strict=True))
 
 
-def test_only_surviving_writes_contribute_claims_and_a_shared_claim_answers_once() -> None:
-    # Consumption records a fact about an observed state, so a flush spends one
-    # claim once however many surviving writes settled against it — here two,
-    # because a destruction and an assignment of one state are a pair no verb
-    # admitted as combinable and both are left standing. A carrier the earlier
-    # stages retire takes its claim out of the flush with it: the key-only update
-    # below is known no-op work, eliminated at stage 2, and never settled, so its
-    # claim is absent by ABSENCE rather than by a second filter.
+def test_only_surviving_writes_carry_claims_into_execution_units() -> None:
+    # Two surviving writes settle against one observed state — a destruction and
+    # an assignment of one state are a pair no verb admitted as combinable, so
+    # both are left standing — and each one's unit carries that one claim. A
+    # carrier the earlier stages retire takes its claim out of the flush with it:
+    # the key-only update below is known no-op work, eliminated at stage 2, and
+    # never settled, so its claim is absent by ABSENCE rather than by a second
+    # filter.
     observation = VersionObservation(observed_version=7)
     shared = RetainedObservation(
         VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7), observation, None
@@ -2141,7 +2142,7 @@ def test_only_surviving_writes_contribute_claims_and_a_shared_claim_answers_once
         )
     )
     assert [_step_mutation(step) for step in finalized.plan.steps] == ["update", "delete"]
-    assert finalized.claims == (shared,)
+    assert [unit.claim for unit in finalized.plan.units] == [shared, shared]
 
 
 # --------------------------------------------------------------------------- #
@@ -2672,19 +2673,6 @@ def test_a_surviving_row_overlays_an_effective_value_object_and_carries_a_restor
 # A Materialized Write Group over rows the attempt opened revises or removes   #
 # each such row at its address, and never opens an empty successor.          #
 # --------------------------------------------------------------------------- #
-@dataclass(frozen=True)
-class _GroupOwnership:
-    """An attempt that opened exactly ``endpoints``."""
-
-    endpoints: frozenset[OwnedEndpoint]
-
-    def owns(self, endpoint: OwnedEndpoint, /) -> bool:
-        return endpoint in self.endpoints
-
-    def owns_any(self, entity: EntityIdentity, /) -> bool:
-        return any(endpoint.entity == entity for endpoint in self.endpoints)
-
-
 def _endpoint(entity: str, key: int, *ends: TemporalUpperBound) -> OwnedEndpoint:
     return OwnedEndpoint(corpus_object_key(entity, ("id", key)).entity, (key,), ends)
 
@@ -2697,9 +2685,7 @@ def _planned_group(
     entity: str, mutation: PredicateMutation, *, owned: tuple[int, ...] = ()
 ) -> WritePlan:
     model = _POSITION if entity == "Position" else _BALANCE
-    ownership = _GroupOwnership(
-        frozenset(_endpoint(entity, key, *_open_ends(entity)) for key in owned)
-    )
+    ownership = OpenedRows(frozenset(_endpoint(entity, key, *_open_ends(entity)) for key in owned))
     return (
         build_write_planner(model)
         .finalize(

@@ -416,8 +416,6 @@ class UnitOfWork:
         # already holds, is known to predate any change completed in between.
         self._freshness = 0
         self._changed: dict[ObservedStateKey, int] = {}
-        # The units of the plan the executor is running, and how many of them
-        # it has reported.
         self._reporting: tuple[ExecutionUnit, ...] = ()
         self._reported = 0
         # This scope's participation identity: what a read of THIS unit of work
@@ -739,9 +737,9 @@ class UnitOfWork:
         buffered intent coalesced away or eliminated as a no-op leaves its
         evidence eligible, because no write of it reached the database — even
         where a sibling write in the same batch did. Finalization is what names
-        those survivors' claims, since it alone knows which items it retired,
-        and it names each one once however many surviving writes settled against
-        it.
+        each survivor's claim on its unit, since it alone knows which items it
+        retired; spending is idempotent, so a claim several units carry is
+        spent once.
 
         A failure while executing, enforcing, or completing marks the
         transaction rollback-only before it propagates, so a caller that catches
@@ -762,8 +760,6 @@ class UnitOfWork:
             self._flush_buffer(trigger)
 
     def _flush_buffer(self, trigger: WriteBatchTrigger) -> None:
-        """Plan the buffer, execute what survived, and complete each execution
-        unit as it succeeds."""
         request = PlanningRequest(
             actor_identity=self._actor_identity,
             transaction_instant=self._transaction_instant,
@@ -781,7 +777,7 @@ class UnitOfWork:
         try:
             self.flush_executor(finalized.plan, trigger=trigger, completed=self._report)
             for unit in units[self._reported :]:
-                self._complete(unit)
+                self._report(unit)
         except BaseException as failure:
             self.mark_rollback_only(failure)
             raise
@@ -789,7 +785,6 @@ class UnitOfWork:
             self._reporting = ()
 
     def _report(self, unit: ExecutionUnit) -> None:
-        """Complete ``unit`` as the executor reports it, in the plan's order."""
         reported = self._reported
         units = self._reporting
         if reported >= len(units) or unit is not units[reported]:
@@ -797,23 +792,26 @@ class UnitOfWork:
                 "an execution unit was reported out of order, or was not one of the plan's"
             )
         self._reported = reported + 1
-        self._complete(unit)
+        self._complete(unit, executed=unit.end > (units[reported - 1].end if reported else 0))
 
-    def _complete(self, unit: ExecutionUnit) -> None:
+    def _complete(self, unit: ExecutionUnit, *, executed: bool) -> None:
         """Publish one successful execution unit's effects.
 
         Evidence the unit's writes settled against is spent; live evidence of
         every state it changed is invalidated and the change recorded, so a read
         that ran before it cannot later build eligible evidence of that state;
         then the owned rows it removed are retired before the rows it opened are
-        registered.
+        registered. A unit that ``executed`` no step changed no stored state, so
+        its claim is spent without invalidating the state it observed.
         """
         stamp = self._freshness + 1
         claim = unit.claim
-        changed_any = claim is not None
+        changed_any = False
         if claim is not None:
             claim.consume()
-            self._invalidate(claim.key, stamp)
+            if executed:
+                changed_any = True
+                self._invalidate(claim.key, stamp)
         for key in unit.changed:
             changed_any = True
             self._invalidate(key, stamp)
