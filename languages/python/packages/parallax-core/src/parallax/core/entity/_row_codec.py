@@ -132,12 +132,15 @@ class EntityRowCodec:
         return self._serialized(facts, names, value, selected, "full_row")
 
     def writable_row(self, value: object) -> dict[str, object]:
-        """:meth:`full_row` without the read-only members, which are immutable
-        after insert and so are no part of the state a replacement writes."""
+        """:meth:`full_row` without the read-only members outside the primary
+        key: they are immutable after insert and so are no part of the state a
+        replacement writes, while a read-only key member still addresses it."""
         row = self.full_row(value)
-        for attribute in self._resolved(value)[0].layout.attributes:
-            if attribute.read_only:
-                row.pop(attribute.identity.name, None)
+        facts = self._resolved(value)[0]
+        for attribute in facts.layout.attributes:
+            name = attribute.identity.name
+            if attribute.read_only and name not in facts.primary_key:
+                row.pop(name, None)
         return row
 
     def identity_row(self, value: object) -> dict[str, object]:

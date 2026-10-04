@@ -2779,27 +2779,30 @@ class _RangeBinding:
         """``known`` together with each acquired row at an address none of them
         holds, ordered by start.
 
-        A caller-addressed range's start names one current row, so acquired rows
-        of which more than one holds that start are Cardinality Corruption — an
-        invariant failure that outranks the caller's precondition.
+        A caller-addressed range's start names one current row, so more than one
+        current row holding that start is Cardinality Corruption — an invariant
+        failure that outranks the caller's precondition. Under Locking every
+        known original is held under the shared lock, so it is current beside
+        the acquired rows and is counted with them; under Optimistic a known
+        original may be stale, so only the acquired rows are current evidence
+        and a stale original is left to its own gate.
         """
         if rows is None:
             return tuple(known)
-        condition = self.condition
         ends = {_bitemporal_ends(original.end) for original in known}
-        merged = list(known)
-        starting = 0
-        for predecessor in _acquired_predecessors(rows):
-            original = _original(self.facts, self.object_key, predecessor, None)
-            if condition is not None and _contains(condition.at, original):
-                starting += 1
-            if _bitemporal_ends(original.end) in ends:
-                continue
-            merged.append(original)
-        if starting > 1:
-            raise CardinalityCorruptionError(
-                self.facts.entity.identity, self._key_target(), 1, starting
-            )
+        acquired = [
+            _original(self.facts, self.object_key, predecessor, None)
+            for predecessor in _acquired_predecessors(rows)
+        ]
+        merged = [*known, *(o for o in acquired if _bitemporal_ends(o.end) not in ends)]
+        condition = self.condition
+        if condition is not None:
+            current = acquired if self.gated else merged
+            starting = sum(1 for original in current if _contains(condition.at, original))
+            if starting > 1:
+                raise CardinalityCorruptionError(
+                    self.facts.entity.identity, self._key_target(), 1, starting
+                )
         merged.sort(key=_original_order)
         return tuple(merged)
 
