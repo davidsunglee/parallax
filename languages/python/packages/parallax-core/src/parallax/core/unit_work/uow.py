@@ -262,9 +262,10 @@ class _TargetRecord:
     opened, by their tags — for a Bitemporal object, whose coverage a write can
     remove in part, and ``row`` for any other, which a removal takes whole.
     ``floor`` is the earliest anchor of any admission whose coverage may still
-    be stored, and ``advanced_from`` the version the last completed update of a
-    versioned row advanced from. A record lasts until the attempt ends unless
-    nothing of it remains.
+    be stored — once a flush executes an insertion, its own anchor, since what
+    an earlier admission opened was removed before it — and ``advanced_from``
+    the version the last completed update of a versioned row advanced from. A
+    record lasts until the attempt ends unless nothing of it remains.
     """
 
     __slots__ = (
@@ -312,10 +313,11 @@ class _TargetWriteState:
 
     Each target's admitted insertion, and every current temporal row the
     attempt successfully opened, by complete physical address. A row of a
-    Bitemporal object opened while an admission of that object stands — its
-    insert, or any later successor — is tagged with that admission's identity.
-    Reads never add to it, so its size follows what the attempt wrote rather
-    than what it read.
+    Bitemporal object that continues an admission standing when it opens — the
+    admission's own insert, or a successor of a row tagged with an admission —
+    is tagged with that admission's identity; a successor of a row no
+    admission opened is not. Reads never add to it, so its size follows what
+    the attempt wrote rather than what it read.
     """
 
     __slots__ = ("_addresses", "_endpoints", "_owning", "_records", "_tags")
@@ -338,6 +340,9 @@ class _TargetWriteState:
 
     def owns_any(self, entity: EntityIdentity, /) -> bool:
         return entity in self._owning
+
+    def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
+        return endpoint in self._tags
 
     def record(self, target: ObjectKey) -> _TargetRecord | None:
         return self._records.get(target)
@@ -363,7 +368,7 @@ class _TargetWriteState:
             if bitemporal:
                 self._addresses[_address(target)] = record
             return identity
-        if not record.stored or _earlier(bounds.valid_from, record.floor):
+        if not record.stored:
             record.floor = bounds.valid_from
         record.opener = opener
         record.bounds = bounds
@@ -417,11 +422,12 @@ class _TargetWriteState:
             else:
                 record.pending_insert = False
                 record.row = True
+                record.floor = record.bounds.valid_from
 
-    def register(self, endpoint: OwnedEndpoint) -> None:
+    def register(self, endpoint: OwnedEndpoint, *, continues: bool = False) -> None:
         self._endpoints.add(endpoint)
         self._owning.add(endpoint.entity)
-        if not self._addresses:
+        if not continues or not self._addresses:
             return
         record = self._addresses.get((endpoint.entity, endpoint.key))
         if record is not None and record.identity is not None:
@@ -457,10 +463,6 @@ class _TargetWriteState:
 
 def _address(target: ObjectKey) -> _Address:
     return (target.entity, tuple(value for _name, value in target.primary_key))
-
-
-def _earlier(first: object | None, second: object | None) -> bool:
-    return first is not None and second is not None and precedes(first, second)
 
 
 class UnitOfWork:
@@ -1062,6 +1064,7 @@ class UnitOfWork:
                 changed=unit.changed,
                 removed=unit.removed,
                 opened=unit.opened,
+                continued=unit.continued,
             )
             return
         self._complete(
@@ -1070,6 +1073,7 @@ class UnitOfWork:
             changed=bound.changed,
             removed=bound.removed,
             opened=bound.opened,
+            continued=bound.continued,
         )
 
     def _complete(
@@ -1080,6 +1084,7 @@ class UnitOfWork:
         changed: Iterable[ObservedStateKey],
         removed: Iterable[OwnedEndpoint],
         opened: Iterable[OwnedEndpoint],
+        continued: Iterable[OwnedEndpoint],
     ) -> None:
         """Publish one successful execution unit's effects.
 
@@ -1109,6 +1114,8 @@ class UnitOfWork:
             targets.retire(endpoint)
         for endpoint in opened:
             targets.register(endpoint)
+        for endpoint in continued:
+            targets.register(endpoint, continues=True)
 
     def _invalidate(self, key: ObservedStateKey, stamp: int) -> None:
         held = self._observations.get(key)

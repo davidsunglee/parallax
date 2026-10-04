@@ -1348,12 +1348,15 @@ address, every current row its successful execution units open — keyed inserts
 temporal successors, and the successors of Materialized Write Groups alike —
 and retires a row from that record when a unit removes it. Reads record nothing.
 The record survives flushes and joined scopes, ends at commit or rollback, and
-starts empty on retry. Every row of an object opened while an admitted insertion
-of it stands — its own insert, and every later successor — is tagged with that
-insertion in the record, and the insertion's coverage is completely removed once
-no row tagged with it remains (*Insertion authority*). A row opened at a removed
-row's address and instant takes the tag of the insertion standing when it opens,
-never the tag of the row it replaced.
+starts empty on retry. The row an admitted insertion's own insert opens is
+tagged with that insertion in the record, and so is every successor of a row
+tagged with it; a successor of a row that existed before the attempt, or of any other
+untagged row, is untagged, so rewriting other coverage of the object beside an
+insertion adds nothing to what the insertion opened. The insertion's coverage is
+completely removed once no row tagged with it remains (*Insertion authority*).
+Address and instant carry no tag: a reinsertion's row opened where a removed row
+stood is tagged with the reinsertion, never with the insertion that row was
+tagged with.
 
 For each temporal mutation's predecessor, the planner derives the mutation's
 **nonempty** successors once and then:

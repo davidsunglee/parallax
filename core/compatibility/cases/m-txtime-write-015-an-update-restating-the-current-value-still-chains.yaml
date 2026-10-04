@@ -1,7 +1,3 @@
-# A keyed update's assignments are literal sets (m-unit-work "Comparing an assigned
-# member with its persisted value"; m-txtime-write): an update assigning the value
-# the current milestone already holds still closes that milestone and chains its
-# successor, so the restatement is recorded on Transaction Time like any change.
 model: models/balance.yaml
 tags: [m-txtime-write, m-unit-work, m-sql, write-sequence, update, audit-only, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
