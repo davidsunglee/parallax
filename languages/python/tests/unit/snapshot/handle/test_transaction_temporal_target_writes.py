@@ -679,6 +679,40 @@ def test_two_current_rows_at_the_start_are_corruption_before_any_write(
     assert _writes(port) == []
 
 
+def test_a_locked_observation_and_a_flush_read_row_both_at_the_start_are_corruption() -> None:
+    # Under Locking the observed rectangle is held under the shared lock, so the
+    # row the flush reads beyond it is a second current row at the start.
+    held = _rectangle(_JAN, _JUN)
+    inserted = _rectangle(_FEB, _DEC, tx_start=_T1)
+    port = ScriptedAdapter(Transact(Read(rows=[held]), Read(rows=[inserted])))
+
+    def fn(tx: Transaction) -> None:
+        tx.update(_source(tx).edit(acct_num="B"), until=_SEP)
+        _patch(tx, value="150.00")
+
+    with raises_contextualized(CardinalityCorruptionError) as corrupt:
+        _db(port).transact(fn, concurrency="locking")
+    assert (corrupt.value.expected, corrupt.value.actual) == (1, 2)
+    assert _writes(port) == []
+
+
+def test_an_optimistic_observation_a_flush_read_row_overlaps_is_left_to_its_gate() -> None:
+    # Under Optimistic the observation may be stale, so the row the flush reads
+    # is no second current row beside it: the start's own gate decides.
+    held = _rectangle(_JAN, _JUN)
+    rewritten = _rectangle(_JAN, _DEC, tx_start=_T1)
+    port = ScriptedAdapter(Transact(Read(rows=[held]), Read(rows=[rewritten]), Write(affected=0)))
+
+    def fn(tx: Transaction) -> None:
+        tx.update(_source(tx).edit(acct_num="B"), until=_SEP)
+        _patch(tx, value="150.00")
+
+    with raises_contextualized(WritePreconditionError):
+        _db(port).transact(fn)
+    (close,) = _writes(port)
+    assert close.sql.endswith("and in_z = %s") and close.binds[-1] == _T0
+
+
 def test_a_database_error_at_the_start_is_the_databases_not_the_callers() -> None:
     port = ScriptedAdapter(
         Transact(

@@ -771,15 +771,26 @@ class Ledger(Entity, table="ledger", namespace="parallax.targetwrites"):
     version: Attr[int] = attr(optimistic_locking=True)
 
 
-def test_a_typed_replacement_of_a_read_value_leaves_its_read_only_members_unwritten() -> None:
+class KeyLedger(Entity, table="ledger", namespace="parallax.targetwrites"):
+    id: Attr[int] = attr(primary_key=True, read_only=True)
+    opened: Attr[str] = attr(read_only=True)
+    note: Attr[str | None]
+    version: Attr[int] = attr(optimistic_locking=True)
+
+
+@pytest.mark.parametrize("entity", [Ledger, KeyLedger], ids=["key", "read-only-key"])
+def test_a_typed_replacement_of_a_read_value_leaves_its_read_only_members_unwritten(
+    entity: type[Ledger | KeyLedger],
+) -> None:
     stored = {"id": 1, "opened": "2024-01-01", "note": "kept", "version": 3}
     port = ScriptedAdapter(Transact(Read(rows=[stored]), Write()))
+    ledger = cast("type[Ledger]", entity)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(Ledger.where(Ledger.id == 1)).result()
+        fetched = tx.find(ledger.where(ledger.id == 1)).result()
         tx.replace(fetched.edit(note="changed"), if_version=3)
 
-    db_for(DomainModel(Ledger), port).transact(fn)
+    db_for(DomainModel(entity), port).transact(fn)
     write = _calls(port)[-1]
     assert write == WriteCall(
         POSTGRES.to_driver_sql(
