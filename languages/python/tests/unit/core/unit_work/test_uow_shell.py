@@ -21,7 +21,7 @@ import pytest
 
 from parallax.conformance import models
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import opt_lock, temporal_read
+from parallax.core import Attr, DomainModel, Entity, attr, opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
@@ -52,10 +52,12 @@ from parallax.core.unit_work import (
     UnitOfWorkError,
     VersionedEvidenceBuilder,
     VersionObservation,
+    WriteAssignment,
     WriteBatchTrigger,
     WriteEvidenceError,
     WritePlan,
     WritePlanningError,
+    WritePreconditionError,
     active_unit_of_work,
     buffered_write,
     observed_state_key,
@@ -64,7 +66,10 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
+    PreparedTargetWrite,
+    TargetWrite,
     prepare_typed_write,
+    prepare_wire_write,
 )
 from parallax.core.unit_work.materialized import InsertionKeyedWrite, ObservedKeyedWrite
 from parallax.core.unit_work.plan import NO_OPENINGS, BoundRange, ExecutionUnit
@@ -78,7 +83,7 @@ from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._temporal_group_support import temporal_group
-from tests.unit._transact_support import PERSON
+from tests.unit._transact_support import PERSON, WherePosition
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
@@ -1359,3 +1364,119 @@ def test_a_unit_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fr
     _run(body, meta=_POSITION, executor=recorder)
     assert _step_kinds(recorder) == ["PlannedInsert"]
     assert [bound.steps for bound in recorder.bound] == [()]
+
+
+class ShellTag(Entity, table="shell_tag", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str] = attr(max_length=16)
+
+
+_BARRIERED = model_of(DomainModel(WherePosition, ShellTag))
+_T0 = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
+_FEB, _APR, _JUN, _AUG, _SEP, _OCT = (
+    dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (2, 4, 6, 8, 9, 10)
+)
+
+
+def _position_row(start: dt.datetime, tx_start: dt.datetime) -> PredecessorRow:
+    return PredecessorRow(
+        members={
+            "id": 1,
+            "acctNum": "A",
+            "value": Decimal("100.00"),
+            "validStart": start,
+            "validEnd": INFINITY,
+            "txStart": tx_start,
+            "txEnd": INFINITY,
+        }
+    )
+
+
+def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetWrite:
+    prepared = prepare_wire_write(
+        TargetWrite(
+            "updateUntil",
+            "WherePosition",
+            {"id": 1, "value": "175.00"},
+            if_tx_start=_T0,
+            valid_from=start,
+            until=until,
+        ),
+        _BARRIERED,
+    )
+    assert isinstance(prepared, PreparedTargetWrite)
+    return prepared
+
+
+def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_proved() -> None:
+    original = TemporalObservation(predecessor=_position_row(_JAN, _T0))
+    key = corpus_object_key("WherePosition", ("id", 1))
+    shape = temporal_read.view(_BARRIERED).shape(key.entity)
+    assert shape is not None
+    state = observed_state_key(key, original, shape)
+    held: list[RetainedObservation] = []
+    seen: list[tuple[bool, bool]] = []
+
+    def executor(
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
+    ) -> None:
+        if len(plan.units) == 1:
+            (unit,) = plan.units
+            assert unit.deferred is not None
+            # A later flush carries no proof: the original's token is stale.
+            unit.deferred.bind([_position_row(_AUG, _FIXED)])
+            return
+        first, barrier, later = plan.units
+        assert first.derived and not barrier.derived
+        completed(first, None)
+        completed(barrier, None)
+        (claim,) = held
+        seen.append((claim.consumed, claim.invalidated))
+        assert later.deferred is not None
+        bound = later.deferred.bind([_position_row(_APR, _FIXED)])
+        assert not any(isinstance(step, PlannedClose) for step in bound.steps)
+        completed(later, bound)
+
+    def body(uow: UnitOfWork) -> None:
+        claim = uow.retain(RetainedObservation(state, original, uow.participation))
+        held.append(claim)
+        observed = prepare_wire_write(
+            KeyedWrite(
+                "updateUntil",
+                "WherePosition",
+                ({"id": 1, "acctNum": "O"},),
+                valid_from=_FEB,
+                until=_APR,
+            ),
+            _BARRIERED,
+        )
+        assert isinstance(observed, PreparedKeyedWrite)
+        uow.buffer(buffered_write(observed, claim))
+        barrier = prepare_wire_write(
+            PredicateWrite(
+                "update",
+                PredicateSelection(
+                    "ShellTag", predicate_algebra.Comparison("eq", "ShellTag.id", 1)
+                ),
+                assignments=(WriteAssignment("ShellTag.label", "q"),),
+            ),
+            _BARRIERED,
+        )
+        assert isinstance(barrier, PreparedPredicateWrite)
+        uow.buffer(barrier)
+        uow.buffer_target(_position_target(_JUN, _AUG), acquire=_never_acquired)
+        uow.read(lambda: None)
+        uow.buffer_target(_position_target(_SEP, _OCT), acquire=_never_acquired)
+
+    with pytest.raises(WritePreconditionError):
+        _run(body, meta=_BARRIERED, executor=executor)
+    # The earlier unit spent the shared source and invalidated its state
+    # before the later one bound.
+    assert seen == [(True, True)]
+
+
+def _never_acquired(*_arguments: object) -> None:
+    raise AssertionError("an Optimistic caller-addressed write reads nothing at its call")

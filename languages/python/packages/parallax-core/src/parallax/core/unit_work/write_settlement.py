@@ -47,6 +47,7 @@ from parallax.core.unit_work.effects import (
     CardinalityCorruptionError,
     MissingTargetError,
     WritePreconditionError,
+    enforce_affected_rows,
 )
 from parallax.core.unit_work.instructions import (
     PreparedAssignment,
@@ -56,6 +57,7 @@ from parallax.core.unit_work.instructions import (
     PreparedWrite,
 )
 from parallax.core.unit_work.materialized import (
+    ChainedTemporalWrite,
     ComposedTemporalWrite,
     GroupStates,
     InsertionKeyedWrite,
@@ -79,6 +81,8 @@ from parallax.core.unit_work.plan import (
     BoundRange,
     Completion,
     Completions,
+    Derivation,
+    Descent,
     ExecutionUnit,
     Openings,
     OwnedEndpoint,
@@ -483,6 +487,7 @@ class WriteSettlement:
                         changed=ranged.changed,
                         removed=ranged.removed,
                         opened=ranged.opened,
+                        derived=ranged.derived,
                     )
                 )
                 continue
@@ -1150,6 +1155,13 @@ class WriteSettlement:
         insertion's anchor once read. So does a write a caller addressed, whose
         caller's condition requires the coverage at its start to stand at the
         Transaction-Time start it states.
+
+        A composition an ordering barrier kept after earlier writes of the same
+        object (:class:`~parallax.core.unit_work.materialized.ChainedTemporalWrite`)
+        always reads its whole window at execution: the units before the barrier
+        changed coverage no planning input knows, and the conditions it was
+        admitted with may already have been proven on the originals those units
+        transformed. One a later region follows records what it derives.
         """
         entity = composed.target
         view = _view(self._families, entity)
@@ -1167,6 +1179,7 @@ class WriteSettlement:
         object_key = ObjectKey(entity.identity, ((key_attribute.name, key_value),))
         originals, validations = _known_originals(composed, facts, object_key)
         claims = _claims(composed)
+        chained = composed if isinstance(composed, ChainedTemporalWrite) else None
         binding = _RangeBinding(
             facts=facts,
             transform=composed.transform,
@@ -1177,9 +1190,30 @@ class WriteSettlement:
             ownership=ownership,
             decoration=decoration,
             anchor=_anchor(composed),
-            condition=_condition(composed),
+            conditions=_conditions(composed),
+            derives=chained is not None and chained.leads,
         )
         transform = composed.transform
+        if chained is not None and chained.follows:
+            return _DeferredTemporalRange(
+                binding=binding,
+                originals=originals,
+                validations=validations,
+                claims=claims,
+                acquisition=RangeAcquisition(
+                    entity=entity,
+                    key_attribute=key_attribute,
+                    key_value=cast("ManagedValue", key_value),
+                    valid_from=cast("ManagedValue | None", transform.start),
+                    until=(
+                        None
+                        if transform.end is None or is_open_bound(transform.end)
+                        else cast("ManagedValue", transform.end)
+                    ),
+                    locking=not gated,
+                ),
+                continued=True,
+            )
         uncovered: object | None = None
         if isinstance(shape, Bitemporal):
             assert transform.start is not None and transform.end is not None
@@ -1217,6 +1251,7 @@ class WriteSettlement:
             changed=bound.changed,
             removed=bound.removed,
             opened=bound.opened,
+            derived=bound.derived,
         )
 
 
@@ -2480,6 +2515,7 @@ class _SettledRange:
     changed: tuple[ObservedStateKey, ...]
     removed: tuple[OwnedEndpoint, ...]
     opened: Openings
+    derived: tuple[Derivation, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -2577,14 +2613,20 @@ class _StartingCondition:
     expected: dt.datetime
 
 
-def _condition(composed: ComposedTemporalWrite) -> _StartingCondition | None:
-    """The one starting condition the callers of a composed range's addressed
-    writes state; admission let in only writes that agree on it."""
+def _conditions(composed: ComposedTemporalWrite) -> tuple[_StartingCondition, ...]:
+    """The distinct starting conditions the callers of a composed range's
+    addressed writes state, in authored order: one per exact-window operation,
+    where admission let in only writes that agree on it, and another for each
+    operation over a disjoint window."""
+    conditions: list[_StartingCondition] = []
     for contribution in composed.contributions:
         condition = contribution.condition
-        if condition is not None:
-            return _StartingCondition(contribution.bounds.valid_from, condition.instant)
-    return None
+        if condition is None:
+            continue
+        stated = _StartingCondition(contribution.bounds.valid_from, condition.instant)
+        if stated not in conditions:
+            conditions.append(stated)
+    return tuple(conditions)
 
 
 def _original(
@@ -2623,9 +2665,57 @@ def _original_order(original: _Original) -> tuple[int, float]:
     return (0, 0.0) if start is None else (1, instant_order(start))
 
 
+@dataclass(slots=True)
+class _Binding:
+    """What binding one range accumulates: every original's own effect before
+    any opening, and the facts its unit publishes."""
+
+    effects: list[PlannedStep] = field(default_factory=list[PlannedStep])
+    openings: list[PlannedStep] = field(default_factory=list[PlannedStep])
+    changed: list[ObservedStateKey] = field(default_factory=list[ObservedStateKey])
+    removed: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
+    fresh: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
+    continued: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
+    derived: list[Derivation] = field(default_factory=list[Derivation])
+
+    def take(
+        self,
+        original: _Original,
+        transformed: tuple[_Settled, Derivation | None] | None,
+        decorate: _Decoration,
+    ) -> None:
+        if transformed is None:
+            return
+        disposed, derivation = transformed
+        for step in disposed.steps:
+            (self.openings if isinstance(step, PlannedInsert) else self.effects).append(
+                decorate(step)
+            )
+        if any(not isinstance(step, PlannedInsert) for step in disposed.steps):
+            self.changed.append(original.state)
+        self.removed.extend(disposed.removed)
+        self.fresh.extend(disposed.opened.fresh)
+        self.continued.extend(disposed.opened.continued)
+        if derivation is not None:
+            self.derived.append(derivation)
+
+    def range(self) -> BoundRange:
+        return BoundRange(
+            steps=(*self.effects, *self.openings),
+            changed=tuple(self.changed),
+            removed=tuple(self.removed),
+            opened=Openings(tuple(self.fresh), tuple(self.continued)),
+            derived=tuple(self.derived),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class _RangeBinding:
-    """Everything binding one range needs beside the coverage it binds to."""
+    """Everything binding one range needs beside the coverage it binds to.
+
+    ``derives`` says a later unit of the same flush depends on what this one
+    does to its originals, so its bound range records it (:class:`Derivation`).
+    """
 
     facts: _TemporalFacts
     transform: TemporalTransform
@@ -2636,9 +2726,15 @@ class _RangeBinding:
     ownership: Ownership
     decoration: _Decoration
     anchor: object = _UNANCHORED
-    condition: _StartingCondition | None = None
+    conditions: tuple[_StartingCondition, ...] = ()
+    derives: bool = False
 
-    def bind(self, originals: Sequence[_Original], validations: Sequence[_Original]) -> BoundRange:
+    def bind(
+        self,
+        originals: Sequence[_Original],
+        validations: Sequence[_Original],
+        discharged: frozenset[int] = frozenset(),
+    ) -> BoundRange:
         """The steps the transform takes over ``originals``, after a guarded
         validation of each of ``validations``.
 
@@ -2655,65 +2751,95 @@ class _RangeBinding:
         without it: the anchor is where the authority starts, never shifted to
         coverage that survives elsewhere.
 
-        A range a caller addressed requires the coverage at its start to stand
-        at the Transaction-Time start the caller stated, and fails as that
-        caller's precondition otherwise — before anything executes where the
-        coverage shows it, and at that original's gate where only execution can.
-        The original it starts from is affected first. A replacement's extent
-        then opens its complete state over every gap the originals leave.
+        A range a caller addressed requires the coverage at each of its
+        operations' starts to stand at the Transaction-Time start that caller
+        stated, and fails as that caller's precondition otherwise — before
+        anything executes where the coverage shows it, and at that original's
+        gate where only execution can. The originals they start from are
+        affected first, in the order the callers stated them, so a lost start
+        fails ahead of every other original's effect; one guard serves every
+        start one original holds. A condition an earlier unit of the flush
+        already proved (``discharged``, by its position) is judged no further.
+        A replacement's extent then opens its complete state over every gap the
+        originals leave.
         """
         facts = self.facts
         self._require_anchor(originals)
-        start = self._require_start(originals)
-        effects: list[PlannedStep] = []
-        openings: list[PlannedStep] = []
-        changed: list[ObservedStateKey] = []
-        removed: list[OwnedEndpoint] = []
-        fresh: list[OwnedEndpoint] = []
-        continued: list[OwnedEndpoint] = []
+        starts = self._starts(originals, discharged)
+        bound = _Binding()
         resolved: dict[
             int, tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]
         ] = {}
         decorate = self.decoration
+        for original in starts:
+            bound.take(original, self._transformed(original, True, resolved), decorate)
         for original in validations:
-            effects.append(decorate(self._close(original, TERMINATED)))
-            changed.append(original.state)
+            bound.effects.append(decorate(self._close(original, TERMINATED)))
+            bound.changed.append(original.state)
+            if self.derives:
+                bound.derived.append(Derivation(original.state, original.end, None, ()))
         for original in originals:
-            if not self.transform.touches(original.start, original.end):
-                continue
-            pieces = self.transform.pieces(original.start, original.end)
-            predecessor = original.predecessor.with_bindable_document()
-            successors = tuple(self._successor(piece, predecessor, resolved) for piece in pieces)
-            cause = (
-                SUPERSEDED if any(piece.assigned is not None for piece in pieces) else TERMINATED
-            )
-            closing = self._close(original, cause)
-            if original is start and self.gated:
-                closing = replace(
-                    closing, affected_rows=ExactCount(expected=1, on_shortfall=FAILED_PRECONDITION)
-                )
-            disposed = _dispose(facts, closing, successors, predecessor, self.ownership)
-            for step in disposed.steps:
-                if isinstance(step, PlannedInsert):
-                    openings.append(decorate(step))
-                else:
-                    effects.append(decorate(step))
-            if any(not isinstance(step, PlannedInsert) for step in disposed.steps):
-                changed.append(original.state)
-            removed.extend(disposed.removed)
-            fresh.extend(disposed.opened.fresh)
-            continued.extend(disposed.opened.continued)
+            if all(original is not start for start in starts):
+                bound.take(original, self._transformed(original, False, resolved), decorate)
         if isinstance(facts.shape, Bitemporal):
             coverage = tuple((original.start, original.end) for original in originals)
             for piece in self.transform.gaps(coverage):
                 opened = self._authored(piece, resolved)
-                openings.append(decorate(opened))
-                fresh.extend(_openings(facts, (opened,)))
-        return BoundRange(
-            steps=(*effects, *openings),
-            changed=tuple(changed),
-            removed=tuple(removed),
-            opened=Openings(tuple(fresh), tuple(continued)),
+                bound.openings.append(decorate(opened))
+                bound.fresh.extend(_openings(facts, (opened,)))
+        return bound.range()
+
+    def _transformed(
+        self,
+        original: _Original,
+        starting: bool,
+        resolved: dict[
+            int, tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]
+        ],
+    ) -> tuple[_Settled, Derivation | None] | None:
+        """What the transform does to ``original`` — its own effect and the
+        pieces it leaves — and what a later unit needs of that, or ``None``
+        where the transform does not reach it. A ``starting`` original's effect
+        fails as its caller's precondition."""
+        if not self.transform.touches(original.start, original.end):
+            return None
+        pieces = self.transform.pieces(original.start, original.end)
+        predecessor = original.predecessor.with_bindable_document()
+        successors = tuple(self._successor(piece, predecessor, resolved) for piece in pieces)
+        cause = SUPERSEDED if any(piece.assigned is not None for piece in pieces) else TERMINATED
+        closing = self._close(original, cause)
+        if self.gated and starting:
+            closing = replace(
+                closing, affected_rows=ExactCount(expected=1, on_shortfall=FAILED_PRECONDITION)
+            )
+        disposed = _dispose(self.facts, closing, successors, predecessor, self.ownership)
+        if not self.derives:
+            return disposed, None
+        return disposed, self._derivation(original, closing, successors)
+
+    def _derivation(
+        self, original: _Original, closing: PlannedClose, successors: Sequence[PlannedInsert]
+    ) -> Derivation:
+        """What a later unit needs of ``original``'s transformation: its state
+        and end, its own address where the attempt owned it, and each nonempty
+        row derived from it."""
+        facts = self.facts
+        own = _target_endpoint(facts, closing.target)
+        rows: list[tuple[OwnedEndpoint, object | None]] = []
+        valid_start = (
+            facts.shape.valid_time.start_attribute if isinstance(facts.shape, Bitemporal) else None
+        )
+        for successor in successors:
+            (entry,) = successor.entries
+            endpoint = _entry_endpoint(facts, entry)
+            if endpoint is not None:
+                start = None if valid_start is None else entry.row.attributes[valid_start]
+                rows.append((endpoint, start))
+        return Derivation(
+            original=original.state,
+            end=original.end,
+            owned=own if self.ownership.owns(own) else None,
+            rows=tuple(rows),
         )
 
     def _require_anchor(self, originals: Sequence[_Original]) -> None:
@@ -2731,26 +2857,36 @@ class _RangeBinding:
     def _key_target(self) -> KeyTarget:
         return KeyTarget(key_attributes=(self.key_attribute,), key_values=((self.key_value,),))
 
-    def _require_start(self, originals: Sequence[_Original]) -> _Original | None:
-        """The original a caller-addressed range starts from, once the coverage
-        shows it stands at its caller's Transaction-Time start, or ``None`` for
-        a range no caller addressed."""
-        condition = self.condition
-        if condition is None:
-            return None
-        start = next(
-            (original for original in originals if _contains(condition.at, original)), None
-        )
-        tx_start = self.facts.shape.transaction_time.start_attribute
-        if start is None or normalize_instant(
-            cast("dt.datetime", start.predecessor.cell(tx_start))
-        ) != normalize_instant(condition.expected):
-            raise WritePreconditionError(
-                self.facts.entity.identity,
-                {self.key_attribute.name: self.key_value},
-                condition.expected,
+    def _starts(
+        self, originals: Sequence[_Original], discharged: frozenset[int]
+    ) -> tuple[_Original, ...]:
+        """The distinct originals the range's caller-addressed operations start
+        from, in the order their conditions were stated, once the coverage shows
+        each stands at its caller's Transaction-Time start; the first that does
+        not fails as that caller's precondition."""
+        starts: list[_Original] = []
+        for position, condition in enumerate(self.conditions):
+            if position in discharged:
+                continue
+            start = next(
+                (original for original in originals if _contains(condition.at, original)), None
             )
-        return start
+            if start is None or self._tx_start(start) != normalize_instant(condition.expected):
+                raise self._failed(condition)
+            if all(start is not held for held in starts):
+                starts.append(start)
+        return tuple(starts)
+
+    def _tx_start(self, original: _Original) -> dt.datetime:
+        tx_start = self.facts.shape.transaction_time.start_attribute
+        return normalize_instant(cast("dt.datetime", original.predecessor.cell(tx_start)))
+
+    def _failed(self, condition: _StartingCondition) -> WritePreconditionError:
+        return WritePreconditionError(
+            self.facts.entity.identity,
+            {self.key_attribute.name: self.key_value},
+            condition.expected,
+        )
 
     def _authored(
         self,
@@ -2779,32 +2915,154 @@ class _RangeBinding:
         """``known`` together with each acquired row at an address none of them
         holds, ordered by start.
 
-        A caller-addressed range's start names one current row, so more than one
-        current row holding that start is Cardinality Corruption — an invariant
-        failure that outranks the caller's precondition. Under Locking every
-        known original is held under the shared lock, so it is current beside
-        the acquired rows and is counted with them; under Optimistic a known
-        original may be stale, so only the acquired rows are current evidence
-        and a stale original is left to its own gate.
+        A caller-addressed operation's start names one current row, so more than
+        one current row holding that start is Cardinality Corruption — an
+        invariant failure that outranks the caller's precondition. Under Locking
+        every known original is held under the shared lock, so it is current
+        beside the acquired rows and is counted with them; under Optimistic a
+        known original may be stale, so only the acquired rows are current
+        evidence and a stale original is left to its own gate.
         """
         if rows is None:
             return tuple(known)
         ends = {_bitemporal_ends(original.end) for original in known}
-        acquired = [
+        acquired = self._read(rows)
+        merged = [*known, *(o for o in acquired if _bitemporal_ends(o.end) not in ends)]
+        self._require_one_start(acquired if self.gated else merged)
+        merged.sort(key=_original_order)
+        return tuple(merged)
+
+    def continued(
+        self,
+        rows: PredecessorRows | Sequence[PredecessorRow] | None,
+        known: Sequence[_Original],
+    ) -> tuple[tuple[_Original, ...], frozenset[int]]:
+        """The rows a range an ordering barrier kept after earlier writes of its
+        object binds to, read over its whole window, beside the positions of
+        the caller conditions the flush has already proved.
+
+        The units before the barrier may have transformed the originals this
+        range's writes were admitted against. An observed original still
+        standing is an ordinary original. One the flush transformed under
+        protection has proven its condition, provided every row derived from it
+        within the window still stands as it was opened; the range then binds to
+        those rows and their current values. Any other observed original has
+        lost its condition, which fails as that write's own shortfall would.
+
+        A caller's start standing at its stated Transaction-Time start is judged
+        as usual. One standing at a row the flush derived from a proven original
+        that held the caller's start at that stated start is proven too. Any
+        other start is the caller's failed precondition, which outranks an
+        observed loss.
+        """
+        read = self._read(rows) if rows is not None else ()
+        self._require_one_start(read)
+        standing = {original.state for original in read}
+        lost = next(
+            (
+                original
+                for original in known
+                if original.state not in standing and not self._intact(original.state, read)
+            ),
+            None,
+        )
+        discharged: set[int] = set()
+        for position, condition in enumerate(self.conditions):
+            start = next((original for original in read if _contains(condition.at, original)), None)
+            if start is None:
+                raise self._failed(condition)
+            if self._tx_start(start) == normalize_instant(condition.expected):
+                continue
+            if not self._descends(start, condition, read):
+                raise self._failed(condition)
+            discharged.add(position)
+        if lost is not None:
+            enforce_affected_rows(self._close(lost, TERMINATED), 0)
+        return tuple(sorted(read, key=_original_order)), frozenset(discharged)
+
+    def _read(self, rows: PredecessorRows | Sequence[PredecessorRow]) -> list[_Original]:
+        return [
             _original(self.facts, self.object_key, predecessor, None)
             for predecessor in _acquired_predecessors(rows)
         ]
-        merged = [*known, *(o for o in acquired if _bitemporal_ends(o.end) not in ends)]
-        condition = self.condition
-        if condition is not None:
-            current = acquired if self.gated else merged
+
+    def _require_one_start(self, current: Sequence[_Original]) -> None:
+        for condition in self.conditions:
             starting = sum(1 for original in current if _contains(condition.at, original))
             if starting > 1:
                 raise CardinalityCorruptionError(
                     self.facts.entity.identity, self._key_target(), 1, starting
                 )
-        merged.sort(key=_original_order)
-        return tuple(merged)
+
+    def _endpoint(self, original: _Original) -> OwnedEndpoint:
+        ends = (
+            _bitemporal_ends(original.end)
+            if isinstance(self.facts.shape, Bitemporal)
+            else TRANSACTION_TIME_ENDS
+        )
+        return OwnedEndpoint(self.facts.entity.identity, (self.key_value,), ends)
+
+    def _opened_here(self, original: _Original) -> Descent | None:
+        """What a current row the flush derived descends from, provided it
+        stands exactly as it was opened: at an owned address, at this attempt's
+        Transaction-Time start, from the Valid-Time start it was opened with."""
+        endpoint = self._endpoint(original)
+        if not self.ownership.owns(endpoint) or self._tx_start(original) != self.facts.instant:
+            return None
+        descent = self.ownership.descent(endpoint)
+        if descent is None or descent.start != original.start:
+            return None
+        return descent
+
+    def _descends(
+        self, start: _Original, condition: _StartingCondition, read: Sequence[_Original]
+    ) -> bool:
+        """Whether ``start`` is a row the flush derived from a proven original
+        that held ``condition``'s start at its stated Transaction-Time start,
+        with everything else derived from that original intact."""
+        descent = self._opened_here(start)
+        if descent is None:
+            return False
+        original = descent.original
+        proof = self.ownership.proven(original)
+        if proof is None or not isinstance(original, TemporalStateKey):
+            return False
+        milestone = original.milestone
+        if normalize_instant(milestone.tx_time) != normalize_instant(condition.expected):
+            return False
+        origin_start = milestone.valid_time_or_none
+        if condition.at is not None and (
+            origin_start is None
+            or precedes(condition.at, origin_start)
+            or not precedes(condition.at, proof.end)
+        ):
+            return False
+        return self._intact(original, read)
+
+    def _intact(self, original: ObservedStateKey, read: Sequence[_Original]) -> bool:
+        """Whether the flush transformed ``original`` under protection and every
+        row it derived from it that lies inside this range's window still stands
+        as it was opened."""
+        if self.ownership.proven(original) is None:
+            return False
+        present = {self._endpoint(row): row for row in read}
+        transform = self.transform
+        until = None if transform.end is None or is_open_bound(transform.end) else transform.end
+        for endpoint, descent in self.ownership.descendants(original, transform.start, until):
+            if not self._within(descent.start, endpoint):
+                continue
+            row = present.get(endpoint)
+            if row is None or self._opened_here(row) is None:
+                return False
+        return True
+
+    def _within(self, start: object | None, endpoint: OwnedEndpoint) -> bool:
+        transform = self.transform
+        if start is None or transform.start is None:
+            return True
+        end = endpoint.ends[0]
+        until = end.instant if isinstance(end, Finite) else INFINITY_LITERAL
+        return precedes(start, transform.end) and precedes(transform.start, until)
 
     def _close(self, original: _Original, cause: CloseCause) -> PlannedClose:
         facts = self.facts
@@ -2877,7 +3135,10 @@ class _DeferredTemporalRange:
 
     The rows acquired for :attr:`acquisition` join the observed originals at
     every address those do not already hold; binding then proceeds exactly as
-    for a range bound at planning.
+    for a range bound at planning. A ``continued`` range follows earlier writes
+    of its object across an ordering barrier, so it binds to the rows it read
+    alone, judging its observed originals and caller conditions against what
+    the earlier units proved (:meth:`_RangeBinding.continued`).
     """
 
     binding: _RangeBinding
@@ -2885,15 +3146,17 @@ class _DeferredTemporalRange:
     validations: tuple[_Original, ...]
     claims: Completions | RetainedObservation | None
     acquisition: RangeAcquisition
+    continued: bool = False
 
     def bind(self, rows: object, /) -> BoundRange:
         binding = self.binding
-        return binding.bind(
-            binding.acquired(
-                cast("PredecessorRows | Sequence[PredecessorRow] | None", rows), self.originals
-            ),
-            self.validations,
-        )
+        acquired = cast("PredecessorRows | Sequence[PredecessorRow] | None", rows)
+        if self.continued:
+            originals, discharged = binding.continued(
+                acquired, (*self.originals, *self.validations)
+            )
+            return binding.bind(originals, (), discharged)
+        return binding.bind(binding.acquired(acquired, self.originals), self.validations)
 
 
 def _acquired_predecessors(

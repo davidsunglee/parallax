@@ -86,6 +86,7 @@ from parallax.core.unit_work.planned import (
     WriteTarget,
     shortfall_for,
 )
+from parallax.core.unit_work.planner import ObjectKey, VersionedStateKey
 from parallax.core.unit_work.strategy import AuditStrategy
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
@@ -620,6 +621,14 @@ def test_an_attempt_that_opened_nothing_owns_nothing_an_insertion_opened() -> No
     endpoint = OwnedEndpoint(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
     assert not NO_OWNERSHIP.owns(endpoint)
     assert not NO_OWNERSHIP.continues_insertion(endpoint)
+
+
+def test_an_attempt_that_opened_nothing_has_proved_and_derived_nothing() -> None:
+    endpoint = OwnedEndpoint(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
+    state = VersionedStateKey(ObjectKey(_ACCOUNT, (("id", 1),)), 1)
+    assert NO_OWNERSHIP.proven(state) is None
+    assert NO_OWNERSHIP.descendants(state, None, None) == ()
+    assert NO_OWNERSHIP.descent(endpoint) is None
 
 
 def test_a_plan_without_units_forms_one_unit_of_every_step() -> None:

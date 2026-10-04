@@ -186,6 +186,33 @@ starting state (`m-unit-work` *Observed-State Coalescing*): a replacement's
 extent survives an assignment composed after it and ends at a destruction,
 which opens no gap only to destroy it.
 
+Writes of one object over **disjoint** windows — adjacent ones included — are
+separate operations, each with its own condition: a caller's `ifTxStart` at its
+own `validFrom`, or the rectangle an observed source read. Both starts may lie
+inside one stored rectangle. Pending together, they execute as one range that
+inactivates each rectangle once and opens each operation's pieces inside its own
+window; every rectangle holding a caller's start is inactivated first, in the
+order the callers stated them, and one guard serves every start one rectangle
+holds. A replacement fills gaps of its own window only, and a termination
+destroys only its own.
+
+```text
+Stored: [January, infinity) at T0
+Patch [February, April) from T0, then patch [June, August) from T0
+Final:  [January, February) | [February, April) first patch
+        | [April, June) | [June, August) second patch | [August, infinity)
+```
+
+When an ordering barrier separates such operations (`m-unit-work`
+*Buffered, batched, ordered writes*), each executes on its own side. The later
+one reads the coverage its window reaches when its turn comes, and finds the
+rectangles the earlier one opened at the attempt's own `txInstant`: its
+condition on the original they derive from was proven by the earlier
+operation's guarded inactivation or held shared lock, and holds while every
+rectangle derived from that original inside its window stands as it was opened.
+It then revises or removes those rectangles like any the attempt opened, so the
+attempt adds no history of its own.
+
 **Concurrent creation in gaps is not coordinated.** The existing-row guards and
 shared locks above protect rows that exist when the flush reads them. A
 concurrent transaction may still open coverage inside a gap a replacement fills,
