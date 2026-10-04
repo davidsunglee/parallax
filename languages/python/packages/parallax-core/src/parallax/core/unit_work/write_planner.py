@@ -6,7 +6,7 @@ from operator import itemgetter
 from typing import cast
 
 from parallax.core import inheritance, relationship, temporal_read
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.unit_work.claims import (
     ClaimVerdict,
     WriteIntent,
@@ -25,13 +25,17 @@ from parallax.core.unit_work.instructions import (
     derive_keyed_write,
 )
 from parallax.core.unit_work.materialized import (
+    AfterRemoval,
     BufferItem,
     ClaimedKeyedWrite,
     ComposedTemporalWrite,
+    InsertionKeyedWrite,
     MaterializedWriteGroup,
     ObjectClaimedWrite,
     ObservedKeyedWrite,
+    PendingOpening,
     buffered_instruction,
+    composed_alone,
     composed_temporal_write,
 )
 from parallax.core.unit_work.plan import NO_OWNERSHIP, Completion, Ownership
@@ -44,6 +48,7 @@ from parallax.core.unit_work.strategy import (
     ConcurrencyStrategy,
     TemporalStrategy,
 )
+from parallax.core.unit_work.temporal import EMPTY_TRANSFORM, TemporalTransform
 from parallax.core.unit_work.write_settlement import (
     OrderedWrite,
     WritePlanningResult,
@@ -51,13 +56,18 @@ from parallax.core.unit_work.write_settlement import (
 )
 
 __all__ = [
+    "BufferedWrite",
     "PendingWrites",
     "PlanningRequest",
     "WritePlanner",
     "compose_writes",
 ]
 
-type BufferedWrites = Sequence[OrderedWrite]
+type BufferedWrite = OrderedWrite | AfterRemoval
+"""One composed buffered write as finalization receives it: what settlement
+reads, or inserts that must follow an earlier removal."""
+
+type BufferedWrites = Sequence[BufferedWrite]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -100,6 +110,7 @@ class WritePlanner:
 
     __slots__ = (
         "_batching",
+        "_concurrency",
         "_families",
         "_model",
         "_relationships",
@@ -121,6 +132,7 @@ class WritePlanner:
         self._temporal_facet = temporal_read.view(model)
         self._relationships = relationship.view(model)
         self._batching = batching
+        self._concurrency = concurrency
         self._settlement = WriteSettlement(
             model,
             self._families,
@@ -170,8 +182,21 @@ class WritePlanner:
             ownership=request.ownership,
         )
 
-    def _form_batches(self, buffer: Sequence[OrderedWrite]) -> list[OrderedWrite]:
-        result: list[OrderedWrite] = []
+    def inserted_version(self, entity: EntityIdentity, advanced_from: int | None) -> int | None:
+        """The version a row of ``entity`` the planning attempt inserted holds,
+        given the version its last completed update advanced from — ``None``
+        where no update did — or ``None`` for an unversioned Entity.
+
+        The attempt wrote every revision of such a row, so the arithmetic that
+        stamped them answers its version without reading it.
+        """
+        if self._concurrency.version_attribute(self._model, entity) is None:
+            return None
+        arithmetic = self._concurrency.version_arithmetic()
+        return arithmetic.initial if advanced_from is None else arithmetic.advance(advanced_from)
+
+    def _form_batches(self, buffer: Sequence[BufferedWrite]) -> list[BufferedWrite]:
+        result: list[BufferedWrite] = []
         run: list[PreparedKeyedWrite] = []
         run_group: object = None
 
@@ -225,11 +250,13 @@ class WritePlanner:
         flush_run()
         return result
 
-    def _order(self, items: Sequence[OrderedWrite]) -> list[OrderedWrite]:
+    def _order(self, items: Sequence[BufferedWrite]) -> list[OrderedWrite]:
         """``items`` in flush order: each readless predicate write stays where it
         was authored, and within each region between them inserts go in
         ascending referential rank, then updates in authored order, then deletes
-        in descending rank. Both sorts are stable."""
+        in descending rank. Both sorts are stable. Inserts that depend on an
+        earlier removal open a new region, as a barrier does, so the removal
+        precedes them while they still order with what follows them."""
         ordered: list[OrderedWrite] = []
         inserts: list[tuple[int, OrderedWrite]] = []
         updates: list[OrderedWrite] = []
@@ -249,6 +276,13 @@ class WritePlanner:
             if isinstance(item, PreparedPredicateWrite):
                 close_region()
                 ordered.append(item)
+                continue
+            if isinstance(item, AfterRemoval):
+                # Everything authored before the removal-dependent inserts
+                # executes first, the removal they depend on included; what is
+                # authored after them orders with them as usual.
+                close_region()
+                inserts.extend((self._rank(insert), insert) for insert in item.inserts)
                 continue
             if isinstance(item, ComposedTemporalWrite):
                 if item.assigns:
@@ -297,9 +331,9 @@ def _merge_update_into_insert(
     return derive_keyed_write(insert, (merged,))
 
 
-type PendingTemporal = ObservedKeyedWrite | ComposedTemporalWrite
-"""What a temporal object's pending observed writes are: one write still
-alone, or several composed."""
+type PendingTemporal = ObservedKeyedWrite | InsertionKeyedWrite | ComposedTemporalWrite
+"""What a temporal object's pending writes against its existing coverage are:
+one write still alone, or several composed."""
 
 
 class PendingWrites:
@@ -311,10 +345,15 @@ class PendingWrites:
     follows authored order:
 
     * an update of an object whose insert is still pending folds into that
-      insert, and a destructive write of it cancels the pair;
+      insert, and a destructive write of it cancels the pair. A Bitemporal
+      opening composes such writes over the coverage it opens instead
+      (:class:`~parallax.core.unit_work.materialized.PendingOpening`), so a
+      bounded write splits it and a destruction cancels only the coverage it
+      reaches;
     * writes claiming one non-temporal scope coalesce by the claim algebra
       (:func:`~parallax.core.unit_work.claims.admits`);
-    * a temporal object's observed writes compose into one
+    * a temporal object's writes against its existing coverage — observed ones
+      and those an admitted insertion authorized alike — compose into one
       :class:`~parallax.core.unit_work.materialized.ComposedTemporalWrite`
       (:func:`~parallax.core.unit_work.claims.admits_composed`), whose
       transform keeps only surviving values while every write's condition stays.
@@ -327,10 +366,12 @@ class PendingWrites:
     """
 
     __slots__ = (
+        "_after_removal",
         "_claims",
         "_families",
         "_inserts",
         "_items",
+        "_removals",
         "_sources",
         "_temporal",
         "_temporal_facet",
@@ -339,7 +380,7 @@ class PendingWrites:
     def __init__(self, model: Metamodel) -> None:
         self._families = inheritance.view(model)
         self._temporal_facet = temporal_read.view(model)
-        self._items: list[BufferItem | ComposedTemporalWrite | None] = []
+        self._items: list[BufferItem | ComposedTemporalWrite | PendingOpening | None] = []
         self._inserts: dict[ObjectKey, int] = {}
         # Where each still-open claim sits, by its scope: one per exact observed
         # state, or the object itself for an object claim. Two observed
@@ -348,25 +389,49 @@ class PendingWrites:
         self._claims: dict[Hashable, int] = {}
         self._temporal: dict[ObjectKey, int] = {}
         self._sources: list[Completion] = []
+        # Objects a pending write removes whole, and the positions of inserts
+        # that must follow a removal of an earlier insertion — each allocated by
+        # the first write it records, since most buffers hold neither.
+        self._removals: set[ObjectKey] | None = None
+        self._after_removal: set[int] | None = None
 
     def __bool__(self) -> bool:
         return bool(self._items)
 
     def temporal(self, key: ObjectKey) -> PendingTemporal | None:
-        """The pending observed writes of temporal object ``key``, if any."""
+        """The pending writes of temporal object ``key`` against its existing
+        coverage, if any."""
         index = self._temporal.get(key)
         if index is None:
             return None
         held = self._items[index]
-        assert isinstance(held, ObservedKeyedWrite | ComposedTemporalWrite)
+        assert isinstance(held, ObservedKeyedWrite | InsertionKeyedWrite | ComposedTemporalWrite)
         return held
 
-    def verdict(self, item: ClaimedKeyedWrite, key: ObjectKey) -> ClaimVerdict:
+    def verdict(
+        self, item: ClaimedKeyedWrite | InsertionKeyedWrite, key: ObjectKey
+    ) -> ClaimVerdict:
         """What a non-temporal claimed write becomes against the write pending
         at its own scope (:func:`~parallax.core.unit_work.claims.admits`)."""
         intent = keyed_intent(item.instruction)
-        assert intent is not None  # neither carrier wraps an insert
+        assert intent is not None  # no carrier wraps an insert
         return admits(self._held_intent(_claim_scope(item, key)), intent)
+
+    def opening_admits(self, key: ObjectKey, instruction: PreparedKeyedWrite) -> bool:
+        """Whether ``instruction`` composes with the still-pending opening of
+        ``key``: an assignment never reaches coverage an earlier write of the
+        opening destroyed, and a destruction overlapping an earlier write
+        states exactly its window (:func:`~parallax.core.unit_work.claims.admits_composed`)."""
+        index = self._inserts.get(key)
+        held = None if index is None else self._items[index]
+        if not isinstance(held, PendingOpening):
+            return True
+        intent = keyed_intent(instruction)
+        assert intent is not None  # an opening's own writes are no inserts
+        return (
+            admits_composed(((None, held_intent) for held_intent in held.intents), None, intent)
+            != "incompatible"
+        )
 
     def holds(self, state: ObservedStateKey) -> bool:
         """Whether a pending keyed write claims observed state ``state``."""
@@ -378,61 +443,149 @@ class PendingWrites:
             scope == state for scope, _intent in composed_intents(cast("PendingTemporal", held))
         )
 
+    def removes(self, key: ObjectKey) -> bool:
+        """Whether a pending write removes object ``key`` whole: a deletion of a
+        Non-Temporal object, or a termination of a Transaction-Time-Only one."""
+        removals = self._removals
+        return removals is not None and key in removals
+
+    def removals(self) -> tuple[ObjectKey, ...]:
+        """Every object a pending write removes whole (:meth:`removes`)."""
+        removals = self._removals
+        return () if removals is None else tuple(removals)
+
+    def transform(self, key: ObjectKey) -> TemporalTransform | None:
+        """What the pending writes of temporal object ``key`` do to its
+        existing coverage, or ``None`` where none is pending."""
+        held = self.temporal(key)
+        if held is None:
+            return None
+        if isinstance(held, ComposedTemporalWrite):
+            return held.transform
+        return composed_alone(held, _key_name(self._families, held.instruction.target)).transform
+
     def _held_intent(self, scope: Hashable) -> WriteIntent | None:
         index = self._claims.get(scope)
         held = None if index is None else self._items[index]
-        assert held is None or isinstance(held, ObservedKeyedWrite | ObjectClaimedWrite)
+        assert held is None or isinstance(
+            held, ObservedKeyedWrite | ObjectClaimedWrite | InsertionKeyedWrite
+        )
         return None if held is None else keyed_intent(held.instruction)
 
+    def is_bitemporal_target(self, instruction: PreparedKeyedWrite) -> bool:
+        """Whether ``instruction``'s target is a Bitemporal Entity."""
+        return isinstance(
+            self._temporal_facet.shape(instruction.target.identity), temporal_read.Bitemporal
+        )
+
     def is_temporal(self, item: BufferItem) -> bool:
-        """Whether ``item`` is an observed write of a temporal object, the
-        writes that compose by object rather than by claimed scope."""
-        return isinstance(item, ObservedKeyedWrite) and _is_temporal(
+        """Whether ``item`` is a write of a temporal object against its existing
+        coverage, the writes that compose by object rather than by claimed
+        scope."""
+        return isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite) and _is_temporal(
             self._temporal_facet, item.instruction.target
         )
 
-    def add(self, item: BufferItem, key: ObjectKey | None = None) -> None:
-        """Compose ``item`` into the pending writes, in authored order.
+    def add(
+        self, item: BufferItem, key: ObjectKey | None = None, *, after_removal: bool = False
+    ) -> bool:
+        """Compose ``item`` into the pending writes, in authored order, and
+        answer whether it cancelled the pending insert of its object.
 
         ``key`` is the object ``item`` addresses where the caller already
         derived it, so the index shares that key rather than deriving its own.
+        ``after_removal`` marks an insert that must execute after every write
+        authored before it, because one of those removes an earlier insertion
+        of its object.
         """
         items = self._items
         if isinstance(item, ObjectClaimedWrite) and item.source is not None:
             self._sources.append(item.source)
         if isinstance(item, MaterializedWriteGroup):
             items.append(item)
-            return
+            return False
         instruction = buffered_instruction(item)
         if key is None:
             key = resolve_object_key(instruction, self._families)
         if not isinstance(instruction, PreparedKeyedWrite) or key is None:
             items.append(item)
-            return
-        verb = instruction.mutation
-        if verb in INSERT_MUTATIONS:
+            return False
+        if instruction.mutation in INSERT_MUTATIONS:
             items.append(item)
-            self._inserts[key] = len(items) - 1
-        elif verb in UPDATE_MUTATIONS and key in self._inserts:
-            index = self._inserts[key]
-            base = items[index]
-            # Neither carrier wraps an insert, so a pending-insert slot is
-            # always a bare instruction — and folding an update into it
-            # yields an insert, which is why the merged item stays bare.
-            assert isinstance(base, PreparedKeyedWrite)
-            items[index] = _merge_update_into_insert(base, instruction, self._families)
-        elif verb in DESTRUCTIVE_MUTATIONS and key in self._inserts:
-            items[self._inserts.pop(key)] = None
-        elif isinstance(item, ObservedKeyedWrite) and self.is_temporal(item):
+            index = len(items) - 1
+            self._inserts[key] = index
+            if after_removal:
+                if self._after_removal is None:
+                    self._after_removal = set()
+                self._after_removal.add(index)
+            return False
+        if key in self._inserts:
+            return self._fold_into_opening(instruction, key)
+        self._add_existing(item, instruction, key)
+        return False
+
+    def _add_existing(
+        self, item: BufferItem, instruction: PreparedKeyedWrite, key: ObjectKey
+    ) -> None:
+        """Compose a write against existing state into the pending writes."""
+        if instruction.mutation in DESTRUCTIVE_MUTATIONS and not self.is_bitemporal_target(
+            instruction
+        ):
+            if self._removals is None:
+                self._removals = set()
+            self._removals.add(key)
+        if self.is_temporal(item):
+            assert isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite)
             # A retained claim already holds its object's key, so the index
             # shares it rather than keeping one of its own.
-            self._add_temporal(item, key if item.claim is None else item.claim.key.object)
-        elif isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite):
+            claim = item.claim if isinstance(item, ObservedKeyedWrite) else None
+            self._add_temporal(item, key if claim is None else claim.key.object)
+            return
+        if isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite | InsertionKeyedWrite):
             self._combine_claimed(item, key)
         else:
-            items.append(item)
+            self._items.append(item)
 
-    def _combine_claimed(self, item: ClaimedKeyedWrite, key: ObjectKey) -> None:
+    def _fold_into_opening(self, instruction: PreparedKeyedWrite, key: ObjectKey) -> bool:
+        """Fold a write of ``key`` into its still-pending insert, answering
+        whether that cancelled the insert.
+
+        A non-temporal or Transaction-Time-Only opening takes an update's values
+        in place and is cancelled by any destruction, which removes all of it. A
+        Bitemporal opening composes the write over the coverage it opens and is
+        cancelled only once no coverage survives.
+        """
+        items = self._items
+        index = self._inserts[key]
+        base = items[index]
+        target = instruction.target
+        if isinstance(self._temporal_facet.shape(target.identity), temporal_read.Bitemporal):
+            opening = (
+                base
+                if isinstance(base, PendingOpening)
+                else PendingOpening(
+                    insert=cast("PreparedKeyedWrite", base), transform=EMPTY_TRANSFORM, intents=()
+                )
+            ).then(instruction, _key_name(self._families, target))
+            if opening.survives:
+                items[index] = opening
+                return False
+        elif instruction.mutation in UPDATE_MUTATIONS:
+            # No carrier wraps an insert, so a pending-insert slot is always a
+            # bare instruction — and folding an update into it yields an insert,
+            # which is why the merged item stays bare.
+            assert isinstance(base, PreparedKeyedWrite)
+            items[index] = _merge_update_into_insert(base, instruction, self._families)
+            return False
+        items[index] = None
+        del self._inserts[key]
+        if self._after_removal is not None:
+            self._after_removal.discard(index)
+        return True
+
+    def _combine_claimed(
+        self, item: ClaimedKeyedWrite | InsertionKeyedWrite, key: ObjectKey
+    ) -> None:
         """Combine ``item`` with the write pending at its OWN scope, or open
         that scope.
 
@@ -447,7 +600,9 @@ class PendingWrites:
         never by its key alone (:func:`_claim_scope`), so writes of two states
         of one key may interleave without either displacing the other. Only
         each scope's position is indexed: the held intent is read back off the
-        held write itself.
+        held write itself. A write an insertion authorized meets an observed
+        write of the same state as its peer, and the survivor keeps the
+        observed write's evidence, which it still spends.
         """
         items = self._items
         scope = _claim_scope(item, key)
@@ -456,17 +611,20 @@ class PendingWrites:
         if verdict == "coalesce":
             assert index is not None  # an unclaimed scope admits
             base = items[index]
-            assert isinstance(base, ObservedKeyedWrite | ObjectClaimedWrite)
+            assert isinstance(base, ObservedKeyedWrite | ObjectClaimedWrite | InsertionKeyedWrite)
             items[index] = _merged_claimed(base, item)
             return
         if verdict == "deduplicate":
             return
         if index is not None and verdict == "supersede":
+            base = items[index]
+            assert isinstance(base, ObservedKeyedWrite | ObjectClaimedWrite | InsertionKeyedWrite)
             items[index] = None
+            item = _evidenced(item, base, item.instruction)
         items.append(item)
         self._claims[scope] = len(items) - 1
 
-    def _add_temporal(self, item: ObservedKeyedWrite, key: ObjectKey) -> None:
+    def _add_temporal(self, item: ObservedKeyedWrite | InsertionKeyedWrite, key: ObjectKey) -> None:
         items = self._items
         index = self._temporal.get(key)
         held = None if index is None else items[index]
@@ -474,10 +632,14 @@ class PendingWrites:
             items.append(item)
             self._temporal[key] = len(items) - 1
             return
-        assert isinstance(held, ObservedKeyedWrite | ComposedTemporalWrite)
+        assert isinstance(held, ObservedKeyedWrite | InsertionKeyedWrite | ComposedTemporalWrite)
         intent = keyed_intent(item.instruction)
-        assert intent is not None  # an observed write is no insert
-        if isinstance(held, ObservedKeyedWrite) and held.observation == item.observation:
+        assert intent is not None  # a write against existing coverage is no insert
+        if (
+            isinstance(held, ObservedKeyedWrite)
+            and isinstance(item, ObservedKeyedWrite)
+            and held.observation == item.observation
+        ):
             held_intent = keyed_intent(held.instruction)
             assert held_intent is not None
             if held_intent.region == intent.region:
@@ -492,7 +654,11 @@ class PendingWrites:
                     items.append(item)
                     self._temporal[key] = len(items) - 1
                     return
-        scope = None if item.claim is None else item.claim.key
+        scope = (
+            item.claim.key
+            if isinstance(item, ObservedKeyedWrite) and item.claim is not None
+            else None
+        )
         if admits_composed(composed_intents(held), scope, intent) == "incompatible":
             items.append(item)
             return
@@ -500,14 +666,29 @@ class PendingWrites:
             held, item, _key_name(self._families, item.instruction.target)
         )
 
-    def writes(self) -> tuple[OrderedWrite, ...]:
+    def writes(self) -> tuple[BufferedWrite, ...]:
         """The composed writes, in authored order, with every cancelled write
-        gone and every object claim unwrapped to its own instruction."""
-        return tuple(
-            item.instruction if isinstance(item, ObjectClaimedWrite) else item
-            for item in self._items
-            if item is not None
-        )
+        gone, every object claim unwrapped to its own instruction, every
+        Bitemporal opening flushed as the inserts its writes leave, and every
+        insert that must follow a removal marked as such."""
+        written: list[BufferedWrite] = []
+        after_removal = self._after_removal or ()
+        for index, item in enumerate(self._items):
+            if item is None:
+                continue
+            if isinstance(item, PendingOpening):
+                inserts = item.pieces()
+            elif index in after_removal:
+                assert isinstance(item, PreparedKeyedWrite)  # an insert is a bare instruction
+                inserts = (item,)
+            else:
+                written.append(item.instruction if isinstance(item, ObjectClaimedWrite) else item)
+                continue
+            if index in after_removal:
+                written.append(AfterRemoval(inserts))
+            else:
+                written.extend(inserts)
+        return tuple(written)
 
     def sources(self) -> tuple[Completion, ...]:
         """Every observation-free source authority a pending write was admitted
@@ -525,6 +706,8 @@ class PendingWrites:
         self._inserts.clear()
         self._claims.clear()
         self._temporal.clear()
+        self._removals = None
+        self._after_removal = None
 
 
 def composed_intents(
@@ -532,10 +715,11 @@ def composed_intents(
 ) -> tuple[tuple[ObservedStateKey | None, WriteIntent], ...]:
     """Each write ``held`` composes, as the scope it claims and the intent it
     states over its window."""
-    if isinstance(held, ObservedKeyedWrite):
+    if isinstance(held, ObservedKeyedWrite | InsertionKeyedWrite):
         intent = keyed_intent(held.instruction)
-        assert intent is not None  # an observed write is no insert
-        return ((None if held.claim is None else held.claim.key, intent),)
+        assert intent is not None  # a write against existing coverage is no insert
+        claim = held.claim if isinstance(held, ObservedKeyedWrite) else None
+        return ((None if claim is None else claim.key, intent),)
     return tuple(
         (
             None if contribution.claim is None else contribution.claim.key,
@@ -549,7 +733,7 @@ def composed_intents(
     )
 
 
-def compose_writes(model: Metamodel, writes: Sequence[BufferItem]) -> tuple[OrderedWrite, ...]:
+def compose_writes(model: Metamodel, writes: Sequence[BufferItem]) -> tuple[BufferedWrite, ...]:
     """``writes`` composed in authored order by :class:`PendingWrites`, for a
     caller holding a buffer no unit of work admitted."""
     pending = PendingWrites(model)
@@ -558,19 +742,24 @@ def compose_writes(model: Metamodel, writes: Sequence[BufferItem]) -> tuple[Orde
     return pending.writes()
 
 
-def _claim_scope(item: ClaimedKeyedWrite, key: ObjectKey) -> Hashable:
+def _claim_scope(item: ClaimedKeyedWrite | InsertionKeyedWrite, key: ObjectKey) -> Hashable:
     """The scope ``item``'s claim is filed under: the retained claim's own
-    Observed State Key, the object for an object claim, or — for a caller-held
+    Observed State Key, the object for an object claim, the scope an
+    insertion-authorized write was admitted at, or — for a caller-held
     observation, which names no state key — the object beside that evidence,
     since equal evidence about one object is one state."""
     if isinstance(item, ObjectClaimedWrite):
         return key
+    if isinstance(item, InsertionKeyedWrite):
+        return key if item.scope is None else item.scope
     if item.claim is not None:
         return item.claim.key
     return (key, item.observation)
 
 
-def _merged_claimed[C: ClaimedKeyedWrite](base: C, arriving: ClaimedKeyedWrite) -> C:
+def _merged_claimed(
+    base: ClaimedKeyedWrite | InsertionKeyedWrite, arriving: ClaimedKeyedWrite | InsertionKeyedWrite
+) -> ClaimedKeyedWrite | InsertionKeyedWrite:
     """``base`` carrying ``arriving``'s assignments too, later value winning.
 
     The surviving carrier keeps ``base``'s position, mutation, bounds, and claim
@@ -579,12 +768,27 @@ def _merged_claimed[C: ClaimedKeyedWrite](base: C, arriving: ClaimedKeyedWrite) 
     """
     merged = dict(base.instruction.rows[0])
     merged.update(arriving.instruction.rows[0])
-    return replace(base, instruction=derive_keyed_write(base.instruction, (merged,)))
+    return _evidenced(base, arriving, derive_keyed_write(base.instruction, (merged,)))
+
+
+def _evidenced(
+    first: ClaimedKeyedWrite | InsertionKeyedWrite,
+    second: ClaimedKeyedWrite | InsertionKeyedWrite,
+    instruction: PreparedKeyedWrite,
+) -> ClaimedKeyedWrite | InsertionKeyedWrite:
+    """``instruction`` in the carrier of whichever of two writes of one scope
+    a read authorized — ``first`` where both or neither were.
+
+    A read's evidence outranks an insertion's authority because the survivor
+    still has to spend it, and the two settle against the same state.
+    """
+    carrier = second if isinstance(first, InsertionKeyedWrite) else first
+    return replace(carrier, instruction=instruction)
 
 
 def _decomposed_updates(
-    buffer: Sequence[OrderedWrite], temporal_facet: temporal_read.TemporalFacet
-) -> list[OrderedWrite]:
+    buffer: Sequence[BufferedWrite], temporal_facet: temporal_read.TemporalFacet
+) -> list[BufferedWrite]:
     """``buffer`` with every PREFORMED multi-row non-temporal keyed update split
     back into one single-row instruction per row.
 
@@ -610,7 +814,7 @@ def _decomposed_updates(
     multi-row milestone chain it is rather than silently settling it as several
     chains the caller never authored.
     """
-    decomposed: list[OrderedWrite] = []
+    decomposed: list[BufferedWrite] = []
     for item in buffer:
         if not isinstance(item, PreparedKeyedWrite) or not _splits_into_rows(item, temporal_facet):
             decomposed.append(item)
@@ -660,10 +864,10 @@ def _instruction_target(instruction: PreparedWrite) -> EntityMetadata:
 
 
 def _without_noop_rows(
-    item: OrderedWrite,
+    item: BufferedWrite,
     families: inheritance.InheritanceFacet,
     temporal_facet: temporal_read.TemporalFacet,
-) -> OrderedWrite | None:
+) -> BufferedWrite | None:
     """``item`` with its known no-op rows gone, or ``None`` when none survive.
 
     An update row naming only key members changes nothing: a key ADDRESSES the
@@ -693,7 +897,7 @@ def _without_noop_rows(
     eliminated whole or passed through untouched, and is never rebuilt around a
     narrower instruction.
     """
-    if isinstance(item, ComposedTemporalWrite):
+    if isinstance(item, ComposedTemporalWrite | AfterRemoval):
         return item
     instruction = buffered_instruction(item)
     if (

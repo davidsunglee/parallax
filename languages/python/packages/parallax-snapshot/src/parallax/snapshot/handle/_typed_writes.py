@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping, Sequence
-from typing import Any, Final
+from typing import Any
 
 from parallax.core.entity import (
     AttributeAssignment,
@@ -10,7 +10,7 @@ from parallax.core.entity import (
     lifecycle_state_of,
 )
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity._declaration import declaration_of, wire_names_of
+from parallax.core.entity._declaration import declaration_of
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
@@ -33,7 +33,7 @@ from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPre
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.snapshot._inspection import snapshot_state_of
+from parallax.snapshot._inspection import insertion_of, snapshot_state_of
 from parallax.snapshot.handle._family import family_view
 from parallax.snapshot.handle._keyed_writes import (
     PreparedSourceWrite,
@@ -72,12 +72,15 @@ def provenance_of(value: EntityBase) -> Provenance:
     lifecycle to read: a Wire source answers the same fact from the Read Origin
     the door that published it filed, and what the keyed write judges is the
     answer rather than either carrier.
+
+    The authority an admitted insertion bound to an instance is no read, so a
+    value carrying it alone is still one no managed source published.
     """
     if lifecycle_state_of(value) is None:
         return "none"
     state = snapshot_state_of(value)
     if state is None:
-        return "foreign"
+        return "none" if insertion_of(value) is not None else "foreign"
     return "none" if state.source is None else "this"
 
 
@@ -127,47 +130,6 @@ def source_pin(instance: object) -> Pin | None:
     here is therefore its provenance, not its editedness."""
     state = snapshot_state_of(instance)
     return None if state is None else state.pin
-
-
-_UNPOPULATED: Final = object()
-"""What :func:`source_identity_row` reads for a member the value states no value
-for — the one reading that must answer rather than raise, since it runs before
-the refusal such a value has coming."""
-
-
-def source_identity_row(
-    record: EntityMetadata, meta: Metamodel, value: EntityBase
-) -> Mapping[str, object] | None:
-    """``value``'s family-key member read straight off it — or ``None`` when it
-    states no value for it, because its own class carries no attribute for that
-    member or because nothing ever populated the one it carries.
-
-    Total for every value of the Entity, which is what this reading exists for:
-    the identity row is what names the object to the opened-object ledger, and
-    the ledger is consulted before the provenance refusal that a value naming no
-    object of this store has coming, so a value this reading could refuse would
-    be answered ahead of the honest complaint about it. The Entity Row Codec's
-    :meth:`~parallax.core.entity.EntityRowCodec.identity_row` selects the same
-    member and is total over neither case: it refuses the class that carries no
-    attribute for the member and fails on the attribute read for the one that
-    carries it unpopulated. Whichever it does follows later, when the write goes
-    to derive the row it would actually buffer.
-
-    ``None`` means no object, so no insert of it was buffered, which is what
-    leaves such a value's provenance refusal standing.
-
-    A primary key is an Attribute, whose canonical form is the value itself, so
-    the member is carried here exactly as a row would serialize it and a reading
-    of this row compares equal to a reading of the row an insert buffers.
-    """
-    name = family_view(meta, record).primary_key.identity.name
-    py_name = wire_names_of(type(value)).name_to_py.get(name)
-    if py_name is None:
-        return None
-    member = getattr(value, py_name, _UNPOPULATED)
-    if member is _UNPOPULATED:
-        return None
-    return {name: member}
 
 
 def written_object_key(
@@ -250,9 +212,9 @@ class TypedKeyedWriteSource:
             entity=entity,
             pin=source_pin(self._value),
             hint=instance_read_origin(self._value),
-            identity_row=source_identity_row(entity, model, self._value),
             provenance=provenance_of(self._value),
             representation="typed",
+            authoring=insertion_of(self._value),
         )
 
     def prepare(

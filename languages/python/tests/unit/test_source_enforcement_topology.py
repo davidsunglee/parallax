@@ -174,6 +174,9 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot._inspection", "_declaration"): frozenset(
         {"declaration_of", "is_entity_class", "members_of"}
     ),
+    ("parallax.snapshot._inspection", "_entity"): frozenset(
+        {"DetachedLifecycleState", "attach_lifecycle_state"}
+    ),
     ("parallax.snapshot.handle._database", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._database", "_model"): frozenset({"class_index", "model_of"}),
     ("parallax.snapshot.handle._keyed_writes", "_layout"): frozenset({"CatalogedModel"}),
@@ -185,9 +188,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot.handle._read", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._retention", "_construction_input"): frozenset({"ABSENT"}),
     ("parallax.snapshot.handle._retention", "_layout"): frozenset({"EntityLayout"}),
-    ("parallax.snapshot.handle._typed_writes", "_declaration"): frozenset(
-        {"declaration_of", "wire_names_of"}
-    ),
+    ("parallax.snapshot.handle._typed_writes", "_declaration"): frozenset({"declaration_of"}),
     ("parallax.snapshot.materialize._classify", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._convert", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._page", "_construction_input"): frozenset({"ABSENT"}),
@@ -381,7 +382,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.snapshot.handle._preflight",
     ): frozenset({"preflight"}),
     ("parallax.conformance._lanes.scenario", "parallax.snapshot.materialize._wire"): frozenset(
-        {"read_origin_of"}
+        {"authoring_of", "read_origin_of"}
     ),
     ("parallax.conformance.another_source", "parallax.snapshot.handle._publication"): frozenset(
         {"read_projection"}

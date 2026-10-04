@@ -98,6 +98,10 @@ the same instant is closed as usual. After the attempt, the Transaction-Time
 history holds each pre-attempt milestone closed once and one current row per
 key, with no empty interval.
 
+A write the insertion itself authorized after its insert flushed observed no
+row: the object's current row is read inside the flush that writes it, and is
+revised or removed as above (`m-unit-work` *Insertion authority*).
+
 ### Composition with inheritance
 
 A milestone-chaining write on an inheritance participant (a concrete subtype of a

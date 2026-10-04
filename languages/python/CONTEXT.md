@@ -17,5 +17,6 @@ Python-specific spelling and public semantics live in the
 | Database / Scoped Database | Resource ownership versus authority-selected execution | [Execution](spec/execution.md) |
 | Transaction | The callback's explicit read/write surface | [Execution](spec/execution.md) |
 | Edit | A copy-based write input derived from an entity value | [Execution](spec/execution.md) |
+| Insertion source | The inserted instance, its later edits, or the node a Wire insert answered | [Execution](spec/execution.md) |
 
 Private implementation names belong in their defining code, not this glossary.

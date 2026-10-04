@@ -10,6 +10,7 @@ from typing import Final, Literal, Protocol
 from weakref import WeakValueDictionary
 
 from parallax.core import inheritance
+from parallax.core.base import INFINITY_LITERAL
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.unit_work.claims import (
     SELECTION_INTENT,
@@ -30,6 +31,7 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.materialized import (
     BufferItem,
+    InsertionKeyedWrite,
     MaterializedWriteGroup,
     ObjectClaimedWrite,
     ObservedKeyedWrite,
@@ -37,13 +39,21 @@ from parallax.core.unit_work.materialized import (
     group_state_keys,
 )
 from parallax.core.unit_work.plan import BoundRange, ExecutionUnit, OwnedEndpoint, WritePlan
+from parallax.core.unit_work.planned import Finite
 from parallax.core.unit_work.planner import (
     ObjectKey,
     ObservedStateKey,
+    VersionedStateKey,
     resolve_object_key,
 )
-from parallax.core.unit_work.retain import ParticipationToken, ReadOrigin, RetainedObservation
+from parallax.core.unit_work.retain import (
+    InsertionIdentity,
+    ParticipationToken,
+    ReadOrigin,
+    RetainedObservation,
+)
 from parallax.core.unit_work.strategy import ActorIdentity, Concurrency, EvidencePolicyLookup
+from parallax.core.unit_work.temporal import covers, precedes
 from parallax.core.unit_work.write_planner import (
     PendingWrites,
     PlanningRequest,
@@ -216,10 +226,9 @@ class BufferOutcome(Enum):
     """What buffering one accepted item did to the buffer's pending inserts.
 
     Both values mean the item was buffered; a refused item raises instead.
-    ``CANCELLED_PENDING_INSERT`` reports a destructive keyed write that removed
-    a still-unflushed insert of its object from the pending set — the pair the
-    flush will annihilate — and nothing about SQL: the insert stays buffered
-    until planning coalesces the two.
+    ``CANCELLED_PENDING_INSERT`` reports a destructive keyed write that left
+    nothing of a still-unflushed insert of its object — the pair the flush
+    emits nothing for — and nothing about SQL.
     """
 
     BUFFERED = "buffered"
@@ -240,37 +249,84 @@ class TransactionSettings:
 
 
 class _TargetRecord:
-    """What one attempt holds about one object it inserts.
+    """What one attempt holds about one object it inserted.
 
-    ``pending_insert`` lasts until the next flush. The admitted insertion —
-    ``opener``, the opaque label of the interface that opened it, kept for its
-    caller's diagnostics, and the ``bounds`` it was admitted with — lasts until
-    the attempt ends or a cancelling destructive write retires it. A record
-    exists only while one of them holds.
+    ``opener`` labels the interface that admitted the latest insertion, kept
+    for its caller's diagnostics, and ``bounds`` are the bounds it was admitted
+    with — the anchor every write it authorizes starts at. ``identity`` is the
+    authority that insertion grants while it stands, and ``None`` once its
+    complete removal retired it. ``pending_insert`` lasts until the next flush.
+
+    What survives of the object's admitted insertions is counted where it is
+    stored: ``live`` — the owned current rows an admission of the object
+    opened, by their tags — for a Bitemporal object, whose coverage a write can
+    remove in part, and ``row`` for any other, which a removal takes whole.
+    ``floor`` is the earliest anchor of any admission whose coverage may still
+    be stored, and ``advanced_from`` the version the last completed update of a
+    versioned row advanced from. A record lasts until the attempt ends unless
+    nothing of it remains.
     """
 
-    __slots__ = ("bounds", "opener", "pending_insert")
+    __slots__ = (
+        "advanced_from",
+        "bitemporal",
+        "bounds",
+        "floor",
+        "identity",
+        "live",
+        "opener",
+        "pending_insert",
+        "row",
+    )
 
-    def __init__(self, opener: Hashable | None, bounds: PreparedTemporalBounds) -> None:
-        self.pending_insert = True
+    def __init__(
+        self,
+        opener: Hashable | None,
+        bounds: PreparedTemporalBounds,
+        identity: InsertionIdentity,
+        *,
+        bitemporal: bool,
+    ) -> None:
         self.opener = opener
         self.bounds = bounds
+        self.identity: InsertionIdentity | None = identity
+        self.pending_insert = True
+        self.bitemporal = bitemporal
+        self.row = False
+        self.live = 0
+        self.floor = bounds.valid_from
+        self.advanced_from: int | None = None
+
+    @property
+    def stored(self) -> bool:
+        """Whether anything an admitted insertion of the object opened may
+        still be stored."""
+        return self.live > 0 if self.bitemporal else self.row
+
+
+type _Address = tuple[EntityIdentity, tuple[object, ...]]
 
 
 class _TargetWriteState:
     """The attempt's write-owned facts about the objects it writes.
 
-    Each target's still-unflushed insert and admitted insertion, and every
-    current temporal row the attempt successfully opened, by complete physical
-    address. Reads never add to it, so its size follows what the attempt wrote
-    rather than what it read.
+    Each target's admitted insertion, and every current temporal row the
+    attempt successfully opened, by complete physical address. A row of a
+    Bitemporal object opened while an admission of that object stands — its
+    insert, or any later successor — is tagged with that admission's identity.
+    Reads never add to it, so its size follows what the attempt wrote rather
+    than what it read.
     """
 
-    __slots__ = ("_endpoints", "_owning", "_records")
+    __slots__ = ("_addresses", "_endpoints", "_owning", "_records", "_tags")
 
     def __init__(self) -> None:
         self._records: dict[ObjectKey, _TargetRecord] = {}
+        # The Bitemporal records again, by the address an owned row names its
+        # object with, so tagging a row needs no key of its own.
+        self._addresses: dict[_Address, _TargetRecord] = {}
         self._endpoints: set[OwnedEndpoint] = set()
+        self._tags: dict[OwnedEndpoint, InsertionIdentity] = {}
         # Every Entity some owned row has been an object of, so a group of an
         # Entity the attempt never opened a row of is planned without a
         # per-row check. It only grows; an Entity whose rows were all removed
@@ -283,46 +339,128 @@ class _TargetWriteState:
     def owns_any(self, entity: EntityIdentity, /) -> bool:
         return entity in self._owning
 
-    def opened_by(self, target: ObjectKey) -> Hashable | None:
-        record = self._records.get(target)
-        return None if record is None else record.opener
+    def record(self, target: ObjectKey) -> _TargetRecord | None:
+        return self._records.get(target)
 
-    def insertion_bounds(self, target: ObjectKey) -> PreparedTemporalBounds | None:
-        record = self._records.get(target)
-        return None if record is None else record.bounds
-
-    def has_pending_insert(self, target: ObjectKey) -> bool:
-        record = self._records.get(target)
-        return record is not None and record.pending_insert
+    def authority(self, identity: InsertionIdentity) -> _TargetRecord | None:
+        """The record whose standing authority ``identity`` is, if any."""
+        record = self._records.get(identity.object_key)
+        return record if record is not None and record.identity is identity else None
 
     def open_insert(
-        self, target: ObjectKey, opener: Hashable | None, bounds: PreparedTemporalBounds
-    ) -> None:
-        self._records[target] = _TargetRecord(opener, bounds)
+        self,
+        target: ObjectKey,
+        opener: Hashable | None,
+        bounds: PreparedTemporalBounds,
+        *,
+        bitemporal: bool,
+    ) -> InsertionIdentity:
+        identity = InsertionIdentity(target)
+        record = self._records.get(target)
+        if record is None:
+            record = _TargetRecord(opener, bounds, identity, bitemporal=bitemporal)
+            self._records[target] = record
+            if bitemporal:
+                self._addresses[_address(target)] = record
+            return identity
+        if not record.stored or _earlier(bounds.valid_from, record.floor):
+            record.floor = bounds.valid_from
+        record.opener = opener
+        record.bounds = bounds
+        record.identity = identity
+        record.pending_insert = True
+        record.advanced_from = None
+        return identity
 
     def cancel_insert(self, target: ObjectKey) -> None:
-        del self._records[target]
+        record = self._records[target]
+        if record.stored:
+            # An earlier insertion's coverage is still stored, and its pending
+            # removal is what the cancelled insert depended on.
+            record.identity = None
+            record.pending_insert = False
+            return
+        self._forget(target)
 
-    def end_flush(self) -> None:
+    def max_end(self, record: _TargetRecord) -> object:
+        """The latest Valid-Time end among the owned rows ``record``'s
+        admissions opened, the open bound included."""
+        latest: object | None = None
+        for endpoint, _tag in self._tags.items():
+            if self._addresses.get((endpoint.entity, endpoint.key)) is not record:
+                continue
+            end = endpoint.ends[0]
+            if not isinstance(end, Finite):
+                return INFINITY_LITERAL
+            if latest is None or precedes(latest, end.instant):
+                latest = end.instant
+        return INFINITY_LITERAL if latest is None else latest
+
+    def advanced(self, state: VersionedStateKey) -> None:
+        record = self._records.get(state.object)
+        if record is not None:
+            record.advanced_from = state.version
+
+    def end_flush(self, removed: Iterable[ObjectKey]) -> None:
         records = self._records
+        for target in removed:
+            record = records.get(target)
+            if record is None:
+                continue
+            record.row = False
+            if not record.pending_insert:
+                record.identity = None
         for target in [target for target, record in records.items() if record.pending_insert]:
             record = records[target]
             if record.opener is None:
-                del records[target]
+                self._forget(target)
             else:
                 record.pending_insert = False
+                record.row = True
 
     def register(self, endpoint: OwnedEndpoint) -> None:
         self._endpoints.add(endpoint)
         self._owning.add(endpoint.entity)
+        if not self._addresses:
+            return
+        record = self._addresses.get((endpoint.entity, endpoint.key))
+        if record is not None and record.identity is not None:
+            self._tags[endpoint] = record.identity
+            record.live += 1
 
     def retire(self, endpoint: OwnedEndpoint) -> None:
         self._endpoints.remove(endpoint)  # planning removes only a row this attempt owns
+        if not self._tags:
+            return
+        tag = self._tags.pop(endpoint, None)
+        if tag is None:
+            return
+        record = self._addresses[(endpoint.entity, endpoint.key)]
+        record.live -= 1
+        if not record.live and record.identity is tag and not record.pending_insert:
+            # The last row this admission opened is gone: it was removed
+            # completely, and its authority ends with it.
+            record.identity = None
+
+    def _forget(self, target: ObjectKey) -> None:
+        record = self._records.pop(target)
+        if record.bitemporal:
+            del self._addresses[_address(target)]
 
     def clear(self) -> None:
         self._records.clear()
+        self._addresses.clear()
         self._endpoints.clear()
+        self._tags.clear()
         self._owning.clear()
+
+
+def _address(target: ObjectKey) -> _Address:
+    return (target.entity, tuple(value for _name, value in target.primary_key))
+
+
+def _earlier(first: object | None, second: object | None) -> bool:
+    return first is not None and second is not None and precedes(first, second)
 
 
 class UnitOfWork:
@@ -406,12 +544,9 @@ class UnitOfWork:
         # a flush spends what it planned, so what a later write may claim
         # is decided by what is still pending.
         self._claims = ClaimTable()
-        # What this attempt holds about each object it writes: an unflushed
-        # insert — the planner's own `pending_insert` map, kept live as writes
-        # arrive, over the SAME two mutation families and object key `_coalesce`
-        # reads, so the outcome a verb is told cannot disagree with what the
-        # flush does with the pair — its admitted insertion, and the current
-        # temporal rows it opened.
+        # What this attempt holds about each object it writes: its admitted
+        # insertion and the authority that grants, and the current temporal
+        # rows it opened.
         self._targets = _TargetWriteState()
         # The ledger is an INDEX, not an owner: a retained observation lives as
         # long as some source value or buffered write reaches it, and this entry
@@ -473,62 +608,150 @@ class UnitOfWork:
         releases the source value it came from, and what a successful flush
         spends it through.
 
-        The outcome reports the pending-insert transition buffering made: an
-        insert records the object it opens, and a destructive write of an object
-        whose insert is still unflushed cancels that pair — recognized when the
-        pair is complete rather than when it is planned.
+        An insert admits an insertion of the object it opens and issues that
+        insertion's identity (:meth:`insertion_identity`), which ``opener``
+        labels with the interface that opened it. Where an earlier insertion of
+        the object is stored and a pending write removes all of it, the insert
+        executes after that removal. A write an insertion authorized
+        (:class:`~parallax.core.unit_work.materialized.InsertionKeyedWrite`) is
+        admitted only while that authority stands.
 
-        ``opener`` labels an insert's admission with the interface that opened
-        it, which :meth:`opened_by` answers until the attempt ends or a
-        cancelling destructive write retires the admission.
+        The outcome reports the pending-insert transition buffering made: a
+        destructive write that leaves nothing of an object's still-unflushed
+        insert cancels that pair — recognized when the pair is complete rather
+        than when it is planned.
         """
         self._ensure_open()
+        if isinstance(item, InsertionKeyedWrite):
+            item = self._authorized(item)
         instruction = buffered_instruction(item)
         key = self._addressed_object(item)
         if isinstance(item, MaterializedWriteGroup):
             self._claim_selection(item)
-        elif isinstance(item, ObservedKeyedWrite) and self._pending.is_temporal(item):
+        elif self._pending.is_temporal(item):
+            assert isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite)
             self._claim_composed(item)
         else:
             self._claim_keyed(item, key)
-        self._pending.add(item, key)
-        mutation = instruction.mutation
         targets = self._targets
-        if key is not None and mutation in INSERT_MUTATIONS:
+        if key is not None and instruction.mutation in INSERT_MUTATIONS:
             assert isinstance(instruction, PreparedKeyedWrite)  # only a keyed write inserts
-            targets.open_insert(key, opener, instruction.bounds)
-        elif (
-            key is not None
-            and mutation in DESTRUCTIVE_MUTATIONS
-            and targets.has_pending_insert(key)
-        ):
+            record = targets.record(key)
+            self._pending.add(
+                item,
+                key,
+                after_removal=(
+                    record is not None
+                    and not record.pending_insert
+                    and record.stored
+                    and self._removes_stored(key, record)
+                ),
+            )
+            targets.open_insert(
+                key,
+                opener,
+                instruction.bounds,
+                bitemporal=self._pending.is_bitemporal_target(instruction),
+            )
+            return BufferOutcome.BUFFERED
+        if self._pending.add(item, key):
+            assert key is not None  # only a write of one object cancels its insert
             targets.cancel_insert(key)
             return BufferOutcome.CANCELLED_PENDING_INSERT
         return BufferOutcome.BUFFERED
 
-    def opened_by(self, target: ObjectKey | None) -> Hashable | None:
-        """The label an admitted insertion of ``target`` was buffered with, or
-        ``None`` where this attempt holds no such insertion.
+    def _authorized(self, item: InsertionKeyedWrite) -> InsertionKeyedWrite:
+        """``item`` checked against the authority it carries, and given the
+        claim scope its stored Non-Temporal row takes, or refused."""
+        record = self._targets.authority(item.identity)
+        instruction = item.instruction
+        if record is None:
+            raise UnitOfWorkError(
+                f"{instruction.target.identity.canonical}: the insertion this write was authored "
+                "through no longer stands in this unit of work"
+            )
+        key = item.identity.object_key
+        if record.pending_insert:
+            if not self._pending.opening_admits(key, instruction):
+                raise _already_claimed(instruction.target, key)
+            return item
+        if self._pending.is_temporal(item):
+            return item
+        version = self._planner.inserted_version(instruction.target.identity, record.advanced_from)
+        scope = key if version is None else VersionedStateKey(key, version)
+        return InsertionKeyedWrite(instruction=instruction, identity=item.identity, scope=scope)
 
-        An admission outlives the flush that executes its insert and ends with
-        the attempt, or when a destructive write cancels the still-pending
-        insert. ``None`` names no object and is never held.
+    def _removes_stored(self, key: ObjectKey, record: _TargetRecord) -> bool:
+        """Whether the pending writes of ``key`` remove everything its admitted
+        insertions left stored.
+
+        A Non-Temporal row is removed whole by a pending delete, and so is a
+        Transaction-Time-Only object by a termination. A Bitemporal object's
+        stored coverage lies between its earliest admitted anchor and the latest
+        end among the rows those admissions opened, so the pending writes must
+        destroy all of that window.
+        """
+        if not record.bitemporal:
+            return self._pending.removes(key)
+        transform = self._pending.transform(key)
+        if transform is None:
+            return False
+        destroyed = tuple(
+            (segment.start, segment.end)
+            for segment in transform.segments
+            if segment.assigned is None
+        )
+        if not destroyed:
+            return False
+        floor = record.floor
+        assert floor is not None  # a Bitemporal opening states its start
+        return covers(destroyed, floor, self._targets.max_end(record)) is None
+
+    def insertion_identity(self, target: ObjectKey) -> InsertionIdentity | None:
+        """The authority the standing admitted insertion of ``target`` grants,
+        or ``None`` where none stands — the identity a source the insertion was
+        stated through carries from then on."""
+        self._ensure_open()
+        record = self._targets.record(target)
+        return None if record is None else record.identity
+
+    def insertion_authority(self, identity: InsertionIdentity) -> PreparedTemporalBounds | None:
+        """The bounds the insertion ``identity`` names was admitted with — where
+        a write it authorizes starts — while its authority stands in this unit
+        of work, or ``None`` once it does not: never issued here, retired by the
+        complete removal of what it opened, or superseded by a later insertion
+        of the same object."""
+        self._ensure_open()
+        record = self._targets.authority(identity)
+        return None if record is None else record.bounds
+
+    def opened_by(self, target: ObjectKey) -> Hashable | None:
+        """The label of the admitted insertion of ``target`` that a further
+        insertion of it would repeat, or ``None`` where an insertion of it is a
+        first opening.
+
+        An insertion still pending is repeated by another; so is one whose
+        coverage is stored and survives what is pending. Once everything the
+        object's admissions opened has been removed — or a pending write
+        removes all of it — the object can be inserted again.
         """
         self._ensure_open()
-        return None if target is None else self._targets.opened_by(target)
-
-    def insertion_bounds(self, target: ObjectKey | None) -> PreparedTemporalBounds | None:
-        """The bounds an admitted insertion of ``target`` was buffered with —
-        where a write authored from its insertion source starts — or ``None``
-        where this attempt holds no such insertion."""
-        self._ensure_open()
-        return None if target is None else self._targets.insertion_bounds(target)
+        record = self._targets.record(target)
+        if record is None:
+            return None
+        if record.pending_insert:
+            return record.opener
+        if not record.stored or self._removes_stored(target, record):
+            return None
+        return record.opener
 
     def _addressed_object(self, item: BufferItem) -> ObjectKey | None:
         """The one object ``item`` addresses where buffering needs it — to claim
         it, or to open or cancel a pending insert of it — derived once."""
         if isinstance(item, MaterializedWriteGroup):
             return None
+        if isinstance(item, InsertionKeyedWrite):
+            return item.identity.object_key
         instruction = buffered_instruction(item)
         mutation = instruction.mutation
         if (
@@ -544,6 +767,8 @@ class UnitOfWork:
             scope: ClaimScope | None = None if item.claim is None else item.claim.key
         elif isinstance(item, ObjectClaimedWrite):
             scope = key
+        elif isinstance(item, InsertionKeyedWrite):
+            scope = item.scope
         else:
             return
         if scope is None or keyed_intent(item.instruction) is None:
@@ -567,37 +792,31 @@ class UnitOfWork:
             object_key=claimed_object(scope),
         )
 
-    def _claim_composed(self, item: ObservedKeyedWrite) -> None:
-        """Admit a temporal object's observed write into composition with the
-        object's pending observed writes, or refuse it (`m-unit-work`
-        "Observed-State Coalescing").
+    def _claim_composed(self, item: ObservedKeyedWrite | InsertionKeyedWrite) -> None:
+        """Admit a temporal object's write against existing coverage into
+        composition with the object's pending writes, or refuse it
+        (`m-unit-work` "Observed-State Coalescing").
 
         Judged over every write of the object still pending, whatever state
-        each observed, before anything changes.
+        each observed, before anything changes. A write an insertion
+        authorized of an object whose insert is still pending composes with
+        that opening instead, which buffering has already judged.
         """
         instruction = item.instruction
-        key = resolve_object_key(instruction, inheritance.view(self.meta))
+        if isinstance(item, InsertionKeyedWrite):
+            key: ObjectKey | None = item.identity.object_key
+            scope = None
+        else:
+            key = resolve_object_key(instruction, inheritance.view(self.meta))
+            scope = None if item.claim is None else item.claim.key
         intent = keyed_intent(instruction)
-        assert key is not None and intent is not None  # an observed write names one object
-        scope = None if item.claim is None else item.claim.key
+        assert key is not None and intent is not None  # such a write names one object
         held = self._pending.temporal(key)
         if (
             held is not None
             and admits_composed(composed_intents(held), scope, intent) == "incompatible"
         ) or (scope is not None and self._claims.held(scope) is not None):
-            raise WriteEvidenceError(
-                code="write-evidence-already-claimed",
-                message=(
-                    f"{instruction.target.identity.canonical}: a write already buffered in this "
-                    "transaction cannot be composed with this one — an assignment after a "
-                    "destructive intent over its window resurrects nothing, a destructive "
-                    "intent composes only with writes of exactly its own window, and a "
-                    "predicate write's selected rows are one compact group; read the row "
-                    "through this transaction to flush the buffered intent and settle against "
-                    "fresh state"
-                ),
-                object_key=key,
-            )
+            raise _already_claimed(instruction.target, key)
 
     def _claim_selection(self, group: MaterializedWriteGroup) -> None:
         # The resolving read force-flushed the buffer, so no pending intent can
@@ -804,9 +1023,10 @@ class UnitOfWork:
         )
         finalized = self._planner.finalize(request)
         sources = self._pending.sources()
+        removed = self._pending.removals()
         self._pending.clear()
         self._claims.clear()
-        self._targets.end_flush()
+        self._targets.end_flush(removed)
         units = finalized.plan.units
         self._reporting = units
         self._reported = 0
@@ -895,6 +1115,8 @@ class UnitOfWork:
         if held is not None:
             held.invalidate()
         self._changed[key] = stamp
+        if isinstance(key, VersionedStateKey):
+            self._targets.advanced(key)
 
     def mark_rollback_only(self, cause: BaseException) -> None:
         """Doom the transaction: commit will be refused. The first cause is kept."""
@@ -967,6 +1189,21 @@ class UnitOfWork:
         except BaseException as exc:
             self.mark_rollback_only(exc)
             raise
+
+
+def _already_claimed(target: EntityMetadata, key: ObjectKey) -> WriteEvidenceError:
+    return WriteEvidenceError(
+        code="write-evidence-already-claimed",
+        message=(
+            f"{target.identity.canonical}: a write already buffered in this transaction cannot "
+            "be composed with this one — an assignment after a destructive intent over its "
+            "window resurrects nothing, a destructive intent composes only with writes of "
+            "exactly its own window, and a predicate write's selected rows are one compact "
+            "group; read the row through this transaction to flush the buffered intent and "
+            "settle against fresh state"
+        ),
+        object_key=key,
+    )
 
 
 class _ActiveState(threading.local):

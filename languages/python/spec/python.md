@@ -607,10 +607,11 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   import the private Snapshot `preflight` operation so compile-only and
   alternate-source reads consume the same validated execution token as
   production. The scenario lane reads each published Wire value's Read Origin
-  through `parallax.snapshot.materialize._wire.read_origin_of`, the reader the
-  Wire write verbs use, so the claims and keys it settles are the ones a real
-  write settles against; the Read Origin is implementation-private evidence, so
-  no exported name reaches it. The scenario lane's private `m-sql` write-step
+  through `parallax.snapshot.materialize._wire.read_origin_of`, and the
+  insertion authority a Wire insert's node carries through `authoring_of`, the
+  readers the Wire write verbs use, so the claims and keys it settles are the
+  ones a real write settles against; both are implementation-private, so no
+  exported name reaches them. The scenario lane's private `m-sql` write-step
   compiler reach is enumerated separately in the carrier-neutral block above,
   and the case loader's `wire._json.authored_number` reach is the production YAML
   token-preservation seam. Compatibility inputs use canonical Wire literals, so

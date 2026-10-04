@@ -32,7 +32,6 @@ from parallax.core.base import DocumentValue, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import EntityRowCodec
-from parallax.core.entity._errors import EntityRowError
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import ObjectKey, WriteInstructionError
 from parallax.snapshot import InvalidData
@@ -138,7 +137,6 @@ def test_a_published_value_answers_the_facts_its_own_read_filed() -> None:
     assert resolved.entity.identity == mm.Account.identity
     assert resolved.provenance == "this"
     assert resolved.representation == "typed"
-    assert resolved.identity_row == {"id": 1}
     assert resolved.hint is not None
     assert resolved.hint.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
     assert resolved.pin is None  # an unpinned read stands at no instant
@@ -152,7 +150,7 @@ def test_a_plainly_constructed_value_answers_that_no_read_produced_it() -> None:
     assert resolved.provenance == "none"
     assert resolved.hint is None
     assert resolved.pin is None
-    assert resolved.identity_row == {"id": 7}
+    assert resolved.authoring is None
 
 
 def test_a_pinned_view_answers_the_instant_it_stands_at() -> None:
@@ -167,21 +165,6 @@ def test_a_pinned_view_answers_the_instant_it_stands_at() -> None:
 
     assert resolved.pin is not None
     assert resolved.pin.tx_time == _TX_PIN
-
-
-def test_a_value_whose_class_keys_the_entity_elsewhere_names_no_object() -> None:
-    # The identity row names the object to the opened-object ledger, and the
-    # ledger is asked before the provenance refusal such a value has coming, so
-    # the answer for a value that can key nothing is "no object" rather than the
-    # codec failure deriving a row for the purpose would raise.
-    meta, codec = _twins()
-    rekeyed = _RekeyedTwin(id_elsewhere=1, only="x")
-
-    resolved = TypedKeyedWriteSource(rekeyed, codec).resolve(meta, "update")
-
-    assert resolved.identity_row is None
-    with pytest.raises(EntityRowError):
-        codec.identity_row(rekeyed)
 
 
 def test_provenance_separates_this_lifecycle_from_another_and_from_none() -> None:

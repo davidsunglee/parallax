@@ -179,3 +179,20 @@ resolved. The peers' agreement now rests on stating the same assignment set
 rather than on observing the same originals. The Python methods name one
 operation each and select bounded behavior with a keyword-only `until`;
 source-backed writes take their Valid-Time start from their source.
+
+## Amendment (2026-10): an insertion authorizes its own source
+
+The decision above requires an authentic read source for every existing-object
+keyed write, and the code it described let a write follow the transaction's own
+insert of the same Object Key instead — recognized by key — with the node a Wire
+insert answered carrying a Read Origin that observed nothing.
+
+**Superseding decision:** a keyed write of an object the attempt inserted is
+licensed by that insertion's authority, which the admitted source alone carries:
+the instance a Typed insert took and the values derived from it afterwards, or
+the node a Wire insert answered, which carries the authority in a private slot
+of its own and no Read Origin. Read Origins come from reads alone. An equal key
+lends nothing: a Typed value built independently of a Wire insert, or the
+reverse, is refused like any value no read produced, and a read of the inserted
+row writes through its own evidence. The peers stay symmetric because each
+interface's insert hands its caller the one source that carries the authority.

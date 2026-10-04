@@ -42,6 +42,7 @@ from parallax.core.temporal_read import (
 )
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.columns import ColumnSlice
+from parallax.core.unit_work.effects import MissingTargetError
 from parallax.core.unit_work.instructions import (
     PreparedAssignment,
     PreparedKeyedWrite,
@@ -52,6 +53,7 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.unit_work.materialized import (
     ComposedTemporalWrite,
     GroupStates,
+    InsertionKeyedWrite,
     MaterializedWriteGroup,
     ObservedKeyedWrite,
     PredecessorRows,
@@ -118,7 +120,12 @@ from parallax.core.unit_work.planned import (
     shortfall_for,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
-from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey, TemporalStateKey
+from parallax.core.unit_work.planner import (
+    ObjectKey,
+    ObservedStateKey,
+    TemporalStateKey,
+    VersionedStateKey,
+)
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
     CARRIED_STATE,
@@ -158,7 +165,11 @@ __all__ = [
 ]
 
 type OrderedWrite = (
-    PreparedWrite | ObservedKeyedWrite | ComposedTemporalWrite | MaterializedWriteGroup
+    PreparedWrite
+    | ObservedKeyedWrite
+    | InsertionKeyedWrite
+    | ComposedTemporalWrite
+    | MaterializedWriteGroup
 )
 """One element of the sequence settlement reads: a buffer item once the
 planner's rewriting stages have finished with it.
@@ -438,7 +449,7 @@ class WriteSettlement:
                 self._temporal_facet.shape(item.target.identity)
                 if isinstance(item, ComposedTemporalWrite)
                 else self._temporal_facet.shape(item.instruction.target.identity)
-                if isinstance(item, ObservedKeyedWrite)
+                if isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite)
                 else None
             )
             composed = self._composition(item, shape)
@@ -463,14 +474,24 @@ class WriteSettlement:
                     )
                 )
                 continue
-            instruction, observation, claim = (
-                (item.instruction, item.observation, item.claim)
-                if isinstance(item, ObservedKeyedWrite)
-                else (item, None, None)
-            )
+            own_state: VersionedStateKey | None = None
+            if isinstance(item, ObservedKeyedWrite):
+                instruction, observation, claim = item.instruction, item.observation, item.claim
+            elif isinstance(item, InsertionKeyedWrite):
+                instruction, observation, claim = item.instruction, None, None
+                scope = item.scope
+                own_state = scope if isinstance(scope, VersionedStateKey) else None
+            else:
+                instruction, observation, claim = item, None, None
             assert not isinstance(instruction, ComposedTemporalWrite)
             settled = self._settle(
-                instruction, observation, concurrency, transaction_instant, ownership, shape
+                instruction,
+                observation,
+                concurrency,
+                transaction_instant,
+                ownership,
+                shape,
+                own_version=None if own_state is None else own_state.version,
             )
             for step in settled.steps:
                 pending.append(
@@ -483,7 +504,11 @@ class WriteSettlement:
             count += len(settled.steps)
             units.append(
                 ExecutionUnit(
-                    end=count, claim=claim, removed=settled.removed, opened=settled.opened
+                    end=count,
+                    claim=claim,
+                    changed=() if own_state is None else (own_state,),
+                    removed=settled.removed,
+                    opened=settled.opened,
                 )
             )
         flush_pending()
@@ -501,7 +526,12 @@ class WriteSettlement:
         tx_instant: TransactionInstant,
         ownership: Ownership,
         shape: TemporalShape | None,
+        *,
+        own_version: int | None = None,
     ) -> _Settled:
+        """One ordered write's steps. ``own_version`` is the version this
+        attempt's own writes left a row it inserted at, which a write its
+        insertion authorized advances from in place of an observed one."""
         if isinstance(instruction, PreparedPredicateWrite):
             return _Settled(self._settle_predicate(instruction))
         entity = instruction.target
@@ -515,8 +545,10 @@ class WriteSettlement:
         if instruction.mutation == "insert":
             return _Settled((self._settle_insert(facts, instruction),))
         addressed = self._addressed_facts(facts, concurrency)
-        observed_version = self._observed_version(
-            entity, instruction, facts.version_attribute, observation
+        observed_version = (
+            own_version
+            if own_version is not None
+            else self._observed_version(entity, instruction, facts.version_attribute, observation)
         )
         return _Settled(
             (
@@ -1021,10 +1053,16 @@ class WriteSettlement:
         A lone observed temporal write whose window lies inside the predecessor
         it observed binds that predecessor alone, which is exactly its topology's
         close and successors; every other observed temporal write is a range over
-        coverage only binding can discover.
+        coverage only binding can discover, and so is every temporal write an
+        insertion authorized, which observed nothing.
         """
         if isinstance(item, ComposedTemporalWrite):
             return item
+        if isinstance(item, InsertionKeyedWrite) and isinstance(
+            shape, TransactionTimeOnly | Bitemporal
+        ):
+            view = _view(self._families, item.instruction.target)
+            return composed_alone(item, view.primary_key.identity.name)
         if not isinstance(item, ObservedKeyedWrite) or not isinstance(shape, Bitemporal):
             return None
         instruction = item.instruction
@@ -1060,6 +1098,9 @@ class WriteSettlement:
         the same coverage. Where those originals cover the whole requested
         window the range binds now; otherwise the coverage beyond them is read
         at execution and the range binds then (:class:`_DeferredTemporalRange`).
+        A write an insertion authorized observed nothing, so a range of such
+        writes alone always reads its coverage, and requires coverage at the
+        insertion's anchor once read.
         """
         entity = composed.target
         view = _view(self._families, entity)
@@ -1086,8 +1127,10 @@ class WriteSettlement:
             object_key=object_key,
             ownership=ownership,
             decoration=decoration,
+            anchor=_anchor(composed),
         )
         transform = composed.transform
+        uncovered: object | None = None
         if isinstance(shape, Bitemporal):
             assert transform.start is not None and transform.end is not None
             uncovered = covers(
@@ -1095,25 +1138,28 @@ class WriteSettlement:
                 transform.start,
                 transform.end,
             )
-            if uncovered is not None:
-                return _DeferredTemporalRange(
-                    binding=binding,
-                    originals=originals,
-                    validations=validations,
-                    claims=claims,
-                    acquisition=RangeAcquisition(
-                        entity=entity,
-                        key_attribute=key_attribute,
-                        key_value=cast("ManagedValue", key_value),
-                        valid_from=cast("ManagedValue", uncovered),
-                        until=(
-                            None
-                            if is_open_bound(transform.end)
-                            else cast("ManagedValue", transform.end)
-                        ),
-                        locking=not gated,
+            reached = uncovered is not None
+        else:
+            reached = not originals
+        if reached:
+            return _DeferredTemporalRange(
+                binding=binding,
+                originals=originals,
+                validations=validations,
+                claims=claims,
+                acquisition=RangeAcquisition(
+                    entity=entity,
+                    key_attribute=key_attribute,
+                    key_value=cast("ManagedValue", key_value),
+                    valid_from=cast("ManagedValue | None", uncovered),
+                    until=(
+                        None
+                        if transform.end is None or is_open_bound(transform.end)
+                        else cast("ManagedValue", transform.end)
                     ),
-                )
+                    locking=not gated,
+                ),
+            )
         bound = binding.bind(originals, validations)
         return _SettledRange(
             steps=bound.steps,
@@ -2358,6 +2404,8 @@ def _known_originals(
     distinct: list[_Original] = []
     for contribution in composed.contributions:
         observation = contribution.observation
+        if observation is None:  # an insertion authorized it, and it observed nothing
+            continue
         assert isinstance(observation, TemporalObservation)  # a temporal write observes a milestone
         claim = contribution.claim
         original = _original(
@@ -2378,6 +2426,25 @@ def _known_originals(
     bound.sort(key=_original_order)
     validated.reverse()
     return tuple(bound), tuple(validated)
+
+
+_UNANCHORED: Final = object()
+"""The anchor of a range no insertion authorized any write of."""
+
+_EXISTENCE: Final = object()
+"""The anchor of a Transaction-Time-Only range an insertion authorized a write
+of: the current row itself, wherever it lies on an axis that has no Valid Time."""
+
+
+def _anchor(composed: ComposedTemporalWrite) -> object:
+    """Where a composed range requires current coverage because an insertion
+    authorized one of its writes: that insertion's own start, which every such
+    write states as its window's start."""
+    for contribution in composed.contributions:
+        if contribution.observation is None:
+            start = contribution.bounds.valid_from
+            return _EXISTENCE if start is None else start
+    return _UNANCHORED
 
 
 def _original(
@@ -2422,6 +2489,7 @@ class _RangeBinding:
     object_key: ObjectKey
     ownership: Ownership
     decoration: _Decoration
+    anchor: object = _UNANCHORED
 
     def bind(self, originals: Sequence[_Original], validations: Sequence[_Original]) -> BoundRange:
         """The steps the transform takes over ``originals``, after a guarded
@@ -2434,8 +2502,14 @@ class _RangeBinding:
         piece of it opened; one the attempt opened is revised in place or
         removed (:func:`_dispose`). An original the transform does not reach is
         left alone.
+
+        A range one of whose writes an insertion authorized requires current
+        coverage at that insertion's anchor and fails as a missing target
+        without it: the anchor is where the authority starts, never shifted to
+        coverage that survives elsewhere.
         """
         facts = self.facts
+        self._require_anchor(originals)
         effects: list[PlannedStep] = []
         openings: list[PlannedStep] = []
         changed: list[ObservedStateKey] = []
@@ -2475,6 +2549,19 @@ class _RangeBinding:
             removed=tuple(removed),
             opened=tuple(opened),
         )
+
+    def _require_anchor(self, originals: Sequence[_Original]) -> None:
+        anchor = self.anchor
+        if anchor is _UNANCHORED:
+            return
+        if any(
+            anchor is _EXISTENCE
+            or (not precedes(anchor, original.start) and precedes(anchor, original.end))
+            for original in originals
+        ):
+            return
+        target = KeyTarget(key_attributes=(self.key_attribute,), key_values=((self.key_value,),))
+        raise MissingTargetError(self.facts.entity.identity, target, 1, 0)
 
     def acquired(
         self,

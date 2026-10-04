@@ -309,9 +309,9 @@ WriteValueRefusal = NotStored | AlreadyStored | ForeignLifecycle
   handed a value **no valid** managed read admitted as a keyed source. No source
   provenance establishes a stored row for it to address, so the refusal names the
   `insert` verb as the one that accepts it —
-  **unless the writing unit of work has itself already buffered an insert of that
-  object**, in which case the value is accepted and the pair coalesces in place
-  (*Same-transaction write coalescing*).
+  **unless the value carries the authority of an insertion still standing in the
+  writing unit of work** (*Insertion authority*), in which case it is accepted
+  and revises what that insertion opened.
 - **AlreadyStored** (`write-value-already-stored`) — an `insert` / `insertUntil`
   verb was handed a value produced by a read through **the very source this verb
   writes through**. That value already denotes a row that source stores, so the
@@ -334,15 +334,17 @@ on the choice.
 
 The partition is over **provenance**; whether a given answer *refuses* is the
 verb's question, and NotStored is the one answer whose refusal a second fact can
-lift. The value of an object the writing unit of work has already buffered an
-insert for keeps the NotStored provenance — no read produced it — but there is
-now a row for the update to address, because that unit of work is the one storing
-it. **Read-your-own-writes** is therefore normative: an implementation that
-refused such a value would refuse the developer spelling of *Insert-then-update
-coalesces in place*, and its refusal would name the `insert` verb the developer
-had just called. The exemption is keyed by the **object**: a value naming an
-object this unit of work never inserted is refused exactly as any other value no
-read produced is, and no other unit of work's buffer lifts anything.
+lift. The value an insertion was stated through keeps the NotStored provenance —
+no read produced it — but it carries that insertion's authority, and the
+insertion opened a row for the update to address. **Read-your-own-writes** is
+therefore normative: an implementation that refused such a value would refuse the
+developer spelling of *Insert-then-update coalesces in place*, and its refusal
+would name the `insert` verb the developer had just called. The exemption is the
+**authority the value carries**, never the object it names: a value of an object
+this unit of work inserted that carries no standing authority — one built
+independently with the same key, or derived before the insertion was admitted —
+is refused exactly as any other value no read produced is, and no other unit of
+work's insertion lifts anything.
 
 Three consequences are normative:
 
@@ -355,13 +357,65 @@ Three consequences are normative:
   value a verb does not accept reaches no row derivation, no buffer, no plan, no
   SQL, and no database. A refusal is never a translation of a lower-level failure
   raised further down that path.
-- The read-your-own-writes exemption is decided the same way, from the object the
-  value names rather than from a row derived for it. A value that can key no row
-  at all names no object this unit of work inserted, so it reaches the NotStored
-  refusal rather than whatever failure deriving its row would have produced.
+- The read-your-own-writes exemption is decided the same way, from the authority
+  the value carries rather than from a row derived for it. A value that can key
+  no row at all carries none, so it reaches the NotStored refusal rather than
+  whatever failure deriving its row would have produced.
 
 The `delete`, `terminate`, and `terminateUntil` verbs derive an identity row alone
 and take no position on provenance.
+
+### Insertion authority
+
+An **insertion-authoring write** is a write of an object this unit of work
+inserted, authorized by that insertion rather than by a read. Successful
+admission of an insertion grants an **authority** that belongs to the source the
+insertion was stated through — the value a typed insert took and every value
+derived from it afterwards, or the node a document insert answered — and is
+compared by identity alone: an equal key, physical address, or Transaction
+Instant never stands for it. A value derived before the admission, a value built
+independently with the same key, and a plain or serialized copy of a source carry
+none; a refused admission grants none. The authority is private to its source and
+outside its members, so no data conversion can manufacture it. A value a read
+produced keeps that read's own evidence whatever this unit of work inserted.
+
+The authority survives flushes and joined scopes, and ends with the attempt:
+commit, rollback, and every retry end it, so a source carrying an earlier
+attempt's authority licenses nothing. Within an attempt it ends when everything
+the insertion opened has been removed (*Rows the attempt opened*), and a later
+admitted insertion of the same object grants a fresh authority that no earlier
+source shares. Completing a write it licensed spends nothing of it.
+
+Every write the authority licenses on a Bitemporal object starts at the
+insertion's own authored Valid-Time start — its **anchor** — however its
+coverage has been edited since; a bounded write states only its exclusive end,
+which must follow the anchor. The write requires current coverage at the anchor
+and never shifts it: a write over an anchor a pending write of the object already
+destroyed is a resurrection, refused at the verb, and a stored anchor that no
+current row covers when the write executes fails it as a missing target, which
+dooms the attempt.
+
+While the insert is pending, the writes it licenses compose over the coverage it
+opens (*Same-transaction write coalescing*). Once a flush has executed it, the
+same writes transform the stored rows: the object's current coverage from the
+anchor is read inside the write batch — under the shared row lock where the
+Entity's Effective Concurrency Strategy is Locking — and every row the attempt
+opened is revised or removed in place (*Rows the attempt opened*). A versioned
+Non-Temporal row advances from the version the attempt's own writes left it at,
+which needs no read. Such writes compose with observed writes of the same object
+in authored order — over unequal windows on a temporal object, and at one claim
+scope on a Non-Temporal one — each keeping its own anchor or source condition;
+completion spends the observed sources and not the insertion's authority.
+
+A further insertion of an object is a repeat, refused as **AlreadyStored**,
+while anything an admitted insertion of it opened is pending, or is stored and
+not removed in full by the writes pending beside it. Once everything those
+admissions opened has been removed — or the pending writes remove all of it — a
+fresh insertion is admitted. It executes after every write authored before it,
+so the removal it depends on precedes it whatever the batching, and a failed
+removal or insertion dooms the attempt. Removing only part of the coverage, or
+an interior gap, removes nothing in this sense. None of this permits removing
+and re-inserting state that existed before the attempt.
 
 ## Write finalization
 
@@ -1064,13 +1118,23 @@ pending insert.
   one `INSERT` with the post-update values (never `INSERT` + `UPDATE`); an
   **Transaction-Time-Only** insert-then-update opens a single current milestone with the final
   value — no close-and-chain, in contrast to the cross-transaction chaining of
-  `m-txtime-write`; a **bitemporal** insert-then-update opens a single fully-current
-  rectangle with the final value — no inactivation / head-tail split, in contrast to
-  the cross-transaction rectangle split of `m-bitemp-write`.
+  `m-txtime-write`; a **bitemporal** insert-then-update covering the whole opening
+  opens a single fully-current rectangle with the final value — no inactivation /
+  head-tail split, in contrast to the cross-transaction rectangle split of
+  `m-bitemp-write`.
+- **A pending Bitemporal opening takes each edit over its own coverage.** An edit
+  of a still-pending opening is a temporal edit, composed with the opening as
+  observed writes compose over stored coverage (*Observed-State Coalescing*): an
+  edit bounded inside the opening splits it at its bound, one bounded at or beyond
+  the opening's end changes all of it, and nothing extends the opening past its
+  own window. Every edit starts at the insertion's anchor (*Insertion authority*).
+  The flush opens only the pieces that survive, each at the one Transaction
+  Instant, carrying the opening's values with the edits' assignments overlaid.
 - **Insert-then-delete cancels.** A row inserted and then deleted in the same unit of
   work **cancels**: the two buffered writes annihilate and the flush emits **no** DML
   for that object — the net-zero effective-change-set elision, extended across two
-  verbs.
+  verbs. A bounded termination of part of a Bitemporal opening removes only its
+  own window; the pair does not cancel, and the flush opens what survives.
 
 Coalescing is a property of **one** unit of work; across two committed transactions
 the milestone modules chain and split as usual. The rule is centralized here because
@@ -1284,7 +1348,12 @@ address, every current row its successful execution units open — keyed inserts
 temporal successors, and the successors of Materialized Write Groups alike —
 and retires a row from that record when a unit removes it. Reads record nothing.
 The record survives flushes and joined scopes, ends at commit or rollback, and
-starts empty on retry.
+starts empty on retry. Every row of an object opened while an admitted insertion
+of it stands — its own insert, and every later successor — is tagged with that
+insertion in the record, and the insertion's coverage is completely removed once
+no row tagged with it remains (*Insertion authority*). A row opened at a removed
+row's address and instant takes the tag of the insertion standing when it opens,
+never the tag of the row it replaced.
 
 For each temporal mutation's predecessor, the planner derives the mutation's
 **nonempty** successors once and then:

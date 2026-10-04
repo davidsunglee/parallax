@@ -286,12 +286,13 @@ def plan_coverage_read(
     model: Metamodel,
     key: str,
     key_value: ManagedValue,
-    valid_from: ManagedValue,
+    valid_from: ManagedValue | None,
     until: ManagedValue | None,
 ) -> ValidatedEntityQuery:
-    """The one flat read of a Bitemporal object's current coverage overlapping
+    """The one flat read of a temporal object's current coverage overlapping
     ``[valid_from, until)`` — through the open bound when ``until`` is ``None``
-    — that an execution-bound range transforms.
+    — that an execution-bound range transforms. A Transaction-Time-Only object
+    has no Valid Time to bound, so its read selects its current row.
 
     Every row it selects is current on Transaction Time and is projected whole,
     every document included, because the range carries each row's unassigned
@@ -318,6 +319,7 @@ def plan_coverage_read(
                 _framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY_LITERAL)
             )
             continue
+        assert valid_from is not None  # a Valid-Time axis bounds every range over it
         terms.append(
             _managed_comparison(op="greaterThan", attr=end_ref, member=end, value=valid_from)
         )

@@ -47,7 +47,7 @@ from parallax.snapshot.handle import (
     WireEntity,
     WriteEvidenceError,
 )
-from parallax.snapshot.materialize._wire import read_origin_of
+from parallax.snapshot.materialize._wire import authoring_of, read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -1413,20 +1413,22 @@ def test_a_typed_insert_of_an_object_a_wire_insert_opened_is_refused() -> None:
     ]
 
 
-def test_a_typed_update_of_a_row_a_wire_insert_opened_coalesces_in_place() -> None:
-    # The opened-object ledger is ONE ledger: the Typed provenance refusal
-    # exempts a value naming an object the WIRE verb inserted, so the pair
-    # coalesces into a single INSERT carrying the final value rather than being
-    # refused as a write of a row no read produced.
+def test_a_typed_value_of_an_object_a_wire_insert_opened_carries_no_authority() -> None:
+    # An insertion's authority belongs to the node the Wire insert answered, not
+    # to the key it opened: an independently built Typed value of the same
+    # object is a value no read produced and no insertion was stated through,
+    # so it is refused rather than coalesced into the pending insert.
     port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
-        tx.update(mm.Person(id=9, name="Newton").edit(name="Grace"))
+        with pytest.raises(KeyedWriteValueError) as refusal:
+            tx.update(mm.Person(id=9, name="Newton").edit(name="Grace"))
+        assert refusal.value.code == "write-value-not-stored"
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == [
-        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Grace"))
+        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Newton"))
     ]
 
 
@@ -1666,7 +1668,7 @@ def test_an_insert_of_a_family_subtype_answers_a_node_carrying_its_variant() -> 
         "cardNetwork": "Visa",
         "familyVariant": "CardPayment",
     }
-    origin = read_origin_of(opened[0])
-    assert origin is not None
-    assert origin.entity.name == "CardPayment"
-    assert origin.observation is None
+    assert read_origin_of(opened[0]) is None
+    authority = authoring_of(opened[0])
+    assert authority is not None
+    assert authority.object_key.entity.name == "CardPayment"

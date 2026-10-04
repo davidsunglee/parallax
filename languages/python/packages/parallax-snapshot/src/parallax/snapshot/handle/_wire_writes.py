@@ -7,10 +7,11 @@ from typing import cast
 
 from parallax.core import predicate as predicate_algebra
 from parallax.core.execution_lifecycle._activity import refuse_reentry
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.unit_work import (
     UPDATE_MUTATIONS,
     KeyedMutation,
+    ObjectKey,
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
@@ -22,6 +23,7 @@ from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
 )
+from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.snapshot.handle._keyed_writes import (
     KeyedWriteContext,
     PreparedSourceWrite,
@@ -37,7 +39,7 @@ from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate_instruction,
 )
 from parallax.snapshot.materialize import WireEntity, opened_wire_entity
-from parallax.snapshot.materialize._wire import read_origin_of
+from parallax.snapshot.materialize._wire import authoring_of, read_origin_of
 
 __all__ = [
     "WireChanges",
@@ -96,11 +98,11 @@ def wire_insert(
     published it or an earlier insert did — it names a row this store already
     holds, and ``tx.wire.update`` is the verb for that — under the Identity the
     resolved Entity spelling supplies. So is a fresh payload naming an object
-    this transaction already buffered an insert of, the same payload twice
+    whose insertion in this transaction still stands, the same payload twice
     included: the provenance rule has nothing to say about a document, and the
-    opened-object ledger refuses it once its row is prepared, under the same
-    code, advising the update verb of whichever interface OPENED the row — the
-    node this verb answered where a Wire insert did, and the instance the caller
+    unit of work refuses it once its row is prepared, under the same code,
+    advising the update verb of whichever interface OPENED the row — the node
+    this verb answered where a Wire insert did, and the instance the caller
     still holds where a Typed one did, which is the only carrier that exists in
     each case.
 
@@ -109,12 +111,9 @@ def wire_insert(
     Wire caller must be handed something too or it can never revise the row it
     just opened. What it publishes is the buffered ROW rather than the payload —
     a ``many`` the payload left out is answered as the empty collection that row
-    stores — so writing a member back off it is the restoration it is off a read
-    result. It carries a Read Origin naming the object and this
-    transaction's participation and NO observation, which is exactly what an
-    opening row has observed — the write off it is licensed by the buffered
-    insert instead, through the ledger this call records into, and the two
-    coalesce.
+    stores. It carries the insertion's authority and no Read Origin, since no
+    read published it: the writes off it are licensed by that authority, before
+    and after a flush, and compose with the insert while it is pending.
     """
     opened = keyed_insert(
         ctx,
@@ -123,7 +122,7 @@ def wire_insert(
         valid_from=valid_from,
         until=until,
     )
-    return opened_wire_entity(ctx.model, opened.identity, opened.row, opened.hint)
+    return opened_wire_entity(ctx.model, opened.identity, opened.row, opened.authority)
 
 
 def wire_keyed_write(
@@ -137,13 +136,13 @@ def wire_keyed_write(
     """Buffer a Wire keyed write against the state ``observed`` came from.
 
     ``observed`` is a frozen Entity mapping Parallax published for the row, from
-    a read or from the insert that opened it; its private Read Origin supplies
-    the concrete Entity, the object the write addresses, the pin the source
-    stands at — which is also where a Bitemporal write starts — and, where a read
-    published it, the evidence the target Entity's Effective Concurrency
-    Strategy weighs. A write naming an object this transaction already buffered
-    an insert of resolves no evidence at all: that insert licenses it, and the
-    hint the insert door filed carries none. ``changes`` is the authored
+    a read or from the insert that opened it. A read's private Read Origin
+    supplies the concrete Entity, the object the write addresses, the pin the
+    source stands at — which is also where a Bitemporal write starts — and the
+    evidence the target Entity's Effective Concurrency Strategy weighs. The node
+    an insert answered carries that insertion's authority instead, which names
+    the object and licenses the write, starting at the insertion's own anchor,
+    while it stands. ``changes`` is the authored
     assignment document for the update family and absent for the destructive
     and close verbs, which key off the source alone.
 
@@ -210,13 +209,13 @@ def wire_predicate_write(
 class _WireKeyedSource:
     """A published row narrowed to a keyed source, beside the facts it answers.
 
-    ``node`` and ``hint`` are what the adapter still needs after the ingress has
-    the answers: the published values a restoration is measured against, and the
-    object the write settles against.
+    ``node`` and ``object_key`` are what the adapter still needs after the
+    ingress has the answers: the published identity spelling and the object the
+    write settles against.
     """
 
     node: WireEntity
-    hint: ReadOrigin
+    object_key: ObjectKey
     resolved: ResolvedKeyedWriteSource
 
 
@@ -229,24 +228,26 @@ def _resolved_wire_source(
     OVER is one thing whether its assignments arrive as a document to prepare or
     as a product already prepared from one.
 
-    Provenance is ``"this"`` and can be nothing else: a hintless argument is
-    refused as no source at all, before the question is asked, so every source
-    that reaches it is a node this store published — by a read, or by the insert
-    that opened the row. The two refusals a Typed value can earn for its
-    provenance have no Wire spelling for the same reason.
+    Provenance is ``"this"`` for a node a read published. The node a Wire
+    insert answered was published by no read, so its provenance is
+    ``"none"``, which the insertion's standing authority lifts exactly as it
+    does for the instance a Typed insert took. Anything else is refused as no
+    source at all before the question is asked, so the foreign-lifecycle
+    refusal a Typed value can earn has no Wire spelling.
     """
-    node, hint = _keyed_source(mutation, observed)
-    record = _concrete_entity(meta, hint)
+    node, hint, authoring = _keyed_source(mutation, observed)
+    key = hint.object_key if hint is not None else authoring.object_key
+    record = _concrete_entity(meta, key.entity)
     return _WireKeyedSource(
         node,
-        hint,
+        key,
         ResolvedKeyedWriteSource(
             entity=record,
-            pin=hint.pin,
+            pin=None if hint is None else hint.pin,
             hint=hint,
-            identity_row=dict(hint.object_key.primary_key),
-            provenance="this",
+            provenance="none" if hint is None else "this",
             representation="wire",
+            authoring=authoring if hint is None else None,
         ),
     )
 
@@ -281,11 +282,11 @@ def _prepared_wire_write(
 def _published_identity(source: _WireKeyedSource) -> dict[str, object]:
     """The object the source names, in the spelling the source published it in.
 
-    The hint's own key names it in MANAGED values, which is what the ledger is
-    asked about; the row an instruction is built from is authored, so its identity
-    members are read back off the published node under those same names.
+    The source's own key names it in MANAGED values; the row an instruction is
+    built from is authored, so its identity members are read back off the
+    published node under those same names.
     """
-    return {name: source.node[name] for name, _value in source.hint.object_key.primary_key}
+    return {name: source.node[name] for name, _value in source.object_key.primary_key}
 
 
 class WireKeyedWriteSource:
@@ -342,7 +343,7 @@ class WireKeyedWriteSource:
         )
         return PreparedSourceWrite(
             instruction=instruction,
-            object_key=source.hint.object_key,
+            object_key=source.object_key,
             assigned=frozenset(assigned),
         )
 
@@ -365,15 +366,14 @@ class WireKeyedInsertSource:
     fact that makes the call wrong whatever else is true of the value, where the
     provenance answer names only which verb this particular one belongs to.
 
-    Provenance here has two answers rather than three: a hinted node is one this
-    store published, by a read or by an insert this transaction already buffered,
-    and anything else is a document a caller built. A value another
-    framework-managed lifecycle produced carries no hint THIS lifecycle
-    recognizes, so it arrives as the plain document it is. Whether a plain
-    document names an object this transaction already opened is not a provenance
-    answer at all — its key members are canonical only once :meth:`prepare` has
-    run — so the ingress asks the opened-object ledger after preparation, and a
-    payload repeated is refused there.
+    Provenance here has two answers rather than three: a node a read published,
+    or the node an insert answered, is one this store published, and anything
+    else is a document a caller built. A value another framework-managed
+    lifecycle produced carries nothing THIS lifecycle recognizes, so it arrives
+    as the plain document it is. Whether a plain document names an object whose
+    insertion still stands is not a provenance answer at all — its key members
+    are canonical only once :meth:`prepare` has run — so the ingress asks the
+    unit of work after preparation, and a payload repeated is refused there.
     """
 
     __slots__ = ("_data", "_entity_name", "_meta", "_mutation", "_payload")
@@ -391,11 +391,13 @@ class WireKeyedInsertSource:
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedInsert:
         self._meta = model
         self._mutation = mutation
-        published = read_origin_of(self._data) if isinstance(self._data, WireEntity) else None
+        data = self._data
+        published = read_origin_of(data) if isinstance(data, WireEntity) else None
+        opened = authoring_of(data) if isinstance(data, WireEntity) else None
         return ResolvedKeyedInsert(
             entity=instructions.resolve_target(model, self._entity_name),
             pin=None if published is None else published.pin,
-            provenance="none" if published is None else "this",
+            provenance="none" if published is None and opened is None else "this",
             representation="wire",
         )
 
@@ -426,17 +428,22 @@ class WireKeyedInsertSource:
         return retained(self._meta), retained(self._mutation)
 
 
-def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity, ReadOrigin]:
-    """``observed`` and its own Read Origin, or refuse the value as a keyed source.
+def _keyed_source(
+    mutation: KeyedMutation, observed: object
+) -> tuple[WireEntity, ReadOrigin | None, InsertionIdentity]:
+    """``observed`` with its own Read Origin, or with the insertion authority
+    the node a Wire insert answered carries, or refuse the value as a keyed
+    source.
 
     One refusal covers every non-source a caller can reach for — an ordinary
     mapping, ``dict(node)``, a JSON or pickle round trip, an
     :class:`~parallax.snapshot.materialize.InvalidData` wrapper, and every node
     published as diagnostic data under an invalid root. They differ only in how
-    the Read Origin is absent; none can authorize a keyed write.
+    the provenance is absent; none can authorize a keyed write.
     """
     hint = read_origin_of(observed) if isinstance(observed, WireEntity) else None
-    if hint is None:
+    authoring = authoring_of(observed) if isinstance(observed, WireEntity) else None
+    if hint is None and authoring is None:
         raise instructions.WriteInstructionError(
             f"a keyed `{mutation}` on `tx.wire` takes a frozen Entity mapping Parallax "
             f"published — a `tx.wire.find` result, or the node `tx.wire.insert` answered — and "
@@ -445,21 +452,21 @@ def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity
             "keyed write is addressed by and the evidence or buffered insert that licenses "
             "it; read the row through `tx.wire.find` and write what it returned"
         )
-    assert isinstance(observed, WireEntity)  # a hint rides an Entity node alone
-    return observed, hint
+    assert isinstance(observed, WireEntity)  # provenance rides an Entity node alone
+    return observed, hint, cast("InsertionIdentity", authoring)
 
 
-def _concrete_entity(meta: Metamodel, hint: ReadOrigin) -> EntityMetadata:
-    """The accepted Metadata for the concrete Entity the source's own hint names.
+def _concrete_entity(meta: Metamodel, entity: EntityIdentity) -> EntityMetadata:
+    """The accepted Metadata for the concrete Entity the source names.
 
-    A hint names the row's OWN Entity — the per-row answer under
+    A source names the row's OWN Entity — the per-row answer under
     table-per-hierarchy — so a write off a polymorphic level's node addresses the
     concrete type that row is, never the position the query targeted.
     """
-    record = meta.entity(hint.entity)
-    if record is None:  # pragma: no cover - a hint is filed under THIS model
+    record = meta.entity(entity)
+    if record is None:  # pragma: no cover - a source is filed under THIS model
         raise instructions.WriteInstructionError(
-            f"{hint.entity.canonical}: the source was published by another model"
+            f"{entity.canonical}: the source was published by another model"
         )
     return record
 

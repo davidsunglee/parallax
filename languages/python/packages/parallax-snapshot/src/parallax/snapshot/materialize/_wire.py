@@ -35,6 +35,7 @@ from parallax.core.metamodel import (
     OccurrenceMetadata,
 )
 from parallax.core.unit_work import ReadOrigin
+from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.wire import encode_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import SnapshotInspectionError, snapshot_state_of
@@ -54,6 +55,7 @@ __all__ = [
     "WireEntity",
     "WireValue",
     "WireWalk",
+    "authoring_of",
     "opened_wire_entity",
     "projection_entity",
     "read_origin_of",
@@ -267,6 +269,22 @@ class _WireEntityNode(_FrozenMapping, WireEntity):
     _source: ReadOrigin | None
 
 
+class _WireAuthoringNode(_WireEntityNode):
+    """The node a Wire insert answers: no read published it, so its Read Origin
+    slot stays empty, and the authority the insertion's admission granted rides
+    a slot of its own.
+
+    The authority is private exactly as a Read Origin is — not a key, not
+    iterated, not compared, not serialized, and not carried by ``dict(value)``
+    — and a subclass carries it, so a node a read publishes pays nothing for a
+    slot it could never fill.
+    """
+
+    __slots__ = ("_authoring",)
+
+    _authoring: InsertionIdentity
+
+
 def _frozen_mapping[T: _FrozenMapping](
     cls: type[T], entries: Mapping[str, WireValue] | Iterable[tuple[str, WireValue]]
 ) -> T:
@@ -287,6 +305,12 @@ def _frozen_sequence(values: Iterable[WireValue]) -> _FrozenSequence:
     value = list.__new__(_FrozenSequence)
     list[Any].extend(value, values)
     return value
+
+
+def authoring_of(entity: WireEntity) -> InsertionIdentity | None:
+    """The insertion authority ``entity`` carries, or ``None`` for any node but
+    one a Wire insert answered."""
+    return getattr(entity, "_authoring", None)
 
 
 def read_origin_of(entity: WireEntity) -> ReadOrigin | None:
@@ -811,17 +835,20 @@ def _occurrence(
 
 
 def opened_wire_entity(
-    model: CatalogedModel, entity: EntityIdentity, row: Mapping[str, object], hint: ReadOrigin
+    model: CatalogedModel,
+    entity: EntityIdentity,
+    row: Mapping[str, object],
+    authority: InsertionIdentity,
 ) -> WireEntity:
     """The frozen Wire node for a row a Wire insert has just OPENED.
 
     A Wire insert's caller holds nothing afterwards — the Typed peer leaves the
     caller holding the instance it passed — so the verb answers the row it
     buffered, in the one representation that can be handed straight back to a
-    keyed verb. The node carries ``hint``, which is what makes it a keyed source
-    at all; the values are the payload's own, rendered through the SAME
-    canonical encoding a read publishes, so writing a member back is the
-    restoration it would be off a read result.
+    keyed verb. The node carries the insertion's ``authority``, which is what
+    makes it a keyed source at all, and no Read Origin, since no read published
+    it; the values are the payload's own, rendered through the SAME canonical
+    encoding a read publishes.
 
     What it publishes is what this transaction STATED, not what a later read of
     the stored row will: the framework-owned members are stamped at flush and
@@ -849,6 +876,7 @@ def opened_wire_entity(
             )
     if layout.family_variant is not None:
         _put(rendered, FAMILY_VARIANT_KEY, layout.family_variant)
-    node = _frozen_mapping(_WireEntityNode, rendered)
-    object.__setattr__(node, "_source", hint)
+    node = _frozen_mapping(_WireAuthoringNode, rendered)
+    object.__setattr__(node, "_source", None)
+    object.__setattr__(node, "_authoring", authority)
     return node

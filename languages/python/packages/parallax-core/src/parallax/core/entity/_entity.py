@@ -70,10 +70,24 @@ __all__ = [
     "CHANGE_RECORD_SLOT",
     "Bitemporal",
     "ChangeRecord",
+    "DetachedLifecycleState",
     "Entity",
     "TxTemporal",
     "attach_lifecycle_state",
 ]
+
+
+class DetachedLifecycleState:
+    """Lifecycle state that is no record of a read, and that a serialized copy
+    of its value leaves behind.
+
+    A lifecycle attaching such state to a value it did not materialize — an
+    authority it granted the value in one live process, say — states nothing
+    a pickle could misrepresent: the copy is the domain data it always was, and
+    the state's meaning stays with the process that granted it.
+    """
+
+    __slots__ = ()
 
 
 class _All:
@@ -586,8 +600,9 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         raise _use_edit(type(self), "__deepcopy__") from None
 
     def __reduce_ex__(self, protocol: SupportsIndex) -> str | tuple[Any, ...]:
-        """Refused while lifecycle state is attached: a materialized node does
-        not pickle.
+        """Refused while a read's lifecycle state is attached: a materialized
+        node does not pickle. A :class:`DetachedLifecycleState` is left behind
+        instead, since it records no read.
 
         That state is one lifecycle's private record of a value IT materialized —
         the views it loaded, the coordinates it read at, and the private hint a
@@ -629,7 +644,8 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         attribute at the slot's own name makes a lifecycle-free value answer as a
         materialized one or hides the state of one that is.
         """
-        if lifecycle_state(self) is not None:
+        state = lifecycle_state(self)
+        if state is not None and not isinstance(state, DetachedLifecycleState):
             raise pickle.PicklingError(
                 f"{type(self).__name__} carries the lifecycle state of the read that published "
                 "it, which describes a live read in a live process and cannot be reconstructed "
