@@ -4444,3 +4444,31 @@ def test_an_instruction_naming_several_rows_settles_against_nothing() -> None:
         scenario.instruction_evidence(_PERSON_META, _prepared_person_delete(1, 2), supplied=None)
         is None
     )
+
+
+def test_a_target_step_is_written_from_its_callers_revision_with_no_source_read() -> None:
+    port = FakeWritePort()
+    emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+        _load_case("m-opt-lock-028"), port
+    )
+    assert round_trips == 1
+    assert not any(" where " in sql for sql, _ in port.reads)
+    assert [sql for sql, _ in port.writes] == [
+        POSTGRES.to_driver_sql(
+            "update account set owner = ?, balance = ?, version = ? where id = ? and version = ?"
+        )
+    ]
+    assert [e.case_pointer for e in emissions] == ["/writeSequence/0"]
+
+
+def test_a_locking_target_step_acquires_its_row_before_it_writes() -> None:
+    port = FakeWritePort(
+        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
+    )
+    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+        _load_case("m-opt-lock-029"), port
+    )
+    assert round_trips == 2
+    assert [sql for sql, _ in port.writes] == [
+        POSTGRES.to_driver_sql("update account set balance = ?, version = ? where id = ?")
+    ]

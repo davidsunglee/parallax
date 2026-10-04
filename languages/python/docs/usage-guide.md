@@ -113,6 +113,30 @@ def keyed_delete_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
     return db.transact(fn)
 ```
 
+## A target patch states its key and the version its caller last observed
+
+Corpus case: `m-opt-lock-027`
+
+```python
+def target_patch_gates_on_the_callers_version(db: ScopedDatabase) -> None:
+    def fn(tx: Transaction) -> None:
+        tx.wire.update("Account", {"id": 2, "balance": "250.00"}, if_version=1)
+
+    db.transact(fn)
+```
+
+## A target replacement states the object's whole writable state
+
+Corpus case: `m-opt-lock-028`
+
+```python
+def target_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
+    def fn(tx: Transaction) -> None:
+        tx.replace(Account(id=3, owner="Hopper", balance=Decimal("12.00")), if_version=1)
+
+    db.transact(fn)
+```
+
 ## Bitemporal update-until splits head/middle/tail
 
 Corpus case: `m-bitemp-write-001`

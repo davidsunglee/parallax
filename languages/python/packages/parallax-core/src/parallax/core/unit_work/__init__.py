@@ -25,6 +25,7 @@ from parallax.core.unit_work.effects import (
     OptimisticLockConflictError,
     StaleWriteError,
     WriteEffectError,
+    WritePreconditionError,
     enforce_affected_rows,
 )
 from parallax.core.unit_work.instructions import (
@@ -37,6 +38,8 @@ from parallax.core.unit_work.instructions import (
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
+    TargetMutation,
+    TargetWrite,
     WriteAssignment,
     WriteInstructionError,
 )
@@ -169,6 +172,8 @@ __all__ = [
     "StaleWriteError",
     "SubjectActor",
     "SystemClock",
+    "TargetMutation",
+    "TargetWrite",
     "TemporalObservation",
     "TransactionInstant",
     "TransactionSettings",
@@ -191,6 +196,7 @@ __all__ = [
     "WritePlan",
     "WritePlanner",
     "WritePlanningError",
+    "WritePreconditionError",
     "WriteRejectedError",
     "active_unit_of_work",
     "buffered_write",

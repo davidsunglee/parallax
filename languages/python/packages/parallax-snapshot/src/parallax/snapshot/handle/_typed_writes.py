@@ -23,6 +23,8 @@ from parallax.core.unit_work import (
     PredicateSelection,
     PredicateWrite,
     ReadOrigin,
+    TargetMutation,
+    TargetWrite,
     WriteAssignment,
     instructions,
 )
@@ -46,6 +48,7 @@ from parallax.snapshot.handle._keyed_writes import (
 from parallax.snapshot.handle._predicate_writes import (
     PredicateWriteContext,
     buffer_predicate_instruction,
+    buffer_target_instruction,
 )
 
 __all__ = [
@@ -53,6 +56,7 @@ __all__ = [
     "TypedKeyedWriteSource",
     "provenance_of",
     "typed_predicate_write",
+    "typed_target_write",
 ]
 
 
@@ -352,3 +356,37 @@ def typed_predicate_write(
     prepared = instructions.prepare_typed_write(instruction, ctx.keyed.model.meta)
     assert isinstance(prepared, PreparedPredicateWrite)
     buffer_predicate_instruction(ctx, prepared)
+
+
+def typed_target_write(
+    ctx: PredicateWriteContext,
+    mutation: TargetMutation,
+    instance: EntityBase,
+    codec: EntityRowCodec,
+    *,
+    valid_from: dt.datetime | None,
+    until: dt.datetime | None,
+    if_version: int | None,
+    if_tx_start: dt.datetime | None,
+) -> None:
+    """The Typed entry to the caller-addressed write lane: ``instance``'s
+    every populated member as the row a :class:`~parallax.core.unit_work.TargetWrite`
+    states, beside the caller's own revision arguments.
+
+    What produced the instance is not asked: the write addresses the object its
+    key names, under the condition its caller states, so neither a read's
+    evidence nor an insertion's authority the instance carries is consulted.
+    """
+    refuse_reentry(ctx.keyed.lifecycle)
+    meta = ctx.keyed.model.meta
+    entity = metadata_of_instance(meta, instance)
+    instruction = TargetWrite(
+        mutation,
+        entity.identity.canonical,
+        codec.full_row(instance),
+        if_version,
+        if_tx_start,
+        valid_from,
+        until,
+    )
+    buffer_target_instruction(ctx, instructions.prepare_typed_write(instruction, meta))

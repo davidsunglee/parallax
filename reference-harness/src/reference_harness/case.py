@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from .corpus_yaml import read_corpus_yaml
 from .naming import default_column_name
@@ -887,7 +887,45 @@ class Case:
 
     @property
     def write_sequence(self) -> list[dict[str, Any]]:
-        return self.when.get("writeSequence", [])
+        """The ``writeSequence`` steps, each caller-addressed step stated as the
+        keyed update its golden grades.
+
+        A target step's gate binds its caller's revision exactly where a keyed
+        update's binds the version its source observed, so it is graded as that
+        update with ``observedVersion`` set to ``ifVersion``. A replacement
+        states every writable member: those its ``row`` omits are written empty
+        — ``null``, or ``[]`` for a ``many`` value object. The keyed form keeps
+        ``target: true`` beside its members, because a target step resolves no
+        source.
+        """
+        return [self._keyed_step(step) for step in self.when.get("writeSequence", [])]
+
+    def _keyed_step(self, step: dict[str, Any]) -> dict[str, Any]:
+        row = step.get("row")
+        if not isinstance(row, dict):
+            return step
+        mutation = step["mutation"]
+        stated = dict(cast("dict[str, Any]", row))
+        if mutation in ("replace", "replaceUntil"):
+            entity = self.model.entity(step["entity"])
+            for attribute in entity.attributes:
+                if attribute.get("primaryKey") or attribute.get("optimisticLocking"):
+                    continue
+                stated.setdefault(attribute["name"], None)
+            for value_object in entity.value_objects:
+                many = value_object.get("multiplicity") == "many"
+                stated.setdefault(value_object["name"], [] if many else None)
+        if "ifVersion" in step:
+            stated["observedVersion"] = step["ifVersion"]
+        keyed = {
+            name: value
+            for name, value in step.items()
+            if name not in ("row", "ifVersion", "ifTxStart")
+        }
+        keyed["mutation"] = "update" if mutation in ("update", "replace") else "updateUntil"
+        keyed["rows"] = [stated]
+        keyed["target"] = True
+        return keyed
 
     @property
     def expected_table_state(self) -> dict[str, list[dict[str, Any]]]:

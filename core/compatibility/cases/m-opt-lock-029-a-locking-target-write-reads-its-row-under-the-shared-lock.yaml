@@ -1,0 +1,26 @@
+model: models/account.yaml
+tags: [m-opt-lock, m-read-lock, m-unit-work, m-sql, write-sequence, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  writeSequence:
+    - mutation: update
+      entity: parallax.compatibility.Account
+      statements: 1
+      note: under Locking the caller's version is compared with the row an acquisition read under the shared lock, and the update itself is ungated
+      row: { id: 1, balance: "90.00" }
+      ifVersion: 1
+then:
+  statements:
+    - sql:
+        postgres: update account set balance = ?, version = ? where id = ?
+      binds: ["90.00", 2, 1]
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: "90.00", version: 2 }
+      - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+      - { id: 3, owner: Grace, balance: "10.00", version: 1 }
+  roundTrips: 2

@@ -213,6 +213,17 @@ advance the version and, when Optimistic, nothing to gate on. A `DELETE` writes 
 version, but still requires the same evidence: current lock participation under
 Locking or retained observed-version evidence under Optimistic.
 
+A **caller-addressed** write (`m-unit-work` *Caller-addressed writes*) is the one
+exception, and it is not a version value in a row: its caller states, as an
+argument of its own, the version an earlier query returned, as a **precondition**
+on the state the write starts from. Under Optimistic the gate binds that stated
+version; under Locking the version a locked read of the row holds is compared
+with it before the write is admitted, and the write is ungated. Either way the
+new version is still the framework's own (`stated + 1`), and nothing in the
+payload, a read's evidence, or the stored row ever stands in for the statement.
+A versioned caller-addressed write that states no version is refused before any
+database access, as is a version stated for an unversioned or temporal target.
+
 ### Empty updates issue no DML
 
 The version advances on every `UPDATE` statement an implementation *issues*, but
@@ -351,6 +362,13 @@ An implementation **MUST NOT** classify by verb here either. An effective-Lockin
 against an unchanged cause, since re-reading cannot supply a gate the strategy never
 rendered.
 
+A gate binding a **caller's stated version** is the exception to the retriable
+half: its shortfall is a failed precondition (`m-unit-work` *Affected Rows
+Policy*), because re-running the transaction re-states the same version against
+the same stored row. Where a write's gate binds both a caller's stated version and
+an observation of the same state — one composed from both — the shortfall is the
+caller's.
+
 ## Retry contract
 
 A detected conflict is **retriable**. On conflict an implementation **MUST**:
@@ -372,6 +390,8 @@ retriable set only when the unit of work opts in (`retryOptimisticConflicts`,
 Reladomo's `setRetryOnOptimisticLockFailure`, default off). Transient database
 failures (deadlock / serialization failure) are always retriable regardless of
 that flag. A retry that exhausts its bound surfaces the conflict to the caller.
+A failed caller precondition is never retried, opted in or not: the retry would
+state the same version again.
 
 The suite proves the retriable half observably with a conflict case's
 **`when.attempts`** sequence (`m-case-format`): a stale-version `UPDATE` affects `0`

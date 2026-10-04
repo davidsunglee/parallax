@@ -1,0 +1,36 @@
+model: models/write-transparency-layout-twin-document.yaml
+tags: [m-unit-work, m-storage-layout, m-value-object, m-opt-lock, m-read-lock, m-sql, write-sequence, update, json, nested, to-many, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: replace
+      entity: parallax.compatibility.WriteTwinItem
+      statements: 1
+      note: the replacement states only the label, so the nullable occurrence is written empty and the many occurrence becomes the empty collection; the unversioned target is acquired under the shared lock first
+      row: { id: 1, label: Pilot }
+then:
+  statements:
+    - sql:
+        postgres: update write_twin set payload = jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+      binds: ['{label}', Pilot, '{spec}', null, '{marks}', [], 1]
+  roundTrips: 2
+  tableState:
+    write_twin:
+      - id: 1
+        payload:
+          label: Pilot
+          spec: null
+          marks: []
+      - id: 2
+        payload:
+          label: south
+          spec:
+            title: Meridian
+            note: second
+            origin: { country: SE }
+            stops:
+              - { port: Bergen }
+          marks:
+            - { code: C }

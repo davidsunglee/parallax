@@ -138,7 +138,7 @@ def _lower(
 
 
 def _flush_and_lower(
-    buffer: list[WriteInstruction],
+    buffer: list[KeyedWrite | PredicateWrite],
     model: Metamodel,
     *,
     concurrency: Concurrency = "locking",

@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from types import MappingProxyType
+
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work.planned import (
     AnyCount,
-    ExactCount,
+    FailedPrecondition,
     KeyTarget,
     MilestoneTarget,
     MissingTarget,
+    NonTemporalConcurrency,
     OptimisticConflict,
     PlannedInsert,
     PlannedWrite,
     StaleWrite,
+    TemporalConcurrency,
+    TemporalGate,
+    Versioned,
+    VersionGate,
 )
 
 __all__ = [
@@ -19,6 +27,7 @@ __all__ = [
     "OptimisticLockConflictError",
     "StaleWriteError",
     "WriteEffectError",
+    "WritePreconditionError",
     "enforce_affected_rows",
 ]
 
@@ -97,6 +106,27 @@ class CardinalityCorruptionError(WriteEffectError):
     _summary = "the write affected more rows than its target addresses"
 
 
+class WritePreconditionError(RuntimeError):
+    """A target write's caller-stated starting condition does not hold: the
+    state it addresses is gone, or a revision other than ``expected`` replaced
+    it.
+
+    ``key`` names the object by its primary key and ``expected`` is the revision
+    the caller stated, unchanged. Re-running the transaction re-states the same
+    condition, so this is never retriable; nothing reads the row again to say
+    which of the two happened.
+    """
+
+    def __init__(self, entity: EntityIdentity, key: Mapping[str, object], expected: object) -> None:
+        self.entity = entity
+        self.key = MappingProxyType(dict(key))
+        self.expected = expected
+        super().__init__(
+            f"{entity.name}: the state this write starts from no longer matches its "
+            f"precondition — key={dict(key)!r}, expected revision {expected!r}"
+        )
+
+
 def enforce_affected_rows(step: PlannedWrite, actual_count: int) -> None:
     """Interpret one step's execution result against its Affected Rows Policy.
 
@@ -118,17 +148,33 @@ def enforce_affected_rows(step: PlannedWrite, actual_count: int) -> None:
     assert isinstance(target, KeyTarget | MilestoneTarget)
     if actual_count > policy.expected:
         raise CardinalityCorruptionError(step.entity, target, policy.expected, actual_count)
-    raise _shortfall_error(policy)(step.entity, target, policy.expected, actual_count)
-
-
-def _shortfall_error(policy: ExactCount) -> type[WriteEffectError]:
     match policy.on_shortfall:
         case MissingTarget():
-            return MissingTargetError
+            error: type[WriteEffectError] = MissingTargetError
         case StaleWrite():
-            return StaleWriteError
+            error = StaleWriteError
         case OptimisticConflict():
-            return OptimisticLockConflictError
+            error = OptimisticLockConflictError
+        case FailedPrecondition():
+            raise _failed_precondition(step.entity, step.concurrency, target)
+    raise error(step.entity, target, policy.expected, actual_count)
+
+
+def _failed_precondition(
+    entity: EntityIdentity,
+    concurrency: NonTemporalConcurrency | TemporalConcurrency,
+    target: AddressedTarget,
+) -> WritePreconditionError:
+    """The caller's condition a gated step that fell short bound: its gate
+    carries the revision the caller stated, and its target the key."""
+    if isinstance(concurrency, Versioned) and isinstance(concurrency.gate, VersionGate):
+        expected: object = concurrency.gate.observed_version
+    else:
+        assert isinstance(concurrency, TemporalGate)  # only a gated step binds a precondition
+        expected = concurrency.observed_start
+    names = tuple(attribute.name for attribute in target.key_attributes)
+    values = target.key_values[0] if isinstance(target, KeyTarget) else target.key_values
+    return WritePreconditionError(entity, dict(zip(names, values, strict=True)), expected)
 
 
 def _address(target: AddressedTarget) -> str:

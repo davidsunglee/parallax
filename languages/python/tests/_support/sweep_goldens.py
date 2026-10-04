@@ -134,6 +134,11 @@ _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
         "m-opt-lock-002",
         "m-opt-lock-026",
+        "m-opt-lock-027",
+        "m-opt-lock-028",
+        "m-opt-lock-029",
+        "m-unit-work-043",
+        "m-unit-work-044",
         "m-inheritance-007",
         "m-inheritance-008",
         "m-inheritance-009",

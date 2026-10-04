@@ -762,7 +762,14 @@ def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
     assert not any(isinstance(op, WriteCall) for op in position.calls)
 
 
-_UNIFIED_OPERATIONS = ("insert", "update", "terminate", "update_where", "terminate_where")
+_UNIFIED_OPERATIONS = (
+    "insert",
+    "update",
+    "replace",
+    "terminate",
+    "update_where",
+    "terminate_where",
+)
 
 
 @pytest.mark.parametrize("operation", _UNIFIED_OPERATIONS)

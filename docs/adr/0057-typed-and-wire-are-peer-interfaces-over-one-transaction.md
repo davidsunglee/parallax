@@ -196,3 +196,18 @@ lends nothing: a Typed value built independently of a Wire insert, or the
 reverse, is refused like any value no read produced, and a read of the inserted
 row writes through its own evidence. The peers stay symmetric because each
 interface's insert hands its caller the one source that carries the authority.
+
+## Amendment (2026-10): a caller may address the object it writes
+
+The decision above requires an authentic Parallax read source for every
+existing-object keyed write, and refuses an ordinary mapping wherever a keyed
+Wire verb is called.
+
+**Superseding decision:** a caller-addressed write needs no source. `tx.wire.update`
+also takes an Entity spelling and a change set naming the object by its primary
+key, and `tx.replace` / `tx.wire.replace` take an instance or a document stating
+the object's complete writable state; each is conditioned by the revision its
+caller states rather than by a read's evidence. The observed `tx.wire.update`
+overload is unchanged and still refuses an ordinary mapping as its source. The
+peers stay symmetric for replacement, and a Typed patch remains an observed edit,
+because a Typed value either came from a read or states the whole object.

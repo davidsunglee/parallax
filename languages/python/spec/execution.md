@@ -156,6 +156,21 @@ node unpickles as plain domain data that authorizes nothing — so pickling an
 inserted instance succeeds, unlike a read's node. Inserting the same instance
 again once its earlier insertion was removed rebinds it; drafts derived before
 keep the earlier, retired authority.
+A target write addresses an existing object by key under its caller's own
+revision (`m-unit-work` *Caller-addressed writes*): `tx.replace(instance, ...)`
+and `tx.wire.replace(entity_name, data, ...)` state its complete writable state,
+and `tx.wire.update(entity_name, changes, ...)` — the overload taking an Entity
+spelling rather than a published node — patches the members `changes` names.
+There is no Typed patch: a Typed value either came from a read, whose edit is an
+observed update, or states the whole object. The revision is a keyword-only
+argument, never a member: `if_version` for a versioned Entity, `if_tx_start` for a
+temporal one, neither for an unversioned one; `None` means it is not stated. The
+observed `tx.wire.update` overload takes neither, nor `valid_from`. Each target
+verb returns `None`. A failed precondition raises
+`parallax.core.unit_work.WritePreconditionError` — at the call under Locking, at
+the flush under Optimistic — and is never retried. An object the attempt
+inserted is refused with `WriteEvidenceError(write-evidence-inserted)`, and a
+target write of a temporal Entity with `WriteInstructionError`.
 `tx.wire` is the Wire ingress, sharing transaction state and policy. Public
 write-plan and flush operations are absent. Framework-owned attributes cannot
 be authored by construction, `edit`, assignments, or Wire changes.

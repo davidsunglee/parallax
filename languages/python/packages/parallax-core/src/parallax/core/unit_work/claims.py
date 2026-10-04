@@ -271,10 +271,14 @@ class ClaimTable:
     ever written. An abort drops both together for the same reason.
     """
 
-    __slots__ = ("_held",)
+    __slots__ = ("_held", "_objects")
 
     def __init__(self) -> None:
         self._held: dict[ClaimScope, WriteIntent] = {}
+        # The objects the claims address, built by the first question about an
+        # object and kept current from then on, so a buffer that is never asked
+        # pays nothing per claim.
+        self._objects: set[ObjectKey] | None = None
 
     def claim(self, key: ClaimScope, intent: WriteIntent) -> ClaimVerdict:
         """Take ``intent``'s claim at ``key``, answering what it became.
@@ -292,6 +296,8 @@ class ClaimTable:
         verdict = admits(self._held.get(key), intent)
         if verdict in ("admit", "coalesce", "supersede"):
             self._held[key] = intent
+            if self._objects is not None:
+                self._objects.add(claimed_object(key))
         return verdict
 
     def held(self, key: ClaimScope) -> WriteIntent | None:
@@ -300,12 +306,21 @@ class ClaimTable:
         intent to combine with at all."""
         return self._held.get(key)
 
+    def claims_object(self, key: ObjectKey) -> bool:
+        """Whether this buffer claims any state of object ``key``."""
+        objects = self._objects
+        if objects is None:
+            objects = self._objects = {claimed_object(scope) for scope in self._held}
+        return key in objects
+
     def release(self, keys: Iterable[ClaimScope]) -> None:
         """Drop the claims at ``keys``, which the caller itself just admitted
         and is withdrawing before the write that took them is buffered."""
         for key in keys:
             del self._held[key]
+        self._objects = None
 
     def clear(self) -> None:
         """Drop every claim — the buffer that held them is gone."""
         self._held.clear()
+        self._objects = None

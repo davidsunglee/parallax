@@ -33,7 +33,7 @@ from parallax.core.unit_work import (
     TransactionInstant,
     instructions,
 )
-from parallax.core.unit_work.instructions import PreparedWrite
+from parallax.core.unit_work.instructions import KeyedWrite, PreparedWrite
 from parallax.core.unit_work.plan import PlannedSteps, RangeAcquisition
 from parallax.core.unit_work.planner import ObjectKey, VersionedStateKey
 from parallax.snapshot.handle import build_write_planner
@@ -291,6 +291,7 @@ def _planned(
     instruction = instructions.deserialize(
         {"mutation": "insert", "entity": entity_name, "rows": [members], "validFrom": valid_from}
     )
+    assert isinstance(instruction, KeyedWrite)  # a `rows` document is a keyed write
     prepared = instructions.prepare_wire_write(instruction, POSITION)
     return (
         build_write_planner(POSITION)
@@ -397,6 +398,7 @@ def test_track_opened_ignores_a_non_temporal_plan() -> None:
             "rows": [{"id": 1, "owner": "Ada", "balance": "0.00"}],
         }
     )
+    assert isinstance(instruction, KeyedWrite)  # a `rows` document is a keyed write
     account = models.load_models()["account"]
     prepared = instructions.prepare_wire_write(instruction, account)
     plan = (
@@ -488,9 +490,9 @@ def _rectangles(
         }
         if until is not None:
             document["until"] = until
-        entries.append(
-            instructions.prepare_wire_write(instructions.deserialize(document), POSITION)
-        )
+        instruction = instructions.deserialize(document)
+        assert isinstance(instruction, KeyedWrite)  # a `rows` document is a keyed write
+        entries.append(instructions.prepare_wire_write(instruction, POSITION))
     return (
         build_write_planner(POSITION)
         .finalize(

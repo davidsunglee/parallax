@@ -1,0 +1,26 @@
+model: models/account.yaml
+tags: [m-opt-lock, m-unit-work, m-sql, write-sequence, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  writeSequence:
+    - mutation: replace
+      entity: parallax.compatibility.Account
+      statements: 1
+      note: a replacement writes the object's whole writable state under the caller's version
+      row: { id: 3, owner: Hopper, balance: "12.00" }
+      ifVersion: 1
+then:
+  statements:
+    - sql:
+        postgres: update account set owner = ?, balance = ?, version = ? where id = ? and version = ?
+      binds: [Hopper, "12.00", 2, 3, 1]
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+      - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+      - { id: 3, owner: Hopper, balance: "12.00", version: 2 }
+  roundTrips: 1

@@ -14,11 +14,15 @@ from parallax.core.unit_work.columns import ChunkedColumnBuilder, ColumnSlice, w
 from parallax.core.unit_work.instructions import (
     INSERT_MUTATIONS,
     UPDATE_MUTATIONS,
+    ExpectedVersion,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
+    PreparedTargetWrite,
     PreparedTemporalBounds,
     PreparedWrite,
+    TargetExpectation,
     derive_opening,
+    target_instruction,
 )
 from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.plan import Completion
@@ -27,6 +31,7 @@ from parallax.core.unit_work.planner import (
     ObservedStateKey,
     TemporalStateKey,
     VersionedStateKey,
+    resolve_object_key,
 )
 from parallax.core.unit_work.retain import InsertionIdentity, RetainedObservation
 from parallax.core.unit_work.temporal import (
@@ -52,6 +57,7 @@ __all__ = [
     "PendingOpening",
     "PredecessorRows",
     "PredecessorRowsBuilder",
+    "TargetKeyedWrite",
     "TemporalContribution",
     "TemporalKeyedWrite",
     "VersionedEvidence",
@@ -61,6 +67,7 @@ __all__ = [
     "composed_alone",
     "composed_temporal_write",
     "group_state_keys",
+    "target_write",
 ]
 
 
@@ -359,6 +366,54 @@ class InsertionKeyedWrite:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class TargetKeyedWrite:
+    """A keyed write of an existing object a caller addressed, carrying the
+    starting condition the caller stated rather than a read's evidence.
+
+    ``scope`` is the claim scope that condition names — the exact version a
+    versioned object is required to stand at, or the object itself when it is
+    unversioned — which is the scope an observed write of the same state takes,
+    so the two compose there. ``claims`` are the retained observations of
+    observed writes composed into this one, which its completion spends; the
+    caller's condition stays whatever values survive, and a destruction
+    superseding the write keeps it too.
+    """
+
+    instruction: PreparedKeyedWrite
+    expectation: TargetExpectation
+    scope: VersionedStateKey | ObjectKey
+    claims: tuple[RetainedObservation, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.instruction.mutation in INSERT_MUTATIONS or len(self.instruction.rows) != 1:
+            raise ValueError(
+                "a caller's condition addresses one existing object: "
+                f"`{self.instruction.mutation}` on "
+                f"{self.instruction.target.identity.canonical!r} is no such write"
+            )
+
+
+def target_write(
+    prepared: PreparedTargetWrite, families: inheritance.InheritanceFacet
+) -> TargetKeyedWrite:
+    """``prepared`` as the buffer item that carries its caller's condition: the
+    keyed update it executes as, claimed at the scope its expectation names."""
+    instruction = target_instruction(prepared)
+    key = resolve_object_key(instruction, families)
+    assert key is not None  # preparation required the key
+    expectation = prepared.expectation
+    return TargetKeyedWrite(
+        instruction=instruction,
+        expectation=expectation,
+        scope=(
+            VersionedStateKey(key, expectation.version)
+            if isinstance(expectation, ExpectedVersion)
+            else key
+        ),
+    )
+
+
 type ClaimedKeyedWrite = ObservedKeyedWrite | ObjectClaimedWrite
 """One keyed write travelling with the claim its verb took for it, at either
 scope. The two carriers share what coalescing manipulates — an instruction —
@@ -575,7 +630,13 @@ class AfterRemoval:
     inserts: tuple[PreparedKeyedWrite, ...]
 
 
-BufferItem = PreparedWrite | ClaimedKeyedWrite | InsertionKeyedWrite | MaterializedWriteGroup
+BufferItem = (
+    PreparedWrite
+    | ClaimedKeyedWrite
+    | InsertionKeyedWrite
+    | TargetKeyedWrite
+    | MaterializedWriteGroup
+)
 
 
 def buffered_instruction(item: BufferItem) -> PreparedWrite:
@@ -586,6 +647,8 @@ def buffered_instruction(item: BufferItem) -> PreparedWrite:
     """
     if isinstance(item, MaterializedWriteGroup):
         return item.mutation
-    if isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite | InsertionKeyedWrite):
+    if isinstance(
+        item, ObservedKeyedWrite | ObjectClaimedWrite | InsertionKeyedWrite | TargetKeyedWrite
+    ):
         return item.instruction
     return item

@@ -326,10 +326,11 @@ def _assignment(
         expression, mutation_binds = dialect.document_mutation(quoted, value.assignments)
         for index, bind in enumerate(_document_binds(mutation_binds)):
             assignment_index, offset = divmod(index, 2)
-            leaf_type = value.leaf_types[assignment_index]
-            if offset == 1 and leaf_type is not None:
-                wire_value = cast("WireValue", value.assignments[assignment_index].value)
-                ctx.bind_framework(bind, wire_value=wire_value)
+            assigned = value.assignments[assignment_index].value
+            # A scalar leaf and JSON null both cross as JSON text, and each
+            # projects as the value it encodes.
+            if offset == 1 and (value.leaf_types[assignment_index] is not None or assigned is None):
+                ctx.bind_framework(bind, wire_value=cast("WireValue", assigned))
             else:
                 _bind(ctx, bind)
         return f"{quoted} = {expression}"

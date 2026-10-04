@@ -37,6 +37,7 @@ from parallax.snapshot.handle._typed_writes import (
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,
     typed_predicate_write,
+    typed_target_write,
 )
 from parallax.snapshot.handle._wire import WireTransactionView
 
@@ -236,6 +237,53 @@ class Transaction:
         empty."""
         mutation, bound = window_mutation("update", "updateUntil", until)
         keyed_write(self._keyed, TypedKeyedWriteSource(copy, self._codec), mutation, until=bound)
+
+    def replace(
+        self,
+        instance: EntityBase,
+        *,
+        valid_from: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
+        if_version: int | None = None,
+        if_tx_start: dt.datetime | None = None,
+    ) -> None:
+        """Buffer a complete replacement of the existing object ``instance``'s
+        primary key names, under the revision its caller states.
+
+        ``instance`` states the object's whole writable state: every member it
+        sets is written, an omitted nullable member is written empty and an
+        omitted ``many`` the empty collection, and an omitted required member is
+        refused — nothing is carried forward from the state it replaces.
+        Framework-owned members are never written. Whatever produced
+        ``instance`` is not consulted: a replacement is addressed by its key
+        and conditioned by its arguments alone.
+
+        The condition is the caller's: a versioned Entity requires
+        ``if_version``, the version the caller last observed; an unversioned one
+        takes no revision argument. The write still advances the version when
+        every value equals what is stored. Under the Optimistic strategy the
+        stated revision gates the write, and a row that no longer stands at it
+        raises :class:`~parallax.core.unit_work.WritePreconditionError` at
+        flush, which no retry repeats. Under Locking the stored row is read
+        under the shared lock now — reading nothing it already holds, and
+        executing no pending write — and a mismatch raises that error here.
+        An object this transaction inserted is refused (``write-evidence-inserted``):
+        until commit, write it through the instance the insert took or a read.
+
+        ``valid_from`` and ``until`` follow :meth:`insert`'s rules, so a
+        non-temporal target takes neither. Returns ``None``; a read reports the
+        saved state."""
+        mutation, bound = window_mutation("replace", "replaceUntil", until)
+        typed_target_write(
+            self._predicates,
+            mutation,
+            instance,
+            self._codec,
+            valid_from=valid_from,
+            until=bound,
+            if_version=if_version,
+            if_tx_start=if_tx_start,
+        )
 
     def delete(self, node_or_instance: EntityBase) -> None:
         """Buffer a keyed ``delete``, keyed off ``node_or_instance``'s primary

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, cast
 
 from parallax.core import deep_fetch, inheritance
+from parallax.core.base import ManagedValue
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.dialect import LockMode
 from parallax.core.document_codec import (
@@ -23,14 +24,16 @@ from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import NonTemporal, Pin, TemporalShape
 from parallax.core.unit_work import (
     MaterializedWriteGroup,
+    ObjectKey,
     PredecessorRows,
     PredecessorRowsBuilder,
     PredicateMutation,
     VersionedEvidence,
     VersionedEvidenceBuilder,
 )
-from parallax.core.unit_work.instructions import PreparedPredicateWrite
+from parallax.core.unit_work.instructions import PreparedPredicateWrite, PreparedTargetWrite
 from parallax.core.unit_work.plan import RangeAcquisition
+from parallax.core.unit_work.uow import StoredTarget
 from parallax.core.unit_work.write_settlement import reject_readless_document_many
 from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._family import (
@@ -46,7 +49,12 @@ from parallax.snapshot.handle._read import entity_read_lock, execute_read
 from parallax.snapshot.materialize import Page, RootView, require_publishable
 from parallax.snapshot.materialize._page import ABSENT
 
-__all__ = ["PredicateWriteContext", "acquire_coverage", "buffer_predicate_instruction"]
+__all__ = [
+    "PredicateWriteContext",
+    "acquire_coverage",
+    "buffer_predicate_instruction",
+    "buffer_target_instruction",
+]
 
 # The predicate mutations that carry Assignments; the rest take none at all and
 # their verbs' signatures say so.
@@ -55,15 +63,17 @@ _ASSIGNMENT_BEARING: Final[frozenset[PredicateMutation]] = frozenset({"update", 
 
 @dataclass(frozen=True, slots=True)
 class PredicateWriteContext:
-    """The transaction state a predicate-selected write reads.
+    """The transaction state a write that may read before buffering reads: a
+    predicate-selected write, and a caller-addressed one.
 
-    Built once per ``Transaction`` and shared by its Typed and Wire predicate
-    ingress. ``keyed`` is that transaction's one :class:`KeyedWriteContext`, so
-    both families read the same accepted model, unit of work, and installed
+    Built once per ``Transaction`` and shared by its Typed and Wire ingress.
+    ``keyed`` is that transaction's one :class:`KeyedWriteContext`, so every
+    family reads the same accepted model, unit of work, and installed
     lifecycle. The connection and the attempt sit beside it rather than inside
-    it because only a materializing predicate write reads: its resolve is a Read
-    of its own under this attempt, on this transaction's connection, and no
-    keyed write reads at all.
+    it because only these writes read: a materializing predicate write's
+    resolve, and a caller-addressed write's acquisition of the state it starts
+    from, are each a Read of its own under this attempt, on this transaction's
+    connection, and no source-backed keyed write reads at all.
     """
 
     keyed: KeyedWriteContext
@@ -340,6 +350,50 @@ def _acquire_temporal(
         if acquisition.selects(row):
             evidence.append(row, raw[position] if documents else None)
     return evidence.seal()
+
+
+def buffer_target_instruction(ctx: PredicateWriteContext, prepared: PreparedTargetWrite) -> None:
+    """Hand a prepared caller-addressed write to the unit of work, with the
+    acquisition it reads the write's starting state through where its Effective
+    Concurrency Strategy needs participation."""
+
+    def acquire(entity: EntityMetadata, key: ObjectKey) -> StoredTarget | None:
+        return _acquire_target(ctx, entity, key)
+
+    ctx.keyed.uow.buffer_target(prepared, acquire=acquire)
+
+
+def _acquire_target(
+    ctx: PredicateWriteContext, entity: EntityMetadata, key: ObjectKey
+) -> StoredTarget | None:
+    """Read the stored row ``key`` names under the shared row lock: one
+    row-form point read of its own, under this attempt, executing no pending
+    write and publishing nothing, through the materializing predicate write's
+    own row-form acquisition."""
+    model = ctx.keyed.model
+    meta = model.meta
+    conn = ctx.conn
+    layout = entity_layout(meta, entity)
+    if layout is None:  # pragma: no cover - a target write's Entity always owns rows
+        raise ValueError(f"{entity.identity.canonical}: target-write target has no Table")
+    ((name, value),) = key.primary_key
+    lock = entity_read_lock(meta, entity.identity, ctx.keyed.uow.settings.concurrency)
+    version_attr = CONCURRENCY.version_attribute(meta, entity.identity)
+    with ctx.attempt.read(entity.identity, "rows") as read:
+        query = deep_fetch.plan_target_read(
+            entity, model=meta, key=name, key_value=cast("ManagedValue", value)
+        )
+        compiled = compile_read(query, meta, conn.dialect, result_form="row", lock=lock)
+        stage = Materializer().read_page(
+            FlatPageRead(model, compiled, lambda: execute_read(conn, compiled, read), Pin())
+        )
+        rows = tuple(_publishable_member_rows(stage.page))
+    if not rows:
+        return None
+    if version_attr is None:
+        return StoredTarget()
+    (row,) = rows
+    return StoredTarget(cast("int", row[layout.member_selection.position(version_attr)]))
 
 
 def acquire_coverage(

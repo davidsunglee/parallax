@@ -19,6 +19,7 @@ a retry loop recognize the canonical conflict without an optional module.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 
 import pytest
 
@@ -33,10 +34,12 @@ from parallax.core.unit_work import (
     PlannedInsert,
     StaleWriteError,
     WriteEffectError,
+    WritePreconditionError,
     enforce_affected_rows,
 )
 from parallax.core.unit_work.planned import (
     ANY_COUNT,
+    FAILED_PRECONDITION,
     INFINITY,
     MISSING_TARGET,
     NEW_LINEAGE,
@@ -298,3 +301,72 @@ def test_every_member_of_the_family_shares_one_base() -> None:
         CardinalityCorruptionError,
     ):
         assert issubclass(error, WriteEffectError)
+
+
+_GATED_UPDATE = Versioned(attribute=_VERSION, gate=VersionGate(observed_version=4))
+_GATED_CLOSE = TemporalGate(start_attribute=_TX_START, observed_start="2024-01-01T00:00:00+00:00")
+
+
+@pytest.mark.parametrize("build", [_update, _delete], ids=["update", "delete"])
+def test_a_gate_binding_a_callers_revision_fails_as_that_precondition(
+    build: Callable[..., PlannedStep],
+) -> None:
+    step = replace(
+        build(OPTIMISTIC_CONFLICT),
+        concurrency=_GATED_UPDATE,
+        affected_rows=ExactCount(expected=1, on_shortfall=FAILED_PRECONDITION),
+    )
+    with pytest.raises(WritePreconditionError) as failed:
+        enforce_affected_rows(step, 0)
+    assert (failed.value.entity, dict(failed.value.key), failed.value.expected) == (
+        _ACCOUNT,
+        {"id": 1},
+        4,
+    )
+    assert not isinstance(failed.value, WriteEffectError)
+    with pytest.raises(CardinalityCorruptionError):
+        enforce_affected_rows(step, 2)
+
+
+@_MILESTONE_STEPS
+def test_a_milestone_gate_binding_a_callers_start_fails_as_that_precondition(
+    build: Callable[[Shortfall], PlannedStep],
+) -> None:
+    step = replace(
+        build(OPTIMISTIC_CONFLICT),
+        concurrency=_GATED_CLOSE,
+        affected_rows=ExactCount(expected=1, on_shortfall=FAILED_PRECONDITION),
+    )
+    with pytest.raises(WritePreconditionError) as failed:
+        enforce_affected_rows(step, 0)
+    assert (dict(failed.value.key), failed.value.expected) == (
+        {"id": 1},
+        "2024-01-01T00:00:00+00:00",
+    )
+
+
+@pytest.mark.parametrize(
+    "concurrency",
+    [UNVERSIONED, Versioned(attribute=_VERSION, gate=UNGATED)],
+    ids=["unversioned", "ungated"],
+)
+def test_only_a_gate_can_fail_as_a_callers_precondition(
+    concurrency: NonTemporalConcurrency,
+) -> None:
+    with pytest.raises(ValueError, match="classifies a shortfall"):
+        PlannedUpdate(
+            entity=_ACCOUNT,
+            target=_ONE_KEY,
+            assignments=_RENAME,
+            concurrency=concurrency,
+            affected_rows=ExactCount(expected=1, on_shortfall=FAILED_PRECONDITION),
+        )
+    with pytest.raises(ValueError, match="classifies a shortfall"):
+        PlannedClose(
+            entity=_ACCOUNT,
+            target=_CURRENT_SLOT,
+            assignments=PlannedAssignments(attributes={_TX_END: "2024-09-01T00:00:00+00:00"}),
+            cause=SUPERSEDED,
+            concurrency=UNGATED,
+            affected_rows=ExactCount(expected=1, on_shortfall=FAILED_PRECONDITION),
+        )

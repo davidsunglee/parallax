@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence, Set
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Final, Literal, cast
+from typing import Final, Literal, cast, overload
 
 from parallax.core import inheritance, temporal_read
 from parallax.core import predicate as predicate_algebra
@@ -29,6 +29,7 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
+    PrimaryKey,
     ValueObjectMetadata,
     VoDocumentViolation,
     WriteAssignmentError,
@@ -39,7 +40,7 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.predicate import PredicateNode
 from parallax.core.unit_work.columns import freeze_retained_value
-from parallax.core.unit_work.planned import ValidatedMutationSelection
+from parallax.core.unit_work.planned import UNVERSIONED, Unversioned, ValidatedMutationSelection
 from parallax.core.unit_work.write_validate import WriteRejectedError, validate_write
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 
@@ -48,6 +49,8 @@ __all__ = [
     "DESTRUCTIVE_MUTATIONS",
     "INSERT_MUTATIONS",
     "UPDATE_MUTATIONS",
+    "ExpectedTxStart",
+    "ExpectedVersion",
     "InstructionRejectedError",
     "KeyedMutation",
     "KeyedWrite",
@@ -57,8 +60,12 @@ __all__ = [
     "PreparedAssignment",
     "PreparedKeyedWrite",
     "PreparedPredicateWrite",
+    "PreparedTargetWrite",
     "PreparedTemporalBounds",
     "PreparedWrite",
+    "TargetExpectation",
+    "TargetMutation",
+    "TargetWrite",
     "WriteAssignment",
     "WriteInstruction",
     "WriteInstructionError",
@@ -71,6 +78,7 @@ __all__ = [
     "prepare_wire_write",
     "resolve_target",
     "serialize",
+    "target_instruction",
 ]
 
 # The keyed write mutation surface: the MVP non-temporal / audit-only verbs plus
@@ -81,6 +89,9 @@ KeyedMutation = Literal[
 # The predicate-selected (set-based) mutation surface: there is no `insert` — a
 # predicate cannot select rows that do not yet exist.
 PredicateMutation = Literal["update", "delete", "terminate", "updateUntil", "terminateUntil"]
+# The caller-addressed (target) mutation surface: a sparse patch or a complete
+# replacement of one existing object, each with its bounded form.
+TargetMutation = Literal["update", "updateUntil", "replace", "replaceUntil"]
 
 # Which of the two verb surfaces above a mutation arrived through. Carried only
 # so a refusal can name methods the caller can act on: one mutation token is
@@ -116,13 +127,17 @@ _KEYED_MUTATIONS: Final[frozenset[str]] = INSERT_MUTATIONS | frozenset(
 _PREDICATE_MUTATIONS: Final[frozenset[str]] = frozenset(
     {"update", "delete", "terminate", "updateUntil", "terminateUntil"}
 )
+_TARGET_MUTATIONS: Final[frozenset[str]] = frozenset(
+    {"update", "updateUntil", "replace", "replaceUntil"}
+)
+_REPLACEMENTS: Final[frozenset[str]] = frozenset({"replace", "replaceUntil"})
 
 BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
-    {"insertUntil", "updateUntil", "terminateUntil"}
+    {"insertUntil", "updateUntil", "terminateUntil", "replaceUntil"}
 )
-"""The mutations whose window is a PAIR of Valid-Time bounds, keyed and
-predicate-selected alike; every other form carries no `until` — its window runs
-`[validFrom, infinity)`, or the target is non-temporal."""
+"""The mutations whose window is a PAIR of Valid-Time bounds, keyed,
+predicate-selected, and target alike; every other form carries no `until` — its
+window runs `[validFrom, infinity)`, or the target is non-temporal."""
 # The assignment-bearing predicate verbs; the others name nothing to assign.
 _ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 
@@ -239,7 +254,38 @@ class PredicateWrite:
     until: dt.datetime | None = None
 
 
-WriteInstruction = KeyedWrite | PredicateWrite
+@dataclass(frozen=True, slots=True)
+class TargetWrite:
+    """An authored caller-addressed write of one existing ``entity`` object.
+
+    ``row`` names the object by its primary key beside the members the write
+    states: the assignments of an ``update`` patch, or the complete writable
+    state of a ``replace``. ``if_version`` and ``if_tx_start`` are the caller's
+    revision arguments exactly as stated, judged by preparation against the
+    target's own revision kind; neither is ever read off the row or off any
+    read's evidence.
+    """
+
+    mutation: TargetMutation
+    entity: str
+    row: Mapping[str, object]
+    if_version: int | None = None
+    if_tx_start: dt.datetime | None = None
+    valid_from: dt.datetime | None = None
+    until: dt.datetime | None = None
+
+    def __post_init__(self) -> None:
+        forbidden = sorted(set(self.row) & _FORBIDDEN_ROW_KEYS)
+        if forbidden:
+            raise WriteInstructionError(
+                f"target write: row carries forbidden observation control key(s) {forbidden} "
+                "(a target write's condition is its own revision argument, never a row member)"
+            )
+        if not isinstance(self.row, MappingProxyType):
+            object.__setattr__(self, "row", MappingProxyType(dict(self.row)))
+
+
+WriteInstruction = KeyedWrite | PredicateWrite | TargetWrite
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,7 +338,50 @@ class PreparedPredicateWrite:
     bounds: PreparedTemporalBounds
 
 
+@dataclass(frozen=True, slots=True)
+class ExpectedVersion:
+    """A versioned target's caller-stated starting version."""
+
+    version: int
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectedTxStart:
+    """A temporal target's caller-stated starting milestone: the
+    Transaction-Time start the caller observed, never the writing attempt's own
+    instant."""
+
+    instant: dt.datetime
+
+
+type TargetExpectation = ExpectedVersion | ExpectedTxStart | Unversioned
+"""What a target write's caller requires of the state it starts from. An
+unversioned target has no revision to state, which is its own answer rather
+than a missing one."""
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class PreparedTargetWrite:
+    """A caller-addressed write over an exact resolved target, its owned managed
+    row, its bounds, and its validated starting expectation.
+
+    ``replaces`` distinguishes a complete replacement, whose row states every
+    writable member, from a sparse patch, whose row states only the members it
+    assigns; ``assigns`` is whether the row states any member beside the key.
+    Only this module's producers construct one, so holding one means the write
+    was judged admissible against its target.
+    """
+
+    replaces: bool
+    assigns: bool
+    target: EntityMetadata
+    row: Mapping[str, object]
+    bounds: PreparedTemporalBounds
+    expectation: TargetExpectation
+
+
 PreparedWrite = PreparedKeyedWrite | PreparedPredicateWrite
+"""A prepared write a unit of work buffers as it is."""
 
 
 def _prepared_keyed_write(
@@ -321,6 +410,39 @@ def _prepared_predicate_write(
     object.__setattr__(prepared, "managed_assignments", managed_assignments)
     object.__setattr__(prepared, "bounds", bounds)
     return prepared
+
+
+def _prepared_target_write(
+    replaces: bool,
+    assigns: bool,
+    target: EntityMetadata,
+    row: Mapping[str, object],
+    bounds: PreparedTemporalBounds,
+    expectation: TargetExpectation,
+) -> PreparedTargetWrite:
+    prepared = object.__new__(PreparedTargetWrite)
+    object.__setattr__(prepared, "replaces", replaces)
+    object.__setattr__(prepared, "assigns", assigns)
+    object.__setattr__(prepared, "target", target)
+    object.__setattr__(prepared, "row", row)
+    object.__setattr__(prepared, "bounds", bounds)
+    object.__setattr__(prepared, "expectation", expectation)
+    return prepared
+
+
+def target_instruction(prepared: PreparedTargetWrite) -> PreparedKeyedWrite:
+    """The keyed update a prepared target write executes as: its row, written
+    against the object its key names, over its bounds.
+
+    A replacement's row already states every writable member, so the update
+    is the replacement; nothing is judged again.
+    """
+    return _prepared_keyed_write(
+        "update" if prepared.bounds.until is None else "updateUntil",
+        prepared.target,
+        (prepared.row,),
+        prepared.bounds,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,8 +493,9 @@ _ASSIGNMENT_REF = re.compile(
 def deserialize(doc: object) -> WriteInstruction:
     """Parse a canonical write-instruction document into a frozen instruction.
 
-    Discriminates the two shapes by their required carrier (``rows`` -> keyed,
-    ``target`` -> predicate), validates the closed shape, the mutation enum, the
+    Discriminates the three shapes by their required carrier (``rows`` -> keyed,
+    ``target`` -> predicate, ``row`` -> caller-addressed), validates the closed
+    shape, the mutation enum, the
     Valid-Time-bound pairing rules (a bounded ``*Until`` carries both bounds, every
     other form carries no ``until``), and — for a keyed write — that no row
     carries a forbidden observation control key or a smuggled Transaction-Time instant.
@@ -386,19 +509,21 @@ def deserialize(doc: object) -> WriteInstruction:
             f"write instruction must be a mapping, got {type(doc).__name__}"
         )
     node = cast("Mapping[str, object]", doc)
-    has_rows = "rows" in node
-    has_target = "target" in node
-    if has_rows and has_target:
+    carriers = [key for key in ("rows", "target", "row") if key in node]
+    if len(carriers) > 1:
         raise WriteInstructionError(
-            "write instruction is ambiguous: it carries both `rows` (keyed) "
-            "and `target` (predicate)"
+            f"write instruction is ambiguous: it carries {carriers}, and `rows` (keyed), "
+            "`target` (predicate), and `row` (caller-addressed) each name a different shape"
         )
-    if has_rows:
+    if carriers == ["rows"]:
         return _keyed(node)
-    if has_target:
+    if carriers == ["target"]:
         return _predicate(node)
+    if carriers == ["row"]:
+        return _target_write(node)
     raise WriteInstructionError(
-        "write instruction must carry `rows` (keyed) or `target` (predicate)"
+        "write instruction must carry `rows` (keyed), `target` (predicate), or `row` "
+        "(caller-addressed)"
     )
 
 
@@ -575,8 +700,58 @@ def _predicate(node: Mapping[str, object]) -> PredicateWrite:
     )
 
 
+def _target_write(node: Mapping[str, object]) -> TargetWrite:
+    _reject_extra(
+        node,
+        frozenset({"mutation", "entity", "row", "ifVersion", "ifTxStart", "validFrom", "until"}),
+        "target write",
+    )
+    _require(node, ("mutation", "entity", "row"), "target write")
+    mutation = _mutation(node, _TARGET_MUTATIONS, "target write")
+    entity = _entity_name(node, "entity", "target write")
+    raw = node.get("row")
+    if not isinstance(raw, Mapping):
+        raise WriteInstructionError("target write: `row` must be a mapping")
+    row = dict(cast("Mapping[str, object]", raw))
+    if "ifVersion" in node and "ifTxStart" in node:
+        raise WriteInstructionError(
+            "target write: states both `ifVersion` and `ifTxStart`, and a target has one "
+            "revision to state"
+        )
+    if_version: int | None = None
+    if "ifVersion" in node:
+        version = node["ifVersion"]
+        if isinstance(version, bool) or not isinstance(version, int):
+            raise WriteInstructionError("target write: `ifVersion` must be an integer version")
+        if_version = version
+    valid_from = _bound(node, "validFrom", "target write")
+    until = _bound(node, "until", "target write")
+    _check_valid_time_bounds(mutation, valid_from, until, "target write")
+    return TargetWrite(
+        mutation=cast("TargetMutation", mutation),
+        entity=entity,
+        row=row,
+        if_version=if_version,
+        if_tx_start=_bound(node, "ifTxStart", "target write"),
+        valid_from=valid_from,
+        until=until,
+    )
+
+
 def serialize(instruction: WriteInstruction) -> dict[str, object]:
     """Emit the canonical minimal write-instruction document for one instruction."""
+    if isinstance(instruction, TargetWrite):
+        target_body: dict[str, object] = {
+            "mutation": instruction.mutation,
+            "entity": instruction.entity,
+            "row": dict(instruction.row),
+        }
+        if instruction.if_version is not None:
+            target_body["ifVersion"] = instruction.if_version
+        if instruction.if_tx_start is not None:
+            target_body["ifTxStart"] = _wire_bound(instruction.if_tx_start)
+        _emit_bounds(target_body, instruction.valid_from, instruction.until)
+        return target_body
     if isinstance(instruction, KeyedWrite):
         keyed_body: dict[str, object] = {
             "mutation": instruction.mutation,
@@ -666,7 +841,9 @@ def _non_temporal_milestone_refusal(
     )
 
 
-def _temporal_singleton_refusal(entity_name: str, instruction: WriteInstruction) -> str | None:
+def _temporal_singleton_refusal(
+    entity_name: str, instruction: KeyedWrite | PredicateWrite
+) -> str | None:
     """Why a TEMPORAL target refuses ``instruction``'s ROW COUNT, or ``None``
     when this rule has nothing to say about it.
 
@@ -687,7 +864,21 @@ def _temporal_singleton_refusal(entity_name: str, instruction: WriteInstruction)
     )
 
 
-def prepare_typed_write(instruction: WriteInstruction, model: AcceptedMetamodel) -> PreparedWrite:
+@overload
+def prepare_typed_write(
+    instruction: TargetWrite, model: AcceptedMetamodel
+) -> PreparedTargetWrite: ...
+@overload
+def prepare_typed_write(
+    instruction: KeyedWrite | PredicateWrite, model: AcceptedMetamodel
+) -> PreparedWrite: ...
+@overload
+def prepare_typed_write(
+    instruction: WriteInstruction, model: AcceptedMetamodel
+) -> PreparedWrite | PreparedTargetWrite: ...
+def prepare_typed_write(
+    instruction: WriteInstruction, model: AcceptedMetamodel
+) -> PreparedWrite | PreparedTargetWrite:
     """Coerce developer values once, then judge and freeze the write."""
     return _prepare_write(
         instruction,
@@ -698,18 +889,40 @@ def prepare_typed_write(instruction: WriteInstruction, model: AcceptedMetamodel)
     )
 
 
+@overload
+def prepare_wire_write(
+    instruction: TargetWrite,
+    model: AcceptedMetamodel,
+    *,
+    authored_members: Set[str] | None = None,
+) -> PreparedTargetWrite: ...
+@overload
+def prepare_wire_write(
+    instruction: KeyedWrite | PredicateWrite,
+    model: AcceptedMetamodel,
+    *,
+    authored_members: Set[str] | None = None,
+) -> PreparedWrite: ...
+@overload
 def prepare_wire_write(
     instruction: WriteInstruction,
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
-) -> PreparedWrite:
+) -> PreparedWrite | PreparedTargetWrite: ...
+def prepare_wire_write(
+    instruction: WriteInstruction,
+    model: AcceptedMetamodel,
+    *,
+    authored_members: Set[str] | None = None,
+) -> PreparedWrite | PreparedTargetWrite:
     """Decode one serialized instruction, then judge and freeze the write.
 
     ``authored_members`` names the row members a Wire caller explicitly wrote:
     an insert's payload keys, judged as insert authoring, or an update's change
     keys, judged as assignments. A neutral instruction omits it, and its row is
-    judged as row content alone.
+    judged as row content alone. A caller-addressed write judges every member
+    its row states beside the key as an assignment either way.
     """
     return _prepare_write(
         instruction,
@@ -727,7 +940,7 @@ def _prepare_write(
     converter: _LeafConverter,
     source_access: SourceAccess,
     authored_members: Set[str] | None,
-) -> PreparedWrite:
+) -> PreparedWrite | PreparedTargetWrite:
     """The sole admissibility judgment of a write: its target first, then its
     payload.
 
@@ -738,6 +951,14 @@ def _prepare_write(
     assignments in authored order — so a call whose verb or window is wrong for
     its target hears that before any complaint about what it carries.
     """
+    if isinstance(instruction, TargetWrite):
+        return _prepare_target_write(
+            instruction,
+            model,
+            converter=converter,
+            source_access=source_access,
+            authored_members=authored_members,
+        )
     keyed = isinstance(instruction, KeyedWrite)
     entity = resolve_target(model, instruction.entity if keyed else instruction.target.entity)
     bounds = _judge_target(model, entity, instruction)
@@ -765,7 +986,7 @@ def _prepare_write(
 
 
 def _judge_target(
-    model: AcceptedMetamodel, entity: EntityMetadata, instruction: WriteInstruction
+    model: AcceptedMetamodel, entity: EntityMetadata, instruction: KeyedWrite | PredicateWrite
 ) -> PreparedTemporalBounds:
     """Judge the verb, window, and row count against ``entity``'s Temporal
     Shape, and answer the managed bounds.
@@ -871,6 +1092,212 @@ def _judge_window(
             f"— got valid_from={valid_from!r}, until={until!r}"
         )
     return PreparedTemporalBounds(managed_from, managed_until)
+
+
+def _prepare_target_write(
+    instruction: TargetWrite,
+    model: AcceptedMetamodel,
+    *,
+    converter: _LeafConverter,
+    source_access: SourceAccess,
+    authored_members: Set[str] | None,
+) -> PreparedTargetWrite:
+    """Judge a caller-addressed write: its target and window, then its revision
+    arguments, then its payload.
+
+    The revision arguments are judged ahead of the payload because they decide
+    what the write may be at all — a target whose revision kind the caller
+    misstated, or whose required revision is missing, is refused before any
+    member it names is weighed.
+    """
+    entity = resolve_target(model, instruction.entity)
+    shape = temporal_read.view(model).shape(entity.identity)
+    root = _family_root(model, entity)
+    bounds = _judge_window(
+        root, shape, instruction.mutation, instruction.valid_from, instruction.until
+    )
+    position = _family_position(model, entity)
+    expectation = _judge_expectation(root, shape, position, instruction)
+    row, assigns = _prepare_target_payload(
+        instruction,
+        model,
+        entity,
+        position,
+        converter=converter,
+        source_access=source_access,
+        authored_members=authored_members,
+    )
+    return _prepared_target_write(
+        instruction.mutation in _REPLACEMENTS, assigns, entity, row, bounds, expectation
+    )
+
+
+def _judge_expectation(
+    root: EntityIdentity,
+    shape: temporal_read.TemporalShape | None,
+    position: inheritance.InheritanceEntityView,
+    instruction: TargetWrite,
+) -> TargetExpectation:
+    """The starting condition a target write's revision arguments state, judged
+    against the family's own revision kind (`m-opt-lock`): a versioned family
+    takes ``if_version``, a temporal one ``if_tx_start``, and an
+    unversioned Non-Temporal one neither.
+
+    Stating both is refused first, because no family has two revisions; then a
+    misstated kind, then a missing one, then the value itself.
+    """
+    mutation = instruction.mutation
+    # A runtime caller may state either argument as any value, whatever the
+    # annotation promises, so each is judged as the object it is.
+    version = cast("object", instruction.if_version)
+    tx_start = cast("object", instruction.if_tx_start)
+    if version is not None and tx_start is not None:
+        raise WriteInstructionError(
+            f"{root.name}: {mutation!r} states both if_version and if_tx_start, and a target "
+            "has one revision to state"
+        )
+    versioned = any(attribute.optimistic_locking for attribute in position.applicable_attributes)
+    if versioned:
+        if tx_start is not None:
+            raise WriteInstructionError(
+                f"{root.name}: {mutation!r} takes if_version, not if_tx_start — "
+                f"{root.name!r} is versioned, so its revision is its version"
+            )
+        if version is None:
+            raise WriteInstructionError(
+                f"{root.name}: {mutation!r} requires if_version, the version of the state the "
+                "write starts from as its caller last observed it"
+            )
+        if isinstance(version, bool) or not isinstance(version, int):
+            raise WriteInstructionError(
+                f"{root.name}: {mutation!r} takes an integer if_version, and "
+                f"{type(version).__name__} is no version"
+            )
+        return ExpectedVersion(version)
+    if isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal):
+        if version is not None:
+            raise WriteInstructionError(
+                f"{root.name}: {mutation!r} takes if_tx_start, not if_version — {root.name!r} "
+                "is temporal, so its revision is its milestone's Transaction-Time start"
+            )
+        if tx_start is None:
+            raise WriteInstructionError(
+                f"{root.name}: {mutation!r} requires if_tx_start, the Transaction-Time start of "
+                "the milestone the write starts from as its caller last observed it"
+            )
+        return ExpectedTxStart(
+            normalize_instant(_stated_instant(root, mutation, "if_tx_start", tx_start))
+        )
+    if version is not None or tx_start is not None:
+        raise WriteInstructionError(
+            f"{root.name}: {mutation!r} takes no revision argument — {root.name!r} is unversioned, "
+            "so it has no revision for a caller to state"
+        )
+    return UNVERSIONED
+
+
+def _prepare_target_payload(
+    instruction: TargetWrite,
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    position: inheritance.InheritanceEntityView,
+    *,
+    converter: _LeafConverter,
+    source_access: SourceAccess,
+    authored_members: Set[str] | None,
+) -> tuple[Mapping[str, object], bool]:
+    """A target write's row, judged, and whether it assigns any member.
+
+    The primary key names the object and is no assignment. Every other member
+    the row states is judged as an assignment, whatever produced the row — so a
+    framework-owned, read-only, or ill-typed member is refused as it is for an
+    update. A replacement states the object's complete writable state: an
+    omitted required member is refused, an omitted nullable one is written
+    empty, and an omitted ``many`` the empty collection, so no value is ever
+    carried forward from the state it replaces.
+    """
+    selection = position.member_selection
+    row = instruction.row
+    try:
+        inheritance.validate_subtype_write(model, entity, row)
+    except inheritance.InheritanceError as error:
+        raise WriteRejectedError(error.rule, str(error)) from error
+    if authored_members is not None:
+        _refuse_framework_owned(entity, selection, authored_members)
+    members = selection.shape.by_name
+    unknown = sorted(name for name in row if name not in members)
+    if unknown:
+        raise WriteInstructionError(
+            f"{entity.identity.name}: target write row names undeclared member(s) {unknown}"
+        )
+    key = position.primary_key.identity.name
+    if key not in row:
+        raise WriteInstructionError(
+            f"{entity.identity.name}: a target write names the object it writes by its primary "
+            f"key, and this row states no {key!r}"
+        )
+    replaces = instruction.mutation in _REPLACEMENTS
+    transformed = _transform_row(
+        selection,
+        entity,
+        row,
+        converter=converter,
+        source_access=source_access,
+        fill_missing_many=replaces,
+    )
+    prepared = transformed.row if not replaces else _completed(entity, position, transformed.row)
+    for name, value in prepared.items():
+        if name == key:
+            continue
+        failure = _member_failure(selection, name, transformed.failures)
+        _judge_prepared_assignment(
+            entity,
+            _declared_member(selection, name),
+            value,
+            known_vo_violation=failure,
+            known_value_valid=failure is None,
+        )
+    validate_write(entity, prepared, model, mutation="update", known_failures=transformed.failures)
+    return prepared, any(name != key for name in prepared)
+
+
+def _completed(
+    entity: EntityMetadata,
+    position: inheritance.InheritanceEntityView,
+    row: Mapping[str, object],
+) -> Mapping[str, object]:
+    """``row`` with every writable member it omits written empty, or refused
+    where the member is required."""
+    owner = entity.identity.name
+    completed = dict(row)
+    for attribute in position.applicable_attributes:
+        name = attribute.identity.name
+        if (
+            name in row
+            or attribute.framework_owned
+            or attribute.read_only
+            or isinstance(attribute.primary_key, PrimaryKey)
+        ):
+            continue
+        if not attribute.nullable:
+            raise WriteRejectedError(
+                "write-required-attribute-missing",
+                f"{owner}.{name}: a replacement states every required member, and this one "
+                "is absent",
+            )
+        completed[name] = None
+    for value_object in position.applicable_value_objects:
+        name = value_object.identity.path[-1]
+        if name in row:
+            continue
+        if not value_object.nullable:
+            raise WriteRejectedError(
+                "write-required-value-object-missing",
+                f"{owner}.{name}: a replacement states every required member, and this one "
+                "is absent",
+            )
+        completed[name] = None
+    return MappingProxyType(completed)
 
 
 def _profile(shape: temporal_read.TemporalShape | None) -> str:
