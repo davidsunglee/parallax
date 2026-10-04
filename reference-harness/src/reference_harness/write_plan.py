@@ -119,12 +119,21 @@ def unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
     read-your-own-writes, and an entry carrying a DB-computed write marker states
     the framework's own bookkeeping, which no public verb accepts.
 
+    A caller-addressed entry resolves no source either. Under Locking it owes
+    one acquisition of each object it writes instead, which a second write of
+    the same object reuses.
+
     Targets are counted by their canonical spelling, so two entries naming one
     Entity two ways owe one read between them.
     """
     opened: set[tuple[str, tuple[Any, ...]]] = set()
     needed: set[str] = set()
+    acquired: set[tuple[str, tuple[Any, ...]]] = set()
     for entry in entries:
+        if entry.get("target"):
+            if _acquires(case, _entry_entity(case, entry)):
+                acquired.update(_entry_object_keys(case, entry))
+            continue
         mutation = entry.get("mutation")
         if mutation in OPENING_MUTATIONS:
             opened.update(_entry_object_keys(case, entry))
@@ -136,7 +145,16 @@ def unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
             continue
         if any(key not in opened for key in _entry_object_keys(case, entry)):
             needed.add(entity.canonical_name)
-    return len(needed)
+    return len(needed) + len(acquired)
+
+
+def _acquires(case: Case, entity: Entity) -> bool:
+    """Whether a caller-addressed write of ``entity`` acquires its row: under the
+    Locking strategy, which a ``locking`` preference imposes and an unversioned
+    Non-Temporal target always takes."""
+    return case.concurrency_mode == "locking" or (
+        version_column(entity) is None and not entity.is_temporal
+    )
 
 
 # --- the framework-derived columns a write gates and routes on -------------------

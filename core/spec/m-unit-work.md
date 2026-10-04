@@ -134,13 +134,17 @@ Every write a unit of work buffers — from any frontend, keyed or predicate-sel
 Query. The canonical, language-neutral shapes are hosted in
 [`write-instruction.schema.json`](../schemas/write-instruction.schema.json), mirroring
 how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
-`m-conformance-adapter` reference that shape rather than redefining it. There are two:
+`m-conformance-adapter` reference that shape rather than redefining it. There are three:
 
 - a **keyed** instruction — a `mutation` on one `entity` carrying the flat
   attribute-named neutral write input (`rows`);
 - a **predicate-selected** instruction — a `mutation` on every row of a `target`
   (`entity` plus a bare `m-predicate` predicate) matching that predicate, with
-  `assignments` on the update forms.
+  `assignments` on the update forms;
+- a **caller-addressed** (target) instruction — a sparse patch (`update` /
+  `updateUntil`) or a complete replacement (`replace` / `replaceUntil`) of the one
+  existing `entity` object its `row` names by primary key, carrying its caller's
+  own starting revision as `ifVersion` or `ifTxStart` (*Caller-addressed writes*).
 
 The embedded predicate is a canonical `m-predicate` node, legal vocabulary here
 because `m-unit-work` already depends on `m-predicate` (the dependency-graph edge);
@@ -251,10 +255,23 @@ position-keyed findings from that same pass rather than walking the document
 again. A validation-only caller invokes the same traversal without constructing
 successful managed output.
 
+A caller-addressed instruction is judged in its own fixed order: its target and
+window first, as above; then its revision arguments against the target's
+revision kind — stating both is refused first, then a misstated kind, then a
+missing one, then a value of the wrong type; and only then its payload, whose
+key names the object and whose every other member is judged as an assignment. A
+replacement additionally states every writable member: an omitted required one
+is refused, an omitted nullable one is written empty, and an omitted `many` the
+empty collection. A missing revision is therefore heard before an undeclared
+member, and an inadmissible window before both.
+
 `PreparedKeyedWrite` carries the exact target, deeply owned managed rows, and
 prepared temporal bounds. `PreparedPredicateWrite` carries its
 `ValidatedMutationSelection`, ordered managed assignments, and prepared temporal
-bounds. Omission and nullable assignment remain structural states; no prepared
+bounds. `PreparedTargetWrite` carries the exact target, its one owned managed row,
+prepared temporal bounds, whether it replaces, and its validated starting
+expectation — an expected version, an expected Transaction-Time start, or the
+explicit absence of a revision for an unversioned target. Omission and nullable assignment remain structural states; no prepared
 variant retains an authored scalar literal or unresolved instruction field.
 Construction is restricted to these operations, with no public constructor or
 serialization contract. Buffering, evidence envelopes, coalescing, and planning
@@ -363,7 +380,8 @@ Three consequences are normative:
   whatever failure deriving its row would have produced.
 
 The `delete`, `terminate`, and `terminateUntil` verbs derive an identity row alone
-and take no position on provenance.
+and take no position on provenance; nor do caller-addressed verbs, which address
+their object by key (*Caller-addressed writes*).
 
 ### Insertion authority
 
@@ -416,6 +434,54 @@ so the removal it depends on precedes it whatever the batching, and a failed
 removal or insertion dooms the attempt. Removing only part of the coverage, or
 an interior gap, removes nothing in this sense. None of this permits removing
 and re-inserting state that existed before the attempt.
+
+### Caller-addressed writes
+
+A **caller-addressed** (target) write is addressed by the object's primary key
+and conditioned by the starting revision its caller states — the version, or the
+Transaction-Time start of the milestone, an earlier query returned — never by a
+read's evidence or by anything the payload carries. A **patch** assigns the
+members it names and leaves every other member as stored; a **replacement**
+states the object's whole writable state. Neither creates an object: the state
+it starts from must exist. Each buffers and answers nothing; an explicit read
+reports the saved state. A versioned target requires `ifVersion`, a temporal one
+`ifTxStart`, and an unversioned Non-Temporal target takes no revision, so it
+cannot detect a change since its caller's query.
+
+A patch that names nothing beside the key is the **empty** write: once it is
+validated it is dropped, with no database work, no existence or revision check,
+and no effect on earlier pending work. A nonempty patch and every replacement
+carry **revision intent**: a versioned row's version advances even when every
+value it writes equals the stored one, and a later write composing with it keeps
+that intent.
+
+Submission follows the target Entity's Effective Concurrency Strategy:
+
+- **Optimistic** — nothing is read. The stated version becomes the write's gate,
+  and a shortfall against it is a **failed precondition**.
+- **Locking** — after the write is judged compatible with the object's pending
+  writes, the participation it needs comes from a pending write of the same
+  stated state, else from a live, unspent read of exactly that state this
+  attempt holds under its shared lock, else from one **acquisition**: a point
+  read of the stored row under the shared lock (`m-read-lock`) that executes no
+  pending write and publishes nothing. The stated revision is compared with the
+  row that acquisition holds; a row standing at another revision, or no row, is
+  a failed precondition refused at the call, leaving the pending writes as they
+  were. The write itself is ungated. An unversioned target takes this path under
+  either preference, and a missing row is its ordinary missing target at flush.
+
+A failed precondition is the caller's: re-running the transaction re-states the
+same revision, so it is **never retried**, whatever the retry option, and no
+diagnostic read distinguishes a deleted row from a revised one. A failure at
+flush dooms the attempt like any other execution failure.
+
+An object this attempt **admitted an insertion** of is refused to every
+nonempty caller-addressed write, before and after a flush, whatever became of
+the insertion: until commit, it is written through its insertion's source or a
+fresh read. The attempt keeps that admission for its whole life for this reason
+alone (*Rows the attempt opened*). An object the attempt only rewrote is no
+insertion, and a later transaction addresses a committed insertion like any
+other row.
 
 ## Write finalization
 
@@ -1052,7 +1118,7 @@ belongs to exactly one row.
 ### Affected Rows Policy
 
 ```text
-Shortfall = MissingTarget | StaleWrite | OptimisticConflict
+Shortfall = MissingTarget | StaleWrite | OptimisticConflict | FailedPrecondition
 
 AffectedRows =
     AnyCount
@@ -1069,7 +1135,8 @@ Policy before lowering. The **target** decides the expected cardinality and the
 | Key Target | `ExactCount(number of keys, …)` |
 | Milestone Target | `ExactCount(1, …)` |
 
-- a **gated** shortfall is `OptimisticConflict`;
+- a **gated** shortfall is `OptimisticConflict`, or `FailedPrecondition` where
+  the gate binds a caller's stated revision rather than an observation;
 - an **ungated observation-requiring** shortfall is `StaleWrite`; and
 - an **observation-free keyed** shortfall is `MissingTarget`.
 
@@ -1215,6 +1282,21 @@ member, and a member set back to the value its source observed is still
 assigned. A superseded or coalesced write's source condition is kept by the
 survivor, which claims the same scope.
 
+**A caller-addressed write claims the state its revision names** — the object at
+its stated version, or the object itself when it is unversioned — so it composes
+with observed writes of that same state by the table above: a patch and an
+observed assignment merge member by member, a replacement replaces what came
+before it and is overlaid by what follows, and a destruction supersedes both
+while keeping the caller's condition, which a destruction's own gate then binds.
+One object's writes start from one state: a caller-addressed write is refused
+where any other write of the object pending — another stated revision, or an
+observation of another state — stands at another scope, and so is an observed
+write of another state while a caller-addressed write of the object is pending.
+The survivor of a composition keeps the caller's condition, its revision intent,
+and every observation the composed writes were admitted through, which its
+completion spends; a shortfall against its gate is the caller's failed
+precondition, ahead of any observed write's own classification.
+
 **A temporal object's observed writes compose by object.** Writes of one temporal
 object through observed sources — whichever states they observed and whatever
 Valid-Time windows they request — form one pending composition at the position
@@ -1348,6 +1430,10 @@ earlier flush closed. The attempt therefore records, by complete physical
 address, every current row its successful execution units open — keyed inserts,
 temporal successors, and the successors of Materialized Write Groups alike —
 and retires a row from that record when a unit removes it. Reads record nothing.
+Every admitted insertion stays recorded until the attempt ends, even once
+everything it opened was removed or a pending removal cancelled it, because a
+caller-addressed write of the object is refused on that admission alone
+(*Caller-addressed writes*).
 The record survives flushes and joined scopes, ends at commit or rollback, and
 starts empty on retry. The row an admitted insertion's own insert opens is
 tagged with that insertion in the record, and so is every successor of a row
@@ -1427,10 +1513,17 @@ assignments, or observation. That keeps the diagnostic stable across dialects an
 lets `m-auto-retry` recognize the canonical Optimistic Lock Conflict Error
 without depending on an optional concurrency module.
 
+A `FailedPrecondition` shortfall raises the **Write Precondition Error**
+instead, carrying the Entity Identity, the object's key, and the revision the
+caller stated — no count, because what failed is the caller's condition rather
+than an effect (*Caller-addressed writes*). It is the same error a Locking
+submission raises when its acquisition finds the condition already false.
+
 Retriability follows the classification, not the raising site: an Optimistic Lock
 Conflict Error is retriable only under the unit of work's opt-in
-(`m-auto-retry`), while a Missing Target Error, a Stale Write Error, and a
-Cardinality Corruption Error are **never** retriable.
+(`m-auto-retry`), while a Missing Target Error, a Stale Write Error, a
+Cardinality Corruption Error, and a Write Precondition Error are **never**
+retriable.
 
 ### When several steps share a driver batch
 

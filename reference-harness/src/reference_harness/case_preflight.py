@@ -279,7 +279,7 @@ def _write_carrier(
     if isinstance(target, Mapping):
         _write_selection(case, carrier, target, where)
     _carrier_rows(case, carrier, where, fallback=fallback)
-    for name in ("at", "validFrom", "until", "observedTxStart", "observedValidStart"):
+    for name in ("at", "validFrom", "until", "observedTxStart", "observedValidStart", "ifTxStart"):
         value = carrier.get(name)
         if value is not None and value != "infinity":
             _literal(case, value, "timestamp", f"{where}.{name}")
@@ -292,10 +292,14 @@ def _carrier_rows(
     *,
     fallback: Entity | None,
 ) -> None:
-    """A keyed carrier's ``rows``, or a bare row read as the ``fallback`` Entity's."""
+    """A keyed carrier's ``rows``, a caller-addressed carrier's ``row``, or a bare
+    row read as the ``fallback`` Entity's."""
     entity_name = carrier.get("entity")
     rows = carrier.get("rows")
-    if isinstance(entity_name, str) and isinstance(rows, Sequence):
+    row = carrier.get("row")
+    if isinstance(entity_name, str) and isinstance(row, Mapping):
+        _entity_row(case, case.model.entity(entity_name), row, f"{where}.row")
+    elif isinstance(entity_name, str) and isinstance(rows, Sequence):
         entity = case.model.entity(entity_name)
         for index, row in enumerate(rows):
             if isinstance(row, Mapping):

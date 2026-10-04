@@ -218,6 +218,21 @@ def test_releasing_claims_drops_exactly_the_named_scopes() -> None:
     assert table.held(other) == _ASSIGNMENT
 
 
+def test_the_claim_table_answers_which_objects_it_claims_as_its_claims_change() -> None:
+    another = ObjectKey(_STATE.object.entity, (("id", 99),))
+    table = ClaimTable()
+    assert not table.claims_object(_STATE.object)
+    assert table.claim(_STATE, SELECTION_INTENT) == "admit"
+    assert table.claims_object(_STATE.object)
+    assert table.claim(another, SELECTION_INTENT) == "admit"
+    assert table.claims_object(another)
+    table.release(iter((_STATE,)))
+    assert not table.claims_object(_STATE.object)
+    assert table.claims_object(another)
+    table.clear()
+    assert not table.claims_object(another)
+
+
 # --------------------------------------------------------------------------- #
 # Coalescing through the real verbs.                                          #
 # --------------------------------------------------------------------------- #

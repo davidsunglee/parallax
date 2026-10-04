@@ -47,6 +47,7 @@ from parallax.core.sql_gen._compile import compile_read, compile_write_predicate
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import WritePlanner
 from parallax.core.unit_work.instructions import (
+    PreparedTargetWrite,
     PreparedWrite,
     prepare_typed_write,
     prepare_wire_write,
@@ -144,8 +145,8 @@ def test_carrier_neutral_lowering_requires_producer_owned_semantic_products() ->
     assert get_type_hints(plan_deep_fetch)["query"] is ValidatedObjectQuery
     assert get_type_hints(compile_read)["query"] is ValidatedEntityQuery
     assert get_type_hints(compile_write_predicate)["op"] is ValidatedPredicate
-    assert get_type_hints(prepare_typed_write)["return"] == PreparedWrite
-    assert get_type_hints(prepare_wire_write)["return"] == PreparedWrite
+    assert get_type_hints(prepare_typed_write)["return"] == PreparedWrite | PreparedTargetWrite
+    assert get_type_hints(prepare_wire_write)["return"] == PreparedWrite | PreparedTargetWrite
     assert get_type_hints(compile_write_step)["step"] == PlannedWrite
     assert not {
         "compile_read",

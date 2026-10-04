@@ -115,6 +115,58 @@ def test_a_value_object_document_shaped_like_a_marker_still_owes_its_read() -> N
     assert unit_resolving_reads(case, [marker_entry]) == 0
 
 
+def _account_case(raw: dict) -> Case:
+    """A DB-free Case bound to the versioned account model."""
+    return Case(
+        path=Path("synthetic.yaml"),
+        raw=raw,
+        model=load_model(COMPATIBILITY_ROOT, "models/account.yaml"),
+    )
+
+
+def test_a_target_step_is_graded_as_the_keyed_update_its_caller_conditions() -> None:
+    patch = {
+        "mutation": "update",
+        "entity": "parallax.compatibility.Account",
+        "row": {"id": 2, "balance": "1.00"},
+        "ifVersion": 4,
+        "statements": 1,
+    }
+    replacement = {**patch, "mutation": "replace", "row": {"id": 2, "owner": "Zed"}}
+    case = _account_case({"when": {"writeSequence": [patch, replacement]}})
+    assert case.write_sequence == [
+        {
+            "mutation": "update",
+            "entity": "parallax.compatibility.Account",
+            "statements": 1,
+            "rows": [{"id": 2, "balance": "1.00", "observedVersion": 4}],
+            "target": True,
+        },
+        {
+            "mutation": "update",
+            "entity": "parallax.compatibility.Account",
+            "statements": 1,
+            "rows": [{"id": 2, "owner": "Zed", "balance": None, "observedVersion": 4}],
+            "target": True,
+        },
+    ]
+
+
+def test_a_target_step_owes_a_read_only_where_it_is_acquired() -> None:
+    entry = {
+        "mutation": "update",
+        "entity": "parallax.compatibility.Account",
+        "rows": [{"id": 2, "balance": "1.00"}],
+        "target": True,
+    }
+    assert unit_resolving_reads(_account_case({}), [entry, entry]) == 0
+    locking = _account_case({"when": {"uow": {"concurrency": "locking"}}})
+    assert unit_resolving_reads(locking, [entry, entry]) == 1
+    unversioned = _synthetic_case({})
+    wallet = {**entry, "entity": "parallax.compatibility.Customer", "rows": [{"id": 1}]}
+    assert unit_resolving_reads(unversioned, [wallet]) == 1
+
+
 def _non_temporal_row_step(case) -> dict | None:
     """The first non-temporal write step that carries a neutral write input (①)."""
     for step in case.write_sequence:

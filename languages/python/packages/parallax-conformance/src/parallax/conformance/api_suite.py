@@ -1410,6 +1410,13 @@ _RELATIONSHIP_FORMATION_REASON: Final[str] = (
     "negative matrix and detailed issues"
 )
 
+_TARGET_REPLACEMENT_TWIN_REASON: Final[str] = (
+    "a layout-twin replacement graded per arm by the compile/run conformance lanes and "
+    "by the reference harness; its developer spelling is the exercised `m-opt-lock-028` "
+    "replacement story, and what the twins add is the empty value each omitted "
+    "occurrence is written as under each Storage Layout, which no caller spells"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-relationship-005": _RELATIONSHIP_FORMATION_REASON,
     "m-relationship-006": _RELATIONSHIP_FORMATION_REASON,
@@ -1447,6 +1454,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-028": _INVALID_ROOT_WRITE_VALUE_REASON,
     "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
     "m-unit-work-042": _RESTORED_MEMBER_WITNESS_REASON,
+    "m-unit-work-043": _TARGET_REPLACEMENT_TWIN_REASON,
+    "m-unit-work-044": _TARGET_REPLACEMENT_TWIN_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     "m-opt-lock-005": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
     "m-opt-lock-006": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,

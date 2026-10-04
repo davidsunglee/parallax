@@ -16,6 +16,8 @@ from parallax.core.unit_work import (
     PredicateSelection,
     PredicateWrite,
     ReadOrigin,
+    TargetMutation,
+    TargetWrite,
     WriteAssignment,
     instructions,
 )
@@ -37,6 +39,7 @@ from parallax.snapshot.handle._keyed_writes import (
 from parallax.snapshot.handle._predicate_writes import (
     PredicateWriteContext,
     buffer_predicate_instruction,
+    buffer_target_instruction,
 )
 from parallax.snapshot.materialize import WireEntity, opened_wire_entity
 from parallax.snapshot.materialize._wire import authoring_of, read_origin_of
@@ -47,6 +50,7 @@ __all__ = [
     "wire_insert",
     "wire_keyed_write",
     "wire_predicate_write",
+    "wire_target_write",
 ]
 
 type WireChanges = Mapping[str, object]
@@ -203,6 +207,41 @@ def wire_predicate_write(
     prepared = instructions.prepare_wire_write(instruction, ctx.keyed.model.meta)
     assert isinstance(prepared, PreparedPredicateWrite)
     buffer_predicate_instruction(ctx, prepared)
+
+
+def wire_target_write(
+    ctx: PredicateWriteContext,
+    mutation: TargetMutation,
+    entity_name: str,
+    document: object,
+    *,
+    valid_from: dt.datetime | None,
+    until: dt.datetime | None,
+    if_version: int | None,
+    if_tx_start: dt.datetime | None,
+) -> None:
+    """Buffer a Wire caller-addressed write of the ``entity_name`` object
+    ``document`` names by its primary key.
+
+    ``document`` is a patch's change set or a replacement's complete data, in
+    accepted wire spellings, and its own shape is judged first. Its primary-key
+    entries name the object and are no assignment; every other entry is
+    assigned, a framework-owned one refused. The caller's revision arguments are
+    its whole condition: nothing ``document`` carries, and no read's evidence,
+    stands in for them.
+    """
+    refuse_reentry(ctx.keyed.lifecycle)
+    described = (
+        f"a Wire target `{mutation}`'s {'change set' if mutation in UPDATE_MUTATIONS else 'data'}"
+    )
+    row = _authored_document(document, described)
+    instruction = TargetWrite(
+        mutation, entity_name, row, if_version, if_tx_start, valid_from, until
+    )
+    meta = ctx.keyed.model.meta
+    buffer_target_instruction(
+        ctx, instructions.prepare_wire_write(instruction, meta, authored_members=row.keys())
+    )
 
 
 @dataclass(frozen=True, slots=True)

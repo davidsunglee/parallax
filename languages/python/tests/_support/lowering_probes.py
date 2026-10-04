@@ -20,7 +20,12 @@ from parallax.core.unit_work import (
     TransactionInstant,
     WriteObservation,
 )
-from parallax.core.unit_work.instructions import WriteInstruction, prepare_typed_write
+from parallax.core.unit_work.instructions import (
+    PreparedTargetWrite,
+    PreparedWrite,
+    WriteInstruction,
+    prepare_typed_write,
+)
 from parallax.core.unit_work.plan import NO_OWNERSHIP, Ownership
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.snapshot.handle import build_write_planner, stream_lowered
@@ -83,12 +88,16 @@ def _stream(
                 actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=instant,
                 concurrency=concurrency,
-                buffered_writes=[
-                    observed_write(prepare_typed_write(instruction, model), model, observation)
-                ],
+                buffered_writes=[observed_write(_prepared(instruction, model), model, observation)],
                 ownership=ownership,
             )
         )
         .plan
     )
     return list(stream_lowered(plan, model, dialect))
+
+
+def _prepared(instruction: WriteInstruction, model: Metamodel) -> PreparedWrite:
+    prepared = prepare_typed_write(instruction, model)
+    assert not isinstance(prepared, PreparedTargetWrite)  # a target write buffers through its UoW
+    return prepared

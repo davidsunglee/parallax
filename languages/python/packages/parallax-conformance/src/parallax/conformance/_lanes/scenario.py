@@ -120,11 +120,15 @@ from parallax.core.unit_work import (
     object_key,
 )
 from parallax.core.unit_work.instructions import (
+    ExpectedVersion,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
+    PreparedTargetWrite,
     PreparedWrite,
+    TargetWrite,
     WriteInstruction,
 )
+from parallax.core.unit_work.materialized import target_write
 from parallax.core.unit_work.planned import PlannedWrite
 from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
@@ -313,7 +317,7 @@ class _ResolvedWrite:
     needing no evidence at all carries none.
     """
 
-    instruction: PreparedWrite
+    instruction: PreparedWrite | PreparedTargetWrite
     oracle_observation: WriteObservation | None
 
 
@@ -970,6 +974,8 @@ def _build_instructions(
             "entry vocabulary is keyed-only)"
         )
     entity_name = cast("str", entry["entity"])
+    if "row" in entry:
+        return [_build_target_instruction(entry, model)]
     if _is_temporal_entity(model, entity_name):
         return [_build_temporal_instruction(entry, model, shadow, unit_inserted, source)]
     mutation = cast("str", entry["mutation"])
@@ -984,6 +990,7 @@ def _build_instructions(
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
         )
+        assert isinstance(instruction, KeyedWrite)  # a `rows` document is a keyed write
         prepared = _case_ingress.prepare_case_write(instruction, model)
         if binds_observations and not opens_a_row:
             key = object_key(prepared, model)
@@ -998,6 +1005,23 @@ def _build_instructions(
             observation = None
         out.append(_ResolvedWrite(prepared, observation))
     return out
+
+
+def _build_target_instruction(
+    entry: Mapping[str, object], model: AcceptedMetamodel
+) -> _ResolvedWrite:
+    """A caller-addressed entry as the target instruction it states, prepared by
+    the one producer every ingress reaches. It carries its caller's revision
+    and no evidence of any read."""
+    instruction = instructions.deserialize(
+        {
+            name: value
+            for name, value in entry.items()
+            if name in ("mutation", "entity", "row", "ifVersion", "ifTxStart", "validFrom", "until")
+        }
+    )
+    assert isinstance(instruction, TargetWrite)  # a `row` document is a target write
+    return _ResolvedWrite(_case_ingress.prepare_case_write(instruction, model), None)
 
 
 def _observed_for(observations: GroupObservations, key: ObjectKey) -> RetainedObservation | None:
@@ -1081,7 +1105,9 @@ def instruction_evidence(
 
 
 def _buffered(
-    instruction: PreparedWrite, observation: WriteObservation | None, model: AcceptedMetamodel
+    instruction: PreparedWrite | PreparedTargetWrite,
+    observation: WriteObservation | None,
+    model: AcceptedMetamodel,
 ) -> BufferItem:
     """One resolved entry as the buffer item a unit of work would hold for it,
     settled against :func:`instruction_evidence`. Whether an observation may
@@ -1089,9 +1115,11 @@ def _buffered(
     seam every producer's rows pass through — and by the carriers' own structural
     refusals; this function only forwards what they left.
     """
+    if isinstance(instruction, PreparedTargetWrite):
+        return target_write(instruction, inheritance.view(model))
     assert isinstance(
         instruction, PreparedKeyedWrite
-    )  # every producer of this seam resolves keyed writes
+    )  # every other producer of this seam resolves keyed writes
     return buffered_write(
         instruction, instruction_evidence(model, instruction, supplied=observation)
     )
@@ -1795,7 +1823,7 @@ def compile_write_sequence_case(
 
 
 def _is_framework_write(
-    instruction: WriteInstruction | PreparedWrite, model: AcceptedMetamodel
+    instruction: WriteInstruction | PreparedWrite | PreparedTargetWrite, model: AcceptedMetamodel
 ) -> bool:
     """Whether ``instruction`` states the FRAMEWORK's own bookkeeping rather than
     a write a developer authors.
@@ -2750,9 +2778,12 @@ def _buffer_wire_write(
     the empty change set, which is the ordinary no-op.
     """
     instruction = write.instruction
+    if isinstance(instruction, PreparedTargetWrite):
+        _buffer_wire_target(tx, model, instruction)
+        return
     assert isinstance(
         instruction, PreparedKeyedWrite
-    )  # every resolved entry this lane buffers is keyed
+    )  # every other resolved entry this lane buffers is keyed
     entity_name = instruction.target.identity.canonical
     entity_metadata = instruction.target
     row = dict(instruction.rows[0])
@@ -2787,6 +2818,22 @@ def _buffer_wire_write(
             tx.wire.terminate(node)
         case _:
             tx.wire.terminate(node, until=_required(until))
+
+
+def _buffer_wire_target(
+    tx: handle.Transaction, model: AcceptedMetamodel, instruction: PreparedTargetWrite
+) -> None:
+    """Buffer ONE caller-addressed write through the public ``tx.wire`` verb
+    its mutation names, with the caller's own revision beside its document."""
+    entity_name = instruction.target.identity.canonical
+    document = ActualWireProjection(model).entity_values(instruction.target, dict(instruction.row))
+    expectation = instruction.expectation
+    bounds = instruction.bounds
+    # Only a Non-Temporal target write is admitted, so neither bound is stated.
+    assert bounds.valid_from is None and bounds.until is None
+    version = expectation.version if isinstance(expectation, ExpectedVersion) else None
+    verb = tx.wire.replace if instruction.replaces else tx.wire.update
+    verb(entity_name, document, if_version=version)
 
 
 def _wire_insert_payload(
@@ -3396,6 +3443,7 @@ def _resolve_conflict_writes(
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": target, "rows": [clean_row]}
         )
+        assert isinstance(instruction, KeyedWrite)  # a `rows` document is a keyed write
         prepared = _case_ingress.prepare_case_write(instruction, model)
         resolved.append(
             _ConflictWrite(clean_row, prepared, object_key(prepared, model), observation)

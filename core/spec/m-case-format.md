@@ -1061,6 +1061,16 @@ like a marker; the two are disambiguated by the field's declared metamodel role
 (resolved from the Entity Layout slot's contributor), not by the value's shape
 (`m-value-object`, `m-storage-layout`).
 
+A step MAY instead be a **caller-addressed** (target) write: it carries one `row`
+rather than `rows`, a `mutation` of `update` / `updateUntil` (a sparse patch) or
+`replace` / `replaceUntil` (a complete replacement), and the caller's own revision
+member — `ifVersion` or `ifTxStart` — exactly as `write-instruction.schema.json`'s
+target instruction does (`m-unit-work` *Write instruction vocabulary*). Its row
+carries no `observedVersion`: the stated revision is the step's whole condition,
+and its golden gate binds that revision. A replacement's ① names the members the
+caller states; the members it omits are written empty in the golden, which is
+what distinguishes it from a patch of the same row.
+
 A writeSequence case MAY set **`given.fixtures: true`** to load the model's
 fixtures **before** the ordered DML (instead of starting empty) — so a sequence
 can mutate a *pre-existing* persisted row. This is used by the minimal dependent
@@ -1105,6 +1115,11 @@ state:
 - an entry whose mutation is **not a Keyed Mutation** owes none. `cascadeDelete`
   is the only such mutation the corpus authors: no keyed verb states it, so it
   resolves no source.
+- a **caller-addressed** entry resolves no source: its caller states the object
+  and the revision. Under the Locking strategy its target Entity's Effective
+  Concurrency Strategy takes, it owes instead **one acquisition per object** —
+  the locked point read that participation requires (`m-unit-work` *Caller-addressed
+  writes*) — and none under Optimistic.
 
 A **grouped** scenario write step owes none of its own: its group's find steps
 are what publish the values it settles against, and those finds already declare

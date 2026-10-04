@@ -24,6 +24,13 @@ read strategy to a compiled read, and the dialect returns an object find with it
 shared-row-lock form appended (Postgres `for share of t0`; MariaDB `lock in share
 mode`). `m-unit-work` contains no dialect-specific SQL shaping.
 
+A **caller-addressed** write under the effective Locking strategy that holds no
+pending or live read of the state it names acquires one (`m-unit-work`
+*Caller-addressed writes*): a point read of the one row its key names, taking the
+same shared row lock, which licenses its ungated write exactly as a find's lock
+licenses an observed one. It executes no pending write and publishes nothing to
+the caller.
+
 ### What one temporal observation locks
 
 A lock is taken on the **physical rows the read selected** — nothing wider. For a

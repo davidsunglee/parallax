@@ -70,6 +70,7 @@ __all__ = [
     "plan",
     "plan_coverage_read",
     "plan_mutation_read",
+    "plan_target_read",
 ]
 
 
@@ -333,6 +334,30 @@ def plan_coverage_read(
         entity=entity,
         validated_predicate=predicate,
         projection=_projection_for(entity, families, ReadProjectionRequest("all", True)),
+    )
+
+
+def plan_target_read(
+    entity: EntityMetadata, *, model: Metamodel, key: str, key_value: ManagedValue
+) -> ValidatedEntityQuery:
+    """The one flat point read of the stored row a caller-addressed write of a
+    Non-Temporal object starts from: the object ``key`` names, projected with
+    no document, since what is read is the row's presence and revision."""
+    families = inheritance.view(model)
+    view = _entity_view(families, entity.identity)
+    term = _managed_comparison(
+        op="eq",
+        attr=f"{entity.identity.canonical}.{key}",
+        member=_declared_attribute(view, key),
+        value=key_value,
+    )
+    return ValidatedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        validated_predicate=navigate.canonicalize_validated(
+            _validated_conjunction(term), model, entity, {}
+        ),
+        projection=_projection_for(entity, families, ReadProjectionRequest("none", False)),
     )
 
 

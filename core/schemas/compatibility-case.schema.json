@@ -739,14 +739,34 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["mutation", "entity", "rows"],
+            "required": ["mutation", "entity"],
+            "oneOf": [
+              {
+                "description": "A keyed step: its `rows` are the neutral write input (①) of a keyed instruction, whose evidence the case authors on the row (`observedVersion`).",
+                "required": ["rows"],
+                "not": { "anyOf": [{ "required": ["ifVersion"] }, { "required": ["ifTxStart"] }] },
+                "properties": {
+                  "mutation": { "not": { "enum": ["replace", "replaceUntil"] } }
+                }
+              },
+              {
+                "description": "A caller-addressed (target) step: its `row` names one existing object by primary key beside the members a patch assigns or the complete writable state a replacement states, and its condition is the caller's own revision member — `ifVersion` or `ifTxStart` — exactly as `write-instruction.schema.json`'s `targetWriteInstruction` carries it.",
+                "required": ["row"],
+                "properties": {
+                  "mutation": { "enum": ["update", "updateUntil", "replace", "replaceUntil"] }
+                },
+                "not": { "required": ["ifVersion", "ifTxStart"] }
+              }
+            ],
             "allOf": [
               {
                 "description": "A Bitemporal `*Until` step bounds a mutation to `[validFrom, until)` and records the Clock-supplied Transaction-Time instant in `at`.",
                 "if": {
                   "required": ["mutation"],
                   "properties": {
-                    "mutation": { "enum": ["insertUntil", "updateUntil", "terminateUntil"] }
+                    "mutation": {
+                      "enum": ["insertUntil", "updateUntil", "terminateUntil", "replaceUntil"]
+                    }
                   }
                 },
                 "then": { "required": ["at", "validFrom", "until"] }
@@ -783,7 +803,9 @@
                   "cascadeDelete",
                   "insertUntil",
                   "updateUntil",
-                  "terminateUntil"
+                  "terminateUntil",
+                  "replace",
+                  "replaceUntil"
                 ]
               },
               "entity": {
@@ -801,6 +823,22 @@
                 "type": "array",
                 "minItems": 1,
                 "items": { "$ref": "#/$defs/writeRow" }
+              },
+              "row": {
+                "description": "A caller-addressed step's neutral write input (①): the one object's primary key beside the members the step writes (`$defs/writeRow`). It carries no `observedVersion`: a target step's condition is its own `ifVersion` / `ifTxStart`.",
+                "allOf": [
+                  { "$ref": "#/$defs/writeRow" },
+                  { "not": { "required": ["observedVersion"] } }
+                ]
+              },
+              "ifVersion": {
+                "description": "A caller-addressed step's stated starting version of a versioned target.",
+                "type": "integer"
+              },
+              "ifTxStart": {
+                "description": "A caller-addressed step's stated Transaction-Time start of a temporal target's starting milestone.",
+                "type": "string",
+                "minLength": 1
               },
               "at": {
                 "description": "The Clock-supplied finite Transaction-Time instant recorded in `in_z`/`out_z`. It is execution context, not a durable write-instruction member, and is distinct from the Valid-Time `validFrom` bound.",

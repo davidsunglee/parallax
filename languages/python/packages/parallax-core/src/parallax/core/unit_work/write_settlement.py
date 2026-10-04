@@ -57,6 +57,7 @@ from parallax.core.unit_work.materialized import (
     MaterializedWriteGroup,
     ObservedKeyedWrite,
     PredecessorRows,
+    TargetKeyedWrite,
     VersionedEvidence,
     composed_alone,
 )
@@ -85,6 +86,7 @@ from parallax.core.unit_work.plan import (
 )
 from parallax.core.unit_work.planned import (
     ANY_COUNT,
+    FAILED_PRECONDITION,
     INFINITY,
     MAX_PLUS_ONE,
     NEW_LINEAGE,
@@ -171,6 +173,7 @@ type OrderedWrite = (
     PreparedWrite
     | ObservedKeyedWrite
     | InsertionKeyedWrite
+    | TargetKeyedWrite
     | ComposedTemporalWrite
     | MaterializedWriteGroup
 )
@@ -477,27 +480,9 @@ class WriteSettlement:
                     )
                 )
                 continue
-            own_state: VersionedStateKey | None = None
-            twinned: ObservedStateKey | None = None
-            claim: Completion | None
-            if isinstance(item, ObservedKeyedWrite):
-                instruction, observation = item.instruction, item.observation
-                claim, twinned = _observed_claim(item)
-            elif isinstance(item, InsertionKeyedWrite):
-                instruction, observation, claim = item.instruction, None, None
-                scope = item.scope
-                own_state = scope if isinstance(scope, VersionedStateKey) else None
-            else:
-                instruction, observation, claim = item, None, None
-            assert not isinstance(instruction, ComposedTemporalWrite)
-            settled = self._settle(
-                instruction,
-                observation,
-                concurrency,
-                transaction_instant,
-                ownership,
-                shape,
-                own_version=None if own_state is None else own_state.version,
+            assert not isinstance(item, ComposedTemporalWrite | MaterializedWriteGroup)
+            settled, unit_parts = self._settle_keyed(
+                item, concurrency, transaction_instant, ownership, shape
             )
             for step in settled.steps:
                 pending.append(
@@ -508,6 +493,7 @@ class WriteSettlement:
                     )
                 )
             count += len(settled.steps)
+            claim, own_state, twinned = unit_parts
             units.append(
                 ExecutionUnit(
                     end=count,
@@ -522,6 +508,46 @@ class WriteSettlement:
             WritePlan(steps=PlannedSteps(tuple(segments)), units=tuple(units))
         )
 
+    def _settle_keyed(
+        self,
+        item: PreparedWrite | ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite,
+        concurrency: Concurrency,
+        tx_instant: TransactionInstant,
+        ownership: Ownership,
+        shape: TemporalShape | None,
+    ) -> tuple[
+        _Settled, tuple[Completion | None, VersionedStateKey | None, ObservedStateKey | None]
+    ]:
+        """One ordered keyed write's steps, beside what its unit records: the
+        claim it spends, the state its carrier itself names as changed, and the
+        one state several twinned observations of it share."""
+        own_state: VersionedStateKey | None = None
+        twinned: ObservedStateKey | None = None
+        observation: WriteObservation | None = None
+        claim: Completion | None = None
+        if isinstance(item, ObservedKeyedWrite):
+            instruction, observation = item.instruction, item.observation
+            claim, twinned = _observed_claim(item)
+        elif isinstance(item, TargetKeyedWrite | InsertionKeyedWrite):
+            instruction = item.instruction
+            scope = item.scope
+            own_state = scope if isinstance(scope, VersionedStateKey) else None
+            if isinstance(item, TargetKeyedWrite):
+                claim = _target_claim(item)
+        else:
+            instruction = item
+        settled = self._settle(
+            instruction,
+            observation,
+            concurrency,
+            tx_instant,
+            ownership,
+            shape,
+            own_version=None if own_state is None else own_state.version,
+            conditioned=isinstance(item, TargetKeyedWrite),
+        )
+        return settled, (claim, own_state, twinned)
+
     # Stages 5, 6, 7: validate the observation the item arrived carrying, #
 
     def _settle(
@@ -534,10 +560,13 @@ class WriteSettlement:
         shape: TemporalShape | None,
         *,
         own_version: int | None = None,
+        conditioned: bool = False,
     ) -> _Settled:
-        """One ordered write's steps. ``own_version`` is the version this
-        attempt's own writes left a row it inserted at, which a write its
-        insertion authorized advances from in place of an observed one."""
+        """One ordered write's steps. ``own_version`` is the version a write
+        advances from in place of an observed one: the version this attempt's
+        own writes left a row it inserted at, or the version a caller's
+        condition requires. ``conditioned`` says the gate binds that caller's
+        condition, so a shortfall against it is a failed precondition."""
         if isinstance(instruction, PreparedPredicateWrite):
             return _Settled(self._settle_predicate(instruction))
         entity = instruction.target
@@ -550,7 +579,7 @@ class WriteSettlement:
         facts = self._non_temporal_facts(entity)
         if instruction.mutation == "insert":
             return _Settled((self._settle_insert(facts, instruction),))
-        addressed = self._addressed_facts(facts, concurrency)
+        addressed = self._addressed_facts(facts, concurrency, conditioned=conditioned)
         observed_version = (
             own_version
             if own_version is not None
@@ -672,7 +701,7 @@ class WriteSettlement:
         )
 
     def _addressed_facts(
-        self, facts: _NonTemporalFacts, concurrency: Concurrency
+        self, facts: _NonTemporalFacts, concurrency: Concurrency, *, conditioned: bool = False
     ) -> _AddressedFacts:
         """What one non-temporal mutation against EXISTING rows settles before
         a row is in hand.
@@ -681,13 +710,19 @@ class WriteSettlement:
         mutation arrived as: what the target's effective primary key is,
         whether the write gates, and how a shortfall against it classifies. An
         insert never reaches here, so it settles no address it does not use.
+        A gate binding a caller's ``conditioned`` revision classifies its
+        shortfall as that condition failing.
         """
         gated = self._concurrency.gates(concurrency, self._model, facts.entity.identity)
         return _AddressedFacts(
             key_attributes=(facts.view.primary_key.identity,),
             gated=gated,
-            shortfall=shortfall_classification(
-                observing=facts.version_attribute is not None, gated=gated
+            shortfall=(
+                FAILED_PRECONDITION
+                if conditioned and gated
+                else shortfall_classification(
+                    observing=facts.version_attribute is not None, gated=gated
+                )
             ),
         )
 
@@ -1717,6 +1752,15 @@ def _observed_claim(
         return item.claim, None
     assert item.claim is not None  # twins meet only at their claim's own scope
     return Completions((item.claim, *item.twins)), item.claim.key
+
+
+def _target_claim(item: TargetKeyedWrite) -> Completion | None:
+    """What a caller-conditioned write's unit spends: the observations of the
+    observed writes composed into it, if any."""
+    claims = item.claims
+    if not claims:
+        return None
+    return claims[0] if len(claims) == 1 else Completions(claims)
 
 
 def _own_changes(

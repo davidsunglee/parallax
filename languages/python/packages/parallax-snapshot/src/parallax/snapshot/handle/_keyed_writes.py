@@ -16,6 +16,7 @@ from parallax.core.unit_work import (
     KeyedWrite,
     ObjectKey,
     ReadOrigin,
+    TargetMutation,
     UnitOfWork,
     buffered_write,
     object_key,
@@ -529,7 +530,7 @@ def retained[T](filed: T | None) -> T:
     return filed
 
 
-def window_mutation[M: KeyedMutation](
+def window_mutation[M: KeyedMutation | TargetMutation](
     unbounded: M, bounded: M, until: dt.datetime | Omitted
 ) -> tuple[M, dt.datetime | None]:
     """The portable verb a public method's ``until`` argument selects, beside

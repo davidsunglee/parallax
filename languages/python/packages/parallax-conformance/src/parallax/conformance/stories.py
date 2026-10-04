@@ -256,6 +256,20 @@ def versioned_update_advances_the_version_ungated_in_locking_mode(db: ScopedData
     db.transact(fn, concurrency="locking")
 
 
+def target_patch_gates_on_the_callers_version(db: ScopedDatabase) -> None:
+    def fn(tx: Transaction) -> None:
+        tx.wire.update("Account", {"id": 2, "balance": "250.00"}, if_version=1)
+
+    db.transact(fn)
+
+
+def target_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
+    def fn(tx: Transaction) -> None:
+        tx.replace(Account(id=3, owner="Hopper", balance=Decimal("12.00")), if_version=1)
+
+    db.transact(fn)
+
+
 def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         tx.delete_where(Wallet.where(Wallet.balance < Decimal("200.00")))
@@ -662,6 +676,20 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "commit",
         "account",
         versioned_update_advances_the_version_ungated_in_locking_mode,
+    ),
+    WriteStory(
+        "m-opt-lock-027",
+        "A target patch states its key and the version its caller last observed",
+        "commit",
+        "account",
+        target_patch_gates_on_the_callers_version,
+    ),
+    WriteStory(
+        "m-opt-lock-028",
+        "A target replacement states the object's whole writable state",
+        "commit",
+        "account",
+        target_replacement_states_every_writable_member,
     ),
     WriteStory(
         "m-batch-write-005",

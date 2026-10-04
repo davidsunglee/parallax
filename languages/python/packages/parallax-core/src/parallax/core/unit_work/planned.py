@@ -16,6 +16,7 @@ from parallax.core.unit_work.observe import PredecessorRow
 
 __all__ = [
     "ANY_COUNT",
+    "FAILED_PRECONDITION",
     "INFINITY",
     "MAX_PLUS_ONE",
     "NEW_LINEAGE",
@@ -29,6 +30,7 @@ __all__ = [
     "ChangedFrom",
     "CloseCause",
     "ExactCount",
+    "FailedPrecondition",
     "Finite",
     "InsertEntry",
     "InsertOrigin",
@@ -59,6 +61,7 @@ __all__ = [
     "VersionGate",
     "Versioned",
     "WriteTarget",
+    "admits_shortfall",
     "adopt_planned_assignments",
     "adopt_planned_row",
     "shortfall_classification",
@@ -537,7 +540,16 @@ class OptimisticConflict:
 
 OPTIMISTIC_CONFLICT: Final[OptimisticConflict] = OptimisticConflict()
 
-type Shortfall = MissingTarget | StaleWrite | OptimisticConflict
+
+@dataclass(frozen=True, slots=True)
+class FailedPrecondition:
+    """A gate binding a caller's stated starting revision no longer held: the
+    state the caller addressed is gone, or a later revision replaced it."""
+
+
+FAILED_PRECONDITION: Final[FailedPrecondition] = FailedPrecondition()
+
+type Shortfall = MissingTarget | StaleWrite | OptimisticConflict | FailedPrecondition
 """The neutral outcome class a shortfall against an exact count names.
 
 The plan names an outcome class, never a language's exception type.
@@ -595,6 +607,21 @@ def shortfall_classification(*, observing: bool, gated: bool) -> Shortfall:
     return OPTIMISTIC_CONFLICT if gated else STALE_WRITE
 
 
+def admits_shortfall(
+    concurrency: NonTemporalConcurrency | TemporalConcurrency, shortfall: Shortfall
+) -> bool:
+    """Whether ``shortfall`` classifies a shortfall against ``concurrency``: the
+    classification :func:`shortfall_for` derives, or — where the decision gates
+    — a failed precondition, because a gate may bind a caller's stated revision
+    rather than an observation."""
+    if shortfall == shortfall_for(concurrency):
+        return True
+    gated = isinstance(concurrency, TemporalGate) or (
+        isinstance(concurrency, Versioned) and isinstance(concurrency.gate, VersionGate)
+    )
+    return gated and isinstance(shortfall, FailedPrecondition)
+
+
 def shortfall_for(concurrency: NonTemporalConcurrency | TemporalConcurrency) -> Shortfall:
     """How a shortfall against one settled concurrency decision classifies.
 
@@ -644,11 +671,10 @@ def _settle(
                     f"{entity.canonical}: a Key Target expects exactly as many rows as it "
                     f"addresses ({len(target.key_values)})"
                 )
-            expected = shortfall_for(concurrency)
-            if affected_rows.on_shortfall != expected:
+            if not admits_shortfall(concurrency, affected_rows.on_shortfall):
                 raise ValueError(
                     f"{entity.canonical}: the concurrency decision classifies a shortfall as "
-                    f"{type(expected).__name__}, and this policy says "
+                    f"{type(shortfall_for(concurrency)).__name__}, and this policy says "
                     f"{type(affected_rows.on_shortfall).__name__}"
                 )
             if (
@@ -753,11 +779,10 @@ def _require_one_milestone(
             f"{entity.canonical}: a {kind} addresses one current milestone, so it expects "
             f"exactly one row and this policy expects {affected_rows.expected}"
         )
-    expected = shortfall_for(concurrency)
-    if affected_rows.on_shortfall != expected:
+    if not admits_shortfall(concurrency, affected_rows.on_shortfall):
         raise ValueError(
             f"{entity.canonical}: the concurrency decision classifies a shortfall as "
-            f"{type(expected).__name__}, and this policy says "
+            f"{type(shortfall_for(concurrency)).__name__}, and this policy says "
             f"{type(affected_rows.on_shortfall).__name__}"
         )
 

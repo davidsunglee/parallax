@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from types import MappingProxyType
-from typing import cast
+from typing import cast, overload
 
 from parallax.conformance._case_literal import normalize_case_bound, normalize_case_literal
 from parallax.core import inheritance, predicate
@@ -25,7 +25,9 @@ from parallax.core.unit_work.instructions import (
     KeyedWrite,
     PredicateSelection,
     PredicateWrite,
+    PreparedTargetWrite,
     PreparedWrite,
+    TargetWrite,
     WriteAssignment,
     WriteInstruction,
 )
@@ -35,7 +37,21 @@ __all__ = ["decode_case_row", "normalize_case_query", "prepare_case_write"]
 type _ScalarMember = AttributeMetadata | ValueObjectAttributeMetadata
 
 
-def prepare_case_write(instruction: WriteInstruction, model: AcceptedMetamodel) -> PreparedWrite:
+@overload
+def prepare_case_write(
+    instruction: TargetWrite, model: AcceptedMetamodel
+) -> PreparedTargetWrite: ...
+@overload
+def prepare_case_write(
+    instruction: KeyedWrite | PredicateWrite, model: AcceptedMetamodel
+) -> PreparedWrite: ...
+@overload
+def prepare_case_write(
+    instruction: WriteInstruction, model: AcceptedMetamodel
+) -> PreparedWrite | PreparedTargetWrite: ...
+def prepare_case_write(
+    instruction: WriteInstruction, model: AcceptedMetamodel
+) -> PreparedWrite | PreparedTargetWrite:
     """Normalize one case-format instruction and invoke strict Wire preparation.
 
     Synthetic conformance cases may carry values already in their managed Python
@@ -102,11 +118,20 @@ def _normalize_instruction(
     instruction: WriteInstruction, model: AcceptedMetamodel
 ) -> WriteInstruction:
     target_name = (
-        instruction.entity if isinstance(instruction, KeyedWrite) else instruction.target.entity
+        instruction.target.entity if isinstance(instruction, PredicateWrite) else instruction.entity
     )
     entity = entity_by_name(model, target_name)
     if entity is None:
         return instruction
+    if isinstance(instruction, TargetWrite):
+        members = _entity_members(model, entity)
+        return replace(
+            instruction,
+            row={
+                name: _normalize_member(members[name], value) if name in members else value
+                for name, value in instruction.row.items()
+            },
+        )
     if isinstance(instruction, KeyedWrite):
         members = _entity_members(model, entity)
         rows = tuple(

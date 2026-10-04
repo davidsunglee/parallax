@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping
+from typing import overload
 
+from parallax.core.unit_work import WriteInstructionError
 from parallax.snapshot.handle._keyed_writes import window_mutation
 from parallax.snapshot.handle._options import OMITTED, Omitted
 from parallax.snapshot.handle._predicate_writes import PredicateWriteContext
@@ -15,6 +17,7 @@ from parallax.snapshot.handle._wire_writes import (
     wire_insert,
     wire_keyed_write,
     wire_predicate_write,
+    wire_target_write,
 )
 from parallax.snapshot.materialize import WireEntity
 
@@ -147,28 +150,115 @@ class WireTransactionView(WireDatabaseView):
             until=bound,
         )
 
+    @overload
     def update(
         self,
         observed: WireEntity,
+        /,
         changes: WireChanges,
         *,
         until: dt.datetime | Omitted = OMITTED,
-    ) -> None:
-        """Buffer a Wire update of the row ``observed`` came from.
+    ) -> None: ...
 
+    @overload
+    def update(
+        self,
+        entity_name: str,
+        /,
+        changes: WireChanges,
+        *,
+        valid_from: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
+        if_version: int | None = None,
+        if_tx_start: dt.datetime | None = None,
+    ) -> None: ...
+
+    def update(
+        self,
+        target: WireEntity | str,
+        /,
+        changes: WireChanges,
+        *,
+        valid_from: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
+        if_version: int | None = None,
+        if_tx_start: dt.datetime | None = None,
+    ) -> None:
+        """Buffer a Wire update: of the row an observed node came from, or a
+        sparse patch of the ``entity_name`` object its caller addresses.
+
+        Handed a node a read published (or the node an insert answered),
         ``changes`` names declared members only; identity, optimistic-version,
         temporal-axis, computed, read-only, and relationship members are refused
         statically, before the target Entity's Effective Concurrency Strategy or
         its evidence is consulted. Every member it names is assigned, including
-        one whose value equals what ``observed`` published; ``{}`` names none
-        and issues no DML at all.
+        one whose value equals what the node published; ``{}`` names none and
+        issues no DML at all. A Bitemporal update starts where the node was read
+        and applies to current coverage from there, exactly as ``tx.update``
+        does; ``until`` follows :meth:`insert`'s rules. Such an update takes its
+        condition from its source, so it states no ``valid_from`` and no
+        revision argument.
 
-        A Bitemporal update starts where ``observed`` was read and applies to
-        current coverage from there, exactly as ``tx.update`` does; ``until``
-        follows :meth:`insert`'s rules.
+        Handed an Entity spelling instead, the update is a patch of the existing
+        object ``changes``'s primary-key entries name, and every other entry is
+        assigned, a value equal to the stored one included. The condition is
+        the caller's revision argument, on the terms ``tx.replace`` states: a
+        versioned Entity requires ``if_version``, an unversioned one takes
+        none. A change set naming nothing but the key is validated and then
+        dropped, with no database work at all — no existence or revision check.
         """
+        if isinstance(target, str):
+            mutation, bound = window_mutation("update", "updateUntil", until)
+            wire_target_write(
+                self._writes,
+                mutation,
+                target,
+                changes,
+                valid_from=valid_from,
+                until=bound,
+                if_version=if_version,
+                if_tx_start=if_tx_start,
+            )
+            return
+        if valid_from is not None or if_version is not None or if_tx_start is not None:
+            raise WriteInstructionError(
+                "an update of an observed node starts where the node was read and is conditioned "
+                "on what that read observed, so it takes no valid_from, if_version, or "
+                "if_tx_start; to address the object yourself, name its Entity instead of "
+                "passing the node"
+            )
         mutation, bound = window_mutation("update", "updateUntil", until)
-        wire_keyed_write(self._writes.keyed, mutation, observed, changes, until=bound)
+        wire_keyed_write(self._writes.keyed, mutation, target, changes, until=bound)
+
+    def replace(
+        self,
+        entity_name: str,
+        data: Mapping[str, object],
+        *,
+        valid_from: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
+        if_version: int | None = None,
+        if_tx_start: dt.datetime | None = None,
+    ) -> None:
+        """Buffer a complete replacement of the existing ``entity_name`` object
+        ``data``'s primary-key entries name, exactly as ``tx.replace`` does.
+
+        ``data`` is the object's whole writable state in accepted wire
+        spellings: an omitted nullable member is written empty, an omitted
+        ``many`` the empty collection, an omitted required member is refused,
+        and a framework-owned member is refused rather than stored.
+        """
+        mutation, bound = window_mutation("replace", "replaceUntil", until)
+        wire_target_write(
+            self._writes,
+            mutation,
+            entity_name,
+            data,
+            valid_from=valid_from,
+            until=bound,
+            if_version=if_version,
+            if_tx_start=if_tx_start,
+        )
 
     def delete(self, observed: WireEntity) -> None:
         """Buffer a Wire ``delete`` of the row ``observed`` came from, keyed off

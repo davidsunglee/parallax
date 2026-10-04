@@ -26,9 +26,11 @@ from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import JSON, InstantError
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel import Table
 from parallax.core.unit_work import WriteRejectedError
 from parallax.core.unit_work import instructions as wi
+from parallax.core.unit_work.planned import UNVERSIONED
 from tests._support.repo import REPO_ROOT
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
@@ -247,6 +249,48 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         },
     ),
     (
+        "target-update-versioned",
+        {
+            "mutation": "update",
+            "entity": "Account",
+            "row": {"id": 1, "balance": 5.0},
+            "ifVersion": 3,
+        },
+    ),
+    (
+        "target-replace-versioned",
+        {
+            "mutation": "replace",
+            "entity": "Account",
+            "row": {"id": 1, "owner": "Ada", "balance": 5.0},
+            "ifVersion": 3,
+        },
+    ),
+    (
+        "target-update-unversioned",
+        {"mutation": "update", "entity": "Wallet", "row": {"id": 1, "balance": 5.0}},
+    ),
+    (
+        "target-update-audit",
+        {
+            "mutation": "update",
+            "entity": "Balance",
+            "row": {"id": 9, "value": 1.0},
+            "ifTxStart": _B1,
+        },
+    ),
+    (
+        "target-replaceUntil-bitemporal-bounded",
+        {
+            "mutation": "replaceUntil",
+            "entity": "Position",
+            "row": {"id": 9, "acctNum": "D", "value": 1.0},
+            "ifTxStart": _B1,
+            "validFrom": _B1,
+            "until": _B2,
+        },
+    ),
+    (
         "predicate-terminateUntil-bitemporal-bounded",
         {
             "mutation": "terminateUntil",
@@ -345,7 +389,7 @@ def test_ambiguous_and_shapeless_instructions_are_rejected() -> None:
                 "target": {"entity": "Account", "predicate": {"all": {}}},
             }
         )
-    with pytest.raises(wi.WriteInstructionError, match=r"`rows`.*or.*`target`"):
+    with pytest.raises(wi.WriteInstructionError, match=r"`rows`.*`target`.*or `row`"):
         wi.deserialize({"mutation": "delete", "entity": "Account"})
     with pytest.raises(wi.WriteInstructionError, match="must be a mapping"):
         wi.deserialize([1, 2, 3])
@@ -445,6 +489,14 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
             {
                 "mutation": "update",
                 "target": {"entity": "Account", "predicate": {"all": {}}},
+                "assignments": [["Account.balance", 0]],
+            },
+            "each assignment must be a mapping",
+        ),
+        (
+            {
+                "mutation": "update",
+                "target": {"entity": "Account", "predicate": {"all": {}}},
                 "assignments": [{"attr": "balance", "value": 0}],
             },
             "`Class.member` reference",
@@ -463,6 +515,284 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
 def test_predicate_structural_rejections(doc: dict[str, Any], match: str) -> None:
     with pytest.raises(wi.WriteInstructionError, match=match):
         wi.deserialize(doc)
+
+
+@pytest.mark.parametrize(
+    "doc, match",
+    [
+        ({"mutation": "update", "entity": "Account", "row": [1]}, "`row` must be a mapping"),
+        (
+            {"mutation": "insert", "entity": "Account", "row": {"id": 1}},
+            "`mutation` must be one of",
+        ),
+        (
+            {"mutation": "update", "entity": "Account", "row": {"id": 1}, "ifVersion": "3"},
+            "`ifVersion` must be an integer",
+        ),
+        (
+            {"mutation": "update", "entity": "Account", "row": {"id": 1}, "ifVersion": True},
+            "`ifVersion` must be an integer",
+        ),
+        (
+            {
+                "mutation": "update",
+                "entity": "Account",
+                "row": {"id": 1},
+                "ifVersion": 1,
+                "ifTxStart": _B1,
+            },
+            "states both `ifVersion` and `ifTxStart`",
+        ),
+        (
+            {"mutation": "replace", "entity": "Account", "row": {"id": 1}, "until": _B2},
+            "MUST NOT carry `until`",
+        ),
+        (
+            {"mutation": "replaceUntil", "entity": "Position", "row": {"id": 1}, "until": _B2},
+            "MUST carry both",
+        ),
+        (
+            {"mutation": "update", "entity": "Account", "row": {"id": 1}, "ifTxStart": ""},
+            "non-empty instant string",
+        ),
+        (
+            {"mutation": "update", "entity": "Account", "row": {"id": 1}, "note": "x"},
+            "unexpected key",
+        ),
+        (
+            {"mutation": "update", "entity": "Account", "row": {"id": 1, "observedVersion": 2}},
+            "forbidden observation control key",
+        ),
+        (
+            {"mutation": "update", "entity": "Account", "rows": [{"id": 1}], "row": {"id": 1}},
+            "ambiguous",
+        ),
+    ],
+)
+def test_target_structural_rejections(doc: dict[str, Any], match: str) -> None:
+    with pytest.raises(wi.WriteInstructionError, match=match):
+        wi.deserialize(doc)
+
+
+def test_a_target_rows_members_are_a_frozen_view() -> None:
+    instruction = wi.TargetWrite("update", "Account", {"id": 1})
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", instruction.row)["id"] = 2
+    assert wi.deserialize(wi.serialize(instruction)) == instruction
+
+
+_WALLET = _MODELS["wallet"]
+_TWIN = _MODELS["write-transparency-layout-twin-columns"]
+
+
+def _target(
+    mutation: wi.TargetMutation, entity: str, row: Mapping[str, object], **kwargs: Any
+) -> wi.TargetWrite:
+    return wi.TargetWrite(mutation, entity, row, **kwargs)
+
+
+def _prepare_wire_target(
+    instruction: wi.TargetWrite, model: AcceptedMetamodel
+) -> wi.PreparedTargetWrite:
+    return wi.prepare_wire_write(instruction, model, authored_members=instruction.row.keys())
+
+
+_BOTH_PRODUCERS = pytest.mark.parametrize(
+    "prepare",
+    [
+        pytest.param(wi.prepare_typed_write, id="typed"),
+        pytest.param(_prepare_wire_target, id="wire"),
+    ],
+)
+
+
+@_BOTH_PRODUCERS
+def test_a_target_patch_states_its_key_its_assignments_and_its_callers_version(
+    prepare: Any,
+) -> None:
+    prepared = prepare(
+        _target("update", "Account", {"id": 1, "owner": "Bo"}, if_version=3), _ACCOUNT
+    )
+    assert isinstance(prepared, wi.PreparedTargetWrite)
+    assert (prepared.replaces, prepared.assigns) == (False, True)
+    assert prepared.expectation == wi.ExpectedVersion(3)
+    assert dict(prepared.row) == {"id": 1, "owner": "Bo"}
+    keyed = wi.target_instruction(prepared)
+    assert (keyed.mutation, keyed.target, keyed.rows) == (
+        "update",
+        prepared.target,
+        (prepared.row,),
+    )
+
+
+@_BOTH_PRODUCERS
+def test_an_identity_only_patch_is_prepared_as_the_empty_write(prepare: Any) -> None:
+    prepared = prepare(_target("update", "Account", {"id": 1}, if_version=3), _ACCOUNT)
+    assert (prepared.replaces, prepared.assigns) == (False, False)
+
+
+@_BOTH_PRODUCERS
+def test_a_replacement_writes_every_omitted_nullable_member_empty(prepare: Any) -> None:
+    prepared = prepare(_target("replace", "WriteTwinItem", {"id": 1}), _TWIN)
+    assert (prepared.replaces, prepared.assigns) == (True, True)
+    assert prepared.expectation is UNVERSIONED
+    assert dict(prepared.row) == {"id": 1, "label": None, "spec": None, "marks": ()}
+
+
+@_BOTH_PRODUCERS
+def test_a_replacement_refuses_an_omitted_required_value_object(prepare: Any) -> None:
+    with pytest.raises(WriteRejectedError, match=r"destination.*absent") as refused:
+        prepare(_target("replace", "Shipment", {"id": 5, "name": "Express"}), _MODELS["shipment"])
+    assert refused.value.rule == "write-required-value-object-missing"
+
+
+@_BOTH_PRODUCERS
+def test_a_replacement_refuses_an_omitted_required_member(prepare: Any) -> None:
+    with pytest.raises(WriteRejectedError, match=r"balance.*absent") as refused:
+        prepare(_target("replace", "Wallet", {"id": 1, "owner": "Ada"}), _WALLET)
+    assert refused.value.rule == "write-required-attribute-missing"
+
+
+@_BOTH_PRODUCERS
+@pytest.mark.parametrize(
+    "instruction, match",
+    [
+        pytest.param(
+            _target("update", "Account", {"id": 1, "owner": "Bo"}, if_version=3, until=_I2),
+            "takes no until",
+            id="non-temporal-until",
+        ),
+        pytest.param(
+            _target("update", "Account", {"id": 1, "owner": "Bo"}, if_version=3, valid_from=_I1),
+            "takes no valid_from",
+            id="non-temporal-valid-from",
+        ),
+        pytest.param(
+            _target("update", "Account", {"id": 1}, if_version=3, until=_I2),
+            "takes no until",
+            id="non-temporal-until-on-an-empty-patch",
+        ),
+        pytest.param(
+            _target("update", "Account", {"id": 1, "owner": "Bo"}, if_version=1, if_tx_start=_I1),
+            "states both if_version and if_tx_start",
+            id="both-revisions",
+        ),
+        pytest.param(
+            _target("update", "Account", {"id": 1, "owner": "Bo"}, if_tx_start=_I1),
+            "takes if_version, not if_tx_start",
+            id="versioned-takes-a-version",
+        ),
+        pytest.param(
+            _target("update", "Account", {"id": 1, "owner": "Bo"}),
+            "requires if_version",
+            id="versioned-missing-version",
+        ),
+        pytest.param(
+            _target("update", "Account", {"id": 1, "owner": "Bo"}, if_version=cast("int", "3")),
+            "integer if_version",
+            id="versioned-version-of-the-wrong-type",
+        ),
+        pytest.param(
+            _target("update", "Account", {"id": 1, "owner": "Bo"}, if_version=True),
+            "integer if_version",
+            id="versioned-boolean-version",
+        ),
+        pytest.param(
+            _target("update", "Balance", {"id": 1, "acctNum": "D"}, if_version=3),
+            "takes if_tx_start, not if_version",
+            id="temporal-takes-a-start",
+        ),
+        pytest.param(
+            _target("update", "Balance", {"id": 1, "acctNum": "D"}),
+            "requires if_tx_start",
+            id="temporal-missing-start",
+        ),
+        pytest.param(
+            _target("update", "Wallet", {"id": 1, "owner": "Bo"}, if_version=1),
+            "takes no revision argument",
+            id="unversioned-version",
+        ),
+        pytest.param(
+            _target("update", "Wallet", {"id": 1, "owner": "Bo"}, if_tx_start=_I1),
+            "takes no revision argument",
+            id="unversioned-start",
+        ),
+        pytest.param(
+            _target("update", "Account", {"balance": 5}, if_version=3),
+            "names the object it writes by its primary key",
+            id="no-key",
+        ),
+        pytest.param(
+            _target("update", "Account", {"id": 1, "nope": 5}, if_version=3),
+            "undeclared member",
+            id="undeclared-member",
+        ),
+    ],
+)
+def test_target_preparation_refuses_the_first_fault_in_its_fixed_order(
+    prepare: Any, instruction: wi.TargetWrite, match: str
+) -> None:
+    model = {"Account": _ACCOUNT, "Balance": _BALANCE, "Wallet": _WALLET}[instruction.entity]
+    with pytest.raises(wi.WriteInstructionError, match=match):
+        prepare(instruction, model)
+
+
+@_BOTH_PRODUCERS
+def test_a_missing_revision_outranks_an_undeclared_member_and_a_bad_window_both(
+    prepare: Any,
+) -> None:
+    with pytest.raises(wi.WriteInstructionError, match="requires if_version"):
+        prepare(_target("update", "Account", {"id": 1, "nope": 5}), _ACCOUNT)
+    with pytest.raises(wi.WriteInstructionError, match="takes no until"):
+        prepare(_target("update", "Account", {"id": 1, "nope": 5}, until=_I2), _ACCOUNT)
+
+
+@_BOTH_PRODUCERS
+def test_a_target_write_never_assigns_a_framework_owned_member(prepare: Any) -> None:
+    with pytest.raises(wi.WriteInstructionError, match="framework-owned"):
+        prepare(_target("update", "Account", {"id": 1, "version": 9}, if_version=3), _ACCOUNT)
+
+
+@_BOTH_PRODUCERS
+def test_a_temporal_targets_revision_is_its_observed_start(prepare: Any) -> None:
+    prepared = prepare(
+        _target("update", "Balance", {"id": 1, "acctNum": "D"}, if_tx_start=_I1), _BALANCE
+    )
+    assert prepared.expectation == wi.ExpectedTxStart(_I1)
+    with pytest.raises(InstantError):
+        prepare(
+            _target("update", "Balance", {"id": 1}, if_tx_start=cast("dt.datetime", _B1)),
+            _BALANCE,
+        )
+    with pytest.raises(wi.WriteInstructionError, match="requires valid_from"):
+        prepare(_target("update", "Position", {"id": 1}, if_tx_start=_I1), _POSITION)
+
+
+def test_a_serialized_target_write_is_prepared_by_the_one_wire_producer() -> None:
+    instruction = wi.deserialize(
+        {
+            "mutation": "update",
+            "entity": "Account",
+            "row": {"id": 1, "balance": "5.00"},
+            "ifVersion": 2,
+        }
+    )
+    prepared = wi.prepare_wire_write(instruction, _ACCOUNT)
+    assert isinstance(prepared, wi.PreparedTargetWrite)
+    assert dict(prepared.row) == {"id": 1, "balance": Decimal("5.00")}
+    with pytest.raises(wi.InstructionRejectedError) as refused:
+        wi.prepare_wire_write(
+            wi.deserialize(
+                {
+                    "mutation": "update",
+                    "entity": "Account",
+                    "row": {"id": 1, "balance": 5},
+                    "ifVersion": 2,
+                }
+            ),
+            _ACCOUNT,
+        )
+    assert refused.value.rule.startswith("neutral-literal-")
 
 
 def test_predicate_rejects_a_malformed_embedded_predicate() -> None:

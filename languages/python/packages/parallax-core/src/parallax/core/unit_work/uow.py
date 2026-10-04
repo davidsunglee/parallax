@@ -22,12 +22,16 @@ from parallax.core.unit_work.claims import (
     keyed_intent,
 )
 from parallax.core.unit_work.clock import Clock, TransactionInstant
+from parallax.core.unit_work.effects import WritePreconditionError
 from parallax.core.unit_work.instructions import (
     DESTRUCTIVE_MUTATIONS,
     INSERT_MUTATIONS,
+    ExpectedVersion,
     KeyedMutation,
     PreparedKeyedWrite,
+    PreparedTargetWrite,
     PreparedTemporalBounds,
+    WriteInstructionError,
 )
 from parallax.core.unit_work.materialized import (
     BufferItem,
@@ -37,6 +41,7 @@ from parallax.core.unit_work.materialized import (
     ObservedKeyedWrite,
     buffered_instruction,
     group_state_keys,
+    target_write,
 )
 from parallax.core.unit_work.plan import (
     BoundRange,
@@ -72,6 +77,8 @@ __all__ = [
     "BufferOutcome",
     "Concurrency",
     "RollbackOnlyError",
+    "StoredTarget",
+    "TargetAcquisition",
     "TransactionSettings",
     "UnitOfWork",
     "UnitOfWorkError",
@@ -160,6 +167,27 @@ class WriteBatchOpening(Protocol):
     def __call__(self, trigger: WriteBatchTrigger, /) -> WriteBatchScope: ...
 
 
+@dataclass(frozen=True, slots=True)
+class StoredTarget:
+    """What an internal acquisition found of the stored state a caller-addressed
+    write starts from: its version, where its family has one."""
+
+    version: int | None = None
+
+
+class TargetAcquisition(Protocol):
+    """The composition-layer capability that reads the stored state a
+    caller-addressed write of ``key`` starts from, under the shared row lock,
+    on the transaction's own connection.
+
+    It executes no pending write and publishes nothing to any caller: what it
+    answers is participation and the stored revision, and ``None`` where no
+    current row stands.
+    """
+
+    def __call__(self, target: EntityMetadata, key: ObjectKey, /) -> StoredTarget | None: ...
+
+
 class UnitOfWorkError(RuntimeError):
     """A unit of work was driven into an illegal state."""
 
@@ -182,15 +210,18 @@ type WriteEvidenceErrorCode = Literal[
     "write-evidence-unavailable",
     "write-evidence-consumed",
     "write-evidence-already-claimed",
+    "write-evidence-inserted",
 ]
 """The write-evidence refusals a keyed verb raises.
 
-The three partition what can be wrong with a source's evidence at the verb:
-there is none the target Entity's Effective Concurrency Strategy can use, the
-evidence there is has been spent by a successful flush, or a write already
+The first three partition what can be wrong with a source's evidence at the
+verb: there is none the target Entity's Effective Concurrency Strategy can use,
+the evidence there is has been spent by a successful flush, or a write already
 buffered in this unit of work claimed the scope this one settles against, for an
-intent this one cannot join. A conflict the database discovers later is a
-different thing entirely and keeps its own flush-time classification.
+intent this one cannot join. The fourth refuses a caller's own condition on an
+object this attempt inserted, which only that insertion's source or a read
+addresses. A conflict the database discovers later is a different thing
+entirely and keeps its own flush-time classification.
 """
 
 WRITE_EVIDENCE_CODES: Final[frozenset[str]] = frozenset(
@@ -198,6 +229,7 @@ WRITE_EVIDENCE_CODES: Final[frozenset[str]] = frozenset(
         "write-evidence-unavailable",
         "write-evidence-consumed",
         "write-evidence-already-claimed",
+        "write-evidence-inserted",
     }
 )
 """The complete set of codes :class:`WriteEvidenceError` carries."""
@@ -271,7 +303,8 @@ class _TargetRecord:
     be stored — once a flush executes an insertion, its own anchor, since what
     an earlier admission opened was removed before it — and ``advanced_from``
     the version the last completed update of a versioned row advanced from. A
-    record lasts until the attempt ends unless nothing of it remains.
+    record lasts until the attempt ends, whatever became of the insertion: it
+    is also the fact that this attempt admitted one.
     """
 
     __slots__ = (
@@ -384,14 +417,11 @@ class _TargetWriteState:
         return identity
 
     def cancel_insert(self, target: ObjectKey) -> None:
+        # The record stays: the attempt admitted an insertion of the object
+        # whatever became of it, and a caller-addressed write consults that.
         record = self._records[target]
-        if record.stored:
-            # An earlier insertion's coverage is still stored, and its pending
-            # removal is what the cancelled insert depended on.
-            record.identity = None
-            record.pending_insert = False
-            return
-        self._forget(target)
+        record.identity = None
+        record.pending_insert = False
 
     def max_end(self, record: _TargetRecord) -> object:
         """The latest Valid-Time end among the owned rows ``record``'s
@@ -421,11 +451,8 @@ class _TargetWriteState:
             record.row = False
             if not record.pending_insert:
                 record.identity = None
-        for target in [target for target, record in records.items() if record.pending_insert]:
-            record = records[target]
-            if record.opener is None:
-                self._forget(target)
-            else:
+        for record in records.values():
+            if record.pending_insert:
                 record.pending_insert = False
                 record.row = True
                 record.floor = record.bounds.valid_from
@@ -464,11 +491,6 @@ class _TargetWriteState:
         if record is not None and record.identity is not None:
             self._tags[endpoint] = record.identity
             record.live += 1
-
-    def _forget(self, target: ObjectKey) -> None:
-        record = self._records.pop(target)
-        if record.bitemporal:
-            del self._addresses[_address(target)]
 
     def clear(self) -> None:
         self._records.clear()
@@ -679,6 +701,82 @@ class UnitOfWork:
             return BufferOutcome.CANCELLED_PENDING_INSERT
         return BufferOutcome.BUFFERED
 
+    def buffer_target(self, prepared: PreparedTargetWrite, *, acquire: TargetAcquisition) -> None:
+        """Admit a caller-addressed write and buffer it — all of it, or nothing.
+
+        A patch that assigns no member is the empty write: it is dropped here,
+        having been validated, before any condition, participation, or other
+        pending work is consulted. Every other target write is refused, with
+        nothing buffered and the pending writes as they were, where:
+
+        * this attempt admitted an insertion of the object, before or after a
+          flush (``write-evidence-inserted``) — such an object is written
+          through its insertion's source or a fresh read until commit;
+        * it cannot join the object's pending writes
+          (``write-evidence-already-claimed``) — another write of the object
+          stands at another stated revision or observed state, or the write it
+          meets at its own is a destruction it would undo; or
+        * under the Locking strategy, the stored state does not match the
+          caller's stated revision (:class:`WritePreconditionError`).
+
+        Under Locking, the participation the write needs is taken from a write
+        of the same state already pending, else from a live read of exactly that
+        state this attempt holds, else by ``acquire`` — which reads the stored
+        row under the shared lock and executes nothing pending. The Optimistic
+        strategy reads nothing: the caller's revision becomes the write's gate.
+        """
+        self._ensure_open()
+        if not prepared.replaces and not prepared.assigns:
+            return
+        target = prepared.target
+        if self._pending.is_temporal_entity(target):
+            raise WriteInstructionError(
+                f"{target.identity.canonical}: caller-addressed writes of a temporal target are "
+                "not supported yet; write through a read of the row"
+            )
+        item = target_write(prepared, inheritance.view(self.meta))
+        scope = item.scope
+        key = claimed_object(scope)
+        if self._targets.record(key) is not None:
+            raise WriteEvidenceError(
+                code="write-evidence-inserted",
+                message=(
+                    f"{target.identity.canonical}: this transaction inserted the object this write "
+                    "addresses, so no caller's revision describes it; until the transaction "
+                    "commits, write it through the value the insert took or a read of it"
+                ),
+                object_key=key,
+            )
+        expectation = prepared.expectation
+        if not self._pending.admits_target(item, key) or self._claims.claims_object(key):
+            raise _already_claimed(target, key)
+        policy = self._evidence_policy_for(target.identity)
+        if policy.effective_strategy(self.settings.concurrency) == "locking" and not (
+            self._pending.holds_scope(scope) or self._participates(scope)
+        ):
+            stored = acquire(target, key)
+            if isinstance(expectation, ExpectedVersion) and (
+                stored is None or stored.version != expectation.version
+            ):
+                raise WritePreconditionError(
+                    target.identity, dict(key.primary_key), expectation.version
+                )
+        self._pending.add(item, key)
+
+    def _participates(self, scope: VersionedStateKey | ObjectKey) -> bool:
+        """Whether a live read of exactly ``scope`` this attempt holds — under
+        its shared lock, unspent, and describing the stored state — already
+        proves it."""
+        if not isinstance(scope, VersionedStateKey):
+            return False
+        held = self._observations.get(scope)
+        return (
+            held is not None
+            and held.participation is self._participation
+            and not held.consumed
+            and not held.invalidated
+        )
+
     def _authorized(self, item: InsertionKeyedWrite) -> InsertionKeyedWrite:
         """``item`` checked against the authority it carries, and given the
         claim scope its stored Non-Temporal row takes, or refused."""
@@ -793,8 +891,10 @@ class UnitOfWork:
         if scope is None or keyed_intent(item.instruction) is None:
             return
         object_scope = scope if isinstance(scope, ObjectKey) else scope.object
+        conditioned = self._pending.target_scope(object_scope)
         if (
             self._claims.held(scope) is None
+            and conditioned in (None, scope)
             and self._pending.verdict(item, object_scope) != "incompatible"
         ):
             return

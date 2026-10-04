@@ -2,10 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/write-instruction.schema.json",
   "title": "Parallax Write Instruction (m-unit-work)",
-  "description": "The canonical, language-neutral write-instruction vocabulary a unit of work buffers and flushes (m-unit-work) — the write-side analogue of `object-query.schema.json`. A write from any frontend lowers into exactly one keyed or predicate instruction. Valid-Time input is spelled `validFrom`; a bounded `*Until` operation additionally carries `until`, so its window is `[validFrom, until)`. The finite Transaction-Time instant is Clock context supplied at flush and is not an instruction member. The framework-owned optimistic observation is likewise flush-time context: `observedVersion`, `observedTxStart` and `observedValidStart` are forbidden on durable rows. There are no business/processing aliases. SERDE ROUND-TRIP CONTRACT: a conforming implementation MUST round-trip every instruction through this canonical form losslessly — `serialize(deserialize(x)) == x` (JSON and YAML).",
+  "description": "The canonical, language-neutral write-instruction vocabulary a unit of work buffers and flushes (m-unit-work) — the write-side analogue of `object-query.schema.json`. A write from any frontend lowers into exactly one keyed, predicate, or caller-addressed (target) instruction. Valid-Time input is spelled `validFrom`; a bounded `*Until` operation additionally carries `until`, so its window is `[validFrom, until)`. The finite Transaction-Time instant is Clock context supplied at flush and is not an instruction member. The framework-owned optimistic observation is likewise flush-time context: `observedVersion`, `observedTxStart` and `observedValidStart` are forbidden on durable rows. There are no business/processing aliases. SERDE ROUND-TRIP CONTRACT: a conforming implementation MUST round-trip every instruction through this canonical form losslessly — `serialize(deserialize(x)) == x` (JSON and YAML).",
   "oneOf": [
     { "$ref": "#/$defs/keyedWriteInstruction" },
-    { "$ref": "#/$defs/predicateWriteInstruction" }
+    { "$ref": "#/$defs/predicateWriteInstruction" },
+    { "$ref": "#/$defs/targetWriteInstruction" }
   ],
   "$defs": {
     "keyedWriteInstruction": {
@@ -79,6 +80,48 @@
           "description": "A bounded predicate write is over `[validFrom, until)`, so it must carry both Valid-Time bounds; unbounded forms must omit `until`.",
           "if": {
             "properties": { "mutation": { "enum": ["updateUntil", "terminateUntil"] } },
+            "required": ["mutation"]
+          },
+          "then": { "required": ["validFrom", "until"] },
+          "else": { "not": { "required": ["until"] } }
+        }
+      ]
+    },
+    "targetWriteInstruction": {
+      "description": "A caller-addressed (target) write: a sparse patch (`update` / `updateUntil`) or a complete replacement (`replace` / `replaceUntil`) of the one existing `entity` object its `row` names by primary key, under the starting revision its caller states. The row's primary-key members address the object and are no assignment; a patch's other members are its assignments, and a replacement's are the object's complete writable state. The revision is a member of its own, never a row member: `ifVersion` for a versioned target, `ifTxStart` — the observed milestone's Transaction-Time start, never the writing transaction's own instant — for a temporal one, and neither for an unversioned target. Which revision a target takes, and whether it requires `validFrom`, depends on the model and is judged when the write is prepared.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mutation", "entity", "row"],
+      "properties": {
+        "mutation": { "$ref": "#/$defs/targetMutation" },
+        "entity": { "$ref": "#/$defs/entityName" },
+        "row": { "$ref": "#/$defs/writeRow" },
+        "ifVersion": {
+          "description": "The version a versioned target's caller last observed the object at.",
+          "type": "integer"
+        },
+        "ifTxStart": {
+          "description": "The Transaction-Time start of the milestone a temporal target's caller last observed.",
+          "$ref": "#/$defs/instant"
+        },
+        "validFrom": {
+          "description": "The Valid-Time instant a Bitemporal target write starts at (`from_z`), which need not be the stored rectangle's own start. Required on every bounded `*Until` write.",
+          "$ref": "#/$defs/instant"
+        },
+        "until": {
+          "description": "The exclusive Valid-Time upper bound of a bounded target write (`thru_z`), always paired with `validFrom`.",
+          "$ref": "#/$defs/instant"
+        }
+      },
+      "not": {
+        "description": "A target has one revision kind, so a write states at most one revision.",
+        "required": ["ifVersion", "ifTxStart"]
+      },
+      "allOf": [
+        {
+          "description": "A bounded target write is over `[validFrom, until)`, so it must carry both Valid-Time bounds; unbounded forms must omit `until`.",
+          "if": {
+            "properties": { "mutation": { "enum": ["updateUntil", "replaceUntil"] } },
             "required": ["mutation"]
           },
           "then": { "required": ["validFrom", "until"] },
@@ -168,6 +211,10 @@
         "updateUntil",
         "terminateUntil"
       ]
+    },
+    "targetMutation": {
+      "description": "The caller-addressed (target) write mutation surface: the sparse patch `update` and the complete `replace`, each with its bounded `*Until` form.",
+      "enum": ["update", "updateUntil", "replace", "replaceUntil"]
     },
     "predicateMutation": {
       "description": "The predicate-selected (set-based) write mutation surface: the update / delete / terminate verbs plus the bounded `updateUntil` / `terminateUntil` (a set-based write has no `insert` form — there is no predicate to select rows that do not yet exist). `compatibility-case.schema.json`'s `predicateWrite` references this enum rather than redefining it.",

@@ -73,6 +73,10 @@ to inject the conflict type into the retry classifier, and **MUST NOT** take a
 opt-in above is genuine caller policy and stays; wiring whose only purpose was
 carrying a type across a module boundary does not.
 
+The Write Precondition Error a caller-addressed write raises (`m-unit-work`) is
+never in the retriable set, opted in or not, and neither is a doom it caused: a
+retry re-states the same caller revision against the same stored row.
+
 ## What the suite pins down
 
 The observable loop-mechanics branches (a conflict surfacing without the opt-in, an
