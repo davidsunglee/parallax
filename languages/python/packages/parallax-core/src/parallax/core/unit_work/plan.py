@@ -167,9 +167,10 @@ class ExecutionUnit:
     A unit spans the plan's steps up to the exclusive offset ``end``, after the
     previous unit's. Its facts are applied only once every one of its steps has
     succeeded, and before any later unit executes: the claim it spends, the
-    observed states it changed — the claim's own state among them — and the
-    owned rows it removed and opened. Removals are retired before openings are
-    registered, so a row removed and reopened at one address remains owned.
+    observed states it changed — the claim's own state among them whenever the
+    unit has a step — and the owned rows it removed and opened. Removals are
+    retired before openings are registered, so a row removed and reopened at one
+    address remains owned.
     """
 
     end: int

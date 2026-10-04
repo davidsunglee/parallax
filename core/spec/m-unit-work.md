@@ -381,10 +381,7 @@ finalize(
         buffered_writes:      BufferedWrites,
         ownership:            AttemptOwnership,
     )
-) -> WritePlanningResult(
-        plan:   WritePlan,
-        claims: RetainedObservations,
-     )
+) -> WritePlanningResult(plan: WritePlan)
 ```
 
 **Attempt Ownership** is a read-only view of the current temporal rows the
@@ -392,16 +389,15 @@ attempt's own successful execution units opened (*Rows the attempt opened*,
 below). Planning reads it to decide what a temporal mutation does to its
 predecessor; it never changes it.
 
-A **Write Planning Result** carries the execution-ordered Write Plan together
-with the deduplicated retained claims its **surviving** writes settled against,
-in first-settlement order. Work the earlier stages retired — folded into a
-pending insert, cancelled against one, or eliminated as a known no-op —
-contributes no claim, so what the result names is exactly what a successful
-flush spends. Each claim appears **once**, because consumption records a fact
-about one observed state rather than about one statement.
+A **Write Planning Result** carries the execution-ordered Write Plan, whose
+execution units name the retained claims its **surviving** writes settled
+against. Work the earlier stages retired — folded into a pending insert,
+cancelled against one, or eliminated as a known no-op — contributes no claim,
+so what the units name is exactly what successful execution spends. Spending is
+idempotent, because consumption records a fact about one observed state rather
+than about one statement; a claim several units name is spent once.
 
-A caller that holds no evidence to spend reads the plan off that same result;
-no second planning operation exists to project it.
+No second planning operation exists to project the plan.
 
 A caller **MUST NOT** be required — or able — to sequence coalescing,
 cancellation, no-op elimination, batching, dependency ordering, Transaction

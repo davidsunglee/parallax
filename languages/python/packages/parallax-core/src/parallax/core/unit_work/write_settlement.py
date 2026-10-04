@@ -106,7 +106,6 @@ from parallax.core.unit_work.planned import (
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.core.unit_work.planner import ObservedStateKey
-from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
     ActorIdentity,
     AuditStrategy,
@@ -168,29 +167,16 @@ class WritePlanningError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class WritePlanningResult:
-    """One flush's finalized plan, and the claims its SURVIVING writes settled
-    against.
+    """One flush's finalized plan.
 
-    The two travel together because only settlement knows both: the plan says
-    what will execute, and ``claims`` says which retained evidence that execution
-    uses — the claims carried by the buffered writes that reached settlement, in
-    settlement order. Work the earlier stages retired (folded into a pending
-    insert, cancelled against one, eliminated as a known no-op) contributes none,
-    which is what keeps a batch's surviving write from spending a claim no
-    statement of it will carry (`m-unit-work` "A successful flush consumes").
-
-    Each claim appears ONCE, by identity, at the position its first surviving
-    carrier settled. Several writes of one flush may settle against one observed
-    state — two edits of one source value are two writes holding one claim — and
-    what consumption records is a fact about that observed state, not about a
-    statement, so a repeated entry would spend one piece of evidence twice.
-
-    Spending them is the caller's, and only after the executor returns: a plan
-    that never ran spends nothing.
+    Each of its execution units carries the claim its SURVIVING write settled
+    against. Work the earlier stages retired (folded into a pending insert,
+    cancelled against one, eliminated as a known no-op) reaches no unit, which
+    is what keeps a batch's surviving write from spending a claim no statement
+    of it will carry (`m-unit-work` "A successful execution unit consumes").
     """
 
     plan: WritePlan
-    claims: tuple[RetainedObservation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,11 +360,8 @@ class WriteSettlement:
     ) -> WritePlanningResult:
         """The whole ordered sequence as one Write Planning Result.
 
-        One traversal answers both halves, so they cannot disagree about which
-        writes survived: an item the planner's earlier stages retired never
-        reaches this loop, and therefore never contributes the evidence it was
-        holding. Claim collection is identity-keyed, so two surviving carriers
-        holding one claim answer it once.
+        An item the planner's earlier stages retired never reaches this loop,
+        and therefore no execution unit carries the evidence it was holding.
 
         Packing is a property of adjacency, which is why the whole sequence
         crosses in one call: a run of eagerly settled steps stays one eager
@@ -410,7 +393,6 @@ class WriteSettlement:
         """
         segments: list[StepSegment] = []
         pending: list[PlannedStep] = []
-        claims: dict[RetainedObservation, None] = {}
         units: list[ExecutionUnit] = []
         count = 0
 
@@ -449,8 +431,6 @@ class WriteSettlement:
                     )
                 )
             count += len(settled.steps)
-            if claim is not None:
-                claims.setdefault(claim, None)
             units.append(
                 ExecutionUnit(
                     end=count, claim=claim, removed=settled.removed, opened=settled.opened
@@ -458,7 +438,7 @@ class WriteSettlement:
             )
         flush_pending()
         return WritePlanningResult(
-            WritePlan(steps=PlannedSteps(tuple(segments)), units=tuple(units)), tuple(claims)
+            WritePlan(steps=PlannedSteps(tuple(segments)), units=tuple(units))
         )
 
     # Stages 5, 6, 7: validate the observation the item arrived carrying, #
@@ -1042,7 +1022,6 @@ class _MaterializedNonTemporalSegment:
         return len(self.versions)
 
     def unit(self, end: int) -> ExecutionUnit:
-        """The execution unit this segment's steps form, ending at ``end``."""
         return ExecutionUnit(end=end, changed=self.changed)
 
     def step(self, index: int) -> PlannedStep:
@@ -1149,7 +1128,6 @@ class _MaterializedTemporalSegment:
         return self._laid_out_step(row_index, row, sub_step)
 
     def unit(self, end: int) -> ExecutionUnit:
-        """The execution unit this segment's steps form, ending at ``end``."""
         return ExecutionUnit(
             end=end,
             changed=self.changed,
@@ -1209,7 +1187,6 @@ class _MaterializedTemporalSegment:
         )
 
     def opened_positions(self, row_index: int) -> tuple[int, ...]:
-        """The successor positions the steps of row ``row_index`` open."""
         layout = self.layout
         row = None if layout is None else layout.rows[row_index]
         if row is None:
@@ -1217,13 +1194,11 @@ class _MaterializedTemporalSegment:
         return row.opened
 
     def removes(self, row_index: int) -> bool:
-        """Whether the steps of row ``row_index`` remove an owned row."""
         layout = self.layout
         row = None if layout is None else layout.rows[row_index]
         return row is not None and row.owned and row.kept is None
 
     def endpoint(self, row_index: int) -> OwnedEndpoint:
-        """The complete physical address of selected row ``row_index``."""
         evidence = self.evidence
         valid_end_position = self.valid_end_position
         return OwnedEndpoint(
@@ -1353,8 +1328,6 @@ class _MaterializedTemporalSegment:
 
 @dataclass(frozen=True, slots=True)
 class _GroupOpenings:
-    """Every row a temporal group's steps open, read on demand."""
-
     segment: _MaterializedTemporalSegment
 
     def __iter__(self) -> Iterator[OwnedEndpoint]:
@@ -1366,8 +1339,6 @@ class _GroupOpenings:
 
 @dataclass(frozen=True, slots=True)
 class _GroupRemovals:
-    """Every owned row a temporal group's steps remove, read on demand."""
-
     segment: _MaterializedTemporalSegment
 
     def __iter__(self) -> Iterator[OwnedEndpoint]:
@@ -1523,8 +1494,6 @@ def _dispose(
 
 
 def _kept(facts: _TemporalFacts, own: OwnedEndpoint, pieces: Sequence[PlannedInsert]) -> int | None:
-    """The position of the one piece that keeps the owned row's complete
-    physical address, or ``None`` unless exactly one does."""
     kept = [
         position
         for position, piece in enumerate(pieces)
@@ -1573,11 +1542,6 @@ def _revision_assignments(
 
 
 def _openings(facts: _TemporalFacts, inserts: Sequence[PlannedInsert]) -> tuple[OwnedEndpoint, ...]:
-    """The physical address of every row ``inserts`` open whose key is known.
-
-    A row whose key the database allocates has no address this attempt can
-    name before it executes, so it is opened without being recorded.
-    """
     openings: list[OwnedEndpoint] = []
     for insert in inserts:
         for entry in insert.entries:
@@ -1588,10 +1552,10 @@ def _openings(facts: _TemporalFacts, inserts: Sequence[PlannedInsert]) -> tuple[
 
 
 def _entry_endpoint(facts: _TemporalFacts, entry: InsertEntry) -> OwnedEndpoint | None:
-    """The complete physical address of the row ``entry`` opens, or ``None``
-    when its key is allocated by the database."""
     attributes = entry.row.attributes
     value = attributes.get(facts.view.primary_key.identity)
+    # A key the database allocates has no address this attempt can name before
+    # the insert executes, so the row it opens is not recorded as owned.
     if value is None or isinstance(value, MaxPlusOne):
         return None
     shape = facts.shape
@@ -1602,12 +1566,10 @@ def _entry_endpoint(facts: _TemporalFacts, entry: InsertEntry) -> OwnedEndpoint 
 
 
 def _target_endpoint(facts: _TemporalFacts, target: MilestoneTarget) -> OwnedEndpoint:
-    """The complete physical address a Milestone Target names."""
     return OwnedEndpoint(facts.entity.identity, target.key_values, target.end_values)
 
 
 def _bitemporal_ends(valid_end: object) -> tuple[TemporalUpperBound, ...]:
-    """A current Bitemporal row's ends, from its Valid-Time end cell."""
     if _is_open(valid_end):
         return OPEN_BITEMPORAL_ENDS
     return (Finite(instant=valid_end), INFINITY)

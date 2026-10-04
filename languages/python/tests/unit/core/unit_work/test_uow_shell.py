@@ -397,12 +397,10 @@ def test_a_carrier_refuses_a_claim_naming_other_evidence() -> None:
 
 
 def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
-    # Consumption records a fact about an OBSERVED STATE, so a flush spends one
-    # claim once however many of its buffered writes settled against it. Two
-    # edits of a single source value are exactly that shape, and Observed-State
-    # Coalescing is what makes them one write: the assignments merge in authored
-    # order, the later value wins the member both name, and the merged carrier
-    # keeps the identical retained observation both held.
+    # Two edits of a single source value hold one claim, and Observed-State
+    # Coalescing makes them one write: the assignments merge in authored order,
+    # the later value wins the member both name, and the merged write's one
+    # execution unit keeps the identical retained observation both held.
     state = VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7)
     retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
     carriers = [
@@ -426,7 +424,7 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
     (step,) = finalized.plan.steps
     assert isinstance(step, PlannedUpdate)
     assert _member_value(step.assignments.attributes, "balance") == Decimal("150.00")
-    assert finalized.claims == (retained,)
+    assert [unit.claim for unit in finalized.plan.units] == [retained]
 
 
 def test_a_predicate_write_cannot_be_buffered_with_one_observation() -> None:
@@ -1216,3 +1214,59 @@ def test_evidence_built_from_a_read_that_predates_an_own_change_is_invalidated()
         assert uow.retain(fresh_observation(1)) is fresh
 
     _run(body, meta=_BALANCE)
+
+
+_POSITION = _MODELS["position"]
+_JAN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_DEC = dt.datetime(2024, 12, 1, tzinfo=dt.UTC)
+
+
+def test_a_unit_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fresh() -> None:
+    # Terminating a rectangle the attempt opened from where it already ends
+    # keeps it whole at its own address, so its unit has no step.
+    members = {
+        "id": 1,
+        "acctNum": "A",
+        "value": Decimal("1.00"),
+        "txStart": _FIXED,
+        "txEnd": INFINITY,
+        "validStart": _JAN,
+        "validEnd": _DEC,
+    }
+    observation = TemporalObservation(predecessor=PredecessorRow(members))
+    shape = temporal_read.view(_POSITION).shape(corpus_object_key("Position", ("id", 1)).entity)
+    assert shape is not None
+    state = observed_state_key(corpus_object_key("Position", ("id", 1)), observation, shape)
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(
+            _prepared_keyed(
+                KeyedWrite(
+                    "insertUntil",
+                    "Position",
+                    ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
+                    valid_from=_JAN,
+                    until=_DEC,
+                ),
+                _POSITION,
+            )
+        )
+        uow.read(lambda: None)
+        read_at = uow.freshness
+        claim = uow.retain(RetainedObservation(state, observation, None))
+        uow.buffer(
+            buffered_write(
+                _prepared_keyed(
+                    KeyedWrite("terminate", "Position", ({"id": 1},), valid_from=_DEC), _POSITION
+                ),
+                claim,
+            )
+        )
+        uow.read(lambda: None)
+        assert claim.consumed and not claim.invalidated
+        late = uow.retain(RetainedObservation(state, observation, None), read_at=read_at)
+        assert not late.invalidated and not late.consumed
+
+    _run(body, meta=_POSITION, executor=recorder)
+    assert _step_kinds(recorder) == ["PlannedInsert"]

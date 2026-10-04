@@ -29,6 +29,7 @@ Transaction-Time instant is known in advance.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, Literal, cast
 
@@ -294,6 +295,30 @@ def _span_update(
         tx.wire.update_until(observed, {"amount": amount}, valid_from=valid_from, until=until)
 
 
+def _span_terminate(
+    tx: Transaction,
+    observed: Any,
+    representation: _Representation,
+    *,
+    valid_from: dt.datetime,
+    until: dt.datetime | None = None,
+) -> None:
+    if representation == "typed":
+        if until is None:
+            tx.terminate(observed, valid_from=valid_from)
+        else:
+            tx.terminate_until(observed, valid_from=valid_from, until=until)
+    elif until is None:
+        tx.wire.terminate(observed, valid_from=valid_from)
+    else:
+        tx.wire.terminate_until(observed, valid_from=valid_from, until=until)
+
+
+def _wire_target(entity: type[Any]) -> dict[str, object]:
+    name = _name(entity)
+    return {"entity": name, "predicate": {"eq": {"attr": f"{name}.id", "value": 1}}}
+
+
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
 @pytest.mark.parametrize("entity", [ColumnsLog, DocumentLog])
@@ -401,10 +426,7 @@ def test_terminating_a_suffix_the_attempt_opened_replaces_it_with_its_head(
         current = _span_find(tx, entity, representation, None)
         _span_update(tx, current, representation, 150, valid_from=_FEB)
         suffix = _span_find(tx, entity, representation, None)
-        if representation == "typed":
-            tx.terminate(suffix, valid_from=_MAR)
-        else:
-            tx.wire.terminate(suffix, valid_from=_MAR)
+        _span_terminate(tx, suffix, representation, valid_from=_MAR)
 
     db.transact(edit, concurrency=concurrency)
 
@@ -412,6 +434,164 @@ def test_terminating_a_suffix_the_attempt_opened_replaces_it_with_its_head(
         (_SEEDED, _ATTEMPT, _JAN, None, 100, _SPEC_DOCUMENT),
         (_ATTEMPT, None, _JAN, _FEB, 100, _SPEC_DOCUMENT),
         (_ATTEMPT, None, _FEB, _MAR, 150, _SPEC_DOCUMENT),
+    ]
+
+
+_ATTEMPT_HEAD = (_ATTEMPT, None, _JAN, _FEB, 100, _SPEC_DOCUMENT)
+_SUFFIX_GEOMETRIES: dict[
+    str, tuple[Callable[[Transaction, Any, _Representation], None], list[tuple[object, ...]]]
+] = {
+    "whole-value-change": (
+        lambda tx, suffix, representation: _span_update(
+            tx, suffix, representation, 175, valid_from=_FEB
+        ),
+        [_ATTEMPT_HEAD, (_ATTEMPT, None, _FEB, None, 175, _SPEC_DOCUMENT)],
+    ),
+    "bounded-termination": (
+        lambda tx, suffix, representation: _span_terminate(
+            tx, suffix, representation, valid_from=_MAR, until=_APR
+        ),
+        [
+            _ATTEMPT_HEAD,
+            (_ATTEMPT, None, _FEB, _MAR, 150, _SPEC_DOCUMENT),
+            (_ATTEMPT, None, _APR, None, 150, _SPEC_DOCUMENT),
+        ],
+    ),
+    "whole-termination": (
+        lambda tx, suffix, representation: _span_terminate(
+            tx, suffix, representation, valid_from=_FEB
+        ),
+        [_ATTEMPT_HEAD],
+    ),
+}
+
+
+@pytest.mark.parametrize("geometry", list(_SUFFIX_GEOMETRIES))
+@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_a_suffix_the_attempt_opened_takes_each_geometry_without_history_of_its_own(
+    profile_run: Any,
+    entity: type[Any],
+    representation: _Representation,
+    concurrency: _Concurrency,
+    geometry: str,
+) -> None:
+    write, opened = _SUFFIX_GEOMETRIES[geometry]
+    db = _attempt_db(profile_run)
+    db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
+
+    def edit(tx: Transaction) -> None:
+        current = _span_find(tx, entity, representation, None)
+        _span_update(tx, current, representation, 150, valid_from=_FEB)
+        write(tx, _span_find(tx, entity, representation, None), representation)
+
+    db.transact(edit, concurrency=concurrency)
+
+    assert _span_rows(profile_run, entity) == [
+        (_SEEDED, _ATTEMPT, _JAN, None, 100, _SPEC_DOCUMENT),
+        *opened,
+    ]
+
+
+@pytest.mark.parametrize("terminating", [False, True], ids=["update", "terminate"])
+@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_a_committed_rectangle_written_from_its_own_start_opens_no_empty_head(
+    profile_run: Any,
+    entity: type[Any],
+    representation: _Representation,
+    concurrency: _Concurrency,
+    terminating: bool,
+) -> None:
+    db = _attempt_db(profile_run)
+    db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
+
+    def edit(tx: Transaction) -> None:
+        current = _span_find(tx, entity, representation, None)
+        if terminating:
+            _span_terminate(tx, current, representation, valid_from=_JAN)
+        else:
+            _span_update(tx, current, representation, 150, valid_from=_JAN)
+
+    db.transact(edit, concurrency=concurrency)
+
+    closed = (_SEEDED, _ATTEMPT, _JAN, None, 100, _SPEC_DOCUMENT)
+    assert _span_rows(profile_run, entity) == (
+        [closed] if terminating else [closed, (_ATTEMPT, None, _JAN, None, 150, _SPEC_DOCUMENT)]
+    )
+
+
+@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_terminating_a_rectangle_the_attempt_opened_from_its_own_end_leaves_it_writable(
+    profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
+) -> None:
+    # The termination covers none of the rectangle, so it changes no stored
+    # state: a streamed root its page fetched before that termination is still
+    # the current state and can be written from.
+    db = _attempt_db(profile_run)
+
+    def seed(tx: Transaction) -> None:
+        for key in (1, 2):
+            tx.insert(entity(id=key, amount=100, spec=_SPEC), valid_from=_JAN)
+
+    db.transact(seed)
+    name = _name(entity)
+
+    def at_feb(tx: Transaction, key: int) -> Any:
+        if representation == "typed":
+            return tx.find(entity.where(entity.id == key).as_of(valid_time=_FEB)).result()
+        return tx.wire.find(
+            {
+                "target": name,
+                "predicate": {"eq": {"attr": f"{name}.id", "value": key}},
+                "temporal": {
+                    "transaction-time": {"asOf": "latest"},
+                    "valid-time": {"asOf": f"{_FEB:%Y-%m-%dT%H:%M:%S.%fZ}"},
+                },
+            }
+        ).result()
+
+    def edit(tx: Transaction) -> None:
+        _span_update(tx, at_feb(tx, 2), representation, 150, valid_from=_FEB, until=_MAR)
+        stream = (
+            tx.stream(entity.where(entity.id >= 1).as_of(valid_time=_FEB), batch_size=2)
+            if representation == "typed"
+            else tx.wire.stream(
+                {
+                    "target": name,
+                    "predicate": {"all": {}},
+                    "temporal": {
+                        "transaction-time": {"asOf": "latest"},
+                        "valid-time": {"asOf": f"{_FEB:%Y-%m-%dT%H:%M:%S.%fZ}"},
+                    },
+                    "orderBy": [{"attr": f"{name}.id", "direction": "asc"}],
+                },
+                batch_size=2,
+            )
+        )
+        with stream as roots:
+            for root in roots:
+                key: object = (
+                    cast("Any", root).id if representation == "typed" else cast("Any", root)["id"]
+                )
+                if key == 1:
+                    _span_terminate(tx, at_feb(tx, 2), representation, valid_from=_MAR)
+                    at_feb(tx, 2)
+                    continue
+                _span_update(tx, root, representation, 175, valid_from=_FEB, until=_MAR)
+
+    db.transact(edit, concurrency=concurrency)
+
+    assert _span_rows(profile_run, entity) == [
+        (_SEEDED, _ATTEMPT, _JAN, None, 100, _SPEC_DOCUMENT),
+        (_SEEDED, None, _JAN, None, 100, _SPEC_DOCUMENT),
+        (_ATTEMPT, None, _JAN, _FEB, 100, _SPEC_DOCUMENT),
+        (_ATTEMPT, None, _FEB, _MAR, 175, _SPEC_DOCUMENT),
+        (_ATTEMPT, None, _MAR, None, 100, _SPEC_DOCUMENT),
     ]
 
 
@@ -507,19 +687,24 @@ def test_a_row_committed_at_a_repeated_instant_is_closed_not_revised(
 
 
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
 @pytest.mark.parametrize("entity", [ColumnsLog, DocumentLog])
 def test_a_row_the_attempt_inserted_is_revised_in_place(
-    profile_run: Any, entity: type[Any], concurrency: _Concurrency
+    profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
 ) -> None:
     profile_run.reset(model_of(_ATTEMPT_MODEL), {})
     clock = ScriptedClock([_ATTEMPT])
     db = own_root(connect(profile_run.port, _ATTEMPT_MODEL, clock=clock)).using_database_login()
 
     def edit(tx: Transaction) -> None:
-        tx.insert(entity(id=1, label="inserted", spec=_SPEC))
         # The predicate write's resolving read flushes the insert first, so the
         # row it selects is one the attempt itself opened.
-        tx.update_where(entity.where(entity.id == 1), entity.label.set("edited"))
+        if representation == "typed":
+            tx.insert(entity(id=1, label="inserted", spec=_SPEC))
+            tx.update_where(entity.where(entity.id == 1), entity.label.set("edited"))
+        else:
+            tx.wire.insert(_name(entity), {"id": 1, "label": "inserted", "spec": _SPEC_DOCUMENT})
+            tx.wire.update_where(_wire_target(entity), {"label": "edited"})
 
     db.transact(edit, concurrency=concurrency)
 
@@ -527,20 +712,27 @@ def test_a_row_the_attempt_inserted_is_revised_in_place(
 
 
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
 @pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
 def test_a_predicate_write_revises_the_rectangles_the_attempt_opened(
-    profile_run: Any, entity: type[Any], concurrency: _Concurrency
+    profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
 ) -> None:
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
 
     def edit(tx: Transaction) -> None:
-        current = _span_find(tx, entity, "typed", None)
-        _span_update(tx, current, "typed", 150, valid_from=_FEB)
-        tx.update_where(entity.where(entity.id == 1), entity.amount.set(175), valid_from=_MAR)
-        tx.update_until_where(
-            entity.where(entity.id == 1), entity.amount.set(200), valid_from=_APR, until=_MAY
-        )
+        current = _span_find(tx, entity, representation, None)
+        _span_update(tx, current, representation, 150, valid_from=_FEB)
+        if representation == "typed":
+            tx.update_where(entity.where(entity.id == 1), entity.amount.set(175), valid_from=_MAR)
+            tx.update_until_where(
+                entity.where(entity.id == 1), entity.amount.set(200), valid_from=_APR, until=_MAY
+            )
+        else:
+            tx.wire.update_where(_wire_target(entity), {"amount": 175}, valid_from=_MAR)
+            tx.wire.update_until_where(
+                _wire_target(entity), {"amount": 200}, valid_from=_APR, until=_MAY
+            )
 
     db.transact(edit, concurrency=concurrency)
 
@@ -555,19 +747,25 @@ def test_a_predicate_write_revises_the_rectangles_the_attempt_opened(
 
 
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
 @pytest.mark.parametrize("entity", [ColumnsLog, DocumentLog])
 def test_a_predicate_termination_removes_the_row_the_attempt_opened(
-    profile_run: Any, entity: type[Any], concurrency: _Concurrency
+    profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
 ) -> None:
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, label="seeded", spec=_SPEC)))
 
     def edit(tx: Transaction) -> None:
-        tx.update_where(entity.where(entity.id == 1), entity.label.set("first"))
-        tx.find(entity.where(entity.id == 1)).result()
-        tx.update_where(entity.where(entity.id == 1), entity.label.set("second"))
-        tx.find(entity.where(entity.id == 1)).result()
-        tx.terminate_where(entity.where(entity.id == 1))
+        for label in ("first", "second"):
+            if representation == "typed":
+                tx.update_where(entity.where(entity.id == 1), entity.label.set(label))
+            else:
+                tx.wire.update_where(_wire_target(entity), {"label": label})
+            _log_find(tx, entity, representation)
+        if representation == "typed":
+            tx.terminate_where(entity.where(entity.id == 1))
+        else:
+            tx.wire.terminate_where(_wire_target(entity))
 
     db.transact(edit, concurrency=concurrency)
 

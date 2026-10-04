@@ -754,7 +754,6 @@ def keyed_insert(
 
 
 def _opener(label: object) -> WriteRepresentation | None:
-    """The representation an admitted insertion was labelled with."""
     if label is None:
         return None
     assert label in _REPEATED_INSERT_ADVICE  # this module labels every insertion it admits

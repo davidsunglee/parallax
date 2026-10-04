@@ -120,8 +120,8 @@ class WritePlanner:
 
     def finalize(self, request: PlanningRequest) -> WritePlanningResult:
         """Plan one flush: coalesce, eliminate no-ops, batch, order, and hand
-        the whole ordered sequence to settlement — answering the plan and the
-        claims the settled writes carried.
+        the whole ordered sequence to settlement — answering the plan, whose
+        execution units carry the claims the settled writes held.
 
         Pure with respect to its inputs — no database I/O, no direct clock
         access, no SQL. ``request.actor_identity`` is accepted and never
@@ -136,8 +136,8 @@ class WritePlanner:
         The four stages here REWRITE the sequence — merge, drop, split, reorder.
         The Write Planning Result
         :meth:`~parallax.core.unit_work.write_settlement.WriteSettlement.settle`
-        answers is returned unchanged, because packing, provenance, and claim
-        collection are decided there and nothing is left for the planner to add.
+        answers is returned unchanged, because packing, provenance, and each
+        unit's claim are decided there and nothing is left for the planner to add.
         """
         coalesced = self._coalesce(request.buffered_writes)
         survivors = [
