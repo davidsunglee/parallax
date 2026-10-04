@@ -102,6 +102,21 @@ A write the insertion itself authorized after its insert flushed observed no
 row: the object's current row is read inside the flush that writes it, and is
 revised or removed as above (`m-unit-work` *Insertion authority*).
 
+### A caller-addressed write
+
+A caller-addressed patch or replacement (`m-unit-work` *Caller-addressed
+writes*) observed no row either: it states the `in_z` of the current row its
+caller last observed as `ifTxStart`, and takes no Valid-Time bound. The current
+row is read inside the flush that writes it, and is closed and chained as an
+`update` is — a patch's chained row keeps every member it does not assign, a
+replacement's states the complete writable state. Where that read finds no
+current row, or one at another `in_z`, the write is its caller's failed
+precondition before any statement executes. Under Optimistic the close's gate
+binds the stated `ifTxStart` rather than an observation, and its zero-row
+shortfall is that failed precondition, never a retriable conflict. Under Locking
+the current row was read under the shared lock at submission and is read under
+it again by the flush, and the close is ungated.
+
 ### Composition with inheritance
 
 A milestone-chaining write on an inheritance participant (a concrete subtype of a

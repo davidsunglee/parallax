@@ -12,6 +12,7 @@ from parallax.core.base import (
     INFINITY_LITERAL,
     ManagedValue,
     TemporalBound,
+    normalize_instant,
     retain_document_value,
 )
 from parallax.core.document_codec import (
@@ -42,7 +43,7 @@ from parallax.core.temporal_read import (
 )
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.columns import ColumnSlice
-from parallax.core.unit_work.effects import MissingTargetError
+from parallax.core.unit_work.effects import MissingTargetError, WritePreconditionError
 from parallax.core.unit_work.instructions import (
     PreparedAssignment,
     PreparedKeyedWrite,
@@ -133,6 +134,7 @@ from parallax.core.unit_work.planner import (
 )
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
+    AUTHORED_STATE,
     CARRIED_STATE,
     CHANGED_STATE,
     ActorIdentity,
@@ -455,7 +457,7 @@ class WriteSettlement:
                 self._temporal_facet.shape(item.target.identity)
                 if isinstance(item, ComposedTemporalWrite)
                 else self._temporal_facet.shape(item.instruction.target.identity)
-                if isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite)
+                if isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite)
                 else None
             )
             composed = self._composition(item, shape)
@@ -1095,11 +1097,11 @@ class WriteSettlement:
         it observed binds that predecessor alone, which is exactly its topology's
         close and successors; every other observed temporal write is a range over
         coverage only binding can discover, and so is every temporal write an
-        insertion authorized, which observed nothing.
+        insertion authorized or a caller addressed, which observed nothing.
         """
         if isinstance(item, ComposedTemporalWrite):
             return item
-        if isinstance(item, InsertionKeyedWrite) and isinstance(
+        if isinstance(item, InsertionKeyedWrite | TargetKeyedWrite) and isinstance(
             shape, TransactionTimeOnly | Bitemporal
         ):
             view = _view(self._families, item.instruction.target)
@@ -1141,7 +1143,9 @@ class WriteSettlement:
         at execution and the range binds then (:class:`_DeferredTemporalRange`).
         A write an insertion authorized observed nothing, so a range of such
         writes alone always reads its coverage, and requires coverage at the
-        insertion's anchor once read.
+        insertion's anchor once read. So does a write a caller addressed, whose
+        caller's condition requires the coverage at its start to stand at the
+        Transaction-Time start it states.
         """
         entity = composed.target
         view = _view(self._families, entity)
@@ -1169,6 +1173,7 @@ class WriteSettlement:
             ownership=ownership,
             decoration=decoration,
             anchor=_anchor(composed),
+            condition=_condition(composed),
         )
         transform = composed.transform
         uncovered: object | None = None
@@ -2552,10 +2557,30 @@ def _anchor(composed: ComposedTemporalWrite) -> object:
     authorized one of its writes: that insertion's own start, which every such
     write states as its window's start."""
     for contribution in composed.contributions:
-        if contribution.observation is None:
+        if contribution.observation is None and contribution.condition is None:
             start = contribution.bounds.valid_from
             return _EXISTENCE if start is None else start
     return _UNANCHORED
+
+
+@dataclass(frozen=True, slots=True)
+class _StartingCondition:
+    """A caller's condition on a composed range: the coverage at ``at`` — the
+    current row, where ``at`` is ``None`` on a Transaction-Time-Only object —
+    stands at Transaction-Time start ``expected``."""
+
+    at: object | None
+    expected: dt.datetime
+
+
+def _condition(composed: ComposedTemporalWrite) -> _StartingCondition | None:
+    """The one starting condition the callers of a composed range's addressed
+    writes state; admission let in only writes that agree on it."""
+    for contribution in composed.contributions:
+        condition = contribution.condition
+        if condition is not None:
+            return _StartingCondition(contribution.bounds.valid_from, condition.instant)
+    return None
 
 
 def _original(
@@ -2601,6 +2626,7 @@ class _RangeBinding:
     ownership: Ownership
     decoration: _Decoration
     anchor: object = _UNANCHORED
+    condition: _StartingCondition | None = None
 
     def bind(self, originals: Sequence[_Original], validations: Sequence[_Original]) -> BoundRange:
         """The steps the transform takes over ``originals``, after a guarded
@@ -2618,9 +2644,17 @@ class _RangeBinding:
         coverage at that insertion's anchor and fails as a missing target
         without it: the anchor is where the authority starts, never shifted to
         coverage that survives elsewhere.
+
+        A range a caller addressed requires the coverage at its start to stand
+        at the Transaction-Time start the caller stated, and fails as that
+        caller's precondition otherwise — before anything executes where the
+        coverage shows it, and at that original's gate where only execution can.
+        The original it starts from is affected first. A replacement's extent
+        then opens its complete state over every gap the originals leave.
         """
         facts = self.facts
         self._require_anchor(originals)
+        start = self._require_start(originals)
         effects: list[PlannedStep] = []
         openings: list[PlannedStep] = []
         changed: list[ObservedStateKey] = []
@@ -2643,9 +2677,12 @@ class _RangeBinding:
             cause = (
                 SUPERSEDED if any(piece.assigned is not None for piece in pieces) else TERMINATED
             )
-            disposed = _dispose(
-                facts, self._close(original, cause), successors, predecessor, self.ownership
-            )
+            closing = self._close(original, cause)
+            if original is start and self.gated:
+                closing = replace(
+                    closing, affected_rows=ExactCount(expected=1, on_shortfall=FAILED_PRECONDITION)
+                )
+            disposed = _dispose(facts, closing, successors, predecessor, self.ownership)
             for step in disposed.steps:
                 if isinstance(step, PlannedInsert):
                     openings.append(decorate(step))
@@ -2656,6 +2693,12 @@ class _RangeBinding:
             removed.extend(disposed.removed)
             fresh.extend(disposed.opened.fresh)
             continued.extend(disposed.opened.continued)
+        if isinstance(facts.shape, Bitemporal):
+            coverage = tuple((original.start, original.end) for original in originals)
+            for piece in self.transform.gaps(coverage):
+                opened = self._authored(piece, resolved)
+                openings.append(decorate(opened))
+                fresh.extend(_openings(facts, (opened,)))
         return BoundRange(
             steps=(*effects, *openings),
             changed=tuple(changed),
@@ -2675,6 +2718,52 @@ class _RangeBinding:
             return
         target = KeyTarget(key_attributes=(self.key_attribute,), key_values=((self.key_value,),))
         raise MissingTargetError(self.facts.entity.identity, target, 1, 0)
+
+    def _require_start(self, originals: Sequence[_Original]) -> _Original | None:
+        """The original a caller-addressed range starts from, once the coverage
+        shows it stands at its caller's Transaction-Time start, or ``None`` for
+        a range no caller addressed."""
+        condition = self.condition
+        if condition is None:
+            return None
+        at = condition.at
+        start = next(
+            (
+                original
+                for original in originals
+                if at is None or (not precedes(at, original.start) and precedes(at, original.end))
+            ),
+            None,
+        )
+        tx_start = self.facts.shape.transaction_time.start_attribute
+        if start is None or normalize_instant(
+            cast("dt.datetime", start.predecessor.cell(tx_start))
+        ) != normalize_instant(condition.expected):
+            raise WritePreconditionError(
+                self.facts.entity.identity,
+                {self.key_attribute.name: self.key_value},
+                condition.expected,
+            )
+        return start
+
+    def _authored(
+        self,
+        piece: BoundPiece,
+        resolved: dict[
+            int, tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]
+        ],
+    ) -> PlannedInsert:
+        """A gap of a replacement's extent opened with its complete state."""
+        assigned = piece.assigned
+        assert assigned is not None  # a gap fills only with a stated state
+        attributes, value_objects = self._resolved(assigned, resolved)
+        return _successor_step(
+            self.facts,
+            literal_successor(AUTHORED_STATE, piece.start, piece.end),
+            {**attributes, self.key_attribute: self.key_value},
+            value_objects,
+            None,
+        )
 
     def acquired(
         self,
@@ -2734,17 +2823,29 @@ class _RangeBinding:
                 {},
                 predecessor,
             )
-        maps = resolved.get(id(assigned))
-        if maps is None:
-            maps = _resolve(facts.entity, facts.view, assigned, context="insert")
-            resolved[id(assigned)] = maps
+        attributes, value_objects = self._resolved(assigned, resolved)
         return _successor_step(
             facts,
             literal_successor(CHANGED_STATE, piece.start, piece.end),
-            maps[0],
-            maps[1],
+            attributes,
+            value_objects,
             predecessor,
         )
+
+    def _resolved(
+        self,
+        assigned: Mapping[str, object],
+        resolved: dict[
+            int, tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]
+        ],
+    ) -> tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]:
+        """``assigned`` under its resolved member identities, resolved once per
+        binding however many pieces carry it."""
+        maps = resolved.get(id(assigned))
+        if maps is None:
+            maps = _resolve(self.facts.entity, self.facts.view, assigned, context="insert")
+            resolved[id(assigned)] = maps
+        return maps
 
 
 @dataclass(frozen=True, slots=True)

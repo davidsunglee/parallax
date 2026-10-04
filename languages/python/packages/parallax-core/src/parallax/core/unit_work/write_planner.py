@@ -7,6 +7,7 @@ from typing import Final, cast
 
 from parallax.core import inheritance, relationship, temporal_read
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.temporal_read import milestone_edge
 from parallax.core.unit_work.claims import (
     ClaimVerdict,
     WriteIntent,
@@ -36,10 +37,14 @@ from parallax.core.unit_work.materialized import (
     ObservedKeyedWrite,
     PendingOpening,
     TargetKeyedWrite,
+    TemporalContribution,
+    TemporalKeyedWrite,
     buffered_instruction,
     composed_alone,
     composed_temporal_write,
+    temporal_contribution,
 )
+from parallax.core.unit_work.observe import TemporalObservation
 from parallax.core.unit_work.plan import NO_OWNERSHIP, Completion, Ownership
 from parallax.core.unit_work.planner import (
     ObjectKey,
@@ -339,7 +344,7 @@ def _merge_update_into_insert(
     return derive_keyed_write(insert, (merged,))
 
 
-type PendingTemporal = ObservedKeyedWrite | InsertionKeyedWrite | ComposedTemporalWrite
+type PendingTemporal = TemporalKeyedWrite | ComposedTemporalWrite
 """What a temporal object's pending writes against its existing coverage are:
 one write still alone, or several composed."""
 
@@ -364,13 +369,13 @@ class PendingWrites:
       (:class:`~parallax.core.unit_work.materialized.TargetKeyedWrite`) claims
       the scope that condition names and composes there like any claimed
       write, keeping the condition through every overwrite and destruction;
-    * a temporal object's writes against its existing coverage — observed ones
-      and those an admitted insertion authorized alike — compose into one
+    * a temporal object's writes against its existing coverage — observed ones,
+      those an admitted insertion authorized, and those a caller addressed
+      alike — compose into one
       :class:`~parallax.core.unit_work.materialized.ComposedTemporalWrite`
-      (:func:`~parallax.core.unit_work.claims.admits_composed`), whose
-      transform keeps only surviving values while every write's condition stays.
-      Two writes of one observed state over one window simply coalesce, as a
-      non-temporal pair does.
+      (:meth:`admits_temporal`), whose transform keeps only surviving values
+      while every write's condition stays. Two writes of one observed state over
+      one window simply coalesce, as a non-temporal pair does.
 
     A pair the algebra calls incompatible is one no verb admitted — a caller
     reached the buffer another way — and both writes are left standing rather
@@ -424,7 +429,7 @@ class PendingWrites:
         if index is None:
             return None
         held = self._items[index]
-        assert isinstance(held, ObservedKeyedWrite | InsertionKeyedWrite | ComposedTemporalWrite)
+        assert isinstance(held, _TEMPORAL)
         return held
 
     def verdict(
@@ -483,6 +488,57 @@ class PendingWrites:
             != "incompatible"
         )
 
+    def admits_temporal(self, item: TemporalKeyedWrite, key: ObjectKey) -> bool:
+        """Whether ``item``, a write of temporal object ``key`` against its
+        existing coverage, composes with that object's pending writes.
+
+        Observed writes and those an insertion authorized compose by the window
+        algebra (:func:`~parallax.core.unit_work.claims.admits_composed`). Once a
+        caller-addressed write is among them, every write of the object states
+        exactly one window, starts from one state — every caller's stated
+        Transaction-Time start and every observed rectangle's agreeing — and no
+        assignment follows a destruction, so the group has one starting
+        condition its guard decides.
+        """
+        held = self.temporal(key)
+        if held is None:
+            return True
+        if not isinstance(item, TargetKeyedWrite) and not _targeted(held):
+            scope = (
+                item.claim.key
+                if isinstance(item, ObservedKeyedWrite) and item.claim is not None
+                else None
+            )
+            intent = keyed_intent(item.instruction)
+            assert intent is not None  # a write against existing coverage is no insert
+            return admits_composed(composed_intents(held), scope, intent) != "incompatible"
+        arriving = temporal_contribution(item)
+        contributions = _contributions(held)
+        start = self._starting_revision(item.instruction.target, arriving)
+        for contribution in contributions:
+            if (
+                contribution.bounds != arriving.bounds
+                or (contribution.kind == "destructive" and arriving.kind == "assignment")
+                or self._starting_revision(item.instruction.target, contribution) != start
+            ):
+                return False
+        return start is not None
+
+    def _starting_revision(
+        self, entity: EntityMetadata, contribution: TemporalContribution
+    ) -> object | None:
+        """The Transaction-Time start ``contribution`` requires of the coverage
+        at its window's start: its caller's, or the observed rectangle's own.
+        An insertion's write states none."""
+        if contribution.condition is not None:
+            return contribution.condition.instant
+        observation = contribution.observation
+        if not isinstance(observation, TemporalObservation):
+            return None
+        shape = self._temporal_facet.shape(entity.identity)
+        assert shape is not None  # the facet covers every accepted Entity
+        return milestone_edge(shape, observation.predecessor, None).tx_time
+
     def holds(self, state: ObservedStateKey) -> bool:
         """Whether a pending keyed write claims observed state ``state``."""
         if state in self._claims:
@@ -528,17 +584,13 @@ class PendingWrites:
             self._temporal_facet.shape(instruction.target.identity), temporal_read.Bitemporal
         )
 
-    def is_temporal_entity(self, entity: EntityMetadata) -> bool:
-        """Whether ``entity`` is a temporal Entity."""
-        return _is_temporal(self._temporal_facet, entity)
-
     def is_temporal(self, item: BufferItem) -> bool:
         """Whether ``item`` is a write of a temporal object against its existing
         coverage, the writes that compose by object rather than by claimed
         scope."""
-        return isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite) and _is_temporal(
-            self._temporal_facet, item.instruction.target
-        )
+        return isinstance(
+            item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
+        ) and _is_temporal(self._temporal_facet, item.instruction.target)
 
     def add(
         self, item: BufferItem, key: ObjectKey | None = None, *, after_removal: bool = False
@@ -589,7 +641,7 @@ class PendingWrites:
                 self._removals = set()
             self._removals.add(key)
         if self.is_temporal(item):
-            assert isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite)
+            assert isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite)
             # A retained claim already holds its object's key, so the index
             # shares it rather than keeping one of its own.
             claim = item.claim if isinstance(item, ObservedKeyedWrite) else None
@@ -692,7 +744,7 @@ class PendingWrites:
         if self._objects is not None:
             _note_scope(self._objects, key, scope)
 
-    def _add_temporal(self, item: ObservedKeyedWrite | InsertionKeyedWrite, key: ObjectKey) -> None:
+    def _add_temporal(self, item: TemporalKeyedWrite, key: ObjectKey) -> None:
         items = self._items
         index = self._temporal.get(key)
         held = None if index is None else items[index]
@@ -700,7 +752,7 @@ class PendingWrites:
             items.append(item)
             self._temporal[key] = len(items) - 1
             return
-        assert isinstance(held, ObservedKeyedWrite | InsertionKeyedWrite | ComposedTemporalWrite)
+        assert isinstance(held, _TEMPORAL)
         intent = keyed_intent(item.instruction)
         assert intent is not None  # a write against existing coverage is no insert
         if (
@@ -723,12 +775,7 @@ class PendingWrites:
                     items.append(item)
                     self._temporal[key] = len(items) - 1
                     return
-        scope = (
-            item.claim.key
-            if isinstance(item, ObservedKeyedWrite) and item.claim is not None
-            else None
-        )
-        if admits_composed(composed_intents(held), scope, intent) == "incompatible":
+        if not self.admits_temporal(item, key):
             items.append(item)
             return
         items[index] = composed_temporal_write(
@@ -783,6 +830,8 @@ class PendingWrites:
 
 _CLAIMED = (ObservedKeyedWrite, ObjectClaimedWrite, InsertionKeyedWrite, TargetKeyedWrite)
 
+_TEMPORAL = (ObservedKeyedWrite, InsertionKeyedWrite, TargetKeyedWrite, ComposedTemporalWrite)
+
 _SEVERAL: Final = object()
 """What the object index records for an object whose claimed writes stand at
 more than one scope."""
@@ -812,7 +861,7 @@ def composed_intents(
 ) -> tuple[tuple[ObservedStateKey | None, WriteIntent], ...]:
     """Each write ``held`` composes, as the scope it claims and the intent it
     states over its window."""
-    if isinstance(held, ObservedKeyedWrite | InsertionKeyedWrite):
+    if not isinstance(held, ComposedTemporalWrite):
         intent = keyed_intent(held.instruction)
         assert intent is not None  # a write against existing coverage is no insert
         claim = held.claim if isinstance(held, ObservedKeyedWrite) else None
@@ -828,6 +877,19 @@ def composed_intents(
         )
         for contribution in held.contributions
     )
+
+
+def _targeted(held: PendingTemporal) -> bool:
+    """Whether a caller-addressed write is among ``held``."""
+    if isinstance(held, ComposedTemporalWrite):
+        return any(contribution.condition is not None for contribution in held.contributions)
+    return isinstance(held, TargetKeyedWrite)
+
+
+def _contributions(held: PendingTemporal) -> tuple[TemporalContribution, ...]:
+    if isinstance(held, ComposedTemporalWrite):
+        return held.contributions
+    return (temporal_contribution(held),)
 
 
 def compose_writes(model: Metamodel, writes: Sequence[BufferItem]) -> tuple[BufferedWrite, ...]:

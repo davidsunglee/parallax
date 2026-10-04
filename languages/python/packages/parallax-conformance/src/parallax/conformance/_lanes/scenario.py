@@ -120,6 +120,7 @@ from parallax.core.unit_work import (
     object_key,
 )
 from parallax.core.unit_work.instructions import (
+    ExpectedTxStart,
     ExpectedVersion,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
@@ -2829,11 +2830,25 @@ def _buffer_wire_target(
     document = ActualWireProjection(model).entity_values(instruction.target, dict(instruction.row))
     expectation = instruction.expectation
     bounds = instruction.bounds
-    # Only a Non-Temporal target write is admitted, so neither bound is stated.
-    assert bounds.valid_from is None and bounds.until is None
     version = expectation.version if isinstance(expectation, ExpectedVersion) else None
+    tx_start = expectation.instant if isinstance(expectation, ExpectedTxStart) else None
     verb = tx.wire.replace if instruction.replaces else tx.wire.update
-    verb(entity_name, document, if_version=version)
+    if bounds.until is None:
+        verb(
+            entity_name,
+            document,
+            valid_from=bounds.valid_from,
+            if_version=version,
+            if_tx_start=tx_start,
+        )
+    else:
+        verb(
+            entity_name,
+            document,
+            valid_from=bounds.valid_from,
+            until=bounds.until,
+            if_tx_start=tx_start,
+        )
 
 
 def _wire_insert_payload(

@@ -164,6 +164,31 @@ def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
     db.transact(split)
 ```
 
+## A bitemporal target patch states its window and its caller's milestone
+
+Corpus case: `m-bitemp-write-026`
+
+```python
+def bitemporal_target_patch_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(
+            Position(id=1, acct_num="A", value=Decimal("100.00")),
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        )
+
+    def patch(tx: Transaction) -> None:
+        tx.wire.update(
+            "Position",
+            {"id": 1, "value": "200.00"},
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+            if_tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(insert)
+    db.transact(patch)
+```
+
 ## A root default is overridden per call, and a joining call inherits the override
 
 Corpus case: `m-unit-work-041`

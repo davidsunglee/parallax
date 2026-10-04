@@ -338,24 +338,50 @@ def plan_coverage_read(
 
 
 def plan_target_read(
-    entity: EntityMetadata, *, model: Metamodel, key: str, key_value: ManagedValue
+    entity: EntityMetadata,
+    *,
+    model: Metamodel,
+    key: str,
+    key_value: ManagedValue,
+    valid_from: ManagedValue | None = None,
 ) -> ValidatedEntityQuery:
-    """The one flat point read of the stored row a caller-addressed write of a
-    Non-Temporal object starts from: the object ``key`` names, projected with
-    no document, since what is read is the row's presence and revision."""
+    """The one flat point read of the stored row a caller-addressed write starts
+    from: the object ``key`` names — on a temporal object its current row, at
+    Valid-Time ``valid_from`` on a Bitemporal one — projected with no document,
+    since what is read is the row's presence and revision."""
     families = inheritance.view(model)
+    root = inheritance.root_metadata(families, model, entity.identity)
     view = _entity_view(families, entity.identity)
-    term = _managed_comparison(
-        op="eq",
-        attr=f"{entity.identity.canonical}.{key}",
-        member=_declared_attribute(view, key),
-        value=key_value,
-    )
+    terms = [
+        _managed_comparison(
+            op="eq",
+            attr=f"{entity.identity.canonical}.{key}",
+            member=_declared_attribute(view, key),
+            value=key_value,
+        )
+    ]
+    for axis in root.declared_as_of_axes:
+        start = _declared_attribute(view, axis.start_attribute.name)
+        end = _declared_attribute(view, axis.end_attribute.name)
+        start_ref = f"{root.identity.canonical}.{start.identity.name}"
+        end_ref = f"{root.identity.canonical}.{end.identity.name}"
+        if axis.dimension is TemporalDimension.TRANSACTION_TIME:
+            terms.append(
+                _framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY_LITERAL)
+            )
+            continue
+        assert valid_from is not None  # a Bitemporal target states its start
+        terms.append(
+            _managed_comparison(op="lessThanEquals", attr=start_ref, member=start, value=valid_from)
+        )
+        terms.append(
+            _managed_comparison(op="greaterThan", attr=end_ref, member=end, value=valid_from)
+        )
     return ValidatedEntityQuery(
         target=entity.identity,
         entity=entity,
         validated_predicate=navigate.canonicalize_validated(
-            _validated_conjunction(term), model, entity, {}
+            _validated_conjunction(*terms), model, entity, {}
         ),
         projection=_projection_for(entity, families, ReadProjectionRequest("none", False)),
     )

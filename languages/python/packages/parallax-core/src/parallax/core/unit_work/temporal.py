@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -270,12 +270,15 @@ class TemporalSegment:
     unbounded window; on a Transaction-Time-Only target both are ``None`` and the
     one segment spans the whole axis. ``assigned`` maps each assigned member's
     declared name to its managed value, the last authored value per member, or
-    is ``None`` where the segment destroys existing coverage.
+    is ``None`` where the segment destroys existing coverage. ``fills`` marks a
+    replacement's extent: ``assigned`` there is a complete state, which a gap in
+    existing coverage takes too.
     """
 
     start: object | None
     end: object | None
     assigned: Mapping[str, object] | None
+    fills: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,7 +300,8 @@ class TemporalTransform:
     ``segments`` are disjoint and ordered by start. Outside them every existing
     interval is carried unchanged; inside one, each existing interval keeps its
     own unassigned members and takes the segment's assignments, or is destroyed.
-    Gaps stay gaps: a segment assigns to coverage, never creates it.
+    Gaps stay gaps, except inside a replacement's extent (``fills``), where a gap
+    takes the complete replacement state; no other segment creates coverage.
     """
 
     segments: tuple[TemporalSegment, ...] = ()
@@ -308,18 +312,26 @@ class TemporalTransform:
         valid_from: object | None,
         until: object | None,
         assigned: Mapping[str, object] | None,
+        replaces: bool = False,
     ) -> TemporalTransform:
         """This transform followed by one more write over ``[valid_from, until)``
         — the whole axis when ``valid_from`` is ``None`` — which assigns
         ``assigned`` there, later values winning per member, or destroys coverage
         there when ``assigned`` is ``None``.
 
+        A write that ``replaces`` states a complete state, and its window becomes
+        a replacement's extent. A later assignment over that extent keeps it, so
+        the extent's gaps take the overlaid state; a destruction ends it, so no
+        coverage is created only to be destroyed.
+
         A destroyed interval is never assigned again: admission refuses such a
         resurrection before a transform is asked for it.
         """
         if valid_from is None:
             previous = self.segments[0] if self.segments else None
-            return TemporalTransform((TemporalSegment(None, None, _merged(previous, assigned)),))
+            return TemporalTransform(
+                (_overlaid(None, None, previous, assigned, replaces=replaces),)
+            )
         start: object = valid_from
         end: object = INFINITY_LITERAL if until is None else until
         composed: list[TemporalSegment] = []
@@ -329,17 +341,21 @@ class TemporalTransform:
                 composed.append(segment)
                 continue
             if precedes(segment.start, start):
-                composed.append(TemporalSegment(segment.start, start, segment.assigned))
+                composed.append(
+                    TemporalSegment(segment.start, start, segment.assigned, segment.fills)
+                )
             overlap_start = _latest(segment.start, start)
             overlap_end = _earliest(segment.end, end)
             if precedes(cursor, overlap_start):
-                composed.append(TemporalSegment(cursor, overlap_start, assigned))
-            composed.append(TemporalSegment(overlap_start, overlap_end, _merged(segment, assigned)))
+                composed.append(TemporalSegment(cursor, overlap_start, assigned, replaces))
+            composed.append(
+                _overlaid(overlap_start, overlap_end, segment, assigned, replaces=replaces)
+            )
             if precedes(end, segment.end):
-                composed.append(TemporalSegment(end, segment.end, segment.assigned))
+                composed.append(TemporalSegment(end, segment.end, segment.assigned, segment.fills))
             cursor = overlap_end
         if precedes(cursor, end):
-            composed.append(TemporalSegment(cursor, end, assigned))
+            composed.append(TemporalSegment(cursor, end, assigned, replaces))
         composed.sort(key=_segment_order)
         return TemporalTransform(_joined(composed))
 
@@ -391,6 +407,32 @@ class TemporalTransform:
             for segment in self.segments
         )
 
+    def gaps(self, coverage: Sequence[tuple[object, object]]) -> tuple[BoundPiece, ...]:
+        """The nonempty intervals of a replacement's extent that ``coverage`` —
+        the existing intervals, disjoint and ordered by start — leaves
+        uncovered, each with the complete state it takes there.
+
+        A Transaction-Time-Only transform has no Valid Time for a gap to lie on.
+        """
+        pieces: list[BoundPiece] = []
+        for segment in self.segments:
+            if not segment.fills or segment.start is None:
+                continue
+            assert segment.assigned is not None  # a destruction ends a replacement's extent
+            cursor = segment.start
+            for start, end in coverage:
+                if not precedes(cursor, segment.end):
+                    break
+                if not precedes(cursor, end):
+                    continue
+                if precedes(cursor, start):
+                    gap_end = _earliest(start, segment.end)
+                    pieces.append(BoundPiece(cursor, gap_end, segment.assigned))
+                cursor = end
+            if precedes(cursor, segment.end):
+                pieces.append(BoundPiece(cursor, segment.end, segment.assigned))
+        return tuple(pieces)
+
 
 EMPTY_TRANSFORM: Final[TemporalTransform] = TemporalTransform()
 
@@ -411,15 +453,24 @@ def covers(
     return cursor if precedes(cursor, end) else None
 
 
-def _merged(
-    previous: TemporalSegment | None, assigned: Mapping[str, object] | None
-) -> Mapping[str, object] | None:
+def _overlaid(
+    start: object | None,
+    end: object | None,
+    previous: TemporalSegment | None,
+    assigned: Mapping[str, object] | None,
+    *,
+    replaces: bool,
+) -> TemporalSegment:
+    """One write over ``[start, end)`` where ``previous`` already stated
+    something, or nothing did."""
     if assigned is None:
-        return None
+        return TemporalSegment(start, end, None)
     if previous is None or previous.assigned is None:
         assert previous is None  # admission refuses an assignment over destroyed coverage
-        return assigned
-    return {**previous.assigned, **assigned}
+        return TemporalSegment(start, end, assigned, replaces)
+    if replaces:
+        return TemporalSegment(start, end, assigned, fills=True)
+    return TemporalSegment(start, end, {**previous.assigned, **assigned}, previous.fills)
 
 
 def _joined(segments: list[TemporalSegment]) -> tuple[TemporalSegment, ...]:
@@ -433,8 +484,11 @@ def _joined(segments: list[TemporalSegment]) -> tuple[TemporalSegment, ...]:
             previous is not None
             and previous.end == segment.start
             and previous.assigned == segment.assigned
+            and previous.fills == segment.fills
         ):
-            joined[-1] = TemporalSegment(previous.start, segment.end, segment.assigned)
+            joined[-1] = TemporalSegment(
+                previous.start, segment.end, previous.assigned, previous.fills
+            )
         else:
             joined.append(segment)
     return tuple(joined)

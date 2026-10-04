@@ -166,11 +166,14 @@ observed update, or states the whole object. The revision is a keyword-only
 argument, never a member: `if_version` for a versioned Entity, `if_tx_start` for a
 temporal one, neither for an unversioned one; `None` means it is not stated. The
 observed `tx.wire.update` overload takes neither, nor `valid_from`. Each target
-verb returns `None`. A failed precondition raises
-`parallax.core.unit_work.WritePreconditionError` — at the call under Locking, at
-the flush under Optimistic — and is never retried. An object the attempt
-inserted is refused with `WriteEvidenceError(write-evidence-inserted)`, and a
-target write of a temporal Entity with `WriteInstructionError`.
+verb returns `None`. A Bitemporal target states `valid_from`, and the keyword
+`until` bounds it exactly as it bounds `insert`; a Transaction-Time-Only target
+takes neither. `if_tx_start` is the milestone start the caller's query
+returned, an aware `datetime`, never this transaction's own instant. A failed
+precondition raises `parallax.core.unit_work.WritePreconditionError` — at the
+call under Locking, at the flush under Optimistic — and is never retried; its
+`expected` is the stated revision. An object the attempt inserted is refused
+with `WriteEvidenceError(write-evidence-inserted)`.
 `tx.wire` is the Wire ingress, sharing transaction state and policy. Public
 write-plan and flush operations are absent. Framework-owned attributes cannot
 be authored by construction, `edit`, assignments, or Wire changes.

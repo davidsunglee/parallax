@@ -230,6 +230,9 @@ _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-value-object-033",
         "m-txtime-write-010",
         "m-bitemp-write-019",
+        "m-txtime-write-016",
+        "m-bitemp-write-026",
+        "m-bitemp-write-027",
     }
 )
 _TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(

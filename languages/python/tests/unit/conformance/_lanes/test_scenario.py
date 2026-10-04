@@ -4472,3 +4472,32 @@ def test_a_locking_target_step_acquires_its_row_before_it_writes() -> None:
     assert [sql for sql, _ in port.writes] == [
         POSTGRES.to_driver_sql("update account set balance = ?, version = ? where id = ?")
     ]
+
+
+def test_a_bounded_temporal_target_step_reads_its_coverage_then_writes_its_window() -> None:
+    jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    port = FakeWritePort(
+        find_rows=[
+            {
+                "pos_id": 1,
+                "acct_num": "A",
+                "val": decimal.Decimal("100.00"),
+                "from_z": jan,
+                "thru_z": INFINITY,
+                "in_z": jan,
+                "out_z": INFINITY,
+            }
+        ]
+    )
+    _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
+        _load_case("m-bitemp-write-026"), port
+    )
+    assert round_trips == 6
+    (coverage,) = (binds for sql, binds in port.reads if "t0.thru_z > " in sql)
+    assert coverage == [
+        1,
+        dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+        "infinity",
+    ]
+    assert [sql.split(" ", 1)[0] for sql, _ in port.writes] == ["insert", "update", *["insert"] * 3]

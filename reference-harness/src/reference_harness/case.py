@@ -885,10 +885,11 @@ class Case:
         """
         return self.shape == "writeSequence"
 
-    @property
+    @cached_property
     def write_sequence(self) -> list[dict[str, Any]]:
         """The ``writeSequence`` steps, each caller-addressed step stated as the
-        keyed update its golden grades.
+        keyed update its golden grades — built once, so a step keeps its
+        identity for every check that locates it among the others.
 
         A target step's gate binds its caller's revision exactly where a keyed
         update's binds the version its source observed, so it is graded as that

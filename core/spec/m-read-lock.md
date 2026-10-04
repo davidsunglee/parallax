@@ -26,10 +26,13 @@ mode`). `m-unit-work` contains no dialect-specific SQL shaping.
 
 A **caller-addressed** write under the effective Locking strategy that holds no
 pending or live read of the state it names acquires one (`m-unit-work`
-*Caller-addressed writes*): a point read of the one row its key names, taking the
-same shared row lock, which licenses its ungated write exactly as a find's lock
-licenses an observed one. It executes no pending write and publishes nothing to
-the caller.
+*Caller-addressed writes*): a point read of the one row its key names — the
+current row of a temporal object, and on a Bitemporal one the rectangle
+containing the write's `validFrom` — taking the same shared row lock, which
+licenses its ungated write exactly as a find's lock licenses an observed one. It
+executes no pending write and publishes nothing to the caller. The point read
+protects that one row; the later rectangles a temporal write's window reaches
+are read under the same lock inside the flush.
 
 ### What one temporal observation locks
 

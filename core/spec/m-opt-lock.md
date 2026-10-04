@@ -223,6 +223,12 @@ new version is still the framework's own (`stated + 1`), and nothing in the
 payload, a read's evidence, or the stored row ever stands in for the statement.
 A versioned caller-addressed write that states no version is refused before any
 database access, as is a version stated for an unversioned or temporal target.
+A temporal caller-addressed write states the Transaction-Time start of the
+milestone it starts from instead (`ifTxStart`): the starting inactivation's gate
+binds it under Optimistic, and under Locking the locked read's `in_z` is compared
+with it. Every later milestone the write's window reaches is gated on its own
+`in_z`, read inside the flush (`m-bitemp-write` *Caller-addressed writes span
+their requested extent*).
 
 ### Empty updates issue no DML
 
@@ -367,7 +373,9 @@ half: its shortfall is a failed precondition (`m-unit-work` *Affected Rows
 Policy*), because re-running the transaction re-states the same version against
 the same stored row. Where a write's gate binds both a caller's stated version and
 an observation of the same state — one composed from both — the shortfall is the
-caller's.
+caller's. A temporal caller-addressed write's starting gate is classified the
+same way; a later milestone's gate in the same write is an ordinary conflict,
+retried under the opt-in with the caller's stated start unchanged.
 
 ## Retry contract
 

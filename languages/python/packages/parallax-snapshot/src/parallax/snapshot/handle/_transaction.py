@@ -259,20 +259,27 @@ class Transaction:
         and conditioned by its arguments alone.
 
         The condition is the caller's: a versioned Entity requires
-        ``if_version``, the version the caller last observed; an unversioned one
-        takes no revision argument. The write still advances the version when
-        every value equals what is stored. Under the Optimistic strategy the
-        stated revision gates the write, and a row that no longer stands at it
-        raises :class:`~parallax.core.unit_work.WritePreconditionError` at
-        flush, which no retry repeats. Under Locking the stored row is read
-        under the shared lock now — reading nothing it already holds, and
-        executing no pending write — and a mismatch raises that error here.
-        An object this transaction inserted is refused (``write-evidence-inserted``):
-        until commit, write it through the instance the insert took or a read.
+        ``if_version``, the version the caller last observed; a temporal one
+        ``if_tx_start``, the Transaction-Time start of the milestone the caller
+        last observed where the write starts, never this transaction's own
+        instant; an unversioned one takes no revision argument. The write still
+        advances the version, or chains a milestone, when every value equals
+        what is stored. Under the Optimistic strategy the stated revision gates
+        the write, and a row that no longer stands at it raises
+        :class:`~parallax.core.unit_work.WritePreconditionError` at flush, which
+        no retry repeats. Under Locking the stored row is read under the shared
+        lock now — reading nothing it already holds, and executing no pending
+        write — and a mismatch raises that error here. An object this
+        transaction inserted is refused (``write-evidence-inserted``): until
+        commit, write it through the instance the insert took or a read.
 
         ``valid_from`` and ``until`` follow :meth:`insert`'s rules, so a
-        non-temporal target takes neither. Returns ``None``; a read reports the
-        saved state."""
+        non-temporal target takes neither. A Bitemporal replacement requires
+        current coverage at ``valid_from`` and establishes ``instance``'s state
+        over its whole window, gaps and coverage after a scheduled termination
+        included; the stated milestone describes that start alone, and the
+        flush reads the later coverage the window reaches. Returns ``None``; a
+        read reports the saved state."""
         mutation, bound = window_mutation("replace", "replaceUntil", until)
         typed_target_write(
             self._predicates,

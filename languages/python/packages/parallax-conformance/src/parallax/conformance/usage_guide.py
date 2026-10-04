@@ -22,6 +22,7 @@ _GUIDE_CASE_IDS = (
     "m-opt-lock-027",
     "m-opt-lock-028",
     "m-bitemp-write-001",
+    "m-bitemp-write-026",
     "m-unit-work-041",
 )
 

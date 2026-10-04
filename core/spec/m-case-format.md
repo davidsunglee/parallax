@@ -1069,7 +1069,11 @@ target instruction does (`m-unit-work` *Write instruction vocabulary*). Its row
 carries no `observedVersion`: the stated revision is the step's whole condition,
 and its golden gate binds that revision. A replacement's ① names the members the
 caller states; the members it omits are written empty in the golden, which is
-what distinguishes it from a patch of the same row.
+what distinguishes it from a patch of the same row. A temporal target step
+carries its window as a keyed temporal step does — `validFrom` and, when
+bounded, `until` on a Bitemporal Entity, neither on a Transaction-Time-Only one —
+beside `at`; its starting inactivation's gate binds `ifTxStart`, which the
+case's own history leaves as the starting milestone's `in_z`.
 
 A writeSequence case MAY set **`given.fixtures: true`** to load the model's
 fixtures **before** the ordered DML (instead of starting empty) — so a sequence
@@ -1119,7 +1123,9 @@ state:
   and the revision. Under the Locking strategy its target Entity's Effective
   Concurrency Strategy takes, it owes instead **one acquisition per object** —
   the locked point read that participation requires (`m-unit-work` *Caller-addressed
-  writes*) — and none under Optimistic.
+  writes*) — and none under Optimistic. A temporal one also owes **one coverage
+  read per object** under either strategy, the read of the coverage its window
+  reaches that its flush makes (`m-bitemp-write`, `m-txtime-write`).
 
 A **grouped** scenario write step owes none of its own: its group's find steps
 are what publish the values it settles against, and those finds already declare

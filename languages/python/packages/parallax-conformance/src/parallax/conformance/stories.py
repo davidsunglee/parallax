@@ -248,6 +248,22 @@ def transaction_time_only_chain_update_from_existing_history(db: ScopedDatabase)
     db.transact(update)
 
 
+def transaction_time_only_target_replacement_gates_on_the_callers_milestone(
+    db: ScopedDatabase,
+) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+
+    def replace(tx: Transaction) -> None:
+        tx.replace(
+            Balance(id=1, acct_num="B", value=Decimal("150.00")),
+            if_tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(insert)
+    db.transact(replace)
+
+
 def versioned_update_advances_the_version_ungated_in_locking_mode(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         current = tx.find(Account.where(Account.id == 2)).result()
@@ -338,6 +354,44 @@ def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
 
     db.transact(insert)
     db.transact(split)
+
+
+def bitemporal_target_patch_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(
+            Position(id=1, acct_num="A", value=Decimal("100.00")),
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        )
+
+    def patch(tx: Transaction) -> None:
+        tx.wire.update(
+            "Position",
+            {"id": 1, "value": "200.00"},
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+            if_tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(insert)
+    db.transact(patch)
+
+
+def bitemporal_target_replacement_acquires_its_start_under_locking(db: ScopedDatabase) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(
+            Position(id=1, acct_num="A", value=Decimal("100.00")),
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        )
+
+    def replace(tx: Transaction) -> None:
+        tx.replace(
+            Position(id=1, acct_num="B", value=Decimal("300.00")),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            if_tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(insert)
+    db.transact(replace, concurrency="locking")
 
 
 def a_close_settles_against_the_milestone_its_own_find_observed(db: ScopedDatabase) -> None:
@@ -671,6 +725,14 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         clock=_txtime_write_005_clock,
     ),
     WriteStory(
+        "m-txtime-write-016",
+        "A Transaction-Time-Only target replacement gates on its caller's milestone",
+        "commit",
+        "balance",
+        transaction_time_only_target_replacement_gates_on_the_callers_milestone,
+        clock=_txtime_write_002_clock,
+    ),
+    WriteStory(
         "m-opt-lock-002",
         "Versioned update advances the version ungated in locking mode",
         "commit",
@@ -705,6 +767,22 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "position",
         bitemporal_update_until_splits_head_middle_tail,
         clock=_bitemp_write_001_clock,
+    ),
+    WriteStory(
+        "m-bitemp-write-026",
+        "A bitemporal target patch states its window and its caller's milestone",
+        "commit",
+        "position",
+        bitemporal_target_patch_gates_on_the_callers_milestone,
+        clock=_bitemp_write_001_clock,
+    ),
+    WriteStory(
+        "m-bitemp-write-027",
+        "A Locking bitemporal target replacement reads its start under the shared lock",
+        "commit",
+        "position",
+        bitemporal_target_replacement_acquires_its_start_under_locking,
+        clock=_txtime_write_002_clock,
     ),
     WriteStory(
         "m-bitemp-write-003",

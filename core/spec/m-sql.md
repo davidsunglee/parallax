@@ -1022,6 +1022,19 @@ revision, or removal is emitted before any successor is inserted — rectangles 
 Valid-Time order, each rectangle's successors in Valid-Time order — so a lost
 condition fails before the range writes anything new.
 
+A caller-addressed temporal write (`m-bitemp-write` *Caller-addressed writes span
+their requested extent*) observed nothing, so its coverage read starts at its own
+`validFrom`; a Transaction-Time-Only one reads `… where t0.bal_id = ? and t0.out_z
+= ?` with `[pk, infinity]`. A replacement's openings over the gaps of its extent
+follow every rectangle's successors, in Valid-Time order. Under Locking the
+write's submission first reads its starting rectangle alone, with the read-lock
+suffix:
+
+| Target | Golden read | Binds |
+|---|---|---|
+| Bitemporal | `… where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? for share of t0` | `[pk, validFrom, validFrom, infinity]` |
+| Transaction-Time-Only | `… where t0.bal_id = ? and t0.out_z = ? for share of t0` | `[pk, infinity]` |
+
 ## Transactional SQL fragments
 
 The unit-of-work layer (`m-unit-work`) is expressed in operations and object

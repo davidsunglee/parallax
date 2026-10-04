@@ -153,6 +153,50 @@ is still pending, its opening is the coverage: an edit bounded inside the
 opening splits it, and nothing extends it beyond its own window (`m-unit-work`
 *Same-transaction write coalescing*).
 
+## Caller-addressed writes span their requested extent
+
+A caller-addressed patch or replacement (`m-unit-work` *Caller-addressed
+writes*) states its own `validFrom`, any instant inside a current rectangle, and
+its requested extent is `[validFrom, until)`, through infinity when unbounded.
+It requires a current rectangle containing `validFrom` whose `in_z` is the
+caller's stated `ifTxStart`. That point condition describes the starting
+rectangle alone, not the earlier state of every rectangle the extent reaches:
+later rectangles are read inside the flush that writes them, including any
+changed since the caller's query, and each is inactivated under its own `in_z`.
+
+| Mutation | Inside its requested extent |
+|---|---|
+| Patch | Each overlapping rectangle takes the assigned members over its own unassigned values, exactly as an observed write's does; a gap and the coverage after a scheduled termination stay absent. |
+| Replacement | Each overlapping rectangle takes the complete stated state, and every part of the extent no current rectangle covers — a gap, or the coverage after a scheduled termination — is opened with that state too, once. |
+
+Every inactivation precedes every opening, the starting rectangle's first; a
+replacement's opened gaps follow the pieces of the rectangles it inactivates.
+Where the flush's read shows no rectangle containing `validFrom`, or one at
+another `in_z`, the write is the caller's failed precondition before any
+statement executes. Under Optimistic the starting rectangle's inactivation gates
+on the stated `ifTxStart`, and its shortfall is that failed precondition; every
+later rectangle's gates on its own `in_z`, and its shortfall is an ordinary
+conflict. Under Locking the starting rectangle was read under the shared lock
+at submission and every rectangle the flush reads is read under it again, so no
+inactivation is gated (`m-read-lock`).
+
+A caller-addressed write composes with observed writes of one window and one
+starting state (`m-unit-work` *Observed-State Coalescing*): a replacement's
+extent survives an assignment composed after it and ends at a destruction,
+which opens no gap only to destroy it.
+
+**Concurrent creation in gaps is not coordinated.** The existing-row guards and
+shared locks above protect rows that exist when the flush reads them. A
+concurrent transaction may still open coverage inside a gap a replacement fills,
+or a gap a patch passes over, and both commits can leave overlapping current
+coverage; no isolation level is raised to prevent it.
+
+**Untracked same-token changes are a configuration constraint.** A supported
+deployment introduces no trigger or cascade that replaces or changes a tracked
+current row outside the framework's own writes while leaving its address and
+`in_z` as they were. Nothing here detects such a change; audit-only side effects
+and effects on unrelated data are unaffected.
+
 ## Rectangles the attempt opened
 
 The splits above inactivate a rectangle that existed before the attempt. A later

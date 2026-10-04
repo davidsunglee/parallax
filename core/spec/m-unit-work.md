@@ -455,10 +455,26 @@ carry **revision intent**: a versioned row's version advances even when every
 value it writes equals the stored one, and a later write composing with it keeps
 that intent.
 
+A temporal target write also states its **window**: none on a
+Transaction-Time-Only target, whose current row it writes, and `validFrom` with
+an optional exclusive `until` on a Bitemporal one, `validFrom` lying anywhere
+inside a stored rectangle. Its stated Transaction-Time start describes the
+coverage at `validFrom` alone. It is a range over current coverage like an
+observed write's (*deferred range unit*): its flush reads the coverage its
+window reaches, a patch assigns to each existing interval and creates nothing,
+and a replacement also opens its state over every gap of its window
+(`m-bitemp-write` *Caller-addressed writes span their requested extent*). Where
+that read shows no current row at `validFrom`, or one at another
+Transaction-Time start, the write is a failed precondition before any of its
+statements executes.
+
 Submission follows the target Entity's Effective Concurrency Strategy:
 
 - **Optimistic** — nothing is read. The stated version becomes the write's gate,
-  and a shortfall against it is a **failed precondition**.
+  and a shortfall against it is a **failed precondition**. A temporal write's
+  stated start gates its starting row, and only that row's shortfall is the
+  failed precondition; a later row's gate binds its own Transaction-Time start,
+  and its shortfall is an ordinary conflict.
 - **Locking** — after the write is judged compatible with the object's pending
   writes, the participation it needs comes from a pending write of the same
   stated state, else from a live, unspent read of exactly that state this
@@ -469,6 +485,10 @@ Submission follows the target Entity's Effective Concurrency Strategy:
   a failed precondition refused at the call, leaving the pending writes as they
   were. The write itself is ungated. An unversioned target takes this path under
   either preference, and a missing row is its ordinary missing target at flush.
+  A temporal target's state is the milestone its stated start and its
+  `validFrom` name, so a live read hits only where `validFrom` is that
+  milestone's own Valid-Time start; a pending write of the object, which
+  admission required to start from the same state, always stands in.
 
 A failed precondition is the caller's: re-running the transaction re-states the
 same revision, so it is **never retried**, whatever the retry option, and no
@@ -652,7 +672,11 @@ semantics already decided.
   rows read: it consults no clock, strategy, or model, so the plan's meaning is
   fixed when planning returns and only its physical enumeration waits for the
   rows. A range whose observed rows already cover it settles at planning like
-  any other write.
+  any other write. A caller-addressed temporal write is such a range whatever it
+  composes with, unless observed rows of its composition cover its window; its
+  meaning also carries the caller's starting condition, which binding judges
+  against the rows read before any step exists, and a replacement's extent,
+  whose uncovered parts binding opens.
 - Planned Steps is a **logical** sequence. An implementation MAY pack homogeneous
   runs and expose stable immutable views during iteration rather than allocating
   one container per step; every exposed view is immutable and stable, and equal
@@ -1296,6 +1320,19 @@ The survivor of a composition keeps the caller's condition, its revision intent,
 and every observation the composed writes were admitted through, which its
 completion spends; a shortfall against its gate is the caller's failed
 precondition, ahead of any observed write's own classification.
+
+A caller-addressed write of a **temporal** object joins that object's
+composition (next paragraph) on the same one-state terms: every write of the
+composition states exactly one window, every caller's stated Transaction-Time
+start and every observed rectangle's agree, and no assignment follows a
+destruction. A write of another window is refused, overlapping or not, while a
+caller-addressed write of the object is pending, and a caller-addressed write is
+refused beside any pending write of another window. The composition's transform
+records a replacement's window as its **extent**: an assignment composed after it
+overlays its values and keeps the extent, so the gaps it fills take the overlaid
+state, and a destruction ends it, opening no gap only to destroy it. The
+condition every caller stated stays the composition's starting condition through
+every overwrite and destruction.
 
 **A temporal object's observed writes compose by object.** Writes of one temporal
 object through observed sources — whichever states they observed and whatever

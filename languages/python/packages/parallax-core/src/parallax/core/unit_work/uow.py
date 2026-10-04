@@ -12,12 +12,12 @@ from weakref import WeakValueDictionary
 from parallax.core import inheritance
 from parallax.core.base import INFINITY_LITERAL
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.temporal_read import Edge
 from parallax.core.unit_work.claims import (
     SELECTION_INTENT,
     ClaimScope,
     ClaimTable,
     SettledEvidence,
-    admits_composed,
     claimed_object,
     keyed_intent,
 )
@@ -26,12 +26,12 @@ from parallax.core.unit_work.effects import WritePreconditionError
 from parallax.core.unit_work.instructions import (
     DESTRUCTIVE_MUTATIONS,
     INSERT_MUTATIONS,
+    ExpectedTxStart,
     ExpectedVersion,
     KeyedMutation,
     PreparedKeyedWrite,
     PreparedTargetWrite,
     PreparedTemporalBounds,
-    WriteInstructionError,
 )
 from parallax.core.unit_work.materialized import (
     BufferItem,
@@ -39,6 +39,7 @@ from parallax.core.unit_work.materialized import (
     MaterializedWriteGroup,
     ObjectClaimedWrite,
     ObservedKeyedWrite,
+    TargetKeyedWrite,
     buffered_instruction,
     group_state_keys,
     target_write,
@@ -54,6 +55,7 @@ from parallax.core.unit_work.planned import Finite
 from parallax.core.unit_work.planner import (
     ObjectKey,
     ObservedStateKey,
+    TemporalStateKey,
     VersionedStateKey,
     resolve_object_key,
 )
@@ -69,7 +71,6 @@ from parallax.core.unit_work.write_planner import (
     PendingWrites,
     PlanningRequest,
     WritePlanner,
-    composed_intents,
 )
 
 __all__ = [
@@ -170,22 +171,27 @@ class WriteBatchOpening(Protocol):
 @dataclass(frozen=True, slots=True)
 class StoredTarget:
     """What an internal acquisition found of the stored state a caller-addressed
-    write starts from: its version, where its family has one."""
+    write starts from: its version, where its family has one, or its current
+    Transaction-Time start, where its family is temporal."""
 
     version: int | None = None
+    tx_start: object | None = None
 
 
 class TargetAcquisition(Protocol):
     """The composition-layer capability that reads the stored state a
     caller-addressed write of ``key`` starts from, under the shared row lock,
-    on the transaction's own connection.
+    on the transaction's own connection: the row current at Valid-Time
+    ``valid_from`` of a Bitemporal object, which is ``None`` for any other.
 
     It executes no pending write and publishes nothing to any caller: what it
     answers is participation and the stored revision, and ``None`` where no
     current row stands.
     """
 
-    def __call__(self, target: EntityMetadata, key: ObjectKey, /) -> StoredTarget | None: ...
+    def __call__(
+        self, target: EntityMetadata, key: ObjectKey, valid_from: object | None, /
+    ) -> StoredTarget | None: ...
 
 
 class UnitOfWorkError(RuntimeError):
@@ -714,8 +720,9 @@ class UnitOfWork:
           through its insertion's source or a fresh read until commit;
         * it cannot join the object's pending writes
           (``write-evidence-already-claimed``) — another write of the object
-          stands at another stated revision or observed state, or the write it
-          meets at its own is a destruction it would undo; or
+          stands at another stated revision or observed state, a temporal one
+          states another window, or the write it meets is a destruction it
+          would undo; or
         * under the Locking strategy, the stored state does not match the
           caller's stated revision (:class:`WritePreconditionError`).
 
@@ -724,16 +731,13 @@ class UnitOfWork:
         state this attempt holds, else by ``acquire`` — which reads the stored
         row under the shared lock and executes nothing pending. The Optimistic
         strategy reads nothing: the caller's revision becomes the write's gate.
+        A temporal target names its state by its stated Transaction-Time start
+        and, on a Bitemporal object, by the coverage at its ``valid_from``.
         """
         self._ensure_open()
         if not prepared.replaces and not prepared.assigns:
             return
         target = prepared.target
-        if self._pending.is_temporal_entity(target):
-            raise WriteInstructionError(
-                f"{target.identity.canonical}: caller-addressed writes of a temporal target are "
-                "not supported yet; write through a read of the row"
-            )
         item = target_write(prepared, inheritance.view(self.meta))
         scope = item.scope
         key = claimed_object(scope)
@@ -748,26 +752,62 @@ class UnitOfWork:
                 object_key=key,
             )
         expectation = prepared.expectation
-        if not self._pending.admits_target(item, key) or self._claims.claims_object(key):
+        temporal = self._pending.is_temporal(item)
+        admitted = (
+            self._pending.admits_temporal(item, key)
+            if temporal
+            else self._pending.admits_target(item, key)
+        )
+        if not admitted or self._claims.claims_object(key):
             raise _already_claimed(target, key)
         policy = self._evidence_policy_for(target.identity)
-        if policy.effective_strategy(self.settings.concurrency) == "locking" and not (
-            self._pending.holds_scope(scope) or self._participates(scope)
-        ):
-            stored = acquire(target, key)
-            if isinstance(expectation, ExpectedVersion) and (
-                stored is None or stored.version != expectation.version
-            ):
-                raise WritePreconditionError(
-                    target.identity, dict(key.primary_key), expectation.version
-                )
+        if policy.effective_strategy(self.settings.concurrency) == "locking":
+            if temporal:
+                assert isinstance(expectation, ExpectedTxStart)  # a temporal target's revision
+                self._acquire_temporal(item, key, expectation, acquire)
+            elif not (self._pending.holds_scope(scope) or self._participates(scope)):
+                stored = acquire(target, key, None)
+                if isinstance(expectation, ExpectedVersion) and (
+                    stored is None or stored.version != expectation.version
+                ):
+                    raise WritePreconditionError(
+                        target.identity, dict(key.primary_key), expectation.version
+                    )
         self._pending.add(item, key)
 
-    def _participates(self, scope: VersionedStateKey | ObjectKey) -> bool:
+    def _acquire_temporal(
+        self,
+        item: TargetKeyedWrite,
+        key: ObjectKey,
+        expectation: ExpectedTxStart,
+        acquire: TargetAcquisition,
+    ) -> None:
+        """Prove a Locking caller-addressed write of a temporal object starts
+        from the state its caller stated, or refuse it.
+
+        A pending write of the object already holds that state: admission
+        required it to start from exactly this one. Otherwise a live read of
+        it this attempt holds does, else ``acquire`` reads it.
+        """
+        if self._pending.temporal(key) is not None:
+            return
+        valid_from = item.instruction.bounds.valid_from
+        if self._participates(
+            TemporalStateKey(key, Edge(tx_time=expectation.instant, valid_time=valid_from))
+        ):
+            return
+        target = item.instruction.target
+        stored = acquire(target, key, valid_from)
+        if stored is None or stored.tx_start != expectation.instant:
+            raise WritePreconditionError(
+                target.identity, dict(key.primary_key), expectation.instant
+            )
+
+    def _participates(self, scope: ObservedStateKey | ObjectKey) -> bool:
         """Whether a live read of exactly ``scope`` this attempt holds — under
         its shared lock, unspent, and describing the stored state — already
         proves it."""
-        if not isinstance(scope, VersionedStateKey):
+        if isinstance(scope, ObjectKey):
             return False
         held = self._observations.get(scope)
         return (
@@ -928,13 +968,10 @@ class UnitOfWork:
         else:
             key = resolve_object_key(instruction, inheritance.view(self.meta))
             scope = None if item.claim is None else item.claim.key
-        intent = keyed_intent(instruction)
-        assert key is not None and intent is not None  # such a write names one object
-        held = self._pending.temporal(key)
-        if (
-            held is not None
-            and admits_composed(composed_intents(held), scope, intent) == "incompatible"
-        ) or (scope is not None and self._claims.held(scope) is not None):
+        assert key is not None  # such a write names one object
+        if not self._pending.admits_temporal(item, key) or (
+            scope is not None and self._claims.held(scope) is not None
+        ):
             raise _already_claimed(instruction.target, key)
 
     def _claim_selection(self, group: MaterializedWriteGroup) -> None:

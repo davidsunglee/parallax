@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Final, cast
 
 from parallax.core import deep_fetch, inheritance
-from parallax.core.base import ManagedValue
+from parallax.core.base import ManagedValue, normalize_instant
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.dialect import LockMode
 from parallax.core.document_codec import (
@@ -21,7 +22,13 @@ from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata
 from parallax.core.object_query._validated import latest_temporal_selections
 from parallax.core.sql_gen._compile import compile_read
-from parallax.core.temporal_read import NonTemporal, Pin, TemporalShape
+from parallax.core.temporal_read import (
+    Bitemporal,
+    NonTemporal,
+    Pin,
+    TemporalShape,
+    TransactionTimeOnly,
+)
 from parallax.core.unit_work import (
     MaterializedWriteGroup,
     ObjectKey,
@@ -357,19 +364,25 @@ def buffer_target_instruction(ctx: PredicateWriteContext, prepared: PreparedTarg
     acquisition it reads the write's starting state through where its Effective
     Concurrency Strategy needs participation."""
 
-    def acquire(entity: EntityMetadata, key: ObjectKey) -> StoredTarget | None:
-        return _acquire_target(ctx, entity, key)
+    def acquire(
+        entity: EntityMetadata, key: ObjectKey, valid_from: object | None
+    ) -> StoredTarget | None:
+        return _acquire_target(ctx, entity, key, cast("ManagedValue | None", valid_from))
 
     ctx.keyed.uow.buffer_target(prepared, acquire=acquire)
 
 
 def _acquire_target(
-    ctx: PredicateWriteContext, entity: EntityMetadata, key: ObjectKey
+    ctx: PredicateWriteContext,
+    entity: EntityMetadata,
+    key: ObjectKey,
+    valid_from: ManagedValue | None,
 ) -> StoredTarget | None:
-    """Read the stored row ``key`` names under the shared row lock: one
-    row-form point read of its own, under this attempt, executing no pending
-    write and publishing nothing, through the materializing predicate write's
-    own row-form acquisition."""
+    """Read the stored row ``key`` names under the shared row lock — the current
+    row at ``valid_from`` of a Bitemporal object, the current one of any other
+    temporal object: one row-form point read of its own, under this attempt,
+    executing no pending write and publishing nothing, through the
+    materializing predicate write's own row-form acquisition."""
     model = ctx.keyed.model
     meta = model.meta
     conn = ctx.conn
@@ -381,7 +394,11 @@ def _acquire_target(
     version_attr = CONCURRENCY.version_attribute(meta, entity.identity)
     with ctx.attempt.read(entity.identity, "rows") as read:
         query = deep_fetch.plan_target_read(
-            entity, model=meta, key=name, key_value=cast("ManagedValue", value)
+            entity,
+            model=meta,
+            key=name,
+            key_value=cast("ManagedValue", value),
+            valid_from=valid_from,
         )
         compiled = compile_read(query, meta, conn.dialect, result_form="row", lock=lock)
         stage = Materializer().read_page(
@@ -390,10 +407,15 @@ def _acquire_target(
         rows = tuple(_publishable_member_rows(stage.page))
     if not rows:
         return None
+    (row,) = rows
+    selection = layout.member_selection
+    shape = temporal_shape(meta, entity)
+    if isinstance(shape, TransactionTimeOnly | Bitemporal):
+        start = row[selection.position(shape.transaction_time.start_attribute)]
+        return StoredTarget(tx_start=normalize_instant(cast("dt.datetime", start)))
     if version_attr is None:
         return StoredTarget()
-    (row,) = rows
-    return StoredTarget(cast("int", row[layout.member_selection.position(version_attr)]))
+    return StoredTarget(cast("int", row[selection.position(version_attr)]))
 
 
 def acquire_coverage(
