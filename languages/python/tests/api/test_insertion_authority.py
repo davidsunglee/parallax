@@ -39,6 +39,7 @@ from parallax.snapshot.handle import ScopedDatabase, Transaction
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "insertion.authority"
+_EARLIER = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 _ATTEMPT = dt.datetime(2024, 6, 15, tzinfo=dt.UTC)
 _LATER = dt.datetime(2024, 7, 15, tzinfo=dt.UTC)
 _JAN, _MAR, _MAY, _JUN, _AUG, _SEP, _DEC = (
@@ -547,3 +548,52 @@ def test_an_insertion_authority_ends_with_its_attempt(
 
     db.transact(later)
     assert _span_rows(profile_run, ColumnsSpan) == _current((_JAN, None, 100))
+
+
+@pytest.mark.parametrize("helper_read", [False, True], ids=["pending", "after-a-helper-read"])
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_rewritten_earlier_coverage_is_no_part_of_an_insertion_it_precedes(
+    profile_run: Any, entity: type[Any], representation: _Representation, helper_read: bool
+) -> None:
+    db = _db(profile_run, _EARLIER, _ATTEMPT)
+    db.transact(lambda tx: _insert_span(tx, entity, representation, valid_from=_JAN, until=_MAR))
+
+    def edit(tx: Transaction) -> None:
+        inserted = _insert_span(tx, entity, representation, valid_from=_MAY, amount=300)
+        _read_span(tx, entity, representation, _JAN).update(until=_MAR, amount=150)
+        _read_span(tx, entity, representation, _MAY)
+        inserted.terminate()
+        if helper_read:
+            _read_span(tx, entity, representation, _JAN)
+        _insert_span(tx, entity, representation, valid_from=_MAY, amount=400)
+
+    db.transact(edit)
+    assert _span_rows(profile_run, entity) == [
+        (_EARLIER, _ATTEMPT, _JAN, _MAR, 100, _SPEC_DOCUMENT),
+        (_ATTEMPT, None, _JAN, _MAR, 150, _SPEC_DOCUMENT),
+        (_ATTEMPT, None, _MAY, None, 400, _SPEC_DOCUMENT),
+    ]
+
+
+@pytest.mark.parametrize("helper_read", [False, True], ids=["pending", "after-a-helper-read"])
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_a_reinsertion_at_a_later_anchor_is_removed_from_its_own_anchor(
+    profile_run: Any, entity: type[Any], representation: _Representation, helper_read: bool
+) -> None:
+    db = _db(profile_run)
+
+    def edit(tx: Transaction) -> None:
+        first = _insert_span(tx, entity, representation, valid_from=_JAN)
+        _read_span(tx, entity, representation, _MAR)
+        first.terminate()
+        second = _insert_span(tx, entity, representation, valid_from=_MAR, amount=200)
+        _read_span(tx, entity, representation, _MAR)
+        second.terminate()
+        if helper_read:
+            assert tx.find(entity.where(entity.id == 1).as_of(valid_time=_MAR)).results() == []
+        _insert_span(tx, entity, representation, valid_from=_MAR, amount=300)
+
+    db.transact(edit)
+    assert _span_rows(profile_run, entity) == _current((_MAR, None, 300))

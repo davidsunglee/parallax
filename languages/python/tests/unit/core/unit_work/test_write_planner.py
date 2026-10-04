@@ -2583,10 +2583,17 @@ def _open_ends(entity: str) -> tuple[TemporalUpperBound, ...]:
 
 
 def _planned_group(
-    entity: str, mutation: PredicateMutation, *, owned: tuple[int, ...] = ()
+    entity: str,
+    mutation: PredicateMutation,
+    *,
+    owned: tuple[int, ...] = (),
+    inserted: tuple[int, ...] = (),
 ) -> WritePlan:
     model = _POSITION if entity == "Position" else _BALANCE
-    ownership = OpenedRows(frozenset(_endpoint(entity, key, *_open_ends(entity)) for key in owned))
+    ownership = OpenedRows(
+        frozenset(_endpoint(entity, key, *_open_ends(entity)) for key in owned),
+        frozenset(_endpoint(entity, key, *_open_ends(entity)) for key in inserted),
+    )
     return (
         build_write_planner(model)
         .finalize(
@@ -2635,9 +2642,17 @@ def test_a_group_unit_records_what_its_rows_remove_and_open() -> None:
     assert list(unit.opened) == [
         _endpoint("Position", key, head_end, OPEN_END) for key in (1, 2, 3)
     ]
+    assert list(unit.continued) == []
     assert [state.object for state in unit.changed] == [
         corpus_object_key("Position", ("id", key)) for key in (1, 2, 3)
     ]
+
+
+def test_a_group_continues_an_insertion_only_from_the_rows_that_insertion_opened() -> None:
+    (unit,) = _planned_group("Position", "terminate", owned=(1, 2), inserted=(2,)).units
+    head_end = Finite(instant=_WINDOW_FROM)
+    assert list(unit.continued) == [_endpoint("Position", 2, head_end, OPEN_END)]
+    assert list(unit.opened) == [_endpoint("Position", key, head_end, OPEN_END) for key in (1, 3)]
 
 
 def test_a_transaction_time_group_unit_opens_one_current_row_per_rewritten_row() -> None:

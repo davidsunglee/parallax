@@ -615,6 +615,10 @@ class PendingWrites:
             items[index] = _merged_claimed(base, item)
             return
         if verdict == "deduplicate":
+            assert index is not None  # an unclaimed scope admits
+            base = items[index]
+            assert isinstance(base, ObservedKeyedWrite | ObjectClaimedWrite | InsertionKeyedWrite)
+            items[index] = _evidenced(base, item, base.instruction)
             return
         if index is not None and verdict == "supersede":
             base = items[index]
@@ -638,6 +642,7 @@ class PendingWrites:
         if (
             isinstance(held, ObservedKeyedWrite)
             and isinstance(item, ObservedKeyedWrite)
+            and held.claim is item.claim
             and held.observation == item.observation
         ):
             held_intent = keyed_intent(held.instruction)
@@ -780,10 +785,18 @@ def _evidenced(
     a read authorized — ``first`` where both or neither were.
 
     A read's evidence outranks an insertion's authority because the survivor
-    still has to spend it, and the two settle against the same state.
+    still has to spend it, and the two settle against the same state. Where
+    both were read, the survivor also spends every distinct retained
+    observation the other was admitted through.
     """
-    carrier = second if isinstance(first, InsertionKeyedWrite) else first
-    return replace(carrier, instruction=instruction)
+    carrier, other = (second, first) if isinstance(first, InsertionKeyedWrite) else (first, second)
+    if not isinstance(carrier, ObservedKeyedWrite) or not isinstance(other, ObservedKeyedWrite):
+        return replace(carrier, instruction=instruction)
+    twins = carrier.twins
+    for claim in (other.claim, *other.twins):
+        if claim is not None and claim is not carrier.claim and all(claim is not t for t in twins):
+            twins = (*twins, claim)
+    return replace(carrier, instruction=instruction, twins=twins)
 
 
 def _decomposed_updates(

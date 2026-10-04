@@ -149,6 +149,11 @@ class Ownership(Protocol):
         """Whether any owned row is an object of ``entity``."""
         ...
 
+    def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
+        """Whether the owned row ``endpoint`` is coverage an admitted insertion
+        opened, so that its successors are too."""
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class _NoOwnership:
@@ -158,6 +163,10 @@ class _NoOwnership:
 
     def owns_any(self, entity: EntityIdentity, /) -> bool:
         del entity
+        return False
+
+    def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
+        del endpoint
         return False
 
 
@@ -207,6 +216,7 @@ class BoundRange:
     changed: tuple[ObservedStateKey, ...]
     removed: tuple[OwnedEndpoint, ...]
     opened: tuple[OwnedEndpoint, ...]
+    continued: tuple[OwnedEndpoint, ...] = ()
 
 
 class DeferredRange(Protocol):
@@ -229,8 +239,11 @@ class ExecutionUnit:
     succeeded, and before any later unit executes: the source authority
     ``claim`` it spends, the observed states it changed — a single retained
     claim's own state among them whenever the unit has a step — and the owned
-    rows it removed and opened. Removals are retired before openings are
-    registered, so a row removed and reopened at one address remains owned.
+    rows it removed and opened. The rows it opened are split by what they
+    derive from: ``continued`` holds an insert's row and every successor of a
+    row an admitted insertion opened, and ``opened`` every other. Removals are
+    retired before openings are registered, so a row removed and reopened at
+    one address remains owned.
 
     A unit with a ``deferred`` range has no planned step of its own: its steps
     and the facts beyond its claim come from binding the coverage the executor
@@ -242,6 +255,7 @@ class ExecutionUnit:
     changed: Iterable[ObservedStateKey] = ()
     removed: Iterable[OwnedEndpoint] = ()
     opened: Iterable[OwnedEndpoint] = ()
+    continued: Iterable[OwnedEndpoint] = ()
     deferred: DeferredRange | None = None
 
 

@@ -45,7 +45,14 @@ from parallax.core.unit_work import (
     PredecessorRow,
     WritePlan,
 )
-from parallax.core.unit_work.plan import ExecutionUnit, PlannedSteps, eager_segment
+from parallax.core.unit_work.plan import (
+    NO_OWNERSHIP,
+    OPEN_BITEMPORAL_ENDS,
+    ExecutionUnit,
+    OwnedEndpoint,
+    PlannedSteps,
+    eager_segment,
+)
 from parallax.core.unit_work.planned import (
     ANY_COUNT,
     INFINITY,
@@ -607,6 +614,12 @@ def test_the_audit_port_decorates_nothing_by_default() -> None:
     )
     assert decorated is step
     assert isinstance(NO_AUDIT, AuditStrategy)
+
+
+def test_an_attempt_that_opened_nothing_owns_nothing_an_insertion_opened() -> None:
+    endpoint = OwnedEndpoint(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
+    assert not NO_OWNERSHIP.owns(endpoint)
+    assert not NO_OWNERSHIP.continues_insertion(endpoint)
 
 
 def test_a_plan_without_units_forms_one_unit_of_every_step() -> None:

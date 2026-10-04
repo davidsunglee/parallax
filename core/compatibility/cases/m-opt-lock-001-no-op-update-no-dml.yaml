@@ -1,7 +1,3 @@
-# Single-transaction empty update issues no DML (m-opt-lock): a versioned update
-# that assigns no attribute emits NO statement — zero round trips —
-# inside the SAME unit of work as its observing find and its dependent verify
-# read (m-unit-work `uow` step grouping).
 model: models/account.yaml
 tags: [m-opt-lock, m-unit-work, no-op, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

@@ -1,8 +1,3 @@
-# A keyed update's assignments are literal sets (m-unit-work "Comparing an assigned
-# member with its persisted value"; m-opt-lock "Empty updates issue no DML"): an
-# update assigning `balance` the value the row already holds is not empty, so it
-# issues its gated UPDATE and advances the version, unlike m-opt-lock-001's update
-# that assigns nothing.
 model: models/account.yaml
 tags: [m-opt-lock, m-unit-work, m-sql, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

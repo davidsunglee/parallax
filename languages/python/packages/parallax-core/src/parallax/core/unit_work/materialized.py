@@ -260,14 +260,18 @@ class ObservedKeyedWrite:
     """Carries verb-time evidence through planning without resolving it again.
 
     A retained ``claim`` is spent only if this write survives to settlement.
-    An update's row is its literal assignment set: the identity plus every
-    member its producer expressed, each written whatever value the source
-    observed for it.
+    ``twins`` are the distinct retained observations of the same state that
+    writes coalesced into this one were admitted through — independent
+    standalone reads of one state retain one each — and its completion spends
+    them with ``claim``. An update's row is its literal assignment set: the
+    identity plus every member its producer expressed, each written whatever
+    value the source observed for it.
     """
 
     instruction: PreparedKeyedWrite
     observation: WriteObservation
     claim: RetainedObservation | None = None
+    twins: tuple[RetainedObservation, ...] = ()
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS:

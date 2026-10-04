@@ -1,13 +1,3 @@
-# A unit of work that reads one key twice keeps BOTH reads as evidence, and the close
-# that follows settles against the milestone the read it names observed — not against
-# whichever read of that key ran last (m-unit-work "An observation is filed under the
-# object it observed AND the milestone it observed of that object"). That close keeps
-# its finite address: the observed rectangle ends at 2024-06-01, and the close names
-# that end. The write itself starts at its source's pin and runs through infinity, so
-# it also reaches the later current rectangle the read never observed; that rectangle
-# is read once more inside the flush (a read call with no golden, counted in the
-# step's round trips), closed under its own observed start, and re-opened with the
-# assignment over its own unassigned values (m-bitemp-write "Requested extent").
 model: models/position.yaml
 tags: [m-unit-work, m-bitemp-write, m-temporal-read, m-opt-lock, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

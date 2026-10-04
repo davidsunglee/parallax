@@ -70,6 +70,7 @@ from parallax.core.unit_work.plan import (
     OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
     BoundRange,
+    Completion,
     Completions,
     ExecutionUnit,
     OwnedEndpoint,
@@ -237,11 +238,13 @@ class _SettledClose:
 @dataclass(frozen=True, slots=True)
 class _Settled:
     """One settled mutation's steps and the owned rows its success removes and
-    opens."""
+    opens, the rows an insertion's coverage continues into apart
+    (:attr:`ExecutionUnit.continued`)."""
 
     steps: tuple[PlannedStep, ...]
     opened: tuple[OwnedEndpoint, ...] = ()
     removed: tuple[OwnedEndpoint, ...] = ()
+    continued: tuple[OwnedEndpoint, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -471,12 +474,16 @@ class WriteSettlement:
                         changed=ranged.changed,
                         removed=ranged.removed,
                         opened=ranged.opened,
+                        continued=ranged.continued,
                     )
                 )
                 continue
             own_state: VersionedStateKey | None = None
+            twinned: ObservedStateKey | None = None
+            claim: Completion | None
             if isinstance(item, ObservedKeyedWrite):
-                instruction, observation, claim = item.instruction, item.observation, item.claim
+                instruction, observation = item.instruction, item.observation
+                claim, twinned = _observed_claim(item)
             elif isinstance(item, InsertionKeyedWrite):
                 instruction, observation, claim = item.instruction, None, None
                 scope = item.scope
@@ -506,9 +513,10 @@ class WriteSettlement:
                 ExecutionUnit(
                     end=count,
                     claim=claim,
-                    changed=() if own_state is None else (own_state,),
+                    changed=_own_changes(own_state, twinned, executed=bool(settled.steps)),
                     removed=settled.removed,
                     opened=settled.opened,
+                    continued=settled.continued,
                 )
             )
         flush_pending()
@@ -756,7 +764,7 @@ class WriteSettlement:
         )
         close = facts.close
         if close is None:
-            return _Settled(successors, opened=_openings(facts, successors))
+            return _Settled(successors, continued=_openings(facts, successors))
         assert predecessor is not None  # a closing topology refuses an unobserved mutation
         closing = _close_step(
             facts,
@@ -1167,6 +1175,7 @@ class WriteSettlement:
             changed=bound.changed,
             removed=bound.removed,
             opened=bound.opened,
+            continued=bound.continued,
         )
 
 
@@ -1230,13 +1239,16 @@ class _RowLayout:
     and ``revises`` whether that revision assigns anything; an owned row with no
     kept successor is removed; a row that existed before the attempt has
     neither and is closed. ``opened`` is the successor positions opened, in
-    order — every nonempty one but ``kept``.
+    order — every nonempty one but ``kept`` — and ``continues`` whether the
+    row is coverage an admitted insertion opened, which its successors then
+    continue.
     """
 
     owned: bool
     kept: int | None
     revises: bool
     opened: tuple[int, ...]
+    continues: bool = False
 
     @property
     def steps(self) -> int:
@@ -1318,7 +1330,8 @@ class _MaterializedTemporalSegment:
             end=end,
             changed=self.changed,
             removed=_GroupRemovals(self),
-            opened=_GroupOpenings(self),
+            opened=_GroupOpenings(self, continued=False),
+            continued=_GroupOpenings(self, continued=True),
         )
 
     def with_layout(self, ownership: Ownership) -> _MaterializedTemporalSegment:
@@ -1370,6 +1383,7 @@ class _MaterializedTemporalSegment:
             opened=tuple(
                 position for index, position in enumerate(nonempty) if kept is None or index != kept
             ),
+            continues=ownership.continues_insertion(own),
         )
 
     def opened_positions(self, row_index: int) -> tuple[int, ...]:
@@ -1383,6 +1397,11 @@ class _MaterializedTemporalSegment:
         layout = self.layout
         row = None if layout is None else layout.rows[row_index]
         return row is not None and row.owned and row.kept is None
+
+    def continues(self, row_index: int) -> bool:
+        layout = self.layout
+        row = None if layout is None else layout.rows[row_index]
+        return row is not None and row.continues
 
     def endpoint(self, row_index: int) -> OwnedEndpoint:
         evidence = self.evidence
@@ -1514,11 +1533,20 @@ class _MaterializedTemporalSegment:
 
 @dataclass(frozen=True, slots=True)
 class _GroupOpenings:
+    """The rows a group opens from the selected rows an admitted insertion
+    opened when ``continued``, and from every other selected row when not."""
+
     segment: _MaterializedTemporalSegment
+    continued: bool
 
     def __iter__(self) -> Iterator[OwnedEndpoint]:
         segment = self.segment
+        continued = self.continued
+        if continued and segment.layout is None:
+            return
         for row_index in range(len(segment.evidence)):
+            if segment.continues(row_index) is not continued:
+                continue
             for position in segment.opened_positions(row_index):
                 yield segment.opened_endpoint(row_index, position)
 
@@ -1652,6 +1680,7 @@ def _dispose(
     own = _target_endpoint(facts, closing.target)
     if not ownership.owns(own):
         return _Settled((closing, *pieces), opened=_openings(facts, pieces))
+    continues = ownership.continues_insertion(own)
     kept = _kept(facts, own, pieces)
     if kept is not None:
         piece = pieces[kept]
@@ -1669,14 +1698,54 @@ def _dispose(
                 ),
                 *others,
             )
-        return _Settled(steps, opened=_openings(facts, others))
+        return _owned_successors(steps, _openings(facts, others), continues)
     removal = PlannedTemporalRemoval(
         entity=closing.entity,
         target=closing.target,
         concurrency=closing.concurrency,
         affected_rows=closing.affected_rows,
     )
-    return _Settled((removal, *pieces), opened=_openings(facts, pieces), removed=(own,))
+    return _owned_successors((removal, *pieces), _openings(facts, pieces), continues, own)
+
+
+def _observed_claim(
+    item: ObservedKeyedWrite,
+) -> tuple[Completion | None, ObservedStateKey | None]:
+    """What an observed keyed write's unit spends, and the state it must name
+    as changed itself because it spends several retained observations of that
+    state together."""
+    if not item.twins:
+        return item.claim, None
+    assert item.claim is not None  # twins meet only at their claim's own scope
+    return Completions((item.claim, *item.twins)), item.claim.key
+
+
+def _own_changes(
+    own_state: VersionedStateKey | None, twinned: ObservedStateKey | None, *, executed: bool
+) -> tuple[ObservedStateKey, ...]:
+    """The states a keyed write's unit names as changed itself: the version an
+    insertion's write advances, or — for a write that spends several retained
+    observations of one state together, which a single claim's unit would
+    otherwise have stated for it — that state once a step executed."""
+    if own_state is not None:
+        return (own_state,)
+    return (twinned,) if twinned is not None and executed else ()
+
+
+def _owned_successors(
+    steps: tuple[PlannedStep, ...],
+    openings: tuple[OwnedEndpoint, ...],
+    continues: bool,
+    removed: OwnedEndpoint | None = None,
+) -> _Settled:
+    """An owned predecessor's effects, its successors continuing the insertion
+    that opened it when ``continues``."""
+    return _Settled(
+        steps,
+        opened=() if continues else openings,
+        continued=openings if continues else (),
+        removed=() if removed is None else (removed,),
+    )
 
 
 def _kept(facts: _TemporalFacts, own: OwnedEndpoint, pieces: Sequence[PlannedInsert]) -> int | None:
@@ -2360,6 +2429,7 @@ class _SettledRange:
     changed: tuple[ObservedStateKey, ...]
     removed: tuple[OwnedEndpoint, ...]
     opened: tuple[OwnedEndpoint, ...]
+    continued: tuple[OwnedEndpoint, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -2515,6 +2585,7 @@ class _RangeBinding:
         changed: list[ObservedStateKey] = []
         removed: list[OwnedEndpoint] = []
         opened: list[OwnedEndpoint] = []
+        continued: list[OwnedEndpoint] = []
         resolved: dict[
             int, tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]
         ] = {}
@@ -2543,11 +2614,13 @@ class _RangeBinding:
                 changed.append(original.state)
             removed.extend(disposed.removed)
             opened.extend(disposed.opened)
+            continued.extend(disposed.continued)
         return BoundRange(
             steps=(*effects, *openings),
             changed=tuple(changed),
             removed=tuple(removed),
             opened=tuple(opened),
+            continued=tuple(continued),
         )
 
     def _require_anchor(self, originals: Sequence[_Original]) -> None:

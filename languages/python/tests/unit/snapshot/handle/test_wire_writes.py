@@ -1115,6 +1115,61 @@ def test_a_wire_source_whose_evidence_a_flush_spent_is_refused() -> None:
     db_for(ACCOUNT, port).transact(fn)
 
 
+@pytest.mark.parametrize(
+    ("first_verb", "second_verb"),
+    [("update", "update"), ("update", "delete"), ("delete", "delete")],
+    ids=["coalesced", "superseded", "deduplicated"],
+)
+def test_independent_standalone_sources_of_one_version_are_both_spent(
+    first_verb: str, second_verb: str
+) -> None:
+    deletes = second_verb == "delete"
+    port = ScriptedAdapter(
+        _ACCOUNT_READ,
+        _ACCOUNT_READ,
+        Transact(Write(), Read(rows=[] if deletes else [_ACCOUNT_ROW])),
+    )
+    db = db_for(ACCOUNT, port)
+    sources = (_standalone(db, _ACCOUNT_QUERY), _standalone(db, _ACCOUNT_QUERY))
+
+    def write(tx: Transaction, verb: str, source: WireEntity, owner: str) -> None:
+        if verb == "update":
+            tx.wire.update(source, {"owner": owner})
+        else:
+            tx.wire.delete(source)
+
+    def fn(tx: Transaction) -> None:
+        write(tx, first_verb, sources[0], "Lin")
+        write(tx, second_verb, sources[1], "Ana")
+        tx.wire.find(_ACCOUNT_QUERY).results()
+        for source in sources:
+            with pytest.raises(WriteEvidenceError) as exc_info:
+                tx.wire.update(source, {"balance": "150.00"})
+            assert exc_info.value.code == "write-evidence-consumed"
+
+    db.transact(fn)
+    assert len(_writes(port)) == 1
+
+
+def test_independent_standalone_sources_of_one_milestone_are_both_spent() -> None:
+    row = balance_row(in_z=_TX_START)
+    port = ScriptedAdapter(Read(rows=[row]), Read(rows=[row]), Transact(Write(times=2), Read()))
+    db = db_for(BALANCE, port)
+    sources = (_standalone(db, _BALANCE_QUERY), _standalone(db, _BALANCE_QUERY))
+
+    def fn(tx: Transaction) -> None:
+        tx.wire.update(sources[0], {"value": "6.00"})
+        tx.wire.update(sources[1], {"acctNum": "A-2"})
+        tx.wire.find(_BALANCE_QUERY).results()
+        for source in sources:
+            with pytest.raises(WriteEvidenceError) as exc_info:
+                tx.wire.update(source, {"value": "7.00"})
+            assert exc_info.value.code == "write-evidence-consumed"
+
+    db.transact(fn)
+    assert len(_writes(port)) == 2
+
+
 def test_a_wire_termination_over_another_window_of_one_state_is_refused_synchronously() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
