@@ -21,10 +21,11 @@ The Write Plan's own contract is here too: an empty Planned Steps is the one
 canonical result for a flush that survives nothing, and Planned Steps is a
 logical sequence whose views compare by value rather than by object identity.
 
-The temporal slice adds its own: a Milestone Target belongs to a Planned Close
-alone, a close expects exactly one row, and the address it names is complete —
-one exclusive upper bound per As-Of Axis, in canonical order, independent of the
-gate the Effective Concurrency Strategy decided.
+The temporal slice adds its own: a Milestone Target belongs to a temporal step —
+a close, or an owned revision or removal — alone, each expects exactly one row,
+and the address it names is complete — one exclusive upper bound per As-Of
+Axis, in canonical order, independent of the gate the Effective Concurrency
+Strategy decided.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ from parallax.core.unit_work import (
     PredecessorRow,
     WritePlan,
 )
-from parallax.core.unit_work.plan import PlannedSteps, eager_segment
+from parallax.core.unit_work.plan import ExecutionUnit, PlannedSteps, eager_segment
 from parallax.core.unit_work.planned import (
     ANY_COUNT,
     INFINITY,
@@ -65,6 +66,8 @@ from parallax.core.unit_work.planned import (
     PlannedAssignments,
     PlannedDelete,
     PlannedRow,
+    PlannedTemporalRemoval,
+    PlannedTemporalRevision,
     PlannedUpdate,
     SelfIncrement,
     Shortfall,
@@ -439,10 +442,10 @@ def _close(
     [PlannedUpdate, PlannedDelete],
     ids=["update", "delete"],
 )
-def test_an_in_place_step_may_not_address_a_milestone(step: object) -> None:
-    # A temporal change expands into a close plus its Planned Insert successors,
-    # so a Milestone Target on an in-place revision or a physical deletion is
-    # unconstructible rather than merely unusual.
+def test_a_non_temporal_step_may_not_address_a_milestone(step: object) -> None:
+    # A temporal change is a close, an owned revision, or an owned removal, so a
+    # Milestone Target on a Non-Temporal update or delete is unconstructible
+    # rather than merely unusual.
     kwargs: dict[str, object] = {
         "entity": _ACCOUNT,
         "target": _CURRENT_SLOT,
@@ -451,13 +454,36 @@ def test_an_in_place_step_may_not_address_a_milestone(step: object) -> None:
     }
     if step is PlannedUpdate:
         kwargs["assignments"] = _BALANCE_SET
-    with pytest.raises(ValueError, match="belongs to a Planned Close"):
+    with pytest.raises(ValueError, match="belongs to a Planned Close, a Planned Temporal"):
         cast("Callable[..., object]", step)(**kwargs)
 
 
 def test_a_close_expects_exactly_one_row() -> None:
     with pytest.raises(ValueError, match="addresses one current milestone"):
         _close(affected_rows=ExactCount(expected=2, on_shortfall=STALE_WRITE))
+
+
+def test_an_owned_revision_and_removal_each_address_one_current_milestone() -> None:
+    two = ExactCount(expected=2, on_shortfall=STALE_WRITE)
+    with pytest.raises(ValueError, match="addresses one current milestone"):
+        PlannedTemporalRevision(
+            entity=_ACCOUNT,
+            target=_CURRENT_SLOT,
+            assignments=_BALANCE_SET,
+            concurrency=UNGATED,
+            affected_rows=two,
+        )
+    with pytest.raises(ValueError, match="addresses one current milestone"):
+        PlannedTemporalRemoval(
+            entity=_ACCOUNT, target=_CURRENT_SLOT, concurrency=UNGATED, affected_rows=two
+        )
+    with pytest.raises(ValueError, match="classifies a shortfall as"):
+        PlannedTemporalRemoval(
+            entity=_ACCOUNT,
+            target=_CURRENT_SLOT,
+            concurrency=UNGATED,
+            affected_rows=ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT),
+        )
 
 
 @pytest.mark.parametrize(
@@ -581,3 +607,17 @@ def test_the_audit_port_decorates_nothing_by_default() -> None:
     )
     assert decorated is step
     assert isinstance(NO_AUDIT, AuditStrategy)
+
+
+def test_a_plan_without_units_forms_one_unit_of_every_step() -> None:
+    steps = PlannedSteps((eager_segment((_close(), _close())),))
+    assert WritePlan(steps=steps).units == (ExecutionUnit(end=2),)
+    assert WritePlan().units == ()
+
+
+def test_a_plans_units_follow_its_steps_in_order_and_end_with_them() -> None:
+    steps = PlannedSteps((eager_segment((_close(), _close())),))
+    with pytest.raises(ValueError, match="follow its steps in order"):
+        WritePlan(steps=steps, units=(ExecutionUnit(end=2), ExecutionUnit(end=1)))
+    with pytest.raises(ValueError, match="end where its 2 step"):
+        WritePlan(steps=steps, units=(ExecutionUnit(end=1),))

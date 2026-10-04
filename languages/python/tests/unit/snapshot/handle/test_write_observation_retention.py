@@ -30,11 +30,14 @@ from parallax.conformance import models
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core.base import INFINITY
+from parallax.core.document_codec import EffectiveChangeSet
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
+    BufferItem,
     EntityStateRow,
+    KeyedWrite,
     ObservedStateKey,
     ReadOrigin,
     RetainedObservation,
@@ -44,9 +47,11 @@ from parallax.core.unit_work import (
     VersionObservation,
     WriteBatchTrigger,
     WritePlan,
+    buffered_write,
     observed_state_key,
     run_unit_of_work,
 )
+from parallax.core.unit_work.instructions import prepare_typed_write
 from parallax.core.unit_work.planner import TemporalStateKey, VersionedStateKey
 from parallax.snapshot.handle import build_write_planner
 from parallax.snapshot.handle._materialization import Materializer
@@ -72,7 +77,7 @@ _RATE_TX_START = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 _INFINITY = INFINITY
 
 
-def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
+def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger, completed: object) -> None:
     """A flush sink for a test that never flushes."""
     return None
 
@@ -664,3 +669,58 @@ def test_a_participating_read_stamps_its_own_unit_of_works_participation() -> No
         )
 
     assert _in_transaction(model, observe)
+
+
+# --------------------------------------------------------------------------- #
+# Freshness: evidence is judged against the state its rows had when read.     #
+# --------------------------------------------------------------------------- #
+def _balance_update(model: AcceptedMetamodel, hint: ReadOrigin) -> BufferItem:
+    instruction = prepare_typed_write(
+        KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("6.00")},)), model
+    )
+    assert hint.observation is not None
+    return buffered_write(
+        instruction,
+        hint.observation,
+        change=EffectiveChangeSet(effective=frozenset({"value"}), restored=frozenset()),
+    )
+
+
+def test_evidence_resolved_after_an_own_change_to_its_state_is_invalidated() -> None:
+    model = _accepted("balance")
+    entity = corpus_entity("Balance")
+
+    def observe(uow: UnitOfWork) -> None:
+        unsubmitted = judged_evidence(model, entity, _balance_columns(), ledger=uow)
+        unaffected = judged_evidence(model, entity, _balance_columns(id_=2), ledger=uow)
+        writer = judged_evidence(model, entity, _balance_columns(), ledger=uow)[0]
+        uow.buffer(_balance_update(model, writer))
+        uow.read(lambda: None)
+        stale = unsubmitted[0].observation
+        assert stale is not None
+        assert stale.invalidated
+        assert not stale.consumed
+        assert stale is not writer.observation
+        other = unaffected[0].observation
+        assert other is not None and not other.invalidated
+        fresh = judged_evidence(model, entity, _balance_columns(), ledger=uow)[0].observation
+        assert fresh is not None and not fresh.invalidated and not fresh.consumed
+
+    _in_transaction(model, observe)
+
+
+def test_an_own_change_invalidates_a_built_observation_no_write_used() -> None:
+    model = _accepted("balance")
+    entity = corpus_entity("Balance")
+
+    def observe(uow: UnitOfWork) -> None:
+        built = judged_evidence(model, entity, _balance_columns(), ledger=uow)[0].observation
+        assert built is not None
+        writer = judged_evidence(model, entity, _balance_columns(), ledger=uow)[0]
+        assert writer.observation is built  # one state, one shared observation
+        uow.buffer(_balance_update(model, writer))
+        assert not built.invalidated  # buffered, not yet completed
+        uow.read(lambda: None)
+        assert built.invalidated and built.consumed
+
+    _in_transaction(model, observe)

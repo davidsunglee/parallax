@@ -33,6 +33,7 @@ __all__ = [
     "ResolvedSuccessor",
     "bind_successor",
     "resolve_successors",
+    "successor_bounds",
 ]
 
 
@@ -147,6 +148,30 @@ def bind_successor(
         row=adopt_planned_row(attributes, value_objects),
         origin=_origin(successor.state, predecessor),
     )
+
+
+def successor_bounds(
+    successor: ResolvedSuccessor, *, predecessor_start: object, predecessor_end: object
+) -> tuple[object, object]:
+    """The Valid-Time start and end ``successor`` binds, given its predecessor's
+    own Valid-Time start and end cells — the values :func:`bind_successor`
+    writes, read without building the row."""
+    window = successor.window
+    assert window is not None  # only a Bitemporal successor binds a window
+    return (
+        _bound_value(window.start, predecessor_start, predecessor_end),
+        _bound_value(window.end, predecessor_start, predecessor_end),
+    )
+
+
+def _bound_value(resolved: ResolvedBound, start: object, end: object) -> object:
+    match resolved:
+        case _Literal(value):
+            return value
+        case PredecessorStart():
+            return start
+        case PredecessorEnd():
+            return end
 
 
 def _origin(state: SuccessorState, predecessor: PredecessorRow | None) -> InsertOrigin:

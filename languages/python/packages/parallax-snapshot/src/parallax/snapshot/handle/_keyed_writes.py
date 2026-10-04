@@ -14,7 +14,6 @@ from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     UPDATE_MUTATIONS,
-    BufferOutcome,
     KeyedMutation,
     KeyedWrite,
     ObjectKey,
@@ -35,7 +34,6 @@ from parallax.snapshot.handle._family import comparison_shape, family_view
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
-    "InsertedObjects",
     "KeyedWriteContext",
     "KeyedWriteValueError",
     "PreparedSourceWrite",
@@ -113,8 +111,9 @@ answers partition the values a keyed verb can be handed, makes
 :func:`validate_provenance` total over them, and lets each refusal name the verb
 that does accept the value. `m-unit-work` "Write value provenance" states its
 answers over the values a READ produced, so this answer alone never settles
-whether a row exists for a write to address; the opened-object ledger does,
-and :func:`validate_provenance` takes it as its own argument. Deriving the answer
+whether a row exists for a write to address; the unit of work's admitted
+insertions do, and :func:`validate_provenance` takes that answer as its own
+argument. Deriving the answer
 is the REPRESENTATION's job — a Typed value carries a lifecycle to read it from
 and a Wire source carries a Read Origin — so this is a fact a caller states
 rather than a value this module inspects."""
@@ -215,8 +214,8 @@ def validate_provenance(
     row derived for the purpose, so a value whose class can key no row still
     reaches THIS refusal rather than an
     :class:`~parallax.core.entity.EntityRowError` raised on its behalf. It is the
-    UPDATE family's exemption only: the insert family reads the same ledger for
-    the opposite verdict, and that refusal is :func:`refuse_repeated_insert`'s,
+    UPDATE family's exemption only: the insert family reads the same admission
+    for the opposite verdict, and that refusal is :func:`refuse_repeated_insert`'s,
     asked once the row is prepared rather than here.
     """
     if mutation not in UPDATE_MUTATIONS and mutation not in INSERT_MUTATIONS:
@@ -267,8 +266,8 @@ def refuse_repeated_insert(
     of, whichever value spells the repeat and whichever representation opened
     the row.
 
-    The insert family's half of read-your-own-writes, read off the same ledger
-    whose entry lifts ``write-value-not-stored`` from an update: a row this
+    The insert family's half of read-your-own-writes, read off the same
+    admitted insertion that lifts ``write-value-not-stored`` from an update: a row this
     unit of work opens is a row it stores, so a second opening of it names a row
     already held, exactly as a value this store published does — and it carries
     that value's code, because what is wrong is the same thing. `m-unit-work`'s
@@ -276,8 +275,8 @@ def refuse_repeated_insert(
     silent on insert-then-insert, whose only other outcome is the database
     refusing the pair at commit; the verb answers instead.
 
-    ``opened_by`` is the ledger's answer for the object the PREPARED row names
-    (:func:`written_object_of_row`), which is why this stands after preparation
+    ``opened_by`` is the unit of work's answer for the object the PREPARED row
+    names (:func:`written_object_of_row`), which is why this stands after preparation
     rather than beside the provenance question: a Wire payload's key members are
     canonical only once its row is prepared. A Typed instance could answer
     earlier and does not, so both representations hear pin, provenance, and
@@ -286,9 +285,10 @@ def refuse_repeated_insert(
     advice names the update verb over the carrier the OPENING interface produced
     (:data:`_REPEATED_INSERT_ADVICE`), which is the only carrier that exists,
     and the refusing call's own interface never decides it. The answer is about
-    an insert that still STANDS buffered: a destructive write that cancelled a
-    pending pair retired the object (:meth:`InsertedObjects.retire`), so an
-    insert after it is a first opening and is not refused.
+    an insert that still STANDS admitted: a destructive write that cancelled a
+    pending pair retired the admission
+    (:class:`~parallax.core.unit_work.BufferOutcome`), so an insert after it is
+    a first opening and is not refused.
     """
     if opened_by is None:
         return
@@ -303,15 +303,9 @@ def refuse_repeated_insert(
     )
 
 
-type WrittenObject = tuple[EntityIdentity, tuple[tuple[str, object], ...]]
-"""Which object a written row names, as :func:`written_object_of_row` reads it —
-the equivalence a same-transaction insert is recognized by, never a row and never
-an :class:`~parallax.core.unit_work.ObjectKey`."""
-
-
 def written_object_of_row(
     record: EntityIdentity, key: AttributeMetadata, row: Mapping[str, object]
-) -> WrittenObject | None:
+) -> ObjectKey | None:
     """Which object a written ROW names.
 
     The one reading, whatever produced the row: the identity row a source states
@@ -319,9 +313,8 @@ def written_object_of_row(
     an object key a read filed) and the canonical
     row an insert buffers key by the SAME family key member ``key`` and carry
     the value as the caller supplied it, so a Typed
-    insert and a Wire update of one object name one member of
-    :class:`InsertedObjects` — which is what makes the exemption span both
-    representations rather than one each.
+    insert and a Wire update of one object name one admitted insertion — which
+    is what makes the exemption span both representations rather than one each.
 
     ``None`` for a row that names no object: one short of the key member, or one
     whose member carries something no object can be addressed BY. A row short
@@ -331,7 +324,7 @@ def written_object_of_row(
     a source states its key members as its caller populated them and only the
     write that follows judges them against the declared type; answering ``None``
     is what leaves that value's own refusal standing instead of failing the
-    ledger's question about it.
+    admission question about it.
     """
     name = key.identity.name
     if name not in row:  # pragma: no cover - every caller holds a complete key already
@@ -339,16 +332,16 @@ def written_object_of_row(
     member = row[name]
     if not _addresses_an_object(member):
         return None
-    return (record, ((name, member),))
+    return ObjectKey(record, ((name, member),))
 
 
 def _addresses_an_object(member: object) -> bool:
     """Whether an object can be addressed by ``member`` at all.
 
-    Addressing is by equality within :class:`InsertedObjects`, so a member no
-    hash is defined over addresses nothing there — and nothing there could have
-    been recorded under one, since an insert is validated against the declared
-    type before its row is recorded. Read as a property of the member rather
+    Addressing is by equality among the unit of work's admitted insertions, so a
+    member no hash is defined over addresses nothing there — and nothing there
+    could have been recorded under one, since an insert is validated against the
+    declared type before its row is recorded. Read as a property of the member rather
     than a list of carriers: which containers a caller can smuggle past
     validation is open-ended, and every one of them addresses no object for the
     same reason.
@@ -366,102 +359,16 @@ def _addresses_an_object(member: object) -> bool:
     return True
 
 
-class InsertedObjects:
-    """The objects one transaction opened by insert, and which interface opened
-    each.
-
-    Not the unit of work's pending inserts: those answer whether an
-    :class:`~parallax.core.unit_work.ObjectKey` still has an unflushed insert,
-    while this answers, by the identity row a source states before any
-    instruction exists, whether this transaction opened the object at all —
-    flushed or not — and through which interface.
-
-    Shared by BOTH keyed doors rather than kept per representation: a Typed
-    insert followed by a Wire update of the same object is one
-    read-your-own-writes pair, and so is the reverse, so the ledger has to be
-    one or the two verbs would disagree about what this transaction stores.
-
-    Two rules read it, and they are the two halves of read-your-own-writes. A
-    write over existing state reads it for the EXEMPTION: a row this transaction
-    opened is a row it stores, so a value naming that object is not refused as
-    unstored (:func:`validate_provenance`). An insert reads it for the REFUSAL:
-    that same row is already opening, so a second insert of its object names a
-    row already held (:func:`refuse_repeated_insert`).
-
-    The refusal also needs the OPENER's representation, which is why an entry is
-    a :data:`WriteRepresentation` and not merely presence: the way out of a
-    repeat is the update verb over the carrier the first insert produced, and
-    only the interface that opened the row has one. Selecting that spelling from
-    the refusing call instead would name a Wire node after a Typed insert
-    answered none, and a Typed ``.edit`` after a Wire insert took a mapping.
-
-    An object leaves it by one route, :meth:`retire`, taken when a destructive
-    keyed write cancels an insert of it that is still PENDING in the buffer: the
-    flush annihilates that pair and emits nothing for the object (`m-unit-work`
-    "Insert-then-delete cancels"), so from that verb on the transaction holds no
-    insert of it, a later insert is a first opening, and a later update
-    addresses nothing. A destructive write of an object whose insert already
-    flushed retires nothing — that row exists, and a second insert of it would
-    collide with it, since a flush emits every surviving insert ahead of every
-    delete. A flush retires nothing either, and what a write of a flushed row
-    then owes is the question
-    :meth:`~parallax.core.unit_work.UnitOfWork.resolve_write_evidence` leaves
-    open.
-
-    A member is the total reading :func:`written_object_of_row` answers for an
-    identity row, never a row and never an
-    :class:`~parallax.core.unit_work.ObjectKey`: the provenance refusal that
-    reads this is decided before any row is derived. ``None`` is a legitimate
-    member — every way a value can name no object arrives as one — and it matches
-    nothing, which is exactly what leaves that value's provenance refusal
-    standing.
-    """
-
-    __slots__ = ("_objects",)
-
-    def __init__(self) -> None:
-        self._objects: dict[WrittenObject | None, WriteRepresentation] = {}
-
-    def record(self, written: WrittenObject | None, opened_by: WriteRepresentation) -> None:
-        """Record the object a just-buffered insert opens, and the interface
-        that opened it."""
-        self._objects[written] = opened_by
-
-    def opened_by(self, written: WrittenObject | None) -> WriteRepresentation | None:
-        """Which interface opened the insert this transaction holds of
-        ``written``, or ``None`` where it holds none.
-
-        ``None`` is the whole "not held" answer, and a value naming no object is
-        never held: a value that names no object is no object this transaction
-        inserted.
-        """
-        if written is None:
-            return None
-        return self._objects.get(written)
-
-    def retire(self, written: WrittenObject | None) -> None:
-        """Forget the object a just-buffered destructive write cancelled the
-        pending insert of.
-
-        Called on the unit of work's report that buffering that write cancelled
-        the pending insert, and never before: a refused write leaves this ledger
-        as it found it, exactly as it leaves the unit of work's own. Total over
-        what :func:`written_object_of_row` answers — an object the ledger does
-        not hold, and ``None``, retire nothing.
-        """
-        self._objects.pop(written, None)
-
-
 @dataclass(frozen=True, slots=True)
 class KeyedWriteContext:
     """The transaction state a keyed write reads, and nothing wider.
 
-    Four facts, all fixed for a ``Transaction``'s whole life, which is why one
+    Three facts, all fixed for a ``Transaction``'s whole life, which is why one
     value is built at its construction and handed to every keyed verb it answers
-    — its own and ``tx.wire``'s alike. ``inserts`` is therefore the SAME ledger
-    under both representations, and ``model`` the same accepted metadata, so no
-    two keyed verbs of one transaction can disagree about what it stores or what
-    it declares.
+    — its own and ``tx.wire``'s alike. ``uow`` therefore holds the SAME admitted
+    insertions under both representations, and ``model`` the same accepted
+    metadata, so no two keyed verbs of one transaction can disagree about what
+    it stores or what it declares.
 
     It carries no connection and no attempt: a keyed write addresses a row its
     caller already holds and reads nothing from the store, so a context that
@@ -470,7 +377,6 @@ class KeyedWriteContext:
 
     model: CatalogedModel
     uow: UnitOfWork
-    inserts: InsertedObjects
     lifecycle: InstalledLifecycle | None
 
 
@@ -482,7 +388,7 @@ class ResolvedKeyedWriteSource:
     makes it one record rather than a phase's worth of separate getters: the
     provenance refusal, the pin refusal, and the buffered-insert exemption are
     all decided from it, in that order, and the identity row is what names the
-    object to the ledger before any instruction exists.
+    object to the admitted insertions before any instruction exists.
 
     ``pin`` and ``hint`` are the source's own, never derived: a hintless source
     is one no read of this store published, and a source pinned at a finite
@@ -490,7 +396,7 @@ class ResolvedKeyedWriteSource:
 
     ``identity_row`` is ``None`` for a source that names no object of this store
     at all — a value whose own class keys this Entity by other members, or one
-    that carries no value for a member it does key by. The ledger holds no insert
+    that carries no value for a member it does key by. No insertion is admitted
     of an object nothing named, so such a source reaches the provenance refusal
     that is the honest complaint about it; deriving a row to ask the question
     with would answer that mistake with a codec failure instead.
@@ -555,8 +461,8 @@ class ResolvedKeyedInsert:
     """What a Keyed Insert Source answers about the row a verb opens.
 
     An opening row revises no state: no read published it and no prior value is
-    restored by it, so there is no identity row to name to the ledger before the
-    instruction exists and no hint to settle against. What remains is which
+    restored by it, so there is no identity row to name an admitted insertion by
+    before the instruction exists and no hint to settle against. What remains is which
     Entity it is a row of, where the value itself came from — the one provenance
     answer an insert can be refused for, since a value this store published names
     a row it already holds — and the ``pin`` such a value carries,
@@ -722,23 +628,22 @@ def keyed_write(
     run inside a lifecycle callback; the source answers, and every judgement
     between its answers belongs here.
 
-    Two stages read the opened-object ledger, from one object derived once at
-    stage 3: the provenance exemption, which is what lets an update follow this
-    transaction's own insert, and the evidence exemption, which is why the write
-    that follows settles bare — the row it revises is the one that insert opens,
-    so there is no prior row for a second intent to compete for. One step past
-    the buffer writes it: a destructive write that cancels an insert of the same
-    object still PENDING in the unit of work retires that object, because the
-    flush will annihilate that pair and emit nothing for it, so from here on an
-    insert of it is a first opening and an update of it addresses nothing.
+    Two stages read the unit of work's admitted insertions, from one object
+    derived once at stage 3: the provenance exemption, which is what lets an
+    update follow this transaction's own insert, and the evidence exemption,
+    which is why the write that follows settles bare — the row it revises is the
+    one that insert opens, so there is no prior row for a second intent to
+    compete for. Buffering itself retires an admission: a destructive write that
+    cancels an insert of the same object still PENDING in the unit of work
+    retires it, because the flush will annihilate that pair and emit nothing for
+    it, so from there on an insert of it is a first opening and an update of it
+    addresses nothing.
 
-    Whether it cancelled one is the unit of work's report of the buffering
-    itself (:class:`~parallax.core.unit_work.BufferOutcome`). An object whose
-    insert already flushed is not pending: that row exists, so a second insert
-    of it would collide with it — the flush emits every surviving insert ahead
-    of every delete, so a delete and a re-insert of one flushed row cannot even
-    be ordered as authored. Retiring follows the buffer for the guarantee the
-    buffer itself gives: a refused write leaves every ledger as it found it.
+    An object whose insert already flushed is not pending: that row exists, so
+    a second insert of it would collide with it — the flush emits every
+    surviving insert ahead of every delete, so a delete and a re-insert of one
+    flushed row cannot even be ordered as authored. A refused write leaves the
+    admissions as it found them, because the buffer admits all or nothing.
     """
     refuse_reentry(ctx.lifecycle)
     source.capture(mutation)
@@ -751,7 +656,7 @@ def keyed_write(
         if identity_row is None
         else written_object_of_row(resolved.entity.identity, family.primary_key, identity_row)
     )
-    opened_by = ctx.inserts.opened_by(written)
+    opened_by = _opener(ctx.uow.opened_by(written))
     validate_provenance(
         resolved.entity.identity,
         resolved.provenance,
@@ -771,9 +676,7 @@ def keyed_write(
             resolved.entity, resolved.hint, mutation=mutation, object_key=prepared.object_key
         )
     )
-    item = buffered_write(prepared.instruction, evidence, change=change)
-    if ctx.uow.buffer(item) is BufferOutcome.CANCELLED_PENDING_INSERT:
-        ctx.inserts.retire(written)
+    ctx.uow.buffer(buffered_write(prepared.instruction, evidence, change=change))
 
 
 def keyed_insert(
@@ -799,13 +702,14 @@ def keyed_insert(
     One stage stands after preparation, the last before the buffer: a second
     insert of an object this transaction already buffered an insert of is
     refused, whichever value spells it and whichever representation opened the
-    row. It reads the same ledger the source-backed door's exemption reads, over
+    row. It reads the same admitted insertions the source-backed door's
+    exemption reads, over
     the object the PREPARED row names, because a Wire payload's key members are
     canonical only once the row is — so pin, provenance, and preparation are all
     heard ahead of it, on both lanes.
 
-    The row this opens is recorded in that ledger under the representation that
-    opened it, which is what licenses the keyed write that follows and what the
+    The insertion this admits is labelled with the representation that opened
+    it, which is what licenses the keyed write that follows and what the
     refusal names the way out in: the caller is sent to the update verb over the
     carrier THIS call produced, which the opposite interface has no spelling for.
     The answer names the row so a caller holding no Entity Class can revise it.
@@ -829,10 +733,9 @@ def keyed_insert(
     refuse_repeated_insert(
         resolved.entity.identity,
         mutation,
-        opened_by=ctx.inserts.opened_by(written),
+        opened_by=_opener(ctx.uow.opened_by(written)),
     )
-    ctx.uow.buffer(prepared)
-    ctx.inserts.record(written, resolved.representation)
+    ctx.uow.buffer(prepared, opener=resolved.representation)
     opened = object_key(prepared, meta)
     # A Create Payload is a complete document, so the row it buffers always names
     # its own object by the time validation has admitted it.
@@ -848,6 +751,14 @@ def keyed_insert(
             observation=None,
         ),
     )
+
+
+def _opener(label: object) -> WriteRepresentation | None:
+    """The representation an admitted insertion was labelled with."""
+    if label is None:
+        return None
+    assert label in _REPEATED_INSERT_ADVICE  # this module labels every insertion it admits
+    return label
 
 
 def _sealed_row(row: Mapping[str, object]) -> Mapping[str, object]:

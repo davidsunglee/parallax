@@ -112,6 +112,39 @@ is the separate MAY-tier `purge`. The plain writes mirror `GenericBiTemporalDire
 unbounded `insert` / `update` / `terminate` (research §6), the open-window / tailless
 companions of the `*Until` trio.
 
+## Rectangles the attempt opened
+
+The splits above inactivate a rectangle that existed before the attempt. A later
+write of the **same** attempt whose observed rectangle the attempt's own earlier
+flush opened has no history to preserve: closing it at the attempt's one
+`txInstant` would leave an empty Transaction-Time interval whose physical key
+collides with the rectangle that flush closed. Such a rectangle is therefore
+**revised in place or removed** (`m-unit-work` *Rows the attempt opened*).
+Whatever the predecessor, only **nonempty** successors are opened — a `head`
+whose window starts where the rectangle starts covers no Valid Time and is not
+opened.
+
+When exactly one nonempty successor keeps the rectangle's complete physical
+address — the key and its Valid-Time end, with Transaction-Time `infinity` — the
+rectangle is updated in place into that successor, moving its `from_z` where the
+successor starts later, and the other successors are inserted. Otherwise the
+rectangle is deleted and every successor inserted. Both address the rectangle
+exactly as an inactivation does, with the same observed-`in_z` gate under
+Optimistic, and every resulting row keeps `in_z = txInstant`:
+
+| Mutation of a rectangle `[s, e)` the attempt opened | Effect |
+|---|---|
+| **update** at `V` with `s < V` | update the rectangle into the changed tail `[V, e)`; insert the `head` `[s, V)` |
+| **update** at `V = s` | update the rectangle's value in place |
+| **updateUntil** `[V, U)` with `s < V < U < e` | update the rectangle into the carried tail `[U, e)`; insert `head` and `middle` |
+| **terminateUntil** `[V, U)` with `s < V < U < e` | update the rectangle into the carried tail `[U, e)`; insert the `head` |
+| **terminate** at `V` with `s < V` | delete the rectangle; insert the `head` `[s, V)` |
+| **terminate** at `V = s` | delete the rectangle |
+
+No end coordinate is moved to make a successor match, and ownership is never
+inferred from `in_z = txInstant`. A rectangle that existed before the attempt is
+inactivated exactly as above, so its Transaction-Time history stays immutable.
+
 ## What this module contributes to planning
 
 Like `m-txtime-write`, this module does not emit its own statements: it describes
@@ -139,10 +172,11 @@ predicate-selected mutation resolving many rows yields one description the
 planner applies across the resolved group. An implementation **MUST NOT** expose
 a milestone plan, milestone step, or per-row expansion value on any cross-module
 interface. The planner expands the description in place at the mutation's
-already-decided position (ADR 0045) into one Planned Close followed immediately
-by its Planned Insert successors in the facet's canonical order — inactivation,
-then `head`, `middle`, `tail` where each exists — with no unrelated step
-interleaved and no surviving group or identifier.
+already-decided position (ADR 0045) into the predecessor's effect — one Planned
+Close, or for a rectangle the attempt opened a Planned Temporal Revision or
+Removal — followed immediately by its Planned Insert successors in the facet's
+canonical order — `head`, `middle`, `tail` where each exists and is nonempty —
+with no unrelated step interleaved and no surviving group or identifier.
 
 ### Address and gate are separate
 

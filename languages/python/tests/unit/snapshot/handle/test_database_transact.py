@@ -463,7 +463,7 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
     db = account_db(port)
 
     def executor(  # pragma: no cover - never flushed
-        _plan: WritePlan, *, trigger: WriteBatchTrigger
+        _plan: WritePlan, *, trigger: WriteBatchTrigger, completed: object
     ) -> None:
         raise AssertionError("no flush expected")
 
@@ -1242,6 +1242,75 @@ def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() ->
     assert (
         port.calls.count(BeginCall()) == 2
     )  # the conflicting attempt, then the retried (successful) attempt
+
+
+def _update_force_flush_and_catch(refusals: list[BaseException]) -> Callable[[Transaction], str]:
+    def callback(tx: Transaction) -> str:
+        _observe_and_update(tx)
+        with contextlib.suppress(OptimisticLockConflictError):
+            tx.find(mm.Account.where(mm.Account.id == 3))  # the flush this forces conflicts
+        with pytest.raises(RollbackOnlyError) as refused:
+            tx.find(mm.Account.where(mm.Account.id == 3))
+        refusals.append(refused.value)
+        return "caught"
+
+    return callback
+
+
+def test_a_caught_dependent_read_flush_failure_refuses_further_work_and_the_commit() -> None:
+    # The OUTER callback catches its own forced flush's conflict: no joined
+    # scope is involved, yet the attempt is doomed before the failure escapes the
+    # read, so the next read is refused, the callback's value is withheld, and
+    # nothing commits.
+    grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    port = ScriptedAdapter(Transact(Read(rows=grace), Write(affected=0)))
+    refusals: list[BaseException] = []
+    with raises_contextualized(RollbackOnlyError) as failure:
+        account_db(port).transact(_update_force_flush_and_catch(refusals), concurrency="optimistic")
+    assert isinstance(failure.value.__cause__, OptimisticLockConflictError)
+    (refusal,) = refusals
+    assert isinstance(refusal.__cause__, OptimisticLockConflictError)
+    assert port.calls.count(CommitCall()) == 0
+    assert port.calls.count(RollbackCall()) == 1
+
+
+def test_a_caught_flush_conflict_keeps_its_retriability_through_the_doom() -> None:
+    grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    port = ScriptedAdapter(
+        Transact(Read(rows=grace), Write(affected=0)),
+        Transact(Read(rows=grace), Write(), Read(rows=grace)),
+    )
+    refusals: list[BaseException] = []
+
+    def callback(tx: Transaction) -> str:
+        if not refusals:
+            return _update_force_flush_and_catch(refusals)(tx)
+        _observe_and_update(tx)
+        tx.find(mm.Account.where(mm.Account.id == 3))
+        return "retried"
+
+    db = account_db(port)
+    assert (
+        db.transact(callback, concurrency="optimistic", retry_optimistic_conflicts=True)
+        == "retried"
+    )
+    assert port.calls.count(BeginCall()) == 2
+
+
+def test_a_failed_unit_stops_the_flush_before_any_later_unit_executes() -> None:
+    rows = [
+        {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
+        {"id": 4, "owner": "Ada", "balance": Decimal("20.00"), "version": 1},
+    ]
+    port = ScriptedAdapter(Transact(Read(rows=rows), Write(affected=0)))
+
+    def callback(tx: Transaction) -> None:
+        for current in tx.find(mm.Account.where(mm.Account.id >= 3)).results():
+            tx.update(current.edit(balance=Decimal("30.00")))
+
+    with raises_contextualized(OptimisticLockConflictError):
+        account_db(port).transact(callback, concurrency="optimistic")
+    assert sum(isinstance(call, WriteCall) for call in port.calls) == 1
 
 
 # --------------------------------------------------------------------------- #

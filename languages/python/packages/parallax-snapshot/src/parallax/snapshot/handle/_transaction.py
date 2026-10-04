@@ -20,7 +20,6 @@ from parallax.core.unit_work import UnitOfWork
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
 from parallax.snapshot.handle._keyed_writes import (
-    InsertedObjects,
     KeyedWriteContext,
     keyed_insert,
     keyed_write,
@@ -127,18 +126,13 @@ class Transaction:
             planner=planner,
         )
         # The transaction state every keyed write of this transaction reads,
-        # built once because all four facts are fixed for its life. Its
-        # opened-object ledger is what a same-transaction insert leaves for a
-        # subsequent keyed write to build on, so both read-your-own-writes
-        # exemptions — the value-provenance refusal and the write-evidence
-        # resolution — and the repeated-insert refusal read one ledger, through
-        # either representation.
-        self._keyed = KeyedWriteContext(
-            model=write.model,
-            uow=uow,
-            inserts=InsertedObjects(),
-            lifecycle=lifecycle,
-        )
+        # built once because all three facts are fixed for its life. The unit
+        # of work's admitted insertions are what a same-transaction insert
+        # leaves for a subsequent keyed write to build on, so both
+        # read-your-own-writes exemptions — the value-provenance refusal and the
+        # write-evidence resolution — and the repeated-insert refusal read one
+        # record, through either representation.
+        self._keyed = KeyedWriteContext(model=write.model, uow=uow, lifecycle=lifecycle)
         # The predicate-selected writes of both representations share the keyed
         # context plus what only a materializing write reads: this connection,
         # and the physical attempt its resolving read hangs under as a child.

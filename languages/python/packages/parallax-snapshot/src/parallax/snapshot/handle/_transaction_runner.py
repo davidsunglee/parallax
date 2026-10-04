@@ -41,6 +41,7 @@ from parallax.core.unit_work import (
     enforce_affected_rows,
     run_unit_of_work,
 )
+from parallax.core.unit_work.plan import ExecutionUnit
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -637,16 +638,25 @@ class _FlushEdge:
         self._batch = batch
         return batch
 
-    def execute(self, plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
-        """Lower each planned step, execute every statement in order, and hand
-        each result back to the unit of work to interpret.
+    def execute(
+        self,
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        completed: Callable[[ExecutionUnit], None],
+    ) -> None:
+        """Lower each planned step, execute every statement in order, hand each
+        result back to the unit of work to interpret, and report each execution
+        unit to it as soon as that unit's last step has been enforced.
 
         The single write-lowering seam (:func:`stream_lowered`) run on the
         transaction's own connection, inside the still-open ``port.transaction``
         scope — so an abort rolls back force-flushed writes with everything else.
         Every step lowers to exactly one statement, and a temporal mutation's
-        close precedes the rows it chains, so a failure on the close aborts
-        BEFORE those rows ever execute.
+        effect on its predecessor precedes the rows it opens, so a failure there
+        aborts BEFORE those rows ever execute. A unit is reported before any
+        step of the next one runs, so what it changed is published before later
+        work proceeds.
 
         This performs NO classification of its own: the adopted Write Planner
         already spent the concurrency mode while settling each step, and this
@@ -664,7 +674,13 @@ class _FlushEdge:
         del trigger
         dialect = self._conn.dialect
         batch = self._batch
+        units = iter(plan.units)
+        unit = next(units, None)
+        executed = 0
         for step, statement in stream_lowered(plan, self._model, dialect):
+            while unit is not None and unit.end == executed:
+                completed(unit)
+                unit = next(units, None)
             with batch.database_call(statement, "write", step.entity) as call:
                 affected = self._conn.execute_write(
                     dialect.to_driver_sql(statement.sql), list(statement.binds)
@@ -672,3 +688,7 @@ class _FlushEdge:
                 call.write_completed(affected)
             with batch.enforcing(call):
                 enforce_affected_rows(step, affected)
+            executed += 1
+        while unit is not None and unit.end == executed:
+            completed(unit)
+            unit = next(units, None)

@@ -96,16 +96,22 @@ builds the value the row is gone."""
 class ObservationLedger(Protocol):
     """The unit of work an observing read files into, satisfied structurally.
 
-    ``find`` needs exactly two things from a transaction — the participation its
-    reads stamp, and the chance to answer evidence it already holds for a state
-    this read saw again — so it names those two rather than the whole scope. A
-    standalone read passes none of it.
+    ``find`` needs exactly three things from a transaction — the participation
+    its reads stamp, the freshness its rows were acquired at, and the chance to
+    answer evidence it already holds for a state this read saw again — so it
+    names those three rather than the whole scope. A standalone read passes none
+    of it.
     """
 
     @property
     def participation(self) -> ParticipationToken: ...
 
-    def retain(self, observation: RetainedObservation, /) -> RetainedObservation: ...
+    @property
+    def freshness(self) -> int: ...
+
+    def retain(
+        self, observation: RetainedObservation, /, *, read_at: int | None = None
+    ) -> RetainedObservation: ...
 
 
 type _Locator = ExplicitVersion | TransactionTimeOnly | Bitemporal
@@ -123,6 +129,11 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
     The pass holds the three family-fact owners by reference until every
     origin resolves, and each retained row keeps only the owner object its
     family's evidence is read through.
+
+    The ledger's freshness is captured when the pass is built — while the read
+    that acquired its rows runs — so evidence a projection builds later is
+    judged against the state those rows had, not against whatever this
+    transaction wrote in between.
     """
 
     __slots__ = (
@@ -136,6 +147,7 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
         "_pass_states",
         "_pin",
         "_primary_key",
+        "_read_at",
         "_resolved",
         "_resolved_count",
         "_temporal",
@@ -168,6 +180,7 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
         self._primary_key = primary_key
         self._ledger = ledger
         self._participation = None if ledger is None else ledger.participation
+        self._read_at = 0 if ledger is None else ledger.freshness
         # One observed state, one retained observation within this pass, so two
         # projections of one row answer one claim exactly as graph aliases do.
         self._pass_states: dict[ObservedStateKey, RetainedObservation] = {}
@@ -240,6 +253,7 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
                 participation=self._participation,
                 pass_states=self._pass_states,
                 ledger=self._ledger,
+                read_at=self._read_at,
                 pin=self._pin,
             ),
         )
@@ -350,6 +364,7 @@ def _retain_observed(
     participation: ParticipationToken | None,
     pass_states: dict[ObservedStateKey, RetainedObservation],
     ledger: ObservationLedger | None,
+    read_at: int,
     pin: Pin,
 ) -> ReadOrigin:
     object_key, observation, key = _observed_state(
@@ -359,7 +374,7 @@ def _retain_observed(
     if held is None:
         held = RetainedObservation(key, observation, participation)
         if ledger is not None:
-            held = ledger.retain(held)
+            held = ledger.retain(held, read_at=read_at)
         pass_states[key] = held
     observed_pin = None if isinstance(locator, ExplicitVersion) else pin
     return ReadOrigin(layout.concrete, object_key, participation, held, observed_pin)

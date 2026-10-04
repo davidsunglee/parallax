@@ -44,6 +44,8 @@ __all__ = [
     "PlannedDelete",
     "PlannedInsert",
     "PlannedRow",
+    "PlannedTemporalRemoval",
+    "PlannedTemporalRevision",
     "PlannedUpdate",
     "PlannedValue",
     "PlannedWrite",
@@ -389,7 +391,7 @@ type TemporalUpperBound = Finite | Infinity
 
 @dataclass(frozen=True, slots=True)
 class MilestoneTarget:
-    """The current milestone slot one close addresses.
+    """The current milestone slot one close, revision, or removal addresses.
 
     The address is one complete key tuple plus one exclusive upper bound per
     As-Of Axis, in canonical axis order: the observed predecessor's Valid-Time
@@ -624,9 +626,8 @@ def _settle(
         case MilestoneTarget():
             raise ValueError(
                 f"{entity.canonical}: a Milestone Target addresses a temporal milestone, so it "
-                "belongs to a Planned Close — a temporal change expands into a close plus its "
-                "Planned Insert successors and never survives as an in-place revision or a "
-                "physical deletion"
+                "belongs to a Planned Close, a Planned Temporal Revision, or a Planned Temporal "
+                "Removal — never to a Non-Temporal update or delete"
             )
         case ValidatedMutationSelection():
             if not isinstance(concurrency, Unversioned) or not isinstance(affected_rows, AnyCount):
@@ -741,19 +742,71 @@ class PlannedClose:
     affected_rows: ExactCount
 
     def __post_init__(self) -> None:
-        if self.affected_rows.expected != 1:
-            raise ValueError(
-                f"{self.entity.canonical}: a Planned Close addresses one current milestone, so "
-                f"it expects exactly one row and this policy expects {self.affected_rows.expected}"
-            )
-        expected = shortfall_for(self.concurrency)
-        if self.affected_rows.on_shortfall != expected:
-            raise ValueError(
-                f"{self.entity.canonical}: the concurrency decision classifies a shortfall as "
-                f"{type(expected).__name__}, and this policy says "
-                f"{type(self.affected_rows.on_shortfall).__name__}"
-            )
+        _require_one_milestone(self.entity, self.concurrency, self.affected_rows, "Planned Close")
 
 
-type PlannedWrite = PlannedInsert | PlannedUpdate | PlannedClose | PlannedDelete
+def _require_one_milestone(
+    entity: EntityIdentity, concurrency: TemporalConcurrency, affected_rows: ExactCount, kind: str
+) -> None:
+    if affected_rows.expected != 1:
+        raise ValueError(
+            f"{entity.canonical}: a {kind} addresses one current milestone, so it expects "
+            f"exactly one row and this policy expects {affected_rows.expected}"
+        )
+    expected = shortfall_for(concurrency)
+    if affected_rows.on_shortfall != expected:
+        raise ValueError(
+            f"{entity.canonical}: the concurrency decision classifies a shortfall as "
+            f"{type(expected).__name__}, and this policy says "
+            f"{type(affected_rows.on_shortfall).__name__}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedTemporalRevision:
+    """An in-place revision of one current milestone this attempt opened.
+
+    Its target is the row's complete physical address, which the revision
+    preserves: it assigns writable payload and, on a Bitemporal row, the
+    Valid-Time start, never the logical key, an axis end, or the
+    Transaction-Time start. Only a row the attempt itself opened is revised in
+    place; a row that existed before the attempt is closed instead, so its
+    history survives.
+    """
+
+    entity: EntityIdentity
+    target: MilestoneTarget
+    assignments: PlannedAssignments
+    concurrency: TemporalConcurrency
+    affected_rows: ExactCount
+
+    def __post_init__(self) -> None:
+        _require_one_milestone(self.entity, self.concurrency, self.affected_rows, "revision")
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedTemporalRemoval:
+    """The physical removal of one current milestone this attempt opened.
+
+    It removes uncommitted state of the attempt's own, which no history
+    records; a row that existed before the attempt is closed instead.
+    """
+
+    entity: EntityIdentity
+    target: MilestoneTarget
+    concurrency: TemporalConcurrency
+    affected_rows: ExactCount
+
+    def __post_init__(self) -> None:
+        _require_one_milestone(self.entity, self.concurrency, self.affected_rows, "removal")
+
+
+type PlannedWrite = (
+    PlannedInsert
+    | PlannedUpdate
+    | PlannedClose
+    | PlannedDelete
+    | PlannedTemporalRevision
+    | PlannedTemporalRemoval
+)
 """The closed algebra of finalized semantic execution steps."""

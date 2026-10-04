@@ -981,6 +981,25 @@ The chained `head` / `middle` / `tail` rows stay ungated `INSERT`s at the fresh
 `in_z`. A zero-row inactivation is a conflict (optimistic) or a stale error
 (locking), never silent.
 
+### Rows the attempt opened — in-place revision and removal
+
+A later write of one attempt against a current row that attempt itself opened
+revises or removes that row rather than closing it (`m-unit-work` *Rows the
+attempt opened*). Both statements address the row by the same Milestone Target a
+close renders and take the same optimistic gate, bound last; a revision assigns
+the changed members — and a moved Valid-Time start — in Table Layout order, and
+never an axis end or the Transaction-Time start:
+
+| Step | Golden DML | Binds |
+|---|---|---|
+| **revision** (Transaction-Time-Only) | `update balance set val = ? where bal_id = ? and out_z = ?` | `[value, pk, infinity]` |
+| **revision** (Bitemporal suffix) | `update position set val = ?, from_z = ? where pos_id = ? and thru_z = ? and out_z = ?` | `[value, V, pk, observedValidEnd, infinity]` |
+| **removal** | `delete from position where pos_id = ? and thru_z = ? and out_z = ?` | `[pk, observedValidEnd, infinity]` |
+
+Under Relational Document Layout a revision patches the Structured Column at the
+assigned members exactly as a Non-Temporal update does. Each statement **MUST**
+affect exactly one row, with the same shortfall classification as a close.
+
 ## Transactional SQL fragments
 
 The unit-of-work layer (`m-unit-work`) is expressed in operations and object

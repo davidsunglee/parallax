@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, cast
 
 from parallax.core import inheritance, temporal_read
 from parallax.core.document_codec import EffectiveChangeSet
-from parallax.core.metamodel import AttributeIdentity, Metamodel
-from parallax.core.temporal_read import milestone_edge
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.temporal_read import TemporalShape, milestone_edge
 from parallax.core.unit_work.claims import SettledEvidence
 from parallax.core.unit_work.columns import ChunkedColumnBuilder, ColumnSlice, whole
 from parallax.core.unit_work.instructions import (
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 __all__ = [
     "BufferItem",
     "ClaimedKeyedWrite",
+    "GroupStates",
     "MaterializedWriteGroup",
     "ObjectClaimedWrite",
     "ObservedKeyedWrite",
@@ -201,27 +202,40 @@ class PredecessorRowsBuilder:
         )
 
 
-def group_state_keys(group: MaterializedWriteGroup, meta: Metamodel) -> Iterator[ObservedStateKey]:
+def group_state_keys(group: MaterializedWriteGroup, meta: Metamodel) -> GroupStates:
     """Each exact state ``group`` selected, in resolution order, keyed as a
     keyed read's own observation of that row would be."""
     entity = group.mutation.selection.target
     position = inheritance.view(meta).entity(entity.identity)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
         raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
-    key = position.primary_key.identity.name
-    evidence = group.evidence
-    if isinstance(evidence, VersionedEvidence):
-        for value, version in zip(evidence.keys, evidence.versions, strict=True):
-            yield VersionedStateKey(ObjectKey(entity.identity, ((key, value),)), version)
-        return
     shape = temporal_read.view(meta).shape(entity.identity)
     if shape is None:  # pragma: no cover - the facet covers every accepted Entity
         raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
-    for index in range(len(evidence)):
-        yield TemporalStateKey(
-            ObjectKey(entity.identity, ((key, evidence.key(index)),)),
-            milestone_edge(shape, evidence, index),
-        )
+    return GroupStates(entity.identity, position.primary_key.identity.name, group.evidence, shape)
+
+
+@dataclass(frozen=True, slots=True)
+class GroupStates:
+    """Each exact state a group's ``evidence`` selected, in resolution order,
+    read on demand from the facts a facet already answered for the group."""
+
+    entity: EntityIdentity
+    key: str
+    evidence: GroupEvidence
+    shape: TemporalShape
+
+    def __iter__(self) -> Iterator[ObservedStateKey]:
+        entity, key, evidence = self.entity, self.key, self.evidence
+        if isinstance(evidence, VersionedEvidence):
+            for value, version in zip(evidence.keys, evidence.versions, strict=True):
+                yield VersionedStateKey(ObjectKey(entity, ((key, value),)), version)
+            return
+        for index in range(len(evidence)):
+            yield TemporalStateKey(
+                ObjectKey(entity, ((key, evidence.key(index)),)),
+                milestone_edge(self.shape, evidence, index),
+            )
 
 
 @dataclass(frozen=True, slots=True)

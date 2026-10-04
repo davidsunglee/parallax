@@ -21,6 +21,7 @@ from parallax.core.unit_work import (
     WriteObservation,
 )
 from parallax.core.unit_work.instructions import WriteInstruction, prepare_typed_write
+from parallax.core.unit_work.plan import NO_OWNERSHIP, Ownership
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.snapshot.handle import build_write_planner, stream_lowered
 from tests._support.clock_probes import inert_instant
@@ -37,12 +38,14 @@ def lower_instruction(
     tx_instant: TransactionInstant | None = None,
     *,
     observation: WriteObservation | None = None,
+    ownership: Ownership = NO_OWNERSHIP,
 ) -> list[LoweredStatement]:
-    """Every statement one instruction plans and lowers to, in execution order."""
+    """Every statement one instruction plans and lowers to, in execution order,
+    for an attempt owning what ``ownership`` names."""
     return [
         statement
         for _step, statement in _stream(
-            instruction, model, dialect, concurrency, tx_instant, observation
+            instruction, model, dialect, concurrency, tx_instant, observation, ownership
         )
     ]
 
@@ -55,9 +58,12 @@ def lower_instruction_steps(
     tx_instant: TransactionInstant | None = None,
     *,
     observation: WriteObservation | None = None,
+    ownership: Ownership = NO_OWNERSHIP,
 ) -> list[tuple[PlannedStep, LoweredStatement]]:
     """The same, paired with the settled step each statement came from."""
-    return list(_stream(instruction, model, dialect, concurrency, tx_instant, observation))
+    return list(
+        _stream(instruction, model, dialect, concurrency, tx_instant, observation, ownership)
+    )
 
 
 def _stream(
@@ -67,6 +73,7 @@ def _stream(
     concurrency: Concurrency,
     tx_instant: TransactionInstant | None,
     observation: WriteObservation | None,
+    ownership: Ownership,
 ) -> list[tuple[PlannedStep, LoweredStatement]]:
     instant = inert_instant() if tx_instant is None else tx_instant
     plan = (
@@ -79,6 +86,7 @@ def _stream(
                 buffered_writes=[
                     observed_write(prepare_typed_write(instruction, model), model, observation)
                 ],
+                ownership=ownership,
             )
         )
         .plan
