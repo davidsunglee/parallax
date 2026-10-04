@@ -111,41 +111,6 @@ landed an unreviewed restructuring of the very surface the boundary review was
 measuring. Until it is taken the residue is reader-facing only: no case id enters
 or leaves the skip map, no case changes lane, and no grade moves.
 
-### D-70 — A transaction's own buffered insert leaves a later keyed write of that object with no evidence once a flush intervenes
-
-*High — a correct program earns a refusal it cannot avoid.* Relates to
-`parallax.core.unit_work.UnitOfWork.resolve_write_evidence`,
-`parallax.snapshot.handle.Transaction`'s opened-object ledger.
-
-**What.** `tx.insert(a)` exempts a later keyed write of `a` from the
-provenance rule, because a row this unit of work inserted is a row it stores. The
-exemption is keyed by the object and is retired only by a destructive keyed
-write that cancels an insert of it still PENDING in the unit of work — never by
-a flush, and never by a destructive write after one, since a flushed insert is
-not pending. So the sequence
-`tx.insert(a)`, then a participating read that force-flushes the buffer, then a
-keyed write of that same object, resolves **no** evidence: the insert is no
-longer pending, the value the caller still holds carries no Read Origin, and the
-write reaches settlement with nothing to advance from or gate on. A versioned
-target fails at settlement despite the transaction holding a perfectly fresh
-observation of the row the flush just wrote. It reproduces identically through
-both representations, because they share one buffer and one ledger. The insert
-door reads that same ledger for the opposite verdict
-(`_keyed_writes.refuse_repeated_insert`), so the flush's non-retirement has a
-second face: after the flush the object can be neither written with evidence
-nor inserted again. Both faces are pinned as fixed expectations
-(`tests/unit/snapshot/handle/test_keyed_write_order.py`'s reread axis), and both move with
-whatever answer flush-time retirement gets.
-
-**Why it is deferred rather than fixed.** It is an evidence-**lifetime** question
-rather than an ingress one: what has to be decided is when an insert's exemption
-ends, and what the transaction owes the caller at that moment — re-reading the
-row itself is one answer, retiring the exemption at the flush and requiring the
-caller to write what the post-flush read returned is another, and they differ in
-whether the framework is permitted to issue a read on a keyed write's behalf,
-which every other rule in this area says it is not. The gap predates the write
-surface's own rework and no acceptance criterion reaches it.
-
 ### D-72 — Predicate-write staging still refuses an issue-bearing read instead of classifying it
 
 *Medium — an invalid stored row is classified by read surfaces but refused by a
@@ -673,35 +638,6 @@ it is the prerequisite for such a case, and the refusal's own tests
 (`reference-harness/tests/test_corrupt_addressing.py`,
 `tests/unit/conformance/_mechanism/test_given_state.py::test_given_corrupt_refuses_a_temporal_entity_before_reading_anything`)
 are what have to change first, since they pin the restriction this entry lifts.
-
-### D-92 — ADR 0057 limits Read Origins to Wire-read results, and the node a Wire insert answers carries one too
-
-*Low — the one document naming where a Read Origin comes from omits the second
-door the code has.* Relates to
-`docs/adr/0057-typed-and-wire-are-peer-interfaces-over-one-transaction.md`,
-`parallax.snapshot.handle._wire_writes.wire_insert`, `spec/python.md`. Owner:
-`docs/adr`; surfaced by this target.
-
-**What.** The ADR says a Wire Entity "returned by a Parallax Wire read may carry
-an opaque Read Origin" and describes it as selecting "the authentic source's
-privately retained evidence". `tx.wire.insert` also answers an origin-bearing
-node: its Read Origin names the concrete Entity, the object, and this transaction's
-participation and carries no observation, because the row it opened had observed
-nothing — the buffered insert licenses the write that follows. That node is a
-keyed write source in every respect the read-published one is. The ADR states
-one door, and no current document states the second: the binding sentence and
-glossary term that named both were removed when contract ownership was
-consolidated, leaving the ADR's incomplete account as the only one.
-
-**Why it is deferred rather than fixed.** A note amending or superseding an ADR
-is a decision record and is authored as one, not as a wording repair made in
-passing. Nothing in the decision itself — two peer interfaces over one
-transaction — is contradicted by the second door; only its account of where a
-Read Origin comes from is incomplete.
-
-**When.** With the next decision record that touches the write surface, or as a
-note on 0057 when one is authored. Whether the insert door also needs a current
-contract owner — `spec/python.md` or a core module — is decided with it.
 
 ### D-94 — The execution lifecycle overhead baseline publishes no current reading
 

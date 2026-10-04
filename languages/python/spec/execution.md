@@ -145,6 +145,17 @@ start, and a source read at Valid-Time `LATEST` is refused. A Typed `update`
 assigns every member touched along the value's `edit` chain and a Wire `update`
 every key its change document names, equal values included; a change touching
 nothing writes nothing.
+
+An insertion's authority (`m-unit-work` *Insertion authority*) rides its source
+privately. `tx.insert` binds it to the instance it took, beside any Snapshot
+state that instance already carries, and `edit` carries it to every value
+derived from that instance afterwards; `tx.wire.insert` answers a node carrying
+it in a slot of its own and no Read Origin. It is no member and no mapping key:
+`model_dump`, `dict(node)`, and JSON drop it, and a pickled inserted instance or
+node unpickles as plain domain data that authorizes nothing — so pickling an
+inserted instance succeeds, unlike a read's node. Inserting the same instance
+again once its earlier insertion was removed rebinds it; drafts derived before
+keep the earlier, retired authority.
 `tx.wire` is the Wire ingress, sharing transaction state and policy. Public
 write-plan and flush operations are absent. Framework-owned attributes cannot
 be authored by construction, `edit`, assignments, or Wire changes.

@@ -95,7 +95,6 @@ from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     BufferItem,
     CardinalityCorruptionError,
-    ClaimedKeyedWrite,
     Concurrency,
     KeyedWrite,
     MissingTargetError,
@@ -137,7 +136,7 @@ from parallax.snapshot.handle import (
     stream_lowered,
     validate_source_pin,
 )
-from parallax.snapshot.materialize._wire import read_origin_of
+from parallax.snapshot.materialize._wire import authoring_of, read_origin_of
 
 __all__ = [
     "INERT_CLOCK_INSTANT",
@@ -1083,7 +1082,7 @@ def instruction_evidence(
 
 def _buffered(
     instruction: PreparedWrite, observation: WriteObservation | None, model: AcceptedMetamodel
-) -> PreparedWrite | ClaimedKeyedWrite:
+) -> BufferItem:
     """One resolved entry as the buffer item a unit of work would hold for it,
     settled against :func:`instruction_evidence`. Whether an observation may
     exist at all is decided BEFORE this point, by :func:`_durable_row` — the one
@@ -2589,9 +2588,14 @@ def _published_claims(nodes: Sequence[handle.WireEntity]) -> GroupObservations:
 
 
 def _node_object_key(node: handle.WireEntity) -> ObjectKey:
+    """The object ``node`` names: the one its read observed, or the one the
+    insert that answered it opened."""
     hint = read_origin_of(node)
-    assert hint is not None
-    return hint.object_key
+    if hint is not None:
+        return hint.object_key
+    authority = authoring_of(node)
+    assert authority is not None  # every node this lane holds a read or an insert published
+    return authority.object_key
 
 
 def _writable_source(node: handle.WireEntity) -> bool:

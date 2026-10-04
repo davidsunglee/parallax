@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
 from parallax.core import inheritance, temporal_read
+from parallax.core.base import INFINITY_LITERAL
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TemporalShape, milestone_edge
-from parallax.core.unit_work.claims import SettledEvidence
+from parallax.core.unit_work.claims import SettledEvidence, WriteIntent, keyed_intent
 from parallax.core.unit_work.columns import ChunkedColumnBuilder, ColumnSlice, whole
 from parallax.core.unit_work.instructions import (
     INSERT_MUTATIONS,
@@ -16,6 +18,7 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
     PreparedTemporalBounds,
     PreparedWrite,
+    derive_opening,
 )
 from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.plan import Completion
@@ -25,23 +28,32 @@ from parallax.core.unit_work.planner import (
     TemporalStateKey,
     VersionedStateKey,
 )
-from parallax.core.unit_work.retain import RetainedObservation
-from parallax.core.unit_work.temporal import EMPTY_TRANSFORM, TemporalTransform
+from parallax.core.unit_work.retain import InsertionIdentity, RetainedObservation
+from parallax.core.unit_work.temporal import (
+    EMPTY_TRANSFORM,
+    BoundPiece,
+    TemporalTransform,
+    is_open_bound,
+)
 
 if TYPE_CHECKING:
     from parallax.core.inheritance import EntityMemberSelection
 
 __all__ = [
+    "AfterRemoval",
     "BufferItem",
     "ClaimedKeyedWrite",
     "ComposedTemporalWrite",
     "GroupStates",
+    "InsertionKeyedWrite",
     "MaterializedWriteGroup",
     "ObjectClaimedWrite",
     "ObservedKeyedWrite",
+    "PendingOpening",
     "PredecessorRows",
     "PredecessorRowsBuilder",
     "TemporalContribution",
+    "TemporalKeyedWrite",
     "VersionedEvidence",
     "VersionedEvidenceBuilder",
     "buffered_instruction",
@@ -312,6 +324,37 @@ class ObjectClaimedWrite:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class InsertionKeyedWrite:
+    """A keyed write authorized by an admitted insertion rather than by a read.
+
+    ``identity`` is the insertion's authority, which the unit of work checks
+    still stands when it admits the write; completion spends nothing of it.
+    ``scope`` is the claim scope a Non-Temporal write of a stored row takes —
+    the exact version this attempt's own writes left the row at, or the object
+    itself when the row is unversioned — so it composes with an observed write
+    of the same state. A temporal write composes by object and takes none.
+    """
+
+    instruction: PreparedKeyedWrite
+    identity: InsertionIdentity
+    scope: VersionedStateKey | ObjectKey | None = None
+
+    def __post_init__(self) -> None:
+        if self.instruction.mutation in INSERT_MUTATIONS:
+            raise ValueError(
+                f"an insert is admitted by its own verb: `{self.instruction.mutation}` on "
+                f"{self.instruction.target.identity.canonical!r} carries no insertion authority"
+            )
+        if len(self.instruction.rows) != 1:
+            raise ValueError(
+                "an insertion's authority licenses writes of the one object it opened: "
+                f"`{self.instruction.mutation}` on "
+                f"{self.instruction.target.identity.canonical!r} addresses "
+                f"{len(self.instruction.rows)} rows"
+            )
+
+
 type ClaimedKeyedWrite = ObservedKeyedWrite | ObjectClaimedWrite
 """One keyed write travelling with the claim its verb took for it, at either
 scope. The two carriers share what coalescing manipulates — an instruction —
@@ -323,16 +366,22 @@ def buffered_write(
     evidence: SettledEvidence | None,
     *,
     source: Completion | None = None,
-) -> PreparedWrite | ClaimedKeyedWrite:
+    authority: InsertionIdentity | None = None,
+) -> PreparedWrite | ClaimedKeyedWrite | InsertionKeyedWrite:
     """``instruction`` as the buffer item that settles against ``evidence``.
 
     Retained observations travel with the write so settlement can spend them,
     while a bare observation has no retained claim. With no evidence, the
-    instruction travels bare. ``source`` is the authority an object-claimed
-    write's source carries in place of an observation; any other evidence
-    already is its source's authority.
+    instruction travels bare, or carries the insertion ``authority`` that
+    licenses it. ``source`` is the authority an object-claimed write's source
+    carries in place of an observation; any other evidence already is its
+    source's authority.
     """
     if evidence is None:
+        if authority is not None:
+            if not isinstance(instruction, PreparedKeyedWrite):
+                raise TypeError("an insertion's authority licenses keyed writes alone")
+            return InsertionKeyedWrite(instruction=instruction, identity=authority)
         return instruction
     if not isinstance(instruction, PreparedKeyedWrite):
         raise TypeError(
@@ -350,19 +399,21 @@ def buffered_write(
 
 @dataclass(frozen=True, slots=True)
 class TemporalContribution:
-    """What one admitted observed write of a temporal object keeps once it is
-    composed: its source condition and requested window, not its values.
+    """What one admitted write of a temporal object keeps once it is composed:
+    its source condition and requested window, not its values.
 
-    ``observation`` is the evidence the write settles against and ``claim`` its
-    retained form, which successful completion spends; ``scope`` is the exact
-    state that evidence observed. Values the write assigned live in the
-    composed transform, where a later write may overwrite them; the condition
-    stays required whatever happens to them.
+    ``observation`` is the evidence an observed write settles against and
+    ``claim`` its retained form, which successful completion spends. A write an
+    admitted insertion authorized has neither: its condition is the coverage at
+    its window's start, the insertion's own anchor, which execution requires.
+    Values the write assigned live in the composed transform, where a later
+    write may overwrite them; the condition stays required whatever happens to
+    them.
     """
 
     kind: Literal["assignment", "destructive"]
     bounds: PreparedTemporalBounds
-    observation: WriteObservation
+    observation: WriteObservation | None
     claim: RetainedObservation | None
 
 
@@ -388,18 +439,24 @@ class ComposedTemporalWrite:
         return self.transform.assigns
 
 
-def temporal_contribution(item: ObservedKeyedWrite) -> TemporalContribution:
+type TemporalKeyedWrite = ObservedKeyedWrite | InsertionKeyedWrite
+"""One keyed write of a temporal object that composes with that object's other
+pending writes: an observed one, or one an admitted insertion authorized."""
+
+
+def temporal_contribution(item: TemporalKeyedWrite) -> TemporalContribution:
     """``item``'s lasting part once composed."""
+    observed = isinstance(item, ObservedKeyedWrite)
     return TemporalContribution(
         kind="assignment" if item.instruction.mutation in UPDATE_MUTATIONS else "destructive",
         bounds=item.instruction.bounds,
-        observation=item.observation,
-        claim=item.claim,
+        observation=item.observation if observed else None,
+        claim=item.claim if observed else None,
     )
 
 
 def composed_temporal_write(
-    held: ObservedKeyedWrite | ComposedTemporalWrite, arriving: ObservedKeyedWrite, key_name: str
+    held: TemporalKeyedWrite | ComposedTemporalWrite, arriving: TemporalKeyedWrite, key_name: str
 ) -> ComposedTemporalWrite:
     """``held`` followed by ``arriving``, one temporal object's writes composed
     in authored order.
@@ -408,35 +465,34 @@ def composed_temporal_write(
     window and destroy coverage there if it is destructive; every earlier
     condition stays.
     """
-    if isinstance(held, ObservedKeyedWrite):
+    if not isinstance(held, ComposedTemporalWrite):
         held = _composed(held, key_name)
     return ComposedTemporalWrite(
         target=held.target,
         key=held.key,
         contributions=(*held.contributions, temporal_contribution(arriving)),
-        transform=_composed_transform(held.transform, arriving, key_name),
+        transform=_composed_transform(held.transform, arriving.instruction, key_name),
     )
 
 
-def _composed(item: ObservedKeyedWrite, key_name: str) -> ComposedTemporalWrite:
+def _composed(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalWrite:
     row = item.instruction.rows[0]
     return ComposedTemporalWrite(
         target=item.instruction.target,
         key={key_name: row[key_name]},
         contributions=(temporal_contribution(item),),
-        transform=_composed_transform(EMPTY_TRANSFORM, item, key_name),
+        transform=_composed_transform(EMPTY_TRANSFORM, item.instruction, key_name),
     )
 
 
-def composed_alone(item: ObservedKeyedWrite, key_name: str) -> ComposedTemporalWrite:
+def composed_alone(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalWrite:
     """``item`` as the composition of itself alone."""
     return _composed(item, key_name)
 
 
 def _composed_transform(
-    transform: TemporalTransform, item: ObservedKeyedWrite, key_name: str
+    transform: TemporalTransform, instruction: PreparedKeyedWrite, key_name: str
 ) -> TemporalTransform:
-    instruction = item.instruction
     bounds = instruction.bounds
     assigned = (
         {name: value for name, value in instruction.rows[0].items() if name != key_name}
@@ -446,7 +502,76 @@ def _composed_transform(
     return transform.then(valid_from=bounds.valid_from, until=bounds.until, assigned=assigned)
 
 
-BufferItem = PreparedWrite | ClaimedKeyedWrite | MaterializedWriteGroup
+@dataclass(frozen=True, slots=True)
+class PendingOpening:
+    """A still-unflushed insert of a Bitemporal object, with the writes its
+    insertion authorized since composed over the coverage it opens.
+
+    ``transform`` applies to the opening's own window exactly as a stored
+    range's transform applies to stored coverage: assigned members replace the
+    opening's values inside each write's window, destruction removes coverage
+    there, and nothing outside the opening is ever created. ``intents`` keeps
+    each composed write's window so admission can judge the next one.
+    """
+
+    insert: PreparedKeyedWrite
+    transform: TemporalTransform
+    intents: tuple[WriteIntent, ...]
+
+    def then(self, instruction: PreparedKeyedWrite, key_name: str) -> PendingOpening:
+        """This opening with ``instruction`` composed after its earlier writes."""
+        intent = keyed_intent(instruction)
+        assert intent is not None  # an opening's own writes are no inserts
+        return PendingOpening(
+            insert=self.insert,
+            transform=_composed_transform(self.transform, instruction, key_name),
+            intents=(*self.intents, intent),
+        )
+
+    @property
+    def survives(self) -> bool:
+        """Whether any of the opened coverage survives its composed writes."""
+        return bool(self._bound_pieces())
+
+    def pieces(self) -> tuple[PreparedKeyedWrite, ...]:
+        """The inserts the opening flushes as: one per nonempty interval its
+        composed writes leave, carrying the opening's values with each
+        interval's assignments overlaid."""
+        insert = self.insert
+        row = insert.rows[0]
+        pieces: list[PreparedKeyedWrite] = []
+        for piece in self._bound_pieces():
+            assert isinstance(piece.start, dt.datetime)  # an opening's own bound or an edit's
+            end = piece.end
+            pieces.append(
+                derive_opening(
+                    insert,
+                    row if piece.assigned is None else {**row, **piece.assigned},
+                    valid_from=piece.start,
+                    until=None if is_open_bound(end) else cast("dt.datetime", end),
+                )
+            )
+        return tuple(pieces)
+
+    def _bound_pieces(self) -> tuple[BoundPiece, ...]:
+        bounds = self.insert.bounds
+        valid_from = bounds.valid_from
+        assert valid_from is not None  # a Bitemporal opening states its start
+        until = bounds.until
+        return self.transform.pieces(valid_from, INFINITY_LITERAL if until is None else until)
+
+
+@dataclass(frozen=True, slots=True)
+class AfterRemoval:
+    """Inserts of an object whose earlier insertion an earlier pending write
+    removes completely, which execute only after everything authored before
+    them: an insert ordinarily runs ahead of every removal, and these must
+    follow the one that clears their way."""
+
+    inserts: tuple[PreparedKeyedWrite, ...]
+
+
+BufferItem = PreparedWrite | ClaimedKeyedWrite | InsertionKeyedWrite | MaterializedWriteGroup
 
 
 def buffered_instruction(item: BufferItem) -> PreparedWrite:
@@ -457,6 +582,6 @@ def buffered_instruction(item: BufferItem) -> PreparedWrite:
     """
     if isinstance(item, MaterializedWriteGroup):
         return item.mutation
-    if isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite):
+    if isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite | InsertionKeyedWrite):
         return item.instruction
     return item

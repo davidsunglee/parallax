@@ -7,7 +7,26 @@ from parallax.core.temporal_read import Pin
 from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey
 
-__all__ = ["ParticipationToken", "ReadOrigin", "RetainedObservation"]
+__all__ = ["InsertionIdentity", "ParticipationToken", "ReadOrigin", "RetainedObservation"]
+
+
+class InsertionIdentity:
+    """The authority one admitted insertion grants the source values that carry it.
+
+    Issued by a unit of work when it admits an insertion, carried privately by
+    the inserted source and every value derived from it afterwards, and compared
+    by identity alone: an equal key, an equal address, or an equal instant never
+    stands for it. ``object_key`` names the object the insertion opened.
+
+    It holds no reference to the unit of work that issued it, so a source
+    outliving its attempt keeps nothing of that attempt alive; whether the
+    identity still licenses a write is the issuing unit of work's answer alone.
+    """
+
+    __slots__ = ("object_key",)
+
+    def __init__(self, object_key: ObjectKey) -> None:
+        self.object_key: Final = object_key
 
 
 class ParticipationToken:

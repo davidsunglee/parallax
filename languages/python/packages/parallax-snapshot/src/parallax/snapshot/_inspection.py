@@ -4,20 +4,24 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
-from parallax.core.entity import UNLOADED, RelationshipPath, UnloadedRelationshipError
+from parallax.core.entity import UNLOADED, Entity, RelationshipPath, UnloadedRelationshipError
 from parallax.core.entity import lifecycle_state_of as _lifecycle_state_of
 from parallax.core.entity import relationship_value_of as _relationship_value_of
 from parallax.core.entity._declaration import declaration_of, is_entity_class, members_of
+from parallax.core.entity._entity import DetachedLifecycleState, attach_lifecycle_state
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
 from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import ReadOrigin
+from parallax.core.unit_work.retain import InsertionIdentity
 
 __all__ = [
     "SNAPSHOT_INSPECTION_CODES",
     "SnapshotInspectionError",
     "SnapshotNodeState",
+    "bind_insertion",
     "edge_of",
+    "insertion_of",
     "is_view_loaded",
     "pin_of",
     "snapshot_state_of",
@@ -92,6 +96,23 @@ class SnapshotNodeState:
     source: ReadOrigin | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _InsertionAuthoring(DetachedLifecycleState):
+    """The authority an admitted insertion granted a value no read published."""
+
+    identity: InsertionIdentity
+
+
+@dataclass(frozen=True, slots=True)
+class _AuthoredNode:
+    """The authority an admitted insertion granted a value that also carries a
+    materialized node's state — diagnostic data a classified read exposed with
+    no Read Origin — which stays that node's own, untouched."""
+
+    identity: InsertionIdentity
+    node: SnapshotNodeState
+
+
 def snapshot_state_of(node: object) -> SnapshotNodeState | None:
     """``node``'s Snapshot state, or ``None`` for anything this lifecycle did not
     materialize — a fresh instance, an edit of a fresh instance, or another
@@ -100,9 +121,39 @@ def snapshot_state_of(node: object) -> SnapshotNodeState | None:
     An edited copy of a node this lifecycle DID materialize answers that node's
     own state, because an edit preserves every kind of instance state outside the
     declared members. What this answers is therefore a value's provenance, not
-    its editedness."""
+    its editedness. An insertion's authority bound to the value later
+    (:func:`bind_insertion`) changes none of it."""
     state = _lifecycle_state_of(node)
+    if isinstance(state, _AuthoredNode):
+        return state.node
     return state if isinstance(state, SnapshotNodeState) else None
+
+
+def insertion_of(value: object) -> InsertionIdentity | None:
+    """The insertion authority ``value`` carries, or ``None`` for a value no
+    admitted insertion was stated through or derived from.
+
+    An edit carries its source's lifecycle state by identity, so a value
+    derived from an inserted instance after the insertion carries its
+    authority; one derived before carries none."""
+    state = _lifecycle_state_of(value)
+    if isinstance(state, _InsertionAuthoring | _AuthoredNode):
+        return state.identity
+    return None
+
+
+def bind_insertion(value: Entity, identity: InsertionIdentity) -> None:
+    """Grant ``value`` — the instance an insertion was just admitted through —
+    that insertion's authority, replacing any authority it carried before.
+
+    Only this one value is rebound: a value derived from it earlier keeps the
+    state it was derived with, so an older draft keeps an older authority. A
+    materialized node's own state, which an inserted diagnostic node carries,
+    is kept as it stands beside the authority."""
+    node = snapshot_state_of(value)
+    attach_lifecycle_state(
+        value, _InsertionAuthoring(identity) if node is None else _AuthoredNode(identity, node)
+    )
 
 
 def pin_of(node: object) -> Pin:

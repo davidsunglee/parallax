@@ -585,21 +585,22 @@ class Scenario:
 def reachable(scenario: Scenario, representation: Representation) -> bool:
     """Whether ``representation`` can issue ``scenario`` at all.
 
-    One shape is not reachable: a Wire keyed write over a source a TYPED insert
-    opened and STILL HOLDS BUFFERED. A Typed insert hands its caller back
-    nothing, and a Wire keyed verb accepts only a hinted Wire Entity, which only
-    a Wire read or a Wire insert can produce — and a Wire read force-flushes the
-    insert first, so the pair it would have coalesced is already two writes by
-    the time the source exists. That route is the ``reread`` source, which every
-    representation can spell; it is a different scenario, not this one.
+    One shape is not reachable: a keyed write through the insertion source of
+    an insert the OTHER interface stated. Only the inserted instance and the
+    values derived from it carry a Typed insert's authority, and only the node a
+    Wire insert answered carries a Wire insert's, so neither interface holds a
+    source of the other's insert; an independently built value of the same key
+    is no source at all. Reading the row produces one in either interface, and
+    that route is the ``reread`` source — a different scenario, not this one.
 
-    The exclusion is about SOURCE verbs. A Wire insert after a Typed insert of
-    the same object needs no source — its payload is fresh — so that crossing is
-    reachable, and is exactly the one the repeated-insert refusal is asked over.
+    The exclusion is about SOURCE verbs. An insert of the same object through
+    the other interface needs no source — its payload is fresh — so that
+    crossing is reachable, and is exactly the one the repeated-insert refusal
+    is asked over.
     """
     return not (
-        representation == "wire"
-        and scenario.opened_by == "typed"
+        scenario.opened_by is not None
+        and representation != scenario.opened_by
         and scenario.source != "reread"
         and scenario.verb not in _INSERT_VERBS
     )
@@ -777,12 +778,12 @@ def _open_ahead_of_the_insert(
 def _typed_source(tx: Transaction, scenario: Scenario, prior: object | None) -> object:
     target = scenario.target
     if scenario.opened_by is not None:
-        _open(tx, scenario)
+        opened = _open(tx, scenario)
         if scenario.source == "reread":
             return tx.find(target.inserted_typed_query).result()
-        # A fresh instance names the object the insert opened: the ledger keys by
-        # the Entity and the identity members, never by object identity.
-        return target.fresh()
+        # The instance the insert took carries its authority; another instance
+        # of the same key carries none.
+        return opened
     if prior is not None:
         return prior
     if scenario.source == "pinned":
@@ -846,7 +847,6 @@ def _wire_source(tx: Transaction, scenario: Scenario, prior: object | None) -> o
         opened = _open(tx, scenario)
         if scenario.source == "reread":
             return tx.wire.find(target.inserted_wire_query).result()
-        assert opened is not None
         return opened
     if prior is not None:
         return prior
@@ -928,22 +928,26 @@ def _source_until(scenario: Scenario) -> dt.datetime:
     return VALID_FROM if scenario.window == "reversed" else UNTIL
 
 
-def _open(tx: Transaction, scenario: Scenario) -> WireEntity | None:
-    """Buffer the same-transaction insert this scenario's source came from.
+def _open(tx: Transaction, scenario: Scenario) -> object:
+    """Buffer the same-transaction insert this scenario's source came from, and
+    answer the carrier of its authority: the instance a Typed insert took, or
+    the node a Wire insert answered.
 
     Bounded or plain: an bounded ``insert`` opens a Valid-Time-bounded rectangle
     where ``insert`` opens one running to infinity, and the write that follows it
-    is exempted by the same ledger either way. The opener's own window is always
-    the ordered one — ``scenario.window`` states what the WRITE bounded, so a
-    reversed window has to reach the write rather than be spent on the insert.
+    is licensed by the same authority either way. The opener's own window is
+    always the ordered one — ``scenario.window`` states what the WRITE bounded,
+    so a reversed window has to reach the write rather than be spent on the
+    insert.
     """
     target = scenario.target
     if scenario.opened_by == "typed":
+        inserted = target.fresh()
         if scenario.opened_until:
-            tx.insert(target.fresh(), valid_from=VALID_FROM, until=UNTIL)
+            tx.insert(inserted, valid_from=VALID_FROM, until=UNTIL)
         else:
-            tx.insert(target.fresh(), valid_from=target.valid_from)
-        return None
+            tx.insert(inserted, valid_from=target.valid_from)
+        return inserted
     if scenario.opened_until:
         return tx.wire.insert(
             target.entity, dict(target.payload), valid_from=VALID_FROM, until=UNTIL

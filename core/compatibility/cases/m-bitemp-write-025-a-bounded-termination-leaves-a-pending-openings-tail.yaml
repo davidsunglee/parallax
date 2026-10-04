@@ -1,0 +1,56 @@
+# A bounded termination of a still-pending BITEMPORAL opening destroys only the
+# window it states (m-unit-work "Same-transaction write coalescing"): the insert
+# opens [2024-01-01, infinity) at 100, and the termination that follows it in
+# the SAME unit of work runs from the insertion's anchor until 2024-05-01. The
+# pair does not cancel — the opening's tail survives, so the flush inserts
+# [May, infinity) alone. Contrast m-unit-work-010, whose deletion removes the
+# whole opening and cancels the pair.
+model: models/position.yaml
+tags: [m-bitemp-write, m-unit-work, m-temporal-read, bitemporal, same-transaction-coalescing, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.Position
+          rows:
+            - { id: 9, acctNum: D, value: "100.00" }
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          at: "2024-01-01T00:00:00.000000Z"
+        - mutation: terminateUntil
+          entity: parallax.compatibility.Position
+          rows:
+            - { id: 9 }
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          until: "2024-05-01T00:00:00.000000Z"
+          at: "2024-01-01T00:00:00.000000Z"
+      roundTrips: 1
+      note: the bounded TERMINATE removes [Jan, May) of the pending opening and leaves its tail, so the flush inserts [May, infinity) at 100 and nothing else
+      statements:
+        - sql:
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [9, D, "100.00", "2024-05-01T00:00:00.000000Z", infinity, "2024-01-01T00:00:00.000000Z", infinity]
+    - objectQuery:
+        target: parallax.compatibility.Position
+        predicate:
+          eq:
+            attr: parallax.compatibility.Position.id
+            value: 9
+        temporal:
+          transaction-time:
+            asOf: latest
+          valid-time:
+            asOf: latest
+      roundTrips: 1
+      note: the surviving tail is the one current rectangle of position 9
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.out_z = ?
+          binds: [9, infinity, infinity]
+      referenceSql: select pos_id, acct_num, val, from_z, thru_z, in_z, out_z from position where pos_id = 9 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
+      expectRows:
+        - { pos_id: 9, acct_num: D, val: "100.00", from_z: "2024-05-01T00:00:00.000000Z", thru_z: infinity, in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+then:
+  roundTrips: 2

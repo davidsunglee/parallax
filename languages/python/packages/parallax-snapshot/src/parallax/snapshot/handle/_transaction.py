@@ -19,6 +19,7 @@ from parallax.core.unit_work import UnitOfWork
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
+from parallax.snapshot._inspection import bind_insertion
 from parallax.snapshot.handle._keyed_writes import (
     KeyedWriteContext,
     keyed_insert,
@@ -173,12 +174,23 @@ class Transaction:
         Strategy and the version is derived, so the Entity constructor refuses a
         caller-authored one and the row carries none.
 
-        An object this transaction already buffered an insert of is not opened
-        twice: a repeated insert of it — the same instance again, or another
-        instance of the same primary key, through either interface — is refused
-        at the verb (:class:`~parallax.snapshot.handle.KeyedWriteValueError`,
+        The admitted instance carries the insertion's authority from then on, and
+        so does every value derived from it afterwards by ``edit``: through them
+        the update and terminate verbs revise what the insert opened for the rest
+        of the attempt, starting at ``valid_from``, before and after a flush. A
+        value derived before the insert, or another instance of the same key,
+        carries none. The authority is private to the instance — not a member,
+        not serialized — and ends with the attempt.
+
+        An object whose insertion still stands is not opened twice: a repeated
+        insert of it — the same instance again, or another instance of the same
+        primary key, through either interface — is refused at the verb
+        (:class:`~parallax.snapshot.handle.KeyedWriteValueError`,
         ``write-value-already-stored``) rather than left for the database to
-        refuse at commit, and the update verbs are what revise the row it opens.
+        refuse at commit. Once everything the insertion opened has been removed,
+        or a pending write removes it, the object may be inserted again: the new
+        insertion executes after that removal, and grants the instance it takes
+        a fresh authority, which no earlier draft shares.
 
         ``valid_from`` is a Bitemporal insert's Valid-Time start; a
         Transaction-Time-Only or non-temporal target takes none. ``until`` bounds
@@ -189,13 +201,14 @@ class Transaction:
         call, before any buffering. Both bounds come from these arguments, never
         from instance fields: an As-Of Axis endpoint is framework-owned."""
         mutation, bound = window_mutation("insert", "insertUntil", until)
-        keyed_insert(
+        opened = keyed_insert(
             self._keyed,
             TypedKeyedInsertSource(instance, self._codec),
             mutation,
             valid_from=valid_from,
             until=bound,
         )
+        bind_insertion(instance, opened.authority)
 
     def update(self, copy: EntityBase, *, until: dt.datetime | Omitted = OMITTED) -> None:
         """Buffer a sparse keyed update of an edited copy: its primary key plus
@@ -302,9 +315,9 @@ class Transaction:
         Its read half is this transaction's one Read Scope, retained rather than
         wrapped, so a Wire read enters at that scope's own verb and refuses
         re-entry at the same first line ``tx.find`` crosses. Its write half is
-        the same write context the Typed verbs here use, so a Wire write reads
-        the opened-object ledger the Typed verbs record into and
-        read-your-own-writes spans both representations.
+        the same write context the Typed verbs here use, so a Wire write meets
+        the insertions the Typed verbs admitted in one unit of work, and a
+        repeated insert is refused across both representations.
         """
         return WireTransactionView(self._reads, self._predicates)
 

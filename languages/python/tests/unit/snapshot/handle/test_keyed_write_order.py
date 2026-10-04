@@ -34,8 +34,7 @@ from typing import Final, cast
 import pytest
 
 from parallax.core.entity import EditError
-from parallax.core.opt_lock import UnobservedVersionError
-from parallax.core.unit_work import WriteInstructionError, WritePlanningError
+from parallax.core.unit_work import WriteInstructionError
 from parallax.snapshot.handle import (
     KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
@@ -136,38 +135,6 @@ def _refused(
 ) -> Answer:
     """A refusal the VERB raised, stated in full."""
     return Answer(error, code, message, "verb", statements)
-
-
-def _refused_at_flush(error: type[Exception], message: str, *, statements: int) -> Answer:
-    """A refusal the FLUSH raised over a write this order admitted, stated in
-    full beside the DML the transaction had already emitted when it landed.
-
-    Neither planning class carries a code, so the message is the only thing
-    separating two verdicts about two different rules.
-    """
-    return Answer(error, None, message, "flush", statements)
-
-
-def _unobserved_version(target: Target) -> Answer:
-    """What a versioned row settled bare answers when the planner reaches it."""
-    return _refused_at_flush(
-        UnobservedVersionError,
-        f"{_short(target)}: a keyed update/delete of a versioned row requires the version its "
-        "source value observed (a prior find) — the framework never issues an implicit "
-        "resolving read on behalf of a keyed write",
-        statements=1,
-    )
-
-
-def _unobserved_milestone(scenario: Scenario) -> Answer:
-    """What a milestoning write settled bare answers when the planner reaches it."""
-    return _refused_at_flush(
-        WritePlanningError,
-        f"{_short(scenario.target)!r}: a temporal {_MUTATIONS[scenario.verb]!r} closes the "
-        "current milestone, and every close requires the Temporal Observation it addresses, "
-        "gates on, and carries state forward from (m-unit-work; m-opt-lock)",
-        statements=1,
-    )
 
 
 def _applicability_refusal(scenario: Scenario, *, statements: int = 0) -> Answer | None:
@@ -387,22 +354,30 @@ def test_a_reversed_window_is_refused_before_the_change_set_is_weighed(
 
 
 # --------------------------------------------------------------------------- #
-# The provenance axis. One opened-object ledger serves both representations,  #
-# so a write over a row THIS unit of work opened answers the same way whoever  #
-# opened it: the pair coalesces into the insert's own statement, and a         #
-# destructive verb cancels it to no DML at all. Three of the four crossings    #
-# write the source the insert itself yielded; the fourth needs a read to       #
-# produce a Wire source from a Typed insert, and that read force-flushes,      #
-# which is a different scenario rather than the same one spelled differently   #
-# (see `reachable`).                                                          #
+# The provenance axis. An admitted insertion licenses writes through the source #
+# it was stated through, whichever interface stated it: the instance a Typed   #
+# insert took, or the node a Wire insert answered. Over a still-pending insert #
+# the write composes into the insert itself — an assignment merges into the row #
+# it opens, a destruction cancels the pair, and a bounded write over a          #
+# Bitemporal opening splits it or leaves its tail. Each interface's insert      #
+# yields a source of that interface alone, so a crossing needs a read to        #
+# produce the other interface's source, and that read force-flushes; that is a #
+# different scenario rather than the same one spelled differently (see         #
+# `reachable`).                                                               #
 # --------------------------------------------------------------------------- #
 def _over_a_buffered_insert(scenario: Scenario) -> Answer:
     """What a write over a row this unit of work still holds buffered answers.
 
-    The insert is the only statement either way: an assignment merges into the
+    The opening's inserts are the only statements: an assignment merges into the
     row the insert opens, and a `delete` or a `terminate` cancels the pair
-    outright, so the transaction commits nothing at all.
+    outright. A bounded write reaches only part of an unbounded opening, so a
+    bounded update splits it into two inserts at its bound, and a bounded
+    termination leaves its tail to insert.
     """
+    if scenario.verb == "bounded_update":
+        return _wrote(2)
+    if scenario.verb == "bounded_terminate":
+        return _wrote(1)
     if scenario.verb in _UPDATE_VERBS:
         return _wrote(1)
     return _wrote(0)
@@ -426,24 +401,32 @@ def test_a_same_transaction_insert_licenses_the_write_whoever_opened_it(
 
 
 # --------------------------------------------------------------------------- #
-# The same provenance, reached through a read of the row the insert opened.    #
-# The read force-flushes, so the pair no longer coalesces — and this is the    #
-# only route by which a Wire verb writes a row a TYPED insert opened, so it is #
-# where all four crossings exist.                                             #
-#                                                                             #
-# The exemption is what makes it interesting: a flush retires nothing from the #
-# ledger, so the write that follows is STILL exempted from resolving           #
-# evidence and settles bare, discarding the observation the read supplied. The #
-# flush then has nothing to gate on and refuses — a versioned row for its      #
-# missing version, a temporal one for its missing observation — where an       #
-# unversioned Non-Temporal row, which observes no state at all, writes.        #
+# The same object, reached through a read of the row the insert opened. The    #
+# read force-flushes, so the pair no longer coalesces — and this is the route  #
+# by which either interface writes a row the other interface's insert opened,  #
+# so it is where all four crossings exist. The read's own evidence is what the #
+# write settles against: an insertion this transaction admitted lends nothing  #
+# to a source a read published. The row it observed is one this attempt opened,#
+# so the write revises or removes it in place rather than closing it into      #
+# history.                                                                     #
 # --------------------------------------------------------------------------- #
+_OWN_ROW_STATEMENTS: Final[Mapping[tuple[Profile, Verb], int]] = {
+    ("non_temporal", "update"): 1,
+    ("non_temporal", "delete"): 1,
+    ("transaction_time", "update"): 1,
+    ("transaction_time", "terminate"): 1,
+    ("bitemporal", "update"): 1,
+    ("bitemporal", "bounded_update"): 2,
+    ("bitemporal", "terminate"): 1,
+    ("bitemporal", "bounded_terminate"): 1,
+}
+"""How much DML a source-backed verb emits over a row this attempt opened and
+then read at its own start: a revision in place, a removal, or — for a bounded
+update — a revision of the kept tail's start beside the new head."""
+
+
 def _over_a_reread_insert(scenario: Scenario) -> Answer:
-    if scenario.target.profile != "non_temporal":
-        return _unobserved_milestone(scenario)
-    if scenario.target.gate == "version":
-        return _unobserved_version(scenario.target)
-    return _wrote(2)
+    return _wrote(1 + _OWN_ROW_STATEMENTS[scenario.target.profile, scenario.verb])
 
 
 @pytest.mark.parametrize(
@@ -457,7 +440,7 @@ def _over_a_reread_insert(scenario: Scenario) -> Answer:
     ),
     ids=str,
 )
-def test_a_write_over_a_reread_insert_settles_bare_whoever_opened_it(
+def test_a_write_over_a_reread_insert_settles_against_the_read_whoever_opened_it(
     scenario: Scenario,
 ) -> None:
     _answers(
@@ -717,7 +700,7 @@ def test_the_window_is_judged_over_an_inserted_source_too(
                 source="reread",
                 label="a-net-zero-write-of-a-reread-inserted-row",
             ),
-            _unobserved_version(ACCOUNT_TARGET),
+            _wrote(2),
         ),
     ),
     ids=lambda value: str(value) if isinstance(value, Scenario) else "",
@@ -727,8 +710,8 @@ def test_a_net_zero_write_of_an_inserted_row_is_the_write_an_ordinary_one_is(
     scenario: Scenario, expected: Answer, opener: Representation
 ) -> None:
     # A net-zero chain expresses its member: over a pending insert it folds into
-    # the insert's one statement, and over a flushed one it settles bare exactly
-    # as an ordinary write does.
+    # the insert's one statement, and over a reread one it settles against the
+    # read exactly as an ordinary write does.
     _answers(replace(scenario, opened_by=opener), expected)
 
 
@@ -861,9 +844,6 @@ _TYPED_AUTHORINGS: tuple[tuple[Mapping[str, object], str], ...] = (
 
 _TYPED_AUTHORING_SOURCES: tuple[Scenario, ...] = (
     Scenario(target=ACCOUNT_TARGET, verb="update", label="over-a-read-source"),
-    Scenario(
-        target=ACCOUNT_TARGET, verb="update", opened_by="wire", label="over-a-wire-insert-source"
-    ),
     Scenario(
         target=ACCOUNT_TARGET, verb="update", opened_by="typed", label="over-a-typed-insert-source"
     ),

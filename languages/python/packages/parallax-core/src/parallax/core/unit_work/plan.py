@@ -187,12 +187,13 @@ class RangeAcquisition:
     """The current coverage a deferred range must read before it binds: one
     object's current rows overlapping ``[valid_from, until)`` — through the open
     bound when ``until`` is ``None`` — read under the shared row lock when
-    ``locking``."""
+    ``locking``. A Transaction-Time-Only object has no Valid Time, so its
+    bounds are both ``None`` and its one current row is the coverage."""
 
     entity: EntityMetadata
     key_attribute: AttributeIdentity
     key_value: ManagedValue
-    valid_from: ManagedValue
+    valid_from: ManagedValue | None
     until: ManagedValue | None
     locking: bool
 

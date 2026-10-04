@@ -66,10 +66,11 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
 )
-from parallax.core.unit_work.materialized import ObservedKeyedWrite
+from parallax.core.unit_work.materialized import InsertionKeyedWrite, ObservedKeyedWrite
 from parallax.core.unit_work.plan import BoundRange, ExecutionUnit
 from parallax.core.unit_work.planned import PlannedClose, PlannedUpdate
 from parallax.core.unit_work.planner import VersionedStateKey
+from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.unit_work.uow import EscapedTransactionError, FlushExecutor, WriteBatchOpening
 from parallax.core.unit_work.write_planner import compose_writes
 from parallax.snapshot.handle import build_write_planner
@@ -388,6 +389,62 @@ def test_a_multi_row_keyed_write_refuses_to_carry_one_write_observation() -> Non
             ),
             VersionObservation(observed_version=7),
         )
+
+
+def test_an_insertion_authority_licenses_no_insert_and_no_multi_row_write() -> None:
+    # An insertion's authority licenses writes of the one object it opened:
+    # an insert is admitted by its own verb, and an instruction naming several
+    # rows names no single object at all.
+    authority = InsertionIdentity(corpus_object_key("Account", ("id", 1)))
+    with pytest.raises(ValueError, match="admitted by its own verb"):
+        InsertionKeyedWrite(instruction=_account_insert(1), identity=authority)
+    with pytest.raises(ValueError, match="the one object it opened"):
+        buffered_write(
+            _prepared_keyed(
+                KeyedWrite(
+                    "update",
+                    "Account",
+                    ({"id": 1, "balance": Decimal("0.00")}, {"id": 2, "balance": Decimal("0.00")}),
+                ),
+                _ACCOUNT,
+            ),
+            None,
+            authority=authority,
+        )
+
+
+def test_an_insertion_authority_licenses_keyed_writes_alone() -> None:
+    selection = PredicateSelection("Account", predicate_algebra.All())
+    predicate = prepare_typed_write(PredicateWrite("delete", selection, ()), _ACCOUNT)
+    assert isinstance(predicate, PreparedPredicateWrite)
+    with pytest.raises(TypeError, match="licenses keyed writes alone"):
+        buffered_write(
+            predicate,
+            None,
+            authority=InsertionIdentity(corpus_object_key("Account", ("id", 1))),
+        )
+
+
+def test_a_write_carrying_an_authority_no_standing_insertion_granted_is_refused() -> None:
+    # The verb asks whether an insertion still stands before it builds the
+    # write; buffering asks again, so an authority this unit of work never
+    # issued — or one a later insertion of the object superseded — is refused
+    # rather than settled.
+    update = _prepared_keyed(
+        KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("1.00")},)), _ACCOUNT
+    )
+
+    def body(tx: UnitOfWork) -> None:
+        stranger = InsertionIdentity(corpus_object_key("Account", ("id", 1)))
+        with pytest.raises(UnitOfWorkError, match="no longer stands"):
+            tx.buffer(buffered_write(update, None, authority=stranger))
+        tx.buffer(_account_insert(1))
+        superseded = tx.insertion_identity(corpus_object_key("Account", ("id", 1)))
+        assert superseded is not None
+        assert tx.insertion_authority(stranger) is None
+        assert tx.insertion_authority(superseded) is not None
+
+    _run(body)
 
 
 def test_a_carrier_refuses_a_claim_naming_other_evidence() -> None:

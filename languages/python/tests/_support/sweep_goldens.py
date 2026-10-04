@@ -228,7 +228,7 @@ _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     }
 )
 _TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
-    {"m-txtime-write-008", "m-bitemp-write-014"}
+    {"m-txtime-write-008", "m-bitemp-write-014", "m-bitemp-write-024", "m-bitemp-write-025"}
 )
 _PIN_CONTRAST_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-bitemp-write-015", "m-bitemp-write-016"}

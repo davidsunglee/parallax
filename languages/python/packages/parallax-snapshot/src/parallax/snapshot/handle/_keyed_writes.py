@@ -3,12 +3,11 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Final, Literal, Protocol
 
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
-from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import Bitemporal, Pin
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
@@ -17,19 +16,22 @@ from parallax.core.unit_work import (
     KeyedWrite,
     ObjectKey,
     ReadOrigin,
-    SettledEvidence,
     UnitOfWork,
     buffered_write,
     object_key,
 )
-from parallax.core.unit_work.columns import freeze_retained_value
-from parallax.core.unit_work.instructions import PreparedKeyedWrite, WriteInstructionError
+from parallax.core.unit_work.instructions import (
+    PreparedKeyedWrite,
+    PreparedTemporalBounds,
+    WriteInstructionError,
+)
+from parallax.core.unit_work.retain import InsertionIdentity
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores.
-from parallax.snapshot.handle._family import family_view, temporal_shape
+from parallax.snapshot.handle._family import temporal_shape
 from parallax.snapshot.handle._options import Omitted
 
 __all__ = [
@@ -204,20 +206,19 @@ def validate_provenance(
     ``delete`` / ``terminate`` / ``terminateUntil`` derive an identity row alone
     and fall through, exactly as they already do for ``valid_from``.
 
-    ``inserted`` answers whether the writing unit of work has ALREADY buffered an
-    insert of this object, and its ``True`` exempts a value from the NotStored
-    refusal: a row this transaction inserted is a row it stores, so the update
-    that follows carries the final value the flush writes rather than addressing
-    nothing (`m-unit-work` "Insert-then-update coalesces in place"). It is
-    answered from what a source's own identity row names
-    (:func:`~parallax.snapshot.handle._typed_writes.source_identity_row`,
-    :func:`written_object_of_row`), never through a
+    ``inserted`` answers whether the value carries the authority of an
+    insertion still standing in the writing unit of work, and its ``True``
+    exempts the value from the NotStored refusal: the instance an insertion was
+    stated through, and every value derived from it since, revise what that
+    insertion opened (`m-unit-work` "Insertion authority"). It is answered from
+    the authority the value itself carries, never from the key it names or a
     row derived for the purpose, so a value whose class can key no row still
     reaches THIS refusal rather than an
     :class:`~parallax.core.entity.EntityRowError` raised on its behalf. It is the
-    UPDATE family's exemption only: the insert family reads the same admission
-    for the opposite verdict, and that refusal is :func:`refuse_repeated_insert`'s,
-    asked once the row is prepared rather than here.
+    UPDATE family's exemption only: the insert family asks whether an insertion
+    of the object still stands for the opposite verdict, and that refusal is
+    :func:`refuse_repeated_insert`'s, asked once the row is prepared rather
+    than here.
     """
     if mutation not in UPDATE_MUTATIONS and mutation not in INSERT_MUTATIONS:
         return
@@ -263,21 +264,18 @@ def refuse_repeated_insert(
     *,
     opened_by: WriteRepresentation | None,
 ) -> None:
-    """Refuse an insert of an object this transaction already buffered an insert
-    of, whichever value spells the repeat and whichever representation opened
-    the row.
+    """Refuse an insert of an object whose insertion in this transaction still
+    stands, whichever value spells the repeat and whichever representation
+    opened the row.
 
-    The insert family's half of read-your-own-writes, read off the same
-    admitted insertion that lifts ``write-value-not-stored`` from an update: a row this
-    unit of work opens is a row it stores, so a second opening of it names a row
-    already held, exactly as a value this store published does — and it carries
-    that value's code, because what is wrong is the same thing. `m-unit-work`'s
-    coalescing rules name insert-then-update and insert-then-delete and are
-    silent on insert-then-insert, whose only other outcome is the database
-    refusing the pair at commit; the verb answers instead.
+    The insert family's half of read-your-own-writes: a row this unit of work
+    opens is a row it stores, so a second opening of it names a row already
+    held, exactly as a value this store published does — and it carries that
+    value's code, because what is wrong is the same thing. The database would
+    otherwise refuse the pair at commit; the verb answers instead.
 
     ``opened_by`` is the unit of work's answer for the object the PREPARED row
-    names (:func:`written_object_of_row`), which is why this stands after preparation
+    names, which is why this stands after preparation
     rather than beside the provenance question: a Wire payload's key members are
     canonical only once its row is prepared. A Typed instance could answer
     earlier and does not, so both representations hear pin, provenance, and
@@ -286,10 +284,9 @@ def refuse_repeated_insert(
     advice names the update verb over the carrier the OPENING interface produced
     (:data:`_REPEATED_INSERT_ADVICE`), which is the only carrier that exists,
     and the refusing call's own interface never decides it. The answer is about
-    an insert that still STANDS admitted: a destructive write that cancelled a
-    pending pair retired the admission
-    (:class:`~parallax.core.unit_work.BufferOutcome`), so an insert after it is
-    a first opening and is not refused.
+    an insertion that still STANDS: once everything it opened has been removed,
+    or a pending write removes all of it, an insert of the object is a first
+    opening and is not refused (`m-unit-work` *Insertion authority*).
     """
     if opened_by is None:
         return
@@ -302,62 +299,6 @@ def refuse_repeated_insert(
         ),
         identity=identity,
     )
-
-
-def written_object_of_row(
-    record: EntityIdentity, key: AttributeMetadata, row: Mapping[str, object]
-) -> ObjectKey | None:
-    """Which object a written ROW names.
-
-    The one reading, whatever produced the row: the identity row a source states
-    (:func:`~parallax.snapshot.handle._typed_writes.source_identity_row`,
-    an object key a read filed) and the canonical
-    row an insert buffers key by the SAME family key member ``key`` and carry
-    the value as the caller supplied it, so a Typed
-    insert and a Wire update of one object name one admitted insertion — which
-    is what makes the exemption span both representations rather than one each.
-
-    ``None`` for a row that names no object: one short of the key member, or one
-    whose member carries something no object can be addressed BY. A row short
-    of the member is defensive rather than reachable — a keyed write's
-    identity row is the key the source itself states, and an insert's is judged
-    complete before this is asked. An unaddressable member is reachable, because
-    a source states its key members as its caller populated them and only the
-    write that follows judges them against the declared type; answering ``None``
-    is what leaves that value's own refusal standing instead of failing the
-    admission question about it.
-    """
-    name = key.identity.name
-    if name not in row:  # pragma: no cover - every caller holds a complete key already
-        return None
-    member = row[name]
-    if not _addresses_an_object(member):
-        return None
-    return ObjectKey(record, ((name, member),))
-
-
-def _addresses_an_object(member: object) -> bool:
-    """Whether an object can be addressed by ``member`` at all.
-
-    Addressing is by equality among the unit of work's admitted insertions, so a
-    member no hash is defined over addresses nothing there — and nothing there
-    could have been recorded under one, since an insert is validated against the
-    declared type before its row is recorded. Read as a property of the member rather
-    than a list of carriers: which containers a caller can smuggle past
-    validation is open-ended, and every one of them addresses no object for the
-    same reason.
-
-    Only ``TypeError`` answers ``False``, because only ``TypeError`` is Python's
-    statement that the member defines no hash. A member whose own ``__hash__``
-    raises anything else is the caller's code failing, and that exception
-    belongs to the caller unmasked rather than being read as an answer about
-    naming.
-    """
-    try:
-        hash(member)
-    except TypeError:
-        return False
-    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,36 +328,32 @@ class ResolvedKeyedWriteSource:
 
     Everything here is answerable before the write is prepared, which is what
     makes it one record rather than a phase's worth of separate getters: the
-    provenance refusal, the pin refusal, and the buffered-insert exemption are
-    all decided from it, in that order, and the identity row is what names the
-    object to the admitted insertions before any instruction exists.
+    provenance refusal, the exemption a standing insertion grants it, and the
+    pin refusal are all decided from it, in that order, before any row is
+    derived — so a value whose class can key no row reaches the provenance
+    refusal that is the honest complaint about it, rather than a codec failure.
 
     ``pin`` and ``hint`` are the source's own, never derived: a hintless source
     is one no read of this store published, and a source pinned at a finite
     Transaction-Time instant is read-only whatever else is true of it.
 
-    ``identity_row`` is ``None`` for a source that names no object of this store
-    at all — a value whose own class keys this Entity by other members, or one
-    that carries no value for a member it does key by. No insertion is admitted
-    of an object nothing named, so such a source reaches the provenance refusal
-    that is the honest complaint about it; deriving a row to ask the question
-    with would answer that mistake with a codec failure instead.
-
     ``representation`` is which interface stated the write, and is here for the
     one thing a refusal cannot state without it: the verb that DOES accept the
     value, in the spelling the caller would type.
+
+    ``authoring`` is the insertion authority the source privately carries — the
+    instance an insertion was admitted through, a value derived from it since,
+    or the node a Wire insert answered — which licenses the write only while
+    the unit of work still answers it as standing. A source no read published
+    carries no hint beside it, and a read's source carries no authority.
     """
 
     entity: EntityMetadata
     pin: Pin | None
     hint: ReadOrigin | None
-    identity_row: Mapping[str, object] | None
     provenance: Provenance
     representation: WriteRepresentation
-
-    def __post_init__(self) -> None:
-        if self.identity_row is not None:
-            object.__setattr__(self, "identity_row", _sealed_row(self.identity_row))
+    authoring: InsertionIdentity | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,20 +401,20 @@ class ResolvedKeyedInsert:
 
 @dataclass(frozen=True, slots=True)
 class OpenedKeyedWrite:
-    """The row an insert opened, as its caller may render it.
+    """The row an insert opened, and the authority its admission granted.
 
-    A Typed caller keeps the instance it passed and ignores this; a Wire caller
-    has nothing else to hold, so it renders the frozen node it will revise the
-    row through. What it publishes is the buffered ROW rather than the payload,
-    and its Read Origin names this transaction's participation with NO
-    observation — which is exactly what an opening row has observed. The write
-    that follows is licensed by the buffered insert instead.
+    A Typed caller has ``authority`` bound to the instance it passed; a Wire
+    caller has nothing else to hold, so it renders the frozen node it will
+    revise the row through, carrying that authority. What the node publishes is
+    the buffered ROW rather than the payload. No read published it, so it
+    carries no Read Origin: the writes that follow are licensed by the
+    insertion's authority instead.
     """
 
     identity: EntityIdentity
     row: Mapping[str, object]
     object_key: ObjectKey
-    hint: ReadOrigin
+    authority: InsertionIdentity
 
 
 class KeyedWriteSource(Protocol):
@@ -625,59 +562,48 @@ def keyed_write(
     run inside a lifecycle callback; the source answers, and every judgement
     between its answers belongs here.
 
-    Two stages read the unit of work's admitted insertions, from one object
-    derived once at stage 3: the provenance exemption, which is what lets an
-    update follow this transaction's own insert, and the evidence exemption,
-    which is why the write that follows settles bare — the row it revises is the
-    one that insert opens, so there is no prior row for a second intent to
-    compete for. Buffering itself retires an admission: a destructive write that
-    cancels an insert of the same object still PENDING in the unit of work
-    retires it, because the flush will annihilate that pair and emit nothing for
-    it, so from there on an insert of it is a first opening and an update of it
-    addresses nothing.
+    A source no read published is licensed by the insertion authority it
+    carries, while the unit of work answers that authority as standing: that
+    lifts the provenance refusal, supplies the write's start, and replaces the
+    evidence question, because the insertion — not a read — is what authorized
+    writes of the object it opened. A key equal to an inserted object's lends a
+    value no authority, and a source a read published keeps its own evidence
+    whatever this transaction inserted.
 
     A source-backed write states no start of its own: a Bitemporal one starts
-    at its source's finite Valid-Time pin, or at the start its admitted
-    insertion was authored with (:func:`source_start`). Preparation then judges
-    that start and ``until`` together, before an update that expresses no
-    member is dropped as the empty set it is.
-
-    An object whose insert already flushed is not pending: that row exists, so
-    a second insert of it would collide with it — the flush emits every
-    surviving insert ahead of every delete, so a delete and a re-insert of one
-    flushed row cannot even be ordered as authored. A refused write leaves the
-    admissions as it found them, because the buffer admits all or nothing.
+    at its source's finite Valid-Time pin, or at the anchor its insertion was
+    admitted with (:func:`source_start`). Preparation then judges that start
+    and ``until`` together, before an update that expresses no member is
+    dropped as the empty set it is. A refused write leaves the admissions as it
+    found them, because the buffer admits all or nothing.
     """
     refuse_reentry(ctx.lifecycle)
     source.capture(mutation)
     meta = ctx.model.meta
     resolved = source.resolve(meta, mutation)
-    family = family_view(meta, resolved.entity)
-    identity_row = resolved.identity_row
-    written = (
+    authoring = resolved.authoring
+    anchor = (
         None
-        if identity_row is None
-        else written_object_of_row(resolved.entity.identity, family.primary_key, identity_row)
+        if authoring is None or resolved.hint is not None
+        else ctx.uow.insertion_authority(authoring)
     )
-    opened_by = _opener(ctx.uow.opened_by(written))
     validate_provenance(
         resolved.entity.identity,
         resolved.provenance,
         mutation,
-        inserted=opened_by is not None,
+        inserted=anchor is not None,
         representation=resolved.representation,
     )
     validate_source_pin(resolved.entity.identity, resolved.pin)
-    valid_from = source_start(ctx, resolved, mutation, written)
+    valid_from = source_start(ctx, resolved, mutation, anchor)
     prepared = source.prepare(resolved, valid_from=valid_from, until=until)
     if mutation in UPDATE_MUTATIONS and not prepared.assigned:
         return
-    evidence: SettledEvidence | None = (
-        None
-        if opened_by is not None
-        else ctx.uow.resolve_write_evidence(
-            resolved.entity, resolved.hint, mutation=mutation, object_key=prepared.object_key
-        )
+    if anchor is not None:
+        ctx.uow.buffer(buffered_write(prepared.instruction, None, authority=authoring))
+        return
+    evidence = ctx.uow.resolve_write_evidence(
+        resolved.entity, resolved.hint, mutation=mutation, object_key=prepared.object_key
     )
     ctx.uow.buffer(buffered_write(prepared.instruction, evidence, source=resolved.hint))
 
@@ -686,32 +612,32 @@ def source_start(
     ctx: KeyedWriteContext,
     resolved: ResolvedKeyedWriteSource,
     mutation: KeyedMutation,
-    written: ObjectKey | None,
+    anchor: PreparedTemporalBounds | None,
 ) -> dt.datetime | None:
     """The Valid-Time start a source-backed write of a Bitemporal target
     begins at, or ``None`` for a target with no Valid Time.
 
-    A source a read published starts at that read's finite Valid-Time pin,
-    whatever its stored rectangle's own start: the read's coordinate is where
-    the caller looked. A source no read published — the value an insert took,
-    or the node it answered — starts where its admitted insertion was authored
-    to start. Valid-Time ``LATEST`` selects the open-ended rectangle rather than
-    naming an instant, so a source read there states no start and is refused,
-    as is a source neither a pin nor an admitted insertion anchors.
+    A source an insertion's standing authority licenses starts at the
+    ``anchor`` that insertion was admitted with, however its coverage has been
+    edited since. A source a read published starts at that read's finite
+    Valid-Time pin, whatever its stored rectangle's own start: the read's
+    coordinate is where the caller looked. Valid-Time ``LATEST`` selects the
+    open-ended rectangle rather than naming an instant, so a source read there
+    states no start and is refused, as is a source neither a pin nor a standing
+    insertion anchors.
     """
     if mutation not in UPDATE_MUTATIONS and mutation not in _SOURCE_WINDOWED:
         return None
     entity = resolved.entity
     if not isinstance(temporal_shape(ctx.model.meta, entity), Bitemporal):
         return None
+    if anchor is not None and anchor.valid_from is not None:
+        return anchor.valid_from
     pin = resolved.pin
     valid_time = None if pin is None else pin.valid_time
     if isinstance(valid_time, dt.datetime):
         return valid_time
     if valid_time is None:
-        bounds = ctx.uow.insertion_bounds(written)
-        if bounds is not None and bounds.valid_from is not None:
-            return bounds.valid_from
         raise WriteInstructionError(
             f"{entity.identity.canonical}: {mutation!r} starts where its source was read, and "
             "this source names no Valid-Time instant — no read pinned it and no insertion "
@@ -749,20 +675,19 @@ def keyed_insert(
     two can never both be pending: a value the provenance rule refuses came from
     no read of this store at all, so it carries no view to be pinned.)
 
-    One stage stands after preparation, the last before the buffer: a second
-    insert of an object this transaction already buffered an insert of is
-    refused, whichever value spells it and whichever representation opened the
-    row. It reads the same admitted insertions the source-backed door's
-    exemption reads, over
-    the object the PREPARED row names, because a Wire payload's key members are
-    canonical only once the row is — so pin, provenance, and preparation are all
-    heard ahead of it, on both lanes.
+    One stage stands after preparation, the last before the buffer: an insert
+    of an object whose insertion in this transaction still stands is refused,
+    whichever value spells it and whichever representation opened the row. It
+    is asked over the object the PREPARED row names, because a Wire payload's
+    key members are canonical only once the row is — so pin, provenance, and
+    preparation are all heard ahead of it, on both lanes.
 
     The insertion this admits is labelled with the representation that opened
-    it, which is what licenses the keyed write that follows and what the
-    refusal names the way out in: the caller is sent to the update verb over the
-    carrier THIS call produced, which the opposite interface has no spelling for.
-    The answer names the row so a caller holding no Entity Class can revise it.
+    it, which is what a later repeat's refusal names the way out in: the caller
+    is sent to the update verb over the carrier THIS call produced, which the
+    opposite interface has no spelling for. The answer carries the authority the
+    admission granted, which the caller's interface binds to that carrier, and
+    names the row so a caller holding no Entity Class can revise it.
     """
     refuse_reentry(ctx.lifecycle)
     opening.capture(mutation)
@@ -777,29 +702,23 @@ def keyed_insert(
         representation=resolved.representation,
     )
     prepared = opening.prepare(resolved, valid_from=valid_from, until=until)
-    family = family_view(meta, resolved.entity)
-    row = prepared.rows[0]
-    written = written_object_of_row(resolved.entity.identity, family.primary_key, row)
-    refuse_repeated_insert(
-        resolved.entity.identity,
-        mutation,
-        opened_by=_opener(ctx.uow.opened_by(written)),
-    )
-    ctx.uow.buffer(prepared, opener=resolved.representation)
     opened = object_key(prepared, meta)
     # A Create Payload is a complete document, so the row it buffers always names
     # its own object by the time validation has admitted it.
     assert opened is not None
+    refuse_repeated_insert(
+        resolved.entity.identity,
+        mutation,
+        opened_by=_opener(ctx.uow.opened_by(opened)),
+    )
+    ctx.uow.buffer(prepared, opener=resolved.representation)
+    authority = ctx.uow.insertion_identity(opened)
+    assert authority is not None  # the admission just issued it
     return OpenedKeyedWrite(
         identity=resolved.entity.identity,
-        row=row,
+        row=prepared.rows[0],
         object_key=opened,
-        hint=ReadOrigin(
-            entity=resolved.entity.identity,
-            object_key=opened,
-            participation=ctx.uow.participation,
-            observation=None,
-        ),
+        authority=authority,
     )
 
 
@@ -808,17 +727,3 @@ def _opener(label: object) -> WriteRepresentation | None:
         return None
     assert label in _REPEATED_INSERT_ADVICE  # this module labels every insertion it admits
     return label
-
-
-def _sealed_row(row: Mapping[str, object]) -> Mapping[str, object]:
-    """``row`` owned by the record that answers it, to the leaves.
-
-    Copied and then sealed, both: an adapter builds these mappings as it reads a
-    value, and the ingress weighs them against the sealed rows a prepared
-    instruction carries, so a record crossing the seam has to be as unable to
-    change underneath its reader as those rows are. Sealing the mapping alone
-    would leave a structured member's own container reachable, so the values go
-    through the SAME freeze a prepared row's leaves do — which is also what makes
-    the two comparable: one carrier per value, whichever side produced it.
-    """
-    return MappingProxyType({name: freeze_retained_value(value) for name, value in row.items()})

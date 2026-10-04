@@ -26,9 +26,13 @@ from parallax.core.unit_work.instructions import (
     PreparedWrite,
     prepare_typed_write,
 )
-from parallax.core.unit_work.materialized import ObjectClaimedWrite, ObservedKeyedWrite
+from parallax.core.unit_work.materialized import (
+    AfterRemoval,
+    ObjectClaimedWrite,
+    ObservedKeyedWrite,
+)
 from parallax.core.unit_work.strategy import ActorIdentity
-from parallax.core.unit_work.write_planner import compose_writes
+from parallax.core.unit_work.write_planner import BufferedWrite, compose_writes
 from parallax.core.unit_work.write_settlement import OrderedWrite
 
 __all__ = ["TEST_ACTOR_IDENTITY", "observed_buffer", "observed_write"]
@@ -63,7 +67,7 @@ def observed_buffer(
             continue
         key = object_key(item, model)
         resolved.append(buffered_write(item, None if key is None else observations.get(key)))
-    return list(compose_writes(model, resolved))
+    return [_settled(item) for item in compose_writes(model, resolved)]
 
 
 def observed_write(
@@ -72,7 +76,14 @@ def observed_write(
     """``instruction`` buffered against ``observation``, as the one write a
     buffer holds."""
     (only,) = compose_writes(model, [buffered_write(instruction, observation)])
-    return only
+    return _settled(only)
+
+
+def _settled(item: BufferedWrite) -> OrderedWrite:
+    """``item`` as settlement reads it: these suites buffer no insert that
+    waits on an earlier removal."""
+    assert not isinstance(item, AfterRemoval)
+    return item
 
 
 def _prepared_item(item: BufferItem | KeyedWrite | PredicateWrite, model: Metamodel) -> BufferItem:

@@ -122,14 +122,15 @@ class WireTransactionView(WireDatabaseView):
 
         The returned node is the Wire peer of the instance ``tx.insert`` leaves
         its caller holding: it publishes the payload's own members in canonical
-        Wire spelling and is a keyed source, so a pure Wire caller can revise the
-        row it just opened without re-reading it — which it could not do anyway,
-        since a participating read force-flushes and an insert-then-delete pair
-        is required to emit no DML at all. The pair coalesces through the same
-        read-your-own-writes ledger a Typed insert records into — and that ledger
-        refuses a repeated insert of the object, whether the payload is stated
-        again or the returned node is handed back, since revising the row is the
-        update verb's job.
+        Wire spelling and carries the insertion's authority, so a pure Wire
+        caller revises the row it opened through it for the rest of the attempt,
+        before and after a flush, without re-reading it. Only this node carries
+        that authority: a plain copy of it, or another document of the same key,
+        is no keyed source. A repeated insert of the object is refused while
+        anything the insertion opened stands, whether the payload is stated again
+        or the returned node is handed back, since revising the row is the update
+        verb's job; once all of it has been removed, a fresh insertion is
+        admitted.
 
         ``valid_from`` and ``until`` bound a Bitemporal insert exactly as
         ``tx.insert`` does: omitting ``until`` opens ``[valid_from, infinity)``,

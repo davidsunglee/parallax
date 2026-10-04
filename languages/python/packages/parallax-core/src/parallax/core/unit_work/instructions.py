@@ -65,6 +65,7 @@ __all__ = [
     "coerce_typed_row",
     "decode_wire_row",
     "derive_keyed_write",
+    "derive_opening",
     "deserialize",
     "prepare_typed_write",
     "prepare_wire_write",
@@ -334,6 +335,28 @@ def derive_keyed_write(
     """Derive a keyed prepared product while retaining owned values by identity."""
     sealed = tuple(cast("Mapping[str, object]", retain_document_value(row)) for row in rows)
     return _prepared_keyed_write(prepared.mutation, prepared.target, sealed, prepared.bounds)
+
+
+def derive_opening(
+    prepared: PreparedKeyedWrite,
+    row: Mapping[str, object],
+    *,
+    valid_from: dt.datetime,
+    until: dt.datetime | None,
+) -> PreparedKeyedWrite:
+    """One piece of an admitted Bitemporal opening: ``row`` opened over
+    ``[valid_from, until)``, through the open bound when ``until`` is ``None``.
+
+    The piece states the same target and an already-judged window inside the
+    opening's own, so nothing is judged again.
+    """
+    sealed = (cast("Mapping[str, object]", retain_document_value(row)),)
+    return _prepared_keyed_write(
+        "insert" if until is None else "insertUntil",
+        prepared.target,
+        sealed,
+        PreparedTemporalBounds(valid_from, until),
+    )
 
 
 # The reference pattern a predicate-write assignment `attr` must match, mirroring

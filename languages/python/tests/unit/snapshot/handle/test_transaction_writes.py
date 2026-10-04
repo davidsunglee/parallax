@@ -55,9 +55,6 @@ from parallax.snapshot.handle import (
     WriteEvidenceError,
 )
 from parallax.snapshot.handle import _predicate_writes as predicate_writes_module
-from parallax.snapshot.handle._keyed_writes import (
-    ResolvedKeyedWriteSource,
-)
 from parallax.snapshot.handle._options import OMITTED
 from parallax.snapshot.handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
@@ -919,7 +916,9 @@ def test_a_source_keeps_its_pin_through_projection_and_streaming(delivery: str) 
 def test_a_source_with_no_pin_and_no_standing_insertion_names_no_start() -> None:
     # The node a Bitemporal insert answered starts its writes where that
     # insertion was authored to start; once a termination cancelled the pending
-    # pair, nothing anchors it any more.
+    # pair, its authority is retired and nothing anchors it any more. An update
+    # through it is refused as a value no read produced, and a destruction,
+    # which takes no position on provenance, finds no start.
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
@@ -929,8 +928,11 @@ def test_a_source_with_no_pin_and_no_standing_insertion_names_no_start() -> None
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         )
         tx.wire.terminate(opened)
-        with pytest.raises(WriteInstructionError, match="names no Valid-Time instant"):
+        with pytest.raises(KeyedWriteValueError) as refused:
             tx.wire.update(opened, {"value": "2.00"})
+        assert refused.value.code == "write-value-not-stored"
+        with pytest.raises(WriteInstructionError, match="names no Valid-Time instant"):
+            tx.wire.terminate(opened)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -1449,34 +1451,6 @@ def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
     assert "tx.insert(...)" in refusal.value.message
 
 
-def test_the_seam_records_own_the_mappings_an_adapter_hands_them() -> None:
-    # An adapter builds these mappings while reading its own value, and the
-    # ingress reads them after the adapter returns, so neither may stay
-    # reachable through the caller that built it — to the leaves, because a
-    # structured member's own container is as reachable as the mapping holding
-    # it, and a prepared row's leaves are frozen the same way.
-    nested: dict[str, object] = {"city": "Berlin"}
-    identity_row: dict[str, object] = {"id": 1, "where": {"geo": nested}}
-    resolved = ResolvedKeyedWriteSource(
-        entity=cataloged_for(ACCOUNT).meta.entities[0],
-        pin=None,
-        hint=None,
-        identity_row=identity_row,
-        provenance="this",
-        representation="typed",
-    )
-
-    identity_row["id"] = 2
-    nested["city"] = "Bonn"
-    assert resolved.identity_row == {"id": 1, "where": {"geo": {"city": "Berlin"}}}
-    with pytest.raises(TypeError):
-        cast("dict[str, object]", resolved.identity_row)["id"] = 3
-    assert resolved.identity_row is not None
-    where = cast("Mapping[str, object]", resolved.identity_row["where"])
-    with pytest.raises(TypeError):
-        cast("dict[str, object]", where["geo"])["city"] = "Bonn"
-
-
 class _NoHash:
     """Populates a key member with something the exemption's equality cannot ask
     about, without being any particular container."""
@@ -1489,12 +1463,12 @@ class _NoHash:
 )
 def test_a_key_member_naming_no_object_reaches_the_provenance_refusal(key: object) -> None:
     # A value built without validation carries whatever its author put on a key
-    # member, and the buffered-insert exemption is read BEFORE the write judges
-    # that member against the declared type. Such a value names no object of this
-    # store, so every one of these reaches `write-value-not-stored` — the honest
-    # complaint about it — rather than failing the exemption's own question with
-    # a bare `TypeError` out of the ledger. The carriers are illustrative, not a
-    # closed set: the reading answers the property, not a list of types.
+    # member, and the provenance refusal is decided BEFORE the write judges that
+    # member against the declared type. Such a value carries no read and no
+    # insertion's authority, so every one of these reaches
+    # `write-value-not-stored` — the honest complaint about it — rather than a
+    # bare `TypeError` raised on its behalf. The carriers are illustrative, not a
+    # closed set.
     def fn(tx: Transaction) -> None:
         tx.update(
             mm.Account.model_construct(id=key, owner="Ada", balance=Decimal("100.00"), version=1)
@@ -1638,16 +1612,15 @@ def test_an_update_after_a_cancelled_insert_delete_pair_addresses_no_stored_row(
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
-def test_an_insert_after_a_delete_of_a_flushed_insert_is_still_refused_as_a_repeat() -> None:
-    # The other side of the pending condition. A participating read force-flushes
-    # the insert, so the `delete` after it cancels NOTHING — the row exists and
-    # the DELETE will be issued against it — and the object stays in the ledger.
-    # A third verb opening it again is a repeat, refused at the verb: the flush
-    # emits every surviving insert ahead of every delete, so admitting it would
-    # send a second INSERT of one primary key to the database ahead of the
-    # DELETE that was supposed to clear the way.
+def test_an_insert_after_a_delete_of_a_flushed_insert_executes_after_that_delete() -> None:
+    # A participating read force-flushes the insert, so the `delete` after it
+    # cancels NOTHING — the row exists and the DELETE will be issued against it.
+    # That delete removes everything the insertion opened, so a third verb
+    # opening the object again is admitted as a fresh insertion, and it runs
+    # after the delete it depends on although the flush ordinarily emits
+    # inserts ahead of deletes.
     port = ScriptedAdapter(
-        Transact(Write(), Read(rows=[{"id": 9, "name": "Newton"}]), Write(times=3))
+        Transact(Write(), Read(rows=[{"id": 9, "name": "Newton"}]), Write(times=2))
     )
 
     def fn(tx: Transaction) -> None:
@@ -1655,23 +1628,21 @@ def test_an_insert_after_a_delete_of_a_flushed_insert_is_still_refused_as_a_repe
         tx.insert(fresh)
         tx.find(Person.where(Person.id == 9)).result()
         tx.delete(fresh)
-        tx.insert(fresh)
+        tx.insert(fresh.edit(name="Grace"))
 
-    with raises_contextualized(KeyedWriteValueError) as refusal:
-        db_for(PERSON, port).transact(fn)
-    assert refusal.value.code == "write-value-already-stored"
+    db_for(PERSON, port).transact(fn)
     assert [op for op in port.calls if isinstance(op, WriteCall)] == [
-        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Newton"))
+        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Newton")),
+        WriteCall("delete from person where id = %s", (9,)),
+        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Grace")),
     ]
 
 
-def test_an_insert_after_a_bounded_terminate_of_a_pending_insert_opens_the_row_again() -> None:
-    # A bounded `terminate` removes a Valid-Time window and preserves head
-    # and tail of an EXISTING row, but against a still-pending insert there is
-    # no such row: the flush annihilates the pair whole, window-blind, exactly
-    # as it does for `delete`. The re-opening is therefore admitted and the
-    # transaction commits one INSERT.
-    port = ScriptedAdapter(Transact(Write(times=6)))
+def test_a_bounded_terminate_of_a_pending_insert_leaves_its_tail_and_refuses_a_repeat() -> None:
+    # A bounded `terminate` of a still-pending opening removes only the window
+    # it states: the opening's tail survives, so the flush inserts that tail
+    # alone, and the object is anything but absent — a re-opening is a repeat.
+    port = ScriptedAdapter(Transact(Write()))
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
     opened_from = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
@@ -1679,7 +1650,9 @@ def test_an_insert_after_a_bounded_terminate_of_a_pending_insert_opens_the_row_a
         fresh = WherePosition(id=1, acct_num="A", value=Decimal("100.00"))
         tx.insert(fresh, valid_from=opened_from)
         tx.terminate(fresh, until=until)
-        tx.insert(fresh, valid_from=opened_from)
+        with pytest.raises(KeyedWriteValueError) as refused:
+            tx.insert(fresh, valid_from=opened_from)
+        assert refused.value.code == "write-value-already-stored"
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -1687,6 +1660,7 @@ def test_an_insert_after_a_bounded_terminate_of_a_pending_insert_opens_the_row_a
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 1
     assert writes[0].sql.startswith("insert into")
+    assert until in writes[0].binds
 
 
 def test_an_insert_after_a_bounded_terminate_of_a_flushed_insert_is_still_refused() -> None:
@@ -1761,10 +1735,10 @@ class _RekeyedTwin(Entity, table="twin", name="Twin", namespace="parallax.compat
 def test_a_value_that_keys_no_row_is_still_refused_for_its_provenance() -> None:
     # The refusal precedes row derivation for EVERY value, including one whose
     # own class keys this Entity by another member and can therefore derive no
-    # identity row at all. The exemption a buffered insert grants is decided from
-    # the object each value names rather than from a row, so this transaction
-    # having an insert to compare against cannot turn a provenance refusal into
-    # an `EntityRowError` reported on the value's behalf.
+    # identity row at all. The exemption an insertion grants is decided from the
+    # authority the value carries rather than from a row, so this transaction
+    # having an insert of the same key cannot turn a provenance refusal into an
+    # `EntityRowError` reported on the value's behalf.
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:

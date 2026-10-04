@@ -119,11 +119,11 @@ keyed `update`, `updateUntil`, `terminate`, or `terminateUntil` written from a
 source a read published is not confined to that rectangle. Its `validFrom` is
 the source's own finite Valid-Time pin — the coordinate the read stood at, not
 the observed rectangle's start — or, for a source an insertion of the same
-attempt authored, that insertion's `validFrom`. A source read at Valid-Time
-`latest` names no instant and is refused, as is a source neither anchors. Its
-**requested extent** is `[validFrom, until)`, through infinity when unbounded,
-and the write applies to every current-on-Transaction-Time rectangle of the
-object that overlaps it:
+attempt authored, that insertion's `validFrom`, its anchor (`m-unit-work`
+*Insertion authority*). A source read at Valid-Time `latest` names no instant
+and is refused, as is a source neither anchors. Its **requested extent** is
+`[validFrom, until)`, through infinity when unbounded, and the write applies to
+every current-on-Transaction-Time rectangle of the object that overlaps it:
 
 - each overlapping rectangle is inactivated once, and its nonempty pieces are
   opened in Valid-Time order: a part outside the extent carries the
@@ -145,6 +145,13 @@ compose (`m-unit-work` *Observed-State Coalescing*), the composition's segments
 are applied the same way: each segment over each rectangle it overlaps, the
 later-authored value winning where windows overlap. An assignment equal to a
 rectangle's stored value is still assigned and still chains.
+
+A write an insertion of the same attempt authorized observed no rectangle, so
+the coverage it reaches is read from its anchor inside the flush that writes it,
+and it requires a current rectangle containing that anchor. While the insertion
+is still pending, its opening is the coverage: an edit bounded inside the
+opening splits it, and nothing extends it beyond its own window (`m-unit-work`
+*Same-transaction write coalescing*).
 
 ## Rectangles the attempt opened
 
