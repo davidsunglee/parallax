@@ -2660,9 +2660,8 @@ def _overlapping(first: _Original, second: _Original) -> bool:
     return precedes(first.start, second.end) and precedes(second.start, first.end)
 
 
-def _original_order(original: _Original) -> tuple[int, float]:
-    start = original.start
-    return (0, 0.0) if start is None else (1, instant_order(start))
+def _original_order(original: _Original) -> dt.datetime:
+    return instant_order(original.start)
 
 
 @dataclass(slots=True)
@@ -2699,13 +2698,14 @@ class _Binding:
         if derivation is not None:
             self.derived.append(derivation)
 
-    def range(self) -> BoundRange:
+    def range(self, concludes: ObjectKey | None) -> BoundRange:
         return BoundRange(
             steps=(*self.effects, *self.openings),
             changed=tuple(self.changed),
             removed=tuple(self.removed),
             opened=Openings(tuple(self.fresh), tuple(self.continued)),
             derived=tuple(self.derived),
+            concludes=concludes,
         )
 
 
@@ -2734,9 +2734,12 @@ class _RangeBinding:
         originals: Sequence[_Original],
         validations: Sequence[_Original],
         discharged: frozenset[int] = frozenset(),
+        *,
+        concludes: bool = False,
     ) -> BoundRange:
         """The steps the transform takes over ``originals``, after a guarded
-        validation of each of ``validations``.
+        validation of each of ``validations``, naming the object where the
+        range ``concludes`` it (:attr:`BoundRange.concludes`).
 
         Every original's own effect — a validation, a close, a same-address
         revision, or a removal — runs before any successor opens, so a lost
@@ -2787,7 +2790,7 @@ class _RangeBinding:
                 opened = self._authored(piece, resolved)
                 bound.openings.append(decorate(opened))
                 bound.fresh.extend(_openings(facts, (opened,)))
-        return bound.range()
+        return bound.range(self.object_key if concludes else None)
 
     def _transformed(
         self,
@@ -3155,7 +3158,7 @@ class _DeferredTemporalRange:
             originals, discharged = binding.continued(
                 acquired, (*self.originals, *self.validations)
             )
-            return binding.bind(originals, (), discharged)
+            return binding.bind(originals, (), discharged, concludes=not binding.derives)
         return binding.bind(binding.acquired(acquired, self.originals), self.validations)
 
 

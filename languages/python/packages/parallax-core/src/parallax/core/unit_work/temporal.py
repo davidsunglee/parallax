@@ -241,9 +241,13 @@ def precedes(earlier: object, later: object) -> bool:
     return _instant(earlier) < _instant(later)
 
 
-def instant_order(bound: object) -> float:
-    """A sort key placing finite Valid-Time bounds in time order."""
-    return _instant(bound).timestamp()
+def instant_order(bound: object | None) -> dt.datetime:
+    """A sort key placing finite Valid-Time bounds in exact time order, and
+    ``None`` — the start a Transaction-Time-Only row lacks — at the earliest."""
+    return _EARLIEST if bound is None else _instant(bound)
+
+
+_EARLIEST: Final = dt.datetime.min.replace(tzinfo=dt.UTC)
 
 
 def _instant(bound: object) -> dt.datetime:
