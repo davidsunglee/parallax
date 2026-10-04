@@ -2639,10 +2639,10 @@ def test_a_group_unit_records_what_its_rows_remove_and_open() -> None:
     (unit,) = _planned_group("Position", "terminate", owned=(2,)).units
     head_end = Finite(instant=_WINDOW_FROM)
     assert list(unit.removed) == [_endpoint("Position", 2, OPEN_END, OPEN_END)]
-    assert list(unit.opened) == [
+    assert list(unit.opened.fresh) == [
         _endpoint("Position", key, head_end, OPEN_END) for key in (1, 2, 3)
     ]
-    assert list(unit.continued) == []
+    assert list(unit.opened.continued) == []
     assert [state.object for state in unit.changed] == [
         corpus_object_key("Position", ("id", key)) for key in (1, 2, 3)
     ]
@@ -2651,20 +2651,22 @@ def test_a_group_unit_records_what_its_rows_remove_and_open() -> None:
 def test_a_group_continues_an_insertion_only_from_the_rows_that_insertion_opened() -> None:
     (unit,) = _planned_group("Position", "terminate", owned=(1, 2), inserted=(2,)).units
     head_end = Finite(instant=_WINDOW_FROM)
-    assert list(unit.continued) == [_endpoint("Position", 2, head_end, OPEN_END)]
-    assert list(unit.opened) == [_endpoint("Position", key, head_end, OPEN_END) for key in (1, 3)]
+    assert list(unit.opened.continued) == [_endpoint("Position", 2, head_end, OPEN_END)]
+    assert list(unit.opened.fresh) == [
+        _endpoint("Position", key, head_end, OPEN_END) for key in (1, 3)
+    ]
 
 
 def test_a_transaction_time_group_unit_opens_one_current_row_per_rewritten_row() -> None:
     (unit,) = _planned_group("Balance", "update", owned=(2,)).units
     assert list(unit.removed) == []
-    assert list(unit.opened) == [_endpoint("Balance", key, OPEN_END) for key in (1, 3)]
+    assert list(unit.opened.fresh) == [_endpoint("Balance", key, OPEN_END) for key in (1, 3)]
 
 
 def test_a_group_of_rows_the_attempt_never_opened_keeps_its_uniform_layout() -> None:
     (unit,) = _planned_group("Position", "update").units
     assert list(unit.removed) == []
-    assert len(list(unit.opened)) == 6
+    assert len(list(unit.opened.fresh)) == 6
 
 
 def test_a_group_never_opens_a_successor_that_covers_no_valid_time() -> None:

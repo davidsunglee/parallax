@@ -38,7 +38,13 @@ from parallax.core.unit_work.materialized import (
     buffered_instruction,
     group_state_keys,
 )
-from parallax.core.unit_work.plan import BoundRange, ExecutionUnit, OwnedEndpoint, WritePlan
+from parallax.core.unit_work.plan import (
+    BoundRange,
+    ExecutionUnit,
+    Openings,
+    OwnedEndpoint,
+    WritePlan,
+)
 from parallax.core.unit_work.planned import Finite
 from parallax.core.unit_work.planner import (
     ObjectKey,
@@ -424,29 +430,40 @@ class _TargetWriteState:
                 record.row = True
                 record.floor = record.bounds.valid_from
 
-    def register(self, endpoint: OwnedEndpoint, *, continues: bool = False) -> None:
+    def complete(self, removed: Iterable[OwnedEndpoint], opened: Openings) -> None:
+        """Retire the owned rows one execution unit removed, then register the
+        rows it opened. An admission whose last tagged row the unit removed is
+        retired only if no row the unit opened continues it."""
+        drained: list[tuple[_TargetRecord, InsertionIdentity]] = []
+        for endpoint in removed:
+            self._endpoints.remove(endpoint)  # planning removes only a row this attempt owns
+            tag = self._tags.pop(endpoint, None) if self._tags else None
+            if tag is None:
+                continue
+            record = self._addresses[(endpoint.entity, endpoint.key)]
+            record.live -= 1
+            if not record.live:
+                drained.append((record, tag))
+        for endpoint in opened.fresh:
+            self._register(endpoint)
+        for endpoint in opened.continued:
+            self._register(endpoint)
+            self._tag(endpoint)
+        for record, tag in drained:
+            if not record.live and record.identity is tag and not record.pending_insert:
+                # The last row this admission opened is gone: it was removed
+                # completely, and its authority ends with it.
+                record.identity = None
+
+    def _register(self, endpoint: OwnedEndpoint) -> None:
         self._endpoints.add(endpoint)
         self._owning.add(endpoint.entity)
-        if not continues or not self._addresses:
-            return
+
+    def _tag(self, endpoint: OwnedEndpoint) -> None:
         record = self._addresses.get((endpoint.entity, endpoint.key))
         if record is not None and record.identity is not None:
             self._tags[endpoint] = record.identity
             record.live += 1
-
-    def retire(self, endpoint: OwnedEndpoint) -> None:
-        self._endpoints.remove(endpoint)  # planning removes only a row this attempt owns
-        if not self._tags:
-            return
-        tag = self._tags.pop(endpoint, None)
-        if tag is None:
-            return
-        record = self._addresses[(endpoint.entity, endpoint.key)]
-        record.live -= 1
-        if not record.live and record.identity is tag and not record.pending_insert:
-            # The last row this admission opened is gone: it was removed
-            # completely, and its authority ends with it.
-            record.identity = None
 
     def _forget(self, target: ObjectKey) -> None:
         record = self._records.pop(target)
@@ -1064,7 +1081,6 @@ class UnitOfWork:
                 changed=unit.changed,
                 removed=unit.removed,
                 opened=unit.opened,
-                continued=unit.continued,
             )
             return
         self._complete(
@@ -1073,7 +1089,6 @@ class UnitOfWork:
             changed=bound.changed,
             removed=bound.removed,
             opened=bound.opened,
-            continued=bound.continued,
         )
 
     def _complete(
@@ -1083,8 +1098,7 @@ class UnitOfWork:
         executed: bool,
         changed: Iterable[ObservedStateKey],
         removed: Iterable[OwnedEndpoint],
-        opened: Iterable[OwnedEndpoint],
-        continued: Iterable[OwnedEndpoint],
+        opened: Openings,
     ) -> None:
         """Publish one successful execution unit's effects.
 
@@ -1109,13 +1123,7 @@ class UnitOfWork:
             self._invalidate(key, stamp)
         if changed_any:
             self._freshness = stamp
-        targets = self._targets
-        for endpoint in removed:
-            targets.retire(endpoint)
-        for endpoint in opened:
-            targets.register(endpoint)
-        for endpoint in continued:
-            targets.register(endpoint, continues=True)
+        self._targets.complete(removed, opened)
 
     def _invalidate(self, key: ObservedStateKey, stamp: int) -> None:
         held = self._observations.get(key)

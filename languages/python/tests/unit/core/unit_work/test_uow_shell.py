@@ -67,7 +67,7 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core.unit_work.materialized import InsertionKeyedWrite, ObservedKeyedWrite
-from parallax.core.unit_work.plan import BoundRange, ExecutionUnit
+from parallax.core.unit_work.plan import NO_OPENINGS, BoundRange, ExecutionUnit
 from parallax.core.unit_work.planned import PlannedClose, PlannedUpdate
 from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.core.unit_work.retain import InsertionIdentity
@@ -1219,7 +1219,7 @@ def test_a_bound_range_reported_for_a_planned_unit_dooms_the_attempt() -> None:
         trigger: WriteBatchTrigger,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
-        completed(plan.units[0], BoundRange((), (), (), ()))
+        completed(plan.units[0], BoundRange((), (), (), NO_OPENINGS))
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_account_write("update", 1, 7))
