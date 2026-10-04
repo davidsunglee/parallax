@@ -384,8 +384,8 @@ class _TargetWriteState:
         # merely keeps its groups on the per-row path.
         self._owning: set[EntityIdentity] = set()
         # What units of the running flush proved for later ones, allocated by
-        # the first unit that records anything and released when the flush
-        # ends however it ends.
+        # the first unit that records anything and released once no object's
+        # proofs remain, or when the flush ends however it ends.
         self._continuity: _Continuity | None = None
 
     def owns(self, endpoint: OwnedEndpoint, /) -> bool:
@@ -1428,13 +1428,12 @@ class UnitOfWork:
         counts as changed exactly when the unit ``executed`` a step; a unit
         that composed several sources states every state it changed itself.
 
-        What the unit ``derived`` from its originals stays for the rest of the
-        flush, for the writes a barrier kept after it: those were admitted with
-        conditions on the same originals, which this unit's guarded effects or
-        held locks have now proven. Spending and invalidation still apply to
-        them; no later submission is admitted on these proofs. A unit that
-        ``concludes`` an object is the last of them, and the object's proofs
-        end with it.
+        What the unit ``derived`` from its originals stays for the writes a
+        barrier kept after it: those were admitted with conditions on the same
+        originals, which this unit's guarded effects or held locks have now
+        proven. Spending and invalidation still apply to them; no later
+        submission is admitted on these proofs. The object's proofs end when
+        the unit that ``concludes`` it completes, or with the flush.
         """
         stamp = self._freshness + 1
         claim = unit.claim
