@@ -1117,8 +1117,19 @@ feeds instead of inside it, which decides WHERE it happens and not whether it
 counts. A temporal close settles against a coordinate the case names and owes
 none.
 
-A resolving read is counted and never authored: `then.statements` is the DML a
-case states, so no resolving read appears in it, and none names a statement
+A Bitemporal entry's resolving read is pinned at the Valid-Time instant the
+entry's `validFrom` states, because a source-backed write starts where its source
+was read (`m-bitemp-write` *Observed writes span their requested extent*); one
+read per Entity becomes one per Entity and pin.
+
+A unit whose observed write reaches current coverage its sources did not observe
+also owes the **coverage read** its flush makes (`m-sql` *Requested ranges*),
+counted in the round trips of the step or entry that flushes it. Where a case's
+own fixtures and earlier entries leave that coverage known, the count is
+derivable like every other.
+
+A resolving or coverage read is counted and never authored: `then.statements` is
+the DML a case states, so neither appears in it, and neither names a statement
 index in `then.executionLifecycle` either (*The execution lifecycle oracle*).
 
 ### Conflict cases (`m-opt-lock`)
@@ -1350,7 +1361,9 @@ an observation derived from case state. Two obligations follow:
 - The named find MUST have observed a row of the write's own key, and the write
   MUST settle against **that** row's observed state — its milestone on a temporal
   target, its version on a versioned one. A write whose named find observed no
-  such row is refused; it names evidence that does not exist.
+  such row is refused; it names evidence that does not exist. On a Bitemporal
+  target the write's `validFrom` MUST equal the named find's Valid-Time pin,
+  where a write from that source starts.
 - The write MUST reach the store by the coordinate the value it was handed came
   from, never by primary key alone. A group whose finds read one key at as-of
   coordinates resolving to different milestones — or at generations a write of its

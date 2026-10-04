@@ -24,6 +24,14 @@ Framework-owned members are not author-assignable. Their source values remain
 part of the carried complement and MUST survive an edit unless the module that
 owns such state explicitly invalidates it.
 
+The members an edit assigns are an observable fact of the result, not only its
+values: a derived value answers every member assigned along its derivation —
+its own edit's and those of the edits it was derived through — and assigning a
+member the value it already held still assigns it. A lifecycle that writes a
+derived value writes exactly that set (`m-unit-work` *Comparing an assigned
+member with its persisted value*); an edit with no assignments adds nothing to
+it.
+
 ## Preservation by complement
 
 The result MUST carry every source binding that the edit neither replaces nor

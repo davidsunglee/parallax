@@ -893,14 +893,15 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
 def test_a_bounded_verb_on_a_non_temporal_target_hears_its_window_refused_first(
     instruction: dict[str, Any],
 ) -> None:
-    # Every bounded verb states a pair, and a target declaring no Valid-Time
-    # dimension takes no `valid_from`: the window is the verdict on an argument
-    # the caller can drop, heard ahead of the verb's own applicability.
+    # A bounded form bounds a Valid-Time window, and a target declaring no
+    # Valid-Time dimension has none: its `until` is refused first, the verdict on
+    # an argument the caller can drop, heard ahead of the verb's own
+    # applicability and of the `valid_from` the same pair states.
     mutation = instruction["mutation"]
     with pytest.raises(wi.WriteInstructionError) as raised:
         wi.prepare_wire_write(wi.deserialize(instruction), _ACCOUNT)
     assert str(raised.value) == (
-        f"Account: a non-temporal {mutation!r} takes no valid_from "
+        f"Account: a non-temporal {mutation!r} takes no until "
         "('Account' declares no Valid-Time dimension to bound)"
     )
 

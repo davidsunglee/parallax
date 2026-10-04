@@ -31,6 +31,10 @@ Key invariants the suite pins down:
   (`out_z` finite); the new value is the current row (`out_z = infinity`). The
   observable state is **two** rows.
 - After a **terminate**, **no** row has `out_z = infinity`.
+- A keyed **update** assigns literally (`m-unit-work` *Comparing an assigned
+  member with its persisted value*): an assigned value equal to the current
+  row's still closes it and chains the successor, while an update assigning no
+  member writes nothing.
 
 This matches `AuditOnlyTemporalDirector` / `GenericBiTemporalDirector`'s
 close-old-insert-new discipline (research §6), restricted to Transaction Time.

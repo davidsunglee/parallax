@@ -39,6 +39,10 @@ on both:
 - A mutation that can change **several** current rectangles of one key must
   resolve and observe **every** rectangle it can change, materializing per row
   (`m-opt-lock`). Observing one rectangle licenses closing that rectangle alone.
+  An observed keyed write whose requested extent reaches rectangles no read of
+  it observed therefore reads them inside the flush before changing them
+  (`m-bitemp-write` *Observed writes span their requested extent*), and under
+  Locking that read takes this same shared lock on every row it selects.
 - A temporal observation names **one milestone** and records nothing about the
   read that produced it, so what it says about lock scope is exactly what this
   section says: the read locked that one row. A write under Locking is licensed

@@ -30,9 +30,11 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.unit_work import (
+    MissingTargetError,
     ObjectKey,
     ObservedStateKey,
     RetainedObservation,
+    WriteEvidenceError,
     WriteRejectedError,
 )
 from parallax.core.unit_work.planner import TemporalStateKey, VersionedStateKey
@@ -43,6 +45,7 @@ from parallax.snapshot.handle import (
     Transaction,
     WireEntity,
 )
+from parallax.snapshot.handle._typed_writes import instance_read_origin
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -60,6 +63,7 @@ from tests.unit._transact_support import (
     ACCOUNT,
     BALANCE,
     FIND_SQL_UNLOCKED,
+    PERSON,
     account_db,
     db_for,
     published_claims,
@@ -193,14 +197,11 @@ def test_a_participating_row_read_force_flushes_a_pending_write_first() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_write_eliminated_before_dml_leaves_its_claim_unspent() -> None:
-    # Consumption follows the surviving WRITE, never the batch it flushed in. The
-    # second update restores the value the source published, which cancels the
-    # assignment buffered before it, so nothing of account 3 reaches the wire and
-    # the claim it carried is still about stored state — even though the insert
-    # beside it in the same flush reached the database and made the plan
-    # non-empty.
-    port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write()))
+def test_a_baseline_equal_update_writes_literally_and_spends_its_claim() -> None:
+    # An update restating the value the source published is still an assignment:
+    # it composes after the update buffered before it, its final value reaches
+    # the wire under the version guard, and the claim it carried is spent.
+    port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write(times=2)))
 
     def fn(tx: Transaction) -> RetainedObservation:
         snapshot = tx.wire.find(_account_query())
@@ -214,10 +215,12 @@ def test_a_write_eliminated_before_dml_leaves_its_claim_unspent() -> None:
         return claim
 
     spent = _run(port, fn)
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, CommitCall]
-    (written,) = (call for call in port.calls if isinstance(call, WriteCall))
-    assert written.sql.startswith("insert into account")
-    assert spent.consumed is False
+    writes = [call for call in port.calls if isinstance(call, WriteCall)]
+    assert [call.sql.split(" ", 1)[0] for call in writes] == ["insert", "update"]
+    update = writes[1]
+    assert update.sql == UPDATE_SQL
+    assert update.binds == (Decimal("10"), 2, 3, 1)
+    assert spent.consumed is True
 
 
 def test_a_surviving_write_spends_its_own_claim() -> None:
@@ -234,6 +237,129 @@ def test_a_surviving_write_spends_its_own_claim() -> None:
 
     assert _run(port, fn).consumed is True
     assert port.calls[2] == WriteCall(UPDATE_SQL, (Decimal("11.00"), 2, 3, 1))
+
+
+# --------------------------------------------------------------------------- #
+# An observation-free source is spent through its own origin.                  #
+# --------------------------------------------------------------------------- #
+
+_PERSON_ROW: MappingRow = {"id": 1, "name": "Ada"}
+_PERSON_UPDATE: tuple[str, tuple[object, ...]] = (
+    "update person set name = %s where id = %s",
+    ("Grace", 1),
+)
+_REPRESENTATIONS = ["typed", "wire"]
+
+
+def _person_query() -> ObjectQueryNode:
+    return deserialize_query(
+        {
+            "target": "parallax.compatibility.Person",
+            "predicate": {"eq": {"attr": "parallax.compatibility.Person.id", "value": 1}},
+        }
+    )
+
+
+def _read_person(tx: Transaction, representation: str) -> mm.Person | WireEntity:
+    if representation == "typed":
+        return tx.find(mm.Person.where(mm.Person.id == 1)).result()
+    return tx.wire.find(_person_query()).result()
+
+
+def _rename(tx: Transaction, source: mm.Person | WireEntity, name: str) -> None:
+    if isinstance(source, WireEntity):
+        tx.wire.update(source, {"name": name})
+    else:
+        tx.update(source.edit(name=name))
+
+
+def _refused_as_spent(write: Callable[[], None]) -> None:
+    with pytest.raises(WriteEvidenceError) as refused:
+        write()
+    assert refused.value.code == "write-evidence-consumed"
+
+
+@pytest.mark.parametrize("name", ["Grace", "Ada"], ids=["changed", "equal"])
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+def test_a_completed_unversioned_write_spends_its_source(representation: str, name: str) -> None:
+    # An unversioned row's read observes no state, yet the source it published
+    # is still spent once a write through it completes — an equal value as much
+    # as a changed one — while a fresh read of the same row is fresh authority.
+    port = ScriptedAdapter(
+        Transact(
+            Read(rows=[_PERSON_ROW]),
+            Write(),
+            Read(rows=[_PERSON_ROW]),
+            Write(),
+        )
+    )
+
+    def fn(tx: Transaction) -> None:
+        source = _read_person(tx, representation)
+        _rename(tx, source, name)
+        fresh = _read_person(tx, representation)
+        _refused_as_spent(lambda: _rename(tx, source, "Hopper"))
+        _rename(tx, fresh, "Hopper")
+
+    db_for(PERSON, port).transact(fn)
+    writes = [call for call in port.calls if isinstance(call, WriteCall)]
+    assert writes == [
+        WriteCall(_PERSON_UPDATE[0], (name, 1)),
+        WriteCall(_PERSON_UPDATE[0], ("Hopper", 1)),
+    ]
+
+
+def test_every_copy_derived_from_an_unversioned_source_shares_its_completion() -> None:
+    # Two edits of one read compose before the flush that completes them, and
+    # completion spends the source they share: neither the read value nor any
+    # copy derived from it, before or after, writes again.
+    port = ScriptedAdapter(Transact(Read(rows=[_PERSON_ROW]), Write(), Read(rows=[_PERSON_ROW])))
+
+    def fn(tx: Transaction) -> None:
+        source = tx.find(mm.Person.where(mm.Person.id == 1)).result()
+        early = source.edit(name="Grace")
+        tx.update(source.edit(name="Hopper"))
+        tx.update(early)
+        tx.find(mm.Person.where(mm.Person.id == 1))
+        _refused_as_spent(lambda: tx.update(source.edit(name="Lovelace")))
+        _refused_as_spent(lambda: tx.update(early.edit(name="Lovelace")))
+
+    db_for(PERSON, port).transact(fn)
+    writes = [call for call in port.calls if isinstance(call, WriteCall)]
+    assert writes == [WriteCall(*_PERSON_UPDATE)]
+
+
+def test_an_empty_unversioned_update_neither_writes_nor_spends_its_source() -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_PERSON_ROW]), Read(rows=[_PERSON_ROW]), Write()))
+
+    def fn(tx: Transaction) -> None:
+        source = tx.wire.find(_person_query()).result()
+        tx.wire.update(source, {})
+        tx.wire.find(_person_query())
+        tx.wire.update(source, {"name": "Grace"})
+
+    db_for(PERSON, port).transact(fn)
+    writes = [call for call in port.calls if isinstance(call, WriteCall)]
+    assert writes == [WriteCall(*_PERSON_UPDATE)]
+
+
+def test_a_failed_unversioned_write_leaves_its_source_unspent() -> None:
+    # A failed execution is not completion: the source is not spent, though
+    # the attempt it ran in can do no further work.
+    port = ScriptedAdapter(Transact(Read(rows=[_PERSON_ROW]), Write(affected=0)))
+    sources: list[mm.Person] = []
+
+    def fn(tx: Transaction) -> None:
+        source = tx.find(mm.Person.where(mm.Person.id == 1)).result()
+        sources.append(source)
+        tx.update(source.edit(name="Grace"))
+
+    with raises_contextualized(MissingTargetError):
+        db_for(PERSON, port).transact(fn)
+    (source,) = sources
+    origin = instance_read_origin(source)
+    assert origin is not None
+    assert origin.consumed is False
 
 
 # --------------------------------------------------------------------------- #

@@ -5,19 +5,24 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Protocol
 
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.base import ManagedValue
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata
 from parallax.core.unit_work.planned import INFINITY, PlannedWrite, TemporalUpperBound
 from parallax.core.unit_work.planner import ObservedStateKey
-from parallax.core.unit_work.retain import RetainedObservation
 
 __all__ = [
     "NO_OWNERSHIP",
     "OPEN_BITEMPORAL_ENDS",
     "TRANSACTION_TIME_ENDS",
+    "BoundRange",
+    "Completion",
+    "Completions",
+    "DeferredRange",
     "ExecutionUnit",
     "OwnedEndpoint",
     "Ownership",
     "PlannedSteps",
+    "RangeAcquisition",
     "StepSegment",
     "WritePlan",
     "eager_segment",
@@ -160,24 +165,83 @@ NO_OWNERSHIP: Final[Ownership] = _NoOwnership()
 """The ownership of an attempt that has opened nothing."""
 
 
+class Completion(Protocol):
+    """Source authority a successful execution unit spends."""
+
+    def consume(self) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class Completions:
+    """Several distinct source authorities one unit spends together."""
+
+    members: tuple[Completion, ...]
+
+    def consume(self) -> None:
+        for member in self.members:
+            member.consume()
+
+
+@dataclass(frozen=True, slots=True)
+class RangeAcquisition:
+    """The current coverage a deferred range must read before it binds: one
+    object's current rows overlapping ``[valid_from, until)`` — through the open
+    bound when ``until`` is ``None`` — read under the shared row lock when
+    ``locking``."""
+
+    entity: EntityMetadata
+    key_attribute: AttributeIdentity
+    key_value: ManagedValue
+    valid_from: ManagedValue
+    until: ManagedValue | None
+    locking: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BoundRange:
+    """What a deferred range became once its acquired coverage was bound: the
+    physical steps it executes, in order, and the facts its success publishes."""
+
+    steps: tuple[PlannedWrite, ...]
+    changed: tuple[ObservedStateKey, ...]
+    removed: tuple[OwnedEndpoint, ...]
+    opened: tuple[OwnedEndpoint, ...]
+
+
+class DeferredRange(Protocol):
+    """A finalized range whose physical steps depend on coverage no planning
+    input knew: the executor performs ``acquisition`` and hands back the rows it
+    read, and :meth:`bind` answers the steps to execute."""
+
+    @property
+    def acquisition(self) -> RangeAcquisition: ...
+
+    def bind(self, rows: object, /) -> BoundRange: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutionUnit:
     """One execution unit of a Write Plan and what its success publishes.
 
     A unit spans the plan's steps up to the exclusive offset ``end``, after the
     previous unit's. Its facts are applied only once every one of its steps has
-    succeeded, and before any later unit executes: the claim it spends, the
-    observed states it changed — the claim's own state among them whenever the
-    unit has a step — and the owned rows it removed and opened. Removals are
-    retired before openings are registered, so a row removed and reopened at one
-    address remains owned.
+    succeeded, and before any later unit executes: the source authority
+    ``claim`` it spends, the observed states it changed — a single retained
+    claim's own state among them whenever the unit has a step — and the owned
+    rows it removed and opened. Removals are retired before openings are
+    registered, so a row removed and reopened at one address remains owned.
+
+    A unit with a ``deferred`` range has no planned step of its own: its steps
+    and the facts beyond its claim come from binding the coverage the executor
+    acquires for it.
     """
 
     end: int
-    claim: RetainedObservation | None = None
+    claim: Completion | None = None
     changed: Iterable[ObservedStateKey] = ()
     removed: Iterable[OwnedEndpoint] = ()
     opened: Iterable[OwnedEndpoint] = ()
+    deferred: DeferredRange | None = None
 
 
 @dataclass(frozen=True, slots=True)

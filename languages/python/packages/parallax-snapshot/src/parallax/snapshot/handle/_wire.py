@@ -3,6 +3,8 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping
 
+from parallax.snapshot.handle._keyed_writes import window_mutation
+from parallax.snapshot.handle._options import OMITTED, Omitted
 from parallax.snapshot.handle._predicate_writes import PredicateWriteContext
 from parallax.snapshot.handle._read import Snapshot
 from parallax.snapshot.handle._read_scope import ReadScope, WireQuery
@@ -84,8 +86,10 @@ class WireTransactionView(WireDatabaseView):
     store published — a Wire read's result, or the node an insert answered for
     the row it opened — and infers the concrete Entity and the object the write
     addresses from it privately, together with the exact state a read published
-    node observed. The node an insert answered observed nothing, and the write
-    off it resolves no evidence at all: the buffered insert licenses it. There is
+    node observed and the Valid-Time instant it was read at, where a Bitemporal
+    write starts. The node an insert answered observed nothing, and the write
+    off it resolves no evidence at all: the buffered insert licenses it, and it
+    starts where that insert was authored to. There is
     no explicit-Entity ordinary-mapping overload: a mapping a caller built
     carries neither, and a verb that accepted one would be issuing a write
     nothing proves anything about.
@@ -103,9 +107,10 @@ class WireTransactionView(WireDatabaseView):
         data: Mapping[str, object],
         *,
         valid_from: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
     ) -> WireEntity:
-        """Buffer a Wire ``insert`` of ``data`` as a fresh ``entity_name`` row,
-        and return the frozen node it opened.
+        """Buffer a Wire insert of ``data`` as a fresh ``entity_name`` row, and
+        return the frozen node it opened.
 
         ``entity_name`` names the Entity the row opens under — required because
         an opening row has no source to infer one from — and resolves by the rule
@@ -126,34 +131,19 @@ class WireTransactionView(WireDatabaseView):
         again or the returned node is handed back, since revising the row is the
         update verb's job.
 
-        ``valid_from`` is the plain Bitemporal insert's own Valid-Time instant —
-        the open rectangle ``[valid_from, infinity)`` — and mirrors ``tx.insert``
-        exactly: a Transaction-Time-Only or non-temporal target takes none.
+        ``valid_from`` and ``until`` bound a Bitemporal insert exactly as
+        ``tx.insert`` does: omitting ``until`` opens ``[valid_from, infinity)``,
+        a stated one bounds the window whatever its value, and a target with no
+        Valid Time takes neither.
         """
-        return wire_insert(
-            self._writes.keyed, entity_name, data, mutation="insert", valid_from=valid_from
-        )
-
-    def insert_until(
-        self,
-        entity_name: str,
-        data: Mapping[str, object],
-        *,
-        valid_from: dt.datetime,
-        until: dt.datetime,
-    ) -> WireEntity:
-        """Buffer a Valid-Time-bounded Wire ``insertUntil``: one bitemporal
-        rectangle bounded to ``[valid_from, until)`` with no prior row to close
-        (`m-bitemp-write`), returning the frozen node it opened as
-        :meth:`insert` does. A window that does not satisfy
-        ``valid_from < until`` raises at THIS call, before any buffering."""
+        mutation, bound = window_mutation("insert", "insertUntil", until)
         return wire_insert(
             self._writes.keyed,
             entity_name,
             data,
-            mutation="insertUntil",
+            mutation=mutation,
             valid_from=valid_from,
-            until=until,
+            until=bound,
         )
 
     def update(
@@ -161,22 +151,23 @@ class WireTransactionView(WireDatabaseView):
         observed: WireEntity,
         changes: WireChanges,
         *,
-        valid_from: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
     ) -> None:
-        """Buffer a Wire ``update`` of the row ``observed`` came from.
+        """Buffer a Wire update of the row ``observed`` came from.
 
         ``changes`` names declared members only; identity, optimistic-version,
         temporal-axis, computed, read-only, and relationship members are refused
         statically, before the target Entity's Effective Concurrency Strategy or
-        its evidence is consulted. A member whose authored value already equals
-        what ``observed`` published is a restoration rather than an assignment,
-        so a change set that restores everything it names issues no DML at all —
-        the same zero-round-trip no-op an empty Typed effective change set is.
+        its evidence is consulted. Every member it names is assigned, including
+        one whose value equals what ``observed`` published; ``{}`` names none
+        and issues no DML at all.
 
-        ``valid_from`` is the plain Bitemporal correction's own Valid-Time
-        instant; a Transaction-Time-Only or non-temporal target takes none.
+        A Bitemporal update starts where ``observed`` was read and applies to
+        current coverage from there, exactly as ``tx.update`` does; ``until``
+        follows :meth:`insert`'s rules.
         """
-        wire_keyed_write(self._writes.keyed, "update", observed, changes, valid_from=valid_from)
+        mutation, bound = window_mutation("update", "updateUntil", until)
+        wire_keyed_write(self._writes.keyed, mutation, observed, changes, until=bound)
 
     def delete(self, observed: WireEntity) -> None:
         """Buffer a Wire ``delete`` of the row ``observed`` came from, keyed off
@@ -190,38 +181,13 @@ class WireTransactionView(WireDatabaseView):
         :meth:`terminate`, which closes the row's history instead."""
         wire_keyed_write(self._writes.keyed, "delete", observed)
 
-    def terminate(self, observed: WireEntity, *, valid_from: dt.datetime | None = None) -> None:
-        """Buffer a Wire ``terminate``: close the milestone ``observed`` came
-        from (the temporal delete-equivalent). Transaction-Time-Only takes no
-        ``valid_from``; Bitemporal requires it."""
-        wire_keyed_write(self._writes.keyed, "terminate", observed, valid_from=valid_from)
-
-    def update_until(
-        self,
-        observed: WireEntity,
-        changes: WireChanges,
-        *,
-        valid_from: dt.datetime,
-        until: dt.datetime,
-    ) -> None:
-        """Buffer a Valid-Time-bounded Wire ``updateUntil`` of the row
-        ``observed`` came from, bounded to ``[valid_from, until)`` (`m-bitemp-write`
-        "The rectangle split") — bitemporal-only. The window is validated at THIS
-        call, before the restoration/no-op rule :meth:`update` states is
-        weighed."""
-        wire_keyed_write(
-            self._writes.keyed, "updateUntil", observed, changes, valid_from=valid_from, until=until
-        )
-
-    def terminate_until(
-        self, observed: WireEntity, *, valid_from: dt.datetime, until: dt.datetime
-    ) -> None:
-        """Buffer a Valid-Time-bounded Wire ``terminateUntil``: close the single
-        Valid-Time window ``[valid_from, until)`` on the milestone ``observed``
-        came from (`m-bitemp-write`) — bitemporal-only."""
-        wire_keyed_write(
-            self._writes.keyed, "terminateUntil", observed, valid_from=valid_from, until=until
-        )
+    def terminate(self, observed: WireEntity, *, until: dt.datetime | Omitted = OMITTED) -> None:
+        """Buffer a Wire terminate of the coverage ``observed`` came from, exactly
+        as ``tx.terminate`` does: a Transaction-Time-Only milestone closes, and a
+        Bitemporal target's current coverage ends from where ``observed`` was
+        read, through infinity or up to the exclusive ``until``."""
+        mutation, bound = window_mutation("terminate", "terminateUntil", until)
+        wire_keyed_write(self._writes.keyed, mutation, observed, until=bound)
 
     def update_where(
         self,
@@ -229,18 +195,24 @@ class WireTransactionView(WireDatabaseView):
         changes: WireChanges,
         *,
         valid_from: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
     ) -> None:
-        """A predicate-selected Wire ``update`` over ``target`` — the canonical
+        """A predicate-selected Wire update over ``target`` — the canonical
         ``{entity, predicate}`` selection, never an Object Query. Readless (one
         statement) for an unversioned Non-Temporal target; a versioned or temporal
-        target materializes to one observation-backed per-row write.
+        target materializes to one observation-backed per-row write. A Bitemporal
+        target requires ``valid_from``, and ``until`` follows :meth:`insert`'s
+        rules.
 
         ``changes`` names at least one member. It lowers to the same canonical
         assignment algebra ``tx.update_where``'s ``.set(...)`` spelling does, and
         that algebra's list is non-empty, so ``{}`` is refused here rather than
-        being the no-op it is for a keyed update — which has one row's published
-        values to be a no-op against, and a selection has none."""
-        wire_predicate_write(self._writes, "update", target, changes, valid_from=valid_from)
+        being the no-op it is for a keyed update — which addresses one row a
+        caller already holds, where a selection holds none."""
+        mutation, bound = window_mutation("update", "updateUntil", until)
+        wire_predicate_write(
+            self._writes, mutation, target, changes, valid_from=valid_from, until=bound
+        )
 
     def delete_where(self, target: WirePredicateTarget) -> None:
         """A predicate-selected Wire ``delete`` over a NON-temporal ``target``.
@@ -252,33 +224,14 @@ class WireTransactionView(WireDatabaseView):
         wire_predicate_write(self._writes, "delete", target)
 
     def terminate_where(
-        self, target: WirePredicateTarget, *, valid_from: dt.datetime | None = None
-    ) -> None:
-        """A predicate-selected Wire ``terminate`` over a TEMPORAL ``target``:
-        Transaction-Time-Only takes no ``valid_from``; Bitemporal requires it."""
-        wire_predicate_write(self._writes, "terminate", target, valid_from=valid_from)
-
-    def update_until_where(
         self,
         target: WirePredicateTarget,
-        changes: WireChanges,
         *,
-        valid_from: dt.datetime,
-        until: dt.datetime,
+        valid_from: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
     ) -> None:
-        """A predicate-selected, Valid-Time-bounded Wire ``updateUntil`` over a
-        Bitemporal ``target``: always materializes to a close plus
-        head/middle/tail. ``changes`` names at least one member, for
-        :meth:`update_where`'s reason."""
-        wire_predicate_write(
-            self._writes, "updateUntil", target, changes, valid_from=valid_from, until=until
-        )
-
-    def terminate_until_where(
-        self, target: WirePredicateTarget, *, valid_from: dt.datetime, until: dt.datetime
-    ) -> None:
-        """A predicate-selected, Valid-Time-bounded Wire ``terminateUntil`` over a
-        Bitemporal ``target``: always materializes to a close plus head/tail."""
-        wire_predicate_write(
-            self._writes, "terminateUntil", target, valid_from=valid_from, until=until
-        )
+        """A predicate-selected Wire terminate over a TEMPORAL ``target``:
+        Transaction-Time-Only takes no ``valid_from``; Bitemporal requires it, and
+        ``until`` follows :meth:`insert`'s rules."""
+        mutation, bound = window_mutation("terminate", "terminateUntil", until)
+        wire_predicate_write(self._writes, mutation, target, valid_from=valid_from, until=bound)

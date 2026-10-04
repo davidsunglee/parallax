@@ -64,8 +64,9 @@ and axis-free `as_of` / `as_of_range` calls are errors.
 Omitted Transaction Time means Latest. Bitemporal queries must select Valid
 Time explicitly. Latest has no `now` alias: an ordinary finite current-clock
 datetime is a finite pin. Temporal naming is `valid_time` / `tx_time` on queries,
-`Pin`, and `Edge`; mutation keywords are `valid_from` and, for bounded verbs,
-`until`.
+`Pin`, and `Edge`; mutation keywords are `valid_from`, on inserts and
+predicate-selected writes, and the keyword-only `until` (*Write verbs* in
+[execution](execution.md)).
 
 ## Eager results
 

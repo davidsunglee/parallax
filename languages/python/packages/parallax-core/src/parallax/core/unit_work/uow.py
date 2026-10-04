@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
 from enum import Enum
 from itertools import islice
@@ -16,7 +16,7 @@ from parallax.core.unit_work.claims import (
     ClaimScope,
     ClaimTable,
     SettledEvidence,
-    claim_scope,
+    admits_composed,
     claimed_object,
     keyed_intent,
 )
@@ -36,7 +36,7 @@ from parallax.core.unit_work.materialized import (
     buffered_instruction,
     group_state_keys,
 )
-from parallax.core.unit_work.plan import ExecutionUnit, OwnedEndpoint, WritePlan
+from parallax.core.unit_work.plan import BoundRange, ExecutionUnit, OwnedEndpoint, WritePlan
 from parallax.core.unit_work.planner import (
     ObjectKey,
     ObservedStateKey,
@@ -44,7 +44,12 @@ from parallax.core.unit_work.planner import (
 )
 from parallax.core.unit_work.retain import ParticipationToken, ReadOrigin, RetainedObservation
 from parallax.core.unit_work.strategy import ActorIdentity, Concurrency, EvidencePolicyLookup
-from parallax.core.unit_work.write_planner import PlanningRequest, WritePlanner
+from parallax.core.unit_work.write_planner import (
+    PendingWrites,
+    PlanningRequest,
+    WritePlanner,
+    composed_intents,
+)
 
 __all__ = [
     "WRITE_EVIDENCE_CODES",
@@ -88,8 +93,10 @@ class FlushExecutor(Protocol):
 
     ``completed`` is called with each of the plan's execution units, in order,
     as soon as every step of that unit has executed and been enforced, and
-    before any step of a later unit executes. A normal return reports every
-    unit not yet reported; an exception reports none after it.
+    before any step of a later unit executes. A unit with a deferred range is
+    reported with the range its acquired coverage bound, once the bound steps
+    have executed; every other unit with ``None``. A normal return reports
+    every unit not yet reported; an exception reports none after it.
     """
 
     def __call__(
@@ -98,7 +105,7 @@ class FlushExecutor(Protocol):
         /,
         *,
         trigger: WriteBatchTrigger,
-        completed: Callable[[ExecutionUnit], None],
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None: ...
 
 
@@ -280,6 +287,10 @@ class _TargetWriteState:
         record = self._records.get(target)
         return None if record is None else record.opener
 
+    def insertion_bounds(self, target: ObjectKey) -> PreparedTemporalBounds | None:
+        record = self._records.get(target)
+        return None if record is None else record.bounds
+
     def has_pending_insert(self, target: ObjectKey) -> bool:
         record = self._records.get(target)
         return record is not None and record.pending_insert
@@ -319,13 +330,12 @@ class UnitOfWork:
 
     Construct via :func:`run_unit_of_work` (which owns the frame lifecycle); the
     body receives the unit of work and drives it with :meth:`buffer`, :meth:`retain`,
-    and :meth:`read`, asking :meth:`holds_assignment` and
-    :meth:`resolve_write_evidence` what a keyed write's source licenses here.
+    and :meth:`read`, asking :meth:`resolve_write_evidence` what a keyed write's
+    source licenses here.
     """
 
     __slots__ = (
         "_actor_identity",
-        "_buffer",
         "_changed",
         "_claims",
         "_closed",
@@ -333,6 +343,7 @@ class UnitOfWork:
         "_freshness",
         "_observations",
         "_participation",
+        "_pending",
         "_planner",
         "_reported",
         "_reporting",
@@ -385,10 +396,11 @@ class UnitOfWork:
         # no cleanup of its own: it is reachable only through the per-thread
         # active binding, which `run_outermost` already clears on every exit.
         self.companion: object | None = None
-        # The buffered writes, each carrying the claim its verb resolved for it —
-        # the strong reference that keeps a write's evidence alive after its
-        # source value is released, and what a successful flush spends through.
-        self._buffer: list[BufferItem] = []
+        # The buffered writes, composed as each is admitted, each carrying the
+        # claims its verbs resolved for it — the strong reference that keeps a
+        # write's evidence alive after its source value is released, and what a
+        # successful flush spends through.
+        self._pending = PendingWrites(meta)
         # What the buffered writes have claimed, by the scope each claim is taken
         # at. It travels with the buffer rather than with the scope:
         # a flush spends what it planned, so what a later write may claim
@@ -475,9 +487,11 @@ class UnitOfWork:
         key = self._addressed_object(item)
         if isinstance(item, MaterializedWriteGroup):
             self._claim_selection(item)
+        elif isinstance(item, ObservedKeyedWrite) and self._pending.is_temporal(item):
+            self._claim_composed(item)
         else:
             self._claim_keyed(item, key)
-        self._buffer.append(item)
+        self._pending.add(item, key)
         mutation = instruction.mutation
         targets = self._targets
         if key is not None and mutation in INSERT_MUTATIONS:
@@ -503,6 +517,13 @@ class UnitOfWork:
         self._ensure_open()
         return None if target is None else self._targets.opened_by(target)
 
+    def insertion_bounds(self, target: ObjectKey | None) -> PreparedTemporalBounds | None:
+        """The bounds an admitted insertion of ``target`` was buffered with —
+        where a write authored from its insertion source starts — or ``None``
+        where this attempt holds no such insertion."""
+        self._ensure_open()
+        return None if target is None else self._targets.insertion_bounds(target)
+
     def _addressed_object(self, item: BufferItem) -> ObjectKey | None:
         """The one object ``item`` addresses where buffering needs it — to claim
         it, or to open or cancel a pending insert of it — derived once."""
@@ -525,10 +546,13 @@ class UnitOfWork:
             scope = key
         else:
             return
-        intent = keyed_intent(item.instruction)
-        if scope is None or intent is None:
+        if scope is None or keyed_intent(item.instruction) is None:
             return
-        if self._claims.claim(scope, intent) != "incompatible":
+        object_scope = scope if isinstance(scope, ObjectKey) else scope.object
+        if (
+            self._claims.held(scope) is None
+            and self._pending.verdict(item, object_scope) != "incompatible"
+        ):
             return
         raise WriteEvidenceError(
             code="write-evidence-already-claimed",
@@ -543,6 +567,38 @@ class UnitOfWork:
             object_key=claimed_object(scope),
         )
 
+    def _claim_composed(self, item: ObservedKeyedWrite) -> None:
+        """Admit a temporal object's observed write into composition with the
+        object's pending observed writes, or refuse it (`m-unit-work`
+        "Observed-State Coalescing").
+
+        Judged over every write of the object still pending, whatever state
+        each observed, before anything changes.
+        """
+        instruction = item.instruction
+        key = resolve_object_key(instruction, inheritance.view(self.meta))
+        intent = keyed_intent(instruction)
+        assert key is not None and intent is not None  # an observed write names one object
+        scope = None if item.claim is None else item.claim.key
+        held = self._pending.temporal(key)
+        if (
+            held is not None
+            and admits_composed(composed_intents(held), scope, intent) == "incompatible"
+        ) or (scope is not None and self._claims.held(scope) is not None):
+            raise WriteEvidenceError(
+                code="write-evidence-already-claimed",
+                message=(
+                    f"{instruction.target.identity.canonical}: a write already buffered in this "
+                    "transaction cannot be composed with this one — an assignment after a "
+                    "destructive intent over its window resurrects nothing, a destructive "
+                    "intent composes only with writes of exactly its own window, and a "
+                    "predicate write's selected rows are one compact group; read the row "
+                    "through this transaction to flush the buffered intent and settle against "
+                    "fresh state"
+                ),
+                object_key=key,
+            )
+
     def _claim_selection(self, group: MaterializedWriteGroup) -> None:
         # The resolving read force-flushed the buffer, so no pending intent can
         # hold a state the group selected; a collision is a caller defect, and
@@ -551,7 +607,11 @@ class UnitOfWork:
         admitted = 0
         try:
             for state in group_state_keys(group, self.meta):
-                verdict = self._claims.claim(state, SELECTION_INTENT)
+                verdict = (
+                    "incompatible"
+                    if self._pending.holds(state)
+                    else self._claims.claim(state, SELECTION_INTENT)
+                )
                 if verdict != "admit":
                     raise UnitOfWorkError(
                         f"a Materialized Write Group's selection of {state!r} collides "
@@ -561,33 +621,6 @@ class UnitOfWork:
         except BaseException:
             self._claims.release(islice(group_state_keys(group, self.meta), admitted))
             raise
-
-    def holds_assignment(
-        self, target: EntityMetadata, origin: ReadOrigin | None, *, mutation: KeyedMutation
-    ) -> bool:
-        """Whether this buffer already holds an ASSIGNMENT at the scope a write
-        of ``mutation`` from ``origin`` would claim.
-
-        The question a wholly restoring update asks before it decides whether it
-        has anything to cancel, so it demands no usable evidence: a net-zero
-        chain off a value the write would refuse still buffers nothing rather
-        than raising (`m-opt-lock`'s no-op-first ordering). The scope is the one
-        ``target``'s policy derives, so a versioned write is asked about the
-        exact state its source observed and an unversioned Non-Temporal one
-        about its object. A source from no read cancels nothing.
-        """
-        self._ensure_open()
-        if origin is None:
-            return False
-        scope = claim_scope(
-            self._evidence_policy_for(target.identity).settled_evidence(
-                mutation, object_key=origin.object_key, observation=origin.observation
-            )
-        )
-        if scope is None:  # pragma: no cover - a Read Origin reaches its target's own arm
-            return False
-        held = self._claims.held(scope)
-        return held is not None and held.kind == "assignment"
 
     def resolve_write_evidence(
         self,
@@ -617,7 +650,10 @@ class UnitOfWork:
         Evidence a successful flush already spent, or describing a state a
         later successful change of this transaction replaced, is refused under
         BOTH strategies: either way the state the source observed is no longer
-        the stored state, and a held lock does not restore it.
+        the stored state, and a held lock does not restore it. A source with no
+        observation — an unversioned Non-Temporal row's — is spent the same way
+        once a write through it completes, on its origin rather than on an
+        observation it does not have.
         """
         self._ensure_open()
         policy = self._evidence_policy_for(target.identity)
@@ -646,13 +682,13 @@ class UnitOfWork:
                 ),
                 object_key=object_key,
             )
-        if observation is not None and observation.consumed:
+        if origin is not None and origin.consumed:
             raise WriteEvidenceError(
                 code="write-evidence-consumed",
                 message=(
-                    f"{identity}: the state this value observed was already written by a flush "
-                    "of this unit of work, so its evidence is spent; read the row again and "
-                    "write what that read returns"
+                    f"{identity}: a write through this value's source already completed in a "
+                    "flush of this unit of work, so its evidence is spent; read the row again "
+                    "and write what that read returns"
                 ),
                 object_key=object_key,
             )
@@ -716,7 +752,7 @@ class UnitOfWork:
         (the DB rollback the enclosing transaction performs, upstream).
         """
         self._ensure_open()
-        if self._buffer:
+        if self._pending:
             self.flush(trigger="read_dependency")
         return read_fn()
 
@@ -731,15 +767,14 @@ class UnitOfWork:
         planning reduces to no DML at all still ends the way it began.
 
         Each execution unit of the plan completes as soon as its steps succeed,
-        before the next unit executes: it spends the evidence its surviving
-        writes settled against, invalidates evidence of the states it changed,
-        retires the owned rows it removed, and registers the rows it opened. A
-        buffered intent coalesced away or eliminated as a no-op leaves its
-        evidence eligible, because no write of it reached the database — even
-        where a sibling write in the same batch did. Finalization is what names
-        each survivor's claim on its unit, since it alone knows which items it
-        retired; spending is idempotent, so a claim several units carry is
-        spent once.
+        before the next unit executes: it spends the evidence every write it
+        composed was admitted through — an overwritten or physically empty one
+        included — invalidates evidence of the states it changed, retires the
+        owned rows it removed, and registers the rows it opened. Sources that
+        carry no observation are spent once the whole flush succeeds. Only an
+        update that assigns no member leaves its evidence eligible, because it
+        stated no write at all. Spending is idempotent, so a claim several
+        units carry is spent once.
 
         A failure while executing, enforcing, or completing marks the
         transaction rollback-only before it propagates, so a caller that catches
@@ -750,7 +785,7 @@ class UnitOfWork:
         claim is decided by what is still pending, and after a flush nothing is.
         """
         self._ensure_open()
-        if not self._buffer:
+        if not self._pending:
             return
         opening = self.write_batch_opening
         if opening is None:
@@ -764,11 +799,12 @@ class UnitOfWork:
             actor_identity=self._actor_identity,
             transaction_instant=self._transaction_instant,
             concurrency=self.settings.concurrency,
-            buffered_writes=tuple(self._buffer),
+            buffered_writes=self._pending.writes(),
             ownership=self._targets,
         )
         finalized = self._planner.finalize(request)
-        self._buffer.clear()
+        sources = self._pending.sources()
+        self._pending.clear()
         self._claims.clear()
         self._targets.end_flush()
         units = finalized.plan.units
@@ -777,50 +813,81 @@ class UnitOfWork:
         try:
             self.flush_executor(finalized.plan, trigger=trigger, completed=self._report)
             for unit in units[self._reported :]:
-                self._report(unit)
+                self._report(unit, None)
+            for source in sources:
+                source.consume()
         except BaseException as failure:
             self.mark_rollback_only(failure)
             raise
         finally:
             self._reporting = ()
 
-    def _report(self, unit: ExecutionUnit) -> None:
+    def _report(self, unit: ExecutionUnit, bound: BoundRange | None) -> None:
         reported = self._reported
         units = self._reporting
         if reported >= len(units) or unit is not units[reported]:
             raise UnitOfWorkError(
                 "an execution unit was reported out of order, or was not one of the plan's"
             )
+        if (unit.deferred is None) != (bound is None):
+            raise UnitOfWorkError(
+                "a deferred range is reported with the range its coverage bound, and no other "
+                "unit is"
+            )
         self._reported = reported + 1
-        self._complete(unit, executed=unit.end > (units[reported - 1].end if reported else 0))
+        if bound is None:
+            self._complete(
+                unit,
+                executed=unit.end > (units[reported - 1].end if reported else 0),
+                changed=unit.changed,
+                removed=unit.removed,
+                opened=unit.opened,
+            )
+            return
+        self._complete(
+            unit,
+            executed=bool(bound.steps),
+            changed=bound.changed,
+            removed=bound.removed,
+            opened=bound.opened,
+        )
 
-    def _complete(self, unit: ExecutionUnit, *, executed: bool) -> None:
+    def _complete(
+        self,
+        unit: ExecutionUnit,
+        *,
+        executed: bool,
+        changed: Iterable[ObservedStateKey],
+        removed: Iterable[OwnedEndpoint],
+        opened: Iterable[OwnedEndpoint],
+    ) -> None:
         """Publish one successful execution unit's effects.
 
-        Evidence the unit's writes settled against is spent; live evidence of
-        every state it changed is invalidated and the change recorded, so a read
-        that ran before it cannot later build eligible evidence of that state;
-        then the owned rows it removed are retired before the rows it opened are
-        registered. A unit that ``executed`` no step changed no stored state, so
-        its claim is spent without invalidating the state it observed.
+        Every source authority the unit's writes settled against is spent;
+        live evidence of every state it changed is invalidated and the change
+        recorded, so a read that ran before it cannot later build eligible
+        evidence of that state; then the owned rows it removed are retired before
+        the rows it opened are registered. A single retained claim's own state
+        counts as changed exactly when the unit ``executed`` a step; a unit
+        that composed several sources states every state it changed itself.
         """
         stamp = self._freshness + 1
         claim = unit.claim
         changed_any = False
         if claim is not None:
             claim.consume()
-            if executed:
+            if executed and isinstance(claim, RetainedObservation):
                 changed_any = True
                 self._invalidate(claim.key, stamp)
-        for key in unit.changed:
+        for key in changed:
             changed_any = True
             self._invalidate(key, stamp)
         if changed_any:
             self._freshness = stamp
         targets = self._targets
-        for endpoint in unit.removed:
+        for endpoint in removed:
             targets.retire(endpoint)
-        for endpoint in unit.opened:
+        for endpoint in opened:
             targets.register(endpoint)
 
     def _invalidate(self, key: ObservedStateKey, stamp: int) -> None:
@@ -857,7 +924,7 @@ class UnitOfWork:
         # enclosing transaction performs (upstream) erases any force-flushed rows.
         # Buffered claims are released rather than spent: nothing this scope wrote
         # survives, so evidence a later scope is handed is still about stored state.
-        self._buffer.clear()
+        self._pending.clear()
         self._claims.clear()
         self._targets.clear()
         self._observations.clear()

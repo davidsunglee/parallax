@@ -112,6 +112,40 @@ is the separate MAY-tier `purge`. The plain writes mirror `GenericBiTemporalDire
 unbounded `insert` / `update` / `terminate` (research §6), the open-window / tailless
 companions of the `*Until` trio.
 
+## Observed writes span their requested extent
+
+The tables above describe one current rectangle covering the whole window. A
+keyed `update`, `updateUntil`, `terminate`, or `terminateUntil` written from a
+source a read published is not confined to that rectangle. Its `validFrom` is
+the source's own finite Valid-Time pin — the coordinate the read stood at, not
+the observed rectangle's start — or, for a source an insertion of the same
+attempt authored, that insertion's `validFrom`. A source read at Valid-Time
+`latest` names no instant and is refused, as is a source neither anchors. Its
+**requested extent** is `[validFrom, until)`, through infinity when unbounded,
+and the write applies to every current-on-Transaction-Time rectangle of the
+object that overlaps it:
+
+- each overlapping rectangle is inactivated once, and its nonempty pieces are
+  opened in Valid-Time order: a part outside the extent carries the
+  rectangle's own values, and a part inside carries the assigned members over
+  the rectangle's own unassigned values — or is not opened, for termination;
+- a gap in coverage stays a gap: nothing is opened where no current rectangle
+  exists, and the write continues to the coverage beyond it;
+- a rectangle outside the extent is untouched, and adjacent pieces are never
+  merged across two rectangles;
+- every rectangle's inactivation precedes every opening (`m-sql`).
+
+The observed rectangle is addressed and gated as an inactivation always is. A
+rectangle no read of the write observed is read inside the flush that writes it
+— the object's current rows over the part of the extent the observations do
+not cover, read with the shared lock under Locking (`m-read-lock`) — and is
+inactivated under its own observed `in_z` like any observed rectangle
+(`m-unit-work` *deferred range unit*). Where observed writes of one object
+compose (`m-unit-work` *Observed-State Coalescing*), the composition's segments
+are applied the same way: each segment over each rectangle it overlaps, the
+later-authored value winning where windows overlap. An assignment equal to a
+rectangle's stored value is still assigned and still chains.
+
 ## Rectangles the attempt opened
 
 The splits above inactivate a rectangle that existed before the attempt. A later

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from parallax.core import inheritance, temporal_read
-from parallax.core.document_codec import EffectiveChangeSet
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TemporalShape, milestone_edge
 from parallax.core.unit_work.claims import SettledEvidence
 from parallax.core.unit_work.columns import ChunkedColumnBuilder, ColumnSlice, whole
@@ -15,10 +14,11 @@ from parallax.core.unit_work.instructions import (
     UPDATE_MUTATIONS,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
+    PreparedTemporalBounds,
     PreparedWrite,
-    derive_keyed_write,
 )
 from parallax.core.unit_work.observe import WriteObservation
+from parallax.core.unit_work.plan import Completion
 from parallax.core.unit_work.planner import (
     ObjectKey,
     ObservedStateKey,
@@ -26,6 +26,7 @@ from parallax.core.unit_work.planner import (
     VersionedStateKey,
 )
 from parallax.core.unit_work.retain import RetainedObservation
+from parallax.core.unit_work.temporal import EMPTY_TRANSFORM, TemporalTransform
 
 if TYPE_CHECKING:
     from parallax.core.inheritance import EntityMemberSelection
@@ -33,16 +34,20 @@ if TYPE_CHECKING:
 __all__ = [
     "BufferItem",
     "ClaimedKeyedWrite",
+    "ComposedTemporalWrite",
     "GroupStates",
     "MaterializedWriteGroup",
     "ObjectClaimedWrite",
     "ObservedKeyedWrite",
     "PredecessorRows",
     "PredecessorRowsBuilder",
+    "TemporalContribution",
     "VersionedEvidence",
     "VersionedEvidenceBuilder",
     "buffered_instruction",
     "buffered_write",
+    "composed_alone",
+    "composed_temporal_write",
     "group_state_keys",
 ]
 
@@ -243,17 +248,14 @@ class ObservedKeyedWrite:
     """Carries verb-time evidence through planning without resolving it again.
 
     A retained ``claim`` is spent only if this write survives to settlement.
-    ``change`` is the effective-change classification its producer made of an
-    update's assigned members against the values its source observed, and only
-    an update carries one: a temporal changed successor overlays its effective
-    members alone, and its restored members — touched and put back — cancel
-    earlier assignments during coalescing.
+    An update's row is its literal assignment set: the identity plus every
+    member its producer expressed, each written whatever value the source
+    observed for it.
     """
 
     instruction: PreparedKeyedWrite
     observation: WriteObservation
     claim: RetainedObservation | None = None
-    change: EffectiveChangeSet | None = None
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS:
@@ -278,44 +280,19 @@ class ObservedKeyedWrite:
                 "claim naming other evidence (m-unit-work: one resolution serves the address, "
                 "the gate, and the license)"
             )
-        if self.change is None and self.instruction.mutation in UPDATE_MUTATIONS:
-            raise ValueError(
-                f"an observed `{self.instruction.mutation}` on "
-                f"{self.instruction.target.identity.canonical!r} carries its producer's "
-                "effective change set (m-unit-work: settlement does not classify a keyed "
-                "write again)"
-            )
-        _refuse_misplaced_change(self.instruction, self.change)
-
-    @property
-    def restorations(self) -> frozenset[str]:
-        """The members this write touched and put back."""
-        return frozenset() if self.change is None else self.change.restored
-
-
-def _refuse_misplaced_change(instruction: PreparedWrite, change: EffectiveChangeSet | None) -> None:
-    """Refuse a change set on a write that is not a keyed update: a destructive
-    or close verb, and a predicate-selected write, name no member a producer
-    classified."""
-    if change is None or (
-        isinstance(instruction, PreparedKeyedWrite) and instruction.mutation in UPDATE_MUTATIONS
-    ):
-        return
-    raise ValueError(
-        f"`{instruction.mutation}` names no member a producer classified, so it carries no "
-        "effective change set"
-    )
 
 
 @dataclass(frozen=True, slots=True)
 class ObjectClaimedWrite:
     """Coalesces by object identity, then leaves planning as a bare instruction.
 
-    ``restorations`` has the same cancellation meaning as on ObservedKeyedWrite.
+    ``source`` is the observation-free source authority the write was admitted
+    through, which the successful flush it is pending in spends whatever
+    becomes of the write itself.
     """
 
     instruction: PreparedKeyedWrite
-    restorations: frozenset[str] = frozenset()
+    source: Completion | None = None
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS:
@@ -337,43 +314,24 @@ class ObjectClaimedWrite:
 
 type ClaimedKeyedWrite = ObservedKeyedWrite | ObjectClaimedWrite
 """One keyed write travelling with the claim its verb took for it, at either
-scope. The two carriers share what coalescing manipulates — an instruction and
-the members its author restored — and differ only in the grain their claims are
-taken at."""
+scope. The two carriers share what coalescing manipulates — an instruction —
+and differ only in the grain their claims are taken at."""
 
 
 def buffered_write(
     instruction: PreparedWrite,
     evidence: SettledEvidence | None,
     *,
-    change: EffectiveChangeSet | None = None,
+    source: Completion | None = None,
 ) -> PreparedWrite | ClaimedKeyedWrite:
     """``instruction`` as the buffer item that settles against ``evidence``.
 
-    ``change`` is a producer's effective-change classification of an update's
-    assigned members against the values its source observed; an update that
-    settles against a Write Observation requires one, and a write that is not
-    an update refuses one. A restored member is written nowhere: it leaves the
-    row here, so an update restoring every member it assigned is key-only and
-    stage 2 eliminates it, and on a claimed carrier it also cancels an earlier
-    assignment during coalescing. A temporal changed successor overlays only
-    the effective members and carries every other member's predecessor cell.
-
     Retained observations travel with the write so settlement can spend them,
     while a bare observation has no retained claim. With no evidence, the
-    instruction travels bare, so no classification survives it.
+    instruction travels bare. ``source`` is the authority an object-claimed
+    write's source carries in place of an observation; any other evidence
+    already is its source's authority.
     """
-    _refuse_misplaced_change(instruction, change)
-    restorations: frozenset[str] = frozenset() if change is None else change.restored
-    if restorations:
-        assert isinstance(instruction, PreparedKeyedWrite)  # only a keyed update carries one
-        instruction = derive_keyed_write(
-            instruction,
-            tuple(
-                {name: value for name, value in row.items() if name not in restorations}
-                for row in instruction.rows
-            ),
-        )
     if evidence is None:
         return instruction
     if not isinstance(instruction, PreparedKeyedWrite):
@@ -382,15 +340,110 @@ def buffered_write(
             "materializes to a Materialized Write Group with its own aligned evidence"
         )
     if isinstance(evidence, ObjectKey):
-        return ObjectClaimedWrite(instruction=instruction, restorations=restorations)
+        return ObjectClaimedWrite(instruction=instruction, source=source)
     if isinstance(evidence, RetainedObservation):
         return ObservedKeyedWrite(
-            instruction=instruction,
-            observation=evidence.evidence,
-            claim=evidence,
-            change=change,
+            instruction=instruction, observation=evidence.evidence, claim=evidence
         )
-    return ObservedKeyedWrite(instruction=instruction, observation=evidence, change=change)
+    return ObservedKeyedWrite(instruction=instruction, observation=evidence)
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalContribution:
+    """What one admitted observed write of a temporal object keeps once it is
+    composed: its source condition and requested window, not its values.
+
+    ``observation`` is the evidence the write settles against and ``claim`` its
+    retained form, which successful completion spends; ``scope`` is the exact
+    state that evidence observed. Values the write assigned live in the
+    composed transform, where a later write may overwrite them; the condition
+    stays required whatever happens to them.
+    """
+
+    kind: Literal["assignment", "destructive"]
+    bounds: PreparedTemporalBounds
+    observation: WriteObservation
+    claim: RetainedObservation | None
+
+
+@dataclass(frozen=True, slots=True)
+class ComposedTemporalWrite:
+    """Every pending observed write of one temporal object, composed in
+    authored order at the position of the first.
+
+    ``key`` is the object's identity row. ``contributions`` keeps each admitted
+    write's original condition and window, overwritten ones included;
+    ``transform`` holds only the assignments that still survive.
+    """
+
+    target: EntityMetadata
+    key: Mapping[str, object]
+    contributions: tuple[TemporalContribution, ...]
+    transform: TemporalTransform
+
+    @property
+    def assigns(self) -> bool:
+        """Whether the composition still assigns somewhere, rather than only
+        destroying."""
+        return self.transform.assigns
+
+
+def temporal_contribution(item: ObservedKeyedWrite) -> TemporalContribution:
+    """``item``'s lasting part once composed."""
+    return TemporalContribution(
+        kind="assignment" if item.instruction.mutation in UPDATE_MUTATIONS else "destructive",
+        bounds=item.instruction.bounds,
+        observation=item.observation,
+        claim=item.claim,
+    )
+
+
+def composed_temporal_write(
+    held: ObservedKeyedWrite | ComposedTemporalWrite, arriving: ObservedKeyedWrite, key_name: str
+) -> ComposedTemporalWrite:
+    """``held`` followed by ``arriving``, one temporal object's writes composed
+    in authored order.
+
+    The arriving write's values replace earlier ones per member inside its own
+    window and destroy coverage there if it is destructive; every earlier
+    condition stays.
+    """
+    if isinstance(held, ObservedKeyedWrite):
+        held = _composed(held, key_name)
+    return ComposedTemporalWrite(
+        target=held.target,
+        key=held.key,
+        contributions=(*held.contributions, temporal_contribution(arriving)),
+        transform=_composed_transform(held.transform, arriving, key_name),
+    )
+
+
+def _composed(item: ObservedKeyedWrite, key_name: str) -> ComposedTemporalWrite:
+    row = item.instruction.rows[0]
+    return ComposedTemporalWrite(
+        target=item.instruction.target,
+        key={key_name: row[key_name]},
+        contributions=(temporal_contribution(item),),
+        transform=_composed_transform(EMPTY_TRANSFORM, item, key_name),
+    )
+
+
+def composed_alone(item: ObservedKeyedWrite, key_name: str) -> ComposedTemporalWrite:
+    """``item`` as the composition of itself alone."""
+    return _composed(item, key_name)
+
+
+def _composed_transform(
+    transform: TemporalTransform, item: ObservedKeyedWrite, key_name: str
+) -> TemporalTransform:
+    instruction = item.instruction
+    bounds = instruction.bounds
+    assigned = (
+        {name: value for name, value in instruction.rows[0].items() if name != key_name}
+        if instruction.mutation in UPDATE_MUTATIONS
+        else None
+    )
+    return transform.then(valid_from=bounds.valid_from, until=bounds.until, assigned=assigned)
 
 
 BufferItem = PreparedWrite | ClaimedKeyedWrite | MaterializedWriteGroup

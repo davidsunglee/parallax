@@ -206,8 +206,8 @@ def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
     _node, edge = render_branch_milestone(db, id=1)  # RENDER time — the stale edge
 
     def concurrent_write(tx: Transaction) -> None:
-        current = tx.find(Branch.where(Branch.id == 1).as_of(valid_time=LATEST)).result()
-        tx.update(current.edit(name="Renamed By Someone Else"), valid_from=_I2)
+        current = tx.find(Branch.where(Branch.id == 1).as_of(valid_time=_I2)).result()
+        tx.update(current.edit(name="Renamed By Someone Else"))
 
     # An independent second session commits a REAL chaining update first, and is
     # released with the choreography that needed it.

@@ -213,13 +213,30 @@ advance the version and, when Optimistic, nothing to gate on. A `DELETE` writes 
 version, but still requires the same evidence: current lock participation under
 Locking or retained observed-version evidence under Optimistic.
 
-### No-op updates issue no DML
+### Empty updates issue no DML
 
 The version advances on every `UPDATE` statement an implementation *issues*, but
-an update whose `set` changes **no** attribute **MUST** issue **no DML** at all
-(zero round trips). A no-domain-change write does not need to bump the version —
-the concurrent editor that races it advances the version itself, so nothing slips
-through.
+an update that assigns **no** attribute **MUST** issue **no DML** at all (zero
+round trips). A keyed update's assignments are literal sets (`m-unit-work`), so
+a keyed update assigning an attribute the value its source observed is not
+empty: it issues its `UPDATE`, gated as any other, and advances the version. A
+predicate-selected update instead compares each resolved row, below. Neither
+empty write needs to bump the version — the concurrent editor that races it
+advances the version itself, so nothing slips through.
+
+### Composed temporal writes keep every source condition
+
+A temporal object's observed writes compose before they execute (`m-unit-work`
+*Observed-State Coalescing*), and the composition keeps the condition of every
+source it admitted. Each observed rectangle it reaches is inactivated with that
+rectangle's own gate, so a source that went stale fails its statement whether
+or not any of its values survived the composition. Two observations of one
+object whose rectangles overlap cannot both be current: the later-authored one
+is the rectangle the composition rewrites, and the earlier is closed on its own
+gated address before anything is opened, so a lost condition aborts the unit of
+work before the composition writes anything new. A rectangle the flush read
+for the range (`m-bitemp-write` *Observed writes span their requested extent*)
+is gated on the `in_z` that read observed, exactly as an observed one is.
 
 ### Predicate-selected writes materialize when observations are needed
 
@@ -392,8 +409,8 @@ entries that simulate a concurrent transaction mutating the row — and a
 | versioned update, effective Locking | locking | remove the row out of band | none — no gate | **0** (non-retriable stale write) |
 | versioned delete, effective Locking | locking | remove the row out of band | none — no gate | **0** (non-retriable stale write) |
 
-A companion **scenario** case pins the no-op rule: a versioned update whose `set`
-changes no attribute declares `roundTrips: 0` and lists no golden DML (no
+A companion **scenario** case pins the empty-update rule: a versioned update
+assigning no attribute declares `roundTrips: 0` and lists no golden DML (no
 statement issued). Predicate-selected witnesses use a materializing `find`, the
 structured `write` instruction, and a verification `find`; non-trivial finds carry
 their own naive `referenceSql` oracle.

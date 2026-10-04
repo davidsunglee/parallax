@@ -192,7 +192,7 @@ def test_provenance_separates_this_lifecycle_from_another_and_from_none() -> Non
 # --------------------------------------------------------------------------- #
 # What a value authors, once the window has been judged.                      #
 # --------------------------------------------------------------------------- #
-def test_prepare_states_every_touched_member_beside_its_original() -> None:
+def test_prepare_states_every_touched_member_as_its_literal_assignment() -> None:
     meta, codec = _accounts()
     edited = _published_account().edit(balance=Decimal("125.00"))
     source = TypedKeyedWriteSource(edited, codec)
@@ -201,30 +201,13 @@ def test_prepare_states_every_touched_member_beside_its_original() -> None:
     prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
-    assert prepared.originals == {"balance": Decimal("100.00")}
+    assert prepared.assigned == {"balance"}
     assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
 
 
-def test_the_assigned_side_of_the_comparison_is_the_originals_names_and_no_identity() -> None:
-    # The two sides of the comparison are one member set, which is `originals`'
-    # own invariant; reading the assigned side through it is what keeps the
-    # ingress from restating that invariant at the comparison. The key the row
-    # also carries names the object rather than assigning anything, so it is not
-    # on either side.
-    meta, codec = _accounts()
-    edited = _published_account().edit(balance=Decimal("125.00"))
-    source = TypedKeyedWriteSource(edited, codec)
-
-    prepared = source.prepare(source.resolve(meta, "update"), valid_from=None, until=None)
-
-    assert prepared.assigned == {"balance": Decimal("125.00")}
-    assert prepared.assigned.keys() == prepared.originals.keys()
-
-
-def test_a_wholly_restoring_chain_still_states_the_member_it_took_back() -> None:
-    # Both halves name the member, and both carry the same value: the effective
-    # change set is the ingress's to reduce, so the adapter states what was
-    # authored rather than deciding it changed nothing.
+def test_a_wholly_restoring_chain_still_assigns_the_member_it_took_back() -> None:
+    # The chain touched the member, so the adapter states it at the value the
+    # chain ended on, whatever that equals: the assignment is literal.
     meta, codec = _accounts()
     restored = _published_account().edit(balance=Decimal("125.00")).edit(balance=Decimal("100.00"))
     source = TypedKeyedWriteSource(restored, codec)
@@ -232,17 +215,16 @@ def test_a_wholly_restoring_chain_still_states_the_member_it_took_back() -> None
     prepared = source.prepare(source.resolve(meta, "update"), valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("100.00")}
-    assert prepared.originals == {"balance": Decimal("100.00")}
+    assert prepared.assigned == {"balance"}
 
 
-def test_a_correction_states_the_original_current_authoring_would_refuse() -> None:
+def test_a_correction_states_what_current_authoring_admits_over_any_stored_original() -> None:
     # `Contact` requires every member inside its address, and the stored document
     # states no `city`: readable state a read publishes as a hydratable
     # classified record, which authoring refuses — assigning that same document
     # is `Contact.address.city: required attribute is absent (or null)`. The
-    # write repairing it is a correction, so the adapter states the deficient
-    # original beside the complete assignment rather than refusing the write for
-    # the state that write revises. Only the authored side is judged.
+    # write repairing it is a correction, judged on the authored side alone, so
+    # the state it revises never refuses it.
     meta = cataloged_for(CONTACT_MODEL).meta
     source = TypedKeyedWriteSource(
         _published_contact().edit(address=_COMPLETE_ADDRESS), row_codec_for(CONTACT_MODEL)
@@ -256,13 +238,7 @@ def test_a_correction_states_the_original_current_authoring_would_refuse() -> No
         "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
         "phones": (),
     }
-    assert prepared.originals == {
-        "address": {
-            "street": "Main",
-            "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
-            "phones": (),
-        }
-    }
+    assert prepared.assigned == {"address"}
 
 
 def test_an_untouched_copy_authors_its_identity_row_alone() -> None:
@@ -272,17 +248,17 @@ def test_an_untouched_copy_authors_its_identity_row_alone() -> None:
     prepared = source.prepare(source.resolve(meta, "update"), valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1}
-    assert prepared.originals == {}
+    assert prepared.assigned == frozenset()
 
 
-def test_a_destructive_verb_authors_its_identity_row_and_no_originals() -> None:
+def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> None:
     meta, codec = _accounts()
     source = TypedKeyedWriteSource(_published_account(), codec)
 
     prepared = source.prepare(source.resolve(meta, "delete"), valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1}
-    assert prepared.originals == {}
+    assert prepared.assigned == frozenset()
 
 
 def test_a_value_no_read_produced_keys_its_object_off_the_row_it_authors() -> None:

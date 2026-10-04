@@ -1253,34 +1253,90 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     # The evidence the write settles by is the Observed State Key the claim that
     # node carries is addressed by, and the golden the oracle renders comes from
     # the same node's own milestone — so the close addresses R2's `thru_z`, which
-    # a store keyed by identity alone could not have chosen between.
-    port = FakeWritePort(
-        find_rows=[
-            {
-                "pos_id": 1,
-                "acct_num": "A",
-                "val": decimal.Decimal("100.00"),
-                "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "thru_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
-                "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-                "out_z": INFINITY,
-            }
-        ]
-    )
+    # a store keyed by identity alone could not have chosen between. The write
+    # runs from its source's pin through infinity, so the flush reads the
+    # coverage beyond R2 and closes R3 too.
+    r2 = {
+        "pos_id": 1,
+        "acct_num": "A",
+        "val": decimal.Decimal("100.00"),
+        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "thru_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+        "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+        "out_z": INFINITY,
+    }
+    r3 = {
+        **r2,
+        "val": decimal.Decimal("200.00"),
+        "from_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+        "thru_z": INFINITY,
+    }
+    port = FakeWritePort(read_script=[[r2], [r3], [r2, r3]])
     run = scenario.run_scenario_case(_load_case("m-unit-work-015"), port)
-    assert run.round_trips == 5
-    # The close plus the two rectangles the split chains, all under the write
-    # step's own pointer.
+    assert run.round_trips == 8
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/objectQuery",
-        *["/scenario/2/write"] * 3,
+        *["/scenario/2/write"] * 5,
     ]
     close = run.emissions[2]
     assert close.sql.startswith("update position set out_z = ?")
     # The close's address is the OBSERVED rectangle's own `thru_z`, derived from
     # the node the named find published — never the primary key alone.
     assert close.binds[2] == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    assert run.emissions[3].binds[2] == "infinity"
+
+
+def test_a_grouped_write_starting_away_from_its_finds_pin_is_an_engine_error() -> None:
+    case = _own_copy(_load_case("m-unit-work-015"))
+    document = cast("dict[str, Any]", case.document)
+    steps = cast("list[dict[str, Any]]", document["when"]["scenario"])
+    steps[2]["write"][0]["validFrom"] = "2024-04-01T00:00:00.000000Z"
+    row = {
+        "pos_id": 1,
+        "acct_num": "A",
+        "val": decimal.Decimal("100.00"),
+        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "thru_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+        "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+        "out_z": INFINITY,
+    }
+    with pytest.raises(EngineError, match="starts at"):
+        scenario.run_scenario_case(case, FakeWritePort(read_script=[[row], [row]]))
+
+
+def test_a_range_beyond_its_observation_needs_tracked_coverage_to_bind() -> None:
+    meta = models.load_models()["position"]
+    tracked = TemporalObservation(
+        predecessor=PredecessorRow(
+            members={
+                "id": 1,
+                "acctNum": "A",
+                "value": decimal.Decimal("100.00"),
+                "validStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "validEnd": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+                "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "txEnd": INFINITY,
+            }
+        )
+    )
+    instruction = instructions.prepare_wire_write(
+        KeyedWrite(
+            "update",
+            "parallax.compatibility.Position",
+            ({"id": 1, "value": "150.00"},),
+            dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        ),
+        meta,
+    )
+    with pytest.raises(EngineError, match="no observation of its unit holds"):
+        scenario._plan_and_lower(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
+            meta,
+            POSTGRES,
+            "optimistic",
+            scenario.INERT_CLOCK_INSTANT,
+            [scenario._buffered(instruction, tracked, meta)],  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
+        )
 
 
 def test_a_tracked_milestone_of_a_document_target_is_refused_after_out_of_band_statements() -> None:
@@ -1356,11 +1412,12 @@ def test_a_document_milestone_opened_after_out_of_band_statements_still_chains()
     assert port.writes[0][0].startswith("insert into unrelated")
 
 
-def test_the_lane_carries_a_restated_occurrence_and_the_unknown_keys_it_stored() -> None:
-    # The lane pairs each keyed instruction with its evidence directly, so no
-    # verb classified what the row assigns. A row restating `manifest` exactly as
-    # the milestone holds it is classified restored against the tracked
-    # Predecessor Row, and the successor carries the stored subtree whole.
+def test_the_lane_assigns_a_restated_occurrence_literally_and_keeps_unassigned_keys() -> None:
+    # The lane pairs each keyed instruction with its evidence directly. A row
+    # restating `manifest` exactly as the milestone's declared members hold it
+    # still assigns it: the occurrence is replaced whole, so the unknown key
+    # stored inside it is gone, while every position the row does not assign —
+    # declared or not — is carried from the stored document.
     meta = models.load_models()["document-layout"]
     stored: dict[str, object] = {
         "title": "Northbound",
@@ -1401,7 +1458,12 @@ def test_the_lane_carries_a_restated_occurrence_and_the_unknown_keys_it_stored()
     )
 
     (document,) = (bind.value for bind in successor.binds if isinstance(bind, JsonDocument))
-    assert document == {**stored, "title": "Southbound"}
+    assert dict(cast("Mapping[str, object]", document)) == {
+        "title": "Southbound",
+        "crew": 12,
+        "manifest": {"cargo": "grain"},
+        "legs": ({"port": "Oslo"},),
+    }
 
 
 def test_a_read_step_names_its_own_object_query() -> None:
@@ -1519,7 +1581,7 @@ def test_a_units_resolving_read_names_no_statement_in_the_lifecycle_observation(
 def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window() -> None:
     # m-bitemp-write-001: the updateUntil entry's canonical instruction carries
     # BOTH `validFrom` and `until` (its bounded rectangle-split window), which
-    # `_execute_write_unit` hands `tx.wire.update_until` unchanged.
+    # the run lane buffers with that window unchanged.
     port = FakeWritePort(
         find_rows=[
             _position_row(

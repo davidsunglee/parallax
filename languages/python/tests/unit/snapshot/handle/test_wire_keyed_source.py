@@ -36,7 +36,6 @@ from tests._support.db_port import Read, ScriptedAdapter
 from tests._support.model_capabilities import cataloged_for
 from tests.unit._transact_support import (
     ACCOUNT,
-    CONTACT,
     INFINITY_INSTANT,
     WHERE_POSITION_META,
     db_for,
@@ -156,7 +155,7 @@ def test_a_projected_node_enters_the_existing_wire_keyed_source() -> None:
     assert resolved.provenance == "this"
     assert resolved.representation == "wire"
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
-    assert prepared.originals == {"balance": Decimal("100.00")}
+    assert prepared.assigned == {"balance"}
 
 
 def test_a_node_a_pinned_read_published_answers_the_instant_it_stands_at() -> None:
@@ -189,10 +188,9 @@ def test_an_argument_carrying_no_hint_is_refused_as_no_source_at_all() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Prepare: the authored row and the source's own originals, through one       #
-# producer.                                                                   #
+# Prepare: the authored row, whose stated keys are its literal assignment set. #
 # --------------------------------------------------------------------------- #
-def test_prepare_states_every_authored_member_beside_what_the_source_published() -> None:
+def test_prepare_states_every_authored_member_as_its_literal_assignment() -> None:
     source = WireKeyedWriteSource(_account_node(), {"balance": "125.00"})
     source.capture("update")
     resolved = source.resolve(_meta(ACCOUNT), "update")
@@ -200,33 +198,22 @@ def test_prepare_states_every_authored_member_beside_what_the_source_published()
     prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
-    assert prepared.originals == {"balance": Decimal("100.00")}
+    assert prepared.assigned == {"balance"}
     assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
 
 
-def test_a_member_the_source_published_nothing_for_is_measured_against_a_null() -> None:
-    # The published row states no address at all. The originals row must still
-    # NAME the member, because the comparison is over the two prepared rows and a
-    # name missing from one of them is no comparison; the null is what the source
-    # would state back.
-    node = _published(CONTACT, _BLANK_CONTACT_ROW, _query(_CONTACT, 2))
-    authored: dict[str, object] = {
-        "street": "1 Park",
-        "city": "Oslo",
-        "geo": {"country": "NO", "point": {"lat": 59.9, "lon": 10.7}},
-        "phones": [],
-    }
-    source = WireKeyedWriteSource(node, {"address": authored})
+def test_a_member_equal_to_what_the_source_published_is_still_assigned() -> None:
+    source = WireKeyedWriteSource(_account_node(), {"balance": "100.00"})
     source.capture("update")
-    resolved = source.resolve(_meta(CONTACT), "update")
+    resolved = source.resolve(_meta(ACCOUNT), "update")
 
     prepared = source.prepare(resolved, valid_from=None, until=None)
 
-    assert set(prepared.originals) == {"address"}
-    assert prepared.originals["address"] is None
+    assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("100.00")}
+    assert prepared.assigned == {"balance"}
 
 
-def test_a_destructive_verb_authors_its_identity_row_and_no_originals() -> None:
+def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> None:
     source = WireKeyedWriteSource(_account_node(), None)
     source.capture("delete")
     resolved = source.resolve(_meta(ACCOUNT), "delete")
@@ -234,7 +221,7 @@ def test_a_destructive_verb_authors_its_identity_row_and_no_originals() -> None:
     prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1}
-    assert prepared.originals == {}
+    assert prepared.assigned == frozenset()
 
 
 # --------------------------------------------------------------------------- #

@@ -38,7 +38,6 @@ from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.object_query import LATEST
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import Edge
@@ -724,7 +723,8 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
     # Time, so only the rectangle's OWN exclusive Valid-Time end picks out the one
     # this close means to close. The bound value is that end — never the
     # rectangle's start, and never `infinity` — in BOTH modes; concurrency decides
-    # only whether the `in_z` gate follows it.
+    # only whether the `in_z` gate follows it. The correction ends where the
+    # rectangle does, so it touches no coverage beyond the one it observed.
     observed = _observed(
         tx_start="2023-11-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
@@ -732,10 +732,11 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
         payload=_R1_PAYLOAD,
     )
     update = KeyedWrite(
-        "update",
+        "updateUntil",
         "Position",
         ({"id": 1, "value": Decimal("200.00")},),
         valid_from=_instant("2024-04-01T00:00:00+00:00"),
+        until=_instant("2024-07-01T00:00:00+00:00"),
     )
     close, head, tail = _lower(
         update,
@@ -767,8 +768,8 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
 
 
 # The two rectangles one key holds current at one Transaction Time, as the
-# driver hands each back: real `datetime` values on both axes, `INFINITY_INSTANT`
-# for an open bound. They share nothing a close addresses or gates on — distinct
+# driver hands each back: real `datetime` values on both axes, the open-bound
+# sentinel for an open one. They share nothing a close addresses or gates on — distinct
 # Valid-Time windows and distinct `in_z` — so every bind below names exactly one
 # of them.
 _CURRENT_RECTANGLE: MappingRow = {
@@ -805,9 +806,9 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
 ) -> None:
     # One key holding TWO rectangles current at one Transaction Time — what a
     # retroactive correction leaves behind — read twice in one transaction: once
-    # latest, then once at a Valid-Time instant inside the earlier rectangle, then
-    # updated from the value the FIRST read handed back. The close must address
-    # the rectangle THAT value came from: `thru_z` binds its own exclusive
+    # at the correction's own instant, then once at a Valid-Time instant inside the
+    # earlier rectangle, then updated from the value the FIRST read handed back.
+    # The close must address the rectangle THAT value came from: `thru_z` binds its own exclusive
     # Valid-Time end, head and tail reconstruct its own window split at the
     # correction, and the optimistic gate binds its own `in_z`. The distinction is
     # which read a write settles against — an as-of read is evidence about the
@@ -824,17 +825,16 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
 
     def fn(tx: Transaction) -> None:
         current = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+            WherePosition.where(WherePosition.id == 1).as_of(
+                valid_time=dt.datetime(2024, 8, 1, tzinfo=dt.UTC)
+            )
         ).result()
         tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(
                 valid_time=dt.datetime(2024, 2, 15, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(
-            current.edit(value=Decimal("150.00")),
-            valid_from=dt.datetime(2024, 8, 1, tzinfo=dt.UTC),
-        )
+        tx.update(current.edit(value=Decimal("150.00")))
 
     db_for(WHERE_POSITION_META, port).transact(fn, concurrency=concurrency)
 
@@ -844,7 +844,7 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
             "update where_position set out_z = ? "
             f"where id = ? and thru_z = ? and out_z = ?{gate_sql}"
         ),
-        (dt.datetime(2024, 6, 1, tzinfo=dt.UTC), 1, INFINITY_INSTANT, "infinity", *gate_binds),
+        (dt.datetime(2024, 6, 1, tzinfo=dt.UTC), 1, "infinity", "infinity", *gate_binds),
     )
     assert head.binds == (
         1,

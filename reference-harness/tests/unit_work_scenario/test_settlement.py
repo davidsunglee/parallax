@@ -673,10 +673,13 @@ def _settled_close_case(
                     "on": 0,
                     "write": [
                         {
-                            "mutation": "update",
+                            # Bounded inside the observed rectangle, so the flush
+                            # reads no coverage beyond it.
+                            "mutation": "updateUntil",
                             "entity": "parallax.compatibility.DepositRate",
                             "rows": [{"id": 1, "amount": "3.00"}],
                             "validFrom": "2024-03-01T00:00:00.000000Z",
+                            "until": "2024-05-01T00:00:00.000000Z",
                             "at": at,
                         }
                     ],

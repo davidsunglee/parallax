@@ -215,7 +215,36 @@ _READ_ROWS_BY_CASE: Final[dict[str, list[list[MappingRow]]]] = {
                 "out_z": _INFINITY,
             }
         ],
+        # The flush's coverage read from the write's start through infinity
+        # answers both rectangles.
+        [
+            {
+                "pos_id": 1,
+                "acct_num": "A",
+                "val": Decimal("100.00"),
+                "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "thru_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+                "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+                "out_z": _INFINITY,
+            },
+            {
+                "pos_id": 1,
+                "acct_num": "A",
+                "val": Decimal("200.00"),
+                "from_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+                "thru_z": _INFINITY,
+                "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+                "out_z": _INFINITY,
+            },
+        ],
     ]
+}
+
+# Reads a flush makes to acquire temporal coverage carry no golden of their own
+# (m-case-format counts them in a step's round trips only), so the statement
+# compare skips them by their position among the story's statements.
+_COVERAGE_READS_BY_CASE: Final[dict[str, frozenset[int]]] = {
+    "m-unit-work-015": frozenset({2}),
 }
 
 
@@ -367,7 +396,12 @@ def _observed_statements(
     _assert_reads_are_proper_selects(port)
     if _CASES[case_id].shape == "writeSequence":
         return port.writes()
-    return port.statements()
+    coverage = _COVERAGE_READS_BY_CASE.get(case_id, frozenset())
+    return [
+        statement
+        for position, statement in enumerate(port.statements())
+        if position not in coverage
+    ]
 
 
 def _assert_statements(

@@ -80,6 +80,7 @@ _VALID_FROM = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 _NAIVE_INSTANT = dt.datetime(2024, 7, 1)  # no tzinfo: not an instant at all
 _OTHER_FROM = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 _UNTIL = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
+_OTHER_UNTIL = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
 _ACCOUNT_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Account",
@@ -101,7 +102,7 @@ _POSITION_QUERY: dict[str, object] = {
     "predicate": {"eq": {"attr": "parallax.compatibility.WherePosition.id", "value": 1}},
     "temporal": {
         "transaction-time": {"asOf": "latest"},
-        "valid-time": {"asOf": "latest"},
+        "valid-time": {"asOf": "2024-07-01T00:00:00.000000Z"},
     },
 }
 _PERSON_TARGET: dict[str, object] = {
@@ -210,10 +211,10 @@ def _standalone(db: ScopedDatabase, query: dict[str, object]) -> WireEntity:
 def test_authoring_an_occurrence_short_of_a_nested_many_emits_one_answer() -> None:
     # The stored document omits `phones`, which a `many` has no absent state for:
     # the read publishes `[]` there and storing this authored occurrence would too.
-    # Both authored values therefore state exactly the value the row holds, and the
-    # two lanes agree on the only answer that leaves state as it is — no DML, no
-    # milestone, no clock. A Wire author who omits the key spells the same zero the
-    # Typed author's unpopulated tuple does.
+    # Both authored values state the occurrence the row holds, and an assignment
+    # is literal, so the two lanes agree on writing it: one statement apiece, the
+    # same one. A Wire author who omits the key spells the same zero the Typed
+    # author's unpopulated tuple does.
     stored: MappingRow = {
         "id": 1,
         "name": "Ada",
@@ -230,7 +231,7 @@ def test_authoring_an_occurrence_short_of_a_nested_many_emits_one_answer() -> No
         "city": "C",
         "geo": {"country": "NO", "point": {"lat": 1.0, "lon": 2.0}},
     }
-    wire_port = ScriptedAdapter(Transact(Read(rows=[copy.deepcopy(stored)])))
+    wire_port = ScriptedAdapter(Transact(Read(rows=[copy.deepcopy(stored)]), Write()))
 
     def wire(tx: Transaction) -> None:
         node = tx.wire.find(_CONTACT_QUERY).result()
@@ -239,7 +240,7 @@ def test_authoring_an_occurrence_short_of_a_nested_many_emits_one_answer() -> No
 
     db_for(CONTACT, wire_port).transact(wire)
 
-    typed_port = ScriptedAdapter(Transact(Read(rows=[copy.deepcopy(stored)])))
+    typed_port = ScriptedAdapter(Transact(Read(rows=[copy.deepcopy(stored)]), Write()))
 
     def typed(tx: Transaction) -> None:
         node = tx.find(vo.Contact.where(vo.Contact.id == 1)).result()
@@ -255,8 +256,8 @@ def test_authoring_an_occurrence_short_of_a_nested_many_emits_one_answer() -> No
 
     db_for(CONTACT, typed_port).transact(typed)
 
-    assert _writes(wire_port) == []
-    assert _writes(typed_port) == []
+    (wire_write,) = _writes(wire_port)
+    assert _writes(typed_port) == [wire_write]
 
 
 def test_an_insert_answers_the_nested_many_its_own_buffered_row_stores() -> None:
@@ -333,16 +334,11 @@ def test_a_wire_terminate_closes_the_observed_milestone() -> None:
     assert sql.startswith("update balance set out_z")
 
 
-def test_a_wire_update_until_splits_the_observed_rectangle() -> None:
+def test_a_bounded_wire_update_splits_the_observed_rectangle() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def fn(tx: Transaction) -> None:
-        tx.wire.update_until(
-            _node(tx, _POSITION_QUERY),
-            {"value": "300.00"},
-            valid_from=_VALID_FROM,
-            until=_UNTIL,
-        )
+        tx.wire.update(_node(tx, _POSITION_QUERY), {"value": "300.00"}, until=_UNTIL)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -352,11 +348,11 @@ def test_a_wire_update_until_splits_the_observed_rectangle() -> None:
     assert kinds == ["update", "insert", "insert", "insert"]
 
 
-def test_a_wire_terminate_until_closes_and_reopens_the_flanks() -> None:
+def test_a_bounded_wire_terminate_closes_and_reopens_the_flanks() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=3)))
 
     def fn(tx: Transaction) -> None:
-        tx.wire.terminate_until(_node(tx, _POSITION_QUERY), valid_from=_VALID_FROM, until=_UNTIL)
+        tx.wire.terminate(_node(tx, _POSITION_QUERY), until=_UNTIL)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -366,11 +362,11 @@ def test_a_wire_terminate_until_closes_and_reopens_the_flanks() -> None:
     assert kinds == ["update", "insert", "insert"]
 
 
-def test_a_wire_insert_until_opens_one_bounded_rectangle() -> None:
+def test_a_bounded_wire_insert_opens_one_bounded_rectangle() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
-        tx.wire.insert_until(
+        tx.wire.insert(
             "parallax.compatibility.WherePosition",
             {"id": 2, "acctNum": "B", "value": "10.00"},
             valid_from=_VALID_FROM,
@@ -417,7 +413,7 @@ def test_a_wire_predicate_terminate_over_a_temporal_target_materializes() -> Non
 
 
 def test_the_bounded_predicate_verbs_reach_the_rectangle_split() -> None:
-    for verb, expected in (("update_until_where", 4), ("terminate_until_where", 3)):
+    for verb, expected in (("update_where", 4), ("terminate_where", 3)):
         port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=expected)))
         target: dict[str, object] = {
             "entity": "parallax.compatibility.WherePosition",
@@ -425,12 +421,12 @@ def test_the_bounded_predicate_verbs_reach_the_rectangle_split() -> None:
         }
 
         def fn(tx: Transaction, verb: str = verb, target: dict[str, object] = target) -> None:
-            if verb == "update_until_where":
-                tx.wire.update_until_where(
+            if verb == "update_where":
+                tx.wire.update_where(
                     target, {"value": "300.00"}, valid_from=_VALID_FROM, until=_UNTIL
                 )
             else:
-                tx.wire.terminate_until_where(target, valid_from=_VALID_FROM, until=_UNTIL)
+                tx.wire.terminate_where(target, valid_from=_VALID_FROM, until=_UNTIL)
 
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -561,37 +557,26 @@ def test_a_temporal_axis_member_is_not_assignable() -> None:
 
 
 def test_a_bounded_verb_states_its_window_as_a_pair() -> None:
-    # Half a window states nothing, and reading the absent bound as "unbounded"
-    # would buffer a rectangle the caller never asked for. Which bound is missing
-    # is asked of the VERB rather than of the other bound, because the instruction
-    # build is not always downstream: the restoring change set below buffers no
-    # instruction at all, so a window this seam waves through is a window nothing
-    # else ever judges.
+    # A stated `until` is a bound whatever its value: `None` is the half of a
+    # window that is missing, never a spelling of "unbounded", which would buffer
+    # a rectangle the caller never asked for. A target with no Valid Time takes
+    # no `until` at all. Both are judged at the verb, ahead of whether the change
+    # set expresses anything.
     account = ScriptedAdapter(Transact(_ACCOUNT_READ))
     position = ScriptedAdapter(Transact(Read(rows=[_position_row()])))
 
-    def absent_valid_from(tx: Transaction) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="valid_from is absent"):
-            tx.wire.update_until(
-                _node(tx, _ACCOUNT_QUERY),
-                {"balance": "125.00"},
-                valid_from=cast("dt.datetime", None),
-                until=_UNTIL,
-            )
+    def non_temporal(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="takes no until"):
+            tx.wire.update(_node(tx, _ACCOUNT_QUERY), {"balance": "125.00"}, until=_UNTIL)
 
     def absent_until(tx: Transaction) -> None:
         node = _node(tx, _POSITION_QUERY)
         with pytest.raises(instructions.WriteInstructionError, match="until is absent"):
-            tx.wire.update_until(
-                node,
-                {"value": node["value"]},
-                valid_from=_VALID_FROM,
-                until=cast("dt.datetime", None),
-            )
+            tx.wire.update(node, {}, until=cast("dt.datetime", None))
         with pytest.raises(instructions.WriteInstructionError, match="until is absent"):
-            tx.wire.terminate_until(node, valid_from=_VALID_FROM, until=cast("dt.datetime", None))
+            tx.wire.terminate(node, until=cast("dt.datetime", None))
 
-    db_for(ACCOUNT, account).transact(absent_valid_from)
+    db_for(ACCOUNT, account).transact(non_temporal)
     own_root(
         Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(absent_until)
@@ -611,16 +596,9 @@ def test_a_bound_carries_the_refusal_of_whichever_rule_it_broke() -> None:
     def fn(tx: Transaction) -> None:
         node = _node(tx, _POSITION_QUERY)
         with pytest.raises(InstantError, match="naive datetime"):
-            tx.wire.update(node, {"value": "300.00"}, valid_from=_NAIVE_INSTANT)
+            tx.wire.update(node, {"value": "300.00"}, until=_NAIVE_INSTANT)
         with pytest.raises(InstantError, match="no `timestamp`"):
-            tx.wire.update(node, {"value": "300.00"}, valid_from=cast("dt.datetime", "2024-07-01"))
-        with pytest.raises(InstantError, match="no `timestamp`"):
-            tx.wire.update_until(
-                node,
-                {"value": "300.00"},
-                valid_from=_VALID_FROM,
-                until=cast("dt.datetime", "2024-11-01"),
-            )
+            tx.wire.update(node, {"value": "300.00"}, until=cast("dt.datetime", "2024-11-01"))
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -664,11 +642,15 @@ def test_an_instant_no_canonical_spelling_writes_is_refused_at_every_ingress() -
 
 
 def test_a_non_temporal_target_takes_no_valid_from() -> None:
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="takes no valid_from"):
-            tx.wire.update(_node(tx, _ACCOUNT_QUERY), {"balance": "125.00"}, valid_from=_VALID_FROM)
+            tx.wire.insert(
+                "parallax.compatibility.Account",
+                {"id": 2, "owner": "Ada", "balance": "1.00"},
+                valid_from=_VALID_FROM,
+            )
 
     db_for(ACCOUNT, port).transact(fn)
 
@@ -712,13 +694,13 @@ def test_every_update_verb_requires_the_change_document_its_signature_states() -
         node = _node(tx, _POSITION_QUERY)
         none_changes = cast("dict[str, object]", None)
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
-            tx.wire.update(node, none_changes, valid_from=_VALID_FROM)
+            tx.wire.update(node, none_changes)
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
-            tx.wire.update_until(node, none_changes, valid_from=_VALID_FROM, until=_UNTIL)
+            tx.wire.update(node, none_changes, until=_UNTIL)
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
             tx.wire.update_where(_POSITION_TARGET, none_changes, valid_from=_VALID_FROM)
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
-            tx.wire.update_until_where(
+            tx.wire.update_where(
                 _POSITION_TARGET, none_changes, valid_from=_VALID_FROM, until=_UNTIL
             )
 
@@ -1133,14 +1115,14 @@ def test_a_wire_source_whose_evidence_a_flush_spent_is_refused() -> None:
     db_for(ACCOUNT, port).transact(fn)
 
 
-def test_two_wire_intents_over_different_regions_are_refused_synchronously() -> None:
+def test_a_wire_termination_over_another_window_of_one_state_is_refused_synchronously() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _POSITION_QUERY)
-        tx.wire.update_until(node, {"value": "300.00"}, valid_from=_VALID_FROM, until=_UNTIL)
+        tx.wire.update(node, {"value": "300.00"}, until=_UNTIL)
         with pytest.raises(WriteEvidenceError) as exc_info:
-            tx.wire.update_until(node, {"value": "400.00"}, valid_from=_OTHER_FROM, until=_UNTIL)
+            tx.wire.terminate(node, until=_OTHER_UNTIL)
         assert exc_info.value.code == "write-evidence-already-claimed"
 
     own_root(
@@ -1176,19 +1158,32 @@ def test_two_wire_assignments_of_one_state_merge_with_the_later_value_winning() 
     assert _writes(port)[0].binds[:2] == ("Grace", Decimal("150.00"))
 
 
-def test_a_wire_assignment_equal_to_what_the_read_published_is_a_no_op() -> None:
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
+def test_a_wire_assignment_equal_to_what_the_read_published_is_still_written() -> None:
+    # Every key the change document names is assigned: equality with the
+    # published value cancels nothing, and the version advances as for any
+    # versioned update.
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
         tx.wire.update(node, {"balance": node["balance"], "owner": node["owner"]})
 
     db_for(ACCOUNT, port).transact(fn)
+    assert [write.binds for write in _writes(port)] == [("Ada", Decimal("100.00"), 5, 1, 4)]
+
+
+def test_an_empty_wire_change_document_emits_nothing() -> None:
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
+
+    def fn(tx: Transaction) -> None:
+        tx.wire.update(_node(tx, _ACCOUNT_QUERY), {})
+
+    db_for(ACCOUNT, port).transact(fn)
     assert _writes(port) == []
 
 
-def test_a_wire_restore_chain_across_two_verbs_emits_nothing() -> None:
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
+def test_a_wire_net_equal_chain_across_two_verbs_writes_its_last_value() -> None:
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
@@ -1196,14 +1191,14 @@ def test_a_wire_restore_chain_across_two_verbs_emits_nothing() -> None:
         tx.wire.update(node, {"balance": "100.00"})
 
     db_for(ACCOUNT, port).transact(fn)
-    assert _writes(port) == []
+    assert [write.binds for write in _writes(port)] == [(Decimal("100.00"), 5, 1, 4)]
 
 
-def test_a_typed_assignment_a_wire_verb_restores_emits_nothing() -> None:
+def test_a_typed_assignment_a_wire_verb_restates_writes_the_wire_value() -> None:
     # Both sources are taken BEFORE either write, because a participating read
     # force-flushes: read-your-own-writes is what a mixed chain has to work
     # inside, not around.
-    port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2), Write()))
 
     def fn(tx: Transaction) -> None:
         typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -1212,11 +1207,11 @@ def test_a_typed_assignment_a_wire_verb_restores_emits_nothing() -> None:
         tx.wire.update(node, {"balance": "100.00"})
 
     db_for(ACCOUNT, port).transact(fn)
-    assert _writes(port) == []
+    assert [write.binds for write in _writes(port)] == [(Decimal("100.00"), 5, 1, 4)]
 
 
-def test_a_wire_assignment_a_typed_verb_restores_emits_nothing() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2)))
+def test_a_wire_assignment_a_typed_verb_restates_writes_the_typed_value() -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2), Write()))
 
     def fn(tx: Transaction) -> None:
         typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -1225,7 +1220,7 @@ def test_a_wire_assignment_a_typed_verb_restores_emits_nothing() -> None:
         tx.update(typed.edit(balance=Decimal("125.00")).edit(balance=Decimal("100.00")))
 
     db_for(ACCOUNT, port).transact(fn)
-    assert _writes(port) == []
+    assert [write.binds for write in _writes(port)] == [(Decimal("100.00"), 5, 1, 4)]
 
 
 def test_a_typed_and_a_wire_assignment_of_one_object_merge_in_authored_order() -> None:

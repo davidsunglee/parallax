@@ -109,21 +109,6 @@ so CANCEL a buffered insert of the same object still pending in the same flush
 frontend gate that has to agree with it must answer "is this destructive?" from
 one definition."""
 
-MILESTONE_MUTATIONS: Final[frozenset[str]] = frozenset(
-    {"insertUntil", "terminate", "terminateUntil", "updateUntil"}
-)
-"""The mutations that OPEN, SPLIT, or CLOSE a milestone rather than writing a row
-outright, keyed and predicate-selected alike. Membership answers ONE direction of
-target/mutation applicability: a target that derives no As-Of Axis admits no
-member of this set, because it has no axis to hold the milestone
-(`m-txtime-write` / `m-bitemp-write`).
-
-Non-membership grants nothing in the other direction. The complement — `insert`,
-`update`, `delete` — is not a triad every target admits: a temporal target spells
-its removal `terminate` and rejects `delete` (`m-unit-work`), and `insert` is
-not on the predicate-selected surface at all. What a TEMPORAL target admits is
-a question this set does not answer."""
-
 _KEYED_MUTATIONS: Final[frozenset[str]] = INSERT_MUTATIONS | frozenset(
     {"update", "delete", "terminate", "updateUntil", "terminateUntil"}
 )
@@ -609,36 +594,12 @@ def _wire_bound(value: dt.datetime) -> object:
     return encode_wire(TIMESTAMP, cast("dt.datetime", coerce_neutral_input(value, TIMESTAMP)))
 
 
-_KEYED_SPELLING: Final[dict[str, str]] = {
-    "insert": "insert",
-    "insertUntil": "insert_until",
-    "update": "update",
-    "updateUntil": "update_until",
-    "delete": "delete",
-    "terminate": "terminate",
-    "terminateUntil": "terminate_until",
-}
-
-_MILESTONE_MEANING: Final[dict[str, tuple[str, str]]] = {
-    "insertUntil": ("records a row over a time range", "insert"),
-    "updateUntil": ("records a change over a time range", "update"),
-    "terminate": ("closes a row's history instead of removing it", "delete"),
-    "terminateUntil": ("closes a row's history instead of removing it", "delete"),
-}
-
-
 def _spelled(mutation: str, surface: _WriteSurface) -> str:
     """``mutation``'s METHOD name on ``surface``, which is the only spelling a
-    caller can act on.
-
-    Deliberately not the wire mutation token these refusals otherwise render:
-    a caller who wrote ``terminate_until`` never typed ``terminateUntil``, and a
-    message that renames their call to a token no method carries costs them the
-    step of translating it back. Scoped to the two applicability refusals below;
-    every other message in this module still names the token it was given.
-    """
-    keyed = _KEYED_SPELLING[mutation]
-    return keyed if surface == "keyed" else f"{keyed}_where"
+    caller can act on. Scoped to the two applicability refusals below, whose
+    verbs state no window; every other message in this module still names the
+    token it was given."""
+    return mutation if surface == "keyed" else f"{mutation}_where"
 
 
 def _temporal_delete_refusal(
@@ -667,23 +628,18 @@ def _non_temporal_milestone_refusal(
     """Why a NON-TEMPORAL target refuses ``mutation``'s VERB, or ``None`` when
     this rule has nothing to say about it.
 
-    A milestone verb names a milestone to open, split, or close, and a
-    non-temporal target has no axis to hold one. Settling one anyway would keep
-    the verb's row effect and silently drop its temporal meaning — a bounded
-    ``updateUntil`` becoming an ordinary overwrite of the row it addressed.
-
-    The alternative each milestone verb names is the one that keeps the caller's
-    row effect on a target with no axis, which is why it is per-verb: a bounded
-    ``insert_until`` wanted an ``insert``, not the ``delete`` a ``terminate``
-    wanted (`m-txtime-write` / `m-bitemp-write`).
+    ``terminate`` closes a milestone, and a non-temporal target has no axis to
+    hold one; settling it anyway would keep its row effect and silently drop its
+    temporal meaning, so the refusal names ``delete``, which keeps the row
+    effect (`m-txtime-write` / `m-bitemp-write`). Every bounded milestone verb
+    states an ``until``, which the window judgment has already refused.
     """
-    if mutation not in MILESTONE_MUTATIONS:
+    if mutation != "terminate":
         return None
-    meaning, alternative = _MILESTONE_MEANING[mutation]
     return (
         f"Non-temporal objects like {entity_name!r} do not support "
-        f"{_spelled(mutation, surface)!r}, which {meaning}. "
-        f"Use {_spelled(alternative, surface)!r} instead."
+        f"{_spelled(mutation, surface)!r}, which closes a row's history instead of "
+        f"removing it. Use {_spelled('delete', surface)!r} instead."
     )
 
 
@@ -834,23 +790,32 @@ def _judge_window(
 ) -> PreparedTemporalBounds:
     """One write's Valid-Time window, judged once per call.
 
-    Three questions in a fixed order, because each presupposes the one before
-    it. Is the window stated as the verb's form requires — a ``*Until`` window
-    is a PAIR, and no other form carries ``until``? Does the target's Temporal
-    Shape admit ``valid_from`` — a Bitemporal target requires it, every other
-    takes none? Is each bound an instant, and is the window ordered?
+    Four questions in a fixed order, because each presupposes the one before
+    it. Does the target's Temporal Shape admit a bounded form at all — only a
+    Bitemporal target has a Valid-Time window to bound? Is the window stated as
+    the verb's form requires — a ``*Until`` window is a PAIR, and no other form
+    carries ``until``? Does the target's Temporal Shape admit ``valid_from`` — a
+    Bitemporal target requires it, every other takes none? Is each bound an
+    instant, and is the window ordered?
 
-    A half-stated window, an inadmissible bound, and an unordered one are this
-    write's own verdict on its input (:class:`WriteInstructionError`); a bound
-    that is no instant keeps `m-core`'s :class:`~parallax.core.base.InstantError`.
-    Refusals name the family by its root.
+    A bounded form on a target without Valid Time, a half-stated window, an
+    inadmissible bound, and an unordered one are this write's own verdict on its
+    input (:class:`WriteInstructionError`); a bound that is no instant keeps
+    `m-core`'s :class:`~parallax.core.base.InstantError`. Refusals name the
+    family by its root.
     """
     if mutation in BOUNDED_MUTATIONS:
+        if not isinstance(shape, temporal_read.Bitemporal):
+            raise WriteInstructionError(
+                f"{root.name}: {_profile(shape)} {mutation!r} takes no until "
+                f"({root.name!r} declares no Valid-Time dimension to bound)"
+            )
         missing = "valid_from" if valid_from is None else "until" if until is None else None
         if missing is not None:
             raise WriteInstructionError(
                 f"{root.name}: a bounded {mutation!r} states its window as a pair, "
-                f"and {missing} is absent"
+                f"and {missing} is absent — an unbounded write omits until rather than "
+                "stating none"
             )
     elif until is not None:
         raise WriteInstructionError(
@@ -865,13 +830,8 @@ def _judge_window(
             )
         managed_from = normalize_instant(_stated_instant(root, mutation, "valid_from", valid_from))
     elif valid_from is not None:
-        profile = (
-            "a Transaction-Time-Only"
-            if isinstance(shape, temporal_read.TransactionTimeOnly)
-            else "a non-temporal"
-        )
         raise WriteInstructionError(
-            f"{root.name}: {profile} {mutation!r} takes no valid_from "
+            f"{root.name}: {_profile(shape)} {mutation!r} takes no valid_from "
             f"({root.name!r} declares no Valid-Time dimension to bound)"
         )
     else:
@@ -888,6 +848,14 @@ def _judge_window(
             f"— got valid_from={valid_from!r}, until={until!r}"
         )
     return PreparedTemporalBounds(managed_from, managed_until)
+
+
+def _profile(shape: temporal_read.TemporalShape | None) -> str:
+    return (
+        "a Transaction-Time-Only"
+        if isinstance(shape, temporal_read.TransactionTimeOnly)
+        else "a non-temporal"
+    )
 
 
 def _stated_instant(root: EntityIdentity, mutation: str, bound: str, value: object) -> dt.datetime:

@@ -131,13 +131,14 @@ def _write(
     valid_from = _valid_from(entity, _CORRECTED_FROM)
 
     def write(tx: Transaction) -> None:
-        latest: Pin | None = "latest" if entity is Position else None
+        # A keyed write starts where its source was read.
+        pinned: Pin | None = _CORRECTED_FROM if entity is Position else None
         if writer == "keyed" and representation == "typed":
-            found = tx.find(_typed_query(entity, latest, "latest")).result()
-            tx.update(found.edit(amount=_NEW), valid_from=valid_from)
+            found = tx.find(_typed_query(entity, pinned, "latest")).result()
+            tx.update(found.edit(amount=_NEW))
         elif writer == "keyed":
-            node = tx.wire.find(_wire_query(entity, latest, "latest")).result()
-            tx.wire.update(node, {"amount": _NEW}, valid_from=valid_from)
+            node = tx.wire.find(_wire_query(entity, pinned, "latest")).result()
+            tx.wire.update(node, {"amount": _NEW})
         elif representation == "typed":
             tx.update_where(
                 entity.where(entity.id == 1), entity.amount.set(_NEW), valid_from=valid_from

@@ -285,3 +285,24 @@ is buffered, so a group and its claims are published together or not at all.
 Everything else about the group is unchanged: it is private, indivisible, never
 empty, never observation-free, and holds no per-row Predecessor Row or keyed-write
 object.
+
+## Amendment (2026-10): keyed assignments are literal and compose at admission
+
+The coalescing amendment above eliminates a keyed write whose winning
+assignments equal its source's originals (the 100 → 125 → 100 example), refuses
+temporal intents with different bounds, and has `buffered_write` carry the
+producer's effective change set.
+
+**Superseding decision:** a keyed write's assignments are literal sets — a Typed
+edit's cumulative touched members, a Wire change document's keys — so the
+example above writes 100 and consumes its observation; only an update assigning
+no member is empty. `buffered_write` carries no change set. Composition moves to
+admission: Unit Work's pending writes compose each arriving write as it is
+buffered, and the planner no longer coalesces. A temporal object's observed
+writes compose by object across observed states and Valid-Time windows into one
+ordered set of disjoint assignment segments that keeps every admitted source
+condition; destructive intents keep the refusals `m-unit-work` states. A
+composition whose range reaches coverage no observation holds finalizes as a
+deferred range unit, which the executor binds to the coverage it reads inside the
+flush. Result-dependent no-op filtering of a predicate-selected mutation is
+unchanged.

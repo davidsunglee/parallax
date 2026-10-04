@@ -263,19 +263,14 @@ class TypedKeyedWriteSource:
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
     ) -> PreparedSourceWrite:
-        """The instruction this value authors, beside its own originals.
+        """The instruction this value authors: its identity plus every member
+        its edit chain touched, at the value each now holds.
 
-        Both sides cross the SAME coercion and only the authored side is judged:
-        an update family verb measures the Change Record's two halves — every
-        touched member at the value it now holds, and those same members at the
-        value the chain first recorded — so the ingress weighs effectiveness over
-        like carriers rather than over a serialized document on one side. What the
-        chain first recorded is state this write revises rather than anything its
-        caller stated in the call, so preparation's judgement is asked of the
-        authored half alone and a correction of a member current authoring would
-        refuse still reaches the ingress. A destructive or close verb names no
-        member at all and authors its identity row alone, and so does an update
-        off a value whose chain touched nothing.
+        The touched set is cumulative across the chain and literal: a member set
+        back to the value the source published is still assigned, because the
+        caller expressed it. A destructive or close verb names no member at all
+        and authors its identity row alone, and so does an update off a value
+        whose chain touched nothing — the empty set the ingress drops.
 
         The object a refusal reports comes from the source's own hint where there
         is one, and is derived from the authored row where there is not — the two
@@ -285,20 +280,14 @@ class TypedKeyedWriteSource:
         meta, mutation = self._retained()
         authored = self._codec.authored_row(self._value) if mutation in UPDATE_MUTATIONS else None
         if authored is None:
-            instruction = prepared_typed_write(
-                meta,
-                mutation,
-                resolved.entity,
-                self._codec.identity_row(self._value),
-                valid_from=valid_from,
-                until=until,
-            )
-            originals: Mapping[str, object] = {}
+            row: Mapping[str, object] = self._codec.identity_row(self._value)
+            assigned: frozenset[str] = frozenset()
         else:
-            instruction = prepared_typed_write(
-                meta, mutation, resolved.entity, authored.row, valid_from=valid_from, until=until
-            )
-            originals = instructions.coerce_typed_row(authored.originals, meta, resolved.entity)
+            row = authored.row
+            assigned = frozenset(authored.originals)
+        instruction = prepared_typed_write(
+            meta, mutation, resolved.entity, row, valid_from=valid_from, until=until
+        )
         return PreparedSourceWrite(
             instruction=instruction,
             object_key=(
@@ -306,7 +295,7 @@ class TypedKeyedWriteSource:
                 if resolved.hint is not None
                 else written_object_key(resolved.entity, meta, instruction.rows[0])
             ),
-            originals=originals,
+            assigned=assigned,
         )
 
     def _retained(self) -> tuple[Metamodel, KeyedMutation]:

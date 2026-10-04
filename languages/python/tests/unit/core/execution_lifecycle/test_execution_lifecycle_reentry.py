@@ -302,42 +302,22 @@ def _transaction_entry_points(tx: Transaction) -> dict[str, _Work]:
         "wire.find": lambda: tx.wire.find(UNUSED),
         "wire.stream": lambda: tx.wire.stream(UNUSED),
         "read_rows": lambda: tx.read_rows(UNUSED),
-        "insert": lambda: tx.insert(UNUSED),
-        "insert_until": lambda: tx.insert_until(UNUSED, valid_from=FIXED, until=FIXED),
-        "update": lambda: tx.update(UNUSED),
+        "insert": lambda: tx.insert(UNUSED, valid_from=FIXED, until=FIXED),
+        "update": lambda: tx.update(UNUSED, until=FIXED),
         "delete": lambda: tx.delete(UNUSED),
-        "terminate": lambda: tx.terminate(UNUSED),
-        "update_until": lambda: tx.update_until(UNUSED, valid_from=FIXED, until=FIXED),
-        "terminate_until": lambda: tx.terminate_until(UNUSED, valid_from=FIXED, until=FIXED),
-        "update_where": lambda: tx.update_where(UNUSED, UNUSED),
+        "terminate": lambda: tx.terminate(UNUSED, until=FIXED),
+        "update_where": lambda: tx.update_where(UNUSED, UNUSED, valid_from=FIXED, until=FIXED),
         "delete_where": lambda: tx.delete_where(UNUSED),
-        "terminate_where": lambda: tx.terminate_where(UNUSED),
-        "update_until_where": lambda: tx.update_until_where(
-            UNUSED, UNUSED, valid_from=FIXED, until=FIXED
-        ),
-        "terminate_until_where": lambda: tx.terminate_until_where(
-            UNUSED, valid_from=FIXED, until=FIXED
-        ),
-        "wire.insert": lambda: tx.wire.insert(UNUSED, UNUSED),
-        "wire.insert_until": lambda: tx.wire.insert_until(
-            UNUSED, UNUSED, valid_from=FIXED, until=FIXED
-        ),
-        "wire.update": lambda: tx.wire.update(UNUSED, UNUSED),
+        "terminate_where": lambda: tx.terminate_where(UNUSED, valid_from=FIXED, until=FIXED),
+        "wire.insert": lambda: tx.wire.insert(UNUSED, UNUSED, valid_from=FIXED, until=FIXED),
+        "wire.update": lambda: tx.wire.update(UNUSED, UNUSED, until=FIXED),
         "wire.delete": lambda: tx.wire.delete(UNUSED),
-        "wire.terminate": lambda: tx.wire.terminate(UNUSED),
-        "wire.update_until": lambda: tx.wire.update_until(
+        "wire.terminate": lambda: tx.wire.terminate(UNUSED, until=FIXED),
+        "wire.update_where": lambda: tx.wire.update_where(
             UNUSED, UNUSED, valid_from=FIXED, until=FIXED
         ),
-        "wire.terminate_until": lambda: tx.wire.terminate_until(
-            UNUSED, valid_from=FIXED, until=FIXED
-        ),
-        "wire.update_where": lambda: tx.wire.update_where(UNUSED, UNUSED),
         "wire.delete_where": lambda: tx.wire.delete_where(UNUSED),
-        "wire.terminate_where": lambda: tx.wire.terminate_where(UNUSED),
-        "wire.update_until_where": lambda: tx.wire.update_until_where(
-            UNUSED, UNUSED, valid_from=FIXED, until=FIXED
-        ),
-        "wire.terminate_until_where": lambda: tx.wire.terminate_until_where(
+        "wire.terminate_where": lambda: tx.wire.terminate_where(
             UNUSED, valid_from=FIXED, until=FIXED
         ),
     }

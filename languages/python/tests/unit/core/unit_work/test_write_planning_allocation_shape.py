@@ -62,7 +62,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.predicate import Comparison
 from parallax.core.unit_work import (
-    BufferItem,
     KeyedWrite,
     MaterializedWriteGroup,
     PlanningRequest,
@@ -74,6 +73,7 @@ from parallax.core.unit_work import (
     object_key,
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
+from parallax.core.unit_work.write_settlement import OrderedWrite
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
@@ -248,7 +248,7 @@ def _version_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
     return MaterializedWriteGroup(mutation=prepared, evidence=sealed)
 
 
-def _prepared_writes(model: Metamodel, count: int) -> Sequence[BufferItem]:
+def _prepared_writes(model: Metamodel, count: int) -> Sequence[OrderedWrite]:
     return observed_buffer(
         [KeyedWrite("update", "Entity0", ({"id": row + 1, "value": row},)) for row in range(count)],
         model,

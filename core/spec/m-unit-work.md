@@ -347,8 +347,8 @@ read produced is, and no other unit of work's buffer lifts anything.
 Three consequences are normative:
 
 - A value this verb's own source produced that no author has changed is **not** a
-  refusal for an `update` verb. It buffers nothing, issues no statement, and raises nothing —
-  the same outcome as an edit whose net change is empty. Requiring an author to
+  refusal for an `update` verb. It assigns nothing, so it buffers nothing, issues
+  no statement, and raises nothing. Requiring an author to
   test each value before writing it would defeat the change tracking the framework
   performs on the author's behalf.
 - Every refusal is decided from provenance **before** the row is derived, so a
@@ -390,12 +390,16 @@ below). Planning reads it to decide what a temporal mutation does to its
 predecessor; it never changes it.
 
 A **Write Planning Result** carries the execution-ordered Write Plan, whose
-execution units name the retained claims its **surviving** writes settled
-against. Work the earlier stages retired — folded into a pending insert,
-cancelled against one, or eliminated as a known no-op — contributes no claim,
-so what the units name is exactly what successful execution spends. Spending is
-idempotent, because consumption records a fact about one observed state rather
-than about one statement; a claim several units name is spent once.
+execution units name the source authority of **every** write admitted against
+existing state — a write coalesced into another, superseded, or overwritten by a
+later composed assignment included (*Observed-State Coalescing*). A write keeps
+its source condition whatever happens to its values, so a unit whose surviving
+assignment came from one source still spends every source composed into it,
+even when it emits no statement. Work that stated nothing against existing
+state — folded into a pending insert, cancelled against one, or an update
+assigning no member — contributes no claim. Spending is idempotent, because
+consumption records a fact about one source rather than about one statement; a
+claim several units name is spent once.
 
 No second planning operation exists to project the plan.
 
@@ -438,7 +442,8 @@ The Write Planner privately owns this stage order:
 4. dependency-order private units within barrier regions
 5. validate the observation each surviving write carries
 6. resolve the Transaction Instant only if surviving work needs it
-7. expand temporal topology in place
+7. expand temporal topology in place, or finalize a requested range whose
+   coverage no planning input holds
 8. decorate provenance
 9. freeze the Planned Steps
 ```
@@ -513,6 +518,21 @@ semantics already decided.
 - An **empty** Planned Steps sequence is the one canonical result for complete
   cancellation or known no-op elimination. There is no empty-plan sentinel and no
   second result variant.
+- A **deferred range unit** is the one exception to fully expanded topology. A
+  temporal object's observed writes whose requested Valid-Time range reaches
+  current coverage no planning input observed (`m-bitemp-write` *Observed writes
+  span their requested extent*) finalize to their meaning — the composed
+  assignments over that range, the source conditions, and which rows the
+  attempt owns — together with the one coverage read that range needs. Such a
+  unit carries no planned step. When the executor reaches it, it reads the
+  object's current rows over the range not already covered, inside the write
+  batch and under `m-read-lock`'s shared lock when the effective strategy is
+  Locking, and binds those rows with the observed ones into the unit's physical
+  steps before running them. Binding is pure over the finalized meaning and the
+  rows read: it consults no clock, strategy, or model, so the plan's meaning is
+  fixed when planning returns and only its physical enumeration waits for the
+  rows. A range whose observed rows already cover it settles at planning like
+  any other write.
 - Planned Steps is a **logical** sequence. An implementation MAY pack homogeneous
   runs and expose stable immutable views during iteration rather than allocating
   one container per step; every exposed view is immutable and stable, and equal
@@ -538,14 +558,19 @@ enforced, before any step of a later unit runs. The unit of work then completes
 the unit synchronously:
 
 ```text
-spend the evidence the unit's surviving writes settled against
+spend the source authority of every write the unit composed
 invalidate evidence of every Observed State the unit changed
 retire the attempt-owned rows the unit removed
 register the rows the unit opened
 ```
 
-Removals are retired before openings are registered, so a row removed and
-reopened at one physical address remains owned. Nothing is published for a
+A deferred range unit's changed states, removals, and openings are those its
+binding produced. A source that carries no observation — an unversioned
+Non-Temporal read's — has no state for a unit to name; its authority is spent
+on the source itself once the flush that held its write succeeds, and every
+value derived from that source shares it. Removals are retired before openings
+are registered, so a row removed and reopened at one physical address remains
+owned. Nothing is published for a
 unit whose steps did not all succeed; such a failure dooms the attempt
 (*Abort*). Completion therefore happens per unit, not at the end of the flush:
 a later unit, and any read the flush serves, observes the earlier units'
@@ -795,11 +820,16 @@ Three rules follow, and an implementation **MUST** exhibit all three:
   upgrades or overwrites the evidence an older live value carries. Two reads that
   resolve to **one** observed state within a transaction share **one** retained
   observation, exactly as two graph positions reaching one node do.
-- **A successful execution unit consumes.** Every observation a surviving write
-  used is spent when that write's execution unit completes, and a value still
-  tied to a spent observation cannot drive another write — the caller must read
-  again. Work eliminated before any DML consumes nothing, and a failed flush
-  dooms the attempt, so nothing needs restoring.
+- **A successful execution unit consumes.** Every observation an admitted
+  write used is spent when the execution unit it composed into completes —
+  whether or not its own values survived, and whether or not the unit emitted a
+  statement — and a value still tied to a spent observation cannot drive
+  another write; the caller must read again. An update assigning no member
+  consumes nothing, and a failed flush dooms the attempt, so nothing needs
+  restoring. A source with no observation is spent the same way, on the
+  source's own provenance shared by every value derived from it, once the flush
+  holding its write succeeds; spending it consumes neither the transaction's
+  participation nor any other source.
 - **An own change invalidates.** When an execution unit successfully revises,
   closes, or removes an observed state, every observation of that state the
   attempt's reads produced becomes ineligible for further writes, even one no
@@ -831,7 +861,7 @@ observation field for anything to be absent from. Absence is therefore the
 absence of the pairing rather than a field carrying it, which is what lets
 planning read a write's address, gate, and carried state off one object. What an
 unobserved write MAY still travel with is what *Observed-State Coalescing* below
-gives it: the claim scope it takes, and the members its author restored. Neither
+gives it: the claim scope it takes, and the source authority it spends. Neither
 is an observation, and neither survives the stage that reads it.
 
 A **Predecessor Row** is the complete, immutable persisted state a Temporal
@@ -894,22 +924,28 @@ mutation did not name — rides forward exactly as stored.
 
 ### Comparing an assigned member with its persisted value
 
-Wherever this module compares an assigned member with the value a read observed —
-the write-input comparison of a Materialized Write Group below, the no-op
-elimination that precedes planning, and the keyed successor classification
-described below — the comparison is `m-document-codec`'s one
-effective-change classification, over the members the write explicitly assigns
-and, under those same names, the values the read observed, and it answers
-identically under either Storage Layout. What this module states is which members
-it hands that operation and what it does with the answer; the rule it applies —
-scalar, whole occurrence, and undeclared key alike — is the codec's and is not
-restated here.
+A **keyed** write's assignments are **literal**. The members its author
+expressed — a Typed edit's cumulative touched members, a Wire change document's
+keys — are assigned whatever the source published for them, so an assignment
+equal to the stored value is still written: it advances a version, and for a
+temporal entity it closes and chains like any other assignment. A keyed
+temporal write's changed successor overlays every member the write assigns and
+carries every other member's persisted state. Only an update expressing **no**
+member is empty; it buffers nothing and claims nothing.
 
-An assigned member the classification answers as **restored** contributes nothing
-to the write, and a write every assigned member of which a classification made
-before Write Settlement answers as restored is **eliminated**: it issues no DML,
-advances no version, consults no clock, and for a temporal entity performs no
-close and chains no row. That holds however the codec reached the answer.
+A predicate-selected write compares instead. The write-input comparison of a
+Materialized Write Group below, and the no-op elimination it performs before
+planning, use `m-document-codec`'s one effective-change classification, over the
+members the write explicitly assigns and, under those same names, the values the
+resolving read observed, and it answers identically under either Storage
+Layout. What this module states is which members it hands that operation and
+what it does with the answer; the rule it applies — scalar, whole occurrence,
+and undeclared key alike — is the codec's and is not restated here.
+
+A resolved row every assigned member of which the classification answers as
+**restored** is **eliminated**: it issues no DML, advances no version, consults
+no clock, and for a temporal entity performs no close and chains no row. That
+holds however the codec reached the answer.
 
 The same holds member by member inside a Materialized Write Group row that
 survives because another of its assigned members is effective. Planning decides
@@ -919,17 +955,10 @@ nothing to the row's changed successor: the successor carries the member's
 persisted state, so a stored subtree the assignment would have replaced — keys no
 member declares included — rides forward.
 
-A keyed temporal write's changed successor follows the same member rule, and its
-assigned members are classified once. The keyed verb classifies them against the
-values its source observed — the originals the published value or its Change
-Record states — and buffers that answer with the write, so planning overlays the
-members it answers as effective without comparing them again, and every member
-the successor does not effectively change carries its persisted state.
-
 Elimination is deliberately the conservative direction wherever that answer makes
-equal two documents a store spells differently: eliminating the write leaves the
-stored spelling standing where issuing it would have replaced the assigned
-subtree whole. A write the codec finds nothing changed in is not the place to
+equal two documents a store spells differently: eliminating the row leaves the
+stored spelling standing where writing it would have replaced the assigned
+subtree whole. A row the codec finds nothing changed in is not the place to
 destroy stored state no assignment can name.
 
 ### Write Gate and the concurrency decision
@@ -1113,16 +1142,36 @@ with what the flush would have done:
 | assignment | destruction, same region | **supersede** — the destruction replaces the assignments buffered before it, so an update then a delete at one scope is one delete |
 | destruction | destruction, same region | **deduplicate** — the second says what the first said and adds nothing |
 | destruction | assignment | **incompatible** — no write means to resurrect a row that is going away |
-| any | any, different region | **incompatible** — interval composition is semantics this framework does not invent |
+| any | any, different region | **incompatible** for a non-temporal write; a temporal object's observed writes compose instead (below) |
 | a Materialized Write Group's selection | any | **incompatible** — the group is one compact indivisible unit, so a keyed intent has nothing to join |
 
-Effective-change elimination runs **after** the merge, so what is weighed is the
-caller's last word on each member rather than each verb's own. A member an author
-touched and then restored to the value its source observed is not written, and it
-cancels an assignment to that member buffered earlier at the same scope — which is
-what makes a chain from a value to another and back emit no DML across several
-verbs, exactly as it does within one. A write left with nothing but its key is
-eliminated, consumes no observation, and issues no statement.
+Merged assignments are literal: the merge keeps the caller's last word on each
+member, and a member set back to the value its source observed is still
+assigned. A superseded or coalesced write's source condition is kept by the
+survivor, which claims the same scope.
+
+**A temporal object's observed writes compose by object.** Writes of one temporal
+object through observed sources — whichever states they observed and whatever
+Valid-Time windows they request — form one pending composition at the position
+of the first, judged against every write of the object still pending:
+
+- an **assignment** composes in authored order: where requested windows
+  overlap, the later assignment's value wins member by member, and outside the
+  overlap each keeps its own; an assignment after a destruction at the same
+  scope or over an overlapping window is **incompatible**;
+- a **destruction** composes only with writes it neither overlaps nor shares a
+  scope with, or with writes of exactly its own window, which it supersedes or
+  repeats; any other pairing is **incompatible**.
+
+Composition keeps every admitted write's source condition and requested window,
+whether or not any of its values survive, and finalizes the surviving
+assignments into one ordered set of disjoint Valid-Time segments, each stating
+the members assigned over it. That composition is the write's whole meaning:
+binding it to coverage substitutes each current row's own unassigned values and
+never revives a value a later write overwrote. Two writes of one observed state
+over one window are an ordinary pair of the table above. Stale and current
+observations of one object compose without a refusal of their own; their
+conditions are validated when the composition executes (`m-opt-lock`).
 
 An incompatible intent is refused **synchronously at the verb**, before buffering
 and before any database access, and the refusal is a write-evidence failure naming

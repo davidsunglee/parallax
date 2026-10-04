@@ -23,8 +23,9 @@ from parallax.snapshot.handle._keyed_writes import (
     KeyedWriteContext,
     keyed_insert,
     keyed_write,
+    window_mutation,
 )
-from parallax.snapshot.handle._options import DatabaseOptions
+from parallax.snapshot.handle._options import OMITTED, DatabaseOptions, Omitted
 from parallax.snapshot.handle._predicate_writes import PredicateWriteContext
 from parallax.snapshot.handle._publication import SelectedReadModel, SelectedWriteModel
 from parallax.snapshot.handle._read import RowsResult, Snapshot
@@ -52,13 +53,12 @@ class Transaction:
     target Entity calls for, otherwise identical to
     :meth:`ScopedDatabase.find`. The predicate-selected
     ``_where`` verb family —
-    :meth:`update_where`, :meth:`delete_where`, :meth:`terminate_where`,
-    :meth:`update_until_where`, :meth:`terminate_until_where` — mirrors the
-    keyed surface over a mutation-compatible Object Query: readless for an
-    unversioned,
-    non-temporal target, materializing to per-row keyed writes otherwise
-    (:mod:`parallax.snapshot.handle._predicate_writes`, ADR 0014, which those
-    five verbs reach through the Typed predicate ingress). A reference used after
+    :meth:`update_where`, :meth:`delete_where`, :meth:`terminate_where` — mirrors
+    the keyed surface over a mutation-compatible Object Query: readless for an
+    unversioned, non-temporal target, materializing to per-row keyed writes
+    otherwise (:mod:`parallax.snapshot.handle._predicate_writes`, ADR 0014, which
+    those verbs reach through the Typed predicate ingress). Every windowed verb
+    selects its bounded form with keyword-only ``until``. A reference used after
     its owning scope ends raises
     :class:`~parallax.core.unit_work.EscapedTransactionError` (every verb
     delegates to the unit of work, which fences use-after-scope).
@@ -159,8 +159,14 @@ class Transaction:
         """
         return self._options
 
-    def insert(self, instance: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
-        """Buffer a keyed ``insert`` of a full instance (the Create Payload,
+    def insert(
+        self,
+        instance: EntityBase,
+        *,
+        valid_from: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
+    ) -> None:
+        """Buffer a keyed insert of a full instance (the Create Payload,
         the Python binding): every member the instance actually SET. A framework-owned
         member is never among them: the interval bounds (``in_z``/``out_z``,
         bitemporal ``from_z``/``thru_z``) are stamped at flush from the Clock
@@ -174,80 +180,49 @@ class Transaction:
         ``write-value-already-stored``) rather than left for the database to
         refuse at commit, and the update verbs are what revise the row it opens.
 
-        ``valid_from`` is the plain Bitemporal insert's Valid-Time instant — the
-        open rectangle's lower bound ``[valid_from, infinity)`` (`m-bitemp-write` "insert /
-        insertUntil — a single open rectangle, no close"); mirrors ``update``'s
-        own Bitemporal-only requirement: a
-        Transaction-Time-Only or non-temporal target takes none (no Valid-Time dimension to
-        bound)."""
+        ``valid_from`` is a Bitemporal insert's Valid-Time start; a
+        Transaction-Time-Only or non-temporal target takes none. ``until`` bounds
+        a Bitemporal insert to ``[valid_from, until)``; omitting it opens
+        ``[valid_from, infinity)``. A stated ``until`` is a bound whatever its
+        value — ``None`` is refused rather than read as omission — and a target
+        with no Valid Time refuses one outright. The window is judged at THIS
+        call, before any buffering. Both bounds come from these arguments, never
+        from instance fields: an As-Of Axis endpoint is framework-owned."""
+        mutation, bound = window_mutation("insert", "insertUntil", until)
         keyed_insert(
             self._keyed,
             TypedKeyedInsertSource(instance, self._codec),
-            "insert",
+            mutation,
             valid_from=valid_from,
+            until=bound,
         )
 
-    def insert_until(
-        self, instance: EntityBase, *, valid_from: dt.datetime, until: dt.datetime
-    ) -> None:
-        """Buffer a keyed, Valid-Time-bounded ``insertUntil``
-        (``m-bitemp-write-003``): open a single bitemporal rectangle
-        bounded to ``[valid_from, until)`` at the fresh Transaction-Time
-        milestone, with no prior row to close — the bitemporal analogue of an
-        audit-only ``insert``, Valid-Time-bounded — bitemporal-only (mirrors
-        ``update_until``'s own required ``valid_from`` / ``until``). A window
-        that does not satisfy ``valid_from < until``
-        (equal or reversed bounds) raises at THIS call, before any buffering
-        (all validated at build), and
-        so does a repeated insert of an object this transaction already buffered
-        an insert of, exactly as :meth:`insert` refuses one.
-        The window bounds come from THESE verb arguments, never from instance
-        fields: an As-Of Axis endpoint is framework-owned and the temporal write
-        path derives every interval bound itself, which is why
-        the Entity constructor refuses an authored one outright."""
-        keyed_insert(
-            self._keyed,
-            TypedKeyedInsertSource(instance, self._codec),
-            "insertUntil",
-            valid_from=valid_from,
-            until=until,
-        )
+    def update(self, copy: EntityBase, *, until: dt.datetime | Omitted = OMITTED) -> None:
+        """Buffer a sparse keyed update of an edited copy: its primary key plus
+        every member its edit chain touched, at the value each now holds.
 
-    def update(self, copy: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
-        """Buffer a sparse keyed ``update``: primary key + the effective change
-        set of an edited copy (touched fields whose current value differs from
-        the recorded original). An EMPTY effective change set
-        issues no DML at all (zero round trips, the net-zero-chain no-op rule
-        — the no-op-first ordering `m-opt-lock` fixes: dropped before any
-        observation or locking concern), and a node this transaction's own read
-        returned that no edit touched carries exactly that empty change set:
-        writing every value a find returned and editing only some of them is
-        correct code. A value no read of this store produced is refused instead,
-        before any row is derived
-        (:class:`~parallax.snapshot.handle.KeyedWriteValueError`,
-        ``write-value-not-stored``) — unless THIS transaction already buffered
-        its insert, which is the row it stores and the pair the flush coalesces
-        into one final-value write (`m-unit-work` "Insert-then-update coalesces
-        in place"). The version column, if
-        any, is never authored here — it is framework-owned end to end
-        (`m-opt-lock`; ADR 0013): the write seam derives its advance from the
-        observation the source value itself retained
-        (`parallax.snapshot.handle`'s write finalization), never from the edited copy.
+        The touched set is the literal assignment: a member set back to the value
+        the source was read with is still written, and a copy whose chain touched
+        nothing is the empty set, which buffers nothing and issues no statement. A
+        value no read of this store produced is refused instead, before any row is
+        derived (:class:`~parallax.snapshot.handle.KeyedWriteValueError`,
+        ``write-value-not-stored``) — unless THIS transaction already admitted its
+        insert, which is the row it stores (`m-unit-work` "Insert-then-update
+        coalesces in place"). The version column, if any, is never authored here —
+        it is framework-owned end to end (`m-opt-lock`; ADR 0013): the write seam
+        derives its advance from the observation the source value itself retained.
 
-        ``valid_from`` is the plain Bitemporal correction's Valid-Time instant
-        (`m-bitemp-write-006` "plain-update-split" — inactivates the original on
-        Transaction Time, then chains head
-        (the old value) + a new tail (the new value) running to infinity, the
-        two-way degenerate of ``update_until``'s three-way rectangle split).
-        Mirrors ``update_where``'s own Bitemporal-only requirement: a
-        Transaction-Time-Only or non-temporal target takes none (no Valid-Time
-        dimension to bound)."""
-        keyed_write(
-            self._keyed,
-            TypedKeyedWriteSource(copy, self._codec),
-            "update",
-            valid_from=valid_from,
-        )
+        A Bitemporal update starts where its source was read — the source's
+        finite Valid-Time pin, or the start an insert this transaction admitted
+        was authored with — and applies to every interval of the object's current
+        coverage from there: through infinity when ``until`` is omitted, or up to
+        the exclusive ``until``. Each interval keeps its own unassigned members,
+        and gaps stay gaps (`m-bitemp-write`). A source read at Valid-Time
+        ``LATEST`` names no start and is refused. ``until`` follows
+        :meth:`insert`'s rules, and is judged at THIS call even when the set is
+        empty."""
+        mutation, bound = window_mutation("update", "updateUntil", until)
+        keyed_write(self._keyed, TypedKeyedWriteSource(copy, self._codec), mutation, until=bound)
 
     def delete(self, node_or_instance: EntityBase) -> None:
         """Buffer a keyed ``delete``, keyed off ``node_or_instance``'s primary
@@ -263,62 +238,23 @@ class Transaction:
         keyed_write(self._keyed, TypedKeyedWriteSource(node_or_instance, self._codec), "delete")
 
     def terminate(
-        self, node_or_instance: EntityBase, *, valid_from: dt.datetime | None = None
+        self, node_or_instance: EntityBase, *, until: dt.datetime | Omitted = OMITTED
     ) -> None:
-        """Buffer a keyed ``terminate``: close ``node_or_instance``'s current
-        milestone (the temporal delete-equivalent) — keyed off
-        its primary key alone, no chained row (close-only, `m-txtime-write` /
-        `m-bitemp-write`). Transaction-Time-Only takes no ``valid_from``;
-        Bitemporal requires it (the mutation's own Valid-Time
-        instant, mirroring ``terminate_where``)."""
+        """Buffer a keyed terminate: end ``node_or_instance``'s current coverage,
+        keyed off its primary key alone (the temporal delete-equivalent,
+        `m-txtime-write` / `m-bitemp-write`).
+
+        A Transaction-Time-Only target closes its current milestone. A Bitemporal
+        one starts where its source was read, as :meth:`update` does, and ends
+        every interval of current coverage from there — through infinity when
+        ``until`` is omitted, or up to the exclusive ``until``; history and
+        coverage outside that window survive."""
+        mutation, bound = window_mutation("terminate", "terminateUntil", until)
         keyed_write(
             self._keyed,
             TypedKeyedWriteSource(node_or_instance, self._codec),
-            "terminate",
-            valid_from=valid_from,
-        )
-
-    def update_until(
-        self, copy: EntityBase, *, valid_from: dt.datetime, until: dt.datetime
-    ) -> None:
-        """Buffer a sparse keyed, Valid-Time-bounded ``updateUntil``:
-        primary key + the effective change set of an edited copy (mirrors
-        keyed ``update``), bounded to ``[valid_from, until)``
-        (`m-bitemp-write` "The rectangle split") — bitemporal-only (mirrors
-        ``update_until_where``'s own required ``valid_from`` / ``until``). A
-        window that does not satisfy ``valid_from < until``
-        (equal or reversed bounds) raises at THIS call, before any buffering
-        (all validated at build) —
-        checked BEFORE the empty-effective-change-set no-op return below:
-        window validation runs first for every window verb, never after;
-        equal bounds reject even when the
-        edited copy's own Change Record nets to zero). An EMPTY effective
-        change set (once the window is confirmed valid) issues no DML at all,
-        exactly like keyed ``update``."""
-        keyed_write(
-            self._keyed,
-            TypedKeyedWriteSource(copy, self._codec),
-            "updateUntil",
-            valid_from=valid_from,
-            until=until,
-        )
-
-    def terminate_until(
-        self, node_or_instance: EntityBase, *, valid_from: dt.datetime, until: dt.datetime
-    ) -> None:
-        """Buffer a keyed, Valid-Time-bounded ``terminateUntil``: close a
-        single Valid-Time window ``[valid_from, until)`` on
-        ``node_or_instance``'s current milestone, keyed off its primary key
-        alone (`m-bitemp-write`) — bitemporal-only (mirrors
-        ``terminate_until_where``). A window that does not satisfy
-        ``valid_from < until`` (equal or reversed bounds) raises at THIS
-        call, before any buffering."""
-        keyed_write(
-            self._keyed,
-            TypedKeyedWriteSource(node_or_instance, self._codec),
-            "terminateUntil",
-            valid_from=valid_from,
-            until=until,
+            mutation,
+            until=bound,
         )
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
@@ -412,16 +348,24 @@ class Transaction:
         query: ObjectQuery[Any, Any],
         *assignments: AttributeAssignment[Any],
         valid_from: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
     ) -> None:
-        """A predicate-selected ``update``: ``query`` MUST be
-        mutation-compatible (nothing but a target and a predicate);
-        ``assignments`` are ``Attr.set(value)`` calls, non-empty, no duplicate
-        field, each addressing the query's exact target. Readless
-        (one statement) for an unversioned, non-temporal target; a versioned
-        or temporal target MATERIALIZES (`m-opt-lock`, ADR 0014) — see
+        """A predicate-selected update: ``query`` MUST be mutation-compatible
+        (nothing but a target and a predicate); ``assignments`` are
+        ``Attr.set(value)`` calls, non-empty, no duplicate field, each addressing
+        the query's exact target. Readless (one statement) for an unversioned,
+        non-temporal target; a versioned or temporal target MATERIALIZES
+        (`m-opt-lock`, ADR 0014) — see
         :func:`~parallax.snapshot.handle._typed_writes.typed_predicate_write`,
-        the Typed predicate ingress every ``_where`` verb here delegates to."""
-        typed_predicate_write(self._predicates, "update", query, assignments, valid_from=valid_from)
+        the Typed predicate ingress every ``_where`` verb here delegates to.
+
+        A Bitemporal target requires ``valid_from``; ``until`` bounds the
+        correction to ``[valid_from, until)`` and follows :meth:`insert`'s
+        rules."""
+        mutation, bound = window_mutation("update", "updateUntil", until)
+        typed_predicate_write(
+            self._predicates, mutation, query, assignments, valid_from=valid_from, until=bound
+        )
 
     def delete_where(self, query: ObjectQuery[Any, Any]) -> None:
         """A predicate-selected ``delete`` over a NON-temporal target
@@ -433,45 +377,18 @@ class Transaction:
         typed_predicate_write(self._predicates, "delete", query, (), valid_from=None)
 
     def terminate_where(
-        self, query: ObjectQuery[Any, Any], *, valid_from: dt.datetime | None = None
-    ) -> None:
-        """A predicate-selected ``terminate`` over a TEMPORAL target
-        : Transaction-Time-Only takes no ``valid_from``;
-         Bitemporal requires it. Always materializes — a temporal predicate
-         write has no readless template."""
-        typed_predicate_write(self._predicates, "terminate", query, (), valid_from=valid_from)
-
-    def update_until_where(
         self,
         query: ObjectQuery[Any, Any],
-        *assignments: AttributeAssignment[Any],
-        valid_from: dt.datetime,
-        until: dt.datetime,
+        *,
+        valid_from: dt.datetime | None = None,
+        until: dt.datetime | Omitted = OMITTED,
     ) -> None:
-        """A predicate-selected, Valid-Time-bounded ``updateUntil`` over a
-        Bitemporal target (the Python binding; `m-bitemp-write` "The rectangle
-        split"): always materializes to a close plus head/middle/tail."""
+        """A predicate-selected terminate over a TEMPORAL target, which always
+        materializes — a temporal predicate write has no readless template.
+        Transaction-Time-Only takes no ``valid_from``; Bitemporal requires it, and
+        ``until`` bounds the window to ``[valid_from, until)`` under
+        :meth:`insert`'s rules."""
+        mutation, bound = window_mutation("terminate", "terminateUntil", until)
         typed_predicate_write(
-            self._predicates,
-            "updateUntil",
-            query,
-            assignments,
-            valid_from=valid_from,
-            until=until,
-        )
-
-    def terminate_until_where(
-        self, query: ObjectQuery[Any, Any], *, valid_from: dt.datetime, until: dt.datetime
-    ) -> None:
-        """A predicate-selected, Valid-Time-bounded ``terminateUntil`` over
-        a Bitemporal target: always materializes to a close
-        plus head/tail (no middle — the window becomes a hole in Valid
-        time)."""
-        typed_predicate_write(
-            self._predicates,
-            "terminateUntil",
-            query,
-            (),
-            valid_from=valid_from,
-            until=until,
+            self._predicates, mutation, query, (), valid_from=valid_from, until=bound
         )

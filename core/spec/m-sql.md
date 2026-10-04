@@ -1000,6 +1000,28 @@ Under Relational Document Layout a revision patches the Structured Column at the
 assigned members exactly as a Non-Temporal update does. Each statement **MUST**
 affect exactly one row, with the same shortfall classification as a close.
 
+### Requested ranges — coverage read and statement order
+
+An observed write whose requested extent reaches current rectangles no read of
+it observed (`m-bitemp-write` *Observed writes span their requested extent*)
+reads those rectangles inside its flush, as an ordinary row-form read of the
+object's current coverage from the first instant its observations leave
+uncovered:
+
+| Extent | Golden read | Binds |
+|---|---|---|
+| unbounded | `select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z > ? and t0.out_z = ?` | `[pk, uncoveredFrom, infinity]` |
+| bounded by `until` | `… where t0.pos_id = ? and t0.thru_z > ? and t0.from_z < ? and t0.out_z = ?` | `[pk, uncoveredFrom, until, infinity]` |
+
+Its projection is the predecessor projection of a resolving read, the
+Structured Column included under Relational Document Layout, and under Locking it
+carries the read-lock suffix below. The read belongs to the write step: it is
+counted in that step's round trips, and a case authors no golden for it
+(`m-case-format`). Once the rectangles are known, every rectangle's inactivation,
+revision, or removal is emitted before any successor is inserted — rectangles in
+Valid-Time order, each rectangle's successors in Valid-Time order — so a lost
+condition fails before the range writes anything new.
+
 ## Transactional SQL fragments
 
 The unit-of-work layer (`m-unit-work`) is expressed in operations and object

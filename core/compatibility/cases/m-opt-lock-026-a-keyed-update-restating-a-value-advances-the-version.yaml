@@ -1,0 +1,31 @@
+# A keyed update's assignments are literal sets (m-unit-work "Comparing an assigned
+# member with its persisted value"; m-opt-lock "Empty updates issue no DML"): an
+# update assigning `balance` the value the row already holds is not empty, so it
+# issues its gated UPDATE and advances the version, unlike m-opt-lock-001's update
+# that assigns nothing.
+model: models/account.yaml
+tags: [m-opt-lock, m-unit-work, m-sql, write-sequence, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  writeSequence:
+    - mutation: update
+      entity: parallax.compatibility.Account
+      statements: 1
+      note: the assigned balance equals the stored one; the write is still issued, gated on the observed version
+      rows:
+        - { id: 2, balance: "250.00", observedVersion: 1 }
+then:
+  statements:
+    - sql:
+        postgres: update account set balance = ?, version = ? where id = ? and version = ?
+      binds: ["250.00", 2, 2, 1]
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+      - { id: 2, owner: Linus, balance: "250.00", version: 2 }
+      - { id: 3, owner: Grace, balance: "10.00", version: 1 }
+  roundTrips: 2

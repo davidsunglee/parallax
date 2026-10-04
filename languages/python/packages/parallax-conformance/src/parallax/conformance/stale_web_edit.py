@@ -84,33 +84,31 @@ def submit_branch_edit(
     valid_from: dt.datetime,
     concurrency: Concurrency = "optimistic",
 ) -> None:
-    """SUBMIT time (bitemporal): re-read the displayed RECTANGLE — Valid Time
-    pinned at the transported coordinate (`as_of(valid_time=...)`, which
-    selects which rectangle was displayed; a finite Valid-Time pin is the
-    writable retroactive correction), Transaction Time left at its latest
-    default so the read answers the rectangle's current milestone. Refuse the
-    submit when that milestone's edge is not the transported one, then apply
-    ``fields`` via ``edit`` and issue a PLAIN (unbounded) bitemporal
-    correction effective from ``valid_from`` (the mutation's OWN Valid-Time
-    instant `B` — the everyday "this correction takes effect from B onward"
-    idiom, `m-bitemp-write-006`; independent of the displayed edge's own
-    Valid-Time coordinate, which only selects the rectangle: ``valid_from``
-    equal to the displayed rectangle's own `from_z` degenerates the head
-    interval to empty and is a build-time caller error, out of this recipe's
-    scope). A concurrent split between this read and the flush leaves the
-    observed row's ``in_z`` stale — the gated close still addresses the
-    displayed rectangle by its own Valid-Time end, but its gate matches zero
+    """SUBMIT time (bitemporal): read the object where the correction takes
+    effect — Valid Time pinned at ``valid_from``, the mutation's own instant `B`
+    (the everyday "this correction takes effect from B onward" idiom), which an
+    observed write takes from its source's pin — with Transaction Time left at
+    its latest default, so the read answers the current milestone of the
+    rectangle holding `B`. Refuse the submit unless that is the displayed
+    rectangle at the transported milestone — the same Valid-Time start and the
+    same Transaction-Time start — then apply ``fields`` via ``edit`` and issue a
+    PLAIN (unbounded) bitemporal correction, which applies from `B` across all
+    current coverage. A concurrent split between this read and the flush
+    leaves the observed row's ``in_z`` stale — the gated close still addresses
+    the displayed rectangle by its own Valid-Time end, but its gate matches zero
     rows, ``OptimisticLockConflictError``."""
 
     def fn(tx: Transaction) -> None:
-        current = tx.find(Branch.where(Branch.id == id).as_of(valid_time=edge.valid_time)).result()
+        current = tx.find(Branch.where(Branch.id == id).as_of(valid_time=valid_from)).result()
         current_edge = edge_of(current)
-        if current_edge.tx_time != edge.tx_time:
+        if current_edge != edge:
             raise StaleMilestoneError(
                 f"branch {id} was superseded before this submit: the form displayed the "
-                f"rectangle's milestone starting {edge.tx_time.isoformat()}, but the current "
-                f"one starts {current_edge.tx_time.isoformat()}"
+                f"rectangle starting {edge.valid_time.isoformat()} at the milestone starting "
+                f"{edge.tx_time.isoformat()}, but {valid_from.isoformat()} now falls in the one "
+                f"starting {current_edge.valid_time.isoformat()} at "
+                f"{current_edge.tx_time.isoformat()}"
             )
-        tx.update(current.edit(**fields), valid_from=valid_from)
+        tx.update(current.edit(**fields))
 
     db.transact(fn, concurrency=concurrency)

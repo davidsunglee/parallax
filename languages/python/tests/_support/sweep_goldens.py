@@ -133,6 +133,7 @@ _OBJECT_CLAIM_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
 _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
         "m-opt-lock-002",
+        "m-opt-lock-026",
         "m-inheritance-007",
         "m-inheritance-008",
         "m-inheritance-009",
@@ -206,6 +207,7 @@ _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-txtime-write-003",
         "m-txtime-write-004",
         "m-txtime-write-005",
+        "m-txtime-write-015",
         "m-bitemp-write-001",
         "m-bitemp-write-002",
         "m-bitemp-write-003",

@@ -1,7 +1,7 @@
 # A value this verb's own source produced that no author has changed is NOT a
-# refusal for `update` (m-unit-work *Write value provenance*): it buffers
-# nothing, issues no statement, and raises nothing — the same outcome as an edit
-# whose net change is empty. Requiring an author to test each value before
+# refusal for `update` (m-unit-work *Write value provenance*): it assigns
+# nothing, so it buffers nothing, issues no statement, and raises nothing.
+# Requiring an author to test each value before
 # writing it would defeat the change tracking the framework performs on the
 # author's behalf, so writing every value a read returned and changing only some
 # of them is correct.

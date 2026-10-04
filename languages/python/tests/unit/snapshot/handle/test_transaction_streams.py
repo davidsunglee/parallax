@@ -125,7 +125,7 @@ def _pending_writes(tx: Transaction) -> int:
     satisfied by coalescing that never happened.
     """
     uow = tx._uow  # pyright: ignore[reportPrivateUsage] - unit test reads the transaction's own ledger
-    return len(uow._buffer)  # pyright: ignore[reportPrivateUsage] - the buffer IS the claim's subject
+    return len(uow._pending.writes())  # pyright: ignore[reportPrivateUsage] - the buffer IS the claim's subject
 
 
 def _observation(node: object) -> Any:

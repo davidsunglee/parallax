@@ -24,7 +24,6 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import INFINITY
-from parallax.core.document_codec import EffectiveChangeSet
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.temporal_read import TemporalReadError
@@ -68,10 +67,11 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core.unit_work.materialized import ObservedKeyedWrite
-from parallax.core.unit_work.plan import ExecutionUnit
+from parallax.core.unit_work.plan import BoundRange, ExecutionUnit
 from parallax.core.unit_work.planned import PlannedClose, PlannedUpdate
 from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.core.unit_work.uow import EscapedTransactionError, FlushExecutor, WriteBatchOpening
+from parallax.core.unit_work.write_planner import compose_writes
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
@@ -81,7 +81,6 @@ from tests.unit._transact_support import PERSON
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
-_BALANCE_CHANGED = EffectiveChangeSet(effective=frozenset({"balance"}), restored=frozenset())
 """What a verb classifies an Account update assigning a new balance as."""
 _BALANCE = _MODELS["balance"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -89,25 +88,36 @@ _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 class _Recorder:
     """Records each Write Plan the shell hands the executor, with the flush
-    trigger it travelled under."""
+    trigger it travelled under, binding each deferred range to coverage that
+    holds no row beyond what the range already observed."""
 
     def __init__(self) -> None:
         self.plans: list[WritePlan] = []
         self.triggers: list[WriteBatchTrigger] = []
+        self.bound: list[BoundRange] = []
 
     def __call__(
         self,
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
-        completed: Callable[[ExecutionUnit], None],
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         self.plans.append(plan)
         self.triggers.append(trigger)
+        for unit in plan.units:
+            deferred = unit.deferred
+            bound = None if deferred is None else deferred.bind(None)
+            if bound is not None:
+                self.bound.append(bound)
+            completed(unit, bound)
 
 
 def _noop(
-    plan: WritePlan, *, trigger: WriteBatchTrigger, completed: Callable[[ExecutionUnit], None]
+    plan: WritePlan,
+    *,
+    trigger: WriteBatchTrigger,
+    completed: Callable[[ExecutionUnit, BoundRange | None], None],
 ) -> None:
     return None
 
@@ -245,7 +255,10 @@ def test_read_force_flushes_pending_writes_first() -> None:
     recorder = _Recorder()
 
     def executor(
-        plan: WritePlan, *, trigger: WriteBatchTrigger, completed: Callable[[ExecutionUnit], None]
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         order.append("flush")
         recorder(plan, trigger=trigger, completed=completed)
@@ -325,7 +338,6 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
                     _ACCOUNT,
                 ),
                 observation=resolved.evidence,
-                change=_BALANCE_CHANGED,
             )
         )
 
@@ -409,7 +421,6 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
                 KeyedWrite("update", "Account", ({"id": 1, "balance": balance},)), _ACCOUNT
             ),
             retained,
-            change=_BALANCE_CHANGED,
         )
         for balance in (Decimal("125.00"), Decimal("150.00"))
     ]
@@ -418,7 +429,7 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(FixedClock(_FIXED)),
             concurrency="locking",
-            buffered_writes=carriers,
+            buffered_writes=compose_writes(_ACCOUNT, carriers),
         )
     )
     (step,) = finalized.plan.steps
@@ -597,7 +608,10 @@ def test_each_batch_is_a_scope_around_its_own_planning_and_execution() -> None:
     order: list[str] = []
 
     def executor(
-        plan: WritePlan, *, trigger: WriteBatchTrigger, completed: Callable[[ExecutionUnit], None]
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         order.append(f"executed:{trigger}")
 
@@ -733,7 +747,6 @@ def _account_write(
         RetainedObservation(_account_state(account_id, version), evidence, None)
         if retained
         else evidence,
-        change=_BALANCE_CHANGED if mutation == "update" else None,
     )
 
 
@@ -744,11 +757,7 @@ def _balance_update(key: int) -> BufferItem:
             KeyedWrite("update", "Balance", ({"id": key, "value": Decimal("2.00")},)), _BALANCE
         ),
         RetainedObservation(_balance_state(key), observation, None),
-        change=_VALUE_CHANGED,
     )
-
-
-_VALUE_CHANGED = EffectiveChangeSet(effective=frozenset({"value"}), restored=frozenset())
 
 
 def _refused_as_claimed(uow: UnitOfWork, item: BufferItem) -> WriteEvidenceError:
@@ -856,11 +865,6 @@ def _person_write(mutation: KeyedMutation, person_id: int) -> BufferItem:
     return buffered_write(
         prepared,
         corpus_object_key("Person", ("id", person_id)),
-        change=(
-            EffectiveChangeSet(effective=frozenset({"name"}), restored=frozenset())
-            if mutation == "update"
-            else None
-        ),
     )
 
 
@@ -1037,7 +1041,6 @@ def _balance_update_from(key: int, tx_start: object) -> BufferItem:
             KeyedWrite("update", "Balance", ({"id": key, "value": Decimal("2.00")},)), _BALANCE
         ),
         RetainedObservation(state, observation, None),
-        change=_VALUE_CHANGED,
     )
 
 
@@ -1115,11 +1118,14 @@ def test_each_unit_spends_its_evidence_before_the_next_unit_executes() -> None:
     seen: list[tuple[bool, ...]] = []
 
     def executor(
-        plan: WritePlan, *, trigger: WriteBatchTrigger, completed: Callable[[ExecutionUnit], None]
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         for unit in plan.units:
             seen.append(tuple(claim is not None and claim.consumed for claim in claims))
-            completed(unit)
+            completed(unit, None)
         seen.append(tuple(claim is not None and claim.consumed for claim in claims))
 
     def body(uow: UnitOfWork) -> None:
@@ -1132,14 +1138,35 @@ def test_each_unit_spends_its_evidence_before_the_next_unit_executes() -> None:
 
 def test_a_unit_reported_out_of_order_dooms_the_attempt() -> None:
     def executor(
-        plan: WritePlan, *, trigger: WriteBatchTrigger, completed: Callable[[ExecutionUnit], None]
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
-        completed(plan.units[1])
+        completed(plan.units[1], None)
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_account_write("update", 1, 7))
         uow.buffer(_account_write("update", 2, 3))
         with pytest.raises(UnitOfWorkError, match="out of order"):
+            uow.read(lambda: None)
+
+    with pytest.raises(RollbackOnlyError):
+        _run(body, executor=executor)
+
+
+def test_a_bound_range_reported_for_a_planned_unit_dooms_the_attempt() -> None:
+    def executor(
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
+    ) -> None:
+        completed(plan.units[0], BoundRange((), (), (), ()))
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_account_write("update", 1, 7))
+        with pytest.raises(UnitOfWorkError, match="deferred range"):
             uow.read(lambda: None)
 
     with pytest.raises(RollbackOnlyError):
@@ -1152,7 +1179,10 @@ def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
     assert isinstance(claimed, ObservedKeyedWrite) and claimed.claim is not None
 
     def executor(
-        plan: WritePlan, *, trigger: WriteBatchTrigger, completed: Callable[[ExecutionUnit], None]
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         raise failure
 
@@ -1222,8 +1252,9 @@ _DEC = dt.datetime(2024, 12, 1, tzinfo=dt.UTC)
 
 
 def test_a_unit_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fresh() -> None:
-    # Terminating a rectangle the attempt opened from where it already ends
-    # keeps it whole at its own address, so its unit has no step.
+    # A termination starting where the rectangle the attempt opened already
+    # ends reaches past it, so its coverage is read at execution; finding none
+    # there, the range binds to no step at all.
     members = {
         "id": 1,
         "acctNum": "A",
@@ -1270,3 +1301,4 @@ def test_a_unit_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fr
 
     _run(body, meta=_POSITION, executor=recorder)
     assert _step_kinds(recorder) == ["PlannedInsert"]
+    assert [bound.steps for bound in recorder.bound] == [()]

@@ -19,10 +19,12 @@ Each run is one transaction. A case that revises a row first reads it through
 production (``tx.find`` or ``tx.wire.find``), because a keyed write is licensed
 only by evidence a read of this store retained, and a Typed case edits what the
 read published. The window then runs from the public verb — ``tx.insert``,
-``tx.update``, ``tx.update_until``, or their ``tx.wire`` peers — until
-``transact`` returns: preparation, effective-change classification, buffering,
-the pre-commit flush's planning, settlement, and SQL lowering, and the commit.
-The read and what the caller authors against it are outside it.
+``tx.update``, a bounded ``tx.update``, or their ``tx.wire`` peers — until
+``transact`` returns: preparation, buffering, the pre-commit flush's planning,
+settlement, and SQL lowering, and the commit. The read and what the caller
+authors against it are outside it. The unchanged cases author no member at all,
+which is the update that changes nothing: a member restated at its stored value
+is a literal assignment and writes like any other.
 
 The window ends where the driver would hand bytes to the socket: the
 provider-free port crosses each statement's binds through the production
@@ -83,7 +85,6 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
-from parallax.core.object_query import LATEST
 from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import KeyedMutation
 from parallax.core.unit_work.instructions import coerce_typed_row
@@ -362,7 +363,12 @@ def _keyed_case(
     predecessor: Entity | None,
     statements: int,
     bounded: bool = False,
+    expressed: bool = True,
+    members: frozenset[str] | None = None,
 ) -> Case:
+    authored: Mapping[str, object] = _authored(ingress, mutation, value) if expressed else {}
+    if members is not None:
+        authored = {name: member for name, member in authored.items() if name in members}
     return Case(
         name,
         family,
@@ -371,7 +377,7 @@ def _keyed_case(
         layout,
         mutation,
         value if mutation == "insert" and ingress == "typed" else None,
-        _authored(ingress, mutation, value),
+        authored,
         None if predecessor is None else _stored_row(predecessor, layout),
         statements,
         MODEL,
@@ -391,6 +397,7 @@ def _case(
     predecessor: str | None,
     statements: int,
     bounded: bool = False,
+    expressed: bool = True,
 ) -> Case:
     cls = _CATEGORICAL[(family, layout)]
     return _keyed_case(
@@ -403,6 +410,7 @@ def _case(
         predecessor=None if predecessor is None else _value(cls, key, predecessor),
         statements=statements,
         bounded=bounded,
+        expressed=expressed,
     )
 
 
@@ -447,6 +455,7 @@ def _categorical_cases() -> tuple[Case, ...]:
                     label="same",
                     predecessor="same",
                     statements=0,
+                    expressed=False,
                 )
             )
             cases.append(
@@ -499,10 +508,10 @@ def _geometry_cases() -> tuple[Case, ...]:
 def _ancestor_cases() -> tuple[Case, ...]:
     """One changed successor per ancestor level and layout.
 
-    The successor restates every member and changes one leaf of the root
-    occurrence, so the write closes its milestone and opens a row whose
-    Structured Column production composes from the retained predecessor
-    document.
+    The successor assigns the root occurrence alone, with one leaf changed, so
+    the write closes its milestone and opens a row whose Structured Column
+    production composes from the retained predecessor document. Assignments are
+    literal, so restating the other members would write them too.
     """
     return tuple(
         _keyed_case(
@@ -516,6 +525,7 @@ def _ancestor_cases() -> tuple[Case, ...]:
                 level, layout, ANCESTOR_KEY, changed=False
             ),
             statements=2,
+            members=frozenset({geometry_support.CHANGED_OCCURRENCE}),
         )
         for level in geometry_support.ANCESTOR_LEVELS
         for layout in geometry_support.LAYOUTS
@@ -707,7 +717,7 @@ def _source(tx: Transaction, case: Case) -> object:
     entity = cast("Any", case.entity)
     query = entity.where(entity.id == case.stored["id"])
     if issubclass(case.entity, Bitemporal):
-        query = query.as_of(valid_time=LATEST)
+        query = query.as_of(valid_time=INTERIOR_FROM)
     if case.ingress == "wire":
         return tx.wire.find(query).result()
     return tx.find(query).result().edit(**case.changes)
@@ -715,19 +725,18 @@ def _source(tx: Transaction, case: Case) -> object:
 
 def _buffer(tx: Transaction, case: Case, source: object) -> None:
     """Buffer ``case``'s keyed write through its public verb."""
-    window = {"valid_from": INTERIOR_FROM, "until": INTERIOR_UNTIL} if case.bounded else {}
     if case.ingress == "typed":
         if case.mutation == "insert":
             tx.insert(cast("Entity", case.instance))
         elif case.mutation == "updateUntil":
-            tx.update_until(cast("Entity", source), **window)
+            tx.update(cast("Entity", source), until=INTERIOR_UNTIL)
         else:
             tx.update(cast("Entity", source))
         return
     if case.mutation == "insert":
         tx.wire.insert(case.entity.identity.name, case.changes)
     elif case.mutation == "updateUntil":
-        tx.wire.update_until(cast("WireEntity", source), case.changes, **window)
+        tx.wire.update(cast("WireEntity", source), case.changes, until=INTERIOR_UNTIL)
     else:
         tx.wire.update(cast("WireEntity", source), case.changes)
 

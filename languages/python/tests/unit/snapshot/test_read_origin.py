@@ -38,6 +38,7 @@ from parallax.core.entity._model import DomainModel
 from parallax.core.unit_work import (
     ObjectKey,
     OptimisticLockConflictError,
+    ParticipationToken,
     ReadOrigin,
     RetainedObservation,
     VersionObservation,
@@ -116,6 +117,29 @@ def test_a_read_origin_is_an_immutable_value_over_its_complete_claim() -> None:
     assert repr(origin).startswith("ReadOrigin(entity=")
     with pytest.raises(AttributeError, match="immutable"):
         origin.pin = None  # pyright: ignore[reportAttributeAccessIssue] - the refusal is this test's subject
+
+
+def test_spending_an_origin_spends_its_observation_or_itself() -> None:
+    # An origin with an observation defers to that shared observation; one
+    # without carries its own one-way status, and keeps answering the same
+    # participation once spent, so equality and hashing do not move.
+    object_key = ObjectKey(mm.Account.identity, (("id", 1),))
+    observation = RetainedObservation(
+        VersionedStateKey(object_key, 4), VersionObservation(observed_version=4), None
+    )
+    observed = ReadOrigin(mm.Account.identity, object_key, None, observation)
+    observed.consume()
+    assert observed.consumed and observation.consumed
+
+    participation = ParticipationToken()
+    unversioned = ReadOrigin(mm.Account.identity, object_key, participation, None)
+    before = hash(unversioned)
+    assert not unversioned.consumed
+    unversioned.consume()
+    unversioned.consume()
+    assert unversioned.consumed
+    assert unversioned.participation is participation and unversioned.pin is None
+    assert hash(unversioned) == before
 
 
 def test_no_exported_name_reaches_a_read_origin() -> None:
@@ -722,15 +746,15 @@ def test_a_locking_source_consumed_by_a_flush_cannot_drive_a_second_write() -> N
 
 
 def test_an_intent_eliminated_before_dml_consumes_nothing() -> None:
-    # An edited copy whose effective change set is empty buffers nothing and
-    # issues no statement, so the evidence its source carries is still about the
-    # stored state and still licenses a later write.
+    # An edited copy expressing no member buffers nothing and issues no
+    # statement, so the evidence its source carries is still about the stored
+    # state and still licenses a later write.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
     db = account_db(port)
 
     def fn(tx: Transaction) -> mm.Account:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit(balance=Decimal("100.00")))
+        tx.update(node.edit())
         return node
 
     unchanged = db.transact(fn)

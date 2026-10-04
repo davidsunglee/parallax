@@ -22,6 +22,7 @@ from typing import Any, Final, cast
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, Bitemporal, DomainModel, attr
+from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     DatabaseAdapter,
@@ -257,10 +258,14 @@ def published_claims(snapshot: Snapshot[WireEntity]) -> tuple[RetainedObservatio
 # through the typed verbs and so through the SAME `_buffer` neutral seam the  #
 # conformance engine uses.                                                    #
 # --------------------------------------------------------------------------- #
-INFINITY_INSTANT: Final[dt.datetime] = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
+# The open upper bound as the port hands it back: the neutral m-core sentinel
+# `timestamptz` infinity normalizes to (m-db-port), not a far-future instant.
+INFINITY_INSTANT: Final[TemporalBound] = INFINITY
 
 
-def balance_row(*, in_z: dt.datetime, out_z: dt.datetime = INFINITY_INSTANT) -> MappingRow:
+def balance_row(
+    *, in_z: dt.datetime, out_z: dt.datetime | TemporalBound = INFINITY_INSTANT
+) -> MappingRow:
     return {
         "bal_id": 1,
         "acct_num": "A-1",
