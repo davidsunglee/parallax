@@ -1025,10 +1025,15 @@ condition fails before the range writes anything new.
 A caller-addressed temporal write (`m-bitemp-write` *Caller-addressed writes span
 their requested extent*) observed nothing, so its coverage read starts at its own
 `validFrom`; a Transaction-Time-Only one reads `… where t0.bal_id = ? and t0.out_z
-= ?` with `[pk, infinity]`. A replacement's openings over the gaps of its extent
-follow every rectangle's successors, in Valid-Time order. Under Locking the
-write's submission first reads its starting rectangle alone, with the read-lock
-suffix:
+= ?` with `[pk, infinity]`. Separate operations over disjoint windows pending
+together are one read, from the earliest window's start to the latest's end. The
+rectangles holding callers' starts are inactivated, revised, or removed first,
+in the order the callers stated them, then the others in Valid-Time order. A
+replacement's openings over the gaps of its extent follow every rectangle's
+successors, in Valid-Time order. A composition an ordering barrier kept after
+earlier writes of its object reads its whole window, from its first window's
+start, once its turn comes. Under Locking the write's submission first reads its
+starting rectangle alone, with the read-lock suffix:
 
 | Target | Golden read | Binds |
 |---|---|---|

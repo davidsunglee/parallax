@@ -19,6 +19,8 @@ __all__ = [
     "Completion",
     "Completions",
     "DeferredRange",
+    "Derivation",
+    "Descent",
     "ExecutionUnit",
     "Openings",
     "OwnedEndpoint",
@@ -137,6 +139,35 @@ OPEN_BITEMPORAL_ENDS: Final[tuple[TemporalUpperBound, ...]] = (INFINITY, INFINIT
 """The ends of a current Bitemporal row whose Valid Time runs on without end."""
 
 
+@dataclass(frozen=True, slots=True)
+class Derivation:
+    """One original an execution unit transformed under protection — a guarded
+    effect that succeeded, or the shared lock the unit held — and the current
+    rows it left in that original's place.
+
+    ``original`` is the exact state the unit found, ``end`` its Valid-Time end
+    (``None`` on a Transaction-Time-Only object), and ``owned`` its own address
+    where the attempt had opened it. ``rows`` holds each nonempty row the unit
+    derived from it, by address and Valid-Time start, a row revised in place
+    among them.
+    """
+
+    original: ObservedStateKey
+    end: object | None
+    owned: OwnedEndpoint | None
+    rows: tuple[tuple[OwnedEndpoint, object | None], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Descent:
+    """What one current row the attempt opened derives from within the running
+    flush: its Valid-Time ``start`` as opened, and the protected original that
+    stood before the flush began, through however many of its units."""
+
+    start: object | None
+    original: ObservedStateKey
+
+
 class Ownership(Protocol):
     """Read-only access to the rows the planning attempt opened successfully.
 
@@ -156,6 +187,25 @@ class Ownership(Protocol):
         opened, so that its successors are too."""
         ...
 
+    def proven(self, original: ObservedStateKey, /) -> Derivation | None:
+        """How an earlier execution unit of the running flush transformed
+        ``original``, if one did."""
+        ...
+
+    def descendants(
+        self, original: ObservedStateKey, start: object | None, until: object | None, /
+    ) -> tuple[tuple[OwnedEndpoint, Descent], ...]:
+        """The current rows the running flush derived from ``original``, which
+        it proved (:meth:`proven`), that may overlap Valid Time
+        ``[start, until)`` — every one of them where ``start`` is ``None`` — in
+        Valid-Time order; ``until`` is ``None`` through the open bound."""
+        ...
+
+    def descent(self, endpoint: OwnedEndpoint, /) -> Descent | None:
+        """What the current row ``endpoint`` derives from within the running
+        flush, if anything."""
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class _NoOwnership:
@@ -170,6 +220,20 @@ class _NoOwnership:
     def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
         del endpoint
         return False
+
+    def proven(self, original: ObservedStateKey, /) -> Derivation | None:
+        del original
+        return None
+
+    def descendants(
+        self, original: ObservedStateKey, start: object | None, until: object | None, /
+    ) -> tuple[tuple[OwnedEndpoint, Descent], ...]:
+        del original, start, until
+        return ()
+
+    def descent(self, endpoint: OwnedEndpoint, /) -> Descent | None:
+        del endpoint
+        return None
 
 
 NO_OWNERSHIP: Final[Ownership] = _NoOwnership()
@@ -231,6 +295,7 @@ class BoundRange:
     changed: tuple[ObservedStateKey, ...]
     removed: tuple[OwnedEndpoint, ...]
     opened: Openings
+    derived: tuple[Derivation, ...] = ()
 
 
 class DeferredRange(Protocol):
@@ -261,6 +326,10 @@ class ExecutionUnit:
     A unit with a ``deferred`` range has no planned step of its own: its steps
     and the facts beyond its claim come from binding the coverage the executor
     acquires for it.
+
+    ``derived`` records the originals the unit transformed and the rows it left
+    of each, for a later unit of the same flush whose conditions those
+    originals carry; a unit no later one depends on records none.
     """
 
     end: int
@@ -269,6 +338,7 @@ class ExecutionUnit:
     removed: Iterable[OwnedEndpoint] = ()
     opened: Openings = NO_OPENINGS
     deferred: DeferredRange | None = None
+    derived: tuple[Derivation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

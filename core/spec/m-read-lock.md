@@ -30,9 +30,11 @@ pending or live read of the state it names acquires one (`m-unit-work`
 current row of a temporal object, and on a Bitemporal one the rectangle
 containing the write's `validFrom` — taking the same shared row lock, which
 licenses its ungated write exactly as a find's lock licenses an observed one. It
-executes no pending write and publishes nothing to the caller. The point read
-protects that one row; the later rectangles a temporal write's window reaches
-are read under the same lock inside the flush.
+executes no pending write and publishes nothing to the caller, so a second
+target of the same object over a disjoint window, whose start a pending write of
+the first names nothing about, acquires its own start while the first stays
+pending. The point read protects that one row; the later rectangles a temporal
+write's window reaches are read under the same lock inside the flush.
 
 ### What one temporal observation locks
 

@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 __all__ = [
     "AfterRemoval",
     "BufferItem",
+    "ChainedTemporalWrite",
     "ClaimedKeyedWrite",
     "ComposedTemporalWrite",
     "GroupStates",
@@ -65,6 +66,7 @@ __all__ = [
     "VersionedEvidenceBuilder",
     "buffered_instruction",
     "buffered_write",
+    "chained",
     "composed_alone",
     "composed_temporal_write",
     "group_state_keys",
@@ -505,6 +507,46 @@ class ComposedTemporalWrite:
         """Whether the composition still assigns somewhere, rather than only
         destroying."""
         return self.transform.assigns
+
+
+@dataclass(frozen=True, slots=True)
+class ChainedTemporalWrite(ComposedTemporalWrite):
+    """One ordering-barrier region's composition of a temporal object whose
+    other pending writes stand in other regions of the same buffer.
+
+    A barrier keeps every write on its own side, so each region's writes of the
+    object execute as their own unit. ``follows`` marks a composition an
+    earlier region's writes of the object precede: it binds to the coverage
+    those left, carrying the conditions they already proved. ``leads`` marks
+    one a later region's writes follow: it records what it derived from each
+    original it transformed, for them.
+    """
+
+    leads: bool = False
+    follows: bool = False
+
+
+def chained(
+    held: TemporalKeyedWrite | ComposedTemporalWrite,
+    key_name: str,
+    *,
+    leads: bool = False,
+    follows: bool = False,
+) -> ChainedTemporalWrite:
+    """``held`` as a composition of its barrier region, leading or following
+    the object's writes in other regions as stated, and as it already did."""
+    composed = held if isinstance(held, ComposedTemporalWrite) else _composed(held, key_name)
+    if isinstance(composed, ChainedTemporalWrite):
+        leads = leads or composed.leads
+        follows = follows or composed.follows
+    return ChainedTemporalWrite(
+        target=composed.target,
+        key=composed.key,
+        contributions=composed.contributions,
+        transform=composed.transform,
+        leads=leads,
+        follows=follows,
+    )
 
 
 type TemporalKeyedWrite = ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite

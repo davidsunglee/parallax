@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import threading
 from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
@@ -46,6 +47,8 @@ from parallax.core.unit_work.materialized import (
 )
 from parallax.core.unit_work.plan import (
     BoundRange,
+    Derivation,
+    Descent,
     ExecutionUnit,
     Openings,
     OwnedEndpoint,
@@ -66,7 +69,7 @@ from parallax.core.unit_work.retain import (
     RetainedObservation,
 )
 from parallax.core.unit_work.strategy import ActorIdentity, Concurrency, EvidencePolicyLookup
-from parallax.core.unit_work.temporal import covers, precedes
+from parallax.core.unit_work.temporal import covers, instant_order, precedes
 from parallax.core.unit_work.write_planner import (
     PendingWrites,
     PlanningRequest,
@@ -365,7 +368,7 @@ class _TargetWriteState:
     the attempt wrote rather than what it read.
     """
 
-    __slots__ = ("_addresses", "_endpoints", "_owning", "_records", "_tags")
+    __slots__ = ("_addresses", "_continuity", "_endpoints", "_owning", "_records", "_tags")
 
     def __init__(self) -> None:
         self._records: dict[ObjectKey, _TargetRecord] = {}
@@ -379,6 +382,10 @@ class _TargetWriteState:
         # per-row check. It only grows; an Entity whose rows were all removed
         # merely keeps its groups on the per-row path.
         self._owning: set[EntityIdentity] = set()
+        # What units of the running flush proved for later ones, allocated by
+        # the first unit that records anything and released when the flush
+        # ends however it ends.
+        self._continuity: _Continuity | None = None
 
     def owns(self, endpoint: OwnedEndpoint, /) -> bool:
         return endpoint in self._endpoints
@@ -388,6 +395,25 @@ class _TargetWriteState:
 
     def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
         return endpoint in self._tags
+
+    def proven(self, original: ObservedStateKey, /) -> Derivation | None:
+        continuity = self._continuity
+        return None if continuity is None else continuity.proofs.get(original)
+
+    def descendants(
+        self, original: ObservedStateKey, start: object | None, until: object | None, /
+    ) -> tuple[tuple[OwnedEndpoint, Descent], ...]:
+        continuity = self._continuity
+        assert continuity is not None  # a proven original's rows are kept
+        descents = continuity.descents
+        return tuple(
+            (endpoint, descents[endpoint])
+            for endpoint in continuity.lineage[original].overlapping(start, until)
+        )
+
+    def descent(self, endpoint: OwnedEndpoint, /) -> Descent | None:
+        continuity = self._continuity
+        return None if continuity is None else continuity.descents.get(endpoint)
 
     def record(self, target: ObjectKey) -> _TargetRecord | None:
         return self._records.get(target)
@@ -463,20 +489,25 @@ class _TargetWriteState:
                 record.row = True
                 record.floor = record.bounds.valid_from
 
-    def complete(self, removed: Iterable[OwnedEndpoint], opened: Openings) -> None:
+    def complete(
+        self,
+        removed: Iterable[OwnedEndpoint],
+        opened: Openings,
+        derived: tuple[Derivation, ...] = (),
+    ) -> None:
         """Retire the owned rows one execution unit removed, then register the
         rows it opened. An admission whose last tagged row the unit removed is
-        retired only if no row the unit opened continues it."""
-        drained: list[tuple[_TargetRecord, InsertionIdentity]] = []
-        for endpoint in removed:
-            self._endpoints.remove(endpoint)  # planning removes only a row this attempt owns
-            tag = self._tags.pop(endpoint, None) if self._tags else None
-            if tag is None:
-                continue
-            record = self._addresses[(endpoint.entity, endpoint.key)]
-            record.live -= 1
-            if not record.live:
-                drained.append((record, tag))
+        retired only if no row the unit opened continues it.
+
+        Each original the unit ``derived`` rows from that stood before the
+        flush began is proven for the rest of the flush, and each row it derived
+        descends from it; a row derived from one an earlier unit of the flush
+        derived descends from what that one did."""
+        continuity = self._continuity
+        if derived and continuity is None:
+            continuity = self._continuity = _Continuity()
+        inherited = continuity.inherited(derived) if continuity is not None else ()
+        drained = self._retire(removed, continuity)
         for endpoint in opened.fresh:
             self._register(endpoint)
         for endpoint in opened.continued:
@@ -487,6 +518,31 @@ class _TargetWriteState:
                 # The last row this admission opened is gone: it was removed
                 # completely, and its authority ends with it.
                 record.identity = None
+        if continuity is not None:
+            continuity.derive(derived, inherited)
+
+    def _retire(
+        self, removed: Iterable[OwnedEndpoint], continuity: _Continuity | None
+    ) -> list[tuple[_TargetRecord, InsertionIdentity]]:
+        """Retire each removed row, answering every admission whose last tagged
+        row went with them."""
+        drained: list[tuple[_TargetRecord, InsertionIdentity]] = []
+        for endpoint in removed:
+            self._endpoints.remove(endpoint)  # planning removes only a row this attempt owns
+            if continuity is not None:
+                continuity.forget(endpoint)
+            tag = self._tags.pop(endpoint, None) if self._tags else None
+            if tag is None:
+                continue
+            record = self._addresses[(endpoint.entity, endpoint.key)]
+            record.live -= 1
+            if not record.live:
+                drained.append((record, tag))
+        return drained
+
+    def release_continuity(self) -> None:
+        """End the flush's proofs: no later submission carries them."""
+        self._continuity = None
 
     def _register(self, endpoint: OwnedEndpoint) -> None:
         self._endpoints.add(endpoint)
@@ -504,10 +560,105 @@ class _TargetWriteState:
         self._endpoints.clear()
         self._tags.clear()
         self._owning.clear()
+        self.release_continuity()
+
+
+class _Continuity:
+    """What the running flush's units proved for later units of the same
+    objects: each original transformed under protection that stood before the
+    flush began, which current row derives from which of them, and each one's
+    current rows in Valid-Time order."""
+
+    __slots__ = ("descents", "lineage", "proofs")
+
+    def __init__(self) -> None:
+        self.proofs: dict[ObservedStateKey, Derivation] = {}
+        self.descents: dict[OwnedEndpoint, Descent] = {}
+        self.lineage: dict[ObservedStateKey, _Lineage] = {}
+
+    def inherited(self, derived: tuple[Derivation, ...]) -> tuple[ObservedStateKey | None, ...]:
+        """The original each one in ``derived`` was itself derived from earlier
+        in the flush, if any, read before the unit's removals retire it."""
+        descents = self.descents
+        inherited: list[ObservedStateKey | None] = []
+        for derivation in derived:
+            owned = derivation.owned
+            descent = None if owned is None else descents.get(owned)
+            inherited.append(None if descent is None else descent.original)
+        return tuple(inherited)
+
+    def derive(
+        self, derived: tuple[Derivation, ...], inherited: tuple[ObservedStateKey | None, ...]
+    ) -> None:
+        for derivation, earlier in zip(derived, inherited, strict=True):
+            original = derivation.original
+            if earlier is None:
+                self.proofs[original] = derivation
+            else:
+                original = earlier
+            rows = self.lineage.get(original)
+            if rows is None:
+                rows = self.lineage[original] = _Lineage()
+            # A row revised in place is re-derived at its own address, so what
+            # it descended from is forgotten before any row is added again.
+            for endpoint, _start in derivation.rows:
+                self.forget(endpoint)
+            for endpoint, start in derivation.rows:
+                self.descents[endpoint] = Descent(start, original)
+                rows.add(endpoint, start)
+
+    def forget(self, endpoint: OwnedEndpoint) -> None:
+        descent = self.descents.pop(endpoint, None)
+        if descent is not None:
+            self.lineage[descent.original].discard(endpoint, descent.start)
+
+
+class _Lineage:
+    """The current rows derived from one proven original, in Valid-Time order.
+
+    They are pieces of one original's coverage and so never overlap, which is
+    what lets a range find the ones its window may reach by their starts alone
+    rather than by visiting every row the original's units left.
+    """
+
+    __slots__ = ("_keys", "_rows")
+
+    def __init__(self) -> None:
+        self._keys: list[float] = []
+        self._rows: list[OwnedEndpoint] = []
+
+    def add(self, endpoint: OwnedEndpoint, start: object | None) -> None:
+        position = bisect.bisect_right(self._keys, _start_key(start))
+        self._keys.insert(position, _start_key(start))
+        self._rows.insert(position, endpoint)
+
+    def discard(self, endpoint: OwnedEndpoint, start: object | None) -> None:
+        position = bisect.bisect_left(self._keys, _start_key(start))
+        assert self._rows[position] == endpoint  # no two current pieces share a start
+        del self._keys[position]
+        del self._rows[position]
+
+    def overlapping(self, start: object | None, until: object | None) -> list[OwnedEndpoint]:
+        """The rows that may overlap ``[start, until)``: those starting before
+        ``until``, from the last one starting at or before ``start``."""
+        if start is None:
+            return list(self._rows)
+        keys = self._keys
+        first = max(bisect.bisect_right(keys, _start_key(start)) - 1, 0)
+        last = len(keys) if until is None else bisect.bisect_left(keys, _start_key(until))
+        return self._rows[first:last]
+
+
+def _start_key(start: object | None) -> float:
+    return 0.0 if start is None else instant_order(start)
 
 
 def _address(target: ObjectKey) -> _Address:
     return (target.entity, tuple(value for _name, value in target.primary_key))
+
+
+def _start_order(interval: tuple[object, object]) -> float:
+    return instant_order(interval[0])
 
 
 class UnitOfWork:
@@ -721,15 +872,17 @@ class UnitOfWork:
         * it cannot join the object's pending writes
           (``write-evidence-already-claimed``) — another write of the object
           stands at another stated revision or observed state, a temporal one
-          states another window, or the write it meets is a destruction it
-          would undo; or
+          overlaps its window without stating exactly that window, an observed
+          rectangle holding its start stands at another revision, or the write
+          it meets is a destruction it would undo; or
         * under the Locking strategy, the stored state does not match the
           caller's stated revision (:class:`WritePreconditionError`).
 
         Under Locking, the participation the write needs is taken from a write
-        of the same state already pending, else from a live read of exactly that
-        state this attempt holds, else by ``acquire`` — which reads the stored
-        row under the shared lock and executes nothing pending. The Optimistic
+        of the same state already pending — over exactly its window, for a
+        temporal object — else from a live read of exactly that state this
+        attempt holds, else by ``acquire`` — which reads the stored row under
+        the shared lock and executes nothing pending. The Optimistic
         strategy reads nothing: the caller's revision becomes the write's gate.
         A temporal target names its state by its stated Transaction-Time start
         and, on a Bitemporal object, by the coverage at its ``valid_from``.
@@ -785,13 +938,16 @@ class UnitOfWork:
         """Prove a Locking caller-addressed write of a temporal object starts
         from the state its caller stated, or refuse it.
 
-        A pending write of the object already holds that state: admission
-        required it to start from exactly this one. Otherwise a live read of
-        it this attempt holds does, else ``acquire`` reads it.
+        A pending write of the object over exactly this window already holds
+        that state: admission required it to start from exactly this one. A
+        write over a disjoint window starts elsewhere and proves nothing here.
+        Otherwise a live read of the state this attempt holds does, else
+        ``acquire`` reads it.
         """
-        if self._pending.temporal(key) is not None:
+        bounds = item.instruction.bounds
+        if self._pending.states_window(key, bounds):
             return
-        valid_from = item.instruction.bounds.valid_from
+        valid_from = bounds.valid_from
         if self._participates(
             TemporalStateKey(key, Edge(tx_time=expectation.instant, valid_time=valid_from))
         ):
@@ -850,13 +1006,16 @@ class UnitOfWork:
         """
         if not record.bitemporal:
             return self._pending.removes(key)
-        transform = self._pending.transform(key)
-        if transform is None:
-            return False
         destroyed = tuple(
-            (segment.start, segment.end)
-            for segment in transform.segments
-            if segment.assigned is None
+            sorted(
+                (
+                    (segment.start, segment.end)
+                    for transform in self._pending.transforms(key)
+                    for segment in transform.segments
+                    if segment.assigned is None
+                ),
+                key=_start_order,
+            )
         )
         if not destroyed:
             return False
@@ -1197,6 +1356,7 @@ class UnitOfWork:
             raise
         finally:
             self._reporting = ()
+            self._targets.release_continuity()
 
     def _report(self, unit: ExecutionUnit, bound: BoundRange | None) -> None:
         reported = self._reported
@@ -1218,6 +1378,7 @@ class UnitOfWork:
                 changed=unit.changed,
                 removed=unit.removed,
                 opened=unit.opened,
+                derived=unit.derived,
             )
             return
         self._complete(
@@ -1226,6 +1387,7 @@ class UnitOfWork:
             changed=bound.changed,
             removed=bound.removed,
             opened=bound.opened,
+            derived=bound.derived,
         )
 
     def _complete(
@@ -1236,6 +1398,7 @@ class UnitOfWork:
         changed: Iterable[ObservedStateKey],
         removed: Iterable[OwnedEndpoint],
         opened: Openings,
+        derived: tuple[Derivation, ...],
     ) -> None:
         """Publish one successful execution unit's effects.
 
@@ -1246,6 +1409,12 @@ class UnitOfWork:
         the rows it opened are registered. A single retained claim's own state
         counts as changed exactly when the unit ``executed`` a step; a unit
         that composed several sources states every state it changed itself.
+
+        What the unit ``derived`` from its originals stays for the rest of the
+        flush, for the writes a barrier kept after it: those were admitted with
+        conditions on the same originals, which this unit's guarded effects or
+        held locks have now proven. Spending and invalidation still apply to
+        them; no later submission is admitted on these proofs.
         """
         stamp = self._freshness + 1
         claim = unit.claim
@@ -1260,7 +1429,7 @@ class UnitOfWork:
             self._invalidate(key, stamp)
         if changed_any:
             self._freshness = stamp
-        self._targets.complete(removed, opened)
+        self._targets.complete(removed, opened, derived)
 
     def _invalidate(self, key: ObservedStateKey, stamp: int) -> None:
         held = self._observations.get(key)

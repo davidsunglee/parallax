@@ -22,7 +22,6 @@ from __future__ import annotations
 import datetime as dt
 import threading
 import time
-from collections.abc import Callable
 from typing import Any, Literal
 
 import pytest
@@ -38,17 +37,11 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity._model import model_of
-from parallax.core.execution_lifecycle import (
-    DatabaseCallFinished,
-    DatabaseReadCompleted,
-    ExecutionLifecycleHandler,
-    ExecutionLifecycleHandlerError,
-    RootExecution,
-)
 from parallax.core.unit_work import OptimisticLockConflictError, WritePreconditionError
 from parallax.snapshot import ExecutionFailure, WriteEvidenceError, connect
 from parallax.snapshot.handle import ScopedDatabase, Transaction
 from tests._support.root_ownership import own_root
+from tests.api._coverage_interleaving import AfterCoverageRead
 
 _NAMESPACE = "temporal.target"
 
@@ -604,52 +597,6 @@ def test_a_temporal_target_of_an_object_this_attempt_inserted_is_refused_until_c
 # --------------------------------------------------------------------------- #
 # Two sessions: losses after the flush read, and the Locking acquisition.      #
 # --------------------------------------------------------------------------- #
-class _AfterCoverageRead:
-    """A Provider whose Handler runs ``peer`` to completion on another thread
-    once, right after the first coverage read a write batch issues for
-    ``table`` — between the read and the writes it binds."""
-
-    def __init__(self, table: str, peer: Callable[[], None]) -> None:
-        self._table = table
-        self._peer = peer
-        self.fired = False
-        self.failures: list[BaseException] = []
-        self.reported: list[ExecutionLifecycleHandlerError] = []
-
-    def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler | None:
-        del execution
-        return _Interleave(self)
-
-    def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
-        self.reported.append(error)
-
-    def interleave(self, sql: str) -> None:
-        if self.fired or self._table not in sql or "thru_z >" not in sql:
-            return
-        self.fired = True
-
-        def run() -> None:
-            try:
-                self._peer()
-            except BaseException as failure:
-                self.failures.append(failure)
-
-        peer = threading.Thread(target=run)
-        peer.start()
-        peer.join(timeout=30.0)
-
-
-class _Interleave:
-    def __init__(self, provider: _AfterCoverageRead) -> None:
-        self._provider = provider
-
-    def handle(self, event: object, /) -> None:
-        if isinstance(event, DatabaseCallFinished) and isinstance(
-            event.outcome, DatabaseReadCompleted
-        ):
-            self._provider.interleave(event.statement.sql)
-
-
 def _two_rectangles(profile_run: Any, entity: type[Any]) -> None:
     """Span 1 as [January, June) opened at T0 and [June, infinity) at T1."""
     profile_run.reset(model_of(_MODEL), {})
@@ -711,7 +658,7 @@ def test_a_row_another_session_revises_after_the_flush_read_it_fails_by_whose_it
             lambda tx: tx.update(_span_find(tx, entity, at).edit(label=label), until=until)
         )
 
-    interleaving = _AfterCoverageRead(_TABLES[entity], peer)
+    interleaving = AfterCoverageRead(_TABLES[entity], peer)
     ours = own_root(
         connect(
             profile_run.port,
@@ -766,7 +713,7 @@ def test_a_later_row_lost_after_the_flush_read_rolls_back_without_retries(
             lambda tx: tx.update(_span_find(tx, entity, _JUL).edit(label="peer"), until=_SEP)
         )
 
-    interleaving = _AfterCoverageRead(_TABLES[entity], peer)
+    interleaving = AfterCoverageRead(_TABLES[entity], peer)
     ours = own_root(
         connect(
             profile_run.port, _MODEL, clock=ScriptedClock([_TA]), lifecycle_provider=interleaving

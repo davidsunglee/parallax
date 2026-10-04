@@ -488,8 +488,10 @@ Submission follows the target Entity's Effective Concurrency Strategy:
   either preference, and a missing row is its ordinary missing target at flush.
   A temporal target's state is the milestone its stated start and its
   `validFrom` name, so a live read hits only where `validFrom` is that
-  milestone's own Valid-Time start; a pending write of the object, which
-  admission required to start from the same state, always stands in.
+  milestone's own Valid-Time start; a pending write of the object over exactly
+  the same window, which admission required to start from the same state,
+  always stands in, while one over a disjoint window starts elsewhere and does
+  not.
 
 A failed precondition is the caller's: re-running the transaction re-states the
 same revision, so it is **never retried**, whatever the retry option, and no
@@ -677,7 +679,15 @@ semantics already decided.
   composes with, unless observed rows of its composition cover its window; its
   meaning also carries the caller's starting condition, which binding judges
   against the rows read before any step exists, and a replacement's extent,
-  whose uncovered parts binding opens.
+  whose uncovered parts binding opens. A composition an ordering barrier kept
+  after earlier writes of its object reads its whole window when its turn comes
+  and binds to those rows alone: each observed condition holds where its
+  rectangle still stands or an earlier unit of the flush proved it, each
+  caller's start where it stands at the stated start or at a row derived from a
+  proven original that held it at that start (*Execution units complete before
+  later work runs*); any other caller's start is a failed precondition, and any
+  other observed condition fails as that write's own shortfall would, the
+  caller's first.
 - Planned Steps is a **logical** sequence. An implementation MAY pack homogeneous
   runs and expose stable immutable views during iteration rather than allocating
   one container per step; every exposed view is immutable and stable, and equal
@@ -721,6 +731,19 @@ unit whose steps did not all succeed; such a failure dooms the attempt
 (*Abort*). Completion therefore happens per unit, not at the end of the flush:
 a later unit, and any read the flush serves, observes the earlier units'
 published effects.
+
+A unit that a later unit of the same flush follows across an ordering barrier
+(*Observed-State Coalescing*) also records, for each original it transformed,
+the current rows it derived from that original. Its guarded effect, or the
+shared lock it held, has then **proven** the original: a condition the later
+unit was admitted with on that original holds for it, provided every row
+derived from the original inside the later unit's window still stands as it
+was opened — at its owned address, at the attempt's Transaction Instant, from
+the Valid-Time start it was opened with — and rows a later unit derives from
+such a row descend from the same original. Spending and invalidation apply to
+the earlier unit's sources as usual: a proof serves only the writes admitted
+before the flush began, never a later submission, and it ends with the flush,
+however the flush ends.
 
 ## The Planned Write algebra
 
@@ -1193,7 +1216,10 @@ no write crosses the barrier in either direction. A readless predicate does not
 reveal which rows it matches, so moving a write across it could change what it
 writes (ADR 0043). The barrier is **private planning structure only** — it
 produces no group, wrapper, flag, or identifier in the Write Plan, just a
-position nothing passes.
+position nothing passes. A temporal object's writes on each side of a barrier
+therefore compose apart, each region's into its own execution unit, though
+admission judges every one of them together (*Observed-State Coalescing*); the
+later unit binds to what the earlier left (*deferred range unit*).
 
 ## Same-transaction write coalescing
 
@@ -1323,22 +1349,36 @@ completion spends; a shortfall against its gate is the caller's failed
 precondition, ahead of any observed write's own classification.
 
 A caller-addressed write of a **temporal** object joins that object's
-composition (next paragraph) on the same one-state terms: every write of the
-composition states exactly one window, every caller's stated Transaction-Time
-start and every observed rectangle's agree, and no assignment follows a
-destruction. A write of another window is refused, overlapping or not, while a
-caller-addressed write of the object is pending, and a caller-addressed write is
-refused beside any pending write of another window. The composition's transform
-records a replacement's window as its **extent**: an assignment composed after it
-overlays its values and keeps the extent, so the gaps it fills take the overlaid
-state, and a destruction ends it, opening no gap only to destroy it. The
-condition every caller stated stays the composition's starting condition through
-every overwrite and destruction.
+composition (next paragraph), judged against every write of the object still
+pending — overwritten ones, and those in other barrier regions, included — and
+not only the latest. Against each one, at least one of the two caller-addressed:
+
+- over **exactly the same window**, the two are one operation and start from
+  one state: the caller's stated Transaction-Time start and the observed
+  rectangle's agree, and no assignment follows a destruction;
+- over **disjoint windows** — half-open, so adjacent windows are disjoint — the
+  two are **separate operations**, each keeping its own condition, scope, and
+  revision intent, even where both starts lie inside one stored rectangle;
+  they are refused only where an observed rectangle holds the caller's start at
+  another Transaction-Time start, a condition no current coverage can meet;
+- over any **other overlapping** window, they are refused. An unbounded window
+  overlaps every window after its start, whatever rectangle holds either start.
+
+A Non-Temporal write has no window, and every Transaction-Time-Only write of
+an object states the same one, so neither admits a separate operation. The
+composition's transform records a replacement's window
+as its **extent**: an assignment composed after it overlays its values and
+keeps the extent, so the gaps it fills take the overlaid state, and a
+destruction ends it, opening no gap only to destroy it. The condition every
+caller stated stays its operation's starting condition through every overwrite
+and destruction, and a replacement's extent never reaches another operation's
+window.
 
 **A temporal object's observed writes compose by object.** Writes of one temporal
 object through observed sources — whichever states they observed and whatever
 Valid-Time windows they request — form one pending composition at the position
-of the first, judged against every write of the object still pending:
+of the first in their barrier region, judged against every write of the object
+still pending:
 
 - an **assignment** composes in authored order: where requested windows
   overlap, the later assignment's value wins member by member, and outside the
