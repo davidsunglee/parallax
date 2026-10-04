@@ -624,7 +624,8 @@ Non-Temporal read's — has no state for a unit to name; its authority is spent
 on the source itself once the flush that held its write succeeds, and every
 value derived from that source shares it. Removals are retired before openings
 are registered, so a row removed and reopened at one physical address remains
-owned. Nothing is published for a
+owned, and an insertion whose last tagged row the unit removed still stands when
+a row the unit opened is tagged with it. Nothing is published for a
 unit whose steps did not all succeed; such a failure dooms the attempt
 (*Abort*). Completion therefore happens per unit, not at the end of the flush:
 a later unit, and any read the flush serves, observes the earlier units'

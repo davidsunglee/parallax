@@ -11,6 +11,7 @@ from parallax.core.unit_work.planned import INFINITY, PlannedWrite, TemporalUppe
 from parallax.core.unit_work.planner import ObservedStateKey
 
 __all__ = [
+    "NO_OPENINGS",
     "NO_OWNERSHIP",
     "OPEN_BITEMPORAL_ENDS",
     "TRANSACTION_TIME_ENDS",
@@ -19,6 +20,7 @@ __all__ = [
     "Completions",
     "DeferredRange",
     "ExecutionUnit",
+    "Openings",
     "OwnedEndpoint",
     "Ownership",
     "PlannedSteps",
@@ -208,6 +210,19 @@ class RangeAcquisition:
 
 
 @dataclass(frozen=True, slots=True)
+class Openings:
+    """The owned rows an execution unit opens, by what each derives from:
+    ``continued`` holds an insert's row and every successor of a row an
+    admitted insertion opened, and ``fresh`` every other row."""
+
+    fresh: Iterable[OwnedEndpoint] = ()
+    continued: Iterable[OwnedEndpoint] = ()
+
+
+NO_OPENINGS: Final[Openings] = Openings()
+
+
+@dataclass(frozen=True, slots=True)
 class BoundRange:
     """What a deferred range became once its acquired coverage was bound: the
     physical steps it executes, in order, and the facts its success publishes."""
@@ -215,8 +230,7 @@ class BoundRange:
     steps: tuple[PlannedWrite, ...]
     changed: tuple[ObservedStateKey, ...]
     removed: tuple[OwnedEndpoint, ...]
-    opened: tuple[OwnedEndpoint, ...]
-    continued: tuple[OwnedEndpoint, ...] = ()
+    opened: Openings
 
 
 class DeferredRange(Protocol):
@@ -239,11 +253,10 @@ class ExecutionUnit:
     succeeded, and before any later unit executes: the source authority
     ``claim`` it spends, the observed states it changed — a single retained
     claim's own state among them whenever the unit has a step — and the owned
-    rows it removed and opened. The rows it opened are split by what they
-    derive from: ``continued`` holds an insert's row and every successor of a
-    row an admitted insertion opened, and ``opened`` every other. Removals are
-    retired before openings are registered, so a row removed and reopened at
-    one address remains owned.
+    rows it removed and opened. Removals are retired before openings are
+    registered, so a row removed and reopened at one address remains owned, and
+    an insertion whose last row the unit removed still stands when a row the
+    unit opened continues it.
 
     A unit with a ``deferred`` range has no planned step of its own: its steps
     and the facts beyond its claim come from binding the coverage the executor
@@ -254,8 +267,7 @@ class ExecutionUnit:
     claim: Completion | None = None
     changed: Iterable[ObservedStateKey] = ()
     removed: Iterable[OwnedEndpoint] = ()
-    opened: Iterable[OwnedEndpoint] = ()
-    continued: Iterable[OwnedEndpoint] = ()
+    opened: Openings = NO_OPENINGS
     deferred: DeferredRange | None = None
 
 

@@ -484,6 +484,34 @@ def test_a_partial_removal_keeps_the_insertion_standing(
     assert _span_rows(profile_run, entity) == _current((_MAY, None, 100))
 
 
+@pytest.mark.parametrize("helper_read", [False, True], ids=["pending", "after-a-helper-read"])
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_a_removal_that_moves_an_openings_end_keeps_the_insertion_standing(
+    profile_run: Any, entity: type[Any], representation: _Representation, helper_read: bool
+) -> None:
+    # Terminating from May removes the stored opening's row and opens its
+    # January head, which continues the insertion: a second insertion is a
+    # repeat whether or not the removal has flushed, and once it has, the first
+    # insertion's source still edits from its anchor.
+    db = _db(profile_run)
+
+    def edit(tx: Transaction) -> None:
+        first = _insert_span(tx, entity, representation, valid_from=_JAN)
+        _read_span(tx, entity, representation, _MAY).terminate()
+        if helper_read:
+            _read_span(tx, entity, representation, _MAR)
+        with pytest.raises(KeyedWriteValueError) as refused:
+            _insert_span(tx, entity, representation, valid_from=_JAN, amount=200)
+        assert refused.value.code == "write-value-already-stored"
+        if not helper_read:
+            _read_span(tx, entity, representation, _MAR)
+        first.update(amount=150)
+
+    db.transact(edit)
+    assert _span_rows(profile_run, entity) == _current((_JAN, _MAY, 150))
+
+
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
 @pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
