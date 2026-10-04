@@ -893,9 +893,11 @@ class Case:
 
         A target step's gate binds its caller's revision exactly where a keyed
         update's binds the version its source observed, so it is graded as that
-        update with ``observedVersion`` set to ``ifVersion``. A replacement
+        update with ``observedVersion`` set to ``ifVersion``; a temporal one
+        keeps its ``ifTxStart`` for the close that gates on it. A replacement
         states every writable member: those its ``row`` omits are written empty
-        — ``null``, or ``[]`` for a ``many`` value object. The keyed form keeps
+        — ``null``, or ``[]`` for a ``many`` value object — while a read-only
+        member, immutable after insert, is no part of it. The keyed form keeps
         ``target: true`` beside its members, because a target step resolves no
         source.
         """
@@ -910,7 +912,11 @@ class Case:
         if mutation in ("replace", "replaceUntil"):
             entity = self.model.entity(step["entity"])
             for attribute in entity.attributes:
-                if attribute.get("primaryKey") or attribute.get("optimisticLocking"):
+                if (
+                    attribute.get("primaryKey")
+                    or attribute.get("optimisticLocking")
+                    or attribute.get("readOnly")
+                ):
                     continue
                 stated.setdefault(attribute["name"], None)
             for value_object in entity.value_objects:
@@ -918,11 +924,7 @@ class Case:
                 stated.setdefault(value_object["name"], [] if many else None)
         if "ifVersion" in step:
             stated["observedVersion"] = step["ifVersion"]
-        keyed = {
-            name: value
-            for name, value in step.items()
-            if name not in ("row", "ifVersion", "ifTxStart")
-        }
+        keyed = {name: value for name, value in step.items() if name not in ("row", "ifVersion")}
         keyed["mutation"] = "update" if mutation in ("update", "replace") else "updateUntil"
         keyed["rows"] = [stated]
         keyed["target"] = True

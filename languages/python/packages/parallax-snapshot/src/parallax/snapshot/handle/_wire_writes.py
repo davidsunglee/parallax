@@ -56,7 +56,8 @@ __all__ = [
 type WireChanges = Mapping[str, object]
 """A Wire write's authored assignments: declared member names to accepted wire
 values. Identity, version, temporal-axis, computed, read-only, and relationship
-members are refused rather than assigned. Required wherever a verb's signature
+members are refused rather than assigned, except that a caller-addressed patch's
+primary-key entries name the object it writes. Required wherever a verb's signature
 names it — the verbs that name no member are the destructive and close ones,
 which take no change set at all.
 

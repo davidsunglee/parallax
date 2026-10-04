@@ -133,8 +133,8 @@ later mutations require provenance where the core evidence rules prescribe it.
 Evidence is never a caller-supplied address. Set-based writes take an Object
 Query; update-bearing verbs also take Assignments.
 
-Each operation is one method: `insert`, `update`, `terminate`, `update_where`,
-and `terminate_where`, on the Transaction and on `tx.wire`, take a keyword-only
+Each operation is one method: `insert`, `update`, `replace`, `terminate`,
+`update_where`, and `terminate_where`, on the Transaction and on `tx.wire`, take a keyword-only
 `until`. Omitting it selects the core unbounded verb; stating it — `None`
 included — selects the bounded one, whose window core preparation judges before
 an empty update is dropped, so `until=None` and an `until` on a target without

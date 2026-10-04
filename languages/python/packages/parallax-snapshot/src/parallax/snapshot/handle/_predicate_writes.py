@@ -30,6 +30,7 @@ from parallax.core.temporal_read import (
     TransactionTimeOnly,
 )
 from parallax.core.unit_work import (
+    CardinalityCorruptionError,
     MaterializedWriteGroup,
     ObjectKey,
     PredecessorRows,
@@ -40,6 +41,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, PreparedTargetWrite
 from parallax.core.unit_work.plan import RangeAcquisition
+from parallax.core.unit_work.planned import KeyTarget
 from parallax.core.unit_work.uow import StoredTarget
 from parallax.core.unit_work.write_settlement import reject_readless_document_many
 from parallax.snapshot.handle._concurrency import CONCURRENCY
@@ -405,6 +407,12 @@ def _acquire_target(
             FlatPageRead(model, compiled, lambda: execute_read(conn, compiled, read), Pin())
         )
         rows = tuple(_publishable_member_rows(stage.page))
+    if len(rows) > 1:
+        target = KeyTarget(
+            key_attributes=(family_view(meta, entity).primary_key.identity,),
+            key_values=((value,),),
+        )
+        raise CardinalityCorruptionError(entity.identity, target, 1, len(rows))
     if not rows:
         return None
     (row,) = rows

@@ -1723,10 +1723,14 @@ def _assert_temporal_input(
         # GATES is decided by the SQL shape, exactly as the bitemporal split's own
         # close is: a gated one appends the observed milestone's `in_z` LAST, and the
         # gate's bind is reconstructed from the case's own history rather than
-        # authored on the step (:func:`_observed_milestone_start`).
+        # authored on the step (:func:`_observed_milestone_start`) — or, on a
+        # caller-addressed step, is the start its caller states (:func:`_gate_start`).
         expected = [at, *close_address_binds(case, entity, pk, None)]
-        if has_temporal_gate(statement, transaction_time["start_column"], dialect):
-            expected.append(_observed_milestone_start(case, entity, step, pk))
+        gated = has_temporal_gate(statement, transaction_time["start_column"], dialect)
+        if gated or step.get("target"):
+            start = _gate_start(case, step, _observed_milestone_start(case, entity, step, pk))
+            if gated:
+                expected.append(start)
         assert_write_values(case, expected, binds, statement)
 
     mutation = step["mutation"]
@@ -1869,6 +1873,7 @@ def _assert_until_input(
         expected_windows = [(valid_from, until)]
     else:
         observed = _observed_rectangle(case, entity, step, pk)
+        observed = observed._replace(tx_start=_gate_start(case, step, observed.tx_start))
         expected_windows = [
             (rectangle.valid_start, rectangle.valid_end)
             for rectangle in _split_successors(mutation, observed, valid_from, until, at)
@@ -2076,6 +2081,31 @@ def _observed_milestone_start(case: Case, entity: Entity, step: dict[str, Any], 
             f"leave exactly one milestone of that key current on Transaction Time."
         )
     return current
+
+
+def _gate_start(case: Case, step: dict[str, Any], observed: Any) -> Any:
+    """The Transaction-Time start *step*'s starting close gates on.
+
+    An observed write's is the ``observed`` start its history leaves. A
+    caller-addressed step's is the ``ifTxStart`` its caller states, which it
+    MUST state, and which its history MUST leave as that starting milestone's
+    ``in_z`` (`m-case-format`) — a golden graded against the history alone would
+    pass whatever token the step carried.
+    """
+    if not step.get("target"):
+        return observed
+    stated = step.get("ifTxStart")
+    if stated is None:
+        raise CaseFailure(
+            f"{case.path.name}: a temporal caller-addressed step MUST state `ifTxStart`, "
+            f"the Transaction-Time start its starting close gates on."
+        )
+    if not write_value_equal(stated, observed):
+        raise CaseFailure(
+            f"{case.path.name}: a caller-addressed step states `ifTxStart` {stated!r}, but "
+            f"the case's own history leaves its starting milestone at {observed!r}."
+        )
+    return stated
 
 
 def _observed_rectangle(case: Case, entity: Entity, step: dict[str, Any], pk: Any) -> _Rectangle:

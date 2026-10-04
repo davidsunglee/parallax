@@ -22,7 +22,9 @@ import pytest
 
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Wallet
+from parallax.core import Attr, Entity, attr
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity import DomainModel
 from parallax.core.unit_work import (
     MissingTargetError,
     RollbackOnlyError,
@@ -732,7 +734,7 @@ def test_a_committed_object_rewritten_in_this_attempt_is_target_writable() -> No
 
 
 # --------------------------------------------------------------------------- #
-# The two update overloads, and what this slice does not yet write.           #
+# The two update overloads, addressing, subtypes, and keyword-only arguments. #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("keyword", ["if_version", "if_tx_start", "valid_from"])
 def test_an_observed_update_takes_its_condition_from_its_source(keyword: str) -> None:
@@ -760,6 +762,31 @@ def test_a_typed_replacement_of_a_read_value_is_addressed_by_its_key_alone() -> 
         ReadCall(FIND_SQL_UNLOCKED, (1,)),
         WriteCall(_GATED, ("Bo", Decimal("100.00"), 8, 1, 7)),
     ]
+
+
+class Ledger(Entity, table="ledger", namespace="parallax.targetwrites"):
+    id: Attr[int] = attr(primary_key=True)
+    opened: Attr[str] = attr(read_only=True)
+    note: Attr[str | None]
+    version: Attr[int] = attr(optimistic_locking=True)
+
+
+def test_a_typed_replacement_of_a_read_value_leaves_its_read_only_members_unwritten() -> None:
+    stored = {"id": 1, "opened": "2024-01-01", "note": "kept", "version": 3}
+    port = ScriptedAdapter(Transact(Read(rows=[stored]), Write()))
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(Ledger.where(Ledger.id == 1)).result()
+        tx.replace(fetched.edit(note="changed"), if_version=3)
+
+    db_for(DomainModel(Ledger), port).transact(fn)
+    write = _calls(port)[-1]
+    assert write == WriteCall(
+        POSTGRES.to_driver_sql(
+            "update ledger set note = ?, version = ? where id = ? and version = ?"
+        ),
+        ("changed", 4, 1, 3),
+    )
 
 
 def test_a_subtype_target_write_is_guarded_by_its_tag_and_refuses_a_sibling_member() -> None:

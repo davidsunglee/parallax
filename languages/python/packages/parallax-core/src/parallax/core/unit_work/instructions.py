@@ -93,7 +93,7 @@ PredicateMutation = Literal["update", "delete", "terminate", "updateUntil", "ter
 # replacement of one existing object, each with its bounded form.
 TargetMutation = Literal["update", "updateUntil", "replace", "replaceUntil"]
 
-# Which of the two verb surfaces above a mutation arrived through. Carried only
+# Which of the keyed and predicate verb surfaces a mutation arrived through. Carried only
 # so a refusal can name methods the caller can act on: one mutation token is
 # spelled by two methods, and answering a `terminate_where` call with "use
 # `delete`" names the addressed verb, which selects nothing.

@@ -152,6 +152,50 @@ def test_a_target_step_is_graded_as_the_keyed_update_its_caller_conditions() -> 
     ]
 
 
+def test_a_target_replacement_writes_no_read_only_member() -> None:
+    model = load_model(COMPATIBILITY_ROOT, "models/evolution-read-only-v1.yaml")
+    entity = model.root_entity
+    read_only = [a["name"] for a in entity.attributes if a.get("readOnly")]
+    assert read_only
+    replacement = {
+        "mutation": "replace",
+        "entity": entity.canonical_name,
+        "row": {"id": 1},
+        "statements": 1,
+    }
+    case = Case(
+        path=Path("synthetic.yaml"),
+        raw={"when": {"writeSequence": [replacement]}},
+        model=model,
+    )
+    (keyed,) = case.write_sequence
+    (stated,) = keyed["rows"]
+    assert not set(read_only) & set(stated)
+
+
+def _temporal_target_case(prefix: str) -> Case:
+    return next(c for c in discover_cases(COMPATIBILITY_ROOT) if c.path.stem.startswith(prefix))
+
+
+@pytest.mark.parametrize(
+    "prefix", ["m-txtime-write-016", "m-bitemp-write-026", "m-bitemp-write-027"]
+)
+@pytest.mark.parametrize("token", ["1999-12-31T00:00:00.000000Z", None], ids=["stale", "missing"])
+def test_a_temporal_target_steps_stated_start_must_be_the_one_its_history_leaves(
+    prefix: str, token: str | None
+) -> None:
+    case = _temporal_target_case(prefix)
+    _assert_write_input_columns(case, "postgres")
+    raw = copy.deepcopy(case.raw)
+    step = next(step for step in raw["when"]["writeSequence"] if "row" in step)
+    if token is None:
+        del step["ifTxStart"]
+    else:
+        step["ifTxStart"] = token
+    with pytest.raises(CaseFailure, match="ifTxStart"):
+        _assert_write_input_columns(Case(path=case.path, raw=raw, model=case.model), "postgres")
+
+
 def test_a_target_step_owes_a_read_only_where_it_is_acquired() -> None:
     entry = {
         "mutation": "update",
