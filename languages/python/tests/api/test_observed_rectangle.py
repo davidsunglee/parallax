@@ -51,7 +51,7 @@ from parallax.core import (
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import RollbackOnlyError
-from parallax.snapshot import ExecutionFailure, WriteEvidenceError, connect
+from parallax.snapshot import ExecutionFailure, WriteEvidenceError, WriteInstructionError, connect
 from parallax.snapshot.handle import ScopedDatabase, Transaction
 from tests._support.root_ownership import own_root
 
@@ -97,7 +97,7 @@ def test_an_optimistic_close_settles_against_the_rectangle_it_read(profile_run: 
     ).using_database_login()
 
     db.transact(
-        lambda tx: tx.insert_until(
+        lambda tx: tx.insert(
             Position(id=1, acct_num="A", value=Decimal("50.00")), valid_from=_V1, until=_V2
         )
     )
@@ -106,9 +106,9 @@ def test_an_optimistic_close_settles_against_the_rectangle_it_read(profile_run: 
     )
 
     def correct(tx: Transaction) -> None:
-        current = tx.find(Position.where(Position.id == 1).as_of(valid_time=LATEST)).result()
+        current = tx.find(Position.where(Position.id == 1).as_of(valid_time=_V3)).result()
         tx.find(Position.where(Position.id == 1).as_of(valid_time=_VP)).result()
-        tx.update(current.edit(value=Decimal("150.00")), valid_from=_V3)
+        tx.update(current.edit(value=Decimal("150.00")))
 
     db.transact(correct, concurrency="optimistic")
 
@@ -280,19 +280,18 @@ def _span_update(
     representation: _Representation,
     amount: int,
     *,
-    valid_from: dt.datetime,
     until: dt.datetime | None = None,
 ) -> None:
     if representation == "typed":
         edited = observed.edit(amount=amount)
         if until is None:
-            tx.update(edited, valid_from=valid_from)
+            tx.update(edited)
         else:
-            tx.update_until(edited, valid_from=valid_from, until=until)
+            tx.update(edited, until=until)
     elif until is None:
-        tx.wire.update(observed, {"amount": amount}, valid_from=valid_from)
+        tx.wire.update(observed, {"amount": amount})
     else:
-        tx.wire.update_until(observed, {"amount": amount}, valid_from=valid_from, until=until)
+        tx.wire.update(observed, {"amount": amount}, until=until)
 
 
 def _span_terminate(
@@ -300,18 +299,17 @@ def _span_terminate(
     observed: Any,
     representation: _Representation,
     *,
-    valid_from: dt.datetime,
     until: dt.datetime | None = None,
 ) -> None:
     if representation == "typed":
         if until is None:
-            tx.terminate(observed, valid_from=valid_from)
+            tx.terminate(observed)
         else:
-            tx.terminate_until(observed, valid_from=valid_from, until=until)
+            tx.terminate(observed, until=until)
     elif until is None:
-        tx.wire.terminate(observed, valid_from=valid_from)
+        tx.wire.terminate(observed)
     else:
-        tx.wire.terminate_until(observed, valid_from=valid_from, until=until)
+        tx.wire.terminate(observed, until=until)
 
 
 def _wire_target(entity: type[Any]) -> dict[str, object]:
@@ -372,10 +370,10 @@ def test_a_bitemporal_suffix_the_attempt_opened_is_split_in_place(
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
 
     def edit(tx: Transaction) -> None:
-        current = _span_find(tx, entity, representation, None)
-        _span_update(tx, current, representation, 150, valid_from=_FEB)
-        suffix = _span_find(tx, entity, representation, None)
-        _span_update(tx, suffix, representation, 175, valid_from=_MAR)
+        current = _span_find(tx, entity, representation, _FEB)
+        _span_update(tx, current, representation, 150)
+        suffix = _span_find(tx, entity, representation, _MAR)
+        _span_update(tx, suffix, representation, 175)
 
     db.transact(edit, concurrency=concurrency)
 
@@ -398,9 +396,9 @@ def test_a_bounded_correction_inside_a_rectangle_the_attempt_opened_keeps_one_in
 
     def edit(tx: Transaction) -> None:
         current = _span_find(tx, entity, representation, _FEB)
-        _span_update(tx, current, representation, 150, valid_from=_FEB, until=_APR)
+        _span_update(tx, current, representation, 150, until=_APR)
         middle = _span_find(tx, entity, representation, _MAR)
-        _span_update(tx, middle, representation, 175, valid_from=_MAR, until=_APR)
+        _span_update(tx, middle, representation, 175, until=_APR)
 
     db.transact(edit, concurrency=concurrency)
 
@@ -423,10 +421,10 @@ def test_terminating_a_suffix_the_attempt_opened_replaces_it_with_its_head(
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
 
     def edit(tx: Transaction) -> None:
-        current = _span_find(tx, entity, representation, None)
-        _span_update(tx, current, representation, 150, valid_from=_FEB)
-        suffix = _span_find(tx, entity, representation, None)
-        _span_terminate(tx, suffix, representation, valid_from=_MAR)
+        current = _span_find(tx, entity, representation, _FEB)
+        _span_update(tx, current, representation, 150)
+        suffix = _span_find(tx, entity, representation, _MAR)
+        _span_terminate(tx, suffix, representation)
 
     db.transact(edit, concurrency=concurrency)
 
@@ -439,18 +437,21 @@ def test_terminating_a_suffix_the_attempt_opened_replaces_it_with_its_head(
 
 _ATTEMPT_HEAD = (_ATTEMPT, None, _JAN, _FEB, 100, _SPEC_DOCUMENT)
 _SUFFIX_GEOMETRIES: dict[
-    str, tuple[Callable[[Transaction, Any, _Representation], None], list[tuple[object, ...]]]
+    str,
+    tuple[
+        dt.datetime,
+        Callable[[Transaction, Any, _Representation], None],
+        list[tuple[object, ...]],
+    ],
 ] = {
     "whole-value-change": (
-        lambda tx, suffix, representation: _span_update(
-            tx, suffix, representation, 175, valid_from=_FEB
-        ),
+        _FEB,
+        lambda tx, suffix, representation: _span_update(tx, suffix, representation, 175),
         [_ATTEMPT_HEAD, (_ATTEMPT, None, _FEB, None, 175, _SPEC_DOCUMENT)],
     ),
     "bounded-termination": (
-        lambda tx, suffix, representation: _span_terminate(
-            tx, suffix, representation, valid_from=_MAR, until=_APR
-        ),
+        _MAR,
+        lambda tx, suffix, representation: _span_terminate(tx, suffix, representation, until=_APR),
         [
             _ATTEMPT_HEAD,
             (_ATTEMPT, None, _FEB, _MAR, 150, _SPEC_DOCUMENT),
@@ -458,9 +459,8 @@ _SUFFIX_GEOMETRIES: dict[
         ],
     ),
     "whole-termination": (
-        lambda tx, suffix, representation: _span_terminate(
-            tx, suffix, representation, valid_from=_FEB
-        ),
+        _FEB,
+        lambda tx, suffix, representation: _span_terminate(tx, suffix, representation),
         [_ATTEMPT_HEAD],
     ),
 }
@@ -477,14 +477,14 @@ def test_a_suffix_the_attempt_opened_takes_each_geometry_without_history_of_its_
     concurrency: _Concurrency,
     geometry: str,
 ) -> None:
-    write, opened = _SUFFIX_GEOMETRIES[geometry]
+    pin, write, opened = _SUFFIX_GEOMETRIES[geometry]
     db = _attempt_db(profile_run)
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
 
     def edit(tx: Transaction) -> None:
-        current = _span_find(tx, entity, representation, None)
-        _span_update(tx, current, representation, 150, valid_from=_FEB)
-        write(tx, _span_find(tx, entity, representation, None), representation)
+        current = _span_find(tx, entity, representation, _FEB)
+        _span_update(tx, current, representation, 150)
+        write(tx, _span_find(tx, entity, representation, pin), representation)
 
     db.transact(edit, concurrency=concurrency)
 
@@ -509,11 +509,11 @@ def test_a_committed_rectangle_written_from_its_own_start_opens_no_empty_head(
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
 
     def edit(tx: Transaction) -> None:
-        current = _span_find(tx, entity, representation, None)
+        current = _span_find(tx, entity, representation, _JAN)
         if terminating:
-            _span_terminate(tx, current, representation, valid_from=_JAN)
+            _span_terminate(tx, current, representation)
         else:
-            _span_update(tx, current, representation, 150, valid_from=_JAN)
+            _span_update(tx, current, representation, 150)
 
     db.transact(edit, concurrency=concurrency)
 
@@ -521,78 +521,6 @@ def test_a_committed_rectangle_written_from_its_own_start_opens_no_empty_head(
     assert _span_rows(profile_run, entity) == (
         [closed] if terminating else [closed, (_ATTEMPT, None, _JAN, None, 150, _SPEC_DOCUMENT)]
     )
-
-
-@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
-@pytest.mark.parametrize("representation", _REPRESENTATIONS)
-@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
-def test_terminating_a_rectangle_the_attempt_opened_from_its_own_end_leaves_it_writable(
-    profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
-) -> None:
-    # The termination covers none of the rectangle, so it changes no stored
-    # state: a streamed root its page fetched before that termination is still
-    # the current state and can be written from.
-    db = _attempt_db(profile_run)
-
-    def seed(tx: Transaction) -> None:
-        for key in (1, 2):
-            tx.insert(entity(id=key, amount=100, spec=_SPEC), valid_from=_JAN)
-
-    db.transact(seed)
-    name = _name(entity)
-
-    def at_feb(tx: Transaction, key: int) -> Any:
-        if representation == "typed":
-            return tx.find(entity.where(entity.id == key).as_of(valid_time=_FEB)).result()
-        return tx.wire.find(
-            {
-                "target": name,
-                "predicate": {"eq": {"attr": f"{name}.id", "value": key}},
-                "temporal": {
-                    "transaction-time": {"asOf": "latest"},
-                    "valid-time": {"asOf": f"{_FEB:%Y-%m-%dT%H:%M:%S.%fZ}"},
-                },
-            }
-        ).result()
-
-    def edit(tx: Transaction) -> None:
-        _span_update(tx, at_feb(tx, 2), representation, 150, valid_from=_FEB, until=_MAR)
-        stream = (
-            tx.stream(entity.where(entity.id >= 1).as_of(valid_time=_FEB), batch_size=2)
-            if representation == "typed"
-            else tx.wire.stream(
-                {
-                    "target": name,
-                    "predicate": {"all": {}},
-                    "temporal": {
-                        "transaction-time": {"asOf": "latest"},
-                        "valid-time": {"asOf": f"{_FEB:%Y-%m-%dT%H:%M:%S.%fZ}"},
-                    },
-                    "orderBy": [{"attr": f"{name}.id", "direction": "asc"}],
-                },
-                batch_size=2,
-            )
-        )
-        with stream as roots:
-            for root in roots:
-                key: object = (
-                    cast("Any", root).id if representation == "typed" else cast("Any", root)["id"]
-                )
-                if key == 1:
-                    _span_terminate(tx, at_feb(tx, 2), representation, valid_from=_MAR)
-                    at_feb(tx, 2)
-                    continue
-                _span_update(tx, root, representation, 175, valid_from=_FEB, until=_MAR)
-
-    db.transact(edit, concurrency=concurrency)
-
-    assert _span_rows(profile_run, entity) == [
-        (_SEEDED, _ATTEMPT, _JAN, None, 100, _SPEC_DOCUMENT),
-        (_SEEDED, None, _JAN, None, 100, _SPEC_DOCUMENT),
-        (_ATTEMPT, None, _JAN, _FEB, 100, _SPEC_DOCUMENT),
-        (_ATTEMPT, None, _FEB, _MAR, 175, _SPEC_DOCUMENT),
-        (_ATTEMPT, None, _MAR, None, 100, _SPEC_DOCUMENT),
-    ]
 
 
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
@@ -640,7 +568,7 @@ def test_an_own_change_leaves_reads_of_an_unaffected_rectangle_writable(
     clock = ScriptedClock([_SEEDED, _SEEDED, _ATTEMPT])
     db = own_root(connect(profile_run.port, _ATTEMPT_MODEL, clock=clock)).using_database_login()
     db.transact(
-        lambda tx: tx.insert_until(entity(id=1, amount=50, spec=_SPEC), valid_from=_JAN, until=_MAR)
+        lambda tx: tx.insert(entity(id=1, amount=50, spec=_SPEC), valid_from=_JAN, until=_MAR)
     )
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_MAR))
 
@@ -648,11 +576,11 @@ def test_an_own_change_leaves_reads_of_an_unaffected_rectangle_writable(
         early = _span_find(tx, entity, representation, _FEB)
         late = _span_find(tx, entity, representation, _APR)
         stale_late = _span_find(tx, entity, representation, _APR)
-        _span_update(tx, late, representation, 150, valid_from=_APR)
+        _span_update(tx, late, representation, 150)
         _span_find(tx, entity, representation, None)
         with pytest.raises(WriteEvidenceError):
-            _span_update(tx, stale_late, representation, 175, valid_from=_APR)
-        _span_update(tx, early, representation, 60, valid_from=_FEB)
+            _span_update(tx, stale_late, representation, 175)
+        _span_update(tx, early, representation, 60, until=_MAR)
 
     db.transact(edit, concurrency=concurrency)
 
@@ -721,18 +649,16 @@ def test_a_predicate_write_revises_the_rectangles_the_attempt_opened(
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100, spec=_SPEC), valid_from=_JAN))
 
     def edit(tx: Transaction) -> None:
-        current = _span_find(tx, entity, representation, None)
-        _span_update(tx, current, representation, 150, valid_from=_FEB)
+        current = _span_find(tx, entity, representation, _FEB)
+        _span_update(tx, current, representation, 150)
         if representation == "typed":
             tx.update_where(entity.where(entity.id == 1), entity.amount.set(175), valid_from=_MAR)
-            tx.update_until_where(
+            tx.update_where(
                 entity.where(entity.id == 1), entity.amount.set(200), valid_from=_APR, until=_MAY
             )
         else:
             tx.wire.update_where(_wire_target(entity), {"amount": 175}, valid_from=_MAR)
-            tx.wire.update_until_where(
-                _wire_target(entity), {"amount": 200}, valid_from=_APR, until=_MAY
-            )
+            tx.wire.update_where(_wire_target(entity), {"amount": 200}, valid_from=_APR, until=_MAY)
 
     db.transact(edit, concurrency=concurrency)
 
@@ -898,3 +824,324 @@ def test_a_read_stays_writable_until_a_change_to_its_state_completes(
         (_SEEDED, _ATTEMPT, "seeded", _SPEC_DOCUMENT),
         (_ATTEMPT, None, "pending", replaced),
     ]
+
+
+# Requested extent. An observed Bitemporal write starts at its source's Valid-Time
+# pin and applies to every current interval from there — through infinity, or up to
+# the exclusive `until` — not only to the rectangle the source observed. Each
+# interval keeps its own unassigned members, gaps stay gaps, and the expected rows
+# below are enumerated by hand rather than derived from the transform.
+
+_JUN = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+_AUG = dt.datetime(2024, 8, 1, tzinfo=dt.UTC)
+_SEP = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+_OCT = dt.datetime(2024, 10, 1, tzinfo=dt.UTC)
+_NOV = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
+_DEC = dt.datetime(2024, 12, 1, tzinfo=dt.UTC)
+_LATER_SPEC = AttemptSpec(title="later", origin=None)
+_LATER_DOCUMENT = {"title": "later", "origin": None}
+
+
+def _seeded_spans(
+    profile_run: Any,
+    entity: type[Any],
+    spans: tuple[tuple[dt.datetime, dt.datetime | None, int, AttemptSpec], ...],
+) -> ScopedDatabase:
+    """A database holding one current rectangle per ``spans`` entry for key 1,
+    each committed by its own transaction at the seeding instant."""
+    profile_run.reset(model_of(_ATTEMPT_MODEL), {})
+    clock = ScriptedClock([*([_SEEDED] * len(spans)), _ATTEMPT])
+    db = own_root(connect(profile_run.port, _ATTEMPT_MODEL, clock=clock)).using_database_login()
+    for start, end, amount, spec in spans:
+        row = entity(id=1, amount=amount, spec=spec)
+        if end is None:
+            db.transact(lambda tx, row=row, start=start: tx.insert(row, valid_from=start))
+        else:
+            db.transact(
+                lambda tx, row=row, start=start, end=end: tx.insert(
+                    row, valid_from=start, until=end
+                )
+            )
+    return db
+
+
+def _history(
+    *spans: tuple[dt.datetime, dt.datetime | None, int, object],
+) -> list[tuple[object, ...]]:
+    return [(_SEEDED, _ATTEMPT, start, end, amount, spec) for start, end, amount, spec in spans]
+
+
+def _current(
+    *spans: tuple[dt.datetime, dt.datetime | None, int, object],
+) -> list[tuple[object, ...]]:
+    return [(_ATTEMPT, None, start, end, amount, spec) for start, end, amount, spec in spans]
+
+
+_TWO_RECTANGLES = ((_JAN, _JUN, 100, _SPEC), (_JUN, None, 200, _LATER_SPEC))
+_TWO_RECTANGLES_HISTORY = _history(
+    (_JAN, _JUN, 100, _SPEC_DOCUMENT), (_JUN, None, 200, _LATER_DOCUMENT)
+)
+
+_EXTENTS: dict[
+    str,
+    tuple[
+        tuple[tuple[dt.datetime, dt.datetime | None, int, AttemptSpec], ...],
+        Callable[[Transaction, Any, _Representation], None],
+        list[tuple[object, ...]],
+    ],
+] = {
+    "plain-update-crosses-a-later-rectangle": (
+        _TWO_RECTANGLES,
+        lambda tx, source, representation: _span_update(tx, source, representation, 150),
+        [
+            *_TWO_RECTANGLES_HISTORY,
+            *_current(
+                (_JAN, _MAR, 100, _SPEC_DOCUMENT),
+                (_MAR, _JUN, 150, _SPEC_DOCUMENT),
+                (_JUN, None, 150, _LATER_DOCUMENT),
+            ),
+        ],
+    ),
+    "bounded-update-ends-inside-a-later-rectangle": (
+        _TWO_RECTANGLES,
+        lambda tx, source, representation: _span_update(
+            tx, source, representation, 150, until=_SEP
+        ),
+        [
+            *_TWO_RECTANGLES_HISTORY,
+            *_current(
+                (_JAN, _MAR, 100, _SPEC_DOCUMENT),
+                (_MAR, _JUN, 150, _SPEC_DOCUMENT),
+                (_JUN, _SEP, 150, _LATER_DOCUMENT),
+                (_SEP, None, 200, _LATER_DOCUMENT),
+            ),
+        ],
+    ),
+    "update-skips-a-gap-and-stops-at-termination": (
+        ((_JAN, _APR, 100, _SPEC), (_JUN, _AUG, 200, _LATER_SPEC)),
+        lambda tx, source, representation: _span_update(tx, source, representation, 150),
+        [
+            *_history((_JAN, _APR, 100, _SPEC_DOCUMENT), (_JUN, _AUG, 200, _LATER_DOCUMENT)),
+            *_current(
+                (_JAN, _MAR, 100, _SPEC_DOCUMENT),
+                (_MAR, _APR, 150, _SPEC_DOCUMENT),
+                (_JUN, _AUG, 150, _LATER_DOCUMENT),
+            ),
+        ],
+    ),
+    "bounded-update-ending-at-a-boundary": (
+        _TWO_RECTANGLES,
+        lambda tx, source, representation: _span_update(
+            tx, source, representation, 150, until=_JUN
+        ),
+        [
+            *_history((_JAN, _JUN, 100, _SPEC_DOCUMENT)),
+            *_current(
+                (_JAN, _MAR, 100, _SPEC_DOCUMENT),
+                (_MAR, _JUN, 150, _SPEC_DOCUMENT),
+            ),
+            (_SEEDED, None, _JUN, None, 200, _LATER_DOCUMENT),
+        ],
+    ),
+    "plain-termination-ends-later-coverage": (
+        _TWO_RECTANGLES,
+        lambda tx, source, representation: _span_terminate(tx, source, representation),
+        [*_TWO_RECTANGLES_HISTORY, *_current((_JAN, _MAR, 100, _SPEC_DOCUMENT))],
+    ),
+    "bounded-termination-keeps-the-later-tail": (
+        _TWO_RECTANGLES,
+        lambda tx, source, representation: _span_terminate(tx, source, representation, until=_SEP),
+        [
+            *_TWO_RECTANGLES_HISTORY,
+            *_current((_JAN, _MAR, 100, _SPEC_DOCUMENT), (_SEP, None, 200, _LATER_DOCUMENT)),
+        ],
+    ),
+}
+
+
+@pytest.mark.parametrize("extent", list(_EXTENTS))
+@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_an_observed_write_applies_to_current_coverage_from_its_source_pin(
+    profile_run: Any,
+    entity: type[Any],
+    representation: _Representation,
+    concurrency: _Concurrency,
+    extent: str,
+) -> None:
+    spans, write, expected = _EXTENTS[extent]
+    db = _seeded_spans(profile_run, entity, spans)
+
+    db.transact(
+        lambda tx: write(tx, _span_find(tx, entity, representation, _MAR), representation),
+        concurrency=concurrency,
+    )
+
+    assert sorted(_span_rows(profile_run, entity), key=_row_order) == sorted(
+        expected, key=_row_order
+    )
+
+
+def _row_order(row: tuple[object, ...]) -> tuple[object, ...]:
+    in_z, out_z, start, *_rest = row
+    return (in_z, out_z is None, out_z or in_z, start)
+
+
+@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_two_pins_of_one_observation_compose_in_authored_order(
+    profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
+) -> None:
+    db = _seeded_spans(profile_run, entity, ((_JAN, _DEC, 100, _SPEC),))
+
+    def edit(tx: Transaction) -> None:
+        at_mar = _span_find(tx, entity, representation, _MAR)
+        at_jun = _span_find(tx, entity, representation, _JUN)
+        _span_update(tx, at_mar, representation, 150, until=_SEP)
+        _span_update(tx, at_jun, representation, 200, until=_NOV)
+
+    db.transact(edit, concurrency=concurrency)
+
+    assert _span_rows(profile_run, entity) == [
+        *_history((_JAN, _DEC, 100, _SPEC_DOCUMENT)),
+        *_current(
+            (_JAN, _MAR, 100, _SPEC_DOCUMENT),
+            (_MAR, _JUN, 150, _SPEC_DOCUMENT),
+            (_JUN, _NOV, 200, _SPEC_DOCUMENT),
+            (_NOV, _DEC, 100, _SPEC_DOCUMENT),
+        ),
+    ]
+
+
+@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_a_baseline_equal_assignment_sets_every_later_interval_literally(
+    profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
+) -> None:
+    db = _seeded_spans(profile_run, entity, ((_JAN, _JUN, 100, _SPEC), (_JUN, _DEC, 120, _SPEC)))
+
+    def edit(tx: Transaction) -> None:
+        at_mar = _span_find(tx, entity, representation, _MAR)
+        at_jun = _span_find(tx, entity, representation, _JUN)
+        _span_update(tx, at_mar, representation, 150, until=_NOV)
+        _span_update(tx, at_jun, representation, 200, until=_OCT)
+        _span_update(tx, at_jun, representation, 120, until=_OCT)
+
+    db.transact(edit, concurrency=concurrency)
+
+    assert _span_rows(profile_run, entity) == [
+        *_history((_JAN, _JUN, 100, _SPEC_DOCUMENT), (_JUN, _DEC, 120, _SPEC_DOCUMENT)),
+        *_current(
+            (_JAN, _MAR, 100, _SPEC_DOCUMENT),
+            (_MAR, _JUN, 150, _SPEC_DOCUMENT),
+            (_JUN, _OCT, 120, _SPEC_DOCUMENT),
+            (_OCT, _NOV, 150, _SPEC_DOCUMENT),
+            (_NOV, _DEC, 120, _SPEC_DOCUMENT),
+        ),
+    ]
+
+
+_DISTINCT_OBSERVATION_ORDERS: dict[str, tuple[bool, list[tuple[object, ...]]]] = {
+    "earlier-pin-first": (
+        True,
+        _current(
+            (_JAN, _MAR, 100, _SPEC_DOCUMENT),
+            (_MAR, _JUN, 150, _SPEC_DOCUMENT),
+            (_JUN, _AUG, 150, _LATER_DOCUMENT),
+            (_AUG, _SEP, 300, _LATER_DOCUMENT),
+            (_SEP, None, 150, _LATER_DOCUMENT),
+        ),
+    ),
+    "later-pin-first": (
+        False,
+        _current(
+            (_JAN, _MAR, 100, _SPEC_DOCUMENT),
+            (_MAR, _JUN, 150, _SPEC_DOCUMENT),
+            (_JUN, None, 150, _LATER_DOCUMENT),
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize("order", list(_DISTINCT_OBSERVATION_ORDERS))
+@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_writes_through_two_observed_rectangles_compose_in_authored_order(
+    profile_run: Any,
+    entity: type[Any],
+    representation: _Representation,
+    concurrency: _Concurrency,
+    order: str,
+) -> None:
+    # Two reads of one object observe two different rectangles; neither write
+    # refuses the other, and the later-authored assignment wins wherever the two
+    # requested ranges overlap, each successor keeping its own rectangle's
+    # unassigned values.
+    earlier_first, current = _DISTINCT_OBSERVATION_ORDERS[order]
+    db = _seeded_spans(profile_run, entity, _TWO_RECTANGLES)
+
+    def edit(tx: Transaction) -> None:
+        at_mar = _span_find(tx, entity, representation, _MAR)
+        at_aug = _span_find(tx, entity, representation, _AUG)
+        writes = [
+            lambda: _span_update(tx, at_mar, representation, 150),
+            lambda: _span_update(tx, at_aug, representation, 300, until=_SEP),
+        ]
+        for write in writes if earlier_first else reversed(writes):
+            write()
+
+    db.transact(edit, concurrency=concurrency)
+
+    assert sorted(_span_rows(profile_run, entity), key=_row_order) == sorted(
+        [*_TWO_RECTANGLES_HISTORY, *current], key=_row_order
+    )
+
+
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_an_observed_write_of_a_source_read_at_valid_time_latest_is_refused(
+    profile_run: Any, entity: type[Any], representation: _Representation
+) -> None:
+    db = _seeded_spans(profile_run, entity, _TWO_RECTANGLES)
+    seeded = _span_rows(profile_run, entity)
+
+    def edit(tx: Transaction) -> None:
+        source = _span_find(tx, entity, representation, None)
+        with pytest.raises(WriteInstructionError, match="read at Valid-Time LATEST"):
+            _span_update(tx, source, representation, 150)
+
+    db.transact(edit)
+
+    assert _span_rows(profile_run, entity) == seeded
+
+
+@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_a_range_flushed_before_a_failing_callback_rolls_back_with_it(
+    profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
+) -> None:
+    # The dependent read executes the range — reading the coverage beyond what
+    # the source observed — and the failure that follows rolls back every row
+    # it closed and opened.
+    db = _seeded_spans(profile_run, entity, _TWO_RECTANGLES)
+    seeded = _span_rows(profile_run, entity)
+
+    def edit(tx: Transaction) -> None:
+        _span_update(tx, _span_find(tx, entity, representation, _MAR), representation, 150)
+        assert _span_find(tx, entity, representation, _AUG) is not None
+        raise _Abandoned
+
+    with pytest.raises(ExecutionFailure) as abandoned:
+        db.transact(edit, concurrency=concurrency)
+    assert isinstance(abandoned.value.cause, _Abandoned)
+
+    assert _span_rows(profile_run, entity) == seeded
+
+
+class _Abandoned(Exception):
+    pass

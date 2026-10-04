@@ -534,11 +534,12 @@ def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> 
     db = db_for(MODELS["branch"], port)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(mm.Branch.where(mm.Branch.id == 1).as_of(valid_time=LATEST)).result()
-        tx.update(
-            fetched.edit(name="Renamed Branch"),
-            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-        )
+        fetched = tx.find(
+            mm.Branch.where(mm.Branch.id == 1).as_of(
+                valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+            )
+        ).result()
+        tx.update(fetched.edit(name="Renamed Branch"))
 
     db.transact(fn)
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
@@ -574,11 +575,12 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
     db = db_for(MODELS["branch"], port)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(mm.Branch.where(mm.Branch.id == 1).as_of(valid_time=LATEST)).result()
-        tx.update(
-            fetched.edit(name="Renamed Branch"),
-            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-        )
+        fetched = tx.find(
+            mm.Branch.where(mm.Branch.id == 1).as_of(
+                valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+            )
+        ).result()
+        tx.update(fetched.edit(name="Renamed Branch"))
 
     db.transact(fn)
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
@@ -671,9 +673,9 @@ def _present(stored: object) -> PresentDocument:
 def _owned_find(reader: Transaction | ScopedDatabase, layout: str) -> Entity:
     if layout == "document":
         document_query = OwnedDocumentCharter.where(OwnedDocumentCharter.id == 1)
-        return reader.find(document_query.as_of(valid_time=LATEST)).result()
+        return reader.find(document_query.as_of(valid_time=_OWNED_SPLIT)).result()
     columns_query = OwnedColumnsCharter.where(OwnedColumnsCharter.id == 1)
-    return reader.find(columns_query.as_of(valid_time=LATEST)).result()
+    return reader.find(columns_query.as_of(valid_time=_OWNED_SPLIT)).result()
 
 
 def _mutate_everything(value: object) -> int:
@@ -736,7 +738,10 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     wire_query: dict[str, object] = {
         "target": target,
         "predicate": {"eq": {"attr": f"{target}.id", "value": 1}},
-        "temporal": {"transaction-time": {"asOf": "latest"}, "valid-time": {"asOf": "latest"}},
+        "temporal": {
+            "transaction-time": {"asOf": "latest"},
+            "valid-time": {"asOf": f"{_OWNED_SPLIT:%Y-%m-%dT%H:%M:%S.%fZ}"},
+        },
     }
     published: list[Entity | WireEntity] = []
 
@@ -752,10 +757,10 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     def write(tx: Transaction, node: Entity | WireEntity) -> None:
         if isinstance(node, Entity):
             assert _mutate_everything(node) + _mutate_everything(node.model_dump()) > 0
-            tx.update(node.edit(title="Southbound"), valid_from=_OWNED_SPLIT)
+            tx.update(node.edit(title="Southbound"))
         else:
             assert _mutate_everything(node) > 0
-            tx.wire.update(node, {"title": "Southbound"}, valid_from=_OWNED_SPLIT)
+            tx.wire.update(node, {"title": "Southbound"})
 
     if standalone:
         node = find(db)
@@ -975,9 +980,10 @@ def _branch_milestone_row(*, from_z: dt.datetime, in_z: dt.datetime) -> MappingR
 
 def test_stale_web_edit_branch_render_then_submit_pins_valid_time_only() -> None:
     # The bitemporal variant transports both coordinates but replays them
-    # differently: Valid Time is PINNED, because a finite Valid-Time pin selects
-    # which rectangle was displayed and stays writable, while Transaction Time
-    # is COMPARED against the rectangle's current milestone.
+    # differently: the submit reads at the correction's own Valid-Time instant,
+    # which is where the observed write starts and which must fall in the
+    # displayed rectangle, while Transaction Time is COMPARED against that
+    # rectangle's current milestone.
     from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     in_z = dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
     port = ScriptedAdapter(
@@ -991,17 +997,14 @@ def test_stale_web_edit_branch_render_then_submit_pins_valid_time_only() -> None
     assert edge.valid_time == from_z
     assert edge.tx_time == in_z
 
+    correction = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     stale_web_edit.submit_branch_edit(
-        db,
-        id=1,
-        edge=edge,
-        fields={"name": "New Name"},
-        valid_from=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+        db, id=1, edge=edge, fields={"name": "New Name"}, valid_from=correction
     )
     submit_read_binds = [op for op in port.calls if isinstance(op, ReadCall)][1].binds
-    # The transported Valid-Time coordinate reaches the submit read's own
-    # containment terms; the Transaction-Time one never reaches a statement.
-    assert from_z in submit_read_binds
+    # The correction's own instant reaches the submit read's containment terms;
+    # the transported Transaction-Time coordinate never reaches a statement.
+    assert correction in submit_read_binds
     assert in_z not in submit_read_binds
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
     close_sql = write_ops[0].sql
@@ -1142,9 +1145,11 @@ def test_an_included_temporal_nodes_own_observation_licenses_its_keyed_close() -
 
     def fn(tx: Transaction) -> None:
         policy = tx.find(
-            Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
+            Policy.where(Policy.id == 1)
+            .as_of(valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
+            .include(Policy.coverages)
         ).result()
-        tx.terminate(policy.coverages[0], valid_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
+        tx.terminate(policy.coverages[0])
 
     db_for(POLICY_MODEL, port).transact(fn)
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]

@@ -47,7 +47,6 @@ from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
-    BufferItem,
     Concurrency,
     KeyedWrite,
     MaterializedWriteGroup,
@@ -79,6 +78,7 @@ from parallax.core.unit_work.planned import (
     Versioned,
 )
 from parallax.core.unit_work.planner import TemporalStateKey, VersionedStateKey
+from parallax.core.unit_work.write_settlement import OrderedWrite
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot import edge_of, pin_of
 from parallax.snapshot.handle import (
@@ -197,7 +197,7 @@ def _version_group() -> MaterializedWriteGroup:
     return MaterializedWriteGroup(mutation=prepared, evidence=sealed)
 
 
-def _prepared_writes() -> list[BufferItem]:
+def _prepared_writes() -> list[OrderedWrite]:
     """Every non-temporal arm version settlement forks on: a versioned insert,
     observed updates and deletes of a standalone Entity and of an inherited
     position, a collapsing unversioned run, a readless predicate write, and a
@@ -302,7 +302,7 @@ def _value_update(entity: str, *, valid_from: dt.datetime | None = None) -> Pred
     )
 
 
-def _temporal_writes() -> list[BufferItem]:
+def _temporal_writes() -> list[OrderedWrite]:
     """Observed updates of an inherited position in a Transaction-Time-Only and
     a Bitemporal family, an observed standalone terminate, and a packed
     Materialized Write Group of each temporal shape."""
@@ -438,17 +438,17 @@ def test_keyed_temporal_writes_settle_standalone_evidence_from_the_family_shape(
     )
     database = db_for(RATE, port)
 
-    def latest(id_: int) -> DepositRate:
+    def pinned(id_: int) -> DepositRate:
         return database.find(
-            DepositRate.where(DepositRate.id == id_).as_of(valid_time=LATEST)
+            DepositRate.where(DepositRate.id == id_).as_of(valid_time=_VALID_FROM)
         ).result()
 
     callers = _trace_declarations(monkeypatch, _TEMPORAL_MODEL)
-    updated, terminated = latest(1), latest(2)
+    updated, terminated = pinned(1), pinned(2)
 
     def write(tx: Transaction) -> None:
-        tx.update(updated.edit(amount=Decimal("2.00")), valid_from=_VALID_FROM)
-        tx.terminate(terminated, valid_from=_VALID_FROM)
+        tx.update(updated.edit(amount=Decimal("2.00")))
+        tx.terminate(terminated)
 
     database.transact(write)
 

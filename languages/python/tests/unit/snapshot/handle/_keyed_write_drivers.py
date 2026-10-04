@@ -39,7 +39,7 @@ from decimal import Decimal
 from typing import Final, Literal, cast
 
 from parallax.conformance.vo_models import ContactAddress, ContactGeo, ContactPhone, ContactPoint
-from parallax.core import LATEST, DomainModel
+from parallax.core import DomainModel
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
@@ -104,7 +104,13 @@ __all__ = [
 
 
 type Verb = Literal[
-    "insert", "insert_until", "update", "update_until", "delete", "terminate", "terminate_until"
+    "insert",
+    "bounded_insert",
+    "update",
+    "bounded_update",
+    "delete",
+    "terminate",
+    "bounded_terminate",
 ]
 type Representation = Literal["typed", "wire"]
 type Concurrency = Literal["locking", "optimistic"]
@@ -140,18 +146,18 @@ is Locking under either preference."""
 
 VERBS: Final[tuple[Verb, ...]] = (
     "insert",
-    "insert_until",
+    "bounded_insert",
     "update",
-    "update_until",
+    "bounded_update",
     "delete",
     "terminate",
-    "terminate_until",
+    "bounded_terminate",
 )
 CONCURRENCIES: Final[tuple[Concurrency, ...]] = ("locking", "optimistic")
 REPRESENTATIONS: Final[tuple[Representation, ...]] = ("typed", "wire")
 
-_INSERT_VERBS: Final[frozenset[str]] = frozenset({"insert", "insert_until"})
-_UPDATE_VERBS: Final[frozenset[str]] = frozenset({"update", "update_until"})
+_INSERT_VERBS: Final[frozenset[str]] = frozenset({"insert", "bounded_insert"})
+_UPDATE_VERBS: Final[frozenset[str]] = frozenset({"update", "bounded_update"})
 VALID_FROM: Final = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 UNTIL: Final = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
 _TX_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
@@ -296,9 +302,9 @@ def _position_query(
 ) -> ObjectQuery[EntityBase, EntityBase]:
     query = WherePosition.where(WherePosition.id == key)
     pinned = (
-        query.as_of(valid_time=LATEST)
+        query.as_of(valid_time=VALID_FROM)
         if tx_time is None
-        else query.as_of(valid_time=LATEST, tx_time=tx_time)
+        else query.as_of(valid_time=VALID_FROM, tx_time=tx_time)
     )
     return cast("ObjectQuery[EntityBase, EntityBase]", pinned)
 
@@ -316,9 +322,10 @@ def _wire_query(
 
 
 _LATEST_TX: Final[Mapping[str, object]] = {"transaction-time": {"asOf": "latest"}}
+_VALID_FROM_WIRE: Final = "2024-07-01T00:00:00.000000Z"
 _LATEST_BOTH: Final[Mapping[str, object]] = {
     "transaction-time": {"asOf": "latest"},
-    "valid-time": {"asOf": "latest"},
+    "valid-time": {"asOf": _VALID_FROM_WIRE},
 }
 
 
@@ -515,7 +522,7 @@ POSITION_TARGET: Final = Target(
     pinned_wire_query=_wire_query(
         _POSITION,
         1,
-        {"transaction-time": {"asOf": _TX_PIN_WIRE}, "valid-time": {"asOf": "latest"}},
+        {"transaction-time": {"asOf": _TX_PIN_WIRE}, "valid-time": {"asOf": _VALID_FROM_WIRE}},
     ),
 )
 
@@ -803,18 +810,18 @@ def _call_typed(tx: Transaction, scenario: Scenario, value: EntityBase) -> None:
     match scenario.verb:
         case "insert":
             tx.insert(value, valid_from=plain)
-        case "insert_until":
-            tx.insert_until(value, valid_from=valid_from, until=until)
+        case "bounded_insert":
+            tx.insert(value, valid_from=valid_from, until=until)
         case "update":
-            tx.update(value, valid_from=plain)
-        case "update_until":
-            tx.update_until(value, valid_from=valid_from, until=until)
+            tx.update(value)
+        case "bounded_update":
+            tx.update(value, until=_source_until(scenario))
         case "delete":
             tx.delete(value)
         case "terminate":
-            tx.terminate(value, valid_from=plain)
-        case "terminate_until":
-            tx.terminate_until(value, valid_from=valid_from, until=until)
+            tx.terminate(value)
+        case "bounded_terminate":
+            tx.terminate(value, until=_source_until(scenario))
         case _:
             # Every `Verb` is spelled above; a verb added to one lane and not the
             # other would otherwise write nothing and read as an agreed no-op.
@@ -871,20 +878,18 @@ def _call_wire(
     match scenario.verb:
         case "insert":
             tx.wire.insert(scenario.target.entity, payload, valid_from=plain)
-        case "insert_until":
-            tx.wire.insert_until(
-                scenario.target.entity, payload, valid_from=valid_from, until=until
-            )
+        case "bounded_insert":
+            tx.wire.insert(scenario.target.entity, payload, valid_from=valid_from, until=until)
         case "update":
-            tx.wire.update(observed, authored, valid_from=plain)
-        case "update_until":
-            tx.wire.update_until(observed, authored, valid_from=valid_from, until=until)
+            tx.wire.update(observed, authored)
+        case "bounded_update":
+            tx.wire.update(observed, authored, until=_source_until(scenario))
         case "delete":
             tx.wire.delete(observed)
         case "terminate":
-            tx.wire.terminate(observed, valid_from=plain)
-        case "terminate_until":
-            tx.wire.terminate_until(observed, valid_from=valid_from, until=until)
+            tx.wire.terminate(observed)
+        case "bounded_terminate":
+            tx.wire.terminate(observed, until=_source_until(scenario))
         case _:
             # Every `Verb` is spelled above; a verb added to one lane and not the
             # other would otherwise write nothing and read as an agreed no-op.
@@ -906,7 +911,7 @@ def _wire_payload(scenario: Scenario, source: object) -> Mapping[str, object]:
 
 
 def _bounded_window(scenario: Scenario) -> tuple[dt.datetime, dt.datetime]:
-    """The pair a bounded verb states — ordered, or reversed onto one instant.
+    """The pair a bounded insert states — ordered, or reversed onto one instant.
 
     A plain verb never reads it: its own bound is the target's, which is what
     keeps a Transaction-Time-Only or Non-Temporal target free of a Valid-Time
@@ -917,10 +922,16 @@ def _bounded_window(scenario: Scenario) -> tuple[dt.datetime, dt.datetime]:
     return VALID_FROM, UNTIL
 
 
+def _source_until(scenario: Scenario) -> dt.datetime:
+    """The bound a source-backed bounded verb states: its window starts at the
+    source's own pin, :data:`VALID_FROM`, so a reversed window ends there too."""
+    return VALID_FROM if scenario.window == "reversed" else UNTIL
+
+
 def _open(tx: Transaction, scenario: Scenario) -> WireEntity | None:
     """Buffer the same-transaction insert this scenario's source came from.
 
-    Bounded or plain: an ``insert_until`` opens a Valid-Time-bounded rectangle
+    Bounded or plain: an bounded ``insert`` opens a Valid-Time-bounded rectangle
     where ``insert`` opens one running to infinity, and the write that follows it
     is exempted by the same ledger either way. The opener's own window is always
     the ordered one — ``scenario.window`` states what the WRITE bounded, so a
@@ -929,12 +940,12 @@ def _open(tx: Transaction, scenario: Scenario) -> WireEntity | None:
     target = scenario.target
     if scenario.opened_by == "typed":
         if scenario.opened_until:
-            tx.insert_until(target.fresh(), valid_from=VALID_FROM, until=UNTIL)
+            tx.insert(target.fresh(), valid_from=VALID_FROM, until=UNTIL)
         else:
             tx.insert(target.fresh(), valid_from=target.valid_from)
         return None
     if scenario.opened_until:
-        return tx.wire.insert_until(
+        return tx.wire.insert(
             target.entity, dict(target.payload), valid_from=VALID_FROM, until=UNTIL
         )
     return tx.wire.insert(target.entity, dict(target.payload), valid_from=target.valid_from)

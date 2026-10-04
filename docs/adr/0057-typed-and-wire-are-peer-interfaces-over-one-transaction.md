@@ -164,3 +164,18 @@ mappings are rejected with `WriteInstructionError`. The structural `WireValue`
 alias does not grow nominal frozen container types solely to describe deep
 immutability. Standard JSON serialization continues to see ordinary objects and
 arrays; decoding produces plain data without keyed-source status.
+
+## Amendment (2026-10): peer interfaces state literal assignments
+
+The coalescing paragraph above compares a winning Typed assignment with its
+Change Record original, and a winning Wire assignment with its frozen observed
+source, and eliminates the write when nothing changed.
+
+**Superseding decision:** neither interface compares. A Typed `update` assigns
+every member touched along the value's edits and a Wire `update` every key its
+change document names, equal values included, and both buffer the same literal
+instruction; only an update assigning nothing is dropped, before evidence is
+resolved. The peers' agreement now rests on stating the same assignment set
+rather than on observing the same originals. The Python methods name one
+operation each and select bounded behavior with a keyword-only `until`;
+source-backed writes take their Valid-Time start from their source.

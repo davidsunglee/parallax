@@ -30,7 +30,6 @@ from parallax.conformance import models
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core.base import INFINITY
-from parallax.core.document_codec import EffectiveChangeSet
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import Edge, Pin
@@ -682,7 +681,6 @@ def _balance_update(model: AcceptedMetamodel, hint: ReadOrigin) -> BufferItem:
     return buffered_write(
         instruction,
         hint.observation,
-        change=EffectiveChangeSet(effective=frozenset({"value"}), restored=frozenset()),
     )
 
 

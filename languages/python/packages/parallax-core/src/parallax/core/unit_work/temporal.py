@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import datetime as dt
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Final
 
-from parallax.core.base import INFINITY_LITERAL
+from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
 from parallax.core.metamodel import AsOfAxisMetadata, AttributeIdentity, ValueObjectIdentity
 from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
 from parallax.core.unit_work.observe import PredecessorRow
@@ -30,8 +33,17 @@ from parallax.core.unit_work.strategy import (
 )
 
 __all__ = [
+    "EMPTY_TRANSFORM",
+    "BoundPiece",
     "ResolvedSuccessor",
+    "TemporalSegment",
+    "TemporalTransform",
     "bind_successor",
+    "covers",
+    "instant_order",
+    "is_open_bound",
+    "literal_successor",
+    "precedes",
     "resolve_successors",
     "successor_bounds",
 ]
@@ -198,3 +210,235 @@ def _bind_bound(
         case PredecessorEnd():
             assert predecessor is not None
             return predecessor.cell(valid_time.end_attribute)
+
+
+def literal_successor(state: SuccessorState, start: object, end: object) -> ResolvedSuccessor:
+    """One successor whose Valid-Time bounds are already concrete values, or
+    which has no Valid-Time window when both are ``None``."""
+    if start is None and end is None:
+        return ResolvedSuccessor(state=state)
+    return ResolvedSuccessor(
+        state=state, window=ResolvedWindow(start=_Literal(start), end=_Literal(end))
+    )
+
+
+def is_open_bound(bound: object) -> bool:
+    """Whether one Valid-Time end is the open upper bound."""
+    return bound == INFINITY_LITERAL or bound is TemporalBound.INFINITY
+
+
+def precedes(earlier: object, later: object) -> bool:
+    """Whether Valid-Time bound ``earlier`` lies strictly before ``later``, the
+    open upper bound after every instant.
+
+    A bound may arrive as a managed instant or in its canonical ISO spelling,
+    as a row a case or a fixture states it does; both name one instant.
+    """
+    if is_open_bound(later):
+        return not is_open_bound(earlier)
+    if is_open_bound(earlier):
+        return False
+    return _instant(earlier) < _instant(later)
+
+
+def instant_order(bound: object) -> float:
+    """A sort key placing finite Valid-Time bounds in time order."""
+    return _instant(bound).timestamp()
+
+
+def _instant(bound: object) -> dt.datetime:
+    if isinstance(bound, str):
+        return normalize_instant(dt.datetime.fromisoformat(bound))
+    assert isinstance(bound, dt.datetime)  # a finite Valid-Time bound is an instant
+    return normalize_instant(bound)
+
+
+def _earliest(first: object, second: object) -> object:
+    return second if precedes(second, first) else first
+
+
+def _latest(first: object, second: object) -> object:
+    return second if precedes(first, second) else first
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalSegment:
+    """One requested Valid-Time interval of a finalized transform, and what every
+    existing interval inside it becomes.
+
+    ``start`` and ``end`` are managed bounds, ``end`` the open bound for an
+    unbounded window; on a Transaction-Time-Only target both are ``None`` and the
+    one segment spans the whole axis. ``assigned`` maps each assigned member's
+    declared name to its managed value, the last authored value per member, or
+    is ``None`` where the segment destroys existing coverage.
+    """
+
+    start: object | None
+    end: object | None
+    assigned: Mapping[str, object] | None
+
+
+@dataclass(frozen=True, slots=True)
+class BoundPiece:
+    """One nonempty interval of one predecessor's coverage after a transform:
+    the predecessor's own state where ``assigned`` is ``None``, or that state
+    with ``assigned`` overlaid."""
+
+    start: object | None
+    end: object | None
+    assigned: Mapping[str, object] | None
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalTransform:
+    """What a target's composed observed writes do to its existing coverage,
+    decided before any coverage is known.
+
+    ``segments`` are disjoint and ordered by start. Outside them every existing
+    interval is carried unchanged; inside one, each existing interval keeps its
+    own unassigned members and takes the segment's assignments, or is destroyed.
+    Gaps stay gaps: a segment assigns to coverage, never creates it.
+    """
+
+    segments: tuple[TemporalSegment, ...] = ()
+
+    def then(
+        self,
+        *,
+        valid_from: object | None,
+        until: object | None,
+        assigned: Mapping[str, object] | None,
+    ) -> TemporalTransform:
+        """This transform followed by one more write over ``[valid_from, until)``
+        — the whole axis when ``valid_from`` is ``None`` — which assigns
+        ``assigned`` there, later values winning per member, or destroys coverage
+        there when ``assigned`` is ``None``.
+
+        A destroyed interval is never assigned again: admission refuses such a
+        resurrection before a transform is asked for it.
+        """
+        if valid_from is None:
+            previous = self.segments[0] if self.segments else None
+            return TemporalTransform((TemporalSegment(None, None, _merged(previous, assigned)),))
+        start: object = valid_from
+        end: object = INFINITY_LITERAL if until is None else until
+        composed: list[TemporalSegment] = []
+        cursor = start
+        for segment in self.segments:
+            if not precedes(segment.start, end) or not precedes(start, segment.end):
+                composed.append(segment)
+                continue
+            if precedes(segment.start, start):
+                composed.append(TemporalSegment(segment.start, start, segment.assigned))
+            overlap_start = _latest(segment.start, start)
+            overlap_end = _earliest(segment.end, end)
+            if precedes(cursor, overlap_start):
+                composed.append(TemporalSegment(cursor, overlap_start, assigned))
+            composed.append(TemporalSegment(overlap_start, overlap_end, _merged(segment, assigned)))
+            if precedes(end, segment.end):
+                composed.append(TemporalSegment(end, segment.end, segment.assigned))
+            cursor = overlap_end
+        if precedes(cursor, end):
+            composed.append(TemporalSegment(cursor, end, assigned))
+        composed.sort(key=_segment_order)
+        return TemporalTransform(_joined(composed))
+
+    @property
+    def start(self) -> object | None:
+        """Where the transform's first segment starts."""
+        return self.segments[0].start
+
+    @property
+    def end(self) -> object | None:
+        """Where the transform's last segment ends."""
+        return self.segments[-1].end
+
+    @property
+    def assigns(self) -> bool:
+        """Whether some segment assigns rather than destroys."""
+        return any(segment.assigned is not None for segment in self.segments)
+
+    def pieces(self, start: object | None, end: object | None) -> tuple[BoundPiece, ...]:
+        """The nonempty intervals one predecessor covering ``[start, end)``
+        becomes; both bounds are ``None`` on a Transaction-Time-Only target."""
+        if start is None:
+            (segment,) = self.segments
+            assigned = segment.assigned
+            return () if assigned is None else (BoundPiece(None, None, assigned),)
+        pieces: list[BoundPiece] = []
+        cursor = start
+        for segment in self.segments:
+            if not precedes(segment.start, end) or not precedes(cursor, segment.end):
+                continue
+            overlap_start = _latest(segment.start, cursor)
+            if precedes(cursor, overlap_start):
+                pieces.append(BoundPiece(cursor, overlap_start, None))
+            overlap_end = _earliest(segment.end, end)
+            if segment.assigned is not None:
+                pieces.append(BoundPiece(overlap_start, overlap_end, segment.assigned))
+            cursor = overlap_end
+        if precedes(cursor, end):
+            pieces.append(BoundPiece(cursor, end, None))
+        return tuple(pieces)
+
+    def touches(self, start: object | None, end: object | None) -> bool:
+        """Whether a predecessor covering ``[start, end)`` lies inside some
+        segment."""
+        if start is None:
+            return bool(self.segments)
+        return any(
+            precedes(segment.start, end) and precedes(start, segment.end)
+            for segment in self.segments
+        )
+
+
+EMPTY_TRANSFORM: Final[TemporalTransform] = TemporalTransform()
+
+
+def covers(
+    intervals: tuple[tuple[object, object], ...], start: object, end: object
+) -> object | None:
+    """The first point of ``[start, end)`` the ordered, disjoint ``intervals``
+    leave uncovered, or ``None`` where they cover it whole."""
+    cursor = start
+    for interval_start, interval_end in intervals:
+        if not precedes(cursor, end):
+            return None
+        if precedes(cursor, interval_start):
+            return cursor
+        if precedes(cursor, interval_end):
+            cursor = interval_end
+    return cursor if precedes(cursor, end) else None
+
+
+def _merged(
+    previous: TemporalSegment | None, assigned: Mapping[str, object] | None
+) -> Mapping[str, object] | None:
+    if assigned is None:
+        return None
+    if previous is None or previous.assigned is None:
+        assert previous is None  # admission refuses an assignment over destroyed coverage
+        return assigned
+    return {**previous.assigned, **assigned}
+
+
+def _joined(segments: list[TemporalSegment]) -> tuple[TemporalSegment, ...]:
+    """``segments`` with each run of adjacent segments that end up stating the
+    same thing joined into one, so a later write over part of an earlier one's
+    window never splits coverage that both leave equal."""
+    joined: list[TemporalSegment] = []
+    for segment in segments:
+        previous = joined[-1] if joined else None
+        if (
+            previous is not None
+            and previous.end == segment.start
+            and previous.assigned == segment.assigned
+        ):
+            joined[-1] = TemporalSegment(previous.start, segment.end, segment.assigned)
+        else:
+            joined.append(segment)
+    return tuple(joined)
+
+
+def _segment_order(segment: TemporalSegment) -> dt.datetime:
+    return _instant(segment.start)

@@ -10,6 +10,7 @@ golden — the structural rules that must hold on every run are
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
@@ -103,18 +104,64 @@ def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
 
 
 def _resolving_reads(case: Case, step: Any) -> int:
-    """The resolving reads ONE scenario step owes beside the SQL it lists.
+    """The resolving and coverage reads ONE scenario step owes beside the SQL it
+    lists.
 
     An UNGROUPED write step is its own choreography unit, so it owes what any unit
-    owes (:func:`write_plan.unit_resolving_reads`). A GROUPED one owes none of its
-    own: its group's find steps are what publish the values it settles against,
-    and those finds already declare their own round trips (`m-case-format`
-    *Resolving reads a write owes*). A find step owes none either — a read IS
-    the SQL it lists.
+    owes (:func:`write_plan.unit_resolving_reads`). A GROUPED one owes no
+    resolving read of its own: its group's find steps are what publish the values
+    it settles against, and those finds already declare their own round trips
+    (`m-case-format` *Resolving reads a write owes*). What a settled one can owe is
+    the coverage read its flush makes for a Bitemporal object whose requested
+    extent its named find's rectangle does not cover (:func:`_coverage_reads`). A
+    find step owes none either — a read IS the SQL it lists.
     """
+    if isinstance(step, _GroupedWrite) and step.settles_on is not None:
+        return _coverage_reads(case, step, step.settles_on)
     if not isinstance(step, _UngroupedWrite):
         return 0
     return unit_resolving_reads(case, list(step.entries))
+
+
+def _coverage_reads(case: Case, step: _GroupedWrite, origin: _SettledOn) -> int:
+    """One read per Bitemporal object a settled step writes beyond the rectangle
+    its named find observed (`m-bitemp-write` *Observed writes span their
+    requested extent*; `m-sql` *Requested ranges*).
+
+    An object's requested extent is the union of its entries' ``[validFrom,
+    until)`` windows, through infinity where one states no ``until``; the
+    observed rectangle covers it exactly when it starts no later and ends no
+    earlier.
+    """
+    uncovered: set[tuple[str, Any]] = set()
+    for entry in step.entries:
+        entity = case.model.entity(entry["entity"])
+        axes = {axis.dimension: axis for axis in temporal_axes(entity.runtime_facts)}
+        valid_axis = axes.get("valid-time")
+        if valid_axis is None or entry.get("validFrom") is None:
+            continue
+        row = _sole_settled_row(case, step.index, entity, entry)
+        _, pk, _set_cols, _observed = classify_write_row(
+            case, entity, row, mutation=entry["mutation"], opening=True
+        )
+        observed = _settled_observed_row(case, entity, step.index, origin, pk, "milestone")
+        start = observed.get(valid_axis.start.column)
+        end = observed.get(valid_axis.end.column)
+        if _instant(entry["validFrom"]) < _instant(start) or _instant(end) < _instant(
+            entry.get("until")
+        ):
+            uncovered.add((entity.canonical_name, pk))
+    return len(uncovered)
+
+
+def _instant(value: Any) -> tuple[int, dt.datetime]:
+    """An authored or observed Valid-Time bound in comparable form; an absent
+    bound and ``infinity`` are the open end, later than every instant."""
+    if value is None or value == "infinity":
+        return (1, dt.datetime.min.replace(tzinfo=dt.UTC))
+    if isinstance(value, dt.datetime):
+        return (0, value)
+    return (0, dt.datetime.fromisoformat(str(value).replace("Z", "+00:00")))
 
 
 def _assert_settled_write(scenario: CompiledScenario, dialect: str) -> None:
@@ -189,13 +236,14 @@ def _assert_settled_step(case: Case, step: _GroupedWrite, origin: _SettledOn, di
         _, pk, _set_cols, _observed = classify_write_row(
             case, entity, row, mutation=entry["mutation"], opening=temporal
         )
-        statement, binds = _settled_statement(case, index, entity, pk, settling, aligned)
-        assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
         if not temporal:
+            statement, binds = _settled_statement(case, index, entity, pk, settling, aligned)
+            assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
             _assert_settled_version_binds(
                 case, entity, index, origin, pk, binds, statement, dialect
             )
             continue
+        _settled_start(case, index, entity, entry, origin)
         observed = _settled_milestone(case, entity, index, origin, pk)
         expected = [
             entry.get("at"),
@@ -203,7 +251,8 @@ def _assert_settled_step(case: Case, step: _GroupedWrite, origin: _SettledOn, di
         ]
         if case.concurrency_mode == "optimistic":
             expected.append(observed.tx_start)
-        assert_write_values(case, expected, binds, statement)
+        statement, binds = _settled_close(case, index, entity, pk, settling, aligned, expected)
+        assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
     if len(aligned) != len(settling):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] carries {len(settling) - len(aligned)} "
@@ -211,6 +260,70 @@ def _assert_settled_step(case: Case, step: _GroupedWrite, origin: _SettledOn, di
             f"buffer writes — every statement a settled flush emits belongs to one of the "
             f"objects written, and entries settling against one state coalesce into one."
         )
+
+
+def _settled_start(
+    case: Case, index: int, entity: Entity, entry: Mapping[str, Any], origin: _SettledOn
+) -> None:
+    """Refuse a settled Bitemporal entry whose ``validFrom`` is not its named
+    find's Valid-Time pin, where a write from that source starts (`m-case-format`
+    *Settling against a grouped find*)."""
+    axes = {axis.dimension for axis in temporal_axes(entity.runtime_facts)}
+    if "valid-time" not in axes:
+        return
+    temporal = (origin.object_query or {}).get("temporal") or {}
+    pin = (temporal.get("valid-time") or {}).get("asOf")
+    if pin is None or entry.get("validFrom") is None:
+        return
+    if _instant(pin) != _instant(entry["validFrom"]):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] writes {entity.name} from validFrom "
+            f"{entry['validFrom']!r}, but the find it settles against is pinned at Valid "
+            f"Time {pin!r} — a write from that source starts where it was read."
+        )
+
+
+def _settled_close(
+    case: Case,
+    index: int,
+    entity: Entity,
+    pk: Any,
+    settling: list[tuple[ObjectAddress, str, list[Any]]],
+    aligned: set[int],
+    expected: list[Any],
+) -> tuple[str, list[Any]]:
+    """The golden close one settled temporal entry's OBSERVED rectangle survives
+    as, beside any closes of rectangles its flush read for the requested range.
+
+    Every existing-row statement of the entry's object belongs to it; exactly one
+    of them binds the observed rectangle's own address and gate, and that one is
+    graded. The others address coverage no find observed, which the table state
+    grades.
+    """
+    matches = [
+        position
+        for position, (address, _statement, _binds) in enumerate(settling)
+        if address.names_table(entity.table)
+        and address.names_key_column(entity.identity_column)
+        and write_value_equal(address.key, pk)
+    ]
+    observed: list[int] = []
+    for position in matches:
+        _address, statement, binds = settling[position]
+        try:
+            assert_write_values(case, expected, binds, statement)
+        except CaseFailure:
+            continue
+        observed.append(position)
+    if len(observed) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] carries {len(observed)} existing-row "
+            f"statement(s) addressing {entity.name} pk {pk!r} at the rectangle its find "
+            f"observed — a settled temporal write closes that rectangle exactly once."
+        )
+    aligned.update(matches)
+    _address, statement, binds = settling[observed[0]]
+    return statement, binds
 
 
 def _settled_statement(

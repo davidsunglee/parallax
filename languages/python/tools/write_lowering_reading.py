@@ -9,7 +9,7 @@ transaction and runs from the public keyed verb until ``transact`` returns:
 preparation, buffering, and the pre-commit flush's settlement, SQL lowering,
 production bind adaptation, and psycopg's own document serialization. A
 predicate-acquisition case runs one
-public ``tx.wire.update_until_where`` from the caller's documents through
+public bounded ``tx.wire.update_where`` from the caller's documents through
 preparation and production acquisition over freshly composed resolving rows to a
 buffered Materialized Write Group, and stops before any flush. A public insert
 case runs one ``tx.wire.insert`` of a nested, polymorphic payload inside an open

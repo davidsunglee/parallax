@@ -12,7 +12,10 @@ from parallax.core.document_codec import (
     PreparedEffectiveChange,
     prepare_effective_change,
 )
-from parallax.core.execution_lifecycle._activity import TransactionAttemptActivity
+from parallax.core.execution_lifecycle._activity import (
+    DatabaseCallScope,
+    TransactionAttemptActivity,
+)
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata
 from parallax.core.object_query._validated import latest_temporal_selections
@@ -27,6 +30,7 @@ from parallax.core.unit_work import (
     VersionedEvidenceBuilder,
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite
+from parallax.core.unit_work.plan import RangeAcquisition
 from parallax.core.unit_work.write_settlement import reject_readless_document_many
 from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._family import (
@@ -37,11 +41,12 @@ from parallax.snapshot.handle._family import (
 )
 from parallax.snapshot.handle._keyed_writes import KeyedWriteContext
 from parallax.snapshot.handle._materialization import FlatPageRead, Materializer, RowPublication
+from parallax.snapshot.handle._publication import SelectedWriteModel
 from parallax.snapshot.handle._read import entity_read_lock, execute_read
 from parallax.snapshot.materialize import Page, RootView, require_publishable
 from parallax.snapshot.materialize._page import ABSENT
 
-__all__ = ["PredicateWriteContext", "buffer_predicate_instruction"]
+__all__ = ["PredicateWriteContext", "acquire_coverage", "buffer_predicate_instruction"]
 
 # The predicate mutations that carry Assignments; the rest take none at all and
 # their verbs' signatures say so.
@@ -335,3 +340,56 @@ def _acquire_temporal(
         if acquisition.selects(row):
             evidence.append(row, raw[position] if documents else None)
     return evidence.seal()
+
+
+def acquire_coverage(
+    write: SelectedWriteModel,
+    conn: DatabaseConnection,
+    calls: DatabaseCallScope,
+    acquisition: RangeAcquisition,
+) -> PredecessorRows | None:
+    """Read the current coverage a deferred range binds to: one row-form read
+    on the flushing transaction's own connection, as a read call of the batch
+    that needs it.
+
+    It executes no pending write and publishes nothing — the flush it serves is
+    already running — and it reuses the materializing predicate write's own
+    row-form acquisition, so every row arrives as the complete Predecessor Row
+    a range carries forward. ``acquisition.locking`` takes the shared row lock
+    the Locking strategy protects every affected row with; an Optimistic range
+    reads without one and guards each row it changes instead.
+    """
+    model = write.model
+    meta = model.meta
+    entity = acquisition.entity
+    layout = entity_layout(meta, entity)
+    if layout is None:  # pragma: no cover - a temporal write target always owns rows
+        raise ValueError(f"{entity.identity.canonical}: range target has no Table")
+    selection = layout.member_selection
+    query = deep_fetch.plan_coverage_read(
+        entity,
+        model=meta,
+        key=acquisition.key_attribute.name,
+        key_value=acquisition.key_value,
+        valid_from=acquisition.valid_from,
+        until=acquisition.until,
+    )
+    compiled = compile_read(
+        query,
+        meta,
+        conn.dialect,
+        result_form="row",
+        lock="locking" if acquisition.locking else None,
+    )
+    stage = Materializer().read_page(
+        FlatPageRead(model, compiled, lambda: execute_read(conn, compiled, calls), Pin())
+    )
+    return _acquire_temporal(
+        stage,
+        _Acquisition(
+            selection=selection,
+            key_position=selection.position(family_view(meta, entity).primary_key.identity),
+            change=None,
+        ),
+        documents=compiled.structured_column is not None,
+    )

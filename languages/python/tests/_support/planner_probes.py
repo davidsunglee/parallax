@@ -8,7 +8,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Final
 
-from parallax.conformance._lanes.scenario import instruction_change
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
     BufferItem,
@@ -29,6 +28,8 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.materialized import ObjectClaimedWrite, ObservedKeyedWrite
 from parallax.core.unit_work.strategy import ActorIdentity
+from parallax.core.unit_work.write_planner import compose_writes
+from parallax.core.unit_work.write_settlement import OrderedWrite
 
 __all__ = ["TEST_ACTOR_IDENTITY", "observed_buffer", "observed_write"]
 
@@ -42,8 +43,9 @@ def observed_buffer(
     buffer: Sequence[BufferItem | KeyedWrite | PredicateWrite],
     model: Metamodel,
     observations: Mapping[ObjectKey, WriteObservation] | None,
-) -> list[BufferItem]:
-    """``buffer`` with every item ``observations`` names wrapped in its carrier.
+) -> list[OrderedWrite]:
+    """``buffer`` with every item ``observations`` names wrapped in its carrier,
+    composed in authored order as a unit of work composes what it admits.
 
     A planner-level suite states which objects the transaction observed, which
     is the readable way to author the scenario; the verb that would do the
@@ -54,30 +56,23 @@ def observed_buffer(
     would refuse it.
     """
     prepared = [_prepared_item(item, model) for item in buffer]
-    if not observations:
-        return prepared
     resolved: list[BufferItem] = []
     for item in prepared:
-        if not isinstance(item, PreparedKeyedWrite):
+        if not observations or not isinstance(item, PreparedKeyedWrite):
             resolved.append(item)
             continue
         key = object_key(item, model)
-        resolved.append(observed_write(item, model, None if key is None else observations.get(key)))
-    return resolved
+        resolved.append(buffered_write(item, None if key is None else observations.get(key)))
+    return list(compose_writes(model, resolved))
 
 
 def observed_write(
     instruction: PreparedWrite, model: Metamodel, observation: WriteObservation | None
-) -> BufferItem:
-    """``instruction`` buffered against ``observation`` beside the change set a
-    verb would classify for it, by the conformance oracle's own
-    :func:`~parallax.conformance._lanes.scenario.instruction_change`."""
-    change = (
-        instruction_change(model, instruction, evidence=observation)
-        if isinstance(instruction, PreparedKeyedWrite)
-        else None
-    )
-    return buffered_write(instruction, observation, change=change)
+) -> OrderedWrite:
+    """``instruction`` buffered against ``observation``, as the one write a
+    buffer holds."""
+    (only,) = compose_writes(model, [buffered_write(instruction, observation)])
+    return only
 
 
 def _prepared_item(item: BufferItem | KeyedWrite | PredicateWrite, model: Metamodel) -> BufferItem:

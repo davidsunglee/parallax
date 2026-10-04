@@ -34,7 +34,6 @@ from parallax.core.base import INFINITY, FrozenMap
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
-    EffectiveChangeSet,
     PreparedEffectiveChange,
     prepare_effective_change,
 )
@@ -58,7 +57,6 @@ from parallax.core.metamodel import (
 from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
-    UPDATE_MUTATIONS,
     BufferItem,
     Concurrency,
     KeyedWrite,
@@ -122,6 +120,7 @@ from parallax.core.unit_work.planned import (
 from parallax.core.unit_work.planned import INFINITY as OPEN_END
 from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.core.unit_work.strategy import ActorIdentity
+from parallax.core.unit_work.write_settlement import OrderedWrite
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle import _planning as planning_composition
 from parallax.snapshot.handle import build_write_planner
@@ -232,25 +231,13 @@ def _observed(
     observation: WriteObservation,
     *,
     claim: RetainedObservation | None = None,
-    restorations: frozenset[str] = frozenset(),
 ) -> ObservedKeyedWrite:
-    """``write`` as an observation carrier; an update's every assigned member is
-    effective but the ``restorations`` it names."""
-    prepared = _prepared_keyed(write, _ACCOUNT)
-    change = (
-        EffectiveChangeSet(
-            effective=frozenset(prepared.rows[0]) - {"id"} - restorations, restored=restorations
-        )
-        if prepared.mutation in UPDATE_MUTATIONS
-        else None
-    )
-    return ObservedKeyedWrite(prepared, observation, claim=claim, change=change)
+    """``write`` as an observation carrier."""
+    return ObservedKeyedWrite(_prepared_keyed(write, _ACCOUNT), observation, claim=claim)
 
 
-def _claimed(
-    write: KeyedWrite, *, restorations: frozenset[str] = frozenset()
-) -> ObjectClaimedWrite:
-    return ObjectClaimedWrite(_prepared_keyed(write, _WALLET), restorations=restorations)
+def _claimed(write: KeyedWrite) -> ObjectClaimedWrite:
+    return ObjectClaimedWrite(_prepared_keyed(write, _WALLET))
 
 
 def _version_group(
@@ -342,54 +329,29 @@ def test_two_assignments_of_one_observed_state_merge_with_the_later_value_winnin
     }
 
 
-def test_a_restored_member_is_dropped_after_the_merge_rather_than_before_it() -> None:
-    # Effective-change elimination runs AFTER the merge, so the caller's last word
-    # on a member decides whether it is written: the second write restores
-    # `balance`, which erases the first write's assignment to it while leaving the
-    # member only the first named standing.
+def test_a_restated_member_is_written_as_the_last_word_on_it() -> None:
+    # Assignments are literal: a later write setting a member back to the value
+    # its source observed is the last word on that member and is written, beside
+    # the member only the first write named.
     key = corpus_object_key("Account", ("id", 1))
     observation = VersionObservation(observed_version=4)
     first = KeyedWrite(
         "update", "Account", ({"id": 1, "owner": "Grace", "balance": Decimal("125.00")},)
     )
-    second = KeyedWrite("update", "Account", ({"id": 1},))
-    plan = _plan(
-        [first, _observed(second, observation, restorations=frozenset({"balance"}))],
-        _ACCOUNT,
-        observations={key: observation},
-    )
+    second = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("250.00")},))
+    plan = _plan([first, second], _ACCOUNT, observations={key: observation})
     (step,) = plan.steps
     assert isinstance(step, PlannedUpdate)
-    assert _assignment_values(step) == {"owner": "Grace", "version": 5}
+    assert _assignment_values(step) == {
+        "owner": "Grace",
+        "balance": Decimal("250.00"),
+        "version": 5,
+    }
 
 
-def test_a_wholly_restored_merge_leaves_no_step_at_all() -> None:
-    # What is left names only the key, which is no work: stage 2 eliminates the
-    # merged write exactly as it eliminates a lone key-only row, so a chain that
-    # nets to zero across two verbs emits no DML.
-    key = corpus_object_key("Account", ("id", 1))
-    observation = VersionObservation(observed_version=4)
-    first = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("125.00")},))
-    second = KeyedWrite("update", "Account", ({"id": 1},))
-    plan = _plan(
-        [first, _observed(second, observation, restorations=frozenset({"balance"}))],
-        _ACCOUNT,
-        observations={key: observation},
-    )
-    assert list(plan.steps) == []
-
-
-def _classified_balance_update(
-    row: Mapping[str, object],
-    observation: TemporalObservation,
-    *,
-    effective: frozenset[str],
-    restorations: frozenset[str] = frozenset(),
-) -> BufferItem:
+def _balance_update(row: Mapping[str, object], observation: TemporalObservation) -> BufferItem:
     return buffered_write(
-        _prepared_keyed(KeyedWrite("update", "Balance", (row,)), _BALANCE),
-        observation,
-        change=EffectiveChangeSet(effective=effective, restored=restorations),
+        _prepared_keyed(KeyedWrite("update", "Balance", (row,)), _BALANCE), observation
     )
 
 
@@ -404,78 +366,25 @@ def _changed_entry(plan: WritePlan) -> tuple[ChangedFrom, PlannedRow]:
     return cast("ChangedFrom", entry.origin), entry.row
 
 
-def test_coalesced_temporal_writes_overlay_what_the_last_word_classified_effective() -> None:
-    # The classification each carrier arrives with merges by the rule its values
-    # do: `value` is effective in the first write and restored by the third, so
-    # the successor overlays `acctNum` alone and carries the predecessor's
-    # `value`.
+def test_coalesced_temporal_writes_overlay_every_member_any_of_them_assigned() -> None:
+    # The successor overlays each member at its last assigned value, a value
+    # equal to the predecessor's own included, and carries only the members no
+    # write named.
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
     plan = _plan(
         [
-            _classified_balance_update(
-                {"id": 1, "value": Decimal("9.00")}, observation, effective=frozenset({"value"})
-            ),
-            _classified_balance_update(
-                {"id": 1, "acctNum": "B"}, observation, effective=frozenset({"acctNum"})
-            ),
-            _classified_balance_update(
-                {"id": 1, "value": Decimal("1.00")},
-                observation,
-                effective=frozenset(),
-                restorations=frozenset({"value"}),
-            ),
+            _balance_update({"id": 1, "value": Decimal("9.00")}, observation),
+            _balance_update({"id": 1, "acctNum": "B"}, observation),
+            _balance_update({"id": 1, "value": Decimal("1.00")}, observation),
         ],
         _BALANCE,
     )
     origin, row = _changed_entry(plan)
     values = _row_values(row)
     assert values["acctNum"] == "B"
+    assert values["value"] == Decimal("1.00")
     (value,) = (identity for identity in row.attributes if identity.name == "value")
-    assert origin.predecessor.carries(value, row.attributes[value])
-
-
-def test_an_observed_update_refuses_to_be_buffered_without_its_producers_change_set() -> None:
-    # Settlement classifies nothing: an update settles against the change set
-    # its producer classified, so a carrier without one is refused where it is
-    # built rather than classified later against the Predecessor Row.
-    observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
-    prepared = _prepared_keyed(
-        KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A"},)), _BALANCE
-    )
-    with pytest.raises(ValueError, match="carries its producer's effective change set"):
-        buffered_write(prepared, observation)
-    with pytest.raises(ValueError, match="carries its producer's effective change set"):
-        ObservedKeyedWrite(prepared, observation)
-
-
-def test_a_write_that_assigns_nothing_refuses_a_change_set() -> None:
-    change = EffectiveChangeSet(effective=frozenset(), restored=frozenset({"balance"}))
-    delete = _prepared_keyed(KeyedWrite("delete", "Account", ({"id": 1},)), _ACCOUNT)
-    observation = VersionObservation(observed_version=4)
-    with pytest.raises(ValueError, match="carries no effective change set"):
-        buffered_write(delete, observation, change=change)
-    with pytest.raises(ValueError, match="carries no effective change set"):
-        ObservedKeyedWrite(delete, observation, change=change)
-    with pytest.raises(ValueError, match="carries no effective change set"):
-        buffered_write(delete, None, change=change)
-
-
-def test_a_wholly_restored_update_is_key_only_when_buffered_and_plans_no_step() -> None:
-    # Every member the update assigned restores what the milestone holds, so the
-    # row that leaves `buffered_write` names only the key, and stage 2 eliminates
-    # it as known no-op work: no close, no successor.
-    observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
-    prepared = _prepared_keyed(
-        KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A"},)), _BALANCE
-    )
-    item = buffered_write(
-        prepared,
-        observation,
-        change=EffectiveChangeSet(effective=frozenset(), restored=frozenset({"acctNum"})),
-    )
-    assert isinstance(item, ObservedKeyedWrite)
-    assert item.instruction.rows == ({"id": 1},)
-    assert list(_plan([item], _BALANCE).steps) == []
+    assert not origin.predecessor.carries(value, row.attributes[value])
 
 
 def test_a_destructive_intent_supersedes_the_assignments_buffered_before_it() -> None:
@@ -563,15 +472,6 @@ def test_identical_object_claimed_destructions_plan_one_step() -> None:
     plan = _plan([delete, delete], _WALLET)
     (step,) = plan.steps
     assert isinstance(step, PlannedDelete)
-
-
-def test_a_wholly_restoring_object_claimed_merge_leaves_no_step_at_all() -> None:
-    first = _claimed(KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("5.00")},)))
-    second = _claimed(
-        KeyedWrite("update", "Wallet", ({"id": 1},)), restorations=frozenset({"balance"})
-    )
-    plan = _plan([first, second], _WALLET)
-    assert list(plan.steps) == []
 
 
 def test_object_claimed_writes_of_two_rows_still_collapse_into_one_batch() -> None:
@@ -1838,7 +1738,7 @@ class _RecordingTopology:
         return txtime_write.MILESTONE_CHAIN.topology(mutation)
 
 
-def _temporal_family_writes() -> list[BufferItem]:
+def _temporal_family_writes() -> list[OrderedWrite]:
     """Observed updates of an inherited Transaction-Time-Only and an inherited
     Bitemporal position, then a three-row group over a standalone target."""
     quote = KeyedWrite("update", "SpotQuote", ({"id": 1, "price": Decimal("2.00")},))
@@ -2391,7 +2291,7 @@ def test_a_surviving_multi_assignment_row_carries_the_member_it_restores(
         assert values["value"] == Decimal("9.00")
 
 
-def test_single_assignment_groups_and_classified_keyed_writes_are_not_compared_again(
+def test_single_assignment_groups_and_literal_keyed_writes_are_never_compared(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _comparisons(monkeypatch)
@@ -2404,15 +2304,11 @@ def test_single_assignment_groups_and_classified_keyed_writes_are_not_compared_a
         _BALANCE,
     )
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
-    classified = buffered_write(
-        prepared,
-        observation,
-        change=EffectiveChangeSet(effective=frozenset({"value"}), restored=frozenset()),
-    )
-    (_close, successor) = _plan([classified], _BALANCE).steps
+    literal = buffered_write(prepared, observation)
+    (_close, successor) = _plan([literal], _BALANCE).steps
     assert calls == {"prepared": 0, "compared": 0}
-    # The producer's answer is the whole of what the successor overlays.
-    assert _insert_rows(successor)[0]["acctNum"] == "A"
+    # The successor overlays every member the row assigns, whatever it equals.
+    assert _insert_rows(successor)[0]["acctNum"] == "B"
     assert _insert_rows(successor)[0]["value"] == Decimal("9.00")
 
 
@@ -2547,14 +2443,14 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
 
 
 @pytest.mark.parametrize("positional", [False, True], ids=["mapping", "positional"])
-def test_a_directly_buffered_update_carries_a_restated_member_and_its_unknown_keys(
+def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omits(
     positional: bool,
 ) -> None:
-    # A caller pairing a keyed update with its evidence through `buffered_write`
-    # supplies the change set its producer classified: `address`, restated as an
-    # equal but distinct value, is restored. The changed successor therefore
-    # carries the stored subtree, the key no member declares included, and
-    # patches `title` alone.
+    # An update's row is its literal assignment set: `address`, restated as an
+    # equal but distinct value, is assigned whole like any other occurrence, so
+    # the changed successor writes the stated subtree — not the stored one, and
+    # not the stored key no member declares — beside the patched `title`, while
+    # every member the row does not name is carried.
     model = model_of(acquisition_support.MODEL)
     target = _acquisition_update_until(model).selection.target
     selection = LayoutCatalog(model).entity(target.identity).member_selection
@@ -2596,8 +2492,7 @@ def test_a_directly_buffered_update_carries_a_restated_member_and_its_unknown_ke
         ),
         model,
     )
-    change = EffectiveChangeSet(effective=frozenset({"title"}), restored=frozenset({"address"}))
-    plan = _plan([buffered_write(prepared, TemporalObservation(predecessor), change=change)], model)
+    plan = _plan([buffered_write(prepared, TemporalObservation(predecessor))], model)
 
     (changed,) = (
         step
@@ -2609,12 +2504,18 @@ def test_a_directly_buffered_update_carries_a_restated_member_and_its_unknown_ke
         for bind in compile_write_step(changed, model, POSTGRES).binds
         if isinstance(bind, JsonDocument)
     ]
-    assert documents == [{**stored, "title": acquisition_support.ASSIGNED_TITLE}]
+    assert documents == [
+        {
+            **stored,
+            "title": acquisition_support.ASSIGNED_TITLE,
+            "address": {"city": "Oslo", "geo": {"country": "NO"}},
+        }
+    ]
     (entry,) = changed.entries
     (address,) = (
         identity for identity in entry.row.value_objects if identity.path[-1] == "address"
     )
-    assert cast("ChangedFrom", entry.origin).predecessor.carries(
+    assert not cast("ChangedFrom", entry.origin).predecessor.carries(
         address, entry.row.value_objects[address]
     )
 

@@ -126,10 +126,13 @@ def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
         )
 
     def split(tx: Transaction) -> None:
-        current = tx.find(Position.where(Position.id == 1).as_of(valid_time=LATEST)).result()
-        tx.update_until(
+        current = tx.find(
+            Position.where(Position.id == 1).as_of(
+                valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+            )
+        ).result()
+        tx.update(
             current.edit(value=Decimal("200.00")),
-            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 

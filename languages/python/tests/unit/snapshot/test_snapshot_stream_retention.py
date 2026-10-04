@@ -171,6 +171,15 @@ _TENFOLD: Final = 10
 """The factor between the two result sizes every independence reading is taken
 at."""
 
+_RESIZE_RESIDUE: Final = 160
+"""Bytes by which the marginal cost of one buffered write may vary across page
+sizes.
+
+Absolute rather than relative: the variation is container resizing, a step of
+fixed size however small each buffered write becomes. A buffer growing faster
+than the page moves the marginal by the write's own size per page, far past
+it."""
+
 _EARLY: Final = 2
 """The position the peak reading advances FROM when the page size or the fan-out
 is what varies.
@@ -878,7 +887,7 @@ def test_a_writing_loops_buffer_grows_with_the_page_and_not_with_the_result() ->
             )
         ]
         assert min(marginal) > 0, buffered
-        assert max(marginal) / min(marginal) < 1.1, (buffered, marginal)
+        assert max(marginal) - min(marginal) < _RESIZE_RESIDUE, (buffered, marginal)
     finally:
         tracemalloc.stop()
 

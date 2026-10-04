@@ -3,14 +3,15 @@
 The instance-taking verbs and their neutral `_buffer` seam: the
 buffer -> flush -> lower -> execute wiring proof, sparse-update no-op
 elimination, the shared model-aware keyed-write rejection matrix, the typed
-KEYED temporal-window family (`update`/`terminate`/`update_until`/
-`terminate_until`, and `insert`/`insert_until`), keyed window-order
+KEYED temporal-window family (`update`/`terminate`/`insert`, unbounded and
+bounded by `until`), keyed window-order
 validation, and the prior-observation license enforced at the developer verb.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import inspect
 from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, cast, get_args
@@ -32,7 +33,6 @@ from parallax.core import LATEST, Attr, DomainModel, Entity, attr, unit_work
 from parallax.core.base import DocumentValue, InstantError, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import classify_effective_change
 from parallax.core.entity import EntityGraphWriter, NodeHandle
 from parallax.core.entity._errors import EntityRowError
 from parallax.core.unit_work import (
@@ -42,6 +42,8 @@ from parallax.core.unit_work import (
     WriteInstructionError,
     instructions,
 )
+from parallax.core.unit_work import write_settlement as write_settlement_module
+from parallax.core.unit_work.temporal import is_open_bound
 from parallax.snapshot import InvalidData, handle
 from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
@@ -52,11 +54,12 @@ from parallax.snapshot.handle import (
     TransactionTimePinReadOnlyError,
     WriteEvidenceError,
 )
-from parallax.snapshot.handle import _keyed_writes as keyed_writes_module
+from parallax.snapshot.handle import _predicate_writes as predicate_writes_module
 from parallax.snapshot.handle._keyed_writes import (
-    PreparedSourceWrite,
     ResolvedKeyedWriteSource,
 )
+from parallax.snapshot.handle._options import OMITTED
+from parallax.snapshot.handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -388,7 +391,7 @@ def test_one_preference_produces_both_behaviors_across_two_entities() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Axis-attribute construction optionality + `tx.insert_until`, through the    #
+# Axis-attribute construction optionality + bounded `tx.insert`, through the  #
 # PUBLIC verbs.                                                               #
 # --------------------------------------------------------------------------- #
 def test_bitemporal_insert_constructs_cleanly_and_stamps_the_valid_from() -> None:
@@ -413,13 +416,13 @@ def test_bitemporal_insert_constructs_cleanly_and_stamps_the_valid_from() -> Non
     )
 
 
-def test_bitemporal_insert_until_opens_a_single_bounded_rectangle() -> None:
+def test_a_bounded_bitemporal_insert_opens_a_single_bounded_rectangle() -> None:
     branch = mm.Branch(id=1, name="Central", address=None)
     port = ScriptedAdapter(Transact(Write()))
     db = db_for(MODELS["branch"], port)
 
     db.transact(
-        lambda tx: tx.insert_until(
+        lambda tx: tx.insert(
             branch,
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
@@ -436,26 +439,26 @@ def test_bitemporal_insert_until_opens_a_single_bounded_rectangle() -> None:
     )
 
 
-def test_insert_until_rejects_an_equal_or_reversed_window() -> None:
+def test_a_bounded_insert_rejects_an_equal_or_reversed_window() -> None:
     branch = mm.Branch(id=1, name="Central", address=None)
     port = ScriptedAdapter(Transact())
     db = db_for(MODELS["branch"], port)
     same_instant = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
     with raises_contextualized(ValueError, match="valid_from < until"):
-        db.transact(lambda tx: tx.insert_until(branch, valid_from=same_instant, until=same_instant))
+        db.transact(lambda tx: tx.insert(branch, valid_from=same_instant, until=same_instant))
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
-def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
+def test_update_of_a_copy_expressing_no_member_issues_no_dml() -> None:
     # An `edit()` with no changes carries forward the SAME (empty)
-    # Change Record: the sparse-update no-op rule.
+    # Change Record, which expresses no assignment: the empty set buffers nothing.
     port = ScriptedAdapter(
         Transact(Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]))
     )
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(fetched.edit(balance=Decimal("100.00")))  # net-zero touch
+        tx.update(fetched.edit())
 
     account_db(port).transact(fn)
     # The read happened; the write never did.
@@ -463,19 +466,17 @@ def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
 
 
 @pytest.mark.parametrize("representation", ["typed", "wire"])
-def test_a_keyed_update_classifies_its_effective_change_once(
+def test_a_keyed_update_compares_no_value_with_its_source(
     monkeypatch: pytest.MonkeyPatch, representation: str
 ) -> None:
-    # The verb classifies against the originals its source states and buffers
-    # that answer beside the write, and settlement overlays it: the one
-    # classification a changed successor settles against is the verb's.
-    classified: list[str] = []
+    # An update's assignments are its literal set, so neither the verb nor
+    # settlement weighs them against what the source observed: no comparison
+    # the document codec offers is reached on the way to the write.
+    def refused(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("a keyed update compared a value with its source")
 
-    def counting(*args: Any, **kwargs: Any) -> Any:
-        classified.append(keyed_writes_module.__name__)
-        return classify_effective_change(*args, **kwargs)
-
-    monkeypatch.setattr(keyed_writes_module, "classify_effective_change", counting)
+    monkeypatch.setattr(write_settlement_module, "prepare_effective_change", refused)
+    monkeypatch.setattr(predicate_writes_module, "prepare_effective_change", refused)
     port = ScriptedAdapter(
         Transact(
             Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]), Write(times=2)
@@ -498,7 +499,6 @@ def test_a_keyed_update_classifies_its_effective_change_once(
 
     db_for(BALANCE, port).transact(fn)
     assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2
-    assert classified == [keyed_writes_module.__name__]
 
 
 # --------------------------------------------------------------------------- #
@@ -568,11 +568,10 @@ def _position_row_dt() -> MappingRow:
 
 
 # --------------------------------------------------------------------------- #
-# Typed KEYED temporal-window verbs: `update`'s                               #
-# own optional bitemporal `valid_from`, `terminate`, `update_until`, and    #
-# `terminate_until` — the KEYED siblings of `update_where` / `terminate_where` #
-# / `update_until_where` / `terminate_until_where`, sharing the SAME           #
-# `_buffer` seam and the SAME prepared-write window judgment, so a keyed and a #
+# Typed KEYED temporal-window verbs: `update` and `terminate`, plain and       #
+# bounded by `until`, starting at the source's own Valid-Time pin — the KEYED #
+# siblings of `update_where` / `terminate_where`, sharing the SAME `_buffer`   #
+# seam and the SAME prepared-write window judgment, so a keyed and a          #
 # predicate-selected write over the identical bitemporal correction lower to  #
 # the identical rectangle split (`m-bitemp-write-001/002/006/007`'s own       #
 # witnessed shape, replayed here through the KEYED verb instead of `_where`). #
@@ -585,9 +584,9 @@ def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.update(fetched.edit(value=Decimal("200.00")), valid_from=valid_from)
+        tx.update(fetched.edit(value=Decimal("200.00")))
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -604,9 +603,9 @@ def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.terminate(fetched, valid_from=valid_from)
+        tx.terminate(fetched)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -615,7 +614,7 @@ def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
     assert len(writes) == 2  # close + head only
 
 
-def test_keyed_update_until_lowers_the_rectangle_split() -> None:
+def test_a_bounded_keyed_update_lowers_the_rectangle_split() -> None:
     # m-bitemp-write-001 "update-until-rectangle-split", replayed through the
     # KEYED verb: close + head + middle + tail.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=4)))
@@ -624,13 +623,9 @@ def test_keyed_update_until_lowers_the_rectangle_split() -> None:
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.update_until(
-            fetched.edit(value=Decimal("200.00")),
-            valid_from=valid_from,
-            until=until,
-        )
+        tx.update(fetched.edit(value=Decimal("200.00")), until=until)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -639,24 +634,21 @@ def test_keyed_update_until_lowers_the_rectangle_split() -> None:
     assert len(writes) == 4  # close + head + middle + tail
 
 
-def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -> None:
-    # The SAME sparse-update no-op rule `update` applies: a
-    # An `edit()` whose Change Record nets to zero issues no DML at all --
-    # but only AFTER its (here, valid) Valid-Time window is validated
-    # (window validation runs BEFORE the
-    # no-op return, for every window verb, never the reverse -- see the
-    # sibling equal-bounds pin immediately below for the corrected
-    # precedence made visible).
+def test_a_bounded_keyed_update_expressing_no_member_issues_no_dml() -> None:
+    # The SAME empty-set rule plain `update` applies: an untouched copy issues no
+    # DML at all -- but only AFTER its (here, valid) Valid-Time window is
+    # validated (window validation runs BEFORE the empty set is dropped, for
+    # every window verb, never the reverse -- see the sibling equal-bounds pin
+    # immediately below for the precedence made visible).
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        # net-zero touch
-        tx.update_until(fetched.edit(value=Decimal("100.00")), valid_from=valid_from, until=until)
+        tx.update(fetched.edit(), until=until)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -664,23 +656,20 @@ def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
-def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds() -> None:
-    # Window validation runs BEFORE
-    # the empty-effective-change-set no-op return -- equal bounds reject even
-    # when the edited copy's own Change Record nets to zero
-    # ("all validated at build"): validating the window only after the no-op
-    # return would let an equal/reversed window slip through when the change
-    # set is empty.
+def test_a_bounded_keyed_update_expressing_no_member_still_rejects_equal_bounds() -> None:
+    # Window validation runs BEFORE the empty set is dropped -- equal bounds
+    # reject even when the copy expresses no member ("all validated at
+    # build"): validating the window only afterwards would let an
+    # equal/reversed window slip through when the set is empty. The window
+    # starts at the source's own pin, so ending it there is the equal pair.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.update_until(  # EQUAL bounds, net-zero touch
-            fetched.edit(value=Decimal("100.00")), valid_from=valid_from, until=valid_from
-        )
+        tx.update(fetched.edit(), until=valid_from)
 
     with raises_contextualized(ValueError, match="requires valid_from < until"):
         own_root(
@@ -689,7 +678,7 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
     assert not any(isinstance(op, WriteCall) for op in port.calls)  # never reached the no-op check
 
 
-def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -> None:
+def test_a_bounded_keyed_update_with_a_naive_until_raises_the_proper_value_error() -> None:
     # A naive `until` (no tzinfo) must raise the SAME `ValueError` shape
     # the shared window gate's own `normalize_instant` normalization raises
     # for a naive `valid_from` (never a bare `TypeError` leaked by
@@ -701,13 +690,9 @@ def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.update_until(
-            fetched.edit(value=Decimal("200.00")),
-            valid_from=valid_from,
-            until=naive_until,
-        )
+        tx.update(fetched.edit(value=Decimal("200.00")), until=naive_until)
 
     # `pytest.raises(ValueError, ...)` itself is the pin against a
     # `TypeError` leak: `TypeError` is not a `ValueError`, so an un-normalized comparison
@@ -722,25 +707,21 @@ def test_a_bound_of_no_datetime_type_carries_the_same_refusal_a_naive_one_does()
     # A value of no datetime type at all is no `m-core` instant either, and the
     # shared window gate the Typed and Wire verbs run answers it with `m-core`'s own
     # class rather than leaking an `AttributeError` out of instant normalization.
-    # Either bound reaches that judgement, so both are stated here as strings.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
         with pytest.raises(InstantError, match="no `timestamp`"):
-            tx.update_until(
-                fetched.edit(value=Decimal("200.00")),
-                valid_from=cast("dt.datetime", "2024-06-01"),
-                until=cast("dt.datetime", "2024-09-01"),
+            tx.update(
+                fetched.edit(value=Decimal("200.00")), until=cast("dt.datetime", "2024-09-01")
             )
         with pytest.raises(InstantError, match="no `timestamp`"):
-            tx.update_until(
-                fetched.edit(value=Decimal("200.00")),
-                valid_from=valid_from,
-                until=cast("dt.datetime", "2024-09-01"),
+            tx.insert(
+                WherePosition(id=2, acct_num="B", value=Decimal("1.00")),
+                valid_from=cast("dt.datetime", "2024-06-01"),
             )
 
     own_root(
@@ -750,13 +731,10 @@ def test_a_bound_of_no_datetime_type_carries_the_same_refusal_a_naive_one_does()
 
 
 def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
-    # A `*_until` verb's window is a PAIR, and half of one states no window at all
-    # — the verb's own `WriteInstructionError`, exactly as its Wire peer answers
-    # the identical call. The pair is asked of the MUTATION and before either bound
-    # is typed, so the missing half is named rather than reported as a value that
-    # is no instant: a non-temporal target admits no `valid_from` to supply, and a
-    # bitemporal one whose `until` is absent hears about `until` rather than about
-    # the malformed `valid_from` beside it.
+    # A stated `until` is a bound whatever its value: `None` is the missing half
+    # of a pair, the verb's own `WriteInstructionError`, never a spelling of
+    # omission. The pair is asked of the MUTATION and before either bound is
+    # typed, and a target with no Valid Time takes no `until` at all.
     account = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}])
@@ -765,29 +743,21 @@ def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
     position = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
-    def absent_valid_from(tx: Transaction) -> None:
+    def non_temporal(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
-        with pytest.raises(WriteInstructionError, match="valid_from is absent"):
-            tx.update_until(
-                fetched.edit(balance=Decimal("20.00")),
-                valid_from=cast("dt.datetime", None),
-                until=until,
-            )
+        with pytest.raises(WriteInstructionError, match="takes no until"):
+            tx.update(fetched.edit(balance=Decimal("20.00")), until=until)
 
     def absent_until(tx: Transaction) -> None:
         fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=FIXED)
         ).result()
         with pytest.raises(WriteInstructionError, match="until is absent"):
-            tx.terminate_until(fetched, valid_from=FIXED, until=cast("dt.datetime", None))
+            tx.terminate(fetched, until=cast("dt.datetime", None))
         with pytest.raises(WriteInstructionError, match="until is absent"):
-            tx.update_until(
-                fetched.edit(value=Decimal("200.00")),
-                valid_from=cast("dt.datetime", "2024-06-01"),
-                until=cast("dt.datetime", None),
-            )
+            tx.update(fetched.edit(value=Decimal("200.00")), until=cast("dt.datetime", None))
 
-    account_db(account).transact(absent_valid_from)
+    account_db(account).transact(non_temporal)
     own_root(
         Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(absent_until, concurrency="optimistic")
@@ -795,7 +765,180 @@ def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
     assert not any(isinstance(op, WriteCall) for op in position.calls)
 
 
-def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:
+_UNIFIED_OPERATIONS = ("insert", "update", "terminate", "update_where", "terminate_where")
+
+
+@pytest.mark.parametrize("operation", _UNIFIED_OPERATIONS)
+@pytest.mark.parametrize("owner", [Transaction, WireTransactionView], ids=["typed", "wire"])
+def test_one_method_per_operation_selects_its_bound_by_keyword(
+    owner: type[object], operation: str
+) -> None:
+    # Omission is a sentinel distinct from every value a caller can state, so a
+    # stated `None` reaches preparation as a bound; the bound can never be
+    # passed positionally, and no suffixed spelling remains.
+    until = inspect.signature(getattr(owner, operation)).parameters["until"]
+    assert until.kind is inspect.Parameter.KEYWORD_ONLY
+    assert until.default is OMITTED
+    suffixed = {f"{operation}_until", f"{operation.removesuffix('_where')}_until_where"}
+    assert not any(hasattr(owner, name) for name in suffixed)
+
+
+def test_a_bounded_predicate_write_states_its_window_as_a_pair() -> None:
+    port = ScriptedAdapter(Transact())
+    target = WherePosition.where(WherePosition.id == 1)
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(WriteInstructionError, match="until is absent"):
+            tx.update_where(
+                target,
+                WherePosition.value.set(Decimal("200.00")),
+                valid_from=FIXED,
+                until=cast("dt.datetime", None),
+            )
+        with pytest.raises(WriteInstructionError, match="until is absent"):
+            tx.wire.terminate_where(
+                {
+                    "entity": "WherePosition",
+                    "predicate": {"eq": {"attr": "WherePosition.id", "value": 1}},
+                },
+                valid_from=FIXED,
+                until=cast("dt.datetime", None),
+            )
+
+    own_root(
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn, concurrency="optimistic")
+    assert port.calls == [BeginCall(), CommitCall()]
+
+
+def _rectangle(start: dt.datetime, end: object, value: str) -> MappingRow:
+    return {
+        "id": 1,
+        "acct_num": "A",
+        "value": Decimal(value),
+        "from_z": start,
+        "thru_z": end,
+        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "out_z": INFINITY_INSTANT,
+    }
+
+
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_an_update_beyond_its_observed_rectangle_reads_the_coverage_it_reaches(
+    concurrency: str,
+) -> None:
+    # The source observed only [Jan, Jun); the write runs from its March pin
+    # through infinity, so the flush reads the object's current coverage from
+    # where the observed rectangle ends — once, inside the write batch, under
+    # the shared lock only when the effective strategy is Locking — and binds
+    # the observed rectangle together with each row it finds.
+    jan, mar, jun = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 6))
+    head = _rectangle(jan, jun, "100.00")
+    tail = _rectangle(jun, INFINITY_INSTANT, "200.00")
+    port = ScriptedAdapter(Transact(Read(rows=[head]), Read(rows=[tail]), Write(times=5)))
+
+    def fn(tx: Transaction) -> None:
+        source = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)).result()
+        tx.update(source.edit(value=Decimal("150.00")))
+
+    own_root(
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn, concurrency=cast("Any", concurrency))
+
+    reads = [call for call in port.calls if isinstance(call, ReadCall)]
+    coverage = reads[1]
+    lock = " for share of t0" if concurrency == "locking" else ""
+    assert coverage.sql.endswith(
+        "from where_position t0 where t0.id = %s and t0.thru_z > %s and t0.out_z = %s" + lock
+    )
+    assert coverage.binds == (1, jun, "infinity")
+    writes = [call for call in port.calls if isinstance(call, WriteCall)]
+    assert [call.sql.split(" ", 1)[0] for call in writes] == ["update"] * 2 + ["insert"] * 3
+    assert [call.binds[2] for call in writes[:2]] == [jun, "infinity"]
+    assert [call.binds[2:5] for call in writes[2:]] == [
+        (Decimal("100.00"), jan, mar),
+        (Decimal("150.00"), mar, jun),
+        (Decimal("150.00"), jun, "infinity"),
+    ]
+
+
+def test_a_bounded_update_reads_coverage_only_up_to_its_bound() -> None:
+    jan, mar, jun, sep = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 6, 9))
+    head = _rectangle(jan, jun, "100.00")
+    tail = _rectangle(jun, INFINITY_INSTANT, "200.00")
+    port = ScriptedAdapter(Transact(Read(rows=[head]), Read(rows=[tail]), Write(times=6)))
+
+    def fn(tx: Transaction) -> None:
+        source = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)).result()
+        tx.update(source.edit(value=Decimal("150.00")), until=sep)
+
+    own_root(
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn, concurrency="optimistic")
+
+    coverage = [call for call in port.calls if isinstance(call, ReadCall)][1]
+    assert coverage.sql.endswith(
+        "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s"
+    )
+    assert coverage.binds == (1, jun, sep, "infinity")
+    writes = [call for call in port.calls if isinstance(call, WriteCall)]
+    assert [call.binds[2:4] for call in writes[2:]] == [
+        (Decimal("100.00"), jan),
+        (Decimal("150.00"), mar),
+        (Decimal("150.00"), jun),
+        (Decimal("200.00"), sep),
+    ]
+
+
+@pytest.mark.parametrize("delivery", ["projected", "streamed"])
+def test_a_source_keeps_its_pin_through_projection_and_streaming(delivery: str) -> None:
+    # A Wire node projected from a Typed snapshot, and a root a stream delivered,
+    # each start their write at the Valid-Time pin of the read that produced
+    # them — the head the close carries ends there.
+    mar = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=3)))
+    query = WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)
+
+    def fn(tx: Transaction) -> None:
+        if delivery == "projected":
+            tx.wire.update(tx.find(query).wire().result(), {"value": "150.00"})
+            return
+        with tx.stream(query, batch_size=1) as stream:
+            for source in stream:
+                tx.update(source.edit(value=Decimal("150.00")))
+
+    own_root(
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn, concurrency="optimistic")
+    head, tail = [call.binds for call in port.calls if isinstance(call, WriteCall)][1:]
+    assert head[2:5] == (Decimal("100.00"), dt.datetime(2024, 1, 1, tzinfo=dt.UTC), mar)
+    assert tail[2:4] == (Decimal("150.00"), mar)
+    assert is_open_bound(tail[4])
+
+
+def test_a_source_with_no_pin_and_no_standing_insertion_names_no_start() -> None:
+    # The node a Bitemporal insert answered starts its writes where that
+    # insertion was authored to start; once a termination cancelled the pending
+    # pair, nothing anchors it any more.
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: Transaction) -> None:
+        opened = tx.wire.insert(
+            "WherePosition",
+            {"id": 1, "acctNum": "A", "value": "1.00"},
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        )
+        tx.wire.terminate(opened)
+        with pytest.raises(WriteInstructionError, match="names no Valid-Time instant"):
+            tx.wire.update(opened, {"value": "2.00"})
+
+    own_root(
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
+    assert not any(isinstance(call, WriteCall) for call in port.calls)
+
+
+def test_a_bounded_keyed_terminate_lowers_head_and_tail_only() -> None:
     # m-bitemp-write-002 "terminate-until", replayed through the KEYED verb:
     # close + head + tail (no middle).
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=3)))
@@ -804,9 +947,9 @@ def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.terminate_until(fetched, valid_from=valid_from, until=until)
+        tx.terminate(fetched, until=until)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -815,7 +958,9 @@ def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:
     assert len(writes) == 3  # close + head + tail
 
 
-def test_keyed_update_on_a_bitemporal_target_without_valid_from_raises() -> None:
+def test_a_keyed_update_of_a_source_read_at_valid_time_latest_is_refused() -> None:
+    # Valid-Time LATEST selects the open-ended rectangle rather than naming an
+    # instant, so a source read there states no start for an observed write.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
 
     def fn(tx: Transaction) -> None:
@@ -824,13 +969,13 @@ def test_keyed_update_on_a_bitemporal_target_without_valid_from_raises() -> None
         ).result()
         tx.update(fetched.edit(value=Decimal("200.00")))
 
-    with raises_contextualized(ValueError, match="requires valid_from"):
+    with raises_contextualized(WriteInstructionError, match="read at Valid-Time LATEST"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
 
 
-def test_keyed_terminate_on_a_non_temporal_target_forbids_valid_from() -> None:
+def test_a_bounded_keyed_terminate_on_a_non_temporal_target_takes_no_until() -> None:
     port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}])
@@ -839,9 +984,9 @@ def test_keyed_terminate_on_a_non_temporal_target_forbids_valid_from() -> None:
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
-        tx.terminate(fetched, valid_from=FIXED)
+        tx.terminate(fetched, until=FIXED)
 
-    with raises_contextualized(ValueError, match="takes no valid_from"):
+    with raises_contextualized(ValueError, match="takes no until"):
         account_db(port).transact(fn)
 
 
@@ -876,7 +1021,7 @@ def test_an_inherited_positions_window_is_judged_by_its_family_shape(
 
     def fn(tx: Transaction) -> None:
         if "until" in window:
-            tx.insert_until(rate, valid_from=window["valid_from"], until=window["until"])
+            tx.insert(rate, valid_from=window["valid_from"], until=window["until"])
         else:
             tx.insert(rate)
 
@@ -886,27 +1031,22 @@ def test_an_inherited_positions_window_is_judged_by_its_family_shape(
 
 # --------------------------------------------------------------------------- #
 # Window-order validation:                                                    #
-# The `*_until` trio additionally requires `until`, with                       #
+# A bounded form additionally requires `until`, with                          #
 # `valid_from < until` ... all validated at build" — an EQUAL and a        #
 # REVERSED window both reject, at the verb call, before any buffering, for    #
-# BOTH the KEYED (`update_until`/`terminate_until`) and `_where`              #
-# (`update_until_where`/`terminate_until_where`) verb families — the ONE      #
-# window judgment of write preparation (`parallax.core.unit_work.            #
-# instructions`) makes all four converge.                                     #
+# BOTH the KEYED and the `_where` verb families — the ONE window judgment of  #
+# write preparation (`parallax.core.unit_work.instructions`) makes them all  #
+# converge.                                                                   #
 # --------------------------------------------------------------------------- #
-def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
+def test_a_bounded_keyed_update_rejects_an_equal_window_bound() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.update_until(
-            fetched.edit(value=Decimal("200.00")),
-            valid_from=valid_from,
-            until=valid_from,
-        )
+        tx.update(fetched.edit(value=Decimal("200.00")), until=valid_from)
 
     with raises_contextualized(ValueError, match="requires valid_from < until"):
         own_root(
@@ -914,16 +1054,16 @@ def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
         ).using_database_login().transact(fn, concurrency="optimistic")
 
 
-def test_keyed_terminate_until_rejects_a_reversed_window_bound() -> None:
+def test_a_bounded_keyed_terminate_rejects_a_reversed_window_bound() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-    until = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)  # BEFORE valid_from — reversed
+    until = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)  # BEFORE the source's pin — reversed
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.terminate_until(fetched, valid_from=valid_from, until=until)
+        tx.terminate(fetched, until=until)
 
     with raises_contextualized(ValueError, match="requires valid_from < until"):
         own_root(
@@ -1117,7 +1257,7 @@ _CORRECTION_UNTIL = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
 
 def _find_pinned_position(tx: Transaction, **as_of: Any) -> Any:
-    as_of.setdefault("valid_time", LATEST)
+    as_of.setdefault("valid_time", _CORRECTION_FROM)
     return tx.find(WherePosition.where(WherePosition.id == 1).as_of(**as_of)).result()
 
 
@@ -1126,7 +1266,7 @@ def test_a_latest_transaction_time_pinned_source_stays_writable() -> None:
 
     def fn(tx: Transaction) -> None:
         node = _find_pinned_position(tx, tx_time=LATEST)
-        tx.terminate(node, valid_from=_CORRECTION_FROM)
+        tx.terminate(node)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -1141,7 +1281,7 @@ def test_a_finite_valid_time_pinned_source_stays_writable() -> None:
 
     def fn(tx: Transaction) -> None:
         node = _find_pinned_position(tx, valid_time=_VALID_PIN)
-        tx.terminate(node, valid_from=_CORRECTION_FROM)
+        tx.terminate(node)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -1160,7 +1300,7 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_is_refused_too(
 
     def fn(tx: Transaction) -> None:
         node = _find_pinned_position(tx, tx_time=_TX_PIN)
-        tx.update(node.edit(value=Decimal("200.00")), valid_from=_CORRECTION_FROM)
+        tx.update(node.edit(value=Decimal("200.00")))
 
     with raises_contextualized(
         TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
@@ -1311,58 +1451,30 @@ def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
 
 def test_the_seam_records_own_the_mappings_an_adapter_hands_them() -> None:
     # An adapter builds these mappings while reading its own value, and the
-    # ingress weighs them against the SEALED rows a prepared instruction carries,
-    # so neither may stay reachable through the caller that built it — to the
-    # leaves, because a structured member's own container is as reachable as the
-    # mapping holding it, and a prepared row's leaves are frozen the same way.
-    instruction = cast(
-        "instructions.PreparedKeyedWrite",
-        instructions.prepare_typed_write(
-            instructions.KeyedWrite(
-                "update", mm.Account.identity.canonical, ({"id": 1, "owner": "Ada"},), None, None
-            ),
-            cataloged_for(ACCOUNT).meta,
-        ),
-    )
+    # ingress reads them after the adapter returns, so neither may stay
+    # reachable through the caller that built it — to the leaves, because a
+    # structured member's own container is as reachable as the mapping holding
+    # it, and a prepared row's leaves are frozen the same way.
     nested: dict[str, object] = {"city": "Berlin"}
-    phones: list[object] = ["home"]
-    identity_row: dict[str, object] = {"id": 1}
-    originals: dict[str, object] = {
-        "owner": "Grace",
-        "address": {"geo": nested, "phones": phones},
-    }
+    identity_row: dict[str, object] = {"id": 1, "where": {"geo": nested}}
     resolved = ResolvedKeyedWriteSource(
-        entity=instruction.target,
+        entity=cataloged_for(ACCOUNT).meta.entities[0],
         pin=None,
         hint=None,
         identity_row=identity_row,
         provenance="this",
         representation="typed",
     )
-    prepared = PreparedSourceWrite(
-        instruction=instruction,
-        object_key=ObjectKey(mm.Account.identity, (("id", 1),)),
-        originals=originals,
-    )
 
     identity_row["id"] = 2
-    originals["owner"] = "Newton"
     nested["city"] = "Bonn"
-    phones.append("work")
-    assert resolved.identity_row == {"id": 1}
-    assert prepared.originals == {
-        "owner": "Grace",
-        "address": {"geo": {"city": "Berlin"}, "phones": ("home",)},
-    }
+    assert resolved.identity_row == {"id": 1, "where": {"geo": {"city": "Berlin"}}}
     with pytest.raises(TypeError):
         cast("dict[str, object]", resolved.identity_row)["id"] = 3
+    assert resolved.identity_row is not None
+    where = cast("Mapping[str, object]", resolved.identity_row["where"])
     with pytest.raises(TypeError):
-        cast("dict[str, object]", prepared.originals)["owner"] = "Newton"
-    address = cast("Mapping[str, object]", prepared.originals["address"])
-    with pytest.raises(TypeError):
-        cast("dict[str, object]", address)["geo"] = None
-    with pytest.raises(TypeError):
-        cast("dict[str, object]", address["geo"])["city"] = "Bonn"
+        cast("dict[str, object]", where["geo"])["city"] = "Bonn"
 
 
 class _NoHash:
@@ -1553,21 +1665,20 @@ def test_an_insert_after_a_delete_of_a_flushed_insert_is_still_refused_as_a_repe
     ]
 
 
-def test_an_insert_after_a_terminate_until_of_a_pending_insert_opens_the_row_again() -> None:
-    # `terminate_until` removes a bounded Valid-Time window and preserves head
+def test_an_insert_after_a_bounded_terminate_of_a_pending_insert_opens_the_row_again() -> None:
+    # A bounded `terminate` removes a Valid-Time window and preserves head
     # and tail of an EXISTING row, but against a still-pending insert there is
     # no such row: the flush annihilates the pair whole, window-blind, exactly
     # as it does for `delete`. The re-opening is therefore admitted and the
     # transaction commits one INSERT.
     port = ScriptedAdapter(Transact(Write(times=6)))
-    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
     opened_from = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         fresh = WherePosition(id=1, acct_num="A", value=Decimal("100.00"))
         tx.insert(fresh, valid_from=opened_from)
-        tx.terminate_until(fresh, valid_from=valid_from, until=until)
+        tx.terminate(fresh, until=until)
         tx.insert(fresh, valid_from=opened_from)
 
     own_root(
@@ -1578,7 +1689,7 @@ def test_an_insert_after_a_terminate_until_of_a_pending_insert_opens_the_row_aga
     assert writes[0].sql.startswith("insert into")
 
 
-def test_an_insert_after_a_terminate_until_of_a_flushed_insert_is_still_refused() -> None:
+def test_an_insert_after_a_bounded_terminate_of_a_flushed_insert_is_still_refused() -> None:
     # The same verb over a row the flush already wrote holes only
     # `[valid_from, until)` and preserves head and tail (m-bitemp-write), so the
     # object is anything but absent — and the ledger keeps it, because the
@@ -1591,8 +1702,8 @@ def test_an_insert_after_a_terminate_until_of_a_flushed_insert_is_still_refused(
     def fn(tx: Transaction) -> None:
         fresh = WherePosition(id=1, acct_num="A", value=Decimal("100.00"))
         tx.insert(fresh, valid_from=opened_from)
-        tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)).result()
-        tx.terminate_until(fresh, valid_from=valid_from, until=until)
+        tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)).result()
+        tx.terminate(fresh, until=until)
         tx.insert(fresh, valid_from=opened_from)
 
     with raises_contextualized(KeyedWriteValueError) as refusal:

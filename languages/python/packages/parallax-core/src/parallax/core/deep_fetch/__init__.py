@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, NamedTuple
 
 from parallax.core import inheritance, navigate, relationship
-from parallax.core.base import ManagedValue
+from parallax.core.base import INFINITY_LITERAL, ManagedValue
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -35,6 +35,8 @@ from parallax.core.predicate._validated import (
     conjunction as _validated_conjunction,
 )
 from parallax.core.predicate._validated import deferred_membership as _deferred_membership
+from parallax.core.predicate._validated import framework_comparison as _framework_comparison
+from parallax.core.predicate._validated import managed_comparison as _managed_comparison
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import (
     inject_resolved_as_of,
@@ -66,6 +68,7 @@ __all__ = [
     "RootRef",
     "ValidatedEntityQuery",
     "plan",
+    "plan_coverage_read",
     "plan_mutation_read",
 ]
 
@@ -275,6 +278,67 @@ def plan_mutation_read(
         validated_predicate=predicate,
         projection=resolved_projection,
     )
+
+
+def plan_coverage_read(
+    entity: EntityMetadata,
+    *,
+    model: Metamodel,
+    key: str,
+    key_value: ManagedValue,
+    valid_from: ManagedValue,
+    until: ManagedValue | None,
+) -> ValidatedEntityQuery:
+    """The one flat read of a Bitemporal object's current coverage overlapping
+    ``[valid_from, until)`` — through the open bound when ``until`` is ``None``
+    — that an execution-bound range transforms.
+
+    Every row it selects is current on Transaction Time and is projected whole,
+    every document included, because the range carries each row's unassigned
+    members forward.
+    """
+    families = inheritance.view(model)
+    root = inheritance.root_metadata(families, model, entity.identity)
+    view = _entity_view(families, entity.identity)
+    terms = [
+        _managed_comparison(
+            op="eq",
+            attr=f"{entity.identity.canonical}.{key}",
+            member=_declared_attribute(view, key),
+            value=key_value,
+        )
+    ]
+    for axis in root.declared_as_of_axes:
+        start = _declared_attribute(view, axis.start_attribute.name)
+        end = _declared_attribute(view, axis.end_attribute.name)
+        start_ref = f"{root.identity.canonical}.{start.identity.name}"
+        end_ref = f"{root.identity.canonical}.{end.identity.name}"
+        if axis.dimension is TemporalDimension.TRANSACTION_TIME:
+            terms.append(
+                _framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY_LITERAL)
+            )
+            continue
+        terms.append(
+            _managed_comparison(op="greaterThan", attr=end_ref, member=end, value=valid_from)
+        )
+        if until is not None:
+            terms.append(
+                _managed_comparison(op="lessThan", attr=start_ref, member=start, value=until)
+            )
+    predicate = navigate.canonicalize_validated(_validated_conjunction(*terms), model, entity, {})
+    return ValidatedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        validated_predicate=predicate,
+        projection=_projection_for(entity, families, ReadProjectionRequest("all", True)),
+    )
+
+
+def _declared_attribute(view: InheritanceEntityView, name: str) -> AttributeMetadata:
+    attribute = view.applicable_attribute(name)
+    if attribute is None:  # pragma: no cover - the accepted family declares its key and axes
+        raise DeepFetchError(f"{view.root.name}: {name!r} is no applicable attribute")
+    return attribute
 
 
 _ROOT_ID = -1

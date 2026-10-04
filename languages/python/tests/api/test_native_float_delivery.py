@@ -325,14 +325,7 @@ def _read_readings(db: ScopedDatabase, reader: Reader) -> list[Any]:
             return _drained(db.wire.stream(wire, batch_size=1), expected=expected)
 
 
-@pytest.mark.parametrize("writer", _WRITERS)
-@pytest.mark.parametrize("representation", _REPRESENTATIONS)
-def test_every_width_edge_reads_back_exactly_and_rewriting_it_is_a_no_op(
-    profile_run: Any, representation: Representation, writer: Writer
-) -> None:
-    db = _served(profile_run)
-    widths = _write_widths(db, representation, writer)
-
+def _assert_widths_read_back(db: Any, widths: Mapping[int, tuple[float, float]]) -> None:
     for reader in _READERS:
         rows = _read_readings(db, reader)
         observed = [(_field(row, "id"), _field(row, "f32"), _field(row, "f64")) for row in rows]
@@ -344,12 +337,27 @@ def test_every_width_edge_reads_back_exactly_and_rewriting_it_is_a_no_op(
             (key, _bits(f32), _bits(f64)) for key, f32, f64 in expected
         ], reader
 
-    # Each write weighs what it states against the rows it read back, so none
-    # finds anything to write.
+
+@pytest.mark.parametrize("writer", _WRITERS)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+def test_every_width_edge_reads_back_exactly_and_rewriting_it_keeps_its_bits(
+    profile_run: Any, representation: Representation, writer: Writer
+) -> None:
+    db = _served(profile_run)
+    widths = _write_widths(db, representation, writer)
+    _assert_widths_read_back(db, widths)
+
+    # A predicate write weighs what it states against the rows it selected, so
+    # it finds nothing to write; a keyed write assigns what it states
+    # literally, so each row is rewritten — to exactly the bits it held.
     versions = {row.id: row.version for row in _read_readings(db, "typed-eager")}
     db.transact(_predicate_widths(representation, widths))
-    db.transact(_keyed_widths(representation, widths))
     assert {row.id: row.version for row in _read_readings(db, "typed-eager")} == versions
+    db.transact(_keyed_widths(representation, widths))
+    assert {row.id: row.version for row in _read_readings(db, "typed-eager")} == {
+        key: version + 1 for key, version in versions.items()
+    }
+    _assert_widths_read_back(db, widths)
 
 
 _NONFINITE = (math.nan, math.inf, -math.inf)
@@ -404,7 +412,7 @@ def _restate_samples(representation: Representation, writer: Writer):
 
 @pytest.mark.parametrize("writer", ["keyed", "predicate"])
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
-def test_restating_a_value_object_float32_leaf_as_read_is_a_no_op(
+def test_restating_a_value_object_float32_leaf_as_read_keeps_its_bits(
     profile_run: Any, representation: Representation, writer: Writer
 ) -> None:
     db = _served(profile_run)
@@ -417,10 +425,13 @@ def test_restating_a_value_object_float32_leaf_as_read_is_a_no_op(
 
     db.transact(_restate_samples(representation, writer))
 
+    # The keyed restatement is a literal assignment and advances the version;
+    # the predicate one finds no selected row it changes.
+    version = 2 if writer == "keyed" else 1
     plots = db.find(Plot.where(Plot.all).order_by(Plot.id.asc())).results()
     authored = zip(_WIDTH_IDS, _FLOAT32_WIDTHS, strict=True)
     assert [(row.id, row.version, _bits(row.sample.f32)) for row in plots] == [
-        (key, 1, _bits(_stored32(f32))) for key, f32 in authored
+        (key, version, _bits(_stored32(f32))) for key, f32 in authored
     ]
 
 

@@ -17,6 +17,7 @@ __all__ = [
     "SettledEvidence",
     "WriteIntent",
     "admits",
+    "admits_composed",
     "claim_scope",
     "claimed_object",
     "keyed_intent",
@@ -217,8 +218,52 @@ def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:
     return "coalesce" if arriving.kind == "assignment" else "supersede"
 
 
+def admits_composed(
+    held: Iterable[tuple[ClaimScope | None, WriteIntent]],
+    scope: ClaimScope | None,
+    arriving: WriteIntent,
+) -> Literal["compose", "incompatible"]:
+    """Whether ``arriving``, a temporal object's observed write at ``scope``,
+    composes with the writes of that object ``held`` already pending, each at
+    its own scope.
+
+    Assignments compose in authored order whatever their windows or scopes:
+    later values win per member where windows overlap, and every earlier
+    condition stays. Destruction composes only where it cannot be undone or
+    half-applied: no assignment follows a destruction at the same scope or over
+    an overlapping window — a resurrection — and a destruction overlapping any
+    other write, or sharing its scope, must state exactly that write's window,
+    superseding an assignment there or repeating a destruction.
+    """
+    for held_scope, intent in held:
+        same_scope = scope is not None and held_scope == scope
+        overlapping = _overlaps(intent, arriving)
+        if arriving.kind == "assignment":
+            if intent.kind == "destructive" and (same_scope or overlapping):
+                return "incompatible"
+        elif (same_scope or overlapping) and intent.region != arriving.region:
+            return "incompatible"
+    return "compose"
+
+
+def _overlaps(first: WriteIntent, second: WriteIntent) -> bool:
+    """Whether two intents' requested windows share any instant; a window with
+    no start spans the whole axis."""
+    if first.valid_from is None or second.valid_from is None:
+        return True
+    return _before(first.valid_from, second.until) and _before(second.valid_from, first.until)
+
+
+def _before(instant: object, end: object | None) -> bool:
+    return end is None or instant < end  # type: ignore[operator]  # managed instants
+
+
 class ClaimTable:
     """The claims one buffer holds, by the scope each is taken at.
+
+    A unit of work files its Materialized Write Groups' selection claims here;
+    a keyed write's claim is the pending write itself, indexed where the buffer
+    composes it.
 
     Buffer-scoped and no wider: a flush spends the buffer it planned and the
     claims travel out with it, so what a later write may claim is decided

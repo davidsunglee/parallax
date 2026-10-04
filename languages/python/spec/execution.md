@@ -132,6 +132,19 @@ the corresponding core operations. Inserts accept fresh constructed values;
 later mutations require provenance where the core evidence rules prescribe it.
 Evidence is never a caller-supplied address. Set-based writes take an Object
 Query; update-bearing verbs also take Assignments.
+
+Each operation is one method: `insert`, `update`, `terminate`, `update_where`,
+and `terminate_where`, on the Transaction and on `tx.wire`, take a keyword-only
+`until`. Omitting it selects the core unbounded verb; stating it — `None`
+included — selects the bounded one, whose window core preparation judges before
+an empty update is dropped, so `until=None` and an `until` on a target without
+Valid Time are refused rather than read as omission. Source-backed `update` and
+`terminate` take no start: a Bitemporal one starts at its source's finite
+Valid-Time pin, or where the insertion that produced its source was authored to
+start, and a source read at Valid-Time `LATEST` is refused. A Typed `update`
+assigns every member touched along the value's `edit` chain and a Wire `update`
+every key its change document names, equal values included; a change touching
+nothing writes nothing.
 `tx.wire` is the Wire ingress, sharing transaction state and policy. Public
 write-plan and flush operations are absent. Framework-owned attributes cannot
 be authored by construction, `edit`, assignments, or Wire changes.

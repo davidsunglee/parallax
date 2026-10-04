@@ -1,5 +1,5 @@
-# Single-transaction no-op update issues no DML (m-opt-lock): a versioned update
-# whose effective change set is empty emits NO statement — zero round trips —
+# Single-transaction empty update issues no DML (m-opt-lock): a versioned update
+# that assigns no attribute emits NO statement — zero round trips —
 # inside the SAME unit of work as its observing find and its dependent verify
 # read (m-unit-work `uow` step grouping).
 model: models/account.yaml

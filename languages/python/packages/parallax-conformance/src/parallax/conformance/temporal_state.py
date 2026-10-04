@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Generator, Iterable, Mapping, Sequence
 
 from parallax.core import inheritance, temporal_read
-from parallax.core.base import normalize_instant
+from parallax.core.base import INFINITY_LITERAL, normalize_instant
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityMetadata,
@@ -15,11 +15,14 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.unit_work import (
+    ObservedStateKey,
     PlannedInsert,
     PredecessorRow,
     TemporalObservation,
-    WritePlan,
 )
+from parallax.core.unit_work.plan import RangeAcquisition
+from parallax.core.unit_work.planned import PlannedWrite
+from parallax.core.unit_work.planner import TemporalStateKey
 
 __all__ = [
     "AmbiguousObservationError",
@@ -308,9 +311,16 @@ class TemporalShadow:
         self._overtaken.discard(key)
         self._materialized.discard(key)
 
-    def track_opened(self, model: Metamodel, plan: WritePlan) -> None:
-        """Track every milestone ``plan`` OPENS as the current state a later step
-        observes.
+    def track_opened(
+        self,
+        model: Metamodel,
+        steps: Iterable[PlannedWrite],
+        *,
+        retired: Iterable[ObservedStateKey] = (),
+    ) -> None:
+        """Track every milestone ``steps`` OPENS as the current state a later step
+        observes, once every milestone in ``retired`` — the states a bound range
+        changed — has been dropped.
 
         The successor rows come off the plan the write lane already produced, so
         the tracker holds exactly what the flush will write rather than a second
@@ -322,7 +332,18 @@ class TemporalShadow:
         Rows of a NON-temporal entity are skipped: they open no milestone, and a
         ledger of them would answer no question a later step can ask.
         """
-        for step in plan.steps:
+        for state in retired:
+            if not isinstance(state, TemporalStateKey):
+                continue
+            key = (
+                state.object.entity.name,
+                tuple(value for _name, value in state.object.primary_key),
+                state.milestone,
+            )
+            self._current.pop(key, None)
+            self._overtaken.discard(key)
+            self._materialized.discard(key)
+        for step in steps:
             if not isinstance(step, PlannedInsert):
                 continue
             entity = model.entity(step.entity)
@@ -337,6 +358,30 @@ class TemporalShadow:
                 predecessor = predecessor_row(entry.row.attributes, entry.row.value_objects)
                 key = self._key(entity.identity.name, pk_names, start_names, predecessor.members)
                 self._track(key, TemporalObservation(predecessor=predecessor))
+
+    def coverage(
+        self, model: Metamodel, acquisition: RangeAcquisition
+    ) -> tuple[PredecessorRow, ...]:
+        """The tracked current milestones of ``acquisition``'s object that
+        overlap its Valid-Time window — what the execution's own coverage read
+        returns from the rows this tracker accounts for."""
+        entity = acquisition.entity
+        valid_start, valid_end = _axis_names(model, entity, TemporalDimension.VALID_TIME)
+        identity = (entity.identity.name, (acquisition.key_value,))
+        window_start = _coordinate(acquisition.valid_from)
+        window_end = None if acquisition.until is None else _coordinate(acquisition.until)
+        covered: list[PredecessorRow] = []
+        for key, observation in self._current.items():
+            if key[:2] != identity:
+                continue
+            members = observation.predecessor.members
+            end = members[valid_end]
+            if not _is_open(end) and _coordinate(end) <= window_start:
+                continue
+            if window_end is not None and _coordinate(members[valid_start]) >= window_end:
+                continue
+            covered.append(observation.predecessor)
+        return tuple(covered)
 
     def _track(self, key: _ObjectKey, observation: TemporalObservation) -> None:
         """Store one milestone in its own slot, refusing a slot already taken.
@@ -472,6 +517,10 @@ def observed_close_coordinates(
 
 
 _NOT_AN_INSTANT = "an as-of axis start is a finite instant, and {value!r} is not one"
+
+
+def _is_open(value: object) -> bool:
+    return value == "infinity" or str(value) == "infinity" or value == INFINITY_LITERAL
 
 
 def _coordinate(value: object) -> dt.datetime:

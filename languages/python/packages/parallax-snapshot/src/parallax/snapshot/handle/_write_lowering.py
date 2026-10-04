@@ -9,7 +9,7 @@ from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import WritePlan
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 
-__all__ = ["stream_lowered"]
+__all__ = ["lowered", "stream_lowered"]
 
 
 def stream_lowered(
@@ -29,3 +29,9 @@ def stream_lowered(
     """
     for step in plan.steps:
         yield (step, compile_write_step(step, meta, dialect))
+
+
+def lowered(step: PlannedStep, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
+    """The one statement ``step`` lowers to — a step no plan held in advance,
+    which a deferred range bound at execution."""
+    return compile_write_step(step, meta, dialect)

@@ -74,24 +74,24 @@ from tests.unit.snapshot.handle._keyed_write_drivers import (
 
 _SOURCE_VERBS: tuple[Verb, ...] = (
     "update",
-    "update_until",
+    "bounded_update",
     "delete",
     "terminate",
-    "terminate_until",
+    "bounded_terminate",
 )
-_INSERT_VERBS: tuple[Verb, ...] = ("insert", "insert_until")
-_BOUNDED_VERBS: tuple[Verb, ...] = ("insert_until", "update_until", "terminate_until")
-_UPDATE_VERBS: frozenset[str] = frozenset({"update", "update_until"})
+_INSERT_VERBS: tuple[Verb, ...] = ("insert", "bounded_insert")
+_BOUNDED_VERBS: tuple[Verb, ...] = ("bounded_insert", "bounded_update", "bounded_terminate")
+_UPDATE_VERBS: frozenset[str] = frozenset({"update", "bounded_update"})
 _ALL_TARGETS: tuple[Target, ...] = TARGETS + DOCUMENT_TARGETS
 
 _MUTATIONS: Final[Mapping[Verb, str]] = {
     "insert": "insert",
-    "insert_until": "insertUntil",
+    "bounded_insert": "insertUntil",
     "update": "update",
-    "update_until": "updateUntil",
+    "bounded_update": "updateUntil",
     "delete": "delete",
     "terminate": "terminate",
-    "terminate_until": "terminateUntil",
+    "bounded_terminate": "terminateUntil",
 }
 """The mutation token a refusal names, per verb: refusals about a target's own
 rules spell the mutation, and the two applicability ones spell the method."""
@@ -104,11 +104,11 @@ _STATEMENTS: Final[Mapping[tuple[Profile, Verb], int]] = {
     ("transaction_time", "update"): 2,
     ("transaction_time", "terminate"): 1,
     ("bitemporal", "insert"): 1,
-    ("bitemporal", "insert_until"): 1,
+    ("bitemporal", "bounded_insert"): 1,
     ("bitemporal", "update"): 3,
-    ("bitemporal", "update_until"): 4,
+    ("bitemporal", "bounded_update"): 4,
     ("bitemporal", "terminate"): 2,
-    ("bitemporal", "terminate_until"): 3,
+    ("bitemporal", "bounded_terminate"): 3,
 }
 """How much DML each admitted verb emits, by the target's temporal profile.
 
@@ -200,15 +200,18 @@ def _applicability_refusal(scenario: Scenario, *, statements: int = 0) -> Answer
         )
         return _refused(
             WriteInstructionError,
-            f"{_short(target)}: {shape} {_MUTATIONS[verb]!r} takes no valid_from "
+            f"{_short(target)}: {shape} {_MUTATIONS[verb]!r} takes no until "
             f"({_short(target)!r} declares no Valid-Time dimension to bound)",
             statements=statements,
         )
     if verb in _BOUNDED_VERBS and scenario.window == "reversed":
+        # An insert states both bounds; a source-backed write starts at its
+        # source's pin, so its reversed window ends where it starts.
+        start = UNTIL if verb in _INSERT_VERBS else VALID_FROM
         return _refused(
             WriteInstructionError,
             f"{_short(target)}: {_MUTATIONS[verb]!r} requires valid_from < until "
-            f"— got valid_from={UNTIL!r}, until={VALID_FROM!r}",
+            f"— got valid_from={start!r}, until={VALID_FROM!r}",
             statements=statements,
         )
     if verb == "terminate" and target.profile == "non_temporal":
@@ -276,22 +279,34 @@ def test_one_verb_over_a_participating_source_answers_its_target(scenario: Scena
 
 
 # --------------------------------------------------------------------------- #
-# The change axis. A net-zero chain and an untouched copy are the two ways a   #
-# keyed update names members and changes nothing; both reduce to the same      #
-# no-op the Wire lane reaches by comparing against what its source published,  #
-# which is what licenses one comparison rule behind both representations. The  #
-# document targets carry it past a scalar: a Value Object occurrence with a    #
-# nested occurrence and a nested many, and a member stored absent whose        #
-# restoration states an explicit null an untouched copy never names.           #
+# The change axis. An untouched copy, and a Wire document naming no member,    #
+# express no assignment and buffer nothing. A net-zero chain — a member set    #
+# and then set back to the value its source published — expresses that member #
+# and writes it, exactly as a changed one does: assignments are literal sets,  #
+# never compared with the source. The document targets carry it past a scalar: #
+# a Value Object occurrence with a nested occurrence and a nested many, and a  #
+# member stored absent whose restoration states an explicit null.              #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "scenario",
-    _grid(targets=_ALL_TARGETS, verbs=("update", "update_until"), change="net_zero")
-    + _grid(targets=_ALL_TARGETS, verbs=("update", "update_until"), change="untouched"),
+    _grid(targets=_ALL_TARGETS, verbs=("update", "bounded_update"), change="untouched"),
     ids=str,
 )
-def test_a_change_set_that_changes_nothing_buffers_nothing(scenario: Scenario) -> None:
+def test_an_update_expressing_no_member_buffers_nothing(scenario: Scenario) -> None:
     _answers(scenario, _applicability_refusal(scenario) or _wrote(0))
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    _grid(targets=_ALL_TARGETS, verbs=("update", "bounded_update"), change="net_zero"),
+    ids=str,
+)
+def test_a_net_zero_chain_writes_the_member_it_expressed(scenario: Scenario) -> None:
+    _answers(
+        scenario,
+        _applicability_refusal(scenario)
+        or _wrote(_STATEMENTS[scenario.target.profile, scenario.verb]),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -353,13 +368,14 @@ def test_a_pinned_source_is_read_only_whatever_verb_was_aimed_at_it(scenario: Sc
 
 # --------------------------------------------------------------------------- #
 # The window axis. A reversed window is refused whatever else the call is,     #
-# including when the change set nets to zero — window before no-op, in both    #
-# representations.                                                            #
+# including when the change set nets to zero or is empty — window before       #
+# empty elimination, in both representations.                                 #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "scenario",
     _grid(verbs=_BOUNDED_VERBS, window="reversed")
-    + _grid(verbs=("update_until",), window="reversed", change="net_zero"),
+    + _grid(verbs=("bounded_update",), window="reversed", change="net_zero")
+    + _grid(verbs=("bounded_update",), window="reversed", change="untouched"),
     ids=str,
 )
 def test_a_reversed_window_is_refused_before_the_change_set_is_weighed(
@@ -423,8 +439,6 @@ def test_a_same_transaction_insert_licenses_the_write_whoever_opened_it(
 # unversioned Non-Temporal row, which observes no state at all, writes.        #
 # --------------------------------------------------------------------------- #
 def _over_a_reread_insert(scenario: Scenario) -> Answer:
-    if scenario.verb in _UPDATE_VERBS and scenario.change == "net_zero":
-        return _wrote(1)
     if scenario.target.profile != "non_temporal":
         return _unobserved_milestone(scenario)
     if scenario.target.gate == "version":
@@ -537,7 +551,7 @@ def test_a_flushed_insert_still_refuses_a_second_insert_of_its_object(scenario: 
 # --------------------------------------------------------------------------- #
 _PINNED_AND_REVERSED: Final = Scenario(
     target=POSITION_TARGET,
-    verb="update_until",
+    verb="bounded_update",
     source="pinned",
     window="reversed",
     label="pin-beats-window",
@@ -567,27 +581,45 @@ def test_a_pinned_source_beats_the_window_it_stated() -> None:
             verb="update",
             source="standalone",
             concurrency="locking",
-            change="net_zero",
-            label="a-net-zero-write-needs-no-evidence",
+            change="untouched",
+            label="an-empty-write-needs-no-evidence",
         ),
         Scenario(
             target=CONTACT_TARGET,
             verb="update",
             source="standalone",
             concurrency="locking",
-            change="net_zero",
-            label="a-net-zero-document-write-needs-no-evidence",
+            change="untouched",
+            label="an-empty-document-write-needs-no-evidence",
         ),
     ),
     ids=str,
 )
-def test_a_net_zero_change_set_is_dropped_before_evidence_is_asked_for(
-    scenario: Scenario,
-) -> None:
-    # The source could license nothing, and the write asks it for nothing: the
-    # no-op return precedes the evidence question, so a chain that took itself
-    # back over an unusable source is silence rather than a refusal.
+def test_an_empty_set_is_dropped_before_evidence_is_asked_for(scenario: Scenario) -> None:
+    # The source could license nothing, and the write asks it for nothing: an
+    # update expressing no member is dropped before the evidence question, so it
+    # is silence over an unusable source rather than a refusal.
     _answers(scenario, _wrote(0))
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    tuple(
+        Scenario(
+            target=target,
+            verb="update",
+            source="standalone",
+            concurrency="locking",
+            change="net_zero",
+        )
+        for target in (ACCOUNT_TARGET, CONTACT_TARGET)
+    ),
+    ids=str,
+)
+def test_a_net_zero_chain_over_an_unusable_source_asks_for_evidence(scenario: Scenario) -> None:
+    # A net-zero chain expresses its member, so it is a write like any other and
+    # needs the evidence its target's strategy demands.
+    _answers(scenario, _unusable_evidence(scenario.target))
 
 
 # --------------------------------------------------------------------------- #
@@ -599,7 +631,7 @@ _INSERT_SOURCE_DEFECTS: Final[tuple[tuple[Scenario, Answer], ...]] = (
     (
         Scenario(
             target=POSITION_TARGET,
-            verb="update_until",
+            verb="bounded_update",
             window="reversed",
             label="window-beats-the-insert-exemption",
         ),
@@ -608,7 +640,7 @@ _INSERT_SOURCE_DEFECTS: Final[tuple[tuple[Scenario, Answer], ...]] = (
     (
         Scenario(
             target=POSITION_TARGET,
-            verb="update_until",
+            verb="bounded_update",
             window="reversed",
             opened_until=True,
             label="window-beats-a-bounded-insert-exemption",
@@ -618,7 +650,7 @@ _INSERT_SOURCE_DEFECTS: Final[tuple[tuple[Scenario, Answer], ...]] = (
     (
         Scenario(
             target=POSITION_TARGET,
-            verb="update_until",
+            verb="bounded_update",
             window="reversed",
             change="net_zero",
             label="window-beats-a-net-zero-insert-source",
@@ -628,7 +660,7 @@ _INSERT_SOURCE_DEFECTS: Final[tuple[tuple[Scenario, Answer], ...]] = (
     (
         Scenario(
             target=POSITION_TARGET,
-            verb="update_until",
+            verb="bounded_update",
             window="reversed",
             source="reread",
             label="window-beats-a-reread-insert-source",
@@ -638,7 +670,7 @@ _INSERT_SOURCE_DEFECTS: Final[tuple[tuple[Scenario, Answer], ...]] = (
     (
         Scenario(
             target=POSITION_TARGET,
-            verb="insert_until",
+            verb="bounded_insert",
             window="reversed",
             label="window-beats-the-repeated-insert-refusal",
         ),
@@ -666,7 +698,7 @@ def test_the_window_is_judged_over_an_inserted_source_too(
 
 
 @pytest.mark.parametrize(
-    ("scenario", "statements"),
+    ("scenario", "expected"),
     (
         (
             Scenario(
@@ -675,7 +707,7 @@ def test_the_window_is_judged_over_an_inserted_source_too(
                 change="net_zero",
                 label="a-net-zero-write-of-an-inserted-row",
             ),
-            1,
+            _wrote(1),
         ),
         (
             Scenario(
@@ -685,16 +717,19 @@ def test_the_window_is_judged_over_an_inserted_source_too(
                 source="reread",
                 label="a-net-zero-write-of-a-reread-inserted-row",
             ),
-            1,
+            _unobserved_version(ACCOUNT_TARGET),
         ),
     ),
-    ids=lambda value: str(value),
+    ids=lambda value: str(value) if isinstance(value, Scenario) else "",
 )
 @pytest.mark.parametrize("opener", REPRESENTATIONS)
-def test_a_net_zero_write_of_an_inserted_row_leaves_the_insert_alone(
-    scenario: Scenario, statements: int, opener: Representation
+def test_a_net_zero_write_of_an_inserted_row_is_the_write_an_ordinary_one_is(
+    scenario: Scenario, expected: Answer, opener: Representation
 ) -> None:
-    _answers(replace(scenario, opened_by=opener), _wrote(statements))
+    # A net-zero chain expresses its member: over a pending insert it folds into
+    # the insert's one statement, and over a flushed one it settles bare exactly
+    # as an ordinary write does.
+    _answers(replace(scenario, opened_by=opener), expected)
 
 
 # --------------------------------------------------------------------------- #
@@ -716,7 +751,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
     (
         Scenario(
             target=POSITION_TARGET,
-            verb="update_until",
+            verb="bounded_update",
             window="reversed",
             wire_changes={"nope": 1},
             label="window-beats-an-undeclared-member",

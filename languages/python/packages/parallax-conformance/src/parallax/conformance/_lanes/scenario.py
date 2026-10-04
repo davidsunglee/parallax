@@ -71,7 +71,6 @@ from parallax.core.db_port import (
     MappingRow,
 )
 from parallax.core.dialect import Dialect
-from parallax.core.document_codec import EffectiveChangeSet, classify_effective_change
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -94,7 +93,6 @@ from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
-    UPDATE_MUTATIONS,
     BufferItem,
     CardinalityCorruptionError,
     ClaimedKeyedWrite,
@@ -102,6 +100,7 @@ from parallax.core.unit_work import (
     KeyedWrite,
     MissingTargetError,
     ObjectKey,
+    ObservedStateKey,
     OptimisticLockConflictError,
     PlanningRequest,
     PredicateWrite,
@@ -127,6 +126,8 @@ from parallax.core.unit_work.instructions import (
     PreparedWrite,
     WriteInstruction,
 )
+from parallax.core.unit_work.planned import PlannedWrite
+from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.snapshot import DatabaseOptions, handle
 from parallax.snapshot.handle import (
@@ -1092,41 +1093,8 @@ def _buffered(
     assert isinstance(
         instruction, PreparedKeyedWrite
     )  # every producer of this seam resolves keyed writes
-    evidence = instruction_evidence(model, instruction, supplied=observation)
     return buffered_write(
-        instruction, evidence, change=instruction_change(model, instruction, evidence=evidence)
-    )
-
-
-def instruction_change(
-    model: AcceptedMetamodel,
-    instruction: PreparedKeyedWrite,
-    *,
-    evidence: SettledEvidence | None,
-) -> EffectiveChangeSet | None:
-    """The effective change set the verb would buffer an evidenced single-row
-    update with, for an oracle holding the INSTRUCTION rather than the value it
-    was derived from: its assigned members, less the identity, classified
-    against the originals the evidence observed over the target's applicable
-    document shape. Evidence stating no member values — a version or an object
-    claim — has no original to restore, so every assigned member is effective.
-    """
-    if (
-        evidence is None
-        or instruction.mutation not in UPDATE_MUTATIONS
-        or len(instruction.rows) != 1
-    ):
-        return None
-    view = inheritance.view(model).entity(instruction.target.identity)
-    assert view is not None  # the facet covers every accepted Entity
-    key = view.primary_key.identity.name
-    (row,) = instruction.rows
-    assigned = {name: value for name, value in row.items() if name != key}
-    observed = evidence.evidence if isinstance(evidence, RetainedObservation) else evidence
-    if not isinstance(observed, TemporalObservation):
-        return EffectiveChangeSet(effective=frozenset(assigned), restored=frozenset())
-    return classify_effective_change(
-        view.applicable_document_shape, assigned, observed.predecessor.members
+        instruction, instruction_evidence(model, instruction, supplied=observation)
     )
 
 
@@ -1162,9 +1130,11 @@ def _lower_resolved(
     rows.
     """
     buffer = [_buffered(write.instruction, write.oracle_observation, model) for write in resolved]
-    plan, statements = _plan_and_lower(model, dialect, concurrency, tx_instant, buffer)
+    plan, statements = _plan_and_lower(
+        model, dialect, concurrency, tx_instant, buffer, coverage=shadow
+    )
     _check_statement_count_consistency(entries, len(statements))
-    shadow.track_opened(model, plan)
+    shadow.track_opened(model, plan.steps, retired=plan.changed)
     return statements
 
 
@@ -1174,10 +1144,19 @@ def _plan_and_lower(
     concurrency: Concurrency,
     tx_instant: str,
     buffered_writes: Sequence[BufferItem],
-) -> tuple[WritePlan, tuple[LoweredStatement, ...]]:
+    *,
+    coverage: TemporalShadow | None = None,
+) -> tuple[ExecutedPlan, tuple[LoweredStatement, ...]]:
     """Plan one write buffer through the SAME ``build_write_planner`` factory the
     composition layer uses and lower every surviving step PURELY, in execution
-    order, beside the plan they came from."""
+    order, beside the plan they came from.
+
+    The buffer is composed first, as a unit of work composes each write it
+    admits. A range whose requested window reaches coverage its observations do
+    not hold is bound to the case state ``coverage`` tracks — the rows the
+    execution's own coverage read returns — so its statements stand where the
+    execution runs them; a lane tracking no case state has none to bind to.
+    """
     plan = (
         build_write_planner(model)
         .finalize(
@@ -1185,12 +1164,50 @@ def _plan_and_lower(
                 actor_identity=_PLANNING_ACTOR,
                 transaction_instant=_pinned_instant(tx_instant),
                 concurrency=concurrency,
-                buffered_writes=buffered_writes,
+                buffered_writes=compose_writes(model, buffered_writes),
             )
         )
         .plan
     )
-    return plan, tuple(statement for _step, statement in stream_lowered(plan, model, dialect))
+    executed = ExecutedPlan(plan)
+    statements: list[LoweredStatement] = []
+    units = iter(plan.units)
+    unit = next(units, None)
+    position = 0
+
+    def bind_deferred() -> None:
+        nonlocal unit
+        while unit is not None and unit.end == position:
+            deferred = unit.deferred
+            if deferred is not None:
+                if coverage is None:
+                    raise EngineError(
+                        "a range write reached coverage no observation of its unit holds, and "
+                        "this lane tracks no case state to bind it to"
+                    )
+                bound = deferred.bind(coverage.coverage(model, deferred.acquisition))
+                executed.steps.extend(bound.steps)
+                executed.changed.extend(bound.changed)
+                statements.extend(compile_write_step(step, model, dialect) for step in bound.steps)
+            unit = next(units, None)
+
+    for step, statement in stream_lowered(plan, model, dialect):
+        bind_deferred()
+        executed.steps.append(step)
+        statements.append(statement)
+        position += 1
+    bind_deferred()
+    return executed, tuple(statements)
+
+
+@dataclass(slots=True)
+class ExecutedPlan:
+    """One write buffer's plan beside every step its execution runs, deferred
+    ranges bound, and the observed states those bound ranges changed."""
+
+    plan: WritePlan
+    steps: list[PlannedWrite] = field(default_factory=list[PlannedWrite])
+    changed: list[ObservedStateKey] = field(default_factory=list[ObservedStateKey])
 
 
 def lower_writes(
@@ -1286,14 +1303,14 @@ def _buffer_wire_predicate_write(
         case "terminate":
             tx.wire.terminate_where(target, valid_from=valid_from)
         case "updateUntil":
-            tx.wire.update_until_where(
+            tx.wire.update_where(
                 target,
                 changes,
                 valid_from=_required(valid_from),
                 until=_required(until),
             )
         case "terminateUntil":
-            tx.wire.terminate_until_where(
+            tx.wire.terminate_where(
                 target, valid_from=_required(valid_from), until=_required(until)
             )
 
@@ -1892,11 +1909,15 @@ _LATEST_SELECTION: Final[Mapping[TemporalDimension, str]] = {
 
 
 def _unit_source_query(
-    model: AcceptedMetamodel, entity_name: str, keys: Sequence[ObjectKey]
+    model: AcceptedMetamodel,
+    entity_name: str,
+    keys: Sequence[ObjectKey],
+    valid_at: dt.datetime | None = None,
 ) -> dict[str, object]:
     """The canonical Object Query resolving every row of ``entity_name`` — a
     CANONICAL Entity spelling — one choreography unit writes against existing
-    state.
+    state, at the Valid-Time instant ``valid_at`` its Bitemporal writes start
+    from.
 
     Membership over the family-declared primary key, one read per target Entity
     however many rows the unit addresses, which is what a caller holding several
@@ -1905,11 +1926,11 @@ def _unit_source_query(
     for no semantic gain, and reading between two writes would force-flush the
     first — destroying the very batch collapse the goldens pin.
 
-    A temporal target selects ``latest`` on every dimension it declares, which is
-    both what a canonical Object Query requires (one selection per declared
-    dimension) and the only milestone a keyed write may address: the
-    Transaction-Time past is read-only, so a source pinned anywhere else is a
-    value no verb accepts.
+    A temporal target selects ``latest`` on Transaction Time, the only milestone
+    a keyed write may address: the Transaction-Time past is read-only. A
+    Bitemporal target is read at the instant its writes start from, because an
+    observed write starts at its source's own Valid-Time pin; one read per
+    distinct start, so writes starting apart read apart.
     """
     declaring = family_declarer(model, case_entity(model, entity_name))
     pk = [
@@ -1930,10 +1951,14 @@ def _unit_source_query(
             }
         },
     }
-    temporal = {
+    temporal: dict[str, object] = {
         _LATEST_SELECTION[axis.dimension]: {"asOf": "latest"}
         for axis in declaring.declared_as_of_axes
     }
+    if valid_at is not None:
+        temporal[_LATEST_SELECTION[TemporalDimension.VALID_TIME]] = {
+            "asOf": f"{valid_at:%Y-%m-%dT%H:%M:%S.%fZ}"
+        }
     if temporal:
         query["temporal"] = temporal
     return query
@@ -1970,7 +1995,7 @@ def _unit_source_reads(
             key = object_key(instruction, model)
             if key is not None:
                 opened.add(key)
-    needed: dict[str, dict[ObjectKey, None]] = {}
+    needed: dict[tuple[str, dt.datetime | None], dict[ObjectKey, None]] = {}
     for write in resolved:
         instruction = write.instruction
         if not isinstance(instruction, PreparedKeyedWrite):
@@ -1981,8 +2006,11 @@ def _unit_source_reads(
         if key is None or key in opened:
             continue
         canonical = instruction.target.identity.canonical
-        needed.setdefault(canonical, {})[key] = None
-    return [_unit_source_query(model, entity, tuple(keys)) for entity, keys in needed.items()]
+        needed.setdefault((canonical, instruction.bounds.valid_from), {})[key] = None
+    return [
+        _unit_source_query(model, entity, tuple(keys), valid_at)
+        for (entity, valid_at), keys in needed.items()
+    ]
 
 
 def _execute_write_unit(
@@ -2590,6 +2618,7 @@ def _group_source_node(
     key: ObjectKey | None,
     state: GroupState,
     named: Sequence[handle.WireEntity] | None,
+    valid_from: dt.datetime | None = None,
 ) -> handle.WireEntity:
     """The published value one keyed write is addressed by, from what its own
     choreography unit produced.
@@ -2606,6 +2635,11 @@ def _group_source_node(
     insert opened wins over any find — that is read-your-own-writes, and no read
     could have returned it — and otherwise the published run is scanned from the
     END, so a write settles against the latest reading rather than a stale one.
+
+    ``valid_from`` is a Bitemporal write's start, which an observed write takes
+    from the Valid-Time pin of the value it is handed rather than as an argument
+    of its own: a published value read anywhere else states a different write,
+    so it is never the source, and a named one is refused.
     """
     if named is not None:
         matched = [node for node in named if _node_object_key(node) == key]
@@ -2616,12 +2650,24 @@ def _group_source_node(
                 "observed state the value it was handed came from (m-case-format 'Settling "
                 "against a grouped find')"
             )
-        return matched[0]
+        (node,) = matched
+        if not _pinned_at(node, valid_from):
+            raise EngineError(
+                f"{entity_name!r}: the write starts at {valid_from!r}, but the find it settles "
+                "against was read at another Valid-Time instant — an observed write starts at "
+                "its source's own pin and states no start of its own (m-case-format 'Settling "
+                "against a grouped find')"
+            )
+        return node
     opened = None if key is None else state.opened.get(key)
     if opened is not None:
         return opened
     for node in reversed(state.published):
-        if _node_object_key(node) == key and _writable_source(node):
+        if (
+            _node_object_key(node) == key
+            and _writable_source(node)
+            and _pinned_at(node, valid_from)
+        ):
             return node
     raise EngineError(
         f"{entity_name!r}: a keyed write addresses {key!r}, which no read of its own "
@@ -2630,6 +2676,18 @@ def _group_source_node(
         "and a choreography unit comes to hold one only by reading the row or by opening it "
         "with its own insert (m-case-format 'Resolving reads a write owes')"
     )
+
+
+def _pinned_at(node: handle.WireEntity, valid_from: dt.datetime | None) -> bool:
+    """Whether ``node`` was read at the Valid-Time instant a write starting at
+    ``valid_from`` takes from its source; a write with no Valid-Time start
+    takes none."""
+    if valid_from is None:
+        return True
+    hint = read_origin_of(node)
+    assert hint is not None
+    pin = hint.pin
+    return pin is not None and pin.valid_time == valid_from
 
 
 def _source_find_nodes(
@@ -2699,11 +2757,8 @@ def _buffer_wire_write(
     if instruction.mutation in INSERT_MUTATIONS:
         payload = _wire_insert_payload(model, entity_metadata, row)
         opened = (
-            tx.wire.insert_until(
-                entity_name,
-                payload,
-                valid_from=_required(valid_from),
-                until=_required(until),
+            tx.wire.insert(
+                entity_name, payload, valid_from=_required(valid_from), until=_required(until)
             )
             if instruction.mutation == "insertUntil"
             else tx.wire.insert(entity_name, payload, valid_from=valid_from)
@@ -2711,7 +2766,7 @@ def _buffer_wire_write(
         state.opened[_node_object_key(opened)] = opened
         return
     key = object_key(instruction, model)
-    node = _group_source_node(entity_name, key, state, named)
+    node = _group_source_node(entity_name, key, state, named, valid_from)
     identity = dict(key.primary_key) if key is not None else {}
     changes = ActualWireProjection(model).entity_values(
         entity_metadata,
@@ -2719,17 +2774,15 @@ def _buffer_wire_write(
     )
     match instruction.mutation:
         case "update":
-            tx.wire.update(node, changes, valid_from=valid_from)
+            tx.wire.update(node, changes)
         case "updateUntil":
-            tx.wire.update_until(
-                node, changes, valid_from=_required(valid_from), until=_required(until)
-            )
+            tx.wire.update(node, changes, until=_required(until))
         case "delete":
             tx.wire.delete(node)
         case "terminate":
-            tx.wire.terminate(node, valid_from=valid_from)
+            tx.wire.terminate(node)
         case _:
-            tx.wire.terminate_until(node, valid_from=_required(valid_from), until=_required(until))
+            tx.wire.terminate(node, until=_required(until))
 
 
 def _wire_insert_payload(

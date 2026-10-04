@@ -1160,13 +1160,13 @@ def test_materializing_plain_terminate_where_over_a_bitemporal_target() -> None:
     assert len(writes) == 2  # close + head only (no tail)
 
 
-def test_materializing_update_until_where_over_a_bitemporal_target() -> None:
+def test_materializing_bounded_update_where_over_a_bitemporal_target() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.update_until_where(
+        tx.update_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=valid_from,
@@ -1180,13 +1180,13 @@ def test_materializing_update_until_where_over_a_bitemporal_target() -> None:
     assert len(writes) == 4  # close + head + middle + tail
 
 
-def test_materializing_terminate_until_where_over_a_bitemporal_target() -> None:
+def test_materializing_bounded_terminate_where_over_a_bitemporal_target() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=3)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.terminate_until_where(
+        tx.terminate_where(
             WherePosition.where(WherePosition.id == 1), valid_from=valid_from, until=until
         )
 
@@ -1197,7 +1197,7 @@ def test_materializing_terminate_until_where_over_a_bitemporal_target() -> None:
     assert len(writes) == 3  # close + head + tail (no middle)
 
 
-def test_materializing_terminate_until_where_writes_per_resolved_row() -> None:
+def test_materializing_bounded_terminate_where_writes_per_resolved_row() -> None:
     # The single-row test above proves the per-row shape
     # (close + head + tail); this proves the MATERIALIZE loop itself resolves
     # and writes MULTIPLE rows, exactly like `update_where`'s / `delete_where`'s
@@ -1211,7 +1211,7 @@ def test_materializing_terminate_until_where_writes_per_resolved_row() -> None:
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.terminate_until_where(
+        tx.terminate_where(
             WherePosition.where(WherePosition.value < 999),
             valid_from=valid_from,
             until=until,
@@ -1270,9 +1270,7 @@ def test_materializing_bitemporal_update_where_carries_the_unassigned_value_obje
     assert tail_binds[2] == Decimal("300.00")  # the assigned scalar column DOES take the new value
 
 
-def test_materializing_update_until_where_bitemporal_carries_the_value_object_on_every_chain() -> (
-    None
-):
+def test_materializing_bounded_update_where_bitemporal_carries_the_value_object_per_chain() -> None:
     # The full rectangle split (`m-bitemp-write-010..013`'s own witnessed
     # shape, VO-free `Position`): every one of head/middle/tail carries the
     # resolved row's own `address` forward, whole, since the caller reassigns
@@ -1283,7 +1281,7 @@ def test_materializing_update_until_where_bitemporal_carries_the_value_object_on
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.update_until_where(
+        tx.update_where(
             WhereRectangle.where(WhereRectangle.id == 1),
             WhereRectangle.value.set(Decimal("300.00")),
             valid_from=valid_from,
@@ -1334,11 +1332,9 @@ def test_materializing_plain_terminate_where_bitemporal_carries_the_document() -
     assert head_binds[-1] == JsonDocument(address)  # head: the OLD value's document, whole
 
 
-def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_head_and_tail() -> (
-    None
-):
+def test_materializing_bounded_terminate_where_bitemporal_carries_the_document_per_edge() -> None:
     # `terminateUntil` opens head AND tail (no middle — the window becomes a
-    # hole in Valid Time, `terminate_until_where`'s own docstring), and
+    # hole in Valid Time, bounded `terminate_where`'s own docstring), and
     # BOTH chain the resolved row's OLD payload forward
     # (`bitemp_write.plan`), so the document rides both, whole.
     address: dict[str, DocumentValue] = {"city": "Tampere"}
@@ -1347,7 +1343,7 @@ def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.terminate_until_where(
+        tx.terminate_where(
             WhereRectangle.where(WhereRectangle.id == 1), valid_from=valid_from, until=until
         )
 
@@ -1655,14 +1651,14 @@ def test_materializing_versioned_update_where_projects_only_the_assigned_value_o
     )
 
 
-def test_materializing_update_until_where_rejects_an_equal_window_bound() -> None:
+def test_materializing_bounded_update_where_rejects_an_equal_window_bound() -> None:
     # No resolving read ever fires — the window rejects at build, before any
     # buffering (preparation, before `_materialize_predicate_write`).
     port = ScriptedAdapter(Transact())
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.update_until_where(
+        tx.update_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=valid_from,
@@ -1678,13 +1674,13 @@ def test_materializing_update_until_where_rejects_an_equal_window_bound() -> Non
     )  # never reached the resolve
 
 
-def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -> None:
+def test_materializing_bounded_terminate_where_rejects_a_reversed_window_bound() -> None:
     port = ScriptedAdapter(Transact())
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)  # BEFORE valid_from — reversed
 
     def fn(tx: Transaction) -> None:
-        tx.terminate_until_where(
+        tx.terminate_where(
             WherePosition.where(WherePosition.id == 1), valid_from=valid_from, until=until
         )
 
@@ -1704,7 +1700,7 @@ def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.update_until_where(
+        tx.update_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
@@ -1719,31 +1715,31 @@ def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None
 
 
 def test_a_where_bounded_verb_states_its_window_as_a_pair() -> None:
-    # A `_where` `*_until` verb's window is a PAIR, judged by the one gate the
-    # keyed verbs and both representations run, so half of one earns the verb's
-    # own `WriteInstructionError` rather than a complaint about the missing
-    # half's type. A non-temporal target admits no `valid_from` to supply at all,
-    # which is how such a call reaches the gate with one bound.
+    # A bounded `_where` window is a PAIR, judged by the one gate the keyed
+    # verbs and both representations run, so half of one earns the verb's own
+    # `WriteInstructionError` rather than a complaint about the missing half's
+    # type. A stated `until` of `None` is that missing half, never omission.
     account = ScriptedAdapter(Transact())
     position = ScriptedAdapter(Transact())
 
     def absent_valid_from(tx: Transaction) -> None:
-        tx.update_until_where(
-            mm.Account.where(mm.Account.id == 1),
-            mm.Account.balance.set(Decimal("300.00")),
-            valid_from=cast("dt.datetime", None),
+        tx.update_where(
+            WherePosition.where(WherePosition.id == 1),
+            WherePosition.value.set(Decimal("300.00")),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 
     def absent_until(tx: Transaction) -> None:
-        tx.terminate_until_where(
+        tx.terminate_where(
             WherePosition.where(WherePosition.id == 1),
             valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
             until=cast("dt.datetime", None),
         )
 
     with raises_contextualized(instructions.WriteInstructionError, match="valid_from is absent"):
-        account_db(account).transact(absent_valid_from)
+        own_root(
+            Database.connect(account, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        ).using_database_login().transact(absent_valid_from, concurrency="optimistic")
     with raises_contextualized(instructions.WriteInstructionError, match="until is absent"):
         own_root(
             Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -2026,7 +2022,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
     idle = ScriptedAdapter(Transact())
 
     def unrenderable(tx: Transaction) -> None:
-        tx.update_until_where(
+        tx.update_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=_EXTREME_OFFSET,
@@ -2042,7 +2038,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
     typed_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def typed(tx: Transaction) -> None:
-        tx.update_until_where(
+        tx.update_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=_NON_UTC_VALID_FROM,
@@ -2056,7 +2052,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
     seam_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def wire(tx: Transaction) -> None:
-        tx.wire.update_until_where(
+        tx.wire.update_where(
             {
                 "entity": "WherePosition",
                 "predicate": {"eq": {"attr": "WherePosition.id", "value": 1}},
@@ -2084,7 +2080,7 @@ def _bounded_write(
     if until is None:
         tx.update_where(query, assignment, valid_from=valid_from)
     else:
-        tx.update_until_where(query, assignment, valid_from=valid_from, until=until)
+        tx.update_where(query, assignment, valid_from=valid_from, until=until)
 
 
 # --------------------------------------------------------------------------- #
@@ -2223,16 +2219,16 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
 # reach that: it buffers no group, so the flush would refuse nothing at all.
 #
 # WHICH refusal fires depends on what the call states, and both are the fixed
-# order working. A bounded verb states a Valid-Time window, and a target
-# declaring no Valid-Time dimension takes none — judged with the window, ahead
-# of the verb's own applicability. Plain `terminate` states no window at all, so
+# order working. A bounded form states a Valid-Time window, and a target
+# declaring no Valid-Time dimension takes no `until` — judged with the window,
+# ahead of the verb's own applicability. Plain `terminate` states no window at all, so
 # the verb is what preparation refuses.
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
-        ("updateUntil", "takes no valid_from"),
+        ("updateUntil", "takes no until"),
         ("terminate", "do not support 'terminate_where'"),
-        ("terminateUntil", "takes no valid_from"),
+        ("terminateUntil", "takes no until"),
     ],
 )
 def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_target(
@@ -2252,11 +2248,11 @@ def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_t
         with pytest.raises(instructions.WriteInstructionError, match=message):
             match mutation:
                 case "updateUntil":
-                    tx.wire.update_until_where(target, {"balance": Decimal("5.00")}, **window)
+                    tx.wire.update_where(target, {"balance": Decimal("5.00")}, **window)
                 case "terminate":
                     tx.wire.terminate_where(target)
                 case _:
-                    tx.wire.terminate_until_where(target, **window)
+                    tx.wire.terminate_where(target, **window)
         assert port.calls == [BeginCall()]
         raise _Abandon
 

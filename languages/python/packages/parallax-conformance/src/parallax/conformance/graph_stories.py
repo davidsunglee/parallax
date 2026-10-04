@@ -259,10 +259,13 @@ def a_rectangle_split_keeps_a_loaded_relationship_view(
     loaded_coverages = snapshot.result().coverages
 
     def split(tx: Transaction) -> None:
-        observed = tx.find(Coverage.where(Coverage.id == 20).as_of(valid_time=LATEST)).result()
-        tx.update_until(
+        observed = tx.find(
+            Coverage.where(Coverage.id == 20).as_of(
+                valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+            )
+        ).result()
+        tx.update(
             observed.edit(amount=Decimal("999.00")),
-            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 

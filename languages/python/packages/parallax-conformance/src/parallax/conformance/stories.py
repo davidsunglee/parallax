@@ -23,7 +23,6 @@ from parallax.conformance.vo_models import (
     Supplier,
 )
 from parallax.core.entity import Entity
-from parallax.core.object_query import LATEST
 from parallax.core.unit_work import Clock
 from parallax.snapshot.handle import ExecutionFailure, ScopedDatabase, Transaction
 
@@ -267,7 +266,7 @@ def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
 
 def bitemporal_insert_until_opens_one_bounded_rectangle(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
-        tx.insert_until(
+        tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
@@ -284,11 +283,12 @@ def bitemporal_plain_update_splits_head_and_new_tail(db: ScopedDatabase) -> None
         )
 
     def correct(tx: Transaction) -> None:
-        current = tx.find(Position.where(Position.id == 1).as_of(valid_time=LATEST)).result()
-        tx.update(
-            current.edit(value=Decimal("200.00")),
-            valid_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
-        )
+        current = tx.find(
+            Position.where(Position.id == 1).as_of(
+                valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+            )
+        ).result()
+        tx.update(current.edit(value=Decimal("200.00")))
 
     db.transact(insert)
     db.transact(correct)
@@ -312,10 +312,13 @@ def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
         )
 
     def split(tx: Transaction) -> None:
-        current = tx.find(Position.where(Position.id == 1).as_of(valid_time=LATEST)).result()
-        tx.update_until(
+        current = tx.find(
+            Position.where(Position.id == 1).as_of(
+                valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+            )
+        ).result()
+        tx.update(
             current.edit(value=Decimal("200.00")),
-            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 
@@ -335,10 +338,7 @@ def a_close_settles_against_the_milestone_its_own_find_observed(db: ScopedDataba
                 valid_time=dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(
-            head.edit(value=Decimal("150.00")),
-            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-        )
+        tx.update(head.edit(value=Decimal("150.00")))
 
     db.transact(fn, concurrency="optimistic")
 
@@ -395,8 +395,10 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: ScopedDatabase) -
         )
 
     def split(tx: Transaction) -> None:
-        current = tx.find(Branch.where(Branch.id == 1).as_of(valid_time=LATEST)).result()
-        tx.update_until(
+        current = tx.find(
+            Branch.where(Branch.id == 1).as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC))
+        ).result()
+        tx.update(
             current.edit(
                 address=Address(
                     street="30 New Road",
@@ -408,7 +410,6 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: ScopedDatabase) -
                     ),
                 )
             ),
-            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 

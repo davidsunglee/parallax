@@ -26,15 +26,16 @@ from parallax.conformance.temporal_state import (
     observed_close_coordinates,
     observed_edge,
 )
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.unit_work import (
     PlanningRequest,
     SubjectActor,
     TransactionInstant,
-    WritePlan,
-    buffered_write,
     instructions,
 )
+from parallax.core.unit_work.instructions import PreparedWrite
+from parallax.core.unit_work.plan import PlannedSteps, RangeAcquisition
+from parallax.core.unit_work.planner import ObjectKey, VersionedStateKey
 from parallax.snapshot.handle import build_write_planner
 
 POSITION = models.load_models()["position"]
@@ -283,7 +284,7 @@ def test_close_coordinates_come_from_the_one_observed_milestone() -> None:
 
 def _planned(
     entity_name: str, members: dict[str, object], *, valid_from: str, at: str
-) -> WritePlan:
+) -> PlannedSteps:
     """The Write Plan an insert of ``members`` produces, through the SAME
     ``build_write_planner`` factory the engine's own write lanes plan with — so
     what the ledger tracks is what a flush would actually write."""
@@ -298,10 +299,10 @@ def _planned(
                 actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(FixedClock(dt.datetime.fromisoformat(at))),
                 concurrency="locking",
-                buffered_writes=[buffered_write(prepared, None)],
+                buffered_writes=[prepared],
             )
         )
-        .plan
+        .plan.steps
     )
 
 
@@ -407,12 +408,12 @@ def test_track_opened_ignores_a_non_temporal_plan() -> None:
                     FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
                 ),
                 concurrency="locking",
-                buffered_writes=[buffered_write(prepared, None)],
+                buffered_writes=[prepared],
             )
         )
         .plan
     )
-    shadow.track_opened(account, plan)
+    shadow.track_opened(account, plan.steps)
     entity = account.entity(EntityIdentity("parallax.compatibility", "Account"))
     assert entity is not None
     assert shadow.resolve(account, entity, {"id": 1}) is None
@@ -471,3 +472,78 @@ def test_a_transaction_time_only_targets_edge_names_its_one_declared_axis() -> N
     )
     assert observation is not None
     assert observation.predecessor.member("value") == 150.00
+
+
+def _rectangles(
+    *spans: tuple[int, str, str | None, str],
+) -> PlannedSteps:
+    """The plan opening one rectangle per ``(id, validFrom, until, value)``."""
+    entries: list[PreparedWrite] = []
+    for key, valid_from, until, value in spans:
+        document: dict[str, object] = {
+            "mutation": "insert" if until is None else "insertUntil",
+            "entity": "Position",
+            "rows": [{"id": key, "acctNum": "A", "value": value}],
+            "validFrom": valid_from,
+        }
+        if until is not None:
+            document["until"] = until
+        entries.append(
+            instructions.prepare_wire_write(instructions.deserialize(document), POSITION)
+        )
+    return (
+        build_write_planner(POSITION)
+        .finalize(
+            PlanningRequest(
+                actor_identity=SubjectActor("unattributed"),
+                transaction_instant=TransactionInstant(
+                    FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
+                ),
+                concurrency="locking",
+                buffered_writes=entries,
+            )
+        )
+        .plan.steps
+    )
+
+
+def _acquisition(valid_from: dt.datetime, until: dt.datetime | None) -> RangeAcquisition:
+    key = AttributeIdentity(POSITION_ENTITY.identity, "id")
+    return RangeAcquisition(
+        entity=POSITION_ENTITY,
+        key_attribute=key,
+        key_value=1,
+        valid_from=valid_from,
+        until=until,
+        locking=False,
+    )
+
+
+def test_coverage_answers_the_tracked_rectangles_of_one_object_inside_the_window() -> None:
+    shadow = TemporalShadow()
+    shadow.track_opened(
+        POSITION,
+        _rectangles(
+            (1, "2024-01-01T00:00:00Z", "2024-03-01T00:00:00Z", "1.00"),
+            (1, "2024-03-01T00:00:00Z", "2024-06-01T00:00:00Z", "2.00"),
+            (1, "2024-06-01T00:00:00Z", None, "3.00"),
+            (2, "2024-01-01T00:00:00Z", None, "9.00"),
+        ),
+    )
+    covered = shadow.coverage(
+        POSITION,
+        _acquisition(
+            dt.datetime(2024, 4, 1, tzinfo=dt.UTC), dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+        ),
+    )
+    assert [row.members["value"] for row in covered] == [decimal.Decimal("2.00")]
+
+
+def test_retiring_a_state_with_no_milestone_leaves_the_tracker_alone() -> None:
+    shadow = TemporalShadow()
+    shadow.track_opened(
+        POSITION,
+        _rectangles((1, "2024-01-01T00:00:00Z", None, "1.00")),
+        retired=(VersionedStateKey(ObjectKey(POSITION_ENTITY.identity, (("id", 1),)), 1),),
+    )
+    assert shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1}) is not None

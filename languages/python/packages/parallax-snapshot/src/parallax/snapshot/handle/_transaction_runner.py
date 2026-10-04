@@ -23,7 +23,7 @@ from parallax.core.execution_lifecycle._activity import (
     open_transaction_root,
     refuse_reentry,
 )
-from parallax.core.metamodel import Metamodel
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -41,7 +41,8 @@ from parallax.core.unit_work import (
     enforce_affected_rows,
     run_unit_of_work,
 )
-from parallax.core.unit_work.plan import ExecutionUnit
+from parallax.core.unit_work.plan import BoundRange, ExecutionUnit
+from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -56,14 +57,16 @@ from parallax.snapshot.handle._options import (
     check_max_retries,
     check_retry_optimistic_conflicts,
 )
+from parallax.snapshot.handle._predicate_writes import acquire_coverage
 from parallax.snapshot.handle._publication import (
+    SelectedWriteModel,
     ServingModel,
     read_projection,
     write_projection,
 )
 from parallax.snapshot.handle._read_plan import ReadPlanner
 from parallax.snapshot.handle._transaction import Transaction
-from parallax.snapshot.handle._write_lowering import stream_lowered
+from parallax.snapshot.handle._write_lowering import lowered, stream_lowered
 
 __all__ = [
     "TransactionAuthorityError",
@@ -298,7 +301,7 @@ class TransactionRunner:
                     with invocation.attempt(selection.edition) as physical:
 
                         def in_txn(conn: DatabaseConnection) -> T:
-                            edge = _FlushEdge(conn, meta, physical)
+                            edge = _FlushEdge(conn, write, physical)
 
                             def body(uow: UnitOfWork) -> T:
                                 tx = Transaction(
@@ -618,11 +621,11 @@ class _FlushEdge:
     def __init__(
         self,
         conn: DatabaseConnection,
-        model: Metamodel,
+        write: SelectedWriteModel,
         attempt: TransactionAttemptActivity,
     ) -> None:
         self._conn = conn
-        self._model = model
+        self._model = write
         self._attempt = attempt
         self._batch: WriteBatchActivity = INERT
 
@@ -643,7 +646,7 @@ class _FlushEdge:
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
-        completed: Callable[[ExecutionUnit], None],
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         """Lower each planned step, execute every statement in order, hand each
         result back to the unit of work to interpret, and report each execution
@@ -657,6 +660,11 @@ class _FlushEdge:
         aborts BEFORE those rows ever execute. A unit is reported before any
         step of the next one runs, so what it changed is published before later
         work proceeds.
+
+        A unit with a deferred range reaches its turn with no planned step: its
+        coverage is read first (:func:`acquire_coverage`), core binds the range
+        to it, and the bound steps execute and are enforced exactly as planned
+        ones are before the unit is reported with what it bound.
 
         This performs NO classification of its own: the adopted Write Planner
         already spent the concurrency mode while settling each step, and this
@@ -672,23 +680,42 @@ class _FlushEdge:
         # carries it; taking it again here would be a second spelling of one
         # fact.
         del trigger
+        meta = self._model.model.meta
         dialect = self._conn.dialect
-        batch = self._batch
         units = iter(plan.units)
         unit = next(units, None)
         executed = 0
-        for step, statement in stream_lowered(plan, self._model, dialect):
+        for step, statement in stream_lowered(plan, meta, dialect):
             while unit is not None and unit.end == executed:
-                completed(unit)
+                self._complete(unit, completed)
                 unit = next(units, None)
-            with batch.database_call(statement, "write", step.entity) as call:
-                affected = self._conn.execute_write(
-                    dialect.to_driver_sql(statement.sql), list(statement.binds)
-                )
-                call.write_completed(affected)
-            with batch.enforcing(call):
-                enforce_affected_rows(step, affected)
+            self._run(step, statement)
             executed += 1
         while unit is not None and unit.end == executed:
-            completed(unit)
+            self._complete(unit, completed)
             unit = next(units, None)
+
+    def _complete(
+        self, unit: ExecutionUnit, completed: Callable[[ExecutionUnit, BoundRange | None], None]
+    ) -> None:
+        deferred = unit.deferred
+        if deferred is None:
+            completed(unit, None)
+            return
+        rows = acquire_coverage(self._model, self._conn, self._batch, deferred.acquisition)
+        bound = deferred.bind(rows)
+        meta = self._model.model.meta
+        dialect = self._conn.dialect
+        for step in bound.steps:
+            self._run(step, lowered(step, meta, dialect))
+        completed(unit, bound)
+
+    def _run(self, step: PlannedStep, statement: LoweredStatement) -> None:
+        batch = self._batch
+        with batch.database_call(statement, "write", step.entity) as call:
+            affected = self._conn.execute_write(
+                self._conn.dialect.to_driver_sql(statement.sql), list(statement.binds)
+            )
+            call.write_completed(affected)
+        with batch.enforcing(call):
+            enforce_affected_rows(step, affected)

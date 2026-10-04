@@ -132,7 +132,6 @@ def wire_keyed_write(
     observed: object,
     changes: WireChanges | None = None,
     *,
-    valid_from: dt.datetime | None = None,
     until: dt.datetime | None = None,
 ) -> None:
     """Buffer a Wire keyed write against the state ``observed`` came from.
@@ -140,11 +139,11 @@ def wire_keyed_write(
     ``observed`` is a frozen Entity mapping Parallax published for the row, from
     a read or from the insert that opened it; its private Read Origin supplies
     the concrete Entity, the object the write addresses, the pin the source
-    stands at, and — where a read published it — the evidence the target
-    Entity's Effective Concurrency Strategy weighs. A write naming an object this
-    transaction already buffered an insert of resolves no evidence at all: that
-    insert licenses it, and the hint the insert door filed carries none.
-    ``changes`` is the authored
+    stands at — which is also where a Bitemporal write starts — and, where a read
+    published it, the evidence the target Entity's Effective Concurrency
+    Strategy weighs. A write naming an object this transaction already buffered
+    an insert of resolves no evidence at all: that insert licenses it, and the
+    hint the insert door filed carries none. ``changes`` is the authored
     assignment document for the update family and absent for the destructive
     and close verbs, which key off the source alone.
 
@@ -152,18 +151,12 @@ def wire_keyed_write(
     than states: the change document's own shape, then the source and its pin,
     then preparation — the verb's applicability to the target and the window,
     and only then every named member's legality and value — all before the
-    strategy is derived or any evidence resolved. A write whose every named
-    member already holds the value the source published is the ordinary no-op,
-    dropped before the evidence question is asked at all, exactly as an empty
-    Typed effective change set is.
+    strategy is derived or any evidence resolved. A change document naming no
+    member is the empty set, dropped before the evidence question is asked at
+    all; every member it does name is assigned, whatever value the source
+    published for it.
     """
-    keyed_write(
-        ctx,
-        WireKeyedWriteSource(observed, changes),
-        mutation,
-        valid_from=valid_from,
-        until=until,
-    )
+    keyed_write(ctx, WireKeyedWriteSource(observed, changes), mutation, until=until)
 
 
 def wire_predicate_write(
@@ -295,32 +288,6 @@ def _published_identity(source: _WireKeyedSource) -> dict[str, object]:
     return {name: source.node[name] for name, _value in source.hint.object_key.primary_key}
 
 
-def _published_originals(
-    meta: Metamodel, entity: EntityMetadata, source: _WireKeyedSource, members: Set[str]
-) -> dict[str, object]:
-    """What the source published under ``members``, in the carriers a prepared
-    authored row states the same members in.
-
-    A member the published row omits is stated as the null it published nothing
-    for, which is exactly the original a restoration of such a member is measured
-    against — and is what the row would state back.
-
-    Decoded and judged by nothing: these are the state the write is addressed
-    against rather than anything its caller stated in the call, and the door that
-    published them settled what admits them. A read owes the accepted model
-    nothing, so the row it published as a hydratable classified record is a keyed
-    source whose correction has to reach the buffer; an insert judged its payload
-    in full before answering the node it opened. Judging either here would refuse
-    the write that revises the member.
-    """
-    published = {
-        **_published_identity(source),
-        **{name: source.node.get(name) for name in members},
-    }
-    decoded = instructions.decode_wire_row(published, meta, entity)
-    return {name: decoded[name] for name in members}
-
-
 class WireKeyedWriteSource:
     """The Wire Keyed Write Source: what a published row and an authored change
     document answer the keyed write ingress.
@@ -360,16 +327,12 @@ class WireKeyedWriteSource:
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
     ) -> PreparedSourceWrite:
-        """The instruction this document authors, beside the source's own originals.
+        """The instruction this document authors: the source's identity plus
+        every key the change document states.
 
-        Both sides run through the SAME decode over the SAME member list — the
-        values the caller authored, and the values the source published under
-        those same names — so the ingress weighs effectiveness over one carrier
-        per value rather than over a decoded document on one side and a managed
-        one on the other.
-
-        Only the authored side is judged, because every rule preparation applies
-        is a rule about what the CALLER wrote.
+        The stated keys are the literal assignment set, whatever the source
+        published under them, and only the authored side is judged, because
+        every rule preparation applies is a rule about what the CALLER wrote.
         """
         meta, mutation, source = self._retained()
         assigned = self._authored.keys()
@@ -380,7 +343,7 @@ class WireKeyedWriteSource:
         return PreparedSourceWrite(
             instruction=instruction,
             object_key=source.hint.object_key,
-            originals=_published_originals(meta, resolved.entity, source, assigned),
+            assigned=frozenset(assigned),
         )
 
     def _retained(self) -> tuple[Metamodel, KeyedMutation, _WireKeyedSource]:

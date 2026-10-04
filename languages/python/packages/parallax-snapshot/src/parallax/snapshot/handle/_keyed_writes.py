@@ -6,11 +6,10 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, Protocol
 
-from parallax.core.document_codec import EffectiveChangeSet, classify_effective_change
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.temporal_read import Pin
+from parallax.core.temporal_read import Bitemporal, Pin
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     UPDATE_MUTATIONS,
@@ -24,13 +23,14 @@ from parallax.core.unit_work import (
     object_key,
 )
 from parallax.core.unit_work.columns import freeze_retained_value
-from parallax.core.unit_work.instructions import PreparedKeyedWrite
+from parallax.core.unit_work.instructions import PreparedKeyedWrite, WriteInstructionError
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores.
-from parallax.snapshot.handle._family import comparison_shape, family_view
+from parallax.snapshot.handle._family import family_view, temporal_shape
+from parallax.snapshot.handle._options import Omitted
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
@@ -47,6 +47,7 @@ __all__ = [
     "keyed_write",
     "retained",
     "validate_source_pin",
+    "window_mutation",
 ]
 
 KEYED_WRITE_VALUE_CODES: Final[frozenset[str]] = frozenset(
@@ -422,38 +423,19 @@ class ResolvedKeyedWriteSource:
 class PreparedSourceWrite:
     """What a Keyed Write Source answers once its write has been prepared.
 
-    ``instruction`` carries the identity plus every member the caller named,
-    canonical and owned; ``originals`` carries those same members' original
-    values in the carriers that instruction states them in. Both sides cross the
-    SAME leaf conversion inside the adapter and only the authored one is judged,
-    so the effective change set is a comparison of like with like whether the
-    originals came from a Change Record or from a published row, and state a
-    write corrects never refuses that write. The comparison itself is the
-    document codec's, applied by the ingress rather than by any adapter, so no
-    source decides its own effectiveness.
+    ``instruction`` carries the identity plus every member the caller
+    expressed, canonical and owned; ``assigned`` names those members, identity
+    excluded. They are the write's literal assignment set: a member equal to
+    the value the source published is still assigned, and only an update that
+    expresses no member at all is empty.
 
-    A destructive or close verb names no member, so ``originals`` is empty and
+    A destructive or close verb names no member, so ``assigned`` is empty and
     the instruction is the identity row alone.
     """
 
     instruction: PreparedKeyedWrite
     object_key: ObjectKey
-    originals: Mapping[str, object]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "originals", _sealed_row(self.originals))
-
-    @property
-    def assigned(self) -> Mapping[str, object]:
-        """The authored side of the comparison: the instruction's members under
-        ``originals``' names, identity excluded.
-
-        The two sides of a comparison are the same member set, which is what
-        ``originals``' own invariant says; reading the assigned side through it
-        is that invariant spelled once rather than restated at the comparison.
-        """
-        row = self.instruction.rows[0]
-        return {name: row[name] for name in self.originals}
+    assigned: frozenset[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -610,12 +592,27 @@ def retained[T](filed: T | None) -> T:
     return filed
 
 
+def window_mutation[M: KeyedMutation](
+    unbounded: M, bounded: M, until: dt.datetime | Omitted
+) -> tuple[M, dt.datetime | None]:
+    """The portable verb a public method's ``until`` argument selects, beside
+    the bound it carries.
+
+    Omission selects the unbounded verb; any stated argument selects the bounded
+    one with that argument as its bound, ``None`` included, so core preparation
+    refuses a missing bound rather than this representation reading it as
+    omission. Nothing else about the bound is judged here.
+    """
+    if isinstance(until, Omitted):
+        return unbounded, None
+    return bounded, until
+
+
 def keyed_write(
     ctx: KeyedWriteContext,
     source: KeyedWriteSource,
     mutation: KeyedMutation,
     *,
-    valid_from: dt.datetime | None = None,
     until: dt.datetime | None = None,
 ) -> None:
     """Run one keyed write over existing state, in the Keyed Write Validation
@@ -638,6 +635,12 @@ def keyed_write(
     retires it, because the flush will annihilate that pair and emit nothing for
     it, so from there on an insert of it is a first opening and an update of it
     addresses nothing.
+
+    A source-backed write states no start of its own: a Bitemporal one starts
+    at its source's finite Valid-Time pin, or at the start its admitted
+    insertion was authored with (:func:`source_start`). Preparation then judges
+    that start and ``until`` together, before an update that expresses no
+    member is dropped as the empty set it is.
 
     An object whose insert already flushed is not pending: that row exists, so
     a second insert of it would collide with it — the flush emits every
@@ -665,9 +668,9 @@ def keyed_write(
         representation=resolved.representation,
     )
     validate_source_pin(resolved.entity.identity, resolved.pin)
+    valid_from = source_start(ctx, resolved, mutation, written)
     prepared = source.prepare(resolved, valid_from=valid_from, until=until)
-    change = _effective_change(ctx, resolved, prepared, mutation)
-    if _is_no_op(ctx, resolved, mutation, change):
+    if mutation in UPDATE_MUTATIONS and not prepared.assigned:
         return
     evidence: SettledEvidence | None = (
         None
@@ -676,7 +679,54 @@ def keyed_write(
             resolved.entity, resolved.hint, mutation=mutation, object_key=prepared.object_key
         )
     )
-    ctx.uow.buffer(buffered_write(prepared.instruction, evidence, change=change))
+    ctx.uow.buffer(buffered_write(prepared.instruction, evidence, source=resolved.hint))
+
+
+def source_start(
+    ctx: KeyedWriteContext,
+    resolved: ResolvedKeyedWriteSource,
+    mutation: KeyedMutation,
+    written: ObjectKey | None,
+) -> dt.datetime | None:
+    """The Valid-Time start a source-backed write of a Bitemporal target
+    begins at, or ``None`` for a target with no Valid Time.
+
+    A source a read published starts at that read's finite Valid-Time pin,
+    whatever its stored rectangle's own start: the read's coordinate is where
+    the caller looked. A source no read published — the value an insert took,
+    or the node it answered — starts where its admitted insertion was authored
+    to start. Valid-Time ``LATEST`` selects the open-ended rectangle rather than
+    naming an instant, so a source read there states no start and is refused,
+    as is a source neither a pin nor an admitted insertion anchors.
+    """
+    if mutation not in UPDATE_MUTATIONS and mutation not in _SOURCE_WINDOWED:
+        return None
+    entity = resolved.entity
+    if not isinstance(temporal_shape(ctx.model.meta, entity), Bitemporal):
+        return None
+    pin = resolved.pin
+    valid_time = None if pin is None else pin.valid_time
+    if isinstance(valid_time, dt.datetime):
+        return valid_time
+    if valid_time is None:
+        bounds = ctx.uow.insertion_bounds(written)
+        if bounds is not None and bounds.valid_from is not None:
+            return bounds.valid_from
+        raise WriteInstructionError(
+            f"{entity.identity.canonical}: {mutation!r} starts where its source was read, and "
+            "this source names no Valid-Time instant — no read pinned it and no insertion "
+            "this transaction admitted anchors it; read the row at a finite Valid-Time "
+            "instant and write what that read returns"
+        )
+    raise WriteInstructionError(
+        f"{entity.identity.canonical}: {mutation!r} starts where its source was read, and this "
+        "source was read at Valid-Time LATEST, which selects the open-ended rectangle rather "
+        "than naming an instant to start from; read the row at a finite Valid-Time instant "
+        "and write what that read returns"
+    )
+
+
+_SOURCE_WINDOWED: Final[frozenset[str]] = frozenset({"terminate", "terminateUntil"})
 
 
 def keyed_insert(
@@ -772,52 +822,3 @@ def _sealed_row(row: Mapping[str, object]) -> Mapping[str, object]:
     the two comparable: one carrier per value, whichever side produced it.
     """
     return MappingProxyType({name: freeze_retained_value(value) for name, value in row.items()})
-
-
-def _effective_change(
-    ctx: KeyedWriteContext,
-    resolved: ResolvedKeyedWriteSource,
-    prepared: PreparedSourceWrite,
-    mutation: KeyedMutation,
-) -> EffectiveChangeSet | None:
-    """This write's effective and restored members against the originals its
-    source states; a verb that assigns nothing classifies nothing.
-
-    Effectiveness is the document codec's one rule, asked here rather than in
-    either adapter, over values the adapter ran through one producer on both
-    sides: a member whose authored value is the original the source states was
-    RESTORED, and what is left is the effective change set. The codec answers
-    names alone, so buffering selects the prepared row's own values by them and
-    the comparison never rewrites what will be stored.
-
-    A destructive or close verb names no member, and what it says about the
-    row's existence is not a change set to reduce.
-    """
-    if mutation not in UPDATE_MUTATIONS:
-        return None
-    return classify_effective_change(
-        comparison_shape(ctx.model.meta, resolved.entity),
-        prepared.assigned,
-        prepared.originals,
-    )
-
-
-def _is_no_op(
-    ctx: KeyedWriteContext,
-    resolved: ResolvedKeyedWriteSource,
-    mutation: KeyedMutation,
-    change: EffectiveChangeSet | None,
-) -> bool:
-    """Whether an update changes nothing and cancels nothing, so buffers nothing.
-
-    A restoration is not nothing — it is the author's last word on that member —
-    so a wholly restoring chain still buffers its identity row when this
-    transaction already buffered an assignment at the scope it would claim, and
-    the merged write is eliminated instead of writing a value the caller took
-    back.
-    """
-    if change is None or change.effective:
-        return False
-    return not change.restored or not ctx.uow.holds_assignment(
-        resolved.entity, resolved.hint, mutation=mutation
-    )

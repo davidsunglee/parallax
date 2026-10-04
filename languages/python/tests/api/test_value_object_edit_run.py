@@ -170,9 +170,11 @@ def _away_and_back(address: CustomerAddress) -> CustomerAddress:
 @pytest.mark.parametrize(
     "derive", [_change_free, _away_and_back], ids=["change-free", "away-and-back"]
 )
-def test_an_occurrence_carrying_no_net_change_writes_nothing(
+def test_an_occurrence_carrying_no_net_change_is_still_assigned(
     profile_run: Any, derive: Callable[[CustomerAddress], CustomerAddress]
 ) -> None:
+    # Editing the root's `address` touches it, so the update assigns the whole
+    # occurrence literally even though it restates what the read returned.
     observed = LifecycleObservation()
     db = _connect_and_seed(profile_run, observed)
     seeded = observed.round_trips
@@ -183,5 +185,5 @@ def test_an_occurrence_carrying_no_net_change_writes_nothing(
 
     db.transact(rewrite)
 
-    assert [call for call in observed.calls[seeded:] if call.kind == "write"] == []
+    assert len([call for call in observed.calls[seeded:] if call.kind == "write"]) == 1
     assert _stored_address(profile_run) == _SEEDED_ADDRESS

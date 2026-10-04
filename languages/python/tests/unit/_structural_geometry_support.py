@@ -52,6 +52,7 @@ from tests.unit._workload_spelling_support import leaf_value
 
 __all__ = [
     "ANCESTOR_LEVELS",
+    "CHANGED_OCCURRENCE",
     "ENTITY_CLASSES",
     "GEOMETRY_LEVELS",
     "LAYOUTS",
@@ -78,6 +79,8 @@ LAYOUTS: Final[tuple[Layout, ...]] = ("columns", "document")
 _NAMESPACE: Final = "structural.geometry"
 _MANY: Final = "items"
 _ONE: Final = "body"
+CHANGED_OCCURRENCE: Final = _ONE
+"""The member a changed-ancestor successor replaces."""
 _NEXT: Final = "next"
 _PAYLOAD: Final = "payload"
 
