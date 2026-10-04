@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bisect
+import datetime as dt
 import threading
 from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
@@ -398,7 +399,8 @@ class _TargetWriteState:
 
     def proven(self, original: ObservedStateKey, /) -> Derivation | None:
         continuity = self._continuity
-        return None if continuity is None else continuity.proofs.get(original)
+        proofs = None if continuity is None else continuity.proofs.get(original.object)
+        return None if proofs is None else proofs.get(original)
 
     def descendants(
         self, original: ObservedStateKey, start: object | None, until: object | None, /
@@ -494,13 +496,15 @@ class _TargetWriteState:
         removed: Iterable[OwnedEndpoint],
         opened: Openings,
         derived: tuple[Derivation, ...] = (),
+        concludes: ObjectKey | None = None,
     ) -> None:
         """Retire the owned rows one execution unit removed, then register the
         rows it opened. An admission whose last tagged row the unit removed is
         retired only if no row the unit opened continues it.
 
         Each original the unit ``derived`` rows from that stood before the
-        flush began is proven for the rest of the flush, and each row it derived
+        flush began is proven until the object's last consumer — the unit that
+        ``concludes`` it — completes, or the flush ends, and each row it derived
         descends from it; a row derived from one an earlier unit of the flush
         derived descends from what that one did."""
         continuity = self._continuity
@@ -520,6 +524,10 @@ class _TargetWriteState:
                 record.identity = None
         if continuity is not None:
             continuity.derive(derived, inherited)
+            if concludes is not None:
+                continuity.release(concludes)
+                if not continuity.proofs:
+                    self._continuity = None
 
     def _retire(
         self, removed: Iterable[OwnedEndpoint], continuity: _Continuity | None
@@ -572,7 +580,7 @@ class _Continuity:
     __slots__ = ("descents", "lineage", "proofs")
 
     def __init__(self) -> None:
-        self.proofs: dict[ObservedStateKey, Derivation] = {}
+        self.proofs: dict[ObjectKey, dict[ObservedStateKey, Derivation]] = {}
         self.descents: dict[OwnedEndpoint, Descent] = {}
         self.lineage: dict[ObservedStateKey, _Lineage] = {}
 
@@ -593,7 +601,7 @@ class _Continuity:
         for derivation, earlier in zip(derived, inherited, strict=True):
             original = derivation.original
             if earlier is None:
-                self.proofs[original] = derivation
+                self.proofs.setdefault(original.object, {})[original] = derivation
             else:
                 original = earlier
             rows = self.lineage.get(original)
@@ -612,6 +620,13 @@ class _Continuity:
         if descent is not None:
             self.lineage[descent.original].discard(endpoint, descent.start)
 
+    def release(self, target: ObjectKey) -> None:
+        """Drop everything proven about ``target``: its last consumer is done."""
+        descents = self.descents
+        for original in self.proofs.pop(target, ()):
+            for endpoint in self.lineage.pop(original).rows:
+                del descents[endpoint]
+
 
 class _Lineage:
     """The current rows derived from one proven original, in Valid-Time order.
@@ -624,19 +639,24 @@ class _Lineage:
     __slots__ = ("_keys", "_rows")
 
     def __init__(self) -> None:
-        self._keys: list[float] = []
+        self._keys: list[dt.datetime] = []
         self._rows: list[OwnedEndpoint] = []
 
     def add(self, endpoint: OwnedEndpoint, start: object | None) -> None:
-        position = bisect.bisect_right(self._keys, _start_key(start))
-        self._keys.insert(position, _start_key(start))
+        key = instant_order(start)
+        position = bisect.bisect_right(self._keys, key)
+        self._keys.insert(position, key)
         self._rows.insert(position, endpoint)
 
     def discard(self, endpoint: OwnedEndpoint, start: object | None) -> None:
-        position = bisect.bisect_left(self._keys, _start_key(start))
+        position = bisect.bisect_left(self._keys, instant_order(start))
         assert self._rows[position] == endpoint  # no two current pieces share a start
         del self._keys[position]
         del self._rows[position]
+
+    @property
+    def rows(self) -> list[OwnedEndpoint]:
+        return self._rows
 
     def overlapping(self, start: object | None, until: object | None) -> list[OwnedEndpoint]:
         """The rows that may overlap ``[start, until)``: those starting before
@@ -644,20 +664,16 @@ class _Lineage:
         if start is None:
             return list(self._rows)
         keys = self._keys
-        first = max(bisect.bisect_right(keys, _start_key(start)) - 1, 0)
-        last = len(keys) if until is None else bisect.bisect_left(keys, _start_key(until))
+        first = max(bisect.bisect_right(keys, instant_order(start)) - 1, 0)
+        last = len(keys) if until is None else bisect.bisect_left(keys, instant_order(until))
         return self._rows[first:last]
-
-
-def _start_key(start: object | None) -> float:
-    return 0.0 if start is None else instant_order(start)
 
 
 def _address(target: ObjectKey) -> _Address:
     return (target.entity, tuple(value for _name, value in target.primary_key))
 
 
-def _start_order(interval: tuple[object, object]) -> float:
+def _start_order(interval: tuple[object, object]) -> dt.datetime:
     return instant_order(interval[0])
 
 
@@ -1388,6 +1404,7 @@ class UnitOfWork:
             removed=bound.removed,
             opened=bound.opened,
             derived=bound.derived,
+            concludes=bound.concludes,
         )
 
     def _complete(
@@ -1399,6 +1416,7 @@ class UnitOfWork:
         removed: Iterable[OwnedEndpoint],
         opened: Openings,
         derived: tuple[Derivation, ...],
+        concludes: ObjectKey | None = None,
     ) -> None:
         """Publish one successful execution unit's effects.
 
@@ -1414,7 +1432,9 @@ class UnitOfWork:
         flush, for the writes a barrier kept after it: those were admitted with
         conditions on the same originals, which this unit's guarded effects or
         held locks have now proven. Spending and invalidation still apply to
-        them; no later submission is admitted on these proofs.
+        them; no later submission is admitted on these proofs. A unit that
+        ``concludes`` an object is the last of them, and the object's proofs
+        end with it.
         """
         stamp = self._freshness + 1
         claim = unit.claim
@@ -1429,7 +1449,7 @@ class UnitOfWork:
             self._invalidate(key, stamp)
         if changed_any:
             self._freshness = stamp
-        self._targets.complete(removed, opened, derived)
+        self._targets.complete(removed, opened, derived, concludes)
 
     def _invalidate(self, key: ObservedStateKey, stamp: int) -> None:
         held = self._observations.get(key)

@@ -1478,5 +1478,68 @@ def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_pro
     assert seen == [(True, True)]
 
 
+def test_an_objects_proofs_end_when_its_last_following_unit_completes() -> None:
+    original = TemporalObservation(predecessor=_position_row(_JAN, _T0))
+    key = corpus_object_key("WherePosition", ("id", 1))
+    shape = temporal_read.view(_BARRIERED).shape(key.entity)
+    assert shape is not None
+    state = observed_state_key(key, original, shape)
+
+    def executor(
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
+    ) -> None:
+        first, barrier, middle, again, last = plan.units
+        completed(first, None)
+        completed(barrier, None)
+        assert middle.deferred is not None and last.deferred is not None
+        bound = middle.deferred.bind([_position_row(_APR, _FIXED)])
+        assert bound.concludes is None  # a later region still follows it
+        completed(middle, bound)
+        completed(again, None)
+        bound = last.deferred.bind([_position_row(_AUG, _FIXED)])
+        assert bound.concludes == key
+        assert not any(isinstance(step, PlannedClose) for step in bound.steps)
+        completed(last, bound)
+        # Nothing the earlier units proved survives the last consumer, even
+        # before the flush ends.
+        with pytest.raises(WritePreconditionError):
+            last.deferred.bind([_position_row(_AUG, _FIXED)])
+
+    def body(uow: UnitOfWork) -> None:
+        claim = uow.retain(RetainedObservation(state, original, uow.participation))
+        observed = prepare_wire_write(
+            KeyedWrite(
+                "updateUntil",
+                "WherePosition",
+                ({"id": 1, "acctNum": "O"},),
+                valid_from=_FEB,
+                until=_APR,
+            ),
+            _BARRIERED,
+        )
+        assert isinstance(observed, PreparedKeyedWrite)
+        uow.buffer(buffered_write(observed, claim))
+        for window in ((_JUN, _AUG), (_SEP, _OCT)):
+            barrier = prepare_wire_write(
+                PredicateWrite(
+                    "update",
+                    PredicateSelection(
+                        "ShellTag", predicate_algebra.Comparison("eq", "ShellTag.id", 1)
+                    ),
+                    assignments=(WriteAssignment("ShellTag.label", "q"),),
+                ),
+                _BARRIERED,
+            )
+            assert isinstance(barrier, PreparedPredicateWrite)
+            uow.buffer(barrier)
+            uow.buffer_target(_position_target(*window), acquire=_never_acquired)
+        uow.read(lambda: None)
+
+    _run(body, meta=_BARRIERED, executor=executor)
+
+
 def _never_acquired(*_arguments: object) -> None:
     raise AssertionError("an Optimistic caller-addressed write reads nothing at its call")

@@ -11,6 +11,7 @@ from parallax.core.unit_work.temporal import (
     BoundPiece,
     TemporalSegment,
     covers,
+    instant_order,
     is_open_bound,
 )
 
@@ -77,6 +78,15 @@ def test_coverage_answers_the_first_point_its_intervals_leave_open() -> None:
     assert covers(((_JAN, _JUN),), _MAR, _JUN) is None
     assert covers(((_JAN, _JUN),), _MAR, INFINITY) == _JUN
     assert covers(((_JAN, _MAR), (_JUN, INFINITY)), _JAN, INFINITY) == _MAR
+
+
+def test_instants_one_microsecond_apart_order_exactly_through_the_last_year() -> None:
+    first = dt.datetime(9999, 1, 1, tzinfo=dt.UTC)
+    second = first + dt.timedelta(microseconds=1)
+    third = second + dt.timedelta(microseconds=1)
+    intervals = sorted(((second, third), (first, second)), key=lambda iv: instant_order(iv[0]))
+    assert intervals == [(first, second), (second, third)]
+    assert covers(tuple(intervals), first, third) is None
 
 
 def test_a_segment_beyond_a_predecessor_contributes_no_piece_of_it() -> None:

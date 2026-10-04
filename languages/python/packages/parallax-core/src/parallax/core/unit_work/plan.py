@@ -8,7 +8,7 @@ from typing import Final, Protocol
 from parallax.core.base import ManagedValue
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata
 from parallax.core.unit_work.planned import INFINITY, PlannedWrite, TemporalUpperBound
-from parallax.core.unit_work.planner import ObservedStateKey
+from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey
 
 __all__ = [
     "NO_OPENINGS",
@@ -289,13 +289,18 @@ NO_OPENINGS: Final[Openings] = Openings()
 @dataclass(frozen=True, slots=True)
 class BoundRange:
     """What a deferred range became once its acquired coverage was bound: the
-    physical steps it executes, in order, and the facts its success publishes."""
+    physical steps it executes, in order, and the facts its success publishes.
+
+    ``concludes`` names the object of a range that follows ordering barriers
+    and leads none: no later unit of the flush consumes what earlier units
+    proved about that object."""
 
     steps: tuple[PlannedWrite, ...]
     changed: tuple[ObservedStateKey, ...]
     removed: tuple[OwnedEndpoint, ...]
     opened: Openings
     derived: tuple[Derivation, ...] = ()
+    concludes: ObjectKey | None = None
 
 
 class DeferredRange(Protocol):
