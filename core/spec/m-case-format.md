@@ -1689,9 +1689,13 @@ A scenario declaring top-level **`grading: state`** is therefore graded on the s
 it states. Such a case states its inputs — its steps and their submissions — the
 refusal each submission's verb raises, each group's fate (*Unit fates*, below), and
 the **complete** final `then.tableState`: every row, current and history, of every
-table a submission writes. No step lists `statements` or `referenceSql`, a read
-step MAY state `expectRows`, and `then` states no `executionLifecycle`, whose
-events name golden statements. Round trips MAY be stated and are not graded. The
+table a submission writes. Its steps are finds and buffered write steps: it
+carries no action step, and each keyed submission writes one row, so that its
+pointer names one verb call and the one value an insert answers. No step lists
+`statements` or `referenceSql`, a read step MAY state `expectRows` but no
+`expectGraph`, `sameObjectAs` or `differentObjectFrom`, which nothing a
+state-graded run reports could grade, and `then` states no
+`executionLifecycle`, whose events name golden statements. Round trips MAY be stated and are not graded. The
 case is `compileEligibility: run-only`, since no golden exists for a compile lane to
 compare against.
 
@@ -1720,8 +1724,9 @@ one key overlap in Valid Time. An already-claimed refusal meets an earlier write
 its object still pending in its group — no find of the group runs between them —
 and an inserted-object refusal is a caller-addressed write of an object its group
 inserted earlier. A rolled-back group's instant stands on no row, and what only it
-names stands as it started. A flush failure names an object its group writes,
-through a submission its Shortfall can arise from. The document's own rules are
+names stands as it started. A flush failure names an object the failing flush
+writes, through a submission still pending when that flush began and its
+Shortfall can arise from. The document's own rules are
 refused before any database: a submission's `on` resolves as *Settling against a
 grouped find* states, every `then.units` label names a group, a flush failure is
 reported where the group last flushes, and one group's submissions state one
@@ -1749,8 +1754,9 @@ and `shortfall` are the object the failure reports and its Shortfall
 than a statement index. A failed flush ends the unit of work, so the group rolls
 back and nothing it did stands.
 
-A golden-graded group's flush failure is graded on the golden its steps executed:
-exactly one statement addressing the object it names affected no row, gated where
+A golden-graded group's flush failure is graded on the golden of the write steps
+that flush ran, the ones still pending when it began: exactly one statement
+addressing the object it names affected no row, gated where
 the Shortfall is a gate's — an optimistic conflict, or a failed precondition,
 under `concurrency: optimistic` — and ungated otherwise, so a rollback that merely
 discarded writes that all succeeded fails the case rather than passing on the

@@ -105,14 +105,10 @@ def _run_interleaved_group(
     before either worker starts, so
     :func:`~parallax.core.auto_retry.run_with_retry` surfaces the conflict after
     exactly one attempt). Unlike
-    :func:`~parallax.conformance._lanes.scenario._run_uow_group`'s own
-    `rolledBack` fate with no flush failure (an authored, EXPLICIT abandonment
-    independent of any real conflict), this lane's ONE conflicting witness
-    (`m-opt-lock-012`) states the flush failure its OWN commit raises — the
-    CONFLICT itself is what rolls the group back, so no separate explicit
-    trigger exists here; a genuinely non-conflict-driven interleaved abort is unwitnessed
-    and out of scope (pinned semantics #10, "unwitnessed surfaces stay
-    honest"). The turnstile only ADVANCES past the group's own last step once
+    :func:`~parallax.conformance._lanes.scenario._run_uow_group`, this lane
+    abandons no group: the only rollback it reports is the one a group's own
+    conflicting flush causes. The turnstile only ADVANCES past the group's own
+    last step once
     ``session.database.transact`` itself RETURNS (a REAL commit — the underlying
     port's transaction context manager has committed, not merely that this
     callback's own Python code finished): the OTHER group's next step must

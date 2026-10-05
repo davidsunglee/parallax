@@ -1,12 +1,7 @@
 """Writes on either side of a readless predicate write, against real Postgres.
 
 A readless predicate write does not say which rows it matches, so it is an
-ordering barrier: every write buffered before it executes before it, and every
-write buffered after it executes after it, whatever the writes have in common.
-Two writes of one Non-Temporal state, and a write of an object whose insert is
-still pending, therefore execute apart, and the predicate observes exactly what
-was buffered before it. Every case reads back the stored rows, under both
-storage layouts.
+ordering barrier: moving a write across it could change what either one writes.
 
 Standalone Docker-backed proofs, like `test_disjoint_target_writes.py`; every
 `Database` connects with a

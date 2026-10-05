@@ -209,12 +209,15 @@ type Shortfall = Literal["missingTarget", "staleWrite", "optimisticConflict", "f
 @dataclass(frozen=True)
 class FlushFailure:
     """The failure a rolled-back group's flush reports: where the flush ran — a
-    step index, or ``"commit"`` — and the object and Shortfall it names."""
+    step index, or ``"commit"`` — and the object and Shortfall it names.
+    ``flushed`` holds the group's write steps that flush ran, the ones still
+    pending when it began."""
 
     at: int | Literal["commit"]
     entity: Entity
     key: Mapping[str, Any]
     shortfall: Shortfall
+    flushed: tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -580,15 +583,17 @@ def _flush_failure(
     if not isinstance(authored, Mapping):
         return None
     last = members[-1]
+    before = members if isinstance(last, _GroupedWrite) else members[:-1]
+    flushed: list[int] = []
+    for step in before:
+        if isinstance(step, _GroupedWrite):
+            flushed.append(step.index)
+        elif isinstance(step, _RowPublishingStep):
+            flushed.clear()
     if isinstance(last, _GroupedWrite):
         flushes_at: int | str | None = "commit"
     else:
-        pending = False
-        for step in members[:-1]:
-            pending = isinstance(step, _GroupedWrite) or (
-                pending and not isinstance(step, _RowPublishingStep)
-            )
-        flushes_at = last.index if pending else None
+        flushes_at = last.index if flushed else None
     if flushes_at is None or authored.get("at") != flushes_at:
         where = "nothing" if flushes_at is None else f"at {flushes_at!r}"
         raise CaseFailure(
@@ -601,6 +606,7 @@ def _flush_failure(
         entity=case.model.entity(str(authored.get("entity", ""))),
         key=dict(authored.get("key") or {}),
         shortfall=authored["shortfall"],
+        flushed=tuple(flushed),
     )
 
 
