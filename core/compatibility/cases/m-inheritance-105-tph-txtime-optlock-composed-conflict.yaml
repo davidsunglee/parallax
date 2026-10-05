@@ -1,29 +1,103 @@
 # Composed temporal x inheritance x optimistic-lock CONFLICT: the tag guard
 # rides the identity predicates, the observed-in_z gate binds LAST (m-inheritance
-# x m-txtime-write x m-opt-lock).
+# x m-txtime-write x m-opt-lock). It carries the composed stale-gate conflict the
+# conflict form pinned — a table-per-hierarchy subtype's close-only shape addressed
+# by the key, the subtype's tag guard and the open out_z, gated last on an in_z no
+# longer current — now produced by a public `terminate` racing a concurrent unit
+# of work's public `update` that committed first. It additionally grades both
+# units' fates and the state the race leaves: the winner's tag-stamped close and
+# chained successor stand, and the loser's close changes no row.
 model: models/reading.yaml
-tags: [m-inheritance, m-txtime-write, m-opt-lock, m-sql, table-per-hierarchy, tag, temporal, audit-only, conflict, slice-snapshot-1, slice-managed-1]
-shape: conflict
+tags: [m-inheritance, m-txtime-write, m-opt-lock, m-unit-work, m-sql, table-per-hierarchy, tag, temporal, audit-only, optimistic-lock-conflict, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
 compileEligibility:
   mode: run-only
-  reason: single-connection
-  note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
-given:
-  apply:
-    - sql: "update reading set out_z = '2024-06-01T00:00:00+00:00' where id = 1 and kind = 'meter' and out_z = 'infinity'"
-    - sql: "insert into reading(id, kind, celsius, in_z, out_z) values (1, 'meter', 25.00, '2024-06-01T00:00:00+00:00', 'infinity')"
+  reason: query-result-dependent
+  note: "each close gates on the milestone its own group's find observed, and the concurrent update's chained successor carries that milestone's unassigned members — a query result (m-case-format 'Settling against a grouped find')"
 when:
   uow:
     concurrency: optimistic
-  write: { id: 1 }
-  at: "2024-09-01T00:00:00.000000Z"
-  observedTxStart: "2024-01-01T00:00:00.000000Z"
+  scenario:
+    - uow: ours
+      objectQuery:
+        target: parallax.compatibility.MeterReading
+        predicate:
+          eq:
+            attr: parallax.compatibility.MeterReading.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: latest
+      roundTrips: 1
+      note: OUR unit of work observes meter reading 1's current milestone (20.00, known from 2024-01-01) through the concrete subtype — tag-guarded
+      statements:
+        - sql:
+            postgres: select t0.id, t0.celsius, t0.in_z, t0.out_z from reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
+            mariadb: select t0.id, t0.celsius, t0.in_z, t0.out_z from reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
+          binds: [1, infinity, meter]
+      expectRows:
+        - { id: 1, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+    - uow: concurrent
+      objectQuery:
+        target: parallax.compatibility.MeterReading
+        predicate:
+          eq:
+            attr: parallax.compatibility.MeterReading.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: latest
+      roundTrips: 1
+      note: a CONCURRENT unit of work observes the SAME milestone — the classic race
+      statements:
+        - sql:
+            postgres: select t0.id, t0.celsius, t0.in_z, t0.out_z from reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
+            mariadb: select t0.id, t0.celsius, t0.in_z, t0.out_z from reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
+          binds: [1, infinity, meter]
+      expectRows:
+        - { id: 1, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+    - uow: concurrent
+      write:
+        - mutation: update
+          "on": 1
+          entity: parallax.compatibility.MeterReading
+          rows:
+            - { id: 1, celsius: "25.00" }
+          at: "2024-06-01T00:00:00.000000Z"
+      roundTrips: 2
+      note: the concurrent unit of work commits FIRST — its tag-guarded close gated on the in_z it observed, then the chained successor with the tag stamped at its slot, from the same instant; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
+            mariadb: update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
+          binds: ["2024-06-01T00:00:00.000000Z", 1, meter, infinity, "2024-01-01T00:00:00.000000Z"]
+        - sql:
+            postgres: insert into reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)
+            mariadb: insert into reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)
+          binds: [1, meter, "25.00", "2024-06-01T00:00:00.000000Z", infinity]
+    - uow: ours
+      write:
+        - mutation: terminate
+          "on": 0
+          entity: parallax.compatibility.MeterReading
+          rows:
+            - { id: 1 }
+          at: "2024-09-01T00:00:00.000000Z"
+      roundTrips: 1
+      note: "our close carries the tag guard among its identity predicates and gates LAST on OUR observed in_z 2024-01-01, which the concurrent commit closed — 0 rows; the commit's flush fails and the group ROLLS BACK after this, its last step"
+      statements:
+        - sql:
+            postgres: update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
+            mariadb: update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
+          binds: ["2024-09-01T00:00:00.000000Z", 1, meter, infinity, "2024-01-01T00:00:00.000000Z"]
 then:
-  statements:
-    - sql:
-        postgres: update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
-      binds: ["2024-09-01T00:00:00.000000Z", 1, meter, infinity, "2024-01-01T00:00:00.000000Z"]
-  affectedRows: 0
+  units:
+    ours:
+      outcome: rolledBack
+      flushFailure: { at: commit, entity: parallax.compatibility.MeterReading, key: { id: 1 }, shortfall: optimisticConflict }
+    concurrent:
+      outcome: committed
+  roundTrips: 5
   tableState:
     reading:
       - { id: 1, kind: meter, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }

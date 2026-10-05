@@ -441,10 +441,9 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "observed `in_z` is fresh and the gate matches — and what they grade beyond an "
         "exercised sibling is the framework-emitted `and in_z = ?` predicate no caller "
         "spells (`-004` closing exactly the rectangle its own group's find observed, "
-        "query-result-dependent); `-005` is the stale-observation twin, and ITS staleness "
-        "comes from a competing writer applied out of band (`given.apply`) that no single "
-        "session can produce. `-010`..`-013` are predicate-selected writes whose `_where` verb the "
-        "developer surface does carry, and what they pin is the per-resolved-row "
+        "query-result-dependent); `-005`, the stale-observation twin, has its own "
+        "case-scoped entry below. `-010`..`-013` are predicate-selected writes whose "
+        "`_where` verb the developer surface does carry, and what they pin is the per-resolved-row "
         "close-and-re-insert lowering. Every one of those distinctions is an emitted-SQL "
         "or concurrency-staging contract, graded end-to-end by the compile/run "
         "conformance lanes (or the run lane alone for the query-result-dependent ones)"
@@ -669,16 +668,16 @@ _INHERITANCE_BITEMPORAL_TERMINATE_REASON: Final[str] = (
     "storyless for the `m-bitemp-write` bucket's own reason above. What the family "
     "composition adds over those is table routing plus the shared-table tag guard"
 )
-# The composed TPH/audit/optimistic-lock case is a CONFLICT shape, not a
-# writeSequence: its skip turns on the staging its gate needs, not on a spelling
-# an exercised story already shows.
+# The composed TPH/audit/optimistic-lock case is an interleaved race, not a
+# writeSequence: its skip turns on the second session its stale gate needs, not on
+# a spelling an exercised story already shows.
 _INHERITANCE_COMPOSED_CONFLICT_REASON: Final[str] = (
     "a table-per-hierarchy audit-only close GATED on a STALE observed Transaction-Time "
     "start (m-inheritance x m-txtime-write x m-opt-lock composed): graded end-to-end by "
-    "the run lane; no idiomatic story covers it because the staleness it grades is "
-    "produced by a competing writer applied out of band (`given.apply`), which one "
-    "single-session callback cannot stage (the SAME posture the `m-opt-lock` stale-gate "
-    "cases carry)"
+    "the run sweep's interleaved-group runner; no idiomatic story covers it because the "
+    "staleness it grades is produced by a concurrent unit of work committing first over a "
+    "session of its own, which one single-session callback cannot stage (the SAME posture "
+    "the interleaved optimistic-lock races carry)"
 )
 # Non-temporal TPH/TPCS insert, update, and delete cases are graded end-to-end
 # by the compile/run lanes, including deep-chain, sibling-branch, and
@@ -763,8 +762,9 @@ _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
     "runner already exercises directly"
 )
 # The interleaved two-session optimistic-lock races (`m-opt-lock-012` over a
-# versioned row, `m-temporal-read-010` over a Transaction-Time-Only milestone;
-# `m-case-format` unit-of-work grouping) hold two concurrent
+# versioned row, `m-temporal-read-010` over a Transaction-Time-Only milestone,
+# `m-bitemp-write-005` over a bitemporal rectangle; `m-case-format` unit-of-work
+# grouping) hold two concurrent
 # `db.transact` units of work, each over a dedicated session of its own,
 # sequenced in authored order — `parallax.conformance.engine.run_interleaved_scenario_case`.
 _OPT_LOCK_INTERLEAVED_RACE_REASON: Final[str] = (
@@ -1508,6 +1508,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-opt-lock-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-012": _OPT_LOCK_INTERLEAVED_RACE_REASON,
     "m-temporal-read-010": _OPT_LOCK_INTERLEAVED_RACE_REASON,
+    "m-bitemp-write-005": _OPT_LOCK_INTERLEAVED_RACE_REASON,
     "m-read-lock-001": _READ_LOCK_HARNESS_GOLDEN_REASON,
     "m-read-lock-006": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-007": _READ_LOCK_TWO_SESSION_REASON,

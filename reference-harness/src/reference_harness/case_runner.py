@@ -2252,8 +2252,8 @@ def _conflict_versioned_entity(case: Case) -> Entity | None:
 
     A versioned conflict (``m-opt-lock-005`` through ``m-opt-lock-009``) gates on a
     version column; a temporal / bitemporal close (``m-temporal-read-011``,
-    ``m-temporal-read-012`` / ``m-bitemp-write-005``) has none
-    and carries a different ① (see :func:`_assert_temporal_conflict_input`).
+    ``m-temporal-read-012``) has none and carries a different ① (see
+    :func:`_assert_temporal_conflict_input`).
     """
     for entity in case.model.entities:
         if version_column(entity) is not None:
@@ -2265,16 +2265,15 @@ def _conflict_temporal_entity(case: Case) -> Entity | None:
     """The Transaction-Time TEMPORAL entity a conflict-close case targets, or None.
 
     A temporal / bitemporal conflict close (``m-temporal-read-011``,
-    ``m-temporal-read-012`` / ``m-bitemp-write-005``) carries no
-    version column; it locks via the observed Transaction-Time start (``in_z``),
-    so the target is the first CONCRETE (row-owning) entity with a Transaction-Time
-    as-of axis. An inheritance family's abstract root (m-inheritance) resolves
-    the SAME family-wide axis (`resolve_effective_definition` flattens it onto
-    every descendant), but is tableless and rowless — a conflict case's golden
-    UPDATE always targets the concrete subtype that owns the row
-    (``m-inheritance-105``, the composed temporal x inheritance x optimistic
-    conflict witness), so an abstract node is skipped even when it is the
-    first entity in the descriptor to carry the axis.
+    ``m-temporal-read-012``) carries no version column; it locks via the
+    observed Transaction-Time start (``in_z``), so the target is the first
+    CONCRETE (row-owning) entity with a Transaction-Time as-of axis. An
+    inheritance family's abstract root (m-inheritance) resolves the SAME
+    family-wide axis (`resolve_effective_definition` flattens it onto every
+    descendant), but is tableless and rowless — a conflict case's golden UPDATE
+    always targets the concrete subtype that owns the row, so an abstract node
+    is skipped even when it is the first entity in the descriptor to carry the
+    axis.
     """
     for entity in case.model.entities:
         if entity.is_abstract:
@@ -2623,7 +2622,7 @@ def _assert_temporal_conflict_close(
     carries the tag GUARD among the identity predicates, immediately after the primary
     key — the SAME composition a keyed update follows (m-inheritance x m-opt-lock
     "Optimistic locking composes with inheritance", resolved Q9), extended to a
-    temporal close (``m-inheritance-105``).
+    temporal close.
 
     Because address and gate are separate, ① names EXACTLY the address's per-axis
     upper bounds it can supply: nothing for a Transaction-Time-Only target, whose only
