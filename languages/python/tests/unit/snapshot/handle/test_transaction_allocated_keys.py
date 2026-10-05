@@ -1,5 +1,6 @@
-"""Inserts whose key the database allocates for a temporal row: the key the
-statement answers, and the row it then names (scripted port)."""
+"""No public verb states a `max` allocation, so the insert is buffered on the
+transaction's own unit of work; every later write goes through the public verbs.
+"""
 
 # pyright: reportPrivateUsage=false
 
@@ -80,7 +81,6 @@ def test_an_allocated_temporal_key_is_answered_and_the_row_revised_in_place() ->
         call for call in port.calls if isinstance(call, ReadCall | WriteCall)
     )
     assert insert == ReadCall(_INSERT, (0, 1, 100, FIXED, "infinity"))
-    # The attempt opened that row, so it is revised at its address, never closed.
     assert isinstance(revision, WriteCall)
     assert revision.sql == (
         "update ledger set amount = %s where id = %s and out_z = %s and in_z = %s"

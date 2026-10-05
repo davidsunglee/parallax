@@ -88,9 +88,6 @@ def test_an_update_leaving_its_row_unchanged_is_counted_as_its_dialect_declares(
 
 
 def test_row_producing_dml_answers_its_rows_beside_a_count_only_write(profile_run: Any) -> None:
-    # `m-db-port`: an insert answering the key the database allocated runs through
-    # `execute` and returns positional managed rows; a count-only write in the
-    # same transaction still reports its native count.
     case = _grade_case()
     meta = engine.load_case_metamodel(case)
     profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))

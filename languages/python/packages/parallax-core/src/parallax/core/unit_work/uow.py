@@ -603,8 +603,6 @@ class _TargetWriteState:
 
 
 def _with_allocated(opened: Openings, allocated: tuple[object, ...]) -> Openings:
-    """``opened`` with each row whose key the database allocated named by the
-    key its insert answered."""
     named = tuple(
         _allocated_endpoint(opening, key)
         for opening, key in zip(opened.allocated, allocated, strict=True)

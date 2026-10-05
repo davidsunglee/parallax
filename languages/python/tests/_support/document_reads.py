@@ -86,7 +86,6 @@ _IDENTIFIER = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 def _returning(sql: str) -> tuple[tuple[str, str | None], ...]:
-    """The columns row-producing DML answers: its ``returning`` list."""
     returning = sql.lower().rfind(" returning ")
     if returning < 0:
         return ()

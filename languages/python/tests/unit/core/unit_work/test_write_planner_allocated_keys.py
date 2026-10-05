@@ -1,6 +1,3 @@
-"""A temporal insert whose key the database allocates: the planner asks the
-insert to answer the key and records the row it opens by its ends."""
-
 from __future__ import annotations
 
 import datetime as dt
