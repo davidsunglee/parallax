@@ -26,6 +26,19 @@ authors against it are outside it. The unchanged cases author no member at all,
 which is the update that changes nothing: a member restated at its stored value
 is a literal assignment and writes like any other.
 
+The caller-addressed target cases revise a row their transaction never read:
+a Wire patch (``tx.wire.update`` naming the Entity) or a Typed or Wire
+replacement (``tx.replace``, ``tx.wire.replace``) states the key, the
+Transaction-Time start a temporal caller last observed, and a Bitemporal
+target's interior window, under the default Optimistic strategy. Their window
+opens at the verb, with nothing read before it, so it contains every read the
+target makes: the point read under the shared lock that an unversioned
+Non-Temporal target acquires its row with at the call, under either strategy,
+and the coverage read a temporal target's flush makes before it closes
+anything. The port answers each with the stored row, composed per statement.
+Every target assigns every writable member the values its observed twin
+assigns, so the two lower to the same statements.
+
 The window ends where the driver would hand bytes to the socket: the
 provider-free port crosses each statement's binds through the production
 PostgreSQL bind adaptation and psycopg's own transformer dump, which is the
@@ -86,7 +99,7 @@ from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.storage_layout import view as storage_layout_view
-from parallax.core.unit_work import KeyedMutation
+from parallax.core.unit_work import KeyedMutation, TargetMutation
 from parallax.core.unit_work.instructions import coerce_typed_row
 from parallax.postgres._connection import adapt_binds
 from parallax.snapshot.handle import (
@@ -272,14 +285,17 @@ class Case:
     """One keyed write, what its caller authors, and the stored row it revises.
 
     ``model`` is the domain model the case's handle is connected over.
-    ``instance`` is the Typed value a Typed insert opens, held as its caller
-    holds it. ``changes`` is what any other case authors: a Typed update's
-    ``edit`` keywords, a Wire update's changes document with its identity
-    omitted, or a Wire insert's Create Payload — composed outside the window
+    ``instance`` is the Typed value a Typed insert opens or a Typed replacement
+    states, held as its caller holds it. ``changes`` is what any other case
+    authors: a Typed update's ``edit`` keywords, a Wire update's changes
+    document with its identity omitted, or a Wire insert's Create Payload, or a
+    Wire target's document with its identity — composed outside the window
     exactly as a caller's arrives. ``stored`` is the milestone the case's read
     answers, keyed by physical column as the driver answers it, and ``None`` for
-    an insert, which reads nothing. ``statements`` is how many statements the
-    flush executes.
+    an insert, which reads nothing; an ``addressed`` target reads nothing before
+    its verb, and its stored row answers the reads the target itself makes
+    inside the window. ``statements`` is how many statements the flush
+    executes.
     """
 
     name: str
@@ -287,13 +303,14 @@ class Case:
     entity: type[Entity]
     ingress: Ingress
     layout: Layout
-    mutation: KeyedMutation
+    mutation: KeyedMutation | TargetMutation
     instance: Entity | None
     changes: Mapping[str, object]
     stored: Mapping[str, object] | None
     statements: int
     model: DomainModel
     bounded: bool = False
+    addressed: bool = False
 
 
 _CODEC: Final = EntityRowCodec(CATALOG)
@@ -340,11 +357,15 @@ def _stored_row(value: Entity, layout: Layout) -> dict[str, object]:
     return row
 
 
-def _authored(ingress: Ingress, mutation: KeyedMutation, value: Entity) -> Mapping[str, object]:
-    """What a caller states for ``value``: a Wire insert's whole payload, or
-    every member but the identity as an update's edit keywords or changes."""
+def _authored(
+    ingress: Ingress, mutation: KeyedMutation | TargetMutation, value: Entity, *, addressed: bool
+) -> Mapping[str, object]:
+    """What a caller states for ``value``: a Wire insert's or Wire target's
+    whole document, identity included, or every member but the identity as an
+    update's edit keywords or changes. A Typed insert or replacement states the
+    instance itself."""
     row = _wire_row(value)
-    if mutation == "insert":
+    if mutation == "insert" or addressed:
         return row if ingress == "wire" else {}
     del row["id"]
     if ingress == "wire":
@@ -358,17 +379,21 @@ def _keyed_case(
     ingress: Ingress,
     layout: Layout,
     *,
-    mutation: KeyedMutation,
+    mutation: KeyedMutation | TargetMutation,
     value: Entity,
     predecessor: Entity | None,
     statements: int,
     bounded: bool = False,
     expressed: bool = True,
     members: frozenset[str] | None = None,
+    addressed: bool = False,
 ) -> Case:
-    authored: Mapping[str, object] = _authored(ingress, mutation, value) if expressed else {}
+    authored: Mapping[str, object] = (
+        _authored(ingress, mutation, value, addressed=addressed) if expressed else {}
+    )
     if members is not None:
         authored = {name: member for name, member in authored.items() if name in members}
+    states_instance = mutation in ("insert", "replace", "replaceUntil") and ingress == "typed"
     return Case(
         name,
         family,
@@ -376,12 +401,13 @@ def _keyed_case(
         ingress,
         layout,
         mutation,
-        value if mutation == "insert" and ingress == "typed" else None,
+        value if states_instance else None,
         authored,
         None if predecessor is None else _stored_row(predecessor, layout),
         statements,
         MODEL,
         bounded,
+        addressed,
     )
 
 
@@ -391,13 +417,14 @@ def _case(
     layout: Layout,
     ingress: Ingress,
     *,
-    mutation: KeyedMutation,
+    mutation: KeyedMutation | TargetMutation,
     key: int,
     label: str,
     predecessor: str | None,
     statements: int,
     bounded: bool = False,
     expressed: bool = True,
+    addressed: bool = False,
 ) -> Case:
     cls = _CATEGORICAL[(family, layout)]
     return _keyed_case(
@@ -411,6 +438,7 @@ def _case(
         statements=statements,
         bounded=bounded,
         expressed=expressed,
+        addressed=addressed,
     )
 
 
@@ -488,6 +516,48 @@ def _categorical_cases() -> tuple[Case, ...]:
     return tuple(cases)
 
 
+_TARGET_TWINS: Final[tuple[tuple[str, int, str, int, bool], ...]] = (
+    ("plain", 701, "after", 1, False),
+    ("txtime", 301, "after", 2, False),
+    ("bitemporal", 901, "middle", 4, True),
+)
+"""Each target family's observed twin: its key, the label of the values it
+assigns, its statement count, and whether it is bounded to the interior
+window. The predecessor is always the twin's ``before`` row."""
+
+
+def _target_cases() -> tuple[Case, ...]:
+    """One Wire patch and one Typed and Wire replacement per categorical
+    family and layout; a Typed target patch is no public verb."""
+    cases: list[Case] = []
+    for family, key, label, statements, bounded in _TARGET_TWINS:
+        for layout in LAYOUTS:
+            forms: tuple[tuple[str, TargetMutation, Ingress], ...] = (
+                ("target-patch", "updateUntil" if bounded else "update", "wire"),
+                *(
+                    ("target-replace", "replaceUntil" if bounded else "replace", ingress)
+                    for ingress in INGRESSES
+                ),
+            )
+            cases.extend(
+                _case(
+                    family,
+                    operation,
+                    layout,
+                    ingress,
+                    mutation=mutation,
+                    key=key,
+                    label=label,
+                    predecessor="before",
+                    statements=statements,
+                    bounded=bounded,
+                    addressed=True,
+                )
+                for operation, mutation, ingress in forms
+            )
+    return tuple(cases)
+
+
 def _geometry_cases() -> tuple[Case, ...]:
     return tuple(
         _keyed_case(
@@ -561,6 +631,7 @@ CASES: Final[tuple[Case, ...]] = (
     *_geometry_cases(),
     *_ancestor_cases(),
     *_leaf_cases(),
+    *_target_cases(),
 )
 
 
@@ -616,6 +687,17 @@ def serialize(binds: Sequence[object]) -> Sequence[Buffer | None]:
     return transformer.dump_sequence(adapted, [PyFormat.AUTO] * len(adapted))
 
 
+def _composed(value: object) -> object:
+    """A fresh copy of a stored row's containers. The keyed-write pass
+    observations count ``detach_json_container`` returns, and a target's reads
+    fall inside the window, so the port composes its answers without it."""
+    if isinstance(value, Mapping):
+        return {key: _composed(item) for key, item in cast("Mapping[str, object]", value).items()}
+    if isinstance(value, list | tuple):
+        return [_composed(item) for item in cast("Sequence[object]", value)]
+    return value
+
+
 class AcceptingPort(ConnectsAsItself):
     """A provider-free port that answers every read with ``stored``, serializes
     every DML statement's binds as the driver would, and counts it as one
@@ -639,7 +721,7 @@ class AcceptingPort(ConnectsAsItself):
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         del binds
-        rows = (cast("Mapping[str, object]", detach_json_container(row)) for row in self._stored)
+        rows = (cast("Mapping[str, object]", _composed(row)) for row in self._stored)
         return projected_rows(sql, rows, document_reads)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
@@ -711,8 +793,9 @@ def database(case: Case, port: AcceptingPort | None = None) -> Generator[ScopedD
 
 def _source(tx: Transaction, case: Case) -> object:
     """What the verb revises: the node the case's read publishes, edited for a
-    Typed case; nothing for an insert, which revises no row."""
-    if case.stored is None:
+    Typed case; nothing for an insert, which revises no row, or for a target,
+    which addresses its row by key."""
+    if case.stored is None or case.addressed:
         return None
     entity = cast("Any", case.entity)
     query = entity.where(entity.id == case.stored["id"])
@@ -723,8 +806,38 @@ def _source(tx: Transaction, case: Case) -> object:
     return tx.find(query).result().edit(**case.changes)
 
 
+def _address(tx: Transaction, case: Case) -> None:
+    """Buffer ``case``'s target write through its public verb, conditioned on
+    the stored milestone's Transaction-Time start where the Entity has one."""
+    if_tx_start = TX_START if issubclass(case.entity, Bitemporal | TxTemporal) else None
+    name = case.entity.identity.name
+    if case.mutation in ("replace", "replaceUntil") and case.ingress == "typed":
+        instance = cast("Entity", case.instance)
+        if case.bounded:
+            tx.replace(
+                instance, valid_from=INTERIOR_FROM, until=INTERIOR_UNTIL, if_tx_start=if_tx_start
+            )
+        else:
+            tx.replace(instance, if_tx_start=if_tx_start)
+        return
+    verb = tx.wire.replace if case.mutation in ("replace", "replaceUntil") else tx.wire.update
+    if case.bounded:
+        verb(
+            name,
+            case.changes,
+            valid_from=INTERIOR_FROM,
+            until=INTERIOR_UNTIL,
+            if_tx_start=if_tx_start,
+        )
+    else:
+        verb(name, case.changes, if_tx_start=if_tx_start)
+
+
 def _buffer(tx: Transaction, case: Case, source: object) -> None:
     """Buffer ``case``'s keyed write through its public verb."""
+    if case.addressed:
+        _address(tx, case)
+        return
     if case.ingress == "typed":
         if case.mutation == "insert":
             tx.insert(cast("Entity", case.instance))
@@ -751,7 +864,8 @@ def write(
 ) -> None:
     """Run ``case`` as one committed transaction.
 
-    ``opened`` runs after the read, immediately before the verb; ``buffered``
+    ``opened`` runs immediately before the verb, after the read where the case
+    makes one; ``buffered``
     immediately after the verb has buffered, still inside the transaction body;
     and ``closed`` once ``transact`` has returned, its flush and commit done. A
     reading marks its window with ``opened`` and ``closed``, and takes what the

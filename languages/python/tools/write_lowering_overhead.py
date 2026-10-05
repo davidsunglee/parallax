@@ -2,9 +2,10 @@
 
 The report owns the runtime-by-case matrix and the Cost Report Envelope. Each
 reading is taken by ``write_lowering_reading.py`` in an isolated child process:
-the twenty categorical keyed-write cases, the geometry inserts, the
-changed-ancestor successors, and the leaf-type inserts through their public
-verbs and the flush's actual driver serialization, the predicate-acquisition
+the twenty categorical keyed-write cases, the caller-addressed target writes
+beside them, the geometry inserts, the changed-ancestor successors, and the
+leaf-type inserts through their public verbs and the flush's actual driver
+serialization, the predicate-acquisition
 families to their buffered group, the public Wire insert to the node it
 answers, and the two model-preparation checkpoints. The leaf-type cases are
 read only on the supported minors the leaf-type manifest scopes them to.
@@ -114,9 +115,12 @@ MODEL_FAMILY_CASE: Final = "model.prepared.family"
 WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
     KEYED_WINDOW: (
         "one public Typed or Wire keyed verb over a row its transaction already read, "
+        "or one caller-addressed target write over a row its transaction never read, "
         "until transact returns: preparation, buffering, the pre-commit flush's "
         "settlement and SQL lowering, production bind adaptation, psycopg's document "
-        "serialization, and the commit; no read or database execution"
+        "serialization, and the commit; a target's own reads over provider-free rows "
+        "(an unversioned target's acquisition, a temporal target's coverage read at "
+        "flush), but no earlier read and no database execution"
     ),
     ACQUISITION_WINDOW: (
         "one public tx.wire.update_where bounded by until over a Bitemporal target, from the "
@@ -167,8 +171,14 @@ LEAF_TYPE_CASE_NAMES: Final = (
     *(case.name for case in acquisition_support.LEAF_CASES),
 )
 """The leaf-type inserts and acquisitions, added after the controls."""
+TARGET_CASE_NAMES: Final = tuple(case.name for case in lowering_support.CASES if case.addressed)
+"""The caller-addressed target writes, added after the leaf-type families."""
+BEFORE_TARGET_CASE_NAMES: Final = tuple(
+    name for name in CASE_NAMES if name not in TARGET_CASE_NAMES
+)
+"""The case set captures were taken over before the target writes."""
 BEFORE_LEAF_TYPE_CASE_NAMES: Final = tuple(
-    name for name in CASE_NAMES if name not in LEAF_TYPE_CASE_NAMES
+    name for name in BEFORE_TARGET_CASE_NAMES if name not in LEAF_TYPE_CASE_NAMES
 )
 """The case set captures were taken over before the leaf-type families."""
 LEGACY_CASE_NAMES: Final = tuple(
@@ -177,6 +187,7 @@ LEGACY_CASE_NAMES: Final = tuple(
 """The case set the retained captures were taken over, before the controls."""
 CASE_COVERAGES: Final[Mapping[str, tuple[str, ...]]] = {
     "current": CASE_NAMES,
+    "before target writes": BEFORE_TARGET_CASE_NAMES,
     "before leaf types": BEFORE_LEAF_TYPE_CASE_NAMES,
     "legacy": LEGACY_CASE_NAMES,
 }
