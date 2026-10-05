@@ -240,6 +240,13 @@ def _extra_predicate(raw: dict[str, Any]) -> None:
     )
 
 
+def _derived_source(raw: dict[str, Any]) -> None:
+    raw["then"]["statements"][1]["sql"]["postgres"] = (
+        "update balance set in_z = in_z from (values (1, 'infinity')) as fake(bal_id, out_z) "
+        "where fake.bal_id = ? and fake.out_z = ? and balance.in_z = ?"
+    )
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -249,6 +256,7 @@ def _extra_predicate(raw: dict[str, Any]) -> None:
         (_rewritten_start, "the guard that keeps its milestone"),
         (_incomplete_address, "the guard that keeps its milestone"),
         (_extra_predicate, "the guard that keeps its milestone"),
+        (_derived_source, "the guard that keeps its milestone"),
     ],
     ids=[
         "a-changed-value",
@@ -257,6 +265,7 @@ def _extra_predicate(raw: dict[str, Any]) -> None:
         "a-rewritten-start",
         "an-incomplete-address",
         "an-extra-predicate",
+        "a-derived-source",
     ],
 )
 def test_a_guard_golden_its_history_does_not_prove_is_refused(

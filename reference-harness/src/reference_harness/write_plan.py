@@ -851,12 +851,13 @@ def has_temporal_gate(statement: str, in_z: str, dialect: str) -> bool:
 
 def is_milestone_guard_statement(statement: str, entity: Entity, dialect: str) -> bool:
     """Whether *statement* is exactly the guard that keeps *entity*'s milestone: an
-    ``UPDATE`` of its table assigning the Transaction-Time start to itself, whose
+    ``UPDATE`` of its table alone assigning the Transaction-Time start to itself, whose
     predicate is the close address (:func:`close_address_binds`) followed by the
     observed-start gate, every conjunct a bound equality.
 
     Judged whole because a guard changes no value: neither the table state nor its
-    affected count can tell an incomplete address from the complete one.
+    affected count can tell an incomplete address from the complete one. With no
+    source but the target table, every predicate column is the target's own.
     """
     in_z = next(
         axis["start_column"]
@@ -878,7 +879,9 @@ def is_milestone_guard_statement(statement: str, entity: Entity, dialect: str) -
         conjuncts = tuple(_conjuncts(where.this))
         assignments = tree.expressions
         return (
-            _names(table, entity.table)
+            {arm for arm, value in tree.args.items() if value} == {"this", "expressions", "where"}
+            and not tree.this.args.get("joins")
+            and _names(table, entity.table)
             and len(assignments) == 1
             and isinstance(assignments[0], exp.EQ)
             and all(
