@@ -849,6 +849,23 @@ def has_temporal_gate(statement: str, in_z: str, dialect: str) -> bool:
     return write is not None and _gates_on(write.conjuncts[-1], in_z)
 
 
+def assigns_itself_only(statement: str, column: str, dialect: str) -> bool:
+    """Whether *statement* is an ``UPDATE`` whose one assignment sets *column* to
+    itself."""
+    with contextlib.suppress(sqlglot.ParseError):
+        tree = sqlglot.parse_one(statement, read=sqlglot_dialect(dialect))
+        if isinstance(tree, exp.Update) and len(tree.expressions) == 1:
+            assignment = tree.expressions[0]
+            return isinstance(assignment, exp.EQ) and all(
+                isinstance(side, exp.Column)
+                and not side.table
+                and isinstance(side.this, exp.Identifier)
+                and _names(side.this, column)
+                for side in (assignment.left, assignment.right)
+            )
+    return False
+
+
 # --- cross-checking the neutral input against the golden binds -------------------
 
 

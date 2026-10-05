@@ -1,14 +1,6 @@
 # Logical rows shared by both unchanged-milestone descriptors. Each row authors
 # declared member names rather than physical cells, so one file describes one
 # logical state under either layout.
-#
-#   span 1  three rectangles with a gap, each its own label and memo:
-#           [2024-01-01, 2024-04-01) amount 100 known from T0 = 2023-12-01,
-#           [2024-05-01, 2024-08-01) amount 180 known from T1 = 2023-12-15, and
-#           [2024-08-01, 2024-12-01) amount 100 known from T2 = 2024-01-02
-#   span 2  one rectangle [2024-01-01, infinity) amount 100 known from T0
-#   log 1   amount 100 known from T0
-#   log 2   amount 100 known from T0
 parallax.compatibility.KeptSpan:
   - id: 1
     amount: 100

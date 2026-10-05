@@ -22,6 +22,7 @@ from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
     _assert_carried_document,
     _assert_write_input_columns,
+    _assert_write_sequence,
     _assert_write_step_count,
     _increment_marker,
     _is_computed_marker,
@@ -220,14 +221,22 @@ def _close_shape(raw: dict[str, Any]) -> None:
     )
 
 
+def _rewritten_start(raw: dict[str, Any]) -> None:
+    raw["then"]["statements"][1]["sql"]["postgres"] = (
+        "update balance set in_z = coalesce(in_z, out_z) where bal_id = ? and out_z = ? "
+        "and in_z = ?"
+    )
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
         (_changed_value, "assigns '150.00'"),
         (_stale_gate, "golden bind"),
         (_close_shape, "the guard that keeps its milestone"),
+        (_rewritten_start, "the guard that keeps its milestone"),
     ],
-    ids=["a-changed-value", "a-gate-its-history-does-not-leave", "a-close"],
+    ids=["a-changed-value", "a-gate-its-history-does-not-leave", "a-close", "a-rewritten-start"],
 )
 def test_a_guard_golden_its_history_does_not_prove_is_refused(
     mutate: Callable[[dict[str, Any]], None], message: str
@@ -243,6 +252,25 @@ def test_a_guard_golden_is_refused_for_a_dialect_whose_count_cannot_prove_it() -
 
     with pytest.raises(CaseFailure, match="does not report an unchanged row"):
         _assert_write_input_columns(_guard_case(stated_for_mariadb), "mariadb")
+
+
+class _CountingExecutor:
+    dialect = "postgres"
+
+    def __init__(self, counts: Sequence[int]) -> None:
+        self._counts = list(counts)
+
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        raise AssertionError(sql)
+
+    def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+        return self._counts.pop(0)
+
+
+def test_a_guard_golden_matching_no_row_is_refused_where_it_executes() -> None:
+    executor = _CountingExecutor([1, 0])
+    with pytest.raises(CaseFailure, match=r"then\.statements\[1\] matched 0 row"):
+        _assert_write_sequence(_temporal_target_case("m-txtime-write-015"), cast(Any, executor))
 
 
 def test_a_target_step_owes_a_read_only_where_it_is_acquired() -> None:

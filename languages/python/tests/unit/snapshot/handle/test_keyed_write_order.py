@@ -249,13 +249,10 @@ def test_one_verb_over_a_participating_source_answers_its_target(scenario: Scena
 # The change axis. An untouched copy, and a Wire document naming no member,    #
 # express no assignment and buffer nothing. A net-zero chain — a member set    #
 # and then set back to the value its source published — expresses that member #
-# and writes it: assignments are literal sets, never compared with the source. #
-# A Non-Temporal row is updated as for a changed value. A temporal milestone   #
-# that already holds the value is kept rather than closed: one guard proves it #
-# under Optimistic, and the shared lock already does under Locking. The        #
-# document targets carry it past a scalar: a Value Object occurrence with a    #
-# nested occurrence and a nested many, and a member stored absent whose        #
-# restoration states an explicit null.                                         #
+# as a literal set, never compared with the source; a temporal milestone that #
+# already holds the value is kept. The document targets carry it past a       #
+# scalar: a Value Object occurrence with a nested occurrence and a nested     #
+# many, and a member stored absent whose restoration states an explicit null. #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "scenario",

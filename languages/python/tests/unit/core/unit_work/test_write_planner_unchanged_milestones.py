@@ -1,7 +1,5 @@
 """Which milestones a temporal write leaves unchanged, and how planning keeps
-them, driven at the planner seam without a database: one guard under Optimistic
-where the dialect's count proves it, no statement under Locking or for a row the
-attempt opened, and the ordinary close and successors everywhere else."""
+them, at the planner seam."""
 
 from __future__ import annotations
 

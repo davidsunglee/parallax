@@ -571,8 +571,6 @@ _NOT_AN_INSTANT = "an as-of axis start is a finite instant, and {value!r} is not
 
 
 def _end_coordinate(value: object) -> dt.datetime | None:
-    """One axis-end value as the comparable an address is keyed by, ``None`` for
-    the open bound."""
     if value is TemporalBound.INFINITY or _is_open(value):
         return None
     return _coordinate(value)

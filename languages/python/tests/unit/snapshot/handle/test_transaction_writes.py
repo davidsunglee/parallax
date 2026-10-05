@@ -464,9 +464,7 @@ def test_update_of_a_copy_expressing_no_member_issues_no_dml() -> None:
 def test_a_keyed_update_changing_one_member_writes_its_whole_literal_set(
     representation: str,
 ) -> None:
-    # An update's assignments are its literal set: a member restating its stored
-    # value beside one that changes it is still assigned, so the milestone is
-    # closed and chained rather than kept.
+    # `acct_num` restates the stored value.
     port = ScriptedAdapter(
         Transact(
             Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]), Write(times=2)

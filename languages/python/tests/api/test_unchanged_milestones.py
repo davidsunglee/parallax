@@ -1,19 +1,4 @@
-"""Temporal writes that leave a milestone as it was, against real Postgres.
-
-An observed or insertion-authored write applies literal assignments to every
-milestone it reaches, and a milestone left exactly as it was keeps its
-Transaction-Time start and gains no history: under Optimistic one guard on the
-observed address and start proves it, under Locking the shared lock does, and a
-row the attempt opened needs neither. Every case reads back every row, current
-and historical, under both storage layouts; the two-session cases show what the
-guard keeps for other transactions — its lock until commit, and a token a peer
-read still standing — and that losing a kept milestone's guard rolls the attempt
-back exactly as losing a changed one's close does.
-
-Standalone Docker-backed proofs, like `test_disjoint_target_writes.py`; every
-`Database` connects with a
-:class:`~parallax.conformance.scripted_clock.ScriptedClock`.
-"""
+"""Temporal writes that leave a milestone as it was, against real Postgres."""
 
 from __future__ import annotations
 
