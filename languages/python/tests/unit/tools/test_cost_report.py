@@ -1846,6 +1846,33 @@ def test_an_amended_capture_is_stated_by_verification_and_by_every_comparison(
     assert f"- The head capture is amended: {amendment}." in stated
 
 
+@pytest.mark.parametrize(
+    ("adjustment", "stated"),
+    [
+        (
+            {"reclassified": {"reason": "the runner's interpreter moved"}},
+            "envelopes re-classified under a later Budget Contract",
+        ),
+        (
+            {"remeasured": {"count": 4}, "reclassified": {}},
+            "4 re-measured readings changed and envelopes re-classified under a later "
+            "Budget Contract",
+        ),
+    ],
+)
+def test_a_reclassified_capture_is_stated_as_reclassified(
+    tmp_path: Path, adjustment: dict[str, object], stated: str
+) -> None:
+    _base, head, *_rest, head_conditions = _pair(tmp_path, BudgetContract.load())
+    head_conditions[cost_report.ADJUSTMENT_FIELD] = adjustment
+    _rewrite(head.parent / cost_report.CONDITIONS_FILE, head_conditions)
+
+    assert cost_report.amendment_beside(head) == (
+        f"{stated} after the run its provenance names, recorded in the "
+        f"{cost_report.ADJUSTMENT_FIELD} of {cost_report.CONDITIONS_FILE}"
+    )
+
+
 def test_an_unmatched_pair_is_refused_before_any_arithmetic(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
