@@ -165,6 +165,15 @@ def _wire_row(row: MappingRow) -> dict[str, object]:
     return {key: wire_value(value) for key, value in row.items()}
 
 
+def _shortfalls(units: dict[str, dict[str, object]]) -> list[object]:
+    """The Shortfall each group's flush failure names, in group order."""
+    return [
+        cast("dict[str, object]", fate["flushFailure"])["shortfall"]
+        for fate in units.values()
+        if "flushFailure" in fate
+    ]
+
+
 def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abort() -> None:
     # `m-opt-lock-012` end to end over two SCRIPTED fake connections (never a
     # real database): the `ours` group's own observing find (step 0) is stale
@@ -185,13 +194,24 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     peer_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
     executions = _ScriptedExecutions(ours_port, peer_port)
 
-    emissions, round_trips, conflict_actual, find_rows = run_interleaved_scenario_case(
+    emissions, round_trips, units, find_rows = run_interleaved_scenario_case(
         case, caller_port, executions
     )
 
     assert round_trips == 6
     assert len(emissions) == 6
-    assert conflict_actual == 0
+    assert units == {
+        "ours": {
+            "outcome": "rolledBack",
+            "flushFailure": {
+                "at": "commit",
+                "entity": "parallax.compatibility.Account",
+                "key": {"id": 2},
+                "shortfall": "optimisticConflict",
+            },
+        },
+        "concurrent": {"outcome": "committed"},
+    }
     # Both dedicated sessions are released by the lane that opened them.
     assert [execution.closed for execution in executions.opened] == [True, True]
     assert [e.case_pointer for e in emissions] == [
@@ -232,7 +252,7 @@ def test_each_interleaved_group_lowers_in_its_own_connections_dialect() -> None:
     ours_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 0])
     peer_port = ScriptedPort(dialect=BACKTICKED, read_rows=[[row_v1]], write_affected=[1])
 
-    emissions, _round_trips, _conflict_actual, _find_rows = run_interleaved_scenario_case(
+    emissions, _round_trips, _units, _find_rows = run_interleaved_scenario_case(
         case, caller_port, _ScriptedExecutions(ours_port, peer_port)
     )
 
@@ -339,11 +359,11 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
     ours_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
     peer_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[0])
 
-    _emissions, _round_trips, conflict_actual, _find_rows = run_interleaved_scenario_case(
+    _emissions, _round_trips, units, _find_rows = run_interleaved_scenario_case(
         case, ScriptedPort(), _ScriptedExecutions(ours_port, peer_port)
     )
 
-    assert conflict_actual == 0
+    assert _shortfalls(units) == ["optimisticConflict"]
 
 
 def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> None:
@@ -414,11 +434,11 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
     ours_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 1])
     peer_port = ScriptedPort(read_rows=[[row3]])
 
-    emissions, round_trips, conflict_actual, find_rows = run_interleaved_scenario_case(
+    emissions, round_trips, units, find_rows = run_interleaved_scenario_case(
         case, ScriptedPort(), _ScriptedExecutions(ours_port, peer_port)
     )
 
-    assert conflict_actual is None
+    assert _shortfalls(units) == []
     assert round_trips == 4
     assert len(ours_port.writes) == 2  # buffered together, flushed once at the group's last step
     assert [e.case_pointer for e in emissions] == [
@@ -575,12 +595,12 @@ def test_an_interleaved_case_whose_opt_in_is_bounded_at_zero_runs_each_group_onc
     peer_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
     executions = _ScriptedExecutions(ours_port, peer_port)
 
-    _emissions, round_trips, conflict_actual, _rows = run_interleaved_scenario_case(
+    _emissions, round_trips, units, _rows = run_interleaved_scenario_case(
         case, caller_port, executions
     )
 
     assert round_trips == 6
-    assert conflict_actual == 0
+    assert _shortfalls(units) == ["optimisticConflict"]
     assert len(ours_port.levels) == 1
     assert len(peer_port.levels) == 1
     assert len(ours_port.writes) == 2

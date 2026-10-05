@@ -6,7 +6,8 @@ together. It spans a single keyed write, a mixed multi-object flush (insert /
 update / delete of DIFFERENT objects), and the two-keyed same-object coalescing
 pair alike — same-object folding at flush is the RUNTIME coalescing rule, not a
 structural constraint, so no cross-entry same-entity / same-primary-key equality is
-imposed. Predicate-selected instructions inside a buffer stay EXCLUDED (keyed-only).
+imposed. A state-graded scenario's buffer may also carry caller-addressed
+submissions and readless predicate writes; a golden-graded one stays keyed.
 
 The generality is over objects and mutations, not over PROVENANCE: an entry
 assigning a DB-computed write marker states a statement the framework issues
@@ -20,9 +21,10 @@ carries exactly one row), and that framework provenance — are the harness
 validator's. These DB-free probes pin both halves: the general keyed shapes — a
 single write, a mixed multi-object flush, a buffer over different entities /
 different keys, and the three same-transaction coalescing witnesses — are
-ACCEPTED; a predicate-in-buffer entry is REJECTED (schema); and a row naming a
-non-member, a plural temporal entry, or a marker entry sharing its buffer or its
-group, is REJECTED (harness).
+ACCEPTED; a predicate entry is REJECTED in a golden-graded case (schema) and
+wherever it would materialize (harness); and a row naming a non-member, a plural
+temporal entry, or a marker entry sharing its buffer or its group, is REJECTED
+(harness).
 """
 
 from __future__ import annotations
@@ -68,7 +70,7 @@ _PK_SEQUENCE = _defs("models/pk-sequence.yaml")
 
 def _accepted(instructions: list[Any], entity_defs: list[dict[str, Any]]) -> bool:
     """A buffer is ACCEPTED only when BOTH layers pass — the schema structural shape
-    (one-or-more keyed entries, no predicate entry) and the harness's three model-aware
+    (one-or-more submissions) and the harness's model-aware
     checks (member-name honesty, the temporal singleton, framework provenance), asked
     here for an UNGROUPED step."""
     schema_ok = next(_buffered_validator().iter_errors(instructions), None) is None
@@ -200,12 +202,12 @@ def test_buffer_over_different_primary_keys_is_accepted() -> None:
     assert _accepted(probe, _ACCOUNT)
 
 
-# --- a predicate-in-buffer entry is REJECTED (keyed-only, schema) ---------------
+# --- a predicate submission is a readless barrier, and only state-graded --------
 
 
-def test_predicate_entry_in_buffer_is_rejected() -> None:
-    # A predicate-selected instruction is the one generality the buffered form still
-    # excludes (the JSON Schema's keyed-only structural rejection).
+def test_a_buffered_predicate_submission_must_be_readless() -> None:
+    # A versioned target's predicate write materializes through a resolving read,
+    # which would flush the very buffer it stands in.
     probe = [
         {
             "mutation": "insert",
@@ -214,8 +216,46 @@ def test_predicate_entry_in_buffer_is_rejected() -> None:
         },
         {"mutation": "delete", "target": {"entity": "Account", "predicate": {"all": {}}}},
     ]
-    assert next(_buffered_validator().iter_errors(probe), None) is not None
+    errors: list[str] = []
+    _validate_buffered_write(probe, _ACCOUNT, _OP, "probe", errors)
+    assert any("would materialize" in error for error in errors)
     assert not _accepted(probe, _ACCOUNT)
+
+
+def _scenario_document(write: list[Any], **top: Any) -> dict[str, Any]:
+    return {
+        "model": "models/orders.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        **top,
+        "when": {"scenario": [{"uow": "g", "write": write, "roundTrips": 0}]},
+        "then": {
+            "tableState": {"order_item": []},
+            "units": {"g": {"outcome": "committed"}},
+        },
+    }
+
+
+_BARRIER = {
+    "mutation": "update",
+    "target": {
+        "entity": "OrderItem",
+        "predicate": {"lessThan": {"attr": "OrderItem.quantity", "value": 3}},
+    },
+    "assignments": [{"attr": "OrderItem.sku", "value": "Z"}],
+}
+
+
+def test_a_golden_graded_buffer_is_keyed_and_a_state_graded_one_carries_barriers() -> None:
+    validator = Draft202012Validator({"$ref": _CASE_URL}, registry=_REGISTRY)
+    golden = _scenario_document([_BARRIER])
+    assert next(validator.iter_errors(golden), None) is not None
+    state = _scenario_document(
+        [_BARRIER],
+        grading="state",
+        compileEligibility={"mode": "run-only", "reason": "query-result-dependent"},
+    )
+    assert next(validator.iter_errors(state), None) is None
 
 
 # --- a row naming a non-member is REJECTED (member honesty, harness) -------------

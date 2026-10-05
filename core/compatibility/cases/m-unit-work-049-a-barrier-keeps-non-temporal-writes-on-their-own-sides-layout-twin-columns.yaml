@@ -1,0 +1,132 @@
+# No two writes combine across a readless predicate write, which is an ordering
+# barrier (m-unit-work Buffered, batched, ordered writes): the predicate observes
+# exactly what was buffered before it.
+#
+#   tag 1: two writes of the one state a read observed, quantity 1 before the barrier
+#     and 7 after; the barrier selects quantity below 2, so it labels the row.
+#   account 1: two writes of version 1 around a barrier; the later starts from the
+#     version the earlier leaves, so the row ends at version 3.
+#   tag 3: inserted before a barrier and revised after it through the value the insert
+#     answered; the barrier sees the inserted quantity 1.
+#   tag 4: inserted before a barrier and deleted after it; the deletion lets a
+#     reinsertion of the same key open its row once it has run.
+model: models/buffered-sequence-layout-twin-columns.yaml
+tags: [m-unit-work, m-batch-write, m-opt-lock, m-read-lock, m-storage-layout, m-sql, scenario, readless, barrier, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: each flush writes against coverage its own reads and the attempt's earlier units leave, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: same-state
+      objectQuery:
+        target: parallax.compatibility.SequenceTag
+        predicate: { eq: { attr: parallax.compatibility.SequenceTag.id, value: 1 } }
+      note: "observe tag 1"
+      expectRows:
+        - { id: 1, quantity: 5, label: t }
+    - uow: same-state
+      write:
+        - mutation: update
+          "on": 0
+          entity: parallax.compatibility.SequenceTag
+          rows:
+            - { id: 1, quantity: 1 }
+        - mutation: update
+          target:
+            entity: parallax.compatibility.SequenceTag
+            predicate: { lessThan: { attr: parallax.compatibility.SequenceTag.quantity, value: 2 } }
+          assignments:
+            - { attr: parallax.compatibility.SequenceTag.label, value: low }
+        - mutation: update
+          "on": 0
+          entity: parallax.compatibility.SequenceTag
+          rows:
+            - { id: 1, quantity: 7 }
+      note: "quantity 1, the barrier, then quantity 7"
+    - uow: versioned
+      objectQuery:
+        target: parallax.compatibility.SequenceAccount
+        predicate: { eq: { attr: parallax.compatibility.SequenceAccount.id, value: 1 } }
+      note: "observe account 1 at version 1"
+      expectRows:
+        - { id: 1, balance: 10, memo: { note: m1 }, version: 1 }
+    - uow: versioned
+      write:
+        - mutation: update
+          "on": 2
+          entity: parallax.compatibility.SequenceAccount
+          rows:
+            - { id: 1, balance: 20 }
+        - mutation: update
+          target:
+            entity: parallax.compatibility.SequenceTag
+            predicate: { lessThan: { attr: parallax.compatibility.SequenceTag.quantity, value: 2 } }
+          assignments:
+            - { attr: parallax.compatibility.SequenceTag.label, value: lower }
+        - mutation: update
+          "on": 2
+          entity: parallax.compatibility.SequenceAccount
+          rows:
+            - { id: 1, memo: { note: after } }
+      note: "two writes of version 1, apart"
+    - uow: inserted
+      write:
+        - mutation: insert
+          entity: parallax.compatibility.SequenceTag
+          rows:
+            - { id: 3, quantity: 1, label: new }
+        - mutation: update
+          target:
+            entity: parallax.compatibility.SequenceTag
+            predicate: { lessThan: { attr: parallax.compatibility.SequenceTag.quantity, value: 2 } }
+          assignments:
+            - { attr: parallax.compatibility.SequenceTag.label, value: low3 }
+        - mutation: update
+          "on": "/scenario/4/write/0"
+          entity: parallax.compatibility.SequenceTag
+          rows:
+            - { id: 3, quantity: 8 }
+      note: "the insert executes before the barrier, the revision after it"
+    - uow: reinserted
+      write:
+        - mutation: insert
+          entity: parallax.compatibility.SequenceTag
+          rows:
+            - { id: 4, quantity: 1, label: x4 }
+        - mutation: update
+          target:
+            entity: parallax.compatibility.SequenceTag
+            predicate: { lessThan: { attr: parallax.compatibility.SequenceTag.quantity, value: 2 } }
+          assignments:
+            - { attr: parallax.compatibility.SequenceTag.label, value: seen }
+        - mutation: delete
+          "on": "/scenario/5/write/0"
+          entity: parallax.compatibility.SequenceTag
+          rows:
+            - { id: 4 }
+        - mutation: insert
+          entity: parallax.compatibility.SequenceTag
+          rows:
+            - { id: 4, quantity: 6, label: again }
+      note: "the insert, the barrier, its removal, then a fresh insert of the key"
+then:
+  units:
+    same-state: { outcome: committed }
+    versioned: { outcome: committed }
+    inserted: { outcome: committed }
+    reinserted: { outcome: committed }
+  tableState:
+    sequence_tag:
+      - { id: 1, quantity: 7, label: low }
+      - { id: 2, quantity: 9, label: u }
+      - { id: 3, quantity: 8, label: low3 }
+      - { id: 4, quantity: 6, label: again }
+    sequence_account:
+      - { id: 1, balance: 20, memo: { note: after }, version: 3 }

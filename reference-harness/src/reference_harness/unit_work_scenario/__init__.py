@@ -13,10 +13,11 @@ unchanged.
 Step interpretation, ordered semantic refusal, golden-SQL normalization,
 round-trip and statement accounting, write settlement against a named find,
 provisioning and ``given.apply`` at the Scenario-defined point, Unit Work
-grouping, transaction lifecycle, reader selection, publication sequencing, and
-conflict-abort adjudication are all decided inside, because each is a property of
-the Scenario the case already authored rather than a choice orchestration gets to
-make.
+grouping, each group's fate and the flush failure that ended it, transaction
+lifecycle, reader selection, publication sequencing, the final table state, and
+the consistency of a state-graded Scenario's stated rows with the rows it starts
+from are all decided inside, because each is a property of the Scenario the case
+already authored rather than a choice orchestration gets to make.
 
 What stays outside: shared case-shape routing, serialization and
 equivalent-encoding checks, accepted Object Query semantics, Write Plan grading,
@@ -42,7 +43,9 @@ first one to refuse is the one reported:
    does not;
 3. judgement, which reads golden SQL and therefore runs only where the executing
    dialect carries one;
-4. execution, which is the first phase to touch a database.
+4. execution, which is the first phase to touch a database. A state-graded
+   Scenario has no golden to judge or execute: it provisions, reads back the rows
+   it starts from, and proves its stated rows consistent with them.
 
 That ordering is part of the interface rather than an accident of call order: a
 case broken in two places reports its serialization or encoding defect ahead of

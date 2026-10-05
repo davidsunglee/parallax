@@ -51,6 +51,7 @@ __all__ = [
     "ChainedTemporalWrite",
     "ClaimedKeyedWrite",
     "ComposedTemporalWrite",
+    "FollowingKeyedWrite",
     "GroupStates",
     "InsertionKeyedWrite",
     "MaterializedWriteGroup",
@@ -701,6 +702,20 @@ class AfterRemoval:
     follow the one that clears their way."""
 
     inserts: tuple[PreparedKeyedWrite, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FollowingKeyedWrite:
+    """A Non-Temporal write of one claimed scope that an ordering barrier keeps
+    after the writes of that scope standing before it.
+
+    Those writes execute first, each advancing a versioned row once, so this
+    one starts from the state they leave: ``advances`` versions past the state
+    its own scope names.
+    """
+
+    write: ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
+    advances: int
 
 
 BufferItem = (

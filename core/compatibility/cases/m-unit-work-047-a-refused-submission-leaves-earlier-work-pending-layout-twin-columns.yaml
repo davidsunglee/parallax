@@ -1,0 +1,312 @@
+# A submission that cannot join its object's pending writes is refused at its verb,
+# before anything is buffered, and the unit of work keeps every earlier submission
+# (m-unit-work Observed-State Coalescing, Caller-addressed writes). Each refused entry
+# is one a caller catches and continues past; every group then commits what it kept:
+#
+#   span 1: a target and an observed write share [2024-03-01, 2024-05-01); an observed
+#     write over [2024-04-01, 2024-06-01) overlaps that window unequally and is refused.
+#   span 2: two targets over disjoint windows stand as separate operations; a third
+#     over [2024-03-15, 2024-05-01) is disjoint from the latest but overlaps the first
+#     unequally, and is refused.
+#   span 3: a target, then an observed termination of the same window; an assignment
+#     after the destruction would resurrect it and is refused.
+#   span 9: inserted by this unit of work, so a caller-addressed write of it is refused
+#     whatever revision it states; the insert itself commits.
+model: models/buffered-sequence-layout-twin-columns.yaml
+tags: [m-unit-work, m-bitemp-write, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, refusal, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: each flush writes against coverage its own reads and the attempt's earlier units leave, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: unequal
+      objectQuery:
+        target: parallax.compatibility.SequenceSpan
+        predicate: { eq: { attr: parallax.compatibility.SequenceSpan.id, value: 1 } }
+        temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-03-01T00:00:00.000000Z" } }
+      note: "observe span 1 at March"
+      expectRows:
+        - id: 1
+          amount: 100
+          label: a
+          memo: { note: n1 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+    - uow: unequal
+      objectQuery:
+        target: parallax.compatibility.SequenceSpan
+        predicate: { eq: { attr: parallax.compatibility.SequenceSpan.id, value: 1 } }
+        temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-04-01T00:00:00.000000Z" } }
+      note: "observe span 1 again at April, the same rectangle"
+      expectRows:
+        - id: 1
+          amount: 100
+          label: a
+          memo: { note: n1 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+    - uow: unequal
+      write:
+        - mutation: updateUntil
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 1, amount: 150 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          until: "2024-05-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+        - mutation: updateUntil
+          "on": 0
+          entity: parallax.compatibility.SequenceSpan
+          rows:
+            - { id: 1, label: x }
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          until: "2024-05-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+        - mutation: updateUntil
+          "on": 1
+          entity: parallax.compatibility.SequenceSpan
+          rows:
+            - { id: 1, label: "y" }
+          validFrom: "2024-04-01T00:00:00.000000Z"
+          until: "2024-06-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+          expectError: write-evidence-already-claimed
+      note: "the third write overlaps the target's window without stating it"
+    - uow: third
+      write:
+        - mutation: updateUntil
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 2, amount: 120 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          until: "2024-04-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+        - mutation: updateUntil
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 2, amount: 130 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-09-01T00:00:00.000000Z"
+          until: "2024-10-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+        - mutation: updateUntil
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 2, amount: 140 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-03-15T00:00:00.000000Z"
+          until: "2024-05-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+          expectError: write-evidence-already-claimed
+      note: "disjoint from the latest window, unequal against the first"
+    - uow: resurrect
+      objectQuery:
+        target: parallax.compatibility.SequenceSpan
+        predicate: { eq: { attr: parallax.compatibility.SequenceSpan.id, value: 3 } }
+        temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-02-01T00:00:00.000000Z" } }
+      note: "observe span 3 at February"
+      expectRows:
+        - id: 3
+          amount: 100
+          label: c
+          memo: { note: n3 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: "2024-06-01T00:00:00.000000Z"
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+    - uow: resurrect
+      write:
+        - mutation: updateUntil
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 3, amount: 500 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-02-01T00:00:00.000000Z"
+          until: "2024-04-01T00:00:00.000000Z"
+          at: "2024-11-03T00:00:00.000000Z"
+        - mutation: terminateUntil
+          "on": 4
+          entity: parallax.compatibility.SequenceSpan
+          rows:
+            - { id: 3 }
+          validFrom: "2024-02-01T00:00:00.000000Z"
+          until: "2024-04-01T00:00:00.000000Z"
+          at: "2024-11-03T00:00:00.000000Z"
+        - mutation: updateUntil
+          "on": 4
+          entity: parallax.compatibility.SequenceSpan
+          rows:
+            - { id: 3, label: z }
+          validFrom: "2024-02-01T00:00:00.000000Z"
+          until: "2024-04-01T00:00:00.000000Z"
+          at: "2024-11-03T00:00:00.000000Z"
+          expectError: write-evidence-already-claimed
+      note: "P, then D, then O: the assignment would resurrect what the destruction removes"
+    - uow: inserted
+      write:
+        - mutation: insert
+          entity: parallax.compatibility.SequenceSpan
+          rows:
+            - { id: 9, amount: 1, label: "n", memo: { note: new } }
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          at: "2024-11-04T00:00:00.000000Z"
+        - mutation: update
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 9, amount: 2 }
+          ifTxStart: "2024-11-04T00:00:00.000000Z"
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          at: "2024-11-04T00:00:00.000000Z"
+          expectError: write-evidence-inserted
+      note: "no caller's revision describes an object this unit of work inserted"
+then:
+  units:
+    unequal: { outcome: committed }
+    third: { outcome: committed }
+    resurrect: { outcome: committed }
+    inserted: { outcome: committed }
+  tableState:
+    sequence_span:
+      - id: 1
+        amount: 100
+        label: a
+        memo: { note: n1 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-11-01T00:00:00.000000Z"
+      - id: 1
+        amount: 100
+        label: a
+        memo: { note: n1 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-03-01T00:00:00.000000Z"
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 1
+        amount: 150
+        label: x
+        memo: { note: n1 }
+        from_z: "2024-03-01T00:00:00.000000Z"
+        thru_z: "2024-05-01T00:00:00.000000Z"
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 1
+        amount: 100
+        label: a
+        memo: { note: n1 }
+        from_z: "2024-05-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 2
+        amount: 100
+        label: b
+        memo: { note: n2 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-11-02T00:00:00.000000Z"
+      - id: 2
+        amount: 100
+        label: b
+        memo: { note: n2 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-03-01T00:00:00.000000Z"
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+      - id: 2
+        amount: 120
+        label: b
+        memo: { note: n2 }
+        from_z: "2024-03-01T00:00:00.000000Z"
+        thru_z: "2024-04-01T00:00:00.000000Z"
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+      - id: 2
+        amount: 100
+        label: b
+        memo: { note: n2 }
+        from_z: "2024-04-01T00:00:00.000000Z"
+        thru_z: "2024-09-01T00:00:00.000000Z"
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+      - id: 2
+        amount: 130
+        label: b
+        memo: { note: n2 }
+        from_z: "2024-09-01T00:00:00.000000Z"
+        thru_z: "2024-10-01T00:00:00.000000Z"
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+      - id: 2
+        amount: 100
+        label: b
+        memo: { note: n2 }
+        from_z: "2024-10-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+      - id: 3
+        amount: 100
+        label: c
+        memo: { note: n3 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-06-01T00:00:00.000000Z"
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-11-03T00:00:00.000000Z"
+      - id: 3
+        amount: 100
+        label: c
+        memo: { note: n3 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-02-01T00:00:00.000000Z"
+        in_z: "2024-11-03T00:00:00.000000Z"
+        out_z: infinity
+      - id: 3
+        amount: 100
+        label: c
+        memo: { note: n3 }
+        from_z: "2024-04-01T00:00:00.000000Z"
+        thru_z: "2024-06-01T00:00:00.000000Z"
+        in_z: "2024-11-03T00:00:00.000000Z"
+        out_z: infinity
+      - id: 3
+        amount: 200
+        label: c
+        memo: { note: n3 }
+        from_z: "2024-06-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: infinity
+      - id: 4
+        amount: 90
+        label: d
+        memo: { note: n4 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2023-12-15T00:00:00.000000Z"
+      - id: 4
+        amount: 100
+        label: d
+        memo: { note: n4 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: infinity
+      - id: 9
+        amount: 1
+        label: "n"
+        memo: { note: new }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-11-04T00:00:00.000000Z"
+        out_z: infinity

@@ -28,14 +28,15 @@ when:
     - uow: superseded-assignment
       write:
         - mutation: update
+          "on": 0
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "175.00" }
         - mutation: delete
+          "on": 0
           entity: parallax.compatibility.Account
           rows:
             - { id: 1 }
-      on: 0
       roundTrips: 1
       note: the delete supersedes the buffered assignment; ONE gated DELETE is emitted and the UPDATE never reaches the wire
       statements:

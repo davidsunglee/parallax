@@ -158,7 +158,9 @@ A case is one of **eleven shapes**, named by the required top-level `shape`:
   and `m-cascade-delete`).
 - **`scenario`** — a `when.scenario` of ordered read, committed-write, *and*
   lifecycle-**action** steps, golden SQL per step (`m-unit-work` and the
-  object-lifecycle modules — see *Lifecycle action steps*).
+  object-lifecycle modules — see *Lifecycle action steps*), or, under
+  `grading: state`, no golden at all and the complete final `then.tableState`
+  (see *State-graded scenarios*).
 - **`conflict`** — an observation-requiring keyed write (`when.mutation`:
   `update`, the default, or `delete`; a temporal target's milestone close)
   asserted by `then.affectedRows` for a single attempt, or an ordered
@@ -365,6 +367,7 @@ in decimal space under any authored `tolerance`.
 | `tags` | top-level | yes | module/feature tags (e.g. `["m-predicate", "eq"]`); drive coverage + test selection |
 | `lane` | top-level | no | which executor satisfies the case (default `harness`): `harness` — the harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
 | `shape` | top-level | yes | the explicit shape discriminator — one of the eleven shapes above; the schema `oneOf` keys on this `const` |
+| `grading` | top-level | no | scenario only: `state` grades the case on the state it states rather than on golden SQL per step (see *State-graded scenarios*, below); omitted, every step's golden is graded |
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
 | `given.apply` | `given` | no | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after the case's own provisioning and before its lane's first golden statement or step; admitted on `conflict`, `writeSequence`, and `scenario` cases. What the entries stand for is the lane's: a concurrent transaction's stale-version mutation or row removal on a conflict case, and otherwise state no authored member of the model could produce |
 | `given.corrupt` | `given` | no | an ordered list of stored-state corruptions applied after the model's conforming fixtures load and before the action, admitted on `read` cases; each entry addresses one occurrence by `entity` + primary `key` + logical `member` path and states the raw stored `value` that replaces it (see *Corrupting stored state*, below) |
@@ -373,7 +376,7 @@ in decimal space under any authored `tolerance`.
 | `given.databaseOptions` | `given` | no | the transaction option defaults the Database Root every unit of work of the case runs through is CONFIGURED with at connect — the same four fields as `when.uow` (`maxRetries`, `concurrency`, `retryOptimisticConflicts`, `isolation`) under the same definitions; a field the case omits is the root's built-in default (`10` / `optimistic` / `false` / `read-committed`), and no field may be `null`. Configuration, not a request: an outer invocation resolves each option as its explicit `when.uow` value, else this root value, and a joining call compares against the ACTIVE transaction's resolved values, never against this record (see *Root configuration*, below) |
 | `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
-| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectRows` / `expectError` / `sameObjectAs` / `differentObjectFrom`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and a `uow`-grouped write step MAY additionally carry `on`, naming the read step it settles against (see *Settling against a grouped find*, below) |
+| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectRows` / `expectError` / `sameObjectAs` / `differentObjectFrom`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and each submission of a `uow`-grouped write step MAY carry `on`, naming the read step it settles against or the insert whose value it writes through (see *Settling against a grouped find*, below) |
 | `when.coherence` | `when` | coherence | a two-node (A / B) step sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements`, except a `kind: commit` step, which carries none because what it performs is that node's own commit |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming any of the four transaction options — `maxRetries`, `concurrency`, `retryOptimisticConflicts`, `isolation` — THAT joining call explicitly requests) |
@@ -395,7 +398,8 @@ in decimal space under any authored `tolerance`.
 | `then.graph` | `then` | read | the assembled object graph a deep fetch must produce (one of `then.rows` / `then.graph` / `then.graphs` is REQUIRED for a read case) |
 | `then.graphs` | `then` | read | an ORDERED array of per-milestone edge-pinned graphs a `history` / `asOfRange` snapshot read materializes (see *Milestone-set graphs*, below) — each entry `{pin, graph}`; coexists with `then.graph` exactly as `then.rows` does |
 | `then.storedDataIssues` | `then` | read | the stored-data diagnoses a read publishes for the result positions whose stored state contradicted the declared model — one `{ordinal, hydrated, issues}` entry per invalid position, in result order (see *Classified stored data*, below) |
-| `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence (or conflict) case asserts, keyed by table name (REQUIRED for a write case) |
+| `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence, conflict, or scenario case asserts once its writes have run, keyed by table name (REQUIRED for a writeSequence case and a state-graded scenario) |
+| `then.units` | `then` | state-graded scenario | each `uow` group's fate, keyed by its label: `outcome` `committed` or `rolledBack`, and for a group a flush failure ended, its `flushFailure` (see *Unit fates*, below); a golden-graded group stating none commits |
 | `then.affectedRows` | `then` | conflict | the number of rows the golden write must affect (`0` = the zero-row shortfall — a gated conflict, or the ungated stale write only a temporal close can author, `1` = success) |
 | `then.errorClass` | `then` | error | the neutral `m-db-error` category a triggered error must classify to (`uniqueViolation` / `deadlock` / `lockWaitTimeout`) |
 | `then.nativeCode` | `then` | error | the per-dialect native code each driver must surface (Postgres SQLSTATE string, MariaDB vendor errno) |
@@ -1309,16 +1313,19 @@ write step is what makes **read-your-own-writes** and **query-cache
 invalidation** expressible: a dependent find after a committed write must observe
 it (and cannot be modeled as a cache hit, since reusing the stale pre-write rows
 would fail the post-write `expectRows`). A write step defaults to **committing**
-its DML; with **`rollback: true`** the harness applies the DML then **rolls it
+its DML; with **`rollback: true`** an ungrouped step's DML is applied then **rolled
 back** (through the provider's manual-commit session seam) — the observable form
 of the `m-unit-work` **abort contract**: a later find MUST re-resolve and observe
-the ORIGINAL rows, never the aborted write. A write step with **`roundTrips: 0`** and
+the ORIGINAL rows, never the aborted write. A grouped step states no fate of its
+own: its group's is stated once, in `then.units` (*Unit fates*, below). A write step with **`roundTrips: 0`** and
 no golden SQL is a **no-op** write — a versioned `UPDATE` whose `set` changes no
 attribute issues no DML (`m-opt-lock`) — and executes nothing, exactly like a
 cache-hit read step. The rolled-back DML still executes, so it counts its
 statements as round trips exactly as a committed write does. The harness asserts
 per-step round-trip / golden-SQL count consistency, executes each step, and checks
-`sameObjectAs` identity assertions; it never compiles a query to SQL.
+`sameObjectAs` identity assertions; it never compiles a query to SQL. A scenario
+authoring `then.tableState` states the tables its writes leave once every step
+has run, and that state is graded too.
 
 A scenario case MAY carry an out-of-band **`given.apply`**, applied after the
 model's fixtures load and **before the first step** — the same position the
@@ -1348,11 +1355,11 @@ Steps execute in **authored order**; a group's own steps need **not** be
 contiguous — two groups MAY interleave, which is how a scenario represents the
 classic optimistic-lock race as two competing units of work: one group's
 observing find, then a second (concurrent) group's own observe-and-commit,
-then back to the first group's doomed write. A group **commits** after its
-LAST step, **unless** one of its write steps declares `rollback: true` — then
-the WHOLE GROUP rolls back after its last step instead, exactly the
-`m-unit-work` **abort contract** applied to the group rather than one step.
-This is what lets a step later in the SAME doomed group (a find re-issued to
+then back to the first group's conflicting write. A group **commits** after its
+LAST step, **unless** `then.units` states it `rolledBack` — then the WHOLE GROUP
+rolls back after its last step instead, exactly the `m-unit-work` **abort
+contract** applied to the group rather than one step (*Unit fates*, below). This
+is what lets a step later in the SAME rolled-back group (a find re-issued to
 force-flush a pending write) observe the mid-transaction state the eventual
 abort then erases, before any find outside the group re-resolves the restored,
 pre-transaction rows. A **read step inside a group** reads THROUGH the group's
@@ -1362,12 +1369,21 @@ state a later, ungrouped find would see.
 
 #### Settling against a grouped find
 
-A `uow`-grouped write step MAY carry **`on: <index>`**, naming the earlier find
-step of its OWN group whose result it settles against. The reference spells one
-thing the write row cannot: which of the group's reads handed over the value being
-written. It reuses the action step's own `on` spelling, and takes only the single
-index form — a keyed write settles against the one observed state its value came
-from, so a set of sources would name none.
+Each keyed submission of a `uow`-grouped write step MAY carry **`on: <index>`**,
+naming the earlier find step of its OWN group whose result it settles against. The
+reference spells one thing the write row cannot: which of the group's reads handed
+over the value being written. It reuses the action step's own `on` spelling, and
+takes only the single index form — a keyed write settles against the one observed
+state its value came from, so a set of sources would name none. A write step
+carries no `on` of its own: the value a write is handed belongs to each
+submission.
+
+A submission's `on` MAY instead be the pointer `/scenario/<n>/write/<k>` of an
+earlier insert submission of its own group, naming the value that insert answered,
+which the write revises through the insertion's authority (`m-unit-work`
+*Insertion authority*). It names a submission the verb accepted: a refused insert
+answered no value. With no `on`, a write takes the value its group's own insert of
+the object answered, else the group's latest reading of it.
 
 Everywhere else, a keyed write's observed row comes from **case state**: a
 writeSequence entry and a conflict close alike consume the state the case's own
@@ -1392,12 +1408,11 @@ an observation derived from case state. Two obligations follow:
   keying by identity alone holds one slot, and a write naming the earlier find
   then settles against the later find's row.
 
-The reference is legal only where every part of it is meaningful: on a step that
-declares `uow` (evidence is transaction-scoped, and an ungrouped write shares a
-unit of work with no find), whose `write` is the **buffered keyed** form (a legacy
-string label carries no instruction and a predicate-selected write consumes no
-single observation, so neither has anything an observation could reach), naming an
-EARLIER step of the SAME group that is a find.
+The reference is legal only where every part of it is meaningful: on an observed
+keyed submission (an insert opens its row, and a caller-addressed or predicate
+submission names its own) of a step that declares `uow` (evidence is
+transaction-scoped, and an ungrouped write shares a unit of work with no find),
+naming an EARLIER step of the SAME group that is a find.
 
 Every profile a keyed write settles against is nameable, because on every one of
 them a unit of work may hold more than one piece of evidence about a key. A
@@ -1572,17 +1587,20 @@ and must agree with its golden rows as the third oracle.
 
 ##### Buffered keyed write instructions (the ordered flush buffer)
 
-A scenario write step MAY carry an **ordered keyed buffer** in place of a single
-instruction: `/scenario/<n>/write` is then a list of **one or more keyed**
-instructions a single unit of work accumulates and **flushes together**
-(`m-unit-work` buffered, batched, ordered writes). Each entry is a **keyed**
-instruction (`mutation` + `entity` + `rows`, the case-format analogue of
-`write-instruction.schema.json`'s `keyedWriteInstruction`), **referencing** the
-canonical write-instruction `$defs` rather than redefining them and layering only
-the `at` / `validFrom` / `until` authoring surface. A **predicate**-selected
-instruction is **not** admitted — the buffer is **keyed-only**, and
-predicate-in-buffer stays **deferred** to the string-label→structured write
-migration. The step's golden SQL (`statements`) is the **independent expected
+A scenario write step MAY carry an **ordered buffer** in place of a single
+instruction: `/scenario/<n>/write` is then a list of **one or more submissions**
+a single unit of work accumulates and **flushes together** (`m-unit-work`
+buffered, batched, ordered writes), each addressed by its own pointer
+`/scenario/<n>/write/<k>`. Each entry **references** the canonical
+write-instruction `$defs` rather than redefining them, layering only the `at` /
+`validFrom` / `until` authoring surface and the entry's own `on` and
+`expectError`. In a golden-graded case every entry is a **keyed** instruction
+(`mutation` + `entity` + `rows`, the case-format analogue of
+`write-instruction.schema.json`'s `keyedWriteInstruction`) its verb accepts. A
+state-graded case's buffer MAY also carry a **caller-addressed** submission
+(`row` with `ifVersion` or `ifTxStart`, the `targetWriteInstruction`) and a
+readless **predicate** write, which is an ordering barrier inside the buffer
+(*State-graded scenarios*, below). The step's golden SQL (`statements`) is the **independent expected
 lowering of that flush**, never the source an adapter deduces the writes from, so
 the step encodes **every** requested mutation explicitly and an adapter exercises
 the flush from the instructions themselves. Valid-Time bounds are `validFrom` and
@@ -1661,6 +1679,82 @@ golden statement and costs no round trip — and a runner that opens no boundary
 all carries it nowhere. A case names the portable level only; which statements or
 session variables an engine needs to forbid that level's anomalies is the
 adapter's, and the harness provider's, own work.
+
+#### State-graded scenarios (`grading: state`)
+
+Golden SQL per step is not defined for a unit of work that composes several
+submissions into one flush: which statements a flush issues, and in what order, is
+the implementation's, as long as the effects are the ones `m-unit-work` specifies.
+A scenario declaring top-level **`grading: state`** is therefore graded on the state
+it states. Such a case states its inputs — its steps and their submissions — the
+refusal each submission's verb raises, each group's fate (*Unit fates*, below), and
+the **complete** final `then.tableState`: every row, current and history, of every
+table a submission writes. No step lists `statements` or `referenceSql`, a read
+step MAY state `expectRows`, and `then` states no `executionLifecycle`, whose
+events name golden statements. Round trips MAY be stated and are not graded. The
+case is `compileEligibility: run-only`, since no golden exists for a compile lane to
+compare against.
+
+Every write step of a state-graded case belongs to a `uow` group, and every
+group's fate is stated. A submission declaring **`expectError`** is one its verb
+refuses at the call, before anything is buffered; the entry stands for a caller
+that catches the refusal and continues in the same unit of work, which keeps
+every earlier submission. A refusal the caller did not catch would end the
+callback and roll the unit of work back, and a flush failure dooms the unit of
+work whether caught or not (`m-unit-work` *Abort*). The refusals a submission may
+declare are the closed vocabulary `m-unit-work` owns:
+
+- `write-evidence-already-claimed` — the write cannot join the pending writes of
+  its object (`m-unit-work` *Observed-State Coalescing*);
+- `write-evidence-inserted` — a caller-addressed write of an object its unit of
+  work admitted an insertion of (`m-unit-work` *Caller-addressed writes*).
+
+The harness grades that a state-graded case is **consistent**, not that SQL
+produces it: it provisions, reads back the rows the case starts from, and proves
+the stated rows against them. A table no committed predicate submission writes
+keeps every row of a key no committed submission names exactly as it started.
+Every row of a temporal table is a starting row, unchanged or closed at a
+committed group's Transaction Instant, or a row such a group opened, current or
+closed by a later one, and every starting row survives so. No two current rows of
+one key overlap in Valid Time. An already-claimed refusal meets an earlier write of
+its object still pending in its group — no find of the group runs between them —
+and an inserted-object refusal is a caller-addressed write of an object its group
+inserted earlier. A rolled-back group's instant stands on no row, and what only it
+names stands as it started. A flush failure names an object its group writes,
+through a submission its Shortfall can arise from. The document's own rules are
+refused before any database: a submission's `on` resolves as *Settling against a
+grouped find* states, every `then.units` label names a group, a flush failure is
+reported where the group last flushes, and one group's submissions state one
+Transaction Instant. For a committed group the independent evidence that the
+stated rows are right is each language runner's real-database run against them.
+
+An adapter runs a state-graded case through its public verbs alone and reports
+what the run left (`m-conformance-adapter` *Unit fates*): each group's fate, each
+refusal at its submission's pointer, each find's published rows, and the tables read
+back. It reports no emissions: nothing grades which statements a flush chose.
+
+#### Unit fates (`then.units`)
+
+**`then.units`** states each `uow` group's fate as one unit of work, keyed by its
+label. **`outcome`** is `committed` — the group commits after its last step, the
+fate a golden-graded group stating none takes — or `rolledBack`: the group rolls
+back after its last step instead. A rolled-back group stating no flush failure is
+one its callback abandons once its last step has run. A group stating a
+**`flushFailure`** is one a flush ended: `at` is where that flush ran — the
+group's last step, where that is a find with writes pending before it, or
+`commit`, where the group's last step leaves writes pending — and `entity`, `key`,
+and `shortfall` are the object the failure reports and its Shortfall
+(`missingTarget` / `staleWrite` / `optimisticConflict` / `failedPrecondition`,
+`m-unit-work` *Affected Rows Policy*), matching the error's own payload rather
+than a statement index. A failed flush ends the unit of work, so the group rolls
+back and nothing it did stands.
+
+A golden-graded group's flush failure is graded on the golden its steps executed:
+exactly one statement addressing the object it names affected no row, gated where
+the Shortfall is a gate's — an optimistic conflict, or a failed precondition,
+under `concurrency: optimistic` — and ungated otherwise, so a rollback that merely
+discarded writes that all succeeded fails the case rather than passing on the
+rollback.
 
 #### Root configuration
 
@@ -1894,7 +1988,9 @@ verifies them (`m-conformance-adapter`, `m-api-conformance`):
 - **`expectError`** — a neutral **application-lifecycle** error the step's verb
   raises. It is a closed vocabulary, defined normatively where each error is
   defined and **distinct from the `m-db-error` DB-error taxonomy** (which pairs
-  `errorClass` with a `nativeCode` an application error has no analogue for):
+  `errorClass` with a `nativeCode` an application error has no analogue for); a
+  state-graded buffer's submission carries its own, from the refusals listed under
+  *State-graded scenarios*:
   - `transaction-time-pin-read-only` — a mutation through a finite
     Transaction-Time pinned view, which records what the system knew and is never rewritten
     (`m-identity-map`).

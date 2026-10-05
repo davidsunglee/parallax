@@ -1,0 +1,81 @@
+# Logical rows shared by both buffered-sequence descriptors. Each row authors declared
+# member names rather than physical cells, so one file describes one logical state
+# under either layout.
+#
+# Every span starts current at Valid Time 2024-01-01 through infinity unless noted, so
+# a case's windows fall inside one stored rectangle or across two:
+#
+#   span 1  one rectangle  amount 100  known from T0 = 2023-12-01
+#   span 2  one rectangle  amount 100  known from T0
+#   span 3  two rectangles [2024-01-01, 2024-06-01) amount 100 known from T0, and
+#           [2024-06-01, infinity) amount 200 known from T1 = 2023-12-15 — two
+#           originals with two different starts
+#   span 4  one current rectangle amount 100 known from T1, beside the belief
+#           amount 90 it superseded at T1 — a caller stating T0 states a revision
+#           that no longer holds
+#
+# Account 1 is a versioned row at version 1. Tags 1 and 2 are unversioned rows a
+# readless predicate write selects by quantity.
+parallax.compatibility.SequenceSpan:
+  - id: 1
+    amount: 100
+    label: a
+    memo: { note: n1 }
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: infinity
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 2
+    amount: 100
+    label: b
+    memo: { note: n2 }
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: infinity
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 3
+    amount: 100
+    label: c
+    memo: { note: n3 }
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: "2024-06-01T00:00:00.000000Z"
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 3
+    amount: 200
+    label: c
+    memo: { note: n3 }
+    validStart: "2024-06-01T00:00:00.000000Z"
+    validEnd: infinity
+    txStart: "2023-12-15T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 4
+    amount: 90
+    label: d
+    memo: { note: n4 }
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: infinity
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: "2023-12-15T00:00:00.000000Z"
+  - id: 4
+    amount: 100
+    label: d
+    memo: { note: n4 }
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: infinity
+    txStart: "2023-12-15T00:00:00.000000Z"
+    txEnd: infinity
+
+parallax.compatibility.SequenceAccount:
+  - id: 1
+    balance: 10
+    memo: { note: m1 }
+    version: 1
+
+parallax.compatibility.SequenceTag:
+  - id: 1
+    quantity: 5
+    label: t
+  - id: 2
+    quantity: 9
+    label: u

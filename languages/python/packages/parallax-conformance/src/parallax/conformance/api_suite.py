@@ -1417,6 +1417,14 @@ _TARGET_REPLACEMENT_TWIN_REASON: Final[str] = (
     "occurrence is written as under each Storage Layout, which no caller spells"
 )
 
+_BUFFERED_SEQUENCE_REASON: Final[str] = (
+    "a state-graded buffered sequence, run per layout arm through the public verbs by "
+    "the run conformance lane and checked for consistency by the reference harness; "
+    "its developer spellings are the real-database public witnesses of the target, "
+    "disjoint, barrier and dependent-read suites, so a story here would add no "
+    "developer surface"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-relationship-005": _RELATIONSHIP_FORMATION_REASON,
     "m-relationship-006": _RELATIONSHIP_FORMATION_REASON,
@@ -1456,6 +1464,26 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-042": _RESTORED_MEMBER_WITNESS_REASON,
     "m-unit-work-043": _TARGET_REPLACEMENT_TWIN_REASON,
     "m-unit-work-044": _TARGET_REPLACEMENT_TWIN_REASON,
+    # -- buffered sequences, state-graded ------------------------------------ #
+    **dict.fromkeys(
+        (
+            "m-unit-work-045",
+            "m-unit-work-046",
+            "m-unit-work-047",
+            "m-unit-work-048",
+            "m-unit-work-049",
+            "m-unit-work-050",
+            "m-bitemp-write-028",
+            "m-bitemp-write-029",
+            "m-bitemp-write-030",
+            "m-bitemp-write-031",
+            "m-bitemp-write-032",
+            "m-bitemp-write-033",
+            "m-opt-lock-030",
+            "m-opt-lock-031",
+        ),
+        _BUFFERED_SEQUENCE_REASON,
+    ),
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     "m-opt-lock-005": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
     "m-opt-lock-006": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,

@@ -361,8 +361,13 @@ def _scenario_goldens(
     if _CASES[case_id].shape == "writeSequence":
         return _driver_goldens(cast("list[dict[str, Any]]", doc["then"]["statements"]))
     out: list[tuple[str, list[object]]] = []
+    units = cast("dict[str, dict[str, Any]]", doc.get("then", {}).get("units", {}))
+    abandoned = {label for label, fate in units.items() if fate["outcome"] == "rolledBack"}
     for step in cast("list[dict[str, Any]]", doc["when"]["scenario"]):
-        if skip_rollback and step.get("rollback") is True:
+        rolls_back = step.get("rollback") is True or (
+            "write" in step and step.get("uow") in abandoned
+        )
+        if skip_rollback and rolls_back:
             continue
         out.extend(_driver_goldens(cast("list[dict[str, Any]]", step["statements"])))
     return out

@@ -28,14 +28,15 @@ when:
     - uow: merged-assignments
       write:
         - mutation: update
+          "on": 0
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "125.00" }
         - mutation: update
+          "on": 0
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, owner: Grace, balance: "175.00" }
-      on: 0
       roundTrips: 1
       note: two assignment-bearing writes of one observed state merge into ONE gated UPDATE; the later 175.00 wins over 125.00
       statements:

@@ -16,6 +16,7 @@ __all__ = [
     "eligibility",
     "has_action_step",
     "scenario_steps",
+    "unit_fate",
     "when",
     "write_sequence_entries",
 ]
@@ -54,6 +55,16 @@ def scenario_steps(case: case_format.Case) -> list[Mapping[str, object]]:
     if not isinstance(steps, list):
         raise EngineError(f"{case.path.name}: scenario case has no `when.scenario` list")
     return [cast("Mapping[str, object]", step) for step in cast("list[object]", steps)]
+
+
+def unit_fate(case: case_format.Case, label: str) -> Mapping[str, object]:
+    """The fate ``then.units`` states for `uow` group ``label`` — empty where it
+    states none, which a golden-graded group's commit is (`m-case-format` *Unit
+    fates*)."""
+    then = case.document.get("then")
+    units = cast("Mapping[str, object]", then).get("units") if isinstance(then, Mapping) else None
+    fate = cast("Mapping[str, object]", units).get(label) if isinstance(units, Mapping) else None
+    return cast("Mapping[str, object]", fate) if isinstance(fate, Mapping) else {}
 
 
 def write_sequence_entries(case: case_format.Case) -> list[Mapping[str, object]]:

@@ -279,6 +279,10 @@ def _scenario_observations(run: engine.ScenarioRun) -> dict[str, Any]:
         observations["stepRows"] = run.step_rows
     if run.step_graphs:
         observations["stepGraphs"] = run.step_graphs
+    if run.units:
+        observations["units"] = run.units
+    if run.table_state is not None:
+        observations["tableState"] = run.table_state
     return observations
 
 

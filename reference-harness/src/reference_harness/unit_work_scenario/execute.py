@@ -18,10 +18,13 @@ applies through the session (never committed per-step) and a grouped find reads
 THROUGH the session (read-your-own-writes, mid-transaction). Two groups MAY
 interleave (non-contiguous in authored order): each group's own session, once
 opened, stays open across the OTHER group's steps in between, closing only at ITS
-OWN last step. An UNGROUPED step keeps exactly a single-step boundary — a
-committed write applies on the provider's autocommit connection, a rolled-back
-write opens its OWN single-step session, and a find reads on the autocommit
-connection.
+OWN last step, as its fate states (:mod:`.settlement`). An UNGROUPED step keeps
+exactly a single-step boundary — a committed write applies on the provider's
+autocommit connection, a rolled-back write opens its OWN single-step session, and
+a find reads on the autocommit connection.
+
+Once every step has run, the tables ``then.tableState`` states are read back and
+graded against it.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from typing import Any
 
 from .._case_execution import CaseExecution
 from ..providers import DatabaseProvider
+from ..table_state import assert_table_state
 from .compile import (
     CompiledScenario,
     _BoundaryAction,
@@ -39,9 +43,9 @@ from .compile import (
     _UngroupedWrite,
     _UnresolvedList,
 )
-from .groups import UowGroupState, assert_conflict_abort, finish_group, group_states
 from .observations import ScenarioRowObservations
 from .report import reported_against
+from .settlement import GroupSession, finish_group, group_sessions
 
 __all__ = ["execute_scenario"]
 
@@ -51,7 +55,7 @@ def execute_scenario(scenario: CompiledScenario, db: DatabaseProvider) -> None:
     case = scenario.case
     execution = CaseExecution(case, db)
     dialect = execution.dialect
-    states = group_states(scenario)
+    states = group_sessions(scenario)
     row_observations = ScenarioRowObservations(case)
 
     # One stack for the whole Scenario, so every session opened during it is
@@ -82,22 +86,23 @@ def execute_scenario(scenario: CompiledScenario, db: DatabaseProvider) -> None:
                     case _UnresolvedList():
                         pass
                 finish_group(case, step.index, step.group, states, dialect)
+    assert_table_state(case, db, after="the scenario")
 
 
 def _apply_grouped_write(
     step: _GroupedWrite,
-    state: UowGroupState,
+    state: GroupSession,
     session: CaseExecution,
     dialect: str,
 ) -> None:
     """Apply a grouped write on the group's own held session.
 
     The GROUP commits or rolls back as ONE unit at its last step
-    (:func:`.groups.finish_group`), never this step alone, so what the step
+    (:func:`.settlement.finish_group`), never this step alone, so what the step
     contributes is the executed statements the group's fate is graded on.
     """
     for statement, binds in step.statements.pairs(dialect):
-        state.executed.append((statement, session.execute(statement, binds)))
+        state.executed.append((statement, binds, session.execute(statement, binds)))
 
 
 def _apply_ungrouped_write(
@@ -121,13 +126,8 @@ def _apply_ungrouped_write(
             execution.execute(statement, binds)
         return
     with execution.open_session(scenario.case.isolation) as session:
-        executed: list[tuple[str, int]] = []
         for statement, binds in pairs:
-            executed.append((statement, session.execute(statement, binds)))
-        # The SAME conflict-abort reasoning a doomed group is closed under
-        # (:func:`.groups.finish_group`) — the ungrouped, single-step form.
-        if scenario.case.expected_affected_rows is not None:
-            assert_conflict_abort(scenario.case, executed, dialect)
+            session.execute(statement, binds)
         session.rollback()
 
 

@@ -271,6 +271,63 @@
   ],
   "allOf": [
     {
+      "description": "A state-graded case is a scenario carrying no golden SQL anywhere (m-case-format *State-graded scenarios*): no step lists `statements` or `referenceSql`, and `then` states no `executionLifecycle`, whose events index golden statements. It states the complete final `then.tableState` and every group's fate in `then.units`, and is run-only, since no golden exists for a compile lane to compare against.",
+      "if": { "required": ["grading"] },
+      "then": {
+        "required": ["compileEligibility", "then"],
+        "properties": {
+          "shape": { "const": "scenario" },
+          "when": {
+            "properties": {
+              "scenario": {
+                "items": {
+                  "allOf": [
+                    { "not": { "required": ["statements"] } },
+                    { "not": { "required": ["referenceSql"] } }
+                  ]
+                }
+              }
+            }
+          },
+          "then": {
+            "required": ["tableState", "units"],
+            "not": { "required": ["executionLifecycle"] }
+          }
+        }
+      },
+      "else": {
+        "description": "A golden-graded scenario's every step declares the round trips its golden SQL is graded against, and its buffered entries are keyed instructions whose verbs accept them: its golden SQL is the independent lowering of that keyed buffer. A state-graded step MAY omit `roundTrips`, which nothing grades.",
+        "properties": {
+          "when": {
+            "properties": {
+              "scenario": {
+                "items": {
+                  "required": ["roundTrips"],
+                  "properties": {
+                    "write": {
+                      "if": { "type": "array" },
+                      "then": {
+                        "items": {
+                          "required": ["rows"],
+                          "not": { "required": ["expectError"] }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "`then.units` states group fates, which only a scenario has; a scenario states a flush failure there rather than as `then.affectedRows`.",
+      "if": { "required": ["shape"], "properties": { "shape": { "const": "scenario" } } },
+      "then": { "properties": { "then": { "not": { "required": ["affectedRows"] } } } },
+      "else": { "properties": { "then": { "not": { "required": ["units"] } } } }
+    },
+    {
       "description": "Execution-authority selectors belong to boundary cases alone. An outer selector is optional because the eventual runner explicitly selects database-login authority when it is absent; an authored selector states authority-sensitive behavior and must not be silently ignored by another case lane.",
       "if": {
         "required": ["when"],
@@ -590,6 +647,10 @@
         }
       }
     },
+    "grading": {
+      "description": "scenario cases only. How the case is graded (m-case-format *State-graded scenarios*). Omitted, every step's golden SQL is graded. `state` — no step carries golden SQL: the case states its inputs, each submission its verb refuses (`expectError`), each `uow` group's fate (`then.units`), and the complete final `then.tableState`, and an adapter is graded on those observations. Round trips may be stated but are not graded.",
+      "const": "state"
+    },
     "given": {
       "description": "Ambient world-state established BEFORE the action under test: the model fixtures to load, out-of-band SQL to apply verbatim, the stored state to corrupt once they are loaded, the Isolation Level the connection already defaults to, any injected fault, and the transaction option defaults the Database Root the case runs through is configured with. Optional — a case that starts from the model's default fixtures, injects nothing, and configures no root omits `given` entirely.",
       "type": "object",
@@ -872,15 +933,15 @@
             "oneOf": [
               {
                 "description": "A read step: issues one Object Query. A cache miss costs >= 1 round trip and lists golden SQL; a cache hit costs 0 and lists none. It names its queried entity inside its own `objectQuery.target`, exactly as a read case does.",
-                "required": ["objectQuery", "roundTrips"]
+                "required": ["objectQuery"]
               },
               {
-                "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` the DML is applied and then ROLLED BACK — UNGROUPED, that step's own unit of work; grouped (`uow`), the whole group's (see the sibling `uow` property). A no-op write issues NO DML: it declares `roundTrips: 0` and lists no `statements`. A GROUPED write MAY name the read step whose result it settles against with `on` (m-case-format *Settling against a grouped find*): the write then consumes the observation that read recorded, rather than one resolved from case state.",
-                "required": ["write", "roundTrips"]
+                "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` an UNGROUPED step's DML is applied and then ROLLED BACK; a grouped step's fate is its group's (`then.units`). A no-op write issues NO DML: it declares `roundTrips: 0` and lists no `statements`. A grouped write's submission MAY name the read step whose result it settles against with `on` (m-case-format *Settling against a grouped find*): the write then consumes the observation that read recorded, rather than one resolved from case state.",
+                "required": ["write"]
               },
               {
                 "description": "An ACTION step (m-case-format lifecycle vocabulary): performs a managed-object lifecycle verb named by `action` against the result of an earlier step (`on`). It carries per-step golden SQL (`statements`) when the verb hits the database (a `load` / `access` relationship query, or `flush` / `commit` DML) exactly as a read / write step does, and per-step observables: `expectRows` (rows a `load` returns or re-read observes, or the derived Wire value a `mutate` publishes), `expectError` (a neutral application-lifecycle error the verb raises), and `sameObjectAs` / `differentObjectFrom` reference-identity assertions. A `load` / first `access` resolving read is INSTANCE-FORM (m-case-format *Read result form*, m-sql *Read projection*): it materializes the loaded / accessed related objects, so a value-object-bearing target projects its applicable Storage Layout `Document` slot, exactly as a deep-fetch child level does. A cache-hit re-access lists no golden SQL and declares `roundTrips: 0`, exactly like a cache-hit read step. A `mutate` declaring `expectRows` publishes its in-memory derived mapping without a re-read or SQL. Golden SQL still lives PER STEP, so a scenario case with action steps carries no top-level `then.statements`.",
-                "required": ["action", "roundTrips"]
+                "required": ["action"]
               }
             ],
             "allOf": [
@@ -983,13 +1044,25 @@
                 "then": { "not": { "required": ["uow"] } }
               },
               {
-                "description": "A WRITE step's `on` names the read step whose result the write settles against (m-case-format *Settling against a grouped find*). The evidence a write consumes is transaction-scoped, so the reference is legal only on a step that declares `uow` — an ungrouped write shares no unit of work with any find and has nothing to settle against. It names ONE find, never an array: a keyed write settles against the one observed state the value it was handed came from, and a set of sources would name no single one. Every target profile is nameable \u2014 a milestone chain holds several rows per key, and a versioned Non-Temporal key holds one observed generation per read of it \u2014 and a write naming no find takes the group's latest reading of its key. It is legal only on the BUFFERED KEYED form (`write` as an array): a legacy string label carries no instruction for an observation to reach, and a predicate-selected write selects its own rows by predicate rather than consuming one milestone a find handed over — an `on` on either would name evidence nothing consumes.",
-                "if": {
-                  "allOf": [{ "required": ["write"] }, { "required": ["on"] }]
-                },
+                "description": "A WRITE step names no `on` of its own: the value a write is handed is a property of each submission, so each buffered entry names its own (`$defs/submissionSource`).",
+                "if": { "required": ["write"] },
+                "then": { "not": { "required": ["on"] } }
+              },
+              {
+                "description": "`rollback` is an UNGROUPED write step's own fate. A `uow` group's fate is the group's, stated once in `then.units`.",
+                "if": { "required": ["uow"] },
+                "then": { "not": { "required": ["rollback"] } }
+              },
+              {
+                "description": "A submission's `on` names evidence a read of its own unit of work recorded, or a value its insert answered, so it is legal only in a step that declares `uow`: an ungrouped write shares no unit of work with any find.",
+                "if": { "not": { "required": ["uow"] } },
                 "then": {
-                  "required": ["uow"],
-                  "properties": { "on": { "type": "integer" }, "write": { "type": "array" } }
+                  "properties": {
+                    "write": {
+                      "if": { "type": "array" },
+                      "then": { "items": { "not": { "required": ["on"] } } }
+                    }
+                  }
                 }
               }
             ],
@@ -1009,7 +1082,7 @@
                 "$ref": "#/$defs/streamContext"
               },
               "write": {
-                "description": "Marks a WRITE step, in one of three forms (disjoint by JSON type). A legacy string LABEL (a coarse verb hint whose intent lives only in the golden SQL — a deferred migration, still carried by `m-identity-map-006/007/008/011` and `m-process-cache-003`). A single predicate-selected `$defs/predicateWrite` instruction. Or a `$defs/bufferedWriteSequence` — the ORDERED buffer of one-or-more KEYED write instructions a single unit of work accumulates and flushes together (m-unit-work), so the step encodes every buffered mutation explicitly rather than in prose. The buffered form is a GENERAL ordered keyed buffer: it spans a single keyed write, a mixed multi-object flush (insert / update / delete of DIFFERENT objects), and the two-keyed same-object coalescing pair alike — same-object folding at flush is the runtime coalescing rule, not a structural constraint. Predicate-selected instructions inside a buffer stay deferred (keyed-only). Every structured form is the neutral requested operation the compile/run and API no-drift checks consume INDEPENDENTLY of golden SQL; golden SQL (`statements`) remains the independent expected lowering of the flush — for coalescing, one final-value write or NO DML — never the source an adapter deduces the writes from.",
+                "description": "Marks a WRITE step, in one of three forms (disjoint by JSON type). A legacy string LABEL (a coarse verb hint whose intent lives only in the golden SQL — a deferred migration, still carried by `m-identity-map-006/007/008/011` and `m-process-cache-003`). A single predicate-selected `$defs/predicateWrite` instruction. Or a `$defs/bufferedWriteSequence` — the ORDERED buffer of one-or-more KEYED write instructions a single unit of work accumulates and flushes together (m-unit-work), so the step encodes every buffered mutation explicitly rather than in prose. The buffered form is a GENERAL ordered keyed buffer: it spans a single keyed write, a mixed multi-object flush (insert / update / delete of DIFFERENT objects), and the two-keyed same-object coalescing pair alike — same-object folding at flush is the runtime coalescing rule, not a structural constraint. Under `grading: state` a buffer MAY also carry caller-addressed submissions and readless predicate writes (`$defs/submission`). Every structured form is the neutral requested operation the compile/run and API no-drift checks consume INDEPENDENTLY of golden SQL; golden SQL (`statements`) remains the independent expected lowering of the flush — for coalescing, one final-value write or NO DML — never the source an adapter deduces the writes from.",
                 "oneOf": [
                   { "type": "string", "minLength": 1 },
                   { "$ref": "#/$defs/predicateWrite" },
@@ -1017,11 +1090,11 @@
                 ]
               },
               "rollback": {
-                "description": "Optional (write steps only). When true, the step's golden DML is applied and then ROLLED BACK instead of committed — the observable form of the m-unit-work abort contract. UNGROUPED, this step's own unit of work rolls back right after it. Grouped (the sibling `uow` key), this declares the WHOLE group doomed: every step sharing the label stays inside the SAME held transaction, which rolls back after the group's LAST step (not necessarily this one) — so a later step in the same group (e.g. a find re-issued to force-flush a pending write) still observes the mid-transaction state before the abort erases it. The rolled-back DML still executes, so the step's roundTrips count its statements exactly as a committed write does.",
+                "description": "Optional (write steps only). When true, the step's golden DML is applied and then ROLLED BACK instead of committed — the observable form of the m-unit-work abort contract. It is the fate of an UNGROUPED step's own unit of work, which rolls back right after it; a grouped step states none, its group's fate being `then.units`'s. The rolled-back DML still executes, so the step's roundTrips count its statements exactly as a committed write does.",
                 "type": "boolean"
               },
               "uow": {
-                "description": "Optional per-step unit-of-work GROUPING label (m-unit-work; sibling of `objectQuery`/`write`/`roundTrips`, legal on a read or write step ONLY — the sibling `allOf` conditional forbids it on an action step, whose lifecycle-object engine path does not observe grouping). Steps sharing the SAME label execute inside ONE held transaction (one unit of work, one connection) instead of each step's own default boundary; steps carrying NO `uow` key keep today's semantics exactly (an ungrouped write step is its own commit/rollback boundary; an ungrouped find runs on the autocommit connection) — grouping is opt-in and changes the meaning of no existing (unlabeled) case. Steps execute in AUTHORED order; a group's own steps need NOT be contiguous — two groups MAY interleave (the classic optimistic-lock race: one unit of work's observing find, then a concurrent unit of work's observe-and-commit, then back to the first unit of work's own doomed write). The group COMMITS after its LAST step, UNLESS one of its write steps declares `rollback: true`, in which case the group ROLLS BACK after its last step instead — the whole group is the doomed unit of work, which is what lets a step later in the SAME group (e.g. a re-issued find) observe a force-flushed write the eventual abort then erases (`core/spec/m-unit-work.md` \"Abort\"). A read (`objectQuery`) step inside a group reads THROUGH the group's own transaction (read-your-own-writes): its `expectRows` are what THAT connection observes mid-transaction, not the post-commit / post-rollback state.",
+                "description": "Optional per-step unit-of-work GROUPING label (m-unit-work; sibling of `objectQuery`/`write`/`roundTrips`, legal on a read or write step ONLY — the sibling `allOf` conditional forbids it on an action step, whose lifecycle-object engine path does not observe grouping). Steps sharing the SAME label execute inside ONE held transaction (one unit of work, one connection) instead of each step's own default boundary; steps carrying NO `uow` key keep today's semantics exactly (an ungrouped write step is its own commit/rollback boundary; an ungrouped find runs on the autocommit connection) — grouping is opt-in and changes the meaning of no existing (unlabeled) case. Steps execute in AUTHORED order; a group's own steps need NOT be contiguous — two groups MAY interleave (the classic optimistic-lock race: one unit of work's observing find, then a concurrent unit of work's observe-and-commit, then back to the first unit of work's own doomed write). The group COMMITS after its LAST step, UNLESS `then.units` states it `rolledBack`, in which case the group ROLLS BACK after its last step instead — the whole group is the abandoned unit of work, which is what lets a step later in the SAME group (e.g. a re-issued find) observe a force-flushed write the eventual abort then erases (`core/spec/m-unit-work.md` \"Abort\"). A read (`objectQuery`) step inside a group reads THROUGH the group's own transaction (read-your-own-writes): its `expectRows` are what THAT connection observes mid-transaction, not the post-commit / post-rollback state.",
                 "type": "string",
                 "minLength": 1
               },
@@ -1067,7 +1140,7 @@
                 "enum": ["mutate", "load", "access", "flush", "commit", "abort", "insert", "update"]
               },
               "on": {
-                "description": "The earlier scenario step(s) whose result this step operates on. A single zero-based index, or an array of indices when an ACTION spans sources at DIFFERENT lowered coordinates (a coordinate-grouped `load`, m-deep-fetch / m-identity-map). Every index MUST name an EARLIER step (the harness asserts `0 <= index < the current step's index`); the array form's indices MUST be UNIQUE (`uniqueItems`) — a source is referenced at most once. On an ACTION step it names the source object(s) the verb acts on: REQUIRED for object-targeting verbs and optional for boundary verbs (see the sibling `allOf`). On a GROUPED WRITE step it instead names the SOURCE FIND — the read whose result the write settles against, so the write consumes the observation that find recorded rather than one resolved from case state (m-case-format *Settling against a grouped find*); there the single-index form is the only legal one and the step MUST declare `uow`.",
+                "description": "The earlier scenario step(s) whose result this step operates on. A single zero-based index, or an array of indices when an ACTION spans sources at DIFFERENT lowered coordinates (a coordinate-grouped `load`, m-deep-fetch / m-identity-map). Every index MUST name an EARLIER step (the harness asserts `0 <= index < the current step's index`); the array form's indices MUST be UNIQUE (`uniqueItems`) — a source is referenced at most once. On an ACTION step it names the source object(s) the verb acts on: REQUIRED for object-targeting verbs and optional for boundary verbs (see the sibling `allOf`). A write step carries none: each of its buffered submissions names its own source (`$defs/submissionSource`).",
                 "oneOf": [
                   { "type": "integer", "minimum": 0 },
                   {
@@ -1532,13 +1605,19 @@
           }
         },
         "tableState": {
-          "description": "The resulting table state a writeSequence or conflict case asserts after applying its ordered DML golden SQL. Keyed by table name; each value is the full set of rows that table must contain (order-insensitive). Row values speak DB column names; timestamp columns are authored as ISO-8601 UTC strings at core microsecond precision, with the open-bound `infinity` as the literal string `infinity`.",
+          "description": "The resulting table state a writeSequence, conflict, or scenario case asserts once its writes have run — after a writeSequence's ordered DML golden SQL, a conflict case's write, or a scenario's last step. A state-graded scenario states every row, current and history, of every table a submission writes. Keyed by table name; each value is the full set of rows that table must contain (order-insensitive). Row values speak DB column names; timestamp columns are authored as ISO-8601 UTC strings at core microsecond precision, with the open-bound `infinity` as the literal string `infinity`.",
           "type": "object",
           "minProperties": 1,
           "additionalProperties": {
             "type": "array",
             "items": { "type": "object" }
           }
+        },
+        "units": {
+          "description": "scenario cases only. Each `uow` group's fate as one unit of work (m-case-format *Unit fates*), keyed by its label. `committed` — the group commits after its last step, the fate a golden-graded group stating none takes. `rolledBack` — the group rolls back instead: its callback abandons the unit of work after its last step, or, with `flushFailure`, a flush failed, which ends the unit of work whether or not the caller catches it. A state-graded case states every group's fate.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/unitFate" }
         },
         "affectedRows": {
           "description": "conflict cases, single-attempt form. The number of rows the golden write — a keyed UPDATE or DELETE, or a temporal milestone close — must affect after any `given.apply` is applied. The EXPECTATION it is graded against follows the write's TARGET, not whether optimistic locking applies: a Key Target expects exactly its key count (the AGGREGATE, for the multi-key `when.write` array form), a milestone close exactly 1. Meeting the expectation is success. A SHORTFALL is classified by the write's already-decided concurrency: a GATED (optimistic) shortfall is the retriable optimistic-lock conflict, an UNGATED (locking-mode) observation-requiring one the non-retriable stale write, and a shortfall on a target that required no observation at all (an UNVERSIONED keyed write) the non-retriable missing target — the rows addressed do not exist. An EXCESS over the expectation is invariant and never a concurrency outcome: it is always the non-retriable cardinality corruption, since no concurrent writer can make a correctly addressed target match more rows than it names. A case whose write is REFUSED commits no write effect, so it always asserts this count and its golden statement; an optional `then.tableState` observes the state that remains.",
@@ -2678,7 +2757,7 @@
       ]
     },
     "keyedWrite": {
-      "description": "A keyed write inside a buffered scenario. `validFrom` and `until` are Valid-Time bounds; `at` is Clock-supplied Transaction-Time context. Flush-only observations are not durable row members.",
+      "description": "A keyed submission inside a buffered scenario. `validFrom` and `until` are Valid-Time bounds; `at` is Clock-supplied Transaction-Time context. Flush-only observations are not durable row members. `on` names the value an observed write is handed, and `expectError` the refusal its verb raises at the call.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "entity", "rows"],
@@ -2705,7 +2784,9 @@
           "description": "The Clock-supplied finite Transaction-Time instant this buffered write flushes at (`in_z`).",
           "type": "string",
           "minLength": 1
-        }
+        },
+        "on": { "$ref": "#/$defs/submissionSource" },
+        "expectError": { "$ref": "#/$defs/submissionRefusal" }
       },
       "allOf": [
         {
@@ -2721,11 +2802,97 @@
         }
       ]
     },
+    "submissionSource": {
+      "description": "The value an observed keyed submission writes through (m-case-format *Settling against a grouped find*): the index of an earlier find step of its own `uow` group, whose observation the write settles against, or the pointer `/scenario/<n>/write/<k>` of an earlier insert submission of that group, whose answered value it revises. Omitted, the write takes the value its group's own insert of the object answered, else the group's latest reading of it.",
+      "oneOf": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "string", "pattern": "^/scenario/[0-9]+/write/[0-9]+$" }
+      ]
+    },
+    "submissionRefusal": {
+      "description": "The refusal a submission's verb raises at the call, before anything is buffered (m-unit-work): `write-evidence-already-claimed` — the write cannot join the pending writes of its object; `write-evidence-inserted` — a caller-addressed write of an object its unit of work admitted an insertion of. A refused submission corresponds to a caller that catches the refusal and continues, so the unit of work keeps every earlier submission. State-graded cases only.",
+      "enum": ["write-evidence-already-claimed", "write-evidence-inserted"]
+    },
+    "targetSubmission": {
+      "description": "A caller-addressed (target) submission inside a buffered scenario: `write-instruction.schema.json`'s `targetWriteInstruction` — one `row` naming an existing object by primary key, the caller's own revision as `ifVersion` or `ifTxStart`, and on a Bitemporal target `validFrom` with an optional `until` — beside the Clock-supplied `at`. State-graded cases only.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mutation", "entity", "row"],
+      "properties": {
+        "mutation": { "$ref": "write-instruction.schema.json#/$defs/targetMutation" },
+        "entity": { "$ref": "write-instruction.schema.json#/$defs/entityName" },
+        "row": { "$ref": "write-instruction.schema.json#/$defs/writeRow" },
+        "ifVersion": { "type": "integer" },
+        "ifTxStart": { "$ref": "write-instruction.schema.json#/$defs/instant" },
+        "validFrom": { "$ref": "write-instruction.schema.json#/$defs/instant" },
+        "until": { "$ref": "write-instruction.schema.json#/$defs/instant" },
+        "at": {
+          "description": "The Clock-supplied finite Transaction-Time instant this buffered write flushes at (`in_z`).",
+          "type": "string",
+          "minLength": 1
+        },
+        "expectError": { "$ref": "#/$defs/submissionRefusal" }
+      },
+      "not": { "required": ["ifVersion", "ifTxStart"] },
+      "allOf": [
+        {
+          "description": "A bounded target write is over `[validFrom, until)`; an unbounded one omits `until`.",
+          "if": {
+            "required": ["mutation"],
+            "properties": { "mutation": { "enum": ["updateUntil", "replaceUntil"] } }
+          },
+          "then": { "required": ["validFrom", "until"] },
+          "else": { "not": { "required": ["until"] } }
+        }
+      ]
+    },
+    "submission": {
+      "description": "One entry of an ordered buffer, addressed by the pointer `/scenario/<n>/write/<k>`, dispatched on the member it carries: `rows` a keyed instruction, `row` a caller-addressed one, and `target` a readless predicate write, an ordering barrier. Each references the canonical write-instruction vocabulary and layers only the `at` / `validFrom` / `until` authoring surface, plus the entry's own `on` and `expectError`.",
+      "oneOf": [
+        { "$ref": "#/$defs/keyedWrite" },
+        { "$ref": "#/$defs/targetSubmission" },
+        { "$ref": "#/$defs/predicateWrite" }
+      ]
+    },
+    "unitFate": {
+      "description": "One `uow` group's fate (m-case-format *Unit fates*). `flushFailure` names the failure a flush raised: `at` is the step whose read flushed, or `commit`, and `entity` / `key` / `shortfall` are the object it reports and its Shortfall (m-unit-work *Affected Rows Policy*), matching the error's own payload. A failed flush ends the unit of work, so a group stating one rolls back.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome"],
+      "properties": {
+        "outcome": { "enum": ["committed", "rolledBack"] },
+        "flushFailure": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["at", "entity", "key", "shortfall"],
+          "properties": {
+            "at": {
+              "oneOf": [
+                { "type": "integer", "minimum": 0 },
+                { "const": "commit" }
+              ]
+            },
+            "entity": { "$ref": "#/$defs/entityName" },
+            "key": {
+              "description": "The reported object's primary key, by attribute name.",
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": { "type": ["string", "number", "boolean"] }
+            },
+            "shortfall": {
+              "enum": ["missingTarget", "staleWrite", "optimisticConflict", "failedPrecondition"]
+            }
+          }
+        }
+      },
+      "if": { "required": ["flushFailure"] },
+      "then": { "properties": { "outcome": { "const": "rolledBack" } } }
+    },
     "bufferedWriteSequence": {
-      "description": "The ORDERED buffer a single unit of work accumulates and flushes together (m-unit-work) — one or more KEYED write instructions, in the order they were requested. This is a GENERAL ordered keyed buffer: entries MAY name different entities and different primary-key identities (a mixed-object flush — an insert of one object, an update of another, a delete of a third — such as `m-unit-work-009`), and a buffer MAY hold a single keyed instruction (a buffer of one — the single INSERT / UPDATE / DELETE writes). Same-object folding at flush IS the coalescing rule, and it is a RUNTIME / planner property, not a structural one: when two buffered entries name the SAME entity and primary-key identity the flush combines them (a same-transaction insert-then-update writes the final value in place with no intermediate milestone; insert-then-delete cancels to no DML). The two-keyed same-object insert-then-update / insert-then-delete pair is that rule's single-object SPECIAL CASE, not a separate shape — the three same-transaction coalescing witnesses (`m-txtime-write-008`, `m-bitemp-write-014`, `m-unit-work-010`) are exactly that pair. The step's golden SQL (`statements`) is the INDEPENDENT expected lowering of the flush (one final-value write, NO DML, or the ordered per-object statements of a mixed flush), so a scenario encodes every requested mutation here explicitly rather than in a prose note. Predicate-selected instructions are deliberately EXCLUDED (keyed-only): a predicate-selected buffered write is the one generality still deferred to the string-label→structured migration.",
+      "description": "The ORDERED buffer a single unit of work accumulates and flushes together (m-unit-work) — one or more submissions, in the order they were requested. This is a GENERAL ordered buffer: entries MAY name different entities and different primary-key identities (a mixed-object flush — an insert of one object, an update of another, a delete of a third — such as `m-unit-work-009`), and a buffer MAY hold a single keyed instruction (a buffer of one — the single INSERT / UPDATE / DELETE writes). Same-object folding at flush IS the coalescing rule, and it is a RUNTIME / planner property, not a structural one: when two buffered entries name the SAME entity and primary-key identity the flush combines them (a same-transaction insert-then-update writes the final value in place with no intermediate milestone; insert-then-delete cancels to no DML). The two-keyed same-object insert-then-update / insert-then-delete pair is that rule's single-object SPECIAL CASE, not a separate shape — the three same-transaction coalescing witnesses (`m-txtime-write-008`, `m-bitemp-write-014`, `m-unit-work-010`) are exactly that pair. The step's golden SQL (`statements`) is the INDEPENDENT expected lowering of the flush (one final-value write, NO DML, or the ordered per-object statements of a mixed flush), so a scenario encodes every requested mutation here explicitly rather than in a prose note. Under `grading: state` an entry MAY also be a caller-addressed submission or a readless predicate write, which is an ordering barrier inside the buffer (`$defs/submission`); a golden-graded buffer stays keyed.",
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/keyedWrite" }
+      "items": { "$ref": "#/$defs/submission" }
     },
     "statementEntry": {
       "description": "One logical statement in the execution sequence: a closed `{sql, binds}` object. `sql` is a plain string at naive locations (`given.apply`) or a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`); `binds` is authored once per statement (dialect-agnostic) and defaults to `[]`. The `{sql, binds}` wrapper keeps dialect keys and entry-level keys in separate namespaces, so the schema needs no reserved-key carve-outs. Golden and naive locations narrow `sql` to the map / string form respectively via `goldenStatements` / `naiveStatements`.",

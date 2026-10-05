@@ -429,9 +429,11 @@ assert different things:
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
 - scenario cases report `identityChecks` and `roundTrips`, plus `stepRows` for the
-  values their read steps and row-observing `mutate` steps published, and
-  `errors` for any step declaring
-  `expectError`
+  values their read steps and row-observing `mutate` steps published,
+  `errors` for any step or submission declaring
+  `expectError`, `units` for the fate of each `uow` group, and `tableState` where
+  the case states one; a state-graded scenario reports no emissions (see *Unit fates*,
+  below)
 - coherence cases report the final observed `rows`, and `identityChecks` for any step that declares `sameObjectAs`
 - error cases with a single-connection trigger (top-level `then.statements`)
   report `errorClass` — the neutral `m-db-error` category the final trigger
@@ -573,17 +575,48 @@ MUST NOT synthesize the observation from authored goldens.
 ### Application lifecycle errors (`errors`)
 
 The optional **`errors`** observation carries one entry per scenario step
-declaring `expectError`, each
-  `{ at, errorClass, native? }`: `at` the step pointer, `errorClass` the neutral
+declaring `expectError`, and one per buffered submission declaring it, each
+  `{ at, errorClass, native? }`: `at` the step pointer, or the submission's own
+  `/scenario/<n>/write/<k>`, `errorClass` the neutral
   application-lifecycle error the verb raised (`transaction-time-pin-read-only` /
   `write-value-not-stored` / `write-value-already-stored` /
-  `write-value-foreign-lifecycle` — `m-identity-map` / `m-unit-work`, **distinct** from the
+  `write-value-foreign-lifecycle`, and for a submission `write-evidence-already-claimed` /
+  `write-evidence-inserted` — `m-identity-map` / `m-unit-work`, **distinct** from the
   `m-db-error` taxonomy), and an optional `native` witness carrying the raw
-  implementation error.
+  implementation error. A refused submission is one its verb refused at the call,
+  which the adapter catches and continues past in the same unit of work, as the
+  case states (`m-case-format` *State-graded scenarios*).
 
 It is additive and optional: an adapter that observes no raised error simply
 omits it, so an existing `run` output (`roundTrips` plus
 `rows` / `graph` / `identityChecks` / `storedDataIssues`) stays valid unchanged.
+
+### Unit fates (`units`)
+
+The optional **`units`** observation reports each `uow` group's fate as the run
+observed it, keyed by its label: `{ outcome, flushFailure? }`, `outcome` being
+`committed` or `rolledBack`, and `flushFailure` — for a group a flush failure ended —
+`{ at, entity, key, shortfall }`: where that flush ran (the step whose read flushed,
+or `commit`), the canonical Entity spelling and primary key the failure reported,
+and its Shortfall (`m-unit-work` *Affected Rows Policy*). It is compared against the
+case's `then.units` (`m-case-format` *Unit fates*), where a group the case states
+no fate for commits. What is reported is what the failure itself carries, never a
+re-read: a failed flush ends the unit of work, so there is nothing left to read.
+
+A **state-graded** scenario (`m-case-format` *State-graded scenarios*) is run
+through the implementation's public verbs alone. The adapter hands each submission
+to the verb its form names — a keyed write through the value its `on` names, a
+caller-addressed write with its caller's revision, a readless predicate write
+through its predicate verb — catches exactly the refusal a submission declares,
+abandons a group whose fate is a plain rollback once its last step has run, and
+otherwise runs each group to commit, recording a flush failure where the flush
+ran. It reports `units`, `errors`, `stepRows`, and the `tableState` it reads back
+once every step has run, and no emissions; its `roundTrips` is reported and not
+graded.
+
+It is additive and optional in the same sense as `errors`: a run of a scenario
+declaring no group omits it, and every existing `run` output stays valid
+unchanged.
 
 ### Per-step row observations (`stepRows`)
 

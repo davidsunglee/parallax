@@ -1613,3 +1613,29 @@ def test_run_case_scenario_reports_a_step_graph_for_an_access_step() -> None:
     step_graphs = envelope["observations"]["stepGraphs"]
     assert [entry["at"] for entry in step_graphs] == ["/scenario/2"]
     assert sorted(node["id"] for node in step_graphs[0]["graph"]["OrderItem"]) == [11, 12]
+
+
+def test_a_state_graded_run_reports_its_unit_fates_and_table_state() -> None:
+    units: dict[str, dict[str, object]] = {
+        "g": {
+            "outcome": "rolledBack",
+            "flushFailure": {
+                "at": "commit",
+                "entity": "parallax.compatibility.Account",
+                "key": {"id": 7},
+                "shortfall": "optimisticConflict",
+            },
+        }
+    }
+    table_state: dict[str, list[MappingRow]] = {
+        "account": [{"id": 7, "owner": "Newton", "balance": "5.00", "version": 1}]
+    }
+    run = engine.ScenarioRun([], 1, [], [], [], units, table_state)
+    with mock.patch.object(engine, "run_scenario_case", return_value=run):
+        envelope = adapter.run_case(_SCENARIO_CASE, _PROFILE.on_stand_in(_WritePort()))
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["observations"] == {
+        "roundTrips": 1,
+        "units": units,
+        "tableState": table_state,
+    }

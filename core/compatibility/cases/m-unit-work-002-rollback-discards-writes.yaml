@@ -30,9 +30,8 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "999.00" }
-      rollback: true
       roundTrips: 1
-      note: "apply a new balance for the OBSERVED account 1 — dooms the group (rollback: true); it ROLLS BACK after this, its last step"
+      note: "apply a new balance for the OBSERVED account 1; the group's fate is rolledBack, so it ROLLS BACK after this, its last step"
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
@@ -52,4 +51,6 @@ when:
       expectRows:
         - { id: 1, owner: Ada, balance: "100.00", version: 1 }
 then:
+  units:
+    doomed-update: { outcome: rolledBack }
   roundTrips: 3
