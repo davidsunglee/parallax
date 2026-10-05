@@ -53,10 +53,10 @@ def _versioned_conflict_cases():
 def _temporal_conflict_close_cases():
     """Transaction-Time-only temporal conflict-close cases (no version, no Valid-Time dimension).
 
-    The audit-only optimistic / locking closes (`m-temporal-read-009` through
+    The audit-only optimistic / locking closes (`m-temporal-read-010` through
     `m-temporal-read-012`) gate on the observed Transaction-Time start (`in_z`), never a
-    version column. The bitemporal closes (`m-bitemp-write-004` / `m-bitemp-write-005`)
-    carry a Valid-Time dimension too and are pinned in `test_bitemporal`.
+    version column. The bitemporal close (`m-bitemp-write-005`) carries a Valid-Time
+    dimension too and is pinned in `test_bitemporal`.
     """
     cases = []
     for case in _conflict_cases():
@@ -181,14 +181,11 @@ def test_conflict_input_gate_presence_follows_the_declared_mode() -> None:
 
 def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
     cases = _temporal_conflict_close_cases()
-    # The Transaction-Time close family all carry ① (write + at [+ observedTxStart]);
-    # m-txtime-write-006 is the SAME gated close, tagged under m-txtime-write.
+    # The Transaction-Time close family all carry ① (write + at [+ observedTxStart]).
     assert {_case_id(case.path.stem) for case in cases} >= {
-        "m-temporal-read-009",
         "m-temporal-read-010",
         "m-temporal-read-011",
         "m-temporal-read-012",
-        "m-txtime-write-006",
     }
     for case in cases:
         # Must not raise: each close ① derives out_z = at (+ the in_z = observedTxStart gate
@@ -197,18 +194,18 @@ def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
         _assert_conflict_input(case, "postgres")
 
 
-def test_txtime_write_optimistic_gated_close_binds_in_z_gate() -> None:
-    # m-txtime-write-006 witnesses the OPTIMISTIC-gated close of an audit-only chaining
-    # update: a single close UPDATE gating on the observed Transaction-Time start (in_z).
+def test_audit_only_optimistic_gated_close_binds_in_z_gate() -> None:
+    # m-temporal-read-010 witnesses the OPTIMISTIC-gated close of an audit-only milestone:
+    # a single close UPDATE gating on the observed Transaction-Time start (in_z).
     # Its ADDRESS is the pk plus one exclusive upper bound per as-of axis, which on
     # balance's single axis is `out_z = infinity` alone — no Valid-Time bound, since the
     # entity declares no Valid-Time dimension. It is the audit-only analogue of the
-    # bitemporal gate (m-bitemp-write-004), reusing that gate shape over a shorter address.
-    case = next(c for c in _conflict_cases() if c.path.stem.startswith("m-txtime-write-006"))
-    assert "m-txtime-write" in case.tags and "m-opt-lock" in case.tags
+    # bitemporal gate (m-bitemp-write-005), reusing that gate shape over a shorter address.
+    case = next(c for c in _conflict_cases() if c.path.stem.startswith("m-temporal-read-010"))
+    assert "m-temporal-read" in case.tags and "m-opt-lock" in case.tags
     assert case.concurrency_mode == "optimistic"
     assert case.observed_tx_start is not None  # the in_z gate token
-    assert case.expected_affected_rows == 1  # the gate MATCHES the observed milestone
+    assert case.expected_affected_rows == 0  # the gate is STALE against the current milestone
     (statement,) = case.golden_statements("postgres")
     # The gated audit close carries the trailing `and in_z = ?` gate and, unlike the
     # bitemporal close, no Valid-Time `thru_z` address bound.
@@ -225,13 +222,31 @@ def test_temporal_conflict_close_observed_tx_start_corruption_is_rejected() -> N
         next(
             c
             for c in _temporal_conflict_close_cases()
-            if c.path.stem.startswith("m-temporal-read-009")
+            if c.path.stem.startswith("m-temporal-read-010")
         )
     )
     # Corrupt the observed in_z gate token: the DERIVED `and in_z = ?` gate bind no
     # longer matches the golden gate bind, so the ① ↔ ② temporal-close gate MUST fail
     # (the gate value is derived from `observedTxStart`, never read from the golden).
     case.when["observedTxStart"] = "1999-12-31T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_conflict_input(case, "postgres")
+
+
+def test_locking_temporal_conflict_close_rendering_a_gate_is_rejected() -> None:
+    # Gating is concurrency-driven, never data-driven: a locking-mode close that renders
+    # the observed-in_z gate anyway MUST be rejected, even though its binds line up.
+    case = copy.deepcopy(
+        next(
+            c
+            for c in _temporal_conflict_close_cases()
+            if c.path.stem.startswith("m-temporal-read-012")
+        )
+    )
+    _assert_conflict_input(case, "postgres")  # sanity: valid as authored
+    close = case.then["statements"][0]
+    close["sql"]["postgres"] = f"{close['sql']['postgres']} and in_z = ?"
+    close["binds"] = [*close["binds"], "2024-02-01T00:00:00+00:00"]
     with pytest.raises(CaseFailure):
         _assert_conflict_input(case, "postgres")
 
@@ -309,8 +324,14 @@ def test_an_unparsable_statement_carries_no_gate() -> None:
 
 
 def _bitemporal_edge_named_case():
-    """The conflict case that names its observed milestone's own edge."""
-    return copy.deepcopy(next(c for c in _conflict_cases() if "observedValidStart" in c.when))
+    """The Bitemporal conflict close rewritten into the form that names its observed
+    milestone's own edge (R3's Valid-Time start) instead of authoring its address."""
+    case = copy.deepcopy(
+        next(c for c in _conflict_cases() if c.path.stem.startswith("m-bitemp-write-005"))
+    )
+    del case.when["write"]["validEnd"]
+    case.when["observedValidStart"] = "2024-06-01T00:00:00.000000Z"
+    return case
 
 
 def test_observed_edge_entitlement_holds_for_every_authored_conflict_case() -> None:

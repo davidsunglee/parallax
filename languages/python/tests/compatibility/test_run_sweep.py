@@ -1234,8 +1234,8 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
 # pk-gen `sequence` run-only set below, neither joins `WRITE_EXERCISED` (that  #
 # set couples compile AND run grading; a run-only case would fail             #
 # `test_compile_sweep`'s `status == "ok"` assert). Increment 4 adds the        #
-# temporal close-only conflict witnesses: the non-inheritance audit-only and   #
-# bitemporal gate/success/conflict pairs, the locking-mode zero-row-close      #
+# temporal close-only conflict witnesses: the audit-only and bitemporal        #
+# stale-gate conflicts, the audit-only retry, the locking-mode zero-row-close  #
 # (StaleWriteError) case, the TPH composed conflict, and the non-temporal      #
 # value-object write under an optimistic gate (already tag-reachable, now      #
 # exercised). Increment 6 admits `m-opt-lock-009` (`retryOptimisticConflicts:  #
@@ -1251,17 +1251,6 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
 # shared lock — are absent from this lane for that reason, and the             #
 # classification they would carry is pinned without a database by              #
 # `tests/unit/test_zero_row_write_classification.py`.                          #
-# `m-bitemp-write-017`/`-018` close the BOUNDED current rectangle whose        #
-# Valid-Time end is finite, in each concurrency mode: only a real execution    #
-# distinguishes an address that binds the observed rectangle's own `thru_z`    #
-# from one that would match both current rectangles of the key, and the        #
-# distinguishing observable is the affected-row count.                         #
-# `m-bitemp-write-021`/`-022` are the EDGE-NAMED pair over one key holding     #
-# two current rectangles: each derives its `thru_z` from the milestone its     #
-# edge selects, and only the pair rules out resolving by primary key and       #
-# always picking the same rectangle. Neither grades where the gate came from   #
-# — both rectangles share `in_z`, and that `in_z` is the authored edge's own   #
-# Transaction-Time half — which each header states as a bare negative.         #
 # --------------------------------------------------------------------------- #
 _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
     {
@@ -1270,17 +1259,10 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-opt-lock-007",
         "m-opt-lock-009",
         "m-opt-lock-013",
-        "m-temporal-read-009",
         "m-temporal-read-010",
         "m-temporal-read-011",
         "m-temporal-read-012",
-        "m-txtime-write-006",
-        "m-bitemp-write-004",
         "m-bitemp-write-005",
-        "m-bitemp-write-017",
-        "m-bitemp-write-018",
-        "m-bitemp-write-021",
-        "m-bitemp-write-022",
         "m-inheritance-105",
         "m-value-object-046",
     }

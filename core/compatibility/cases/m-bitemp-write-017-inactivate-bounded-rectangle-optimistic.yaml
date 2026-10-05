@@ -1,26 +1,61 @@
-# Optimistic bitemporal inactivation of the BOUNDED current rectangle: the close's
-# address binds the observed rectangle's OWN Valid-Time end, which here is FINITE
-# (m-bitemp-write + m-opt-lock, ADR 0046).
+# Optimistic bitemporal termination of the BOUNDED current rectangle a find observed, over
+# exactly that rectangle's extent: the close's address binds the observed rectangle's OWN
+# Valid-Time end, which here is FINITE (m-bitemp-write + m-opt-lock, ADR 0046). It carries
+# the finite-bound addressing the conflict form pinned — only a real execution distinguishes
+# an address binding R2's own thru_z from one matching both current rectangles of the key,
+# and the table state shows R3 left current — now produced by a public `terminateUntil`
+# whose head and old tail are both empty, so the close is emitted alone.
 model: models/position.yaml
-tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict, slice-snapshot-1, slice-managed-1]
-shape: conflict
+tags: [m-bitemp-write, m-opt-lock, m-unit-work, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
 compileEligibility:
   mode: run-only
-  reason: single-connection
-  note: "single-connection concurrency/locking intent (shape:conflict)"
+  reason: query-result-dependent
+  note: "the close settles against the rectangle its own group's find observed, so its finite address and its gate are read off a row no compile lane executes (m-case-format 'Settling against a grouped find')"
 when:
   uow:
     concurrency: optimistic
-  write: { id: 1, validEnd: "2024-06-01T00:00:00.000000Z" }
-  at: "2024-10-01T00:00:00.000000Z"
-  observedTxStart: "2024-04-01T00:00:00.000000Z"
+  scenario:
+    - uow: observe-then-terminate
+      objectQuery:
+        target: parallax.compatibility.Position
+        predicate:
+          eq:
+            attr: parallax.compatibility.Position.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: latest
+          valid-time:
+            asOf: "2024-01-01T00:00:00.000000Z"
+      roundTrips: 1
+      note: observe R2 — id 1 pinned at Valid Time 2024-01-01, its own start, the bounded current rectangle (100.00), valid [2024-01-01, 2024-06-01)
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+            mariadb: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [1, "2024-01-01T00:00:00.000000Z", "2024-01-01T00:00:00.000000Z", infinity]
+      expectRows:
+        - { pos_id: 1, acct_num: A, val: "100.00", from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-04-01T00:00:00.000000Z", out_z: infinity }
+    - uow: observe-then-terminate
+      write:
+        - mutation: terminateUntil
+          "on": 0
+          entity: parallax.compatibility.Position
+          rows:
+            - { id: 1 }
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          until: "2024-06-01T00:00:00.000000Z"
+          at: "2024-10-01T00:00:00.000000Z"
+      roundTrips: 1
+      note: terminate over exactly the observed rectangle's extent — the close alone, addressed by R2's finite thru_z and gated on the observed in_z
+      statements:
+        - sql:
+            postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
+            mariadb: update `position` set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
+          binds: ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", infinity, "2024-04-01T00:00:00.000000Z"]
 then:
-  statements:
-    - sql:
-        postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
-        mariadb: update `position` set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
-      binds: ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", infinity, "2024-04-01T00:00:00.000000Z"]
-  affectedRows: 1
+  roundTrips: 2
   tableState:
     position:
       - pos_id: 1

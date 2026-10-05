@@ -53,9 +53,7 @@ _PROFILE = profile_for("pg-full")
 _READ_CASE = case_format.default_cases_dir() / "m-predicate-002-eq.yaml"
 _VO_READ_CASE = case_format.default_cases_dir() / "m-value-object-001-nested-eq.yaml"
 _SCALAR_READ_CASE = case_format.default_cases_dir() / "m-core-001-scalar-types-roundtrip.yaml"
-_RUN_ONLY_CASE = (
-    case_format.default_cases_dir() / "m-txtime-write-006-optimistic-gated-chaining-update.yaml"
-)
+_RUN_ONLY_CASE = case_format.default_cases_dir() / "m-opt-lock-005-conflict.yaml"
 # A materializing predicate-write scenario; against `_FakePort` — a wrong-shaped
 # canned row and a write path that always raises — it still surfaces a loud
 # `run-failed` error, exercising this lane's own error-reporting contract.
