@@ -72,7 +72,7 @@ from .storage_layout import validate_storage_layout
 from .temporal_selection_validate import validate_temporal_selections
 from .temporality import derive_temporal_structure, temporal_axes
 from .value_object_resolve import RejectionError
-from .write_validate import assignment_violation, undeclared_members
+from .write_validate import assignment_violation, target_row_violation, undeclared_members
 
 
 class ValidationFailure(Exception):
@@ -438,23 +438,19 @@ def _valid_keyed_entry_entity(
 
 
 def _target_refusal(entity: Entity, instruction: dict[str, Any]) -> str | None:
-    """Why a caller-addressed submission's key, revision or window does not fit
+    """Why a caller-addressed submission's row, revision or window does not fit
     its target, or ``None`` (`m-unit-work` *Caller-addressed writes*).
 
-    The model selects all three, which the case schema cannot see: the row states
-    every primary-key member; a temporal target states ``ifTxStart``, a versioned
-    Non-Temporal one ``ifVersion``, and an unversioned one neither; a Bitemporal
-    target states ``validFrom``, and a Transaction-Time-Only or Non-Temporal one
-    no window.
+    The model decides all three, which the case schema cannot see: the row is
+    judged as :func:`~reference_harness.write_validate.target_row_violation`
+    judges it; a temporal target states ``ifTxStart``, a versioned Non-Temporal
+    one ``ifVersion``, and an unversioned one neither; a Bitemporal target states
+    ``validFrom``, and a Transaction-Time-Only or Non-Temporal one no window.
     """
-    row = instruction["row"]
-    unkeyed = [
-        attribute["name"]
-        for attribute in entity.attributes
-        if attribute.get("primaryKey") and attribute["name"] not in row
-    ]
-    if unkeyed:
-        return f"a caller-addressed write of {entity.name} states no primary key {unkeyed}"
+    replaces = instruction.get("mutation") in ("replace", "replaceUntil")
+    violation = target_row_violation(entity, instruction["row"], replaces=replaces)
+    if violation is not None:
+        return f"a caller-addressed write of {entity.name} — {violation}"
     axes = {axis.dimension for axis in temporal_axes(entity.runtime_facts)}
     versioned = any(attribute.get("optimisticLocking") for attribute in entity.attributes)
     revision = "ifTxStart" if axes else "ifVersion" if versioned else None

@@ -41,6 +41,7 @@ what the `rejected` cases pin — the refusal each language implementation must 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from functools import partial
 from typing import Any
 
 from .case import Entity
@@ -158,6 +159,54 @@ def assignment_violation(entity: Entity, name: str, value: Any) -> str | None:
     if occurrence is None:
         return f"{path}: names no assignable attribute or value object"
     return _violation_detail(lambda: _validate_occurrence({name: value}, occurrence, path=path))
+
+
+def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool) -> str | None:
+    """Why *entity* refuses a caller-addressed write's *row*, or ``None``
+    (`m-unit-work` *Caller-addressed writes*).
+
+    The row names its object by every primary-key member, each stating a value
+    that member admits, never null. Every other member it states is judged as
+    an assignment (:func:`assignment_violation`). A replacement states the
+    object's whole writable state, so it also omits no required member a caller
+    may assign; an omitted nullable member is written empty, and an omitted
+    `many` value object is its empty collection.
+    """
+    keys = [attribute for attribute in entity.attributes if attribute.get("primaryKey")]
+    for attribute in keys:
+        path = f"{entity.name}.{attribute['name']}"
+        if attribute["name"] not in row:
+            return f"{path}: a caller-addressed write states every primary-key member"
+        judge = partial(_validate_attribute, row, attribute, path=path, marker_exempt=False)
+        detail = _violation_detail(judge)
+        if detail is not None:
+            return detail
+    key_names = {attribute["name"] for attribute in keys}
+    for name, value in row.items():
+        violation = None if name in key_names else assignment_violation(entity, name, value)
+        if violation is not None:
+            return violation
+    if not replaces:
+        return None
+    framework_owned = framework_owned_names(entity)
+    omitted = [
+        attribute["name"]
+        for attribute in entity.attributes
+        if attribute["name"] not in row
+        and attribute["name"] not in key_names | framework_owned
+        and not attribute.get("readOnly")
+        and not attribute.get("nullable", False)
+    ]
+    omitted += [
+        value_object["name"]
+        for value_object in entity.value_objects
+        if value_object["name"] not in row
+        and not _is_many(value_object)
+        and not value_object.get("nullable", False)
+    ]
+    if omitted:
+        return f"{entity.name}: a replacement states every required member, and omits {omitted}"
+    return None
 
 
 def _violation_detail(judge: Callable[[], None]) -> str | None:

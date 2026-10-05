@@ -271,7 +271,7 @@
   ],
   "allOf": [
     {
-      "description": "A state-graded case is a scenario carrying no golden SQL anywhere (m-case-format *State-graded scenarios*): no step lists `statements` or `referenceSql`, and `then` states no `executionLifecycle`, whose events index golden statements. Its steps are finds and buffers of submissions, each keyed submission writing one row: it carries no action step and states no graph or identity observable, no step-level `expectError` (a refusal is its submission's), and no `expectRows` on a write step, which nothing its run reports could grade. It states the complete final `then.tableState` and every group's fate in `then.units`, and is run-only, since no golden exists for a compile lane to compare against.",
+      "description": "A state-graded case is a scenario carrying no golden SQL anywhere (m-case-format *State-graded scenarios*): no step lists `statements` or `referenceSql`, and `then` states no `executionLifecycle`, whose events index golden statements. Its steps are finds and buffers of submissions, each keyed submission writing one row. A step carries only the members such a step is run by or graded on, beside an ungraded `roundTrips` and `note`, and a write step states no `expectRows`: an action, a golden, a graph or identity observable, or a step-level `on` or `expectError` (a submission's own) is something nothing its run reports could grade. It states the complete final `then.tableState` and every group's fate in `then.units`, and is run-only, since no golden exists for a compile lane to compare against.",
       "if": { "required": ["grading"] },
       "then": {
         "required": ["compileEligibility", "then"],
@@ -281,16 +281,11 @@
             "properties": {
               "scenario": {
                 "items": {
-                  "allOf": [
-                    { "not": { "required": ["statements"] } },
-                    { "not": { "required": ["referenceSql"] } },
-                    { "not": { "required": ["action"] } },
-                    { "not": { "required": ["expectGraph"] } },
-                    { "not": { "required": ["sameObjectAs"] } },
-                    { "not": { "required": ["differentObjectFrom"] } },
-                    { "not": { "required": ["expectError"] } },
-                    { "if": { "required": ["write"] }, "then": { "not": { "required": ["expectRows"] } } }
-                  ],
+                  "propertyNames": {
+                    "enum": ["objectQuery", "equivalentEncodings", "stream", "write", "uow", "roundTrips", "expectRows", "note"]
+                  },
+                  "if": { "required": ["write"] },
+                  "then": { "not": { "required": ["expectRows"] } },
                   "properties": {
                     "write": {
                       "type": "array",

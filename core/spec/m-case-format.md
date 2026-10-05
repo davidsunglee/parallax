@@ -1689,15 +1689,17 @@ A scenario declaring top-level **`grading: state`** is therefore graded on the s
 it states. Such a case states its inputs — its steps and their submissions — the
 refusal each submission's verb raises, each group's fate (*Unit fates*, below), and
 the **complete** final `then.tableState`: every row, current and history, of every
-table a submission writes. Its steps are finds and buffered write steps: it
-carries no action step, and each keyed submission writes one row, so that its
-pointer names one verb call and the one value an insert answers. No step lists
-`statements` or `referenceSql`, a read step MAY state `expectRows` but no
-`expectGraph`, `sameObjectAs` or `differentObjectFrom`, a write step states no
-`expectRows`, and no step states its own `expectError`, since a refusal belongs to
-its submission: nothing a state-graded run reports could grade them. `then` states no
-`executionLifecycle`, whose events name golden statements. Round trips MAY be stated and are not graded. The
-case is `compileEligibility: run-only`, since no golden exists for a compile lane to
+table a submission writes. Its steps are finds and buffered write steps, and each
+keyed submission writes one row, so that its pointer names one verb call and the
+one value an insert answers. A step carries only what such a step is run by or
+graded on — a find its `objectQuery`, `equivalentEncodings`, `stream` and
+`expectRows`, a write step its `write`, and either its `uow` — beside `roundTrips`,
+which MAY be stated and is not graded, and `note`. Any other step member is refused:
+an action, golden SQL (`statements`, `referenceSql`), a graph or identity
+observable, and a step-level `on` or `expectError`, which belong to a submission,
+are all things nothing a state-graded run reports could grade. `then` states no
+`executionLifecycle`, whose events name golden statements. The case is
+`compileEligibility: run-only`, since no golden exists for a compile lane to
 compare against.
 
 Every write step of a state-graded case belongs to a `uow` group, and every
