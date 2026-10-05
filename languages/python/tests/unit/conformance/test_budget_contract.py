@@ -158,7 +158,7 @@ def test_every_memory_gate_is_the_basis_reading_under_the_stated_rule() -> None:
     assert gates.document() == derive_memory_gates(portfolio, gates.headroom)
     basis = _basis_addresses(portfolio)
     assert set(gates.addresses) == set(basis)
-    assert len(gates.addresses) == len(set(gates.addresses)) == 346
+    assert len(gates.addresses) == len(set(gates.addresses)) == 382
     for gate in gates.gates:
         assert gate.unit == basis[(gate.subject, gate.workload, gate.cell)]
         assert gate.max_bytes > 0
