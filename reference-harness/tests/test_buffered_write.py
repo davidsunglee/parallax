@@ -314,6 +314,16 @@ def _state_graded(steps: list[dict[str, Any]]) -> dict[str, Any]:
         pytest.param(
             [_STATE_FIND, {**_STATE_FIND, "differentObjectFrom": 0}], id="a-distinctness-claim"
         ),
+        pytest.param(
+            [{**_STATE_FIND, "expectError": "write-value-not-stored"}], id="a-find-refusal"
+        ),
+        pytest.param(
+            [{"uow": "g", "write": [_STATE_INSERT], "expectError": "write-value-not-stored"}],
+            id="a-write-step-refusal",
+        ),
+        pytest.param(
+            [{"uow": "g", "write": [_STATE_INSERT], "expectRows": []}], id="a-write-step-result"
+        ),
     ],
 )
 def test_a_state_graded_case_states_only_what_its_run_reports(steps: list[dict[str, Any]]) -> None:
@@ -357,6 +367,11 @@ def test_a_target_submission_states_the_condition_its_target_takes(
 @pytest.mark.parametrize(
     ("entry", "entity_defs"),
     [
+        pytest.param(
+            {**_ACCOUNT_TARGET, "row": {"balance": 5}, "ifVersion": 1},
+            _SEQUENCE,
+            id="a-target-without-its-key",
+        ),
         pytest.param(_ACCOUNT_TARGET, _SEQUENCE, id="a-versioned-target-without-its-version"),
         pytest.param(
             {**_ACCOUNT_TARGET, "ifTxStart": _T0}, _SEQUENCE, id="a-versioned-target-by-its-start"

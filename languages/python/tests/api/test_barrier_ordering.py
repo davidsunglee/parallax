@@ -1,12 +1,4 @@
-"""Writes on either side of a readless predicate write, against real Postgres.
-
-A readless predicate write does not say which rows it matches, so it is an
-ordering barrier: moving a write across it could change what either one writes.
-
-Standalone Docker-backed proofs, like `test_disjoint_target_writes.py`; every
-`Database` connects with a
-:class:`~parallax.conformance.scripted_clock.ScriptedClock`.
-"""
+"""Writes on either side of a readless predicate write, against real Postgres."""
 
 from __future__ import annotations
 

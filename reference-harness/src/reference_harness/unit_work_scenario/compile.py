@@ -583,17 +583,20 @@ def _flush_failure(
     if not isinstance(authored, Mapping):
         return None
     last = members[-1]
-    before = members if isinstance(last, _GroupedWrite) else members[:-1]
+    pending: list[int] = []
     flushed: list[int] = []
-    for step in before:
+    for step in members:
         if isinstance(step, _GroupedWrite):
-            flushed.append(step.index)
+            pending.append(step.index)
         elif isinstance(step, _RowPublishingStep):
-            flushed.clear()
-    if isinstance(last, _GroupedWrite):
-        flushes_at: int | str | None = "commit"
+            flushed, pending = pending, []
+    flushes_at: int | str | None
+    if pending:
+        flushes_at, flushed = "commit", pending
+    elif isinstance(last, _RowPublishingStep) and flushed:
+        flushes_at = last.index
     else:
-        flushes_at = last.index if flushed else None
+        flushes_at = None
     if flushes_at is None or authored.get("at") != flushes_at:
         where = "nothing" if flushes_at is None else f"at {flushes_at!r}"
         raise CaseFailure(

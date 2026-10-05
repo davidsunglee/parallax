@@ -1693,8 +1693,9 @@ table a submission writes. Its steps are finds and buffered write steps: it
 carries no action step, and each keyed submission writes one row, so that its
 pointer names one verb call and the one value an insert answers. No step lists
 `statements` or `referenceSql`, a read step MAY state `expectRows` but no
-`expectGraph`, `sameObjectAs` or `differentObjectFrom`, which nothing a
-state-graded run reports could grade, and `then` states no
+`expectGraph`, `sameObjectAs` or `differentObjectFrom`, a write step states no
+`expectRows`, and no step states its own `expectError`, since a refusal belongs to
+its submission: nothing a state-graded run reports could grade them. `then` states no
 `executionLifecycle`, whose events name golden statements. Round trips MAY be stated and are not graded. The
 case is `compileEligibility: run-only`, since no golden exists for a compile lane to
 compare against.

@@ -1,7 +1,3 @@
-# A read inside a unit of work flushes what is pending, so what follows it writes
-# against completed work under its own conditions and never combines with it
-# (m-unit-work Caller-addressed writes, Execution units complete before later work
-# runs).
 model: models/buffered-sequence-layout-twin-document.yaml
 tags: [m-bitemp-write, m-unit-work, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, dependent-read, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario

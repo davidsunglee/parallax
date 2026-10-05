@@ -1,7 +1,3 @@
-# A submission that cannot join its object's pending writes is refused at its verb,
-# before anything is buffered, and the unit of work keeps every earlier submission
-# (m-unit-work Observed-State Coalescing, Caller-addressed writes). Each refused entry
-# is one a caller catches and continues past; every group then commits what it kept.
 model: models/buffered-sequence-layout-twin-columns.yaml
 tags: [m-unit-work, m-bitemp-write, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, refusal, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario

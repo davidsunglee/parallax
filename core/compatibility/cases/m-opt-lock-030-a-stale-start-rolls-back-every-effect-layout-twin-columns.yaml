@@ -1,7 +1,3 @@
-# A caller's stated start that no longer holds fails the flush as a failed
-# precondition, which is never retried and dooms the unit of work: every effect rolls
-# back, the earlier units' included, and a refusal the caller caught along the way
-# changes nothing of that (m-unit-work Caller-addressed writes, Abort; m-opt-lock).
 model: models/buffered-sequence-layout-twin-columns.yaml
 tags: [m-opt-lock, m-unit-work, m-bitemp-write, m-storage-layout, m-sql, scenario, target-write, abort, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario
