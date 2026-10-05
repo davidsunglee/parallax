@@ -10,6 +10,7 @@ Postgres by the compatibility suite.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import re
 from pathlib import Path
 
@@ -208,47 +209,21 @@ def test_an_unparsable_statement_carries_no_gate() -> None:
     assert not has_version_gate("update account set where and", "version", "postgres")
 
 
-def test_observed_edge_entitlement_holds_for_every_authored_conflict_case() -> None:
+def test_every_authored_conflict_case_targets_a_non_temporal_entity() -> None:
     cases = _conflict_cases()
     assert cases, "no conflict (m-opt-lock) case discovered"
     for case in cases:
-        # Must not raise: every authored conflict case either names no observed
-        # milestone at all, or names one on a Bitemporal single-attempt close.
-        _assert_schema(case)
-        _assert_conflict_input(case, "postgres")
-
-
-def test_a_non_temporal_conflict_target_may_not_name_an_observed_milestone() -> None:
-    case = copy.deepcopy(_versioned_conflict_cases()[0])
-    case.when["observedValidStart"] = "2024-01-01T00:00:00+00:00"
-    # A versioned target holds one row per key and no milestone to observe, so
-    # the coordinate is read by nothing: the versioned cross-check never looks at
-    # it, and the case would grade a claim it never made.
-    with pytest.raises(CaseFailure, match=re.escape("no milestone to observe")):
+        # Must not raise: the conflict shape is non-temporal, so every authored
+        # case's write targets an entity with no as-of axis.
         _assert_schema(case)
 
 
-def test_a_non_temporal_conflict_target_may_not_name_an_observed_gate_either() -> None:
-    case = copy.deepcopy(_versioned_conflict_cases()[0])
-    case.when["observedTxStart"] = "2024-01-01T00:00:00+00:00"
-    # The gate half is unentitled for the same reason as the Valid-Time half: a
-    # versioned close gates on `write.observedVersion`, so the milestone
-    # coordinate reaches nothing that could read it.
-    with pytest.raises(CaseFailure, match=re.escape("no milestone to observe")):
-        _assert_schema(case)
-
-
-def test_a_non_temporal_retry_attempt_may_not_name_an_observed_gate() -> None:
-    case = copy.deepcopy(_versioned_conflict_cases()[0])
-    case.when["attempts"] = [
-        {
-            "statements": case.when.get("statements", []),
-            "affectedRows": 1,
-            "write": {"id": 1, "observedVersion": 1},
-            "observedTxStart": "2024-01-01T00:00:00+00:00",
-        }
-    ]
-    # The entitlement is a property of the target, so it holds wherever the
-    # coordinate is spelled — the attempt's own fields included.
-    with pytest.raises(CaseFailure, match=re.escape("no milestone to observe")):
+def test_a_conflict_case_targeting_a_temporal_entity_is_refused() -> None:
+    case = dataclasses.replace(
+        _versioned_conflict_cases()[0],
+        model=next(c for c in _cases() if c.raw["model"] == "models/balance.yaml").model,
+    )
+    # A temporal write's race is an interleaved scenario, graded on what each
+    # unit of work's own reads observed; the conflict shape has no form for it.
+    with pytest.raises(CaseFailure, match=re.escape("targets a non-temporal Entity")):
         _assert_schema(case)

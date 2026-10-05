@@ -34,8 +34,6 @@ __all__ = [
     "AmbiguousObservationError",
     "MilestoneEdgeError",
     "TemporalShadow",
-    "observed_close_coordinates",
-    "observed_edge",
     "predecessor_row",
 ]
 
@@ -52,22 +50,19 @@ _ObjectKey = tuple[str, tuple[object, ...], temporal_read.Edge]
 class AmbiguousObservationError(ValueError):
     """This tracker cannot name one milestone, so it refuses rather than
     silently guessing which one a later step means. Two shapes reach it: several
-    current milestones are tracked for one (entity, pk) and the input named no
-    edge to choose between them — several disjoint Valid-Time rectangles of one
-    key may be current on Transaction Time (`m-bitemp-write.md`), and the remedy
-    is to name the observed milestone's own edge, which a conflict case authors
-    beside its write; or two tracked milestones of one key carry the SAME edge,
-    which no edge could tell apart, so the state itself is unaddressable."""
+    current milestones are tracked for one (entity, pk) — several disjoint
+    Valid-Time rectangles of one key may be current on Transaction Time
+    (`m-bitemp-write.md`), and a step's row names the object rather than the
+    rectangle, so the remedy is a write naming the find it settles against
+    (`m-case-format` "Settling against a grouped find"); or two tracked
+    milestones of one key carry the SAME edge, which no edge could tell apart, so
+    the state itself is unaddressable."""
 
 
 class MilestoneEdgeError(ValueError):
-    """An observed milestone's edge does not name the target's declared as-of
-    axes: it is short of one, or it supplies a coordinate for an axis the target
-    does not declare. An edge is the guaranteed-selecting start instant per
-    DECLARED axis (`m-temporal-read`), so either way it selects no milestone —
-    a coordinate short of one axis is not a partial name for a milestone, and a
-    coordinate on an undeclared axis names an axis the target has no milestones
-    on."""
+    """A milestone's as-of axis start is not a finite instant, so it keys no
+    edge. An edge is the guaranteed-selecting start instant per declared axis
+    (`m-temporal-read`); the open bound belongs to an axis END alone."""
 
 
 class TemporalShadow:
@@ -76,8 +71,7 @@ class TemporalShadow:
     plans.
 
     Keying by the milestone's own edge rather than by identity alone is what lets
-    one key hold every rectangle it genuinely has current, and what lets a case
-    that names an observed edge address exactly the milestone it observed.
+    one key hold every rectangle it genuinely has current.
     """
 
     __slots__ = ("_current", "_materialized", "_out_of_band", "_overtaken")
@@ -93,15 +87,13 @@ class TemporalShadow:
         model: Metamodel,
         entity: EntityMetadata,
         row: Mapping[str, object],
-        edge: temporal_read.Edge | None = None,
     ) -> bool:
         """Whether what this tracker holds for the milestone ``row`` addresses is
         the WHOLE stored row.
 
-        A milestone stays ADDRESSABLE whatever the answer — the key and the edge
-        are the case's own — but a consumer that REBUILDS a row rather than merely
-        addressing one has to answer for the difference, and this is the question
-        it asks.
+        A milestone stays ADDRESSABLE whatever the answer — the key is the case's
+        own — but a consumer that REBUILDS a row rather than merely addressing one
+        has to answer for the difference, and this is the question it asks.
 
         ``False`` in exactly two states, both of them consequences of out-of-band
         statements (:meth:`note_out_of_band_write`):
@@ -125,7 +117,7 @@ class TemporalShadow:
         """
         if not self._out_of_band:
             return True
-        slot = self._slot(model, entity, row, edge)
+        slot = self._slot(model, entity, row)
         return slot is not None and slot not in self._overtaken
 
     def moved_by_materialization(
@@ -133,7 +125,6 @@ class TemporalShadow:
         model: Metamodel,
         entity: EntityMetadata,
         row: Mapping[str, object],
-        edge: temporal_read.Edge | None = None,
     ) -> bool:
         """Whether the milestone ``row`` addresses is one a materializing
         predicate write of this case already retired
@@ -144,7 +135,7 @@ class TemporalShadow:
         close addressed at what this tracker still holds current would match no
         row at all.
         """
-        slot = self._slot(model, entity, row, edge)
+        slot = self._slot(model, entity, row)
         return slot is not None and slot in self._materialized
 
     @contextlib.contextmanager
@@ -217,7 +208,7 @@ class TemporalShadow:
         self, model: Metamodel, entity: EntityMetadata, rows: Sequence[Mapping[str, object]]
     ) -> None:
         """Seed the tracker from a case's loaded fixture rows for ``entity``
-        (`given.fixtures: true`, or a scenario/conflict case's own default
+        (`given.fixtures: true`, or a scenario case's own default
         lifecycle load). A non-temporal entity's rows are a no-op.
 
         A fixture row is already the whole persisted milestone, Attribute-named,
@@ -242,7 +233,6 @@ class TemporalShadow:
         model: Metamodel,
         entity: EntityMetadata,
         row: Mapping[str, object],
-        edge: temporal_read.Edge | None = None,
     ) -> TemporalObservation | None:
         """The tracked observation a temporal update/terminate/updateUntil/
         terminateUntil instruction's close/chain consumes, or ``None`` for a
@@ -250,15 +240,11 @@ class TemporalShadow:
         unobserved close the write itself will surface as a conflict/stale
         error at execution).
 
-        ``edge`` is the observed milestone's own coordinate
-        (:func:`observed_edge`), which a case authors beside its write. Given
-        one, the milestone is addressed directly and a key holding several
-        current rectangles is no obstacle. Given none — the shape every
-        writeSequence/scenario step takes, whose row names the object and not the
-        rectangle — the one current milestone is returned, and several raise
+        A writeSequence/scenario step's row names the object and not the
+        rectangle, so the one current milestone is returned, and several raise
         :class:`AmbiguousObservationError`.
         """
-        slot = self._slot(model, entity, row, edge)
+        slot = self._slot(model, entity, row)
         return None if slot is None else self._current[slot]
 
     def _slot(
@@ -266,10 +252,9 @@ class TemporalShadow:
         model: Metamodel,
         entity: EntityMetadata,
         row: Mapping[str, object],
-        edge: temporal_read.Edge | None,
     ) -> _ObjectKey | None:
-        """The one tracked slot ``row`` (and, given one, ``edge``) addresses, or
-        ``None`` for a key this tracker holds no current milestone of.
+        """The one tracked slot ``row`` addresses, or ``None`` for a key this
+        tracker holds no current milestone of.
 
         The ONE place an input's identity is turned into a slot, so every question
         asked about the addressed milestone — what it is, and whether it is still
@@ -278,9 +263,6 @@ class TemporalShadow:
         entity_name = entity.identity.name
         pk_names = _primary_key_names(model, entity)
         identity = (entity_name, tuple(row[name] for name in pk_names))
-        if edge is not None:
-            slot = (*identity, edge)
-            return slot if slot in self._current else None
         candidates = [key for key in self._current if key[:2] == identity]
         if not candidates:
             return None
@@ -435,11 +417,9 @@ class TemporalShadow:
     def _track(self, key: _ObjectKey, observation: TemporalObservation) -> None:
         """Store one milestone in its own slot, refusing a slot already taken.
 
-        An edge names exactly one milestone (`m-case-format`), so two current
-        milestones of one key sharing an edge are a state no case can address:
-        overwriting would silently drop one and hand every later step the other.
-        The independent grader refuses the same state where it scans for the one
-        fixture row an edge selects.
+        A slot is keyed by the milestone's edge, so two current milestones of one
+        key sharing an edge are a state no write can address: overwriting would
+        silently drop one and hand every later step the other.
 
         Storing a milestone is also what re-establishes a whole account of it: the
         row stored here came from the case's own fixtures or from the plan that
@@ -496,73 +476,6 @@ def predecessor_row(
     for identity, value in value_objects.items():
         members[identity.path[-1]] = value
     return PredecessorRow(members=members)
-
-
-def observed_edge(
-    model: Metamodel,
-    entity: EntityMetadata,
-    *,
-    valid_start: object | None,
-    tx_start: object | None,
-) -> temporal_read.Edge:
-    """The edge coordinate a case authored for the milestone its write observed.
-
-    Built from the SAME instant normalization :class:`TemporalShadow` keys its
-    tracked milestones by, so a coordinate the case spells and a milestone the
-    tracker holds agree by shared derivation rather than by two sites being
-    careful.
-
-    The target's DECLARED axes decide which coordinates are legal, in both
-    directions: a declared axis the case named nothing for is refused, and so is
-    a coordinate the case supplied for an axis the target does not declare. The
-    second is what keeps `observedValidStart` a Bitemporal-only control key
-    rather than a field a Transaction-Time-Only case may author and have
-    silently dropped.
-    """
-    declared = _declared_dimensions(model, entity)
-    supplied: dict[TemporalDimension, tuple[str, object | None]] = {
-        TemporalDimension.VALID_TIME: ("valid-time", valid_start),
-        TemporalDimension.TRANSACTION_TIME: ("transaction-time", tx_start),
-    }
-    coordinates: dict[TemporalDimension, dt.datetime] = {}
-    for dimension, (spelling, value) in supplied.items():
-        if dimension not in declared:
-            if value is not None:
-                raise MilestoneEdgeError(
-                    f"{entity.identity.name}: an observed milestone's edge names the target's "
-                    f"declared as-of axes, and this target declares no {spelling} axis to "
-                    f"carry the start {value!r}"
-                )
-            continue
-        if value is None:
-            raise MilestoneEdgeError(
-                f"{entity.identity.name}: an observed milestone's edge names every declared "
-                f"as-of axis, and the {spelling} start is missing"
-            )
-        coordinates[dimension] = _coordinate(value)
-    return _edge(coordinates)
-
-
-def observed_close_coordinates(
-    model: Metamodel, entity: EntityMetadata, observation: TemporalObservation
-) -> tuple[object | None, object]:
-    """The close coordinates a resolved observation supplies: the observed
-    milestone's own Valid-Time end (the address's exclusive upper bound on that
-    axis, ``None`` for a Transaction-Time-Only target, which has no Valid-Time
-    axis to bound) and its own Transaction-Time start (the optimistic gate's
-    candidate).
-
-    Both are read off the ONE predecessor the observation names, so a close's
-    address and its gate cannot come from two different milestones.
-    """
-    members = observation.predecessor.members
-    tx_start, _tx_end = _axis_names(model, entity, TemporalDimension.TRANSACTION_TIME)
-    dimensions = _declared_dimensions(model, entity)
-    valid_end: object | None = None
-    if TemporalDimension.VALID_TIME in dimensions:
-        _valid_start, valid_end_name = _axis_names(model, entity, TemporalDimension.VALID_TIME)
-        valid_end = members[valid_end_name]
-    return valid_end, members[tx_start]
 
 
 _NOT_AN_INSTANT = "an as-of axis start is a finite instant, and {value!r} is not one"

@@ -35,7 +35,6 @@ from parallax.conformance._mechanism.given_state import (
 from parallax.conformance._mechanism.model_facts import (
     case_entity,
     case_serving_model,
-    default_family_root,
     family_declarer,
     first_declared_entity,
     load_case_metamodel,
@@ -58,11 +57,6 @@ from parallax.core import (
     storage_layout,
 )
 from parallax.core.base import (
-    INFINITY_LITERAL,
-    TIMESTAMP,
-    ManagedValue,
-    TemporalBound,
-    matches_neutral_type,
     normalize_instant,
 )
 from parallax.core.db_port import (
@@ -116,7 +110,6 @@ from parallax.core.unit_work import (
     WritePlanningError,
     WritePreconditionError,
     buffered_write,
-    enforce_affected_rows,
     instructions,
     object_key,
 )
@@ -133,7 +126,6 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.unit_work.materialized import target_write
 from parallax.core.unit_work.planned import KeyTarget, PlannedWrite
 from parallax.core.unit_work.write_planner import compose_writes
-from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.snapshot import DatabaseOptions, handle
 from parallax.snapshot.handle import (
     ServingModel,
@@ -270,10 +262,9 @@ class LoweredStep:
 _VERSION_OBSERVATION_KEY: Final[str] = "observedVersion"
 
 # The two halves of an observed milestone's own EDGE coordinate. NEITHER is a
-# write-row key in any shape: they are authored beside the write, at
-# `when.observedTxStart` / `when.observedValidStart` — and, on a retry attempt,
-# `observedTxStart` alone, since the edge form is single-attempt only
-# (`m-case-format`) — so a row carrying one is refused rather than stripped.
+# write-row key in any shape (`compatibility-case.schema.json` `$defs/writeRow`):
+# a temporal write observes a whole predecessor milestone, which no flat row cell
+# can name, so a row carrying one is refused rather than stripped.
 _TEMPORAL_GATE_KEY: Final[str] = "observedTxStart"
 _TEMPORAL_VALID_START_KEY: Final[str] = "observedValidStart"
 
@@ -487,11 +478,9 @@ def _temporal_entry_row(
     set-based statement (`m-batch-write`), so several rows under one entry denote
     several independent milestone chains rather than one wider write. That rule
     forbids reducing the entry to a first row the case did not single out, so it
-    is refused HERE, where the authoring diagnosis can name the entry. It is the
-    SAME rule :func:`_conflict_close_row` applies to a temporal conflict attempt's
-    multi-key ``write`` array; the shared case schema cannot express either,
-    because the row count it may admit depends on whether the target entity is
-    temporal, which only the model knows.
+    is refused HERE, where the authoring diagnosis can name the entry. The shared
+    case schema cannot express it, because the row count it may admit depends on
+    whether the target entity is temporal, which only the model knows.
 
     Refusing before :func:`_durable_row` is what makes "every case-authored row
     reaches the seam" true rather than approximately true: a row this function
@@ -754,19 +743,16 @@ def _observation_refusal(
       (``observedTxStart`` / ``observedValidStart``) is entitled ANYWHERE. Neither
       is a write-row control key in any shape:
       `compatibility-case.schema.json`'s ``writeRow`` reserves ``observedVersion``
-      alone and every other key names an entity member, while a temporal close's
-      observed coordinate rides beside the write, at ``when.observedTxStart`` /
-      ``when.observedValidStart`` — and, on a retry attempt, ``observedTxStart``
-      alone (`m-case-format`). Stripping one from a row — or projecting the row
-      past it — would silently discard the very coordinate the author meant to
-      observe.
+      alone and every other key names an entity member. Stripping one from a row
+      — or projecting the row past it — would silently discard the very
+      coordinate the author meant to observe.
     - a TEMPORAL target's write observes a whole predecessor MILESTONE, which no
       flat row cell can name. It resolves either from tracked case state
       (:class:`~parallax.conformance.temporal_state.TemporalShadow`) or, where the
       write's own step named the find it settles against, from the observations
-      that `uow` group's reads filled (:func:`_settled_against_source`); a
-      standalone close's gate is authored beside the write. Which of the two
-      supplies it changes nothing here: neither is a cell the row may carry.
+      that `uow` group's reads filled (:func:`_settled_against_source`). Which of
+      the two supplies it changes nothing here: neither is a cell the row may
+      carry.
     - an INSERT opens a row rather than writing against one, so an observed
       version names a milestone that does not yet exist.
     - an UNVERSIONED non-temporal target has no version to observe, so an
@@ -785,17 +771,15 @@ def _observation_refusal(
     """
     if key in {_TEMPORAL_GATE_KEY, _TEMPORAL_VALID_START_KEY}:
         return (
-            f"a write row authors no `{key}` (m-case-format: an observed milestone's own edge "
-            "coordinate rides beside the write, at `when.observedTxStart` / "
-            "`when.observedValidStart`, or an attempt's own `observedTxStart`; a writeRow "
-            "reserves `observedVersion` alone and every other key names an entity member)"
+            f"a write row authors no `{key}` (m-case-format: a writeRow reserves "
+            "`observedVersion` alone and every other key names an entity member — a temporal "
+            "write observes a whole predecessor milestone, which no row cell can name)"
         )
     if _is_temporal_entity(model, entity_name):
         return (
             f"a temporal row authors no `{key}` (m-unit-work: a temporal write observes a whole "
             "predecessor milestone, which no flat row cell can name — the engine resolves one "
-            "from tracked case state or from the find its own step settles against, and a "
-            "standalone close's gate rides beside the write)"
+            "from tracked case state or from the find its own step settles against)"
         )
     if mutation in INSERT_MUTATIONS:
         return (
@@ -824,14 +808,13 @@ def _durable_row(
     THE seam a case row becomes a durable row through — the only one. Every
     producer of a case-authored row goes through it, whatever the row's shape or
     lane: :func:`_build_instructions` for a non-temporal writeSequence/scenario
-    entry, :func:`_build_temporal_instruction` for a temporal one,
-    :func:`_resolve_conflict_writes` for a non-temporal conflict attempt's
-    ``write``, and :func:`_run_conflict_close` for a temporal attempt's close
-    row. EVERY row of each reaches it, not merely the first: the two non-temporal
-    producers resolve the whole authored sequence (:func:`_durable_rows`), and the
-    two temporal ones admit a single row and refuse a plural entry outright
-    (:func:`_temporal_entry_row`, :func:`_conflict_close_row`) rather than
-    settling one row and discarding the rest.
+    entry, :func:`_build_temporal_instruction` for a temporal one, and
+    :func:`_resolve_conflict_writes` for a conflict attempt's ``write``. EVERY row
+    of each reaches it, not merely the first: the two non-temporal producers
+    resolve the whole authored sequence (:func:`_durable_rows`), and the temporal
+    one admits a single row and refuses a plural entry outright
+    (:func:`_temporal_entry_row`) rather than settling one row and discarding the
+    rest.
 
     Refusal (:func:`_observation_refusal`) and stripping are one
     indivisible step here precisely because they were separable before: a
@@ -841,10 +824,7 @@ def _durable_row(
 
     The durable row never carries a control key: the write-instruction schema
     forbids every one of them (ADR 0013), which `instructions.deserialize`
-    enforces for the lanes that reach it and which the lanes that bypass it — a
-    standalone close settles straight through
-    :func:`~parallax.snapshot.handle.plan_temporal_close` — depend on this seam
-    for.
+    enforces as well.
     """
     for key in _ROW_OBSERVATION_KEYS:
         if key not in row:
@@ -2005,8 +1985,7 @@ def _execute_framework_write_unit(
     """Execute the choreography unit ONE framework-marker entry is, and report the
     calls it cost.
 
-    Composed the way :func:`_run_conflict_close` composes a standalone close —
-    the caller's own plan, executed on the port's own transaction — rather than
+    The caller's own plan, executed on the port's own transaction, rather than
     driven through a write verb, because there is no verb to drive: a
     ``{"increment": n}`` registry advance is the PK allocator's own statement,
     and admitting it at a public ingress would make a DB-computed write marker
@@ -3787,39 +3766,9 @@ def read_table_state(
     return state
 
 
-def _conflict_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
-    """The entity a conflict case's write targets, when ``when.write`` carries no
-    explicit reference (`m-case-format`: a conflict case's write names no
-    entity of its own). For a plain model this is its SOLE entity — the same
-    convention the REJECTED lane's default target follows. For an inheritance
-    family writes are concrete-subtype only (`m-inheritance` "Concrete-subtype
-    writes"), never the abstract family root the REJECTED lane's DIFFERENT
-    default-target convention resolves to — this resolves to the family's SOLE
-    concrete subtype, and refuses a family declaring several as ambiguous.
-
-    Reported by CANONICAL spelling, like every default this lane resolves: the
-    subtype is selected by Identity here, so reducing it to a bare local name
-    would hand a resolved selection back to the ambiguity rule that adjudicates
-    an authored reference."""
-    root = default_family_root(model)
-    if root is None:
-        return first_declared_entity(case)
-    view = inheritance.view(model).entity(root.identity)
-    concretes = sorted(
-        identity.canonical for identity in (() if view is None else view.concrete_subtypes)
-    )
-    if len(concretes) != 1:
-        raise EngineError(  # pragma: no cover - no witnessed conflict model is ambiguous
-            f"a conflict case's model declares {len(concretes)} concrete subtypes "
-            f"{concretes!r}; the target is ambiguous without an explicit reference"
-        )
-    return concretes[0]
-
-
 def _conflict_mutation(when: Mapping[str, object]) -> Literal["update", "delete"]:
-    """A NON-TEMPORAL conflict case's written verb (`m-case-format`
-    ``when.mutation``), defaulting to ``update``. A temporal target ignores it:
-    its conflict write is always the milestone close."""
+    """A conflict case's written verb (`m-case-format` ``when.mutation``),
+    defaulting to ``update``."""
     return "delete" if when.get("mutation") == "delete" else "update"
 
 
@@ -3856,9 +3805,7 @@ def _resolve_conflict_writes(
     ADR 0013) and validate the durable instruction it leaves. ``mutation`` is the
     case's own ``when.mutation`` verb — a keyed UPDATE or DELETE, the two
     non-temporal shapes whose gate the target Entity's Effective Concurrency
-    Strategy decides uniformly; a
-    temporal close's own conflict form (`handle.plan_temporal_close`) is a
-    distinct shape.
+    Strategy decides uniformly.
 
     A conflict attempt authors its rows in the SAME ``writeRow`` vocabulary a
     writeSequence entry does, so they become durable rows through the SAME
@@ -3928,7 +3875,7 @@ def _implied_shortfall_error(
     Derived from the case, never from the plan the implementation settled, so a
     write whose policy was settled wrongly cannot also move the expectation it is
     graded against. An OBSERVATION-REQUIRING write — a versioned keyed UPDATE or
-    DELETE, or a temporal close — classifies by its gate, which the target's own
+    DELETE — classifies by its gate, which the target's own
     Effective Concurrency Strategy decides: a GATED (Optimistic) shortfall is the
     retriable optimistic-lock conflict, an UNGATED (Locking) one the
     non-retriable stale write. Anything else is an observation-free keyed write,
@@ -4011,8 +3958,6 @@ def _conflict_attempt_affected(
     the write lands, or the ``actual`` count carried by the ONE Write Effect Error
     the case's own declared facts admit.
 
-    Both conflict lanes — the non-temporal keyed write and the temporal close —
-    make this exact guard, so it lives here once rather than beside each ``body``.
     Every member of the family renders the same ``actual`` count, so a lane that
     caught the whole family would report an identical ``affectedRows`` observation
     whichever class the write raised, and the case would then assert nothing about
@@ -4026,19 +3971,6 @@ def _conflict_attempt_affected(
     """
     try:
         return transact(database, body, **requests)
-    except WriteEffectError as exc:
-        admitted = CardinalityCorruptionError if exc.actual > exc.expected else implied
-        if type(exc) is not admitted:
-            raise
-        return exc.actual
-
-
-def _admitted_affected(implied: type[WriteEffectError], run: Callable[[], int]) -> int:
-    """``run``'s own affected-row count, or the ``actual`` the ONE admitted Write
-    Effect Error carries — :func:`_conflict_attempt_affected`'s guard, for the
-    close lane, which opens no ``db.transact`` at all."""
-    try:
-        return run()
     except WriteEffectError as exc:
         admitted = CardinalityCorruptionError if exc.actual > exc.expected else implied
         if type(exc) is not admitted:
@@ -4261,377 +4193,6 @@ def _conflict_changes(model: AcceptedMetamodel, write: _ConflictWrite) -> dict[s
     return ActualWireProjection(model).entity_values(instruction.target, managed)
 
 
-# A temporal conflict attempt's verb. The case names none (`when.mutation` is
-# the NON-temporal lane's keyed UPDATE/DELETE) because a temporal target's
-# conflict write is always the milestone close — so the close names itself, for
-# the row diagnostics that report which write refused an authored key.
-_CLOSE_MUTATION: Final[str] = "close"
-
-
-def _run_conflict_close(
-    port: DatabaseConnection,
-    model: AcceptedMetamodel,
-    target: str,
-    concurrency: Concurrency,
-    write_row: Mapping[str, object],
-    at: str,
-    observed_tx_start: str | None,
-    observed_valid_start: str | None,
-    shadow: TemporalShadow,
-) -> tuple[tuple[LoweredStatement, ...], int, int]:
-    """Lower and execute one TEMPORAL conflict attempt's close — ONE
-    transaction opened on the port itself, ``clock=FixedClock(at)``. Composes the SAME two halves
-    production does — :func:`~parallax.snapshot.handle.plan_temporal_close`
-    settles the step, :func:`~parallax.core.sql_gen._write.compile_write_step` renders it —
-    for a conflict case's own close-only probe, never a REAL chaining mutation,
-    and executes it on the port's own transaction; a standalone close has
-    nothing to coalesce or FK-order with, so it bypasses the buffer/flush
-    pipeline entirely.
-
-    A case names its close's coordinates one of two ways, and never both:
-
-    * the ADDRESS directly — the write row's own ``validEnd`` completes a
-      bitemporal close's address and ``observed_tx_start`` supplies its gate
-      candidate, both the case's EXPLICIT authored fields
-      (`when.write.validEnd` / `when.observedTxStart`). This is how a case tests
-      a KNOWN stale-or-fresh gate, whose whole point is that it matches no
-      milestone;
-    * the OBSERVED MILESTONE — ``observed_valid_start`` with
-      ``observed_tx_start`` is that milestone's own edge coordinate
-      (`when.observedValidStart` / `when.observedTxStart`), which resolves
-      against the case's tracked state and supplies BOTH the address's
-      Valid-Time end and the gate from the ONE milestone it names. A key holding
-      several disjoint current rectangles is then addressable, and the address
-      and the gate provably come from one observation rather than from two
-      independently authored coordinates.
-
-    Its ``write_row`` is a case-authored row like any other, so it becomes a
-    durable row through :func:`_durable_row`, which entitles a temporal row to no
-    observation control key: the coordinates this close binds are the SEPARATE
-    arguments, and a row that spelled its own would otherwise be projected away
-    to the address's primary-key cells and the author's coordinate silently
-    replaced by the one beside the write.
-
-    A zero-row close is caught only as the class the case's own mode implies
-    (:func:`_implied_shortfall_error`); every other class propagates, so the
-    ``affectedRows`` observation can never absorb a misclassified failure.
-    """
-    row, _authored_none = _durable_row(model, target, _CLOSE_MUTATION, write_row)
-    authored_valid_end = row.pop("validEnd", None)
-    inputs = _conflict_close_inputs(
-        model,
-        target,
-        row,
-        at,
-        observed_tx_start,
-        observed_valid_start,
-        authored_valid_end,
-    )
-    observed_valid_end = inputs.authored_valid_end
-    managed_observed_tx_start = inputs.observed_tx_start
-    if inputs.observed_valid_start is not None:
-        observed_valid_end, managed_observed_tx_start = _observed_milestone_coordinates(
-            model,
-            target,
-            dict(inputs.identity),
-            observed_valid_end,
-            inputs.observed_valid_start,
-            managed_observed_tx_start,
-            shadow,
-        )
-        metadata = _conflict_close_metadata(model, target)
-        observed_valid_end = _decode_observed_conflict_bound(
-            metadata.valid_end, observed_valid_end, position="observed valid end"
-        )
-        managed_observed_tx_start = _decode_conflict_optional_instant(
-            metadata.tx_start,
-            managed_observed_tx_start,
-            position="observed transaction start",
-        )
-    # The standalone close is settled outside any unit of work, so it is handed
-    # its own Transaction Instant over the SAME clock the transaction below runs
-    # on — the two can never derive different instants from one `at`.
-    clock = FixedClock(inputs.instant)
-    step = handle.plan_temporal_close(
-        dict(inputs.identity),
-        target,
-        model,
-        concurrency,
-        TransactionInstant(clock),
-        managed_observed_tx_start,
-        observed_valid_end,
-    )
-    statement = compile_write_step(step, model, port.dialect)
-
-    # A standalone close is no keyed mutation and no unit of work buffers it, so
-    # it runs on the port's own transaction — public `m-db-port`, the same
-    # boundary ``db.transact`` opens. That opens no Handle, so nothing observes
-    # this statement: it is exactly one, and its round trip is stated rather than
-    # read off a lifecycle, the same account `run_error_case` gives for authored
-    # trigger DML.
-    #
-    # A Bitemporal close is unreachable through a keyed verb: every
-    # closure-bearing entry in `bitemp_write._TOPOLOGIES` chains at least the
-    # head rectangle, and the goldens author the close alone. A
-    # Transaction-Time-Only `terminate` does close without chaining
-    # (`txtime_write.MILESTONE_CHAIN.topology`), but it derives its address and
-    # gate from the milestone its observation names, while a conflict case
-    # authors both directly — including the deliberately stale gate whose whole
-    # point is that it matches no milestone.
-    def run_close(conn: DatabaseConnection) -> int:
-        affected = conn.execute_write(
-            conn.dialect.to_driver_sql(statement.sql), list(statement.binds)
-        )
-        # The SAME authoritative interpreter `parallax.snapshot.handle`'s own
-        # flush executor asks, so the two callers can never disagree on what a
-        # count means.
-        enforce_affected_rows(step, affected)
-        return affected
-
-    implied = _implied_shortfall_error(True, concurrency, model, target)
-    affected = _admitted_affected(implied, lambda: committed(port.transaction(run_close)))
-    return (statement,), affected, 1
-
-
-@dataclass(frozen=True, slots=True)
-class _ConflictCloseMetadata:
-    primary_key: tuple[AttributeMetadata, ...]
-    tx_start: AttributeMetadata
-    valid_start: AttributeMetadata | None
-    valid_end: AttributeMetadata | None
-
-
-@dataclass(frozen=True, slots=True)
-class _ConflictCloseInputs:
-    """Managed inputs for compatibility's standalone temporal-close probe."""
-
-    identity: tuple[tuple[str, ManagedValue], ...]
-    instant: dt.datetime
-    observed_tx_start: dt.datetime | None
-    observed_valid_start: dt.datetime | None
-    authored_valid_end: dt.datetime | TemporalBound | None
-
-
-def _conflict_close_inputs(
-    model: AcceptedMetamodel,
-    target: str,
-    row: Mapping[str, object],
-    at: object,
-    observed_tx_start: object | None,
-    observed_valid_start: object | None,
-    authored_valid_end: object | None,
-) -> _ConflictCloseInputs:
-    metadata = _conflict_close_metadata(model, target)
-    primary_key_names = tuple(attribute.identity.name for attribute in metadata.primary_key)
-    if set(row) != set(primary_key_names):
-        raise EngineError(
-            f"{target!r}: a standalone temporal close must carry exactly its primary-key "
-            f"members; expected {list(primary_key_names)!r}, got {list(row)!r}"
-        )
-    return _ConflictCloseInputs(
-        identity=tuple(
-            (
-                attribute.identity.name,
-                _decode_conflict_literal(
-                    attribute,
-                    row[attribute.identity.name],
-                    position=f"primary key `{attribute.identity.name}`",
-                ),
-            )
-            for attribute in metadata.primary_key
-        ),
-        instant=_decode_conflict_instant(metadata.tx_start, at, position="at"),
-        observed_tx_start=_decode_conflict_optional_instant(
-            metadata.tx_start,
-            observed_tx_start,
-            position="observedTxStart",
-        ),
-        observed_valid_start=_decode_conflict_optional_instant(
-            metadata.valid_start,
-            observed_valid_start,
-            position="observedValidStart",
-        ),
-        authored_valid_end=_decode_conflict_bound(
-            metadata.valid_end,
-            authored_valid_end,
-            position="validEnd",
-        ),
-    )
-
-
-def _conflict_close_metadata(model: AcceptedMetamodel, target: str) -> _ConflictCloseMetadata:
-    entity = case_entity(model, target)
-    position = inheritance.view(model).entity(entity.identity)
-    if position is None:  # pragma: no cover - every accepted Entity has a facet position
-        raise EngineError(f"{entity.identity.canonical}: target is absent from inheritance view")
-    primary_key = tuple(
-        attribute
-        for attribute in position.applicable_attributes
-        if isinstance(attribute.primary_key, PrimaryKey)
-    )
-    declarer = family_declarer(model, entity)
-    tx_start, _tx_end = _axis_attributes(declarer, TemporalDimension.TRANSACTION_TIME)
-    valid_axis = (
-        _axis_attributes(declarer, TemporalDimension.VALID_TIME)
-        if declarer.as_of_axis(TemporalDimension.VALID_TIME) is not None
-        else None
-    )
-    return _ConflictCloseMetadata(
-        primary_key,
-        tx_start,
-        None if valid_axis is None else valid_axis[0],
-        None if valid_axis is None else valid_axis[1],
-    )
-
-
-def _axis_attributes(
-    declarer: EntityMetadata,
-    dimension: TemporalDimension,
-) -> tuple[AttributeMetadata, AttributeMetadata]:
-    axis = declarer.as_of_axis(dimension)
-    if axis is None:  # pragma: no cover - the caller establishes the accepted temporal shape
-        raise EngineError(
-            f"{declarer.identity.canonical}: temporal close has no {dimension.value} axis"
-        )
-    start = declarer.attribute(axis.start_attribute.name)
-    end = declarer.attribute(axis.end_attribute.name)
-    if start is None or end is None:  # pragma: no cover - accepted axes resolve both endpoints
-        raise EngineError(
-            f"{declarer.identity.canonical}: {dimension.value} axis endpoints are unresolved"
-        )
-    return start, end
-
-
-def _decode_conflict_optional_instant(
-    attribute: AttributeMetadata | None,
-    value: object | None,
-    *,
-    position: str,
-) -> dt.datetime | None:
-    if value is None:
-        return None
-    if attribute is None:
-        raise EngineError(f"a temporal close {position} names an axis the target does not declare")
-    return _decode_conflict_instant(attribute, value, position=position)
-
-
-def _decode_conflict_bound(
-    attribute: AttributeMetadata | None,
-    value: object | None,
-    *,
-    position: str,
-) -> dt.datetime | TemporalBound | None:
-    if value is None:
-        return None
-    if isinstance(value, str) and str.__str__(value) == INFINITY_LITERAL:
-        if attribute is None:
-            raise EngineError(
-                f"a temporal close {position} names an axis the target does not declare"
-            )
-        return TemporalBound.INFINITY
-    if attribute is None:
-        raise EngineError(f"a temporal close {position} names an axis the target does not declare")
-    return _decode_conflict_instant(attribute, value, position=position)
-
-
-def _decode_observed_conflict_bound(
-    attribute: AttributeMetadata | None,
-    value: object | None,
-    *,
-    position: str,
-) -> dt.datetime | TemporalBound | None:
-    if isinstance(value, TemporalBound):
-        return value
-    return _decode_conflict_bound(attribute, value, position=position)
-
-
-def _decode_conflict_instant(
-    attribute: AttributeMetadata,
-    value: object,
-    *,
-    position: str,
-) -> dt.datetime:
-    normalized = value
-    if isinstance(value, str):
-        try:
-            candidate = dt.datetime.fromisoformat(value)
-        except ValueError:
-            pass
-        else:
-            if matches_neutral_type(candidate, TIMESTAMP):
-                normalized = encode_wire(TIMESTAMP, candidate)
-    elif isinstance(value, dt.datetime) and matches_neutral_type(value, TIMESTAMP):
-        normalized = encode_wire(TIMESTAMP, value)
-    decoded = _decode_conflict_literal(attribute, normalized, position=position)
-    if not isinstance(decoded, dt.datetime):  # pragma: no cover - accepted axes are Timestamp
-        raise EngineError(
-            f"{attribute.identity.entity.canonical}.{attribute.identity.name}: "
-            f"temporal close {position} did not decode to an instant"
-        )
-    return decoded
-
-
-def _decode_conflict_literal(
-    attribute: AttributeMetadata,
-    value: object,
-    *,
-    position: str,
-) -> ManagedValue:
-    try:
-        return decode_wire(attribute.type, cast("WireValue", value))
-    except WireDecodingError as exc:
-        raise EngineError(
-            f"{attribute.identity.entity.canonical}.{attribute.identity.name}: "
-            f"temporal close {position} is "
-            f"neutral-literal-{exc.reason}: {exc}"
-        ) from exc
-
-
-def _observed_milestone_coordinates(
-    model: AcceptedMetamodel,
-    target: str,
-    row: Mapping[str, object],
-    authored_valid_end: dt.datetime | TemporalBound | None,
-    observed_valid_start: dt.datetime,
-    observed_tx_start: dt.datetime | None,
-    shadow: TemporalShadow,
-) -> tuple[object | None, object]:
-    """The close coordinates the ONE milestone a case named the edge of supplies:
-    that milestone's own Valid-Time end (the address's exclusive upper bound) and
-    its own Transaction-Time start (the gate candidate).
-
-    Both come from one resolved observation, so an implementation that resolved
-    the observation by primary key alone — picking whichever of a key's current
-    rectangles it happened to hold — cannot render the address this returns.
-    That is the whole reason a case names an edge instead of an address.
-
-    An authored ``validEnd`` alongside is refused rather than cross-checked: the
-    two spellings answer the same question, and a case that agrees with itself
-    proves nothing the derivation does not already, while a case that disagrees
-    would have to pick a winner.
-    """
-    if authored_valid_end is not None:
-        raise EngineError(
-            f"{target!r} {_CLOSE_MUTATION!r}: a close names its observed milestone's edge "
-            "(`observedValidStart`) or its address (`write.validEnd`), never both — the "
-            "address of an edge-named close is DERIVED from the milestone the edge selects"
-        )
-    entity_metadata = case_entity(model, target)
-    edge = temporal_state.observed_edge(
-        model, entity_metadata, valid_start=observed_valid_start, tx_start=observed_tx_start
-    )
-    observation = shadow.resolve(model, entity_metadata, row, edge)
-    if observation is None:
-        raise EngineError(
-            f"{target!r} {_CLOSE_MUTATION!r}: no current milestone of this key carries the "
-            f"observed edge {edge!r} — a close observes a milestone the case's own state holds"
-        )
-    valid_end, tx_start = temporal_state.observed_close_coordinates(
-        model, entity_metadata, observation
-    )
-    return valid_end, tx_start
-
-
 def _conflict_write_rows(attempt: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
     """One conflict attempt's authored ``write`` as the ordered row sequence both
     forms denote: a lone object is the one-element case of the multi-key array
@@ -4643,144 +4204,28 @@ def _conflict_write_rows(attempt: Mapping[str, object]) -> tuple[Mapping[str, ob
     return (cast("Mapping[str, object]", raw),)
 
 
-def _conflict_close_row(
-    case: case_format.Case, attempt: Mapping[str, object]
-) -> Mapping[str, object]:
-    """The ONE milestone row a temporal conflict attempt closes.
-
-    The multi-key ``write`` array is a keyed, NON-temporal form — a temporal
-    target's write expands into a close plus its successors per key and never
-    collapses into one set-based statement — so an array reaching a close is
-    refused rather than silently reduced to a row the case did not single out.
-    """
-    raw = attempt["write"]
-    if isinstance(raw, list):
-        raise EngineError(
-            f"{case.path.name}: a temporal conflict attempt closes one milestone row, and "
-            "the multi-key `write` array form is keyed and non-temporal"
-        )
-    return cast("Mapping[str, object]", raw)
-
-
-# The observed milestone's own edge, authored beside a temporal conflict write.
-_MILESTONE_EDGE_KEYS: Final[frozenset[str]] = frozenset({"observedTxStart", "observedValidStart"})
-
-
-def _refuse_unentitled_observed_edge(
-    case: case_format.Case, when: Mapping[str, object], *, is_temporal: bool
-) -> None:
-    """Refuse an observation coordinate the conflict target, mode, or attempt
-    form cannot consume.
-
-    Four entitlements, all decided here because all are properties of the CASE
-    rather than of any one attempt's arithmetic (`m-case-format`, *Naming the
-    observed milestone*):
-
-    * a NON-temporal target has no milestones and no edge to name one with, so
-      the coordinates would be read by nothing — the versioned conflict path
-      never looks at them. That holds wherever they are spelled, so the root
-      ``when`` and every attempt are checked alike;
-    * a RETRY attempt re-reads state the concurrent writer left behind, while an
-      edge selects among the milestones the case's own loaded fixtures hold. The
-      two cannot be reconciled without a resolving read no lane performs, so the
-      OBSERVATION form is single-attempt only and a retry names its address
-      directly;
-    * a retry sequence reads each attempt's own coordinates and never the root
-      ``when``'s, so a root coordinate beside ``attempts`` is consumed by nothing.
-      The two authoring locations are alternatives, not a default and an
-      override;
-    * ``observedTxStart`` standing ALONE is the address form's gate candidate,
-      and a close under the Locking strategy renders no gate, so it is entitled
-      only where the preference resolves to ``optimistic`` — which a temporal
-      target's Transaction-Time-derived key then carries into the Optimistic
-      strategy. Beside ``observedValidStart`` it is instead the edge's
-      Transaction-Time half, which selects the milestone under either strategy.
-      The preference is the one the outer invocation resolves to — declared
-      ``when.uow.concurrency``, else the root's, else the built-in
-      ``optimistic`` — so only a case whose resolved preference is ``locking``
-      is refused.
-
-    The Transaction-Time-Only arm of the first entitlement lives where the edge
-    is built (:func:`temporal_state.observed_edge`), which refuses a coordinate
-    on an axis the target does not declare.
-    """
-    raw_attempts = when.get("attempts")
-    attempts = (
-        cast("list[Mapping[str, object]]", raw_attempts) if isinstance(raw_attempts, list) else []
-    )
-    sources = [
-        ("`when`", when),
-        *((f"attempt {index}", attempt) for index, attempt in enumerate(attempts)),
-    ]
-    if not is_temporal:
-        for pointer, source in sources:
-            if any(key in source for key in _MILESTONE_EDGE_KEYS):
-                raise EngineError(
-                    f"{case.path.name}: a NON-temporal conflict target has no milestone to "
-                    f"observe, so it may author neither of {sorted(_MILESTONE_EDGE_KEYS)} "
-                    f"({pointer})"
-                )
-    if raw_attempts is not None:
-        _refuse_retry_observed_edges(case.path.name, when, attempts)
-    if case_document.concurrency(case) == "optimistic":
-        return
-    for pointer, source in sources:
-        if "observedTxStart" in source and "observedValidStart" not in source:
-            raise EngineError(
-                f"{case.path.name}: `locking` mode renders no gate, so a lone "
-                f"`observedTxStart` is consumed by nothing ({pointer}) — it is entitled "
-                "under `optimistic`, or beside `observedValidStart` as the observed "
-                "milestone's edge"
-            )
-
-
-def _refuse_retry_observed_edges(
-    case_name: str, when: Mapping[str, object], attempts: Sequence[Mapping[str, object]]
-) -> None:
-    for index, attempt in enumerate(attempts):
-        if "observedValidStart" in attempt:
-            raise EngineError(
-                f"{case_name}: attempt {index} names its observed milestone's edge "
-                "(`observedValidStart`), which selects among the case's own fixtures — a "
-                "retry re-reads what the concurrent writer left, so a retry attempt names "
-                "its address (`write.validEnd`) directly"
-            )
-    for key in sorted(_MILESTONE_EDGE_KEYS):
-        if key in when:
-            raise EngineError(
-                f"{case_name}: the root `when` authors {key!r} beside `attempts` — "
-                "a retry sequence reads each attempt's own coordinates, so a root one is "
-                "consumed by no attempt"
-            )
-
-
 def run_conflict_case(
     case: case_format.Case,
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], int, dict[str, list[MappingRow]] | None, int]:
-    """Run a `conflict` case (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`):
-    the single-attempt form (`when.write`), or the `when.attempts` retry
-    sequence — each attempt its OWN `db.transact` unit,
-    in order, each with its own statements /
-    affected-row count (the case's own `0`-then-`1` retry-contract witness). A
-    NON-temporal target (a keyed UPDATE or DELETE, named by `when.mutation`)
-    writes every row of its `write` — one row, or the multi-key array whose
-    rows the batching rule may collapse into a single set-based statement —
-    through the public keyed Wire verb; a TEMPORAL target composes
-    `handle.plan_temporal_close` directly, one milestone row at a time.
+    """Run a `conflict` case (`m-opt-lock`): the single-attempt form
+    (`when.write`), or the `when.attempts` retry sequence — each attempt its OWN
+    `db.transact` unit, in order, each with its own statements / affected-row
+    count (the case's own `0`-then-`1` retry-contract witness). The keyed UPDATE
+    or DELETE `when.mutation` names writes every row of its `write` — one row, or
+    the multi-key array whose rows the batching rule may collapse into a single
+    set-based statement — through the public keyed Wire verb. A temporal target
+    is refused: the conflict shape is non-temporal (`m-case-format`).
 
     Loads no fixtures itself (the caller's own lifecycle does, per
     `m-case-format`'s conflict-shape default). `given.apply`'s concurrent writer
     commits BETWEEN the FIRST attempt's source read and the write that read
     licenses (:func:`~parallax.conformance._mechanism.given_state.apply_given_apply`),
-    which is the ordering a non-temporal
-    conflict case describes: the state its write settles against is one a real
-    read of this lane observed, and the writer that invalidated it committed
-    afterwards. A retry attempt reads again, after the attempt before it ran, so
-    it observes the state that writer left. A TEMPORAL attempt needs no source —
-    its close settles against a coordinate the case names — so for it the writer
-    still commits first.
+    which is the ordering a conflict case describes: the state its write settles
+    against is one a real read of this lane observed, and the writer that
+    invalidated it committed afterwards. A retry attempt reads again, after the
+    attempt before it ran, so it observes the state that writer left.
 
     Returns the ordered emissions, the FINAL (single-attempt or last-retry)
     affected-row count — the schema's one `affectedRows` slot,
@@ -4795,17 +4240,14 @@ def run_conflict_case(
     options = case_format.database_options(case)
     refuse_a_conflict_retry_opt_in(case, options, "`given.databaseOptions`")
     requests = _conflict_attempt_requests(case)
-    target = _conflict_target(case, model)
+    target = first_declared_entity(case)
+    if _is_temporal_entity(model, target):
+        raise EngineError(
+            f"{case.path.name}: {target!r} is temporal, and a conflict case's write targets a "
+            "non-temporal Entity — a temporal write's race is an interleaved scenario "
+            "(m-case-format 'Conflict cases')"
+        )
     mutation = _conflict_mutation(when)
-    is_temporal = _is_temporal_entity(model, target)
-    # The state an edge-named close resolves its observed milestone against — the
-    # case's own loaded fixtures, which are exactly the milestones its address
-    # can select. Seeded before `given.apply`, whose out-of-band writer is a
-    # CONCURRENT transaction this one never observed.
-    shadow = TemporalShadow()
-    _refuse_unentitled_observed_edge(case, when, is_temporal=is_temporal)
-    if is_temporal:
-        seed_shadow_from_fixtures(case, model, shadow)
     emissions: list[Emission] = []
     affected = 0
     round_trips = 0
@@ -4836,36 +4278,23 @@ def run_conflict_case(
 
         # Taken before the concurrent writer commits, and spent by the first
         # attempt; every later attempt reads again, after the one before it ran.
-        sources = None if is_temporal else sources_for(attempts[0][1])
-        apply_given_apply(case, port, shadow)
+        sources: dict[ObjectKey, handle.WireEntity] | None = sources_for(attempts[0][1])
+        apply_given_apply(case, port, None)
         for pointer, attempt in attempts:
-            if is_temporal:
-                statements, affected, attempt_trips = _run_conflict_close(
-                    port,
-                    model,
-                    target,
-                    concurrency,
-                    _conflict_close_row(case, attempt),
-                    cast("str", attempt["at"]),
-                    cast("str | None", attempt.get("observedTxStart")),
-                    cast("str | None", attempt.get("observedValidStart")),
-                    shadow,
-                )
-            else:
-                statements, affected, attempt_trips = _run_conflict_write(
-                    port,
-                    serving,
-                    model,
-                    options,
-                    target,
-                    concurrency,
-                    requests,
-                    _conflict_write_rows(attempt),
-                    mutation,
-                    sources_for(attempt) if sources is None else sources,
-                    lifecycle,
-                )
-                sources = None
+            statements, affected, attempt_trips = _run_conflict_write(
+                port,
+                serving,
+                model,
+                options,
+                target,
+                concurrency,
+                requests,
+                _conflict_write_rows(attempt),
+                mutation,
+                sources_for(attempt) if sources is None else sources,
+                lifecycle,
+            )
+            sources = None
             emissions.extend(Emission(pointer, statement) for statement in statements)
             round_trips += attempt_trips
     except LOWERING_ERRORS as exc:

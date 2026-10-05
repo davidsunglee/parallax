@@ -729,8 +729,8 @@ class Case:
 
         Holds exactly one action member per shape (``objectQuery`` | ``writeSequence``
         | ``scenario`` | ``coherence`` | ``concurrency`` | ``boundary`` | ``edit`` |
-        ``attempts`` | ``write``) plus the context members ``uow`` / ``stream`` / ``at`` /
-        ``observedTxStart`` / ``observedValidStart`` / ``equivalentEncodings``.
+        ``attempts`` | ``write``) plus the context members ``uow`` / ``stream`` /
+        ``mutation`` / ``equivalentEncodings``.
         """
         return self.raw.get("when", {})
 
@@ -1010,33 +1010,12 @@ class Case:
 
     @property
     def conflict_mutation(self) -> str:
-        """The keyed verb a NON-temporal conflict case writes (``when.mutation``).
+        """The keyed verb a conflict case writes (``when.mutation``).
 
         ``update`` by default; ``delete`` selects the versioned keyed DELETE,
-        whose golden carries no ``set`` clause. A temporal target ignores this —
-        its conflict write is always the milestone close.
+        whose golden carries no ``set`` clause.
         """
         return self.when.get("mutation", "update")
-
-    @property
-    def at(self) -> Any:
-        """A single-form temporal conflict close's instant (``when.at``)."""
-        return self.when.get("at")
-
-    @property
-    def observed_tx_start(self) -> Any:
-        """A temporal conflict close's observed Transaction-Time start."""
-        return self.when.get("observedTxStart")
-
-    @property
-    def observed_valid_start(self) -> Any:
-        """A temporal conflict close's observed Valid-Time start.
-
-        Paired with ``observedTxStart`` it is the observed milestone's own EDGE
-        coordinate, which names the milestone the close observed instead of
-        naming the close's address directly.
-        """
-        return self.when.get("observedValidStart")
 
     @property
     def expected_affected_rows(self) -> int | None:

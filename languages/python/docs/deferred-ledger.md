@@ -212,39 +212,33 @@ combination, and one has. What remains is the repair: filling the channel from
 each group's finds, grading it in the run sweep, and its own DB-free driver,
 after which `m-unit-work-033` joins the interleaved lane.
 
-### D-78 — Two conformance write lanes run DML no Handle opened, so their work reaches no Execution Lifecycle
+### D-78 — The framework-marker write lane runs DML no Handle opened, so its work reaches no Execution Lifecycle
 
 *Medium — it bounds which case shapes may author `then.executionLifecycle`.*
-Relates to `parallax.conformance._lanes.scenario._execute_framework_write_unit`,
-`parallax.conformance._lanes.scenario._run_conflict_close`.
+Relates to `parallax.conformance._lanes.scenario._execute_framework_write_unit`.
 
 **What.** Every other write lane drives its DML through a real `db.transact`, so
-its statements and round trips are read off the delivered lifecycle. Two do not,
-because the DML they run has no public verb to be stated through: a
-`{"increment": n}` DB-computed write marker is the PK allocator's own statement,
-and a conflict case's standalone temporal close is unreachable through any keyed
-verb — every closure-bearing `bitemp_write._TOPOLOGIES` entry chains at least the
-head rectangle, and a Transaction-Time-Only `terminate` derives its address from
-the milestone its observation names while a conflict case authors both
-coordinates directly. Both therefore execute a plan of their own against
-`m-db-port` and STATE their round trips, exactly as `run_error_case` does for
-authored trigger DML. The consequence is bounded and real: a case reaching either
-shape opens no Root Execution for that work, so it can author no
-`then.executionLifecycle` — the stream would omit calls the run made, and the
-record's own count cross-check (`reference_harness.execution_validate`) would
-report the disagreement rather than the case grading a stream missing them.
+its statements and round trips are read off the delivered lifecycle. One does
+not, because the DML it runs has no public verb to be stated through: a
+`{"increment": n}` DB-computed write marker is the PK allocator's own statement.
+It therefore executes a plan of its own against `m-db-port` and STATES its round
+trips, exactly as `run_error_case` does for authored trigger DML. The consequence
+is bounded and real: a case reaching that shape opens no Root Execution for that
+work, so it can author no `then.executionLifecycle` — the stream would omit calls
+the run made, and the record's own count cross-check
+(`reference_harness.execution_validate`) would report the disagreement rather
+than the case grading a stream missing them.
 
 **Why it is deferred rather than fixed.** Closing it is a design choice with real
 costs on every branch, and no case needs it today. Routing the work through
 `parallax.snapshot.handle` means giving a DB-computed write marker a public
-ingress — developer surface over the framework's own bookkeeping — or adding a
-bare-close verb no application wants. Adding an instrumented seam for the adapter
-alone puts a test-shaped door in production. Restricting the oracle instead is
-free but states the limit nowhere the corpus can see it. What holds the gap shut
-meanwhile is that neither lane can silently grow a second: every `handle.Database`
-the engine builds installs a Provider, asserted over the source
-(`tests/unit/conformance/test_lifecycle_observation.py`), so an unobserved lane is one that
-opens no Handle at all and says so.
+ingress — developer surface over the framework's own bookkeeping. Adding an
+instrumented seam for the adapter alone puts a test-shaped door in production.
+Restricting the oracle instead is free but states the limit nowhere the corpus
+can see it. What holds the gap shut meanwhile is that no other lane can silently
+join it: every `handle.Database` the engine builds installs a Provider, asserted
+over the source (`tests/unit/conformance/test_lifecycle_observation.py`), so an
+unobserved lane is one that opens no Handle at all and says so.
 
 ### D-82 — A published dump builds the same presentation twice, and removing the second build needs no bracket
 
