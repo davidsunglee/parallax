@@ -1,0 +1,31 @@
+model: models/balance.yaml
+tags: [m-txtime-write, m-unit-work, m-sql, write-sequence, update, audit-only, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.Balance
+      statements: 1
+      note: open the original current milestone [2024-01-01, infinity)
+      rows:
+        - { id: 1, acctNum: A, value: "100.00" }
+      at: "2024-01-01T00:00:00.000000Z"
+    - mutation: update
+      entity: parallax.compatibility.Balance
+      statements: 1
+      note: every assigned value equals the current one; a guard on the observed in_z keeps the milestone, so no history is written
+      rows:
+        - { id: 1, acctNum: A, value: "100.00" }
+      at: "2024-06-01T00:00:00.000000Z"
+then:
+  statements:
+    - sql:
+        postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, A, "100.00", "2024-01-01T00:00:00.000000Z", infinity]
+    - sql:
+        postgres: update balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?
+      binds: [1, infinity, "2024-01-01T00:00:00.000000Z"]
+  tableState:
+    balance:
+      - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+  roundTrips: 3

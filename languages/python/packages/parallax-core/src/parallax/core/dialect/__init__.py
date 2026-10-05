@@ -198,6 +198,10 @@ class Dialect:
     # DERIVED name has to fit a budget; an authored Table or Column name is the
     # author's own and is spelled as declared.
     max_identifier_bytes: int
+    # Whether an UPDATE's native affected count includes the rows it matched
+    # but left unchanged, which is what lets a matched count prove that an
+    # unchanged row still stands as observed (`m-dialect` "Unchanged-row count").
+    counts_unchanged_rows: bool = False
 
     # -- identifiers ------------------------------------------------------- #
     def quote(self, identifier: str) -> str:
@@ -576,4 +580,5 @@ POSTGRES: Final[Dialect] = Dialect(
         "55P03": "lockWaitTimeout",
     },
     max_identifier_bytes=63,
+    counts_unchanged_rows=True,
 )

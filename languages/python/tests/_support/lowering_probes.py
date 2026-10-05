@@ -90,6 +90,7 @@ def _stream(
                 concurrency=concurrency,
                 buffered_writes=[observed_write(_prepared(instruction, model), model, observation)],
                 ownership=ownership,
+                counts_unchanged_rows=dialect.counts_unchanged_rows,
             )
         )
         .plan

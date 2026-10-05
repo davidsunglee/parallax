@@ -285,15 +285,18 @@ class BufferOutcome(Enum):
 
 @dataclass(frozen=True, slots=True)
 class TransactionSettings:
-    """A unit of work's fixed Concurrency Preference.
+    """A unit of work's fixed Concurrency Preference, and what its database's
+    write counts report.
 
     The default is `optimistic` (`m-unit-work` "Strategy selection"): a
     preference, not a uniform strategy — each Entity's own Optimistic Lock Facet
     decides whether it yields Optimistic or the mandatory Locking fallback
-    (`m-opt-lock`).
+    (`m-opt-lock`). ``counts_unchanged_rows`` is the connection's dialect fact
+    every flush plans with (:class:`~parallax.core.unit_work.write_planner.PlanningRequest`).
     """
 
     concurrency: Concurrency = "optimistic"
+    counts_unchanged_rows: bool = False
 
 
 class _TargetRecord:
@@ -1388,6 +1391,7 @@ class UnitOfWork:
             concurrency=self.settings.concurrency,
             buffered_writes=self._pending.writes(),
             ownership=self._targets,
+            counts_unchanged_rows=self.settings.counts_unchanged_rows,
         )
         finalized = self._planner.finalize(request)
         sources = self._pending.sources()
@@ -1427,7 +1431,8 @@ class UnitOfWork:
         if bound is None:
             self._complete(
                 unit,
-                executed=unit.end > (units[reported - 1].end if reported else 0),
+                executed=not unit.changed_exactly
+                and unit.end > (units[reported - 1].end if reported else 0),
                 changed=unit.changed,
                 removed=unit.removed,
                 opened=unit.opened,
@@ -1436,7 +1441,7 @@ class UnitOfWork:
             return
         self._complete(
             unit,
-            executed=bool(bound.steps),
+            executed=not unit.changed_exactly and bool(bound.steps),
             changed=bound.changed,
             removed=bound.removed,
             opened=bound.opened,

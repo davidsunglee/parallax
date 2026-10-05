@@ -322,7 +322,8 @@ class ExecutionUnit:
     previous unit's. Its facts are applied only once every one of its steps has
     succeeded, and before any later unit executes: the source authority
     ``claim`` it spends, the observed states it changed — a single retained
-    claim's own state among them whenever the unit has a step — and the owned
+    claim's own state among them whenever the unit has a step, unless
+    ``changed_exactly`` — and the owned
     rows it removed and opened. Removals are retired before openings are
     registered, so a row removed and reopened at one address remains owned, and
     an insertion whose last row the unit removed still stands when a row the
@@ -335,6 +336,11 @@ class ExecutionUnit:
     ``derived`` records the originals the unit transformed and the rows it left
     of each, for a later unit of the same flush whose conditions those
     originals carry; a unit no later one depends on records none.
+
+    ``changed_exactly`` says ``changed`` already names every state the unit
+    changes, its claim's own among them, so a step alone counts nothing as
+    changed: a guard that proves a milestone unchanged executes and changes
+    nothing.
     """
 
     end: int
@@ -344,6 +350,7 @@ class ExecutionUnit:
     opened: Openings = NO_OPENINGS
     deferred: DeferredRange | None = None
     derived: tuple[Derivation, ...] = ()
+    changed_exactly: bool = False
 
 
 @dataclass(frozen=True, slots=True)

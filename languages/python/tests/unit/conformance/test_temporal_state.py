@@ -31,11 +31,13 @@ from parallax.core.unit_work import (
     PlanningRequest,
     SubjectActor,
     TransactionInstant,
+    buffered_write,
     instructions,
 )
 from parallax.core.unit_work.instructions import KeyedWrite, PreparedWrite
 from parallax.core.unit_work.plan import PlannedSteps, RangeAcquisition
 from parallax.core.unit_work.planner import ObjectKey, VersionedStateKey
+from parallax.core.unit_work.write_planner import compose_writes
 from parallax.snapshot.handle import build_write_planner
 
 POSITION = models.load_models()["position"]
@@ -337,6 +339,45 @@ def test_retire_drops_only_the_milestone_the_write_observed() -> None:
     )
     assert survivor is not None
     assert survivor.predecessor.member("value") == 100.00
+
+
+@pytest.mark.parametrize(
+    ("value", "kept"), [("100.00", True), ("150.00", False)], ids=["kept", "closed"]
+)
+def test_a_milestone_no_step_closes_is_tracked_again_after_its_write_resolved(
+    value: str, kept: bool
+) -> None:
+    shadow = TemporalShadow()
+    shadow.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD])
+    observed = shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1})
+    assert observed is not None
+    shadow.retire(POSITION, POSITION_ENTITY, observed)
+    prepared = instructions.prepare_wire_write(
+        KeyedWrite(
+            "updateUntil",
+            "Position",
+            ({"id": 1, "value": value},),
+            dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+            dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        ),
+        POSITION,
+    )
+    steps = (
+        build_write_planner(POSITION)
+        .finalize(
+            PlanningRequest(
+                actor_identity=SubjectActor("unattributed"),
+                transaction_instant=TransactionInstant(
+                    FixedClock(dt.datetime(2024, 9, 1, tzinfo=dt.UTC))
+                ),
+                concurrency="locking",
+                buffered_writes=compose_writes(POSITION, [buffered_write(prepared, observed)]),
+            )
+        )
+        .plan.steps
+    )
+    shadow.keep_unchanged(POSITION, steps, [(POSITION_ENTITY, observed)])
+    assert (shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1}) is observed) is kept
 
 
 def test_a_doomed_units_retirement_and_re_accounting_are_both_discarded() -> None:

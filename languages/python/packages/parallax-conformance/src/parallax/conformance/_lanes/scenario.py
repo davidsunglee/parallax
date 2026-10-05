@@ -1145,7 +1145,8 @@ def _lower_resolved(
     the count is never derived from a second, reconstructed plan.
 
     The case-state ledger advances HERE, from THIS plan's own opened rows
-    (:meth:`TemporalShadow.track_opened`) — the milestone a later choreography
+    (:meth:`TemporalShadow.track_opened`), and keeps every milestone a write left
+    unchanged (:meth:`TemporalShadow.keep_unchanged`) — the milestone a later choreography
     unit observes is the one this write actually plans, so there is no second
     expansion of the same topology to drift from it. The close's retirement
     happened at resolution, where the observation it consumed is known. Both
@@ -1158,6 +1159,16 @@ def _lower_resolved(
         model, dialect, concurrency, tx_instant, buffer, coverage=shadow
     )
     _check_statement_count_consistency(entries, len(statements))
+    shadow.keep_unchanged(
+        model,
+        plan.steps,
+        (
+            (write.instruction.target, write.oracle_observation)
+            for write in resolved
+            if isinstance(write.instruction, PreparedKeyedWrite)
+            and isinstance(write.oracle_observation, TemporalObservation)
+        ),
+    )
     shadow.track_opened(model, plan.steps, retired=plan.changed)
     return statements
 
@@ -1189,6 +1200,7 @@ def _plan_and_lower(
                 transaction_instant=_pinned_instant(tx_instant),
                 concurrency=concurrency,
                 buffered_writes=compose_writes(model, buffered_writes),
+                counts_unchanged_rows=dialect.counts_unchanged_rows,
             )
         )
         .plan

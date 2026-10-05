@@ -46,6 +46,7 @@ __all__ = [
     "PlannedDelete",
     "PlannedInsert",
     "PlannedRow",
+    "PlannedTemporalGuard",
     "PlannedTemporalRemoval",
     "PlannedTemporalRevision",
     "PlannedUpdate",
@@ -394,7 +395,7 @@ type TemporalUpperBound = Finite | Infinity
 
 @dataclass(frozen=True, slots=True)
 class MilestoneTarget:
-    """The current milestone slot one close, revision, or removal addresses.
+    """The current milestone slot one close, revision, removal, or guard addresses.
 
     The address is one complete key tuple plus one exclusive upper bound per
     As-Of Axis, in canonical axis order: the observed predecessor's Valid-Time
@@ -653,8 +654,8 @@ def _settle(
         case MilestoneTarget():
             raise ValueError(
                 f"{entity.canonical}: a Milestone Target addresses a temporal milestone, so it "
-                "belongs to a Planned Close, a Planned Temporal Revision, or a Planned Temporal "
-                "Removal — never to a Non-Temporal update or delete"
+                "belongs to a Planned Close, a Planned Temporal Revision, Removal, or Guard — "
+                "never to a Non-Temporal update or delete"
             )
         case ValidatedMutationSelection():
             if not isinstance(concurrency, Unversioned) or not isinstance(affected_rows, AnyCount):
@@ -826,6 +827,34 @@ class PlannedTemporalRemoval:
         _require_one_milestone(self.entity, self.concurrency, self.affected_rows, "removal")
 
 
+@dataclass(frozen=True, slots=True)
+class PlannedTemporalGuard:
+    """The proof that one current milestone that existed before the attempt
+    still stands as it was observed, for a write that leaves its represented
+    state unchanged.
+
+    It addresses the row exactly as a close would and gates on the same
+    observed Transaction-Time start, but assigns nothing it represents: the
+    milestone, its Transaction-Time start and its history stay as they are.
+    Matching the row is the proof, so a database whose write count reports
+    only rows an update changed cannot prove it (`m-dialect`), and the
+    unchanged write is closed and chained instead.
+    """
+
+    entity: EntityIdentity
+    target: MilestoneTarget
+    concurrency: TemporalGate
+    affected_rows: ExactCount
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.concurrency, TemporalGate):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise ValueError(
+                f"{self.entity.canonical}: a guard proves an observed Transaction-Time start, "
+                "so it is gated"
+            )
+        _require_one_milestone(self.entity, self.concurrency, self.affected_rows, "guard")
+
+
 type PlannedWrite = (
     PlannedInsert
     | PlannedUpdate
@@ -833,5 +862,6 @@ type PlannedWrite = (
     | PlannedDelete
     | PlannedTemporalRevision
     | PlannedTemporalRemoval
+    | PlannedTemporalGuard
 )
 """The closed algebra of finalized semantic execution steps."""

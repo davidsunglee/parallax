@@ -1366,6 +1366,57 @@ def test_a_unit_that_changes_nothing_spends_its_evidence_and_leaves_its_state_fr
     assert [bound.steps for bound in recorder.bound] == [()]
 
 
+@pytest.mark.parametrize(
+    ("value", "kept"), [("100.00", True), ("150.00", False)], ids=["unchanged", "changed"]
+)
+def test_a_guarded_unit_spends_its_source_and_leaves_an_unchanged_state_fresh(
+    value: str, kept: bool
+) -> None:
+    members = {
+        "id": 1,
+        "acctNum": "A",
+        "value": Decimal("100.00"),
+        "txStart": _JAN,
+        "txEnd": INFINITY,
+    }
+    observation = TemporalObservation(predecessor=PredecessorRow(members))
+    key = corpus_object_key("Balance", ("id", 1))
+    shape = temporal_read.view(_BALANCE).shape(key.entity)
+    assert shape is not None
+    state = observed_state_key(key, observation, shape)
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        read_at = uow.freshness
+        claim = uow.retain(RetainedObservation(state, observation, None))
+        uow.buffer(
+            buffered_write(
+                _prepared_keyed(
+                    KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal(value)},)),
+                    _BALANCE,
+                ),
+                claim,
+            )
+        )
+        uow.read(lambda: None)
+        assert claim.consumed
+        assert claim.invalidated is not kept
+        # Evidence an earlier read of the same rows builds now is still evidence
+        # of the stored state exactly when the unit left that state as it was.
+        late = uow.retain(RetainedObservation(state, observation, None), read_at=read_at)
+        assert late.invalidated is not kept
+
+    _run(
+        body,
+        meta=_BALANCE,
+        executor=recorder,
+        settings=TransactionSettings(counts_unchanged_rows=True),
+    )
+    assert _step_kinds(recorder) == (
+        ["PlannedTemporalGuard"] if kept else ["PlannedClose", "PlannedInsert"]
+    )
+
+
 class ShellTag(Entity, table="shell_tag", namespace="parallax.compatibility"):
     id: Attr[int] = attr(primary_key=True)
     label: Attr[str] = attr(max_length=16)

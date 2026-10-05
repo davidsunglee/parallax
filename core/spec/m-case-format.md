@@ -1052,7 +1052,14 @@ equal the sum of the `when.writeSequence` steps' declared statement counts, and
 (*Resolving reads a write owes*, below). A step on a **temporal** entity carries **exactly one**
 neutral write input row (`m-unit-work`: each row closes its own milestone and
 chains its own successors, and a temporal entity never collapses into a set-based
-statement), so a chain per key is authored as a **step per key**. The model descriptor's serde round-trip (layer 4b) still
+statement), so a chain per key is authored as a **step per key**. A
+Transaction-Time-Only `update` declaring **one** statement is the guard that keeps
+the current milestone every assigned value of which it already holds
+(`m-unit-work` *Unchanged milestones*): its golden assigns `in_z` to itself on the
+milestone's address and gates on the observed `in_z`, the harness checks that its
+row assigns exactly the values the case's history leaves current, and a later
+step finds that milestone still current. Such a case states the dialects whose
+count proves a guard (`m-dialect` *Unchanged-row count*) and no other. The model descriptor's serde round-trip (layer 4b) still
 runs; there is no `when.objectQuery` to serde (layer 4a) and no normalization
 difference — the DML golden SQL is normalized to a fixed point exactly like read
 SQL (layer 3).

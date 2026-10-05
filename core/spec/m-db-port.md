@@ -66,7 +66,10 @@ are already **managed values** (produced by the `m-dialect` layer's parse
 functions), never raw driver representations. Nothing above the seam ever sees a
 driver's `Date`, a binary-float `numeric`, a raw byte buffer, or a raw
 structured-document value. `executeWrite`
-returns the concrete driver's native affected-row count and no rows.
+returns the concrete driver's native affected-row count and no rows; whether that
+count includes rows an `UPDATE` matched and left unchanged is the dialect's
+declared fact (`m-dialect` *Unchanged-row count*), and an adapter reports counts
+with the meaning its dialect declares.
 
 `transaction(body)` returns one closed, ephemeral boundary outcome rather than
 raising away which boundary failed:

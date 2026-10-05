@@ -3718,6 +3718,77 @@
       "valueObject": {}
     }
   },
+  "models/unchanged-milestone-layout-twin-columns.yaml": {
+    "parallax.compatibility.KeptLog": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {
+        "memo.note": "memo:note"
+      },
+      "valueObject": {
+        "memo": "memo"
+      }
+    },
+    "parallax.compatibility.KeptSpan": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {
+        "memo.note": "memo:note"
+      },
+      "valueObject": {
+        "memo": "memo"
+      }
+    }
+  },
+  "models/unchanged-milestone-layout-twin-document.yaml": {
+    "parallax.compatibility.KeptLog": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {
+        "amount": "payload:amount",
+        "memo": "payload:memo",
+        "memo.note": "payload:memo.note"
+      },
+      "valueObject": {
+        "memo": "memo"
+      }
+    },
+    "parallax.compatibility.KeptSpan": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {
+        "amount": "payload:amount",
+        "label": "payload:label",
+        "memo": "payload:memo",
+        "memo.note": "payload:memo.note"
+      },
+      "valueObject": {
+        "memo": "memo"
+      }
+    }
+  },
   "models/vehicle.yaml": {
     "parallax.compatibility.Car": {
       "attribute": {

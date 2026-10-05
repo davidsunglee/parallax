@@ -1,0 +1,51 @@
+# Columns member of the unchanged-milestone twin. This descriptor is a production
+# model descriptor: omission is the only Columns spelling, and its Document twin
+# differs only by the root-owned layout block on each Entity. The fixture twin
+# authors the same logical rows and the case twins author the same submissions, so
+# which milestones a write keeps is what the pair proves layout cannot change.
+#
+# `KeptSpan` is Bitemporal, so one write reaches several rectangles and keeps the
+# ones it leaves as they were; `KeptLog` is Transaction-Time-Only, so a write keeps
+# or chains its one current row. Each carries a nullable structured member, so an
+# assignment compares a whole occurrence.
+#
+# Every member name is its Column's name, so a read publishes the same row under
+# either layout.
+entities:
+  - name: KeptSpan
+    namespace: parallax.compatibility
+    table: kept_span
+    temporality: bitemporal
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: amount
+        type: int64
+      - name: label
+        type: string
+        maxLength: 16
+    valueObjects:
+      - name: memo
+        nullable: true
+        attributes:
+          - name: note
+            type: string
+            nullable: true
+  - name: KeptLog
+    namespace: parallax.compatibility
+    table: kept_log
+    temporality: transaction-time
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: amount
+        type: int64
+    valueObjects:
+      - name: memo
+        nullable: true
+        attributes:
+          - name: note
+            type: string
+            nullable: true

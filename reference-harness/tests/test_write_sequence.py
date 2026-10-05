@@ -195,6 +195,56 @@ def test_a_temporal_target_steps_stated_start_must_be_the_one_its_history_leaves
         _assert_write_input_columns(Case(path=case.path, raw=raw, model=case.model), "postgres")
 
 
+def _guard_case(mutate: Callable[[dict[str, Any]], None]) -> Case:
+    case = _temporal_target_case("m-txtime-write-015")
+    raw = copy.deepcopy(case.raw)
+    mutate(raw)
+    return Case(path=case.path, raw=raw, model=case.model)
+
+
+def test_a_one_statement_transaction_time_update_is_the_guard_its_history_proves() -> None:
+    _assert_write_input_columns(_temporal_target_case("m-txtime-write-015"), "postgres")
+
+
+def _changed_value(raw: dict[str, Any]) -> None:
+    raw["when"]["writeSequence"][1]["rows"][0]["value"] = "150.00"
+
+
+def _stale_gate(raw: dict[str, Any]) -> None:
+    raw["then"]["statements"][1]["binds"][2] = "2023-01-01T00:00:00.000000Z"
+
+
+def _close_shape(raw: dict[str, Any]) -> None:
+    raw["then"]["statements"][1]["sql"]["postgres"] = (
+        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (_changed_value, "assigns '150.00'"),
+        (_stale_gate, "golden bind"),
+        (_close_shape, "the guard that keeps its milestone"),
+    ],
+    ids=["a-changed-value", "a-gate-its-history-does-not-leave", "a-close"],
+)
+def test_a_guard_golden_its_history_does_not_prove_is_refused(
+    mutate: Callable[[dict[str, Any]], None], message: str
+) -> None:
+    with pytest.raises(CaseFailure, match=message):
+        _assert_write_input_columns(_guard_case(mutate), "postgres")
+
+
+def test_a_guard_golden_is_refused_for_a_dialect_whose_count_cannot_prove_it() -> None:
+    def stated_for_mariadb(raw: dict[str, Any]) -> None:
+        for statement in raw["then"]["statements"]:
+            statement["sql"]["mariadb"] = statement["sql"]["postgres"]
+
+    with pytest.raises(CaseFailure, match="does not report an unchanged row"):
+        _assert_write_input_columns(_guard_case(stated_for_mariadb), "mariadb")
+
+
 def test_a_target_step_owes_a_read_only_where_it_is_acquired() -> None:
     entry = {
         "mutation": "update",

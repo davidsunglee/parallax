@@ -100,6 +100,9 @@ class PlanningRequest:
     write per temporal object's observed writes, and no write a later one
     cancelled. ``ownership`` answers which current temporal rows the planning
     attempt already opened; planning reads it and never changes it.
+    ``counts_unchanged_rows`` says the database's write count includes rows an
+    update matched and left unchanged, so a guard can prove a milestone a write
+    leaves unchanged (`m-dialect`).
     """
 
     actor_identity: ActorIdentity
@@ -107,6 +110,7 @@ class PlanningRequest:
     concurrency: Concurrency
     buffered_writes: BufferedWrites
     ownership: Ownership = NO_OWNERSHIP
+    counts_unchanged_rows: bool = False
 
 
 class WritePlanner:
@@ -197,6 +201,7 @@ class WritePlanner:
             actor_identity=request.actor_identity,
             transaction_instant=request.transaction_instant,
             ownership=request.ownership,
+            counts_unchanged_rows=request.counts_unchanged_rows,
         )
 
     def inserted_version(self, entity: EntityIdentity, advanced_from: int | None) -> int | None:

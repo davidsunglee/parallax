@@ -1,0 +1,59 @@
+# Relational Document Layout member of the unchanged-milestone twin. This is an
+# ordinary production descriptor consumed without a harness override: the root-owned
+# layout block on each Entity is its only difference from the Columns member, so every
+# member rides inside the shared `payload` document rather than in a Column of its
+# own. The fixture twin authors the same logical rows and the case twins author the
+# same submissions, so which milestones a write keeps is what the pair proves layout
+# cannot change.
+#
+# `KeptSpan` is Bitemporal, so one write reaches several rectangles and keeps the
+# ones it leaves as they were; `KeptLog` is Transaction-Time-Only, so a write keeps
+# or chains its one current row. Each carries a nullable structured member, so an
+# assignment compares a whole occurrence.
+#
+# Every member name is its Column's name, so a read publishes the same row under
+# either layout.
+entities:
+  - name: KeptSpan
+    namespace: parallax.compatibility
+    table: kept_span
+    layout:
+      document:
+        column: payload
+    temporality: bitemporal
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: amount
+        type: int64
+      - name: label
+        type: string
+        maxLength: 16
+    valueObjects:
+      - name: memo
+        nullable: true
+        attributes:
+          - name: note
+            type: string
+            nullable: true
+  - name: KeptLog
+    namespace: parallax.compatibility
+    table: kept_log
+    layout:
+      document:
+        column: payload
+    temporality: transaction-time
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: amount
+        type: int64
+    valueObjects:
+      - name: memo
+        nullable: true
+        attributes:
+          - name: note
+            type: string
+            nullable: true

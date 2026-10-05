@@ -144,7 +144,18 @@ inactivated under its own observed `in_z` like any observed rectangle
 compose (`m-unit-work` *Observed-State Coalescing*), the composition's segments
 are applied the same way: each segment over each rectangle it overlaps, the
 later-authored value winning where windows overlap. An assignment equal to a
-rectangle's stored value is still assigned and still chains.
+rectangle's stored value is still assigned. A rectangle the composed effect
+leaves exactly as it was — every part of it kept and every assigned member
+already its value there — is **unchanged** (`m-unit-work` *Unchanged
+milestones*) and keeps its milestone rather than being inactivated and reopened
+in equal pieces: one guard on its own address and observed `in_z` proves it under
+Optimistic where the database's write count includes unchanged rows (`m-sql`),
+and nothing is written for it under Locking or when the attempt opened it. The
+write's other rectangles are inactivated and reopened as above, so a range
+assigning 100 over `[March, October)` to `[January, April) 100 | gap |
+[May, August) 180 | [August, December) 100` keeps the first and last rectangles
+as they were and rewrites only `[May, August)`. Without the guard's proof every
+reached rectangle is inactivated, equal pieces included.
 
 A write an insertion of the same attempt authorized observed no rectangle, so
 the coverage it reaches is read from its anchor inside the flush that writes it,
@@ -253,6 +264,10 @@ Optimistic, and every resulting row keeps `in_z = txInstant`:
 | **terminateUntil** `[V, U)` with `s < V < U < e` | update the rectangle into the carried tail `[U, e)`; insert the `head` |
 | **terminate** at `V` with `s < V` | delete the rectangle; insert the `head` `[s, V)` |
 | **terminate** at `V = s` | delete the rectangle |
+
+An observed or insertion-authored update every assigned value of which the
+rectangle already holds over the part it reaches writes nothing at all: the
+rectangle is unchanged and is neither split nor revised.
 
 No end coordinate is moved to make a successor match, and ownership is never
 inferred from `in_z = txInstant`. A rectangle that existed before the attempt is
