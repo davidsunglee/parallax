@@ -7,7 +7,6 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Final, cast
 
-from parallax.core import inheritance, temporal_read
 from parallax.core.base import (
     INFINITY_LITERAL,
     ManagedValue,
@@ -31,7 +30,6 @@ from parallax.core.metamodel import (
     OccurrenceMetadata,
     TemporalDimension,
     ValueObjectIdentity,
-    entity_by_name,
 )
 from parallax.core.temporal_read import (
     NON_TEMPORAL,
@@ -181,7 +179,6 @@ __all__ = [
     "WritePlanningError",
     "WritePlanningResult",
     "WriteSettlement",
-    "plan_temporal_close",
     "reject_readless_document_many",
 ]
 
@@ -2324,91 +2321,6 @@ def _resolve(
     return attributes, value_objects
 
 
-def plan_temporal_close(
-    identity: Mapping[str, object],
-    entity_name: str,
-    model: Metamodel,
-    concurrency: Concurrency,
-    concurrency_strategy: ConcurrencyStrategy,
-    tx_instant: TransactionInstant,
-    observed_tx_start: object | None,
-    observed_valid_end: object | None = None,
-) -> PlannedClose:
-    """A STANDALONE temporal milestone close — the `m-opt-lock` conflict lane's
-    own probe.
-
-    A conflict probe runs only the close, under an address and a gate its
-    caller names outright rather than reads off an observation, so it settles
-    one here directly rather than through a full planning pipeline. The
-    pipeline reaches this shape only for a Transaction-Time-Only
-    ``terminate``, whose topology chains nothing; every Bitemporal closure
-    chains at least the head rectangle.
-    ``identity`` is the row the address keys on, ``observed_valid_end``
-    completes that address on a Bitemporal target, and ``observed_tx_start``
-    is the gate candidate; a probe names all three explicitly rather than
-    reading them from a tracked milestone. The cause it records is
-    supersession — what a real mutation's own close performs, and whose
-    successors the probe deliberately does not run.
-
-    Structurally separate from :meth:`WriteSettlement.settle`, which stays the
-    only way an ordered flush becomes Planned Writes: this is one atomic close
-    settlement with no coalescing, batching, or ordering to do, callable
-    without a full flush. ``concurrency_strategy`` is the SAME adapter a
-    production Write Planner was constructed with, so the two can never
-    disagree about a gate decision.
-    """
-    entity = _require_entity(model, entity_name)
-    key_attributes = (_view(inheritance.view(model), entity).primary_key.identity,)
-    _refuse_unaddressing_identity(entity, key_attributes, identity)
-    shape = temporal_read.view(model).shape(entity.identity)
-    if not isinstance(shape, TransactionTimeOnly | Bitemporal):
-        raise WritePlanningError(f"{entity.identity.canonical}: no Transaction-Time axis")
-    gate: TemporalConcurrency = UNGATED
-    if observed_tx_start is not None and concurrency_strategy.gates(
-        concurrency, model, entity.identity
-    ):
-        gate = TemporalGate(
-            start_attribute=shape.transaction_time.start_attribute,
-            observed_start=observed_tx_start,
-        )
-    return _close(
-        entity,
-        shape,
-        key_attributes=key_attributes,
-        key_values=_key_tuple(entity, key_attributes, identity),
-        observed_valid_end=observed_valid_end,
-        cause=SUPERSEDED,
-        gate=gate,
-        instant=tx_instant.value(),
-    )
-
-
-def _refuse_unaddressing_identity(
-    entity: EntityMetadata,
-    key_attributes: tuple[AttributeIdentity, ...],
-    identity: Mapping[str, object],
-) -> None:
-    """Refuse a standalone close's ``identity`` cell that addresses nothing.
-
-    Here ``identity`` IS the address, unlike the pipeline's own close, whose
-    ``identity`` is the full durable row the surrounding mutation revises and out
-    of which the address is projected. A close ends a milestone's currency and
-    revises no represented value, so a cell naming anything but a primary-key
-    member is a value its caller believes this close binds and it does not.
-    Projecting the key and dropping the rest silently would let a caller's own
-    mistranslation reach the database as a well-formed statement.
-    """
-    addressing = {attribute.name for attribute in key_attributes}
-    unaddressing = sorted(name for name in identity if name not in addressing)
-    if unaddressing:
-        named = ", ".join(repr(name) for name in unaddressing)
-        raise WritePlanningError(
-            f"{entity.identity.name!r}: a standalone temporal close is addressed by its "
-            f"primary key alone, and this one's identity row also names {named} — a close "
-            "revises no represented value, so nothing else the row carries would be bound"
-        )
-
-
 def _close(
     entity: EntityMetadata,
     shape: TransactionTimeOnly | Bitemporal,
@@ -2545,13 +2457,6 @@ def _view(families: InheritanceFacet, entity: EntityMetadata) -> InheritanceEnti
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
         raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
     return position
-
-
-def _require_entity(model: Metamodel, spelling: str) -> EntityMetadata:
-    entity = entity_by_name(model, spelling)
-    if entity is None:
-        raise WritePlanningError(f"{spelling!r}: not a declared Entity of the accepted Metamodel")
-    return entity
 
 
 def _key_target(

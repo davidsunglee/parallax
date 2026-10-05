@@ -232,9 +232,11 @@ entity, which carries no version column (the `m-opt-lock` composition,
 conflict** (`updatedRows != 1`); a zero-row *ungated* (effective-Locking) close is a
 distinct **non-retriable** stale/consistency error — a categorically different
 outcome from the gated conflict, but not a new `m-db-error` category: `then`
-carries no `errorClass` for either shape, since a conflict (gated or ungated) is
-proven the same way every optimistic-lock conflict is, by the affected-row count
-(`then.affectedRows`), never by a database error code. On **success** the gate applies
+carries no `errorClass` for either shape, since neither is a database error code.
+A case grades the gated conflict as the Shortfall of the losing unit of work's
+flush failure (`m-case-format` *Unit fates*); the ungated one is a
+language-internal claim rather than a corpus observable (`m-case-format`
+*Conflict cases*). On **success** the gate applies
 **per closed/inactivated current row** — one gated `UPDATE` per such row, each
 binding *that row's* observed `in_z`, each affecting exactly one row — while the
 chained replacement rows are plain ungated `INSERT`s whose fresh `in_z = txInstant`

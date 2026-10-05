@@ -115,7 +115,7 @@ from parallax.core.unit_work.write_planner import (
     PlanningRequest,
     WritePlanner,
 )
-from parallax.core.unit_work.write_settlement import WritePlanningError, plan_temporal_close
+from parallax.core.unit_work.write_settlement import WritePlanningError
 from parallax.core.unit_work.write_validate import WriteRejectedError
 
 __all__ = [
@@ -212,7 +212,6 @@ __all__ = [
     "keyed_intent",
     "object_key",
     "observed_state_key",
-    "plan_temporal_close",
     "returns_rows",
     "run_unit_of_work",
     "whole",

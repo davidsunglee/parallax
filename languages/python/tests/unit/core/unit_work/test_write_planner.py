@@ -1704,11 +1704,9 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
     def refuse(_model: Metamodel, spelling: str) -> None:
         raise AssertionError(f"the prepared path resolved {spelling!r} by scanning the model")
 
-    # Both bindings a flush could reach the model's spelling rule through: key
-    # derivation's, and the refusal that names an Entity the model does not
-    # declare.
+    # Key derivation's binding is the one a flush could reach the model's
+    # spelling rule through.
     monkeypatch.setattr(planner_module, "entity_by_name", refuse)
-    monkeypatch.setattr(write_settlement_module, "entity_by_name", refuse)
     plan = (
         build_write_planner(model)
         .finalize(

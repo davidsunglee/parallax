@@ -569,7 +569,6 @@
     "build_write_planner",
     "connect",
     "find",
-    "plan_temporal_close",
     "prepare_model",
     "stream_lowered",
     "validate_source_pin"

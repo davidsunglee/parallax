@@ -23,7 +23,7 @@ from parallax.snapshot.handle._keyed_writes import (
     validate_source_pin,
 )
 from parallax.snapshot.handle._options import DatabaseOptions
-from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
+from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._publication import (
     ModelSelection,
     PublicationConflictError,
@@ -103,7 +103,6 @@ __all__ = [
     "build_write_planner",
     "connect",
     "find",
-    "plan_temporal_close",
     "prepare_model",
     "stream_lowered",
     "validate_source_pin",

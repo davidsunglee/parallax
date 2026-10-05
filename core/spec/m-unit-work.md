@@ -189,9 +189,9 @@ Three structural rules keep the instruction framework-honest:
   coordinate (`observedTxStart` / `observedValidStart`) are explicitly **forbidden**
   on a `write-instruction.schema.json` write row, so an observation cannot round-trip
   as instruction state — the structural guarantee that versions stay framework-owned
-  (ADR 0013). They are flush-time context beside the case format's materialization
-  row, never cells inside it: a temporal write observes a whole predecessor milestone,
-  which no flat row cell can name.
+  (ADR 0013). Neither milestone coordinate is a row cell at any location: a
+  temporal write observes a whole predecessor milestone, which no flat row cell can
+  name.
 - **A temporal keyed instruction carries exactly one row.** A keyed instruction on a
   **temporal** target — one whose inheritance family derives an As-Of Axis, which for a
   descendant is the root's declaration it inherits unchanged (`m-inheritance`:

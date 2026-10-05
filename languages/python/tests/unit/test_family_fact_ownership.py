@@ -86,7 +86,6 @@ from parallax.snapshot.handle import (
     ScopedDatabase,
     Transaction,
     build_write_planner,
-    plan_temporal_close,
     stream_lowered,
 )
 from parallax.snapshot.handle._concurrency import CONCURRENCY
@@ -344,21 +343,6 @@ def _temporal_writes() -> list[OrderedWrite]:
     ]
 
 
-def _close_probes(concurrency: Concurrency) -> list[PlannedClose]:
-    return [
-        plan_temporal_close(
-            {"id": 4},
-            name,
-            _TEMPORAL_MODEL,
-            concurrency,
-            instant_at("2024-06-01T00:00:00+00:00"),
-            _OPENED,
-            valid_end,
-        )
-        for name, valid_end in (("SpotQuote", None), ("DepositRate", "infinity"))
-    ]
-
-
 @pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
 def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_family_shape(
     monkeypatch: pytest.MonkeyPatch, concurrency: Concurrency
@@ -377,13 +361,12 @@ def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_fami
     steps = list(plan.steps)
     assert list(plan.steps) == steps
     lowered = list(stream_lowered(plan, _TEMPORAL_MODEL, POSTGRES))
-    probes = _close_probes(concurrency)
 
     assert callers == []
     assert len(lowered) == len(steps)
-    closes = [step for step in (*steps, *probes) if isinstance(step, PlannedClose)]
-    # Three addressed writes, three rows of each packed group, and two probes.
-    assert len(closes) == 11
+    closes = [step for step in steps if isinstance(step, PlannedClose)]
+    # Three addressed writes and three rows of each packed group.
+    assert len(closes) == 9
     for close in closes:
         shape = temporal_read.view(_TEMPORAL_MODEL).shape(close.entity)
         assert isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
