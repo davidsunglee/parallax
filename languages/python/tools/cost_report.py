@@ -13,9 +13,10 @@ the fixture and model sources defining it — and never the instruments that
 measured it. A capture is taken once at its producing commit; the blocking
 memory gates are the cost class's, and whether a later instrument edit leaves
 two captures comparable is a judgement recorded beside the evidence. A capture
-whose readings were changed after that run records the change in the
+whose readings were changed after that run, or whose envelopes were
+re-classified under a later Budget Contract, records the change in the
 ``adjustment`` of its ``conditions.json``, and verification and comparison both
-state it rather than presenting the amended readings as the run's own.
+state it rather than presenting the amended capture as the run's own.
 
 Comparison pairs readings only when their subject, runtime, window, workload,
 cell, and unit all agree, names every cell present on one side alone, and
@@ -1494,7 +1495,8 @@ def conditions_beside(portfolio: Path) -> Conditions | None:
 
 
 ADJUSTMENT_FIELD: Final = "adjustment"
-"""Where a capture's conditions record readings changed after the run."""
+"""Where a capture's conditions record readings changed after the run, or its
+envelopes re-classified under a later Budget Contract."""
 
 
 def amendment_beside(portfolio: Path) -> str | None:
@@ -1521,9 +1523,16 @@ def amendment_beside(portfolio: Path) -> str | None:
         count = _object(entry, f"{ADJUSTMENT_FIELD} {key}").get("count")
         if isinstance(count, int) and not isinstance(count, bool):
             changed.append(f"{count} {label}")
-    detail = f"{' and '.join(changed)} readings" if changed else "readings"
+    reclassified = adjustment.get("reclassified") is not None
+    statements: list[str] = []
+    if changed:
+        statements.append(f"{' and '.join(changed)} readings changed")
+    elif not reclassified:
+        statements.append("readings changed")
+    if reclassified:
+        statements.append("envelopes re-classified under a later Budget Contract")
     return (
-        f"{detail} changed after the run its provenance names, recorded in the "
+        f"{' and '.join(statements)} after the run its provenance names, recorded in the "
         f"{ADJUSTMENT_FIELD} of {CONDITIONS_FILE}"
     )
 
