@@ -268,7 +268,9 @@ def test_an_update_expressing_no_member_buffers_nothing(scenario: Scenario) -> N
     _grid(targets=_ALL_TARGETS, verbs=("update", "bounded_update"), change="net_zero"),
     ids=str,
 )
-def test_a_net_zero_chain_writes_the_member_it_expressed(scenario: Scenario) -> None:
+def test_a_net_zero_chain_writes_its_member_and_keeps_a_milestone_that_holds_it(
+    scenario: Scenario,
+) -> None:
     profile = scenario.target.profile
     kept = 0 if scenario.concurrency == "locking" else 1
     _answers(
