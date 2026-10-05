@@ -27,499 +27,553 @@ scaling:
 gates:
   write-lowering:
     txtime.opening.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 2121 }
-      transientBytes: { unit: B/row, maxBytes: 11605 }
+      retainedBytes: { unit: B/row, maxBytes: 2024 }
+      transientBytes: { unit: B/row, maxBytes: 12160 }
     txtime.changed.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 2394 }
-      transientBytes: { unit: B/row, maxBytes: 12638 }
+      retainedBytes: { unit: B/row, maxBytes: 1804 }
+      transientBytes: { unit: B/row, maxBytes: 10984 }
     txtime.unchanged.columns.typed:
       retainedBytes: { unit: B/row, maxBytes: 36 }
-      transientBytes: { unit: B/row, maxBytes: 8519 }
+      transientBytes: { unit: B/row, maxBytes: 4473 }
     plain.changed.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 2271 }
-      transientBytes: { unit: B/row, maxBytes: 10652 }
+      retainedBytes: { unit: B/row, maxBytes: 2192 }
+      transientBytes: { unit: B/row, maxBytes: 9341 }
     bitemporal.interior.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 2394 }
-      transientBytes: { unit: B/row, maxBytes: 16826 }
+      retainedBytes: { unit: B/row, maxBytes: 1804 }
+      transientBytes: { unit: B/row, maxBytes: 16201 }
     txtime.opening.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 2121 }
-      transientBytes: { unit: B/row, maxBytes: 11737 }
+      retainedBytes: { unit: B/row, maxBytes: 2253 }
+      transientBytes: { unit: B/row, maxBytes: 12521 }
     txtime.changed.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 2429 }
-      transientBytes: { unit: B/row, maxBytes: 13144 }
+      retainedBytes: { unit: B/row, maxBytes: 1840 }
+      transientBytes: { unit: B/row, maxBytes: 11811 }
     txtime.unchanged.columns.wire:
       retainedBytes: { unit: B/row, maxBytes: 36 }
-      transientBytes: { unit: B/row, maxBytes: 8642 }
+      transientBytes: { unit: B/row, maxBytes: 3853 }
     plain.changed.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 2227 }
-      transientBytes: { unit: B/row, maxBytes: 11180 }
+      retainedBytes: { unit: B/row, maxBytes: 2148 }
+      transientBytes: { unit: B/row, maxBytes: 10190 }
     bitemporal.interior.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 2535 }
-      transientBytes: { unit: B/row, maxBytes: 17754 }
+      retainedBytes: { unit: B/row, maxBytes: 1840 }
+      transientBytes: { unit: B/row, maxBytes: 16817 }
     txtime.opening.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 2121 }
-      transientBytes: { unit: B/row, maxBytes: 11773 }
+      retainedBytes: { unit: B/row, maxBytes: 2024 }
+      transientBytes: { unit: B/row, maxBytes: 12239 }
     txtime.changed.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 2394 }
-      transientBytes: { unit: B/row, maxBytes: 13143 }
+      retainedBytes: { unit: B/row, maxBytes: 1804 }
+      transientBytes: { unit: B/row, maxBytes: 12633 }
     txtime.unchanged.document.typed:
       retainedBytes: { unit: B/row, maxBytes: 36 }
-      transientBytes: { unit: B/row, maxBytes: 8519 }
+      transientBytes: { unit: B/row, maxBytes: 4475 }
     plain.changed.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 2192 }
-      transientBytes: { unit: B/row, maxBytes: 11589 }
+      retainedBytes: { unit: B/row, maxBytes: 2112 }
+      transientBytes: { unit: B/row, maxBytes: 10366 }
     bitemporal.interior.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 2394 }
-      transientBytes: { unit: B/row, maxBytes: 17030 }
+      retainedBytes: { unit: B/row, maxBytes: 1804 }
+      transientBytes: { unit: B/row, maxBytes: 16722 }
     txtime.opening.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 2121 }
-      transientBytes: { unit: B/row, maxBytes: 11878 }
+      retainedBytes: { unit: B/row, maxBytes: 2253 }
+      transientBytes: { unit: B/row, maxBytes: 12573 }
     txtime.changed.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 2429 }
-      transientBytes: { unit: B/row, maxBytes: 13790 }
+      retainedBytes: { unit: B/row, maxBytes: 1840 }
+      transientBytes: { unit: B/row, maxBytes: 13196 }
     txtime.unchanged.document.wire:
       retainedBytes: { unit: B/row, maxBytes: 36 }
-      transientBytes: { unit: B/row, maxBytes: 8642 }
+      transientBytes: { unit: B/row, maxBytes: 3856 }
     plain.changed.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 2227 }
-      transientBytes: { unit: B/row, maxBytes: 12117 }
+      retainedBytes: { unit: B/row, maxBytes: 2148 }
+      transientBytes: { unit: B/row, maxBytes: 11215 }
     bitemporal.interior.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 2535 }
-      transientBytes: { unit: B/row, maxBytes: 17958 }
+      retainedBytes: { unit: B/row, maxBytes: 1840 }
+      transientBytes: { unit: B/row, maxBytes: 17434 }
     geometry.depth-1.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 1875 }
-      transientBytes: { unit: B/row, maxBytes: 10028 }
+      retainedBytes: { unit: B/row, maxBytes: 1778 }
+      transientBytes: { unit: B/row, maxBytes: 10380 }
     geometry.depth-1.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 1875 }
-      transientBytes: { unit: B/row, maxBytes: 10468 }
+      retainedBytes: { unit: B/row, maxBytes: 1778 }
+      transientBytes: { unit: B/row, maxBytes: 10820 }
     geometry.depth-4.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 2614 }
-      transientBytes: { unit: B/row, maxBytes: 12071 }
+      retainedBytes: { unit: B/row, maxBytes: 2517 }
+      transientBytes: { unit: B/row, maxBytes: 12423 }
     geometry.depth-4.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 2614 }
-      transientBytes: { unit: B/row, maxBytes: 12383 }
+      retainedBytes: { unit: B/row, maxBytes: 2517 }
+      transientBytes: { unit: B/row, maxBytes: 12735 }
     geometry.depth-8.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 3600 }
-      transientBytes: { unit: B/row, maxBytes: 15605 }
+      retainedBytes: { unit: B/row, maxBytes: 3503 }
+      transientBytes: { unit: B/row, maxBytes: 16098 }
     geometry.depth-8.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 3600 }
-      transientBytes: { unit: B/row, maxBytes: 15796 }
+      retainedBytes: { unit: B/row, maxBytes: 3503 }
+      transientBytes: { unit: B/row, maxBytes: 16219 }
     geometry.many-0.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 1312 }
-      transientBytes: { unit: B/row, maxBytes: 8758 }
+      retainedBytes: { unit: B/row, maxBytes: 1215 }
+      transientBytes: { unit: B/row, maxBytes: 9039 }
     geometry.many-0.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 1312 }
-      transientBytes: { unit: B/row, maxBytes: 8852 }
+      retainedBytes: { unit: B/row, maxBytes: 1215 }
+      transientBytes: { unit: B/row, maxBytes: 9204 }
     geometry.many-8.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 3406 }
-      transientBytes: { unit: B/row, maxBytes: 13737 }
+      retainedBytes: { unit: B/row, maxBytes: 3309 }
+      transientBytes: { unit: B/row, maxBytes: 14019 }
     geometry.many-8.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 3406 }
-      transientBytes: { unit: B/row, maxBytes: 14172 }
+      retainedBytes: { unit: B/row, maxBytes: 3309 }
+      transientBytes: { unit: B/row, maxBytes: 14524 }
     geometry.many-32.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 9531 }
-      transientBytes: { unit: B/row, maxBytes: 30739 }
+      retainedBytes: { unit: B/row, maxBytes: 9434 }
+      transientBytes: { unit: B/row, maxBytes: 31020 }
     geometry.many-32.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 9531 }
-      transientBytes: { unit: B/row, maxBytes: 30989 }
+      retainedBytes: { unit: B/row, maxBytes: 9434 }
+      transientBytes: { unit: B/row, maxBytes: 31341 }
     geometry.width-16.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 2799 }
-      transientBytes: { unit: B/row, maxBytes: 13156 }
+      retainedBytes: { unit: B/row, maxBytes: 2702 }
+      transientBytes: { unit: B/row, maxBytes: 13508 }
     geometry.width-16.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 2799 }
-      transientBytes: { unit: B/row, maxBytes: 13570 }
+      retainedBytes: { unit: B/row, maxBytes: 2702 }
+      transientBytes: { unit: B/row, maxBytes: 13922 }
     geometry.width-64.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 26549 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 26901 }
     geometry.width-64.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 28248 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 28600 }
     geometry.sparse-64.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 1875 }
-      transientBytes: { unit: B/row, maxBytes: 9810 }
+      retainedBytes: { unit: B/row, maxBytes: 1778 }
+      transientBytes: { unit: B/row, maxBytes: 10162 }
     geometry.sparse-64.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 1875 }
-      transientBytes: { unit: B/row, maxBytes: 10247 }
+      retainedBytes: { unit: B/row, maxBytes: 1778 }
+      transientBytes: { unit: B/row, maxBytes: 10599 }
     ancestor.depth-1.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 1584 }
-      transientBytes: { unit: B/row, maxBytes: 12138 }
+      retainedBytes: { unit: B/row, maxBytes: 995 }
+      transientBytes: { unit: B/row, maxBytes: 10281 }
     ancestor.depth-1.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 1584 }
-      transientBytes: { unit: B/row, maxBytes: 12710 }
+      retainedBytes: { unit: B/row, maxBytes: 995 }
+      transientBytes: { unit: B/row, maxBytes: 11399 }
     ancestor.width-16.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 1892 }
-      transientBytes: { unit: B/row, maxBytes: 14219 }
+      retainedBytes: { unit: B/row, maxBytes: 1303 }
+      transientBytes: { unit: B/row, maxBytes: 13154 }
     ancestor.width-16.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 1892 }
-      transientBytes: { unit: B/row, maxBytes: 15240 }
+      retainedBytes: { unit: B/row, maxBytes: 1303 }
+      transientBytes: { unit: B/row, maxBytes: 14457 }
     ancestor.width-64.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 3124 }
-      transientBytes: { unit: B/row, maxBytes: 25979 }
+      retainedBytes: { unit: B/row, maxBytes: 2535 }
+      transientBytes: { unit: B/row, maxBytes: 22169 }
     ancestor.width-64.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 3124 }
-      transientBytes: { unit: B/row, maxBytes: 29518 }
+      retainedBytes: { unit: B/row, maxBytes: 2535 }
+      transientBytes: { unit: B/row, maxBytes: 25989 }
     ancestor.sparse-64.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 1584 }
-      transientBytes: { unit: B/row, maxBytes: 10142 }
+      retainedBytes: { unit: B/row, maxBytes: 995 }
+      transientBytes: { unit: B/row, maxBytes: 8286 }
     ancestor.sparse-64.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 1584 }
-      transientBytes: { unit: B/row, maxBytes: 10614 }
+      retainedBytes: { unit: B/row, maxBytes: 995 }
+      transientBytes: { unit: B/row, maxBytes: 9303 }
+    plain.target-patch.columns.wire:
+      retainedBytes: { unit: B/row, maxBytes: 2764 }
+      transientBytes: { unit: B/row, maxBytes: 16068 }
+    plain.target-replace.columns.typed:
+      retainedBytes: { unit: B/row, maxBytes: 2728 }
+      transientBytes: { unit: B/row, maxBytes: 15901 }
+    plain.target-replace.columns.wire:
+      retainedBytes: { unit: B/row, maxBytes: 2764 }
+      transientBytes: { unit: B/row, maxBytes: 16063 }
+    plain.target-patch.document.wire:
+      retainedBytes: { unit: B/row, maxBytes: 2764 }
+      transientBytes: { unit: B/row, maxBytes: 18453 }
+    plain.target-replace.document.typed:
+      retainedBytes: { unit: B/row, maxBytes: 2728 }
+      transientBytes: { unit: B/row, maxBytes: 18291 }
+    plain.target-replace.document.wire:
+      retainedBytes: { unit: B/row, maxBytes: 2764 }
+      transientBytes: { unit: B/row, maxBytes: 18447 }
+    txtime.target-patch.columns.wire:
+      retainedBytes: { unit: B/row, maxBytes: 2315 }
+      transientBytes: { unit: B/row, maxBytes: 23701 }
+    txtime.target-replace.columns.typed:
+      retainedBytes: { unit: B/row, maxBytes: 2280 }
+      transientBytes: { unit: B/row, maxBytes: 23600 }
+    txtime.target-replace.columns.wire:
+      retainedBytes: { unit: B/row, maxBytes: 2315 }
+      transientBytes: { unit: B/row, maxBytes: 23701 }
+    txtime.target-patch.document.wire:
+      retainedBytes: { unit: B/row, maxBytes: 2315 }
+      transientBytes: { unit: B/row, maxBytes: 24204 }
+    txtime.target-replace.document.typed:
+      retainedBytes: { unit: B/row, maxBytes: 2280 }
+      transientBytes: { unit: B/row, maxBytes: 24103 }
+    txtime.target-replace.document.wire:
+      retainedBytes: { unit: B/row, maxBytes: 2315 }
+      transientBytes: { unit: B/row, maxBytes: 24204 }
+    bitemporal.target-patch.columns.wire:
+      retainedBytes: { unit: B/row, maxBytes: 2315 }
+      transientBytes: { unit: B/row, maxBytes: 25661 }
+    bitemporal.target-replace.columns.typed:
+      retainedBytes: { unit: B/row, maxBytes: 2280 }
+      transientBytes: { unit: B/row, maxBytes: 25626 }
+    bitemporal.target-replace.columns.wire:
+      retainedBytes: { unit: B/row, maxBytes: 2315 }
+      transientBytes: { unit: B/row, maxBytes: 25661 }
+    bitemporal.target-patch.document.wire:
+      retainedBytes: { unit: B/row, maxBytes: 2315 }
+      transientBytes: { unit: B/row, maxBytes: 26780 }
+    bitemporal.target-replace.document.typed:
+      retainedBytes: { unit: B/row, maxBytes: 2280 }
+      transientBytes: { unit: B/row, maxBytes: 26745 }
+    bitemporal.target-replace.document.wire:
+      retainedBytes: { unit: B/row, maxBytes: 2315 }
+      transientBytes: { unit: B/row, maxBytes: 26780 }
     acquisition.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 1917 }
-      transientBytes: { unit: B/row, maxBytes: 5305 }
+      retainedBytes: { unit: B/row, maxBytes: 2029 }
+      transientBytes: { unit: B/row, maxBytes: 5047 }
     acquisition.rows-32.columns:
-      retainedBytes: { unit: B/row, maxBytes: 1249 }
-      transientBytes: { unit: B/row, maxBytes: 2966 }
+      retainedBytes: { unit: B/row, maxBytes: 1277 }
+      transientBytes: { unit: B/row, maxBytes: 2795 }
     acquisition.rows-128.columns:
-      retainedBytes: { unit: B/row, maxBytes: 1085 }
-      transientBytes: { unit: B/row, maxBytes: 2256 }
+      retainedBytes: { unit: B/row, maxBytes: 1092 }
+      transientBytes: { unit: B/row, maxBytes: 2394 }
     acquisition.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 3046 }
-      transientBytes: { unit: B/row, maxBytes: 5559 }
+      retainedBytes: { unit: B/row, maxBytes: 3158 }
+      transientBytes: { unit: B/row, maxBytes: 5316 }
     acquisition.rows-32.document:
-      retainedBytes: { unit: B/row, maxBytes: 2357 }
-      transientBytes: { unit: B/row, maxBytes: 3325 }
+      retainedBytes: { unit: B/row, maxBytes: 2385 }
+      transientBytes: { unit: B/row, maxBytes: 3302 }
     acquisition.rows-128.document:
-      retainedBytes: { unit: B/row, maxBytes: 2186 }
-      transientBytes: { unit: B/row, maxBytes: 2717 }
+      retainedBytes: { unit: B/row, maxBytes: 2193 }
+      transientBytes: { unit: B/row, maxBytes: 2730 }
     model.prepared:
-      retainedBytes: { unit: B, maxBytes: 482284 }
-      transientBytes: { unit: B, maxBytes: 489483 }
+      retainedBytes: { unit: B, maxBytes: 482372 }
+      transientBytes: { unit: B, maxBytes: 489500 }
     model.prepared.family:
-      retainedBytes: { unit: B, maxBytes: 26312 }
-      transientBytes: { unit: B, maxBytes: 30457 }
+      retainedBytes: { unit: B, maxBytes: 26400 }
+      transientBytes: { unit: B, maxBytes: 30475 }
     leaf.string.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 26651 }
+      retainedBytes: { unit: B/row, maxBytes: 6627 }
+      transientBytes: { unit: B/row, maxBytes: 27126 }
     leaf.string.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 28351 }
+      retainedBytes: { unit: B/row, maxBytes: 6627 }
+      transientBytes: { unit: B/row, maxBytes: 28826 }
     leaf.boolean.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 23212 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 23564 }
     leaf.boolean.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 23317 }
+      retainedBytes: { unit: B/row, maxBytes: 6627 }
+      transientBytes: { unit: B/row, maxBytes: 23792 }
     leaf.boolean.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 24251 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 24603 }
     leaf.boolean.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 24357 }
+      retainedBytes: { unit: B/row, maxBytes: 6627 }
+      transientBytes: { unit: B/row, maxBytes: 24832 }
     leaf.int32.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 24559 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 24911 }
     leaf.int32.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 13236 }
-      transientBytes: { unit: B/row, maxBytes: 31361 }
+      retainedBytes: { unit: B/row, maxBytes: 13368 }
+      transientBytes: { unit: B/row, maxBytes: 31837 }
     leaf.int32.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 25861 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 26213 }
     leaf.int32.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 13236 }
-      transientBytes: { unit: B/row, maxBytes: 32664 }
+      retainedBytes: { unit: B/row, maxBytes: 13368 }
+      transientBytes: { unit: B/row, maxBytes: 33139 }
     leaf.int64.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 25637 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 25989 }
     leaf.int64.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 13253 }
-      transientBytes: { unit: B/row, maxBytes: 32501 }
+      retainedBytes: { unit: B/row, maxBytes: 13385 }
+      transientBytes: { unit: B/row, maxBytes: 32976 }
     leaf.int64.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 27155 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 27507 }
     leaf.int64.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 13253 }
-      transientBytes: { unit: B/row, maxBytes: 34019 }
+      retainedBytes: { unit: B/row, maxBytes: 13385 }
+      transientBytes: { unit: B/row, maxBytes: 34494 }
     leaf.float32.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 11564 }
-      transientBytes: { unit: B/row, maxBytes: 33921 }
+      retainedBytes: { unit: B/row, maxBytes: 11467 }
+      transientBytes: { unit: B/row, maxBytes: 34273 }
     leaf.float32.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 11564 }
-      transientBytes: { unit: B/row, maxBytes: 34097 }
+      retainedBytes: { unit: B/row, maxBytes: 11696 }
+      transientBytes: { unit: B/row, maxBytes: 34502 }
     leaf.float32.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 11564 }
-      transientBytes: { unit: B/row, maxBytes: 35057 }
+      retainedBytes: { unit: B/row, maxBytes: 11467 }
+      transientBytes: { unit: B/row, maxBytes: 35409 }
     leaf.float32.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 11564 }
-      transientBytes: { unit: B/row, maxBytes: 35163 }
+      retainedBytes: { unit: B/row, maxBytes: 11696 }
+      transientBytes: { unit: B/row, maxBytes: 35638 }
     leaf.float64.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 23731 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 24083 }
     leaf.float64.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 23836 }
+      retainedBytes: { unit: B/row, maxBytes: 6627 }
+      transientBytes: { unit: B/row, maxBytes: 24312 }
     leaf.float64.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 24867 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 25219 }
     leaf.float64.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 24973 }
+      retainedBytes: { unit: B/row, maxBytes: 6627 }
+      transientBytes: { unit: B/row, maxBytes: 25448 }
     leaf.decimal.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 39756 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 40002 }
     leaf.decimal.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 31839 }
-      transientBytes: { unit: B/row, maxBytes: 65271 }
+      retainedBytes: { unit: B/row, maxBytes: 31971 }
+      transientBytes: { unit: B/row, maxBytes: 65676 }
     leaf.decimal.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 41455 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 41701 }
     leaf.decimal.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 31839 }
-      transientBytes: { unit: B/row, maxBytes: 66900 }
+      retainedBytes: { unit: B/row, maxBytes: 31971 }
+      transientBytes: { unit: B/row, maxBytes: 67375 }
     leaf.bytes.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 49002 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 49354 }
     leaf.bytes.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 16844 }
-      transientBytes: { unit: B/row, maxBytes: 59457 }
+      retainedBytes: { unit: B/row, maxBytes: 16976 }
+      transientBytes: { unit: B/row, maxBytes: 59932 }
     leaf.bytes.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 52110 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 52462 }
     leaf.bytes.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 16844 }
-      transientBytes: { unit: B/row, maxBytes: 62564 }
+      retainedBytes: { unit: B/row, maxBytes: 16976 }
+      transientBytes: { unit: B/row, maxBytes: 63039 }
     leaf.date.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 36611 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 36963 }
     leaf.date.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 13253 }
-      transientBytes: { unit: B/row, maxBytes: 43466 }
+      retainedBytes: { unit: B/row, maxBytes: 13385 }
+      transientBytes: { unit: B/row, maxBytes: 43941 }
     leaf.date.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 38169 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 38521 }
     leaf.date.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 13253 }
-      transientBytes: { unit: B/row, maxBytes: 45025 }
+      retainedBytes: { unit: B/row, maxBytes: 13385 }
+      transientBytes: { unit: B/row, maxBytes: 45500 }
     leaf.time.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 39427 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 39779 }
     leaf.time.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 13253 }
-      transientBytes: { unit: B/row, maxBytes: 46352 }
+      retainedBytes: { unit: B/row, maxBytes: 13385 }
+      transientBytes: { unit: B/row, maxBytes: 46757 }
     leaf.time.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 41337 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 41689 }
     leaf.time.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 13253 }
-      transientBytes: { unit: B/row, maxBytes: 48193 }
+      retainedBytes: { unit: B/row, maxBytes: 13385 }
+      transientBytes: { unit: B/row, maxBytes: 48668 }
     leaf.timestamp.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 46191 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 46543 }
     leaf.timestamp.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 16632 }
-      transientBytes: { unit: B/row, maxBytes: 56773 }
+      retainedBytes: { unit: B/row, maxBytes: 16764 }
+      transientBytes: { unit: B/row, maxBytes: 57177 }
     leaf.timestamp.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 48946 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 49298 }
     leaf.timestamp.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 16632 }
-      transientBytes: { unit: B/row, maxBytes: 59458 }
+      retainedBytes: { unit: B/row, maxBytes: 16764 }
+      transientBytes: { unit: B/row, maxBytes: 59933 }
     leaf.uuid.columns.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 51386 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 51738 }
     leaf.uuid.columns.wire:
-      retainedBytes: { unit: B/row, maxBytes: 29304 }
-      transientBytes: { unit: B/row, maxBytes: 74371 }
+      retainedBytes: { unit: B/row, maxBytes: 29436 }
+      transientBytes: { unit: B/row, maxBytes: 74776 }
     leaf.uuid.document.typed:
-      retainedBytes: { unit: B/row, maxBytes: 6495 }
-      transientBytes: { unit: B/row, maxBytes: 54775 }
+      retainedBytes: { unit: B/row, maxBytes: 6398 }
+      transientBytes: { unit: B/row, maxBytes: 55127 }
     leaf.uuid.document.wire:
-      retainedBytes: { unit: B/row, maxBytes: 29304 }
-      transientBytes: { unit: B/row, maxBytes: 77690 }
+      retainedBytes: { unit: B/row, maxBytes: 29436 }
+      transientBytes: { unit: B/row, maxBytes: 78165 }
     leaf-acquisition.string.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 14677 }
-      transientBytes: { unit: B/row, maxBytes: 30179 }
+      retainedBytes: { unit: B/row, maxBytes: 14789 }
+      transientBytes: { unit: B/row, maxBytes: 29884 }
     leaf-acquisition.string.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 29501 }
-      transientBytes: { unit: B/row, maxBytes: 32213 }
+      retainedBytes: { unit: B/row, maxBytes: 29613 }
+      transientBytes: { unit: B/row, maxBytes: 31961 }
     leaf-acquisition.boolean.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 3484 }
-      transientBytes: { unit: B/row, maxBytes: 18986 }
+      retainedBytes: { unit: B/row, maxBytes: 3596 }
+      transientBytes: { unit: B/row, maxBytes: 18691 }
     leaf-acquisition.boolean.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 18307 }
-      transientBytes: { unit: B/row, maxBytes: 21002 }
+      retainedBytes: { unit: B/row, maxBytes: 18419 }
+      transientBytes: { unit: B/row, maxBytes: 20750 }
     leaf-acquisition.int32.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 10523 }
-      transientBytes: { unit: B/row, maxBytes: 26036 }
+      retainedBytes: { unit: B/row, maxBytes: 10635 }
+      transientBytes: { unit: B/row, maxBytes: 25741 }
     leaf-acquisition.int32.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 25347 }
-      transientBytes: { unit: B/row, maxBytes: 28060 }
+      retainedBytes: { unit: B/row, maxBytes: 25459 }
+      transientBytes: { unit: B/row, maxBytes: 27808 }
     leaf-acquisition.int64.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 10946 }
-      transientBytes: { unit: B/row, maxBytes: 26464 }
+      retainedBytes: { unit: B/row, maxBytes: 11058 }
+      transientBytes: { unit: B/row, maxBytes: 26169 }
     leaf-acquisition.int64.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 25770 }
-      transientBytes: { unit: B/row, maxBytes: 28488 }
+      retainedBytes: { unit: B/row, maxBytes: 25882 }
+      transientBytes: { unit: B/row, maxBytes: 28236 }
     leaf-acquisition.float32.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 8764 }
-      transientBytes: { unit: B/row, maxBytes: 24932 }
+      retainedBytes: { unit: B/row, maxBytes: 8876 }
+      transientBytes: { unit: B/row, maxBytes: 24638 }
     leaf-acquisition.float32.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 28656 }
-      transientBytes: { unit: B/row, maxBytes: 31392 }
+      retainedBytes: { unit: B/row, maxBytes: 28768 }
+      transientBytes: { unit: B/row, maxBytes: 31140 }
     leaf-acquisition.float64.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 8552 }
-      transientBytes: { unit: B/row, maxBytes: 24078 }
+      retainedBytes: { unit: B/row, maxBytes: 8665 }
+      transientBytes: { unit: B/row, maxBytes: 23783 }
     leaf-acquisition.float64.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 23376 }
-      transientBytes: { unit: B/row, maxBytes: 26102 }
+      retainedBytes: { unit: B/row, maxBytes: 23488 }
+      transientBytes: { unit: B/row, maxBytes: 25850 }
     leaf-acquisition.decimal.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 29884 }
-      transientBytes: { unit: B/row, maxBytes: 36518 }
+      retainedBytes: { unit: B/row, maxBytes: 29996 }
+      transientBytes: { unit: B/row, maxBytes: 36278 }
     leaf-acquisition.decimal.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 55901 }
-      transientBytes: { unit: B/row, maxBytes: 58963 }
+      retainedBytes: { unit: B/row, maxBytes: 56013 }
+      transientBytes: { unit: B/row, maxBytes: 58723 }
     leaf-acquisition.bytes.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 14264 }
-      transientBytes: { unit: B/row, maxBytes: 36274 }
+      retainedBytes: { unit: B/row, maxBytes: 14376 }
+      transientBytes: { unit: B/row, maxBytes: 35979 }
     leaf-acquisition.bytes.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 44505 }
-      transientBytes: { unit: B/row, maxBytes: 47371 }
+      retainedBytes: { unit: B/row, maxBytes: 44617 }
+      transientBytes: { unit: B/row, maxBytes: 47119 }
     leaf-acquisition.date.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 10524 }
-      transientBytes: { unit: B/row, maxBytes: 31050 }
+      retainedBytes: { unit: B/row, maxBytes: 10636 }
+      transientBytes: { unit: B/row, maxBytes: 30755 }
     leaf-acquisition.date.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 36118 }
-      transientBytes: { unit: B/row, maxBytes: 38988 }
+      retainedBytes: { unit: B/row, maxBytes: 36231 }
+      transientBytes: { unit: B/row, maxBytes: 38736 }
     leaf-acquisition.time.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 10524 }
-      transientBytes: { unit: B/row, maxBytes: 32115 }
+      retainedBytes: { unit: B/row, maxBytes: 10636 }
+      transientBytes: { unit: B/row, maxBytes: 31820 }
     leaf-acquisition.time.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 37174 }
-      transientBytes: { unit: B/row, maxBytes: 40052 }
+      retainedBytes: { unit: B/row, maxBytes: 37287 }
+      transientBytes: { unit: B/row, maxBytes: 39801 }
     leaf-acquisition.timestamp.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 14044 }
-      transientBytes: { unit: B/row, maxBytes: 35234 }
+      retainedBytes: { unit: B/row, maxBytes: 14156 }
+      transientBytes: { unit: B/row, maxBytes: 34939 }
     leaf-acquisition.timestamp.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 43229 }
-      transientBytes: { unit: B/row, maxBytes: 46129 }
+      retainedBytes: { unit: B/row, maxBytes: 43341 }
+      transientBytes: { unit: B/row, maxBytes: 45877 }
     leaf-acquisition.uuid.rows-8.columns:
-      retainedBytes: { unit: B/row, maxBytes: 27238 }
-      transientBytes: { unit: B/row, maxBytes: 39183 }
+      retainedBytes: { unit: B/row, maxBytes: 27350 }
+      transientBytes: { unit: B/row, maxBytes: 38888 }
     leaf-acquisition.uuid.rows-8.document:
-      retainedBytes: { unit: B/row, maxBytes: 58324 }
-      transientBytes: { unit: B/row, maxBytes: 61165 }
+      retainedBytes: { unit: B/row, maxBytes: 58436 }
+      transientBytes: { unit: B/row, maxBytes: 60913 }
   snapshot-delivery:
     read-depth-1:
-      columns.peakKiB: { unit: KiB, maxBytes: 111518 }
+      columns.peakKiB: { unit: KiB, maxBytes: 110392 }
       columns.retainedKiB: { unit: KiB, maxBytes: 57570 }
-      document.peakKiB: { unit: KiB, maxBytes: 116376 }
+      document.peakKiB: { unit: KiB, maxBytes: 114757 }
       document.retainedKiB: { unit: KiB, maxBytes: 57570 }
     read-depth-4:
-      columns.peakKiB: { unit: KiB, maxBytes: 166949 }
+      columns.peakKiB: { unit: KiB, maxBytes: 164229 }
       columns.retainedKiB: { unit: KiB, maxBytes: 99388 }
-      document.peakKiB: { unit: KiB, maxBytes: 170539 }
+      document.peakKiB: { unit: KiB, maxBytes: 168459 }
       document.retainedKiB: { unit: KiB, maxBytes: 99388 }
     read-depth-8:
-      columns.peakKiB: { unit: KiB, maxBytes: 251433 }
+      columns.peakKiB: { unit: KiB, maxBytes: 248423 }
       columns.retainedKiB: { unit: KiB, maxBytes: 155144 }
-      document.peakKiB: { unit: KiB, maxBytes: 255974 }
+      document.peakKiB: { unit: KiB, maxBytes: 252163 }
       document.retainedKiB: { unit: KiB, maxBytes: 155144 }
     read-many-0:
-      columns.peakKiB: { unit: KiB, maxBytes: 70167 }
+      columns.peakKiB: { unit: KiB, maxBytes: 69252 }
       columns.retainedKiB: { unit: KiB, maxBytes: 27439 }
-      document.peakKiB: { unit: KiB, maxBytes: 77278 }
+      document.peakKiB: { unit: KiB, maxBytes: 75870 }
       document.retainedKiB: { unit: KiB, maxBytes: 27439 }
     read-many-8:
-      columns.peakKiB: { unit: KiB, maxBytes: 223178 }
+      columns.peakKiB: { unit: KiB, maxBytes: 220248 }
       columns.retainedKiB: { unit: KiB, maxBytes: 141205 }
-      document.peakKiB: { unit: KiB, maxBytes: 227028 }
+      document.peakKiB: { unit: KiB, maxBytes: 223086 }
       document.retainedKiB: { unit: KiB, maxBytes: 141205 }
     read-many-32:
-      columns.peakKiB: { unit: KiB, maxBytes: 709440 }
+      columns.peakKiB: { unit: KiB, maxBytes: 706034 }
       columns.retainedKiB: { unit: KiB, maxBytes: 482504 }
-      document.peakKiB: { unit: KiB, maxBytes: 713844 }
+      document.peakKiB: { unit: KiB, maxBytes: 709735 }
       document.retainedKiB: { unit: KiB, maxBytes: 482504 }
     read-width-16:
-      columns.peakKiB: { unit: KiB, maxBytes: 250590 }
+      columns.peakKiB: { unit: KiB, maxBytes: 246903 }
       columns.retainedKiB: { unit: KiB, maxBytes: 154300 }
-      document.peakKiB: { unit: KiB, maxBytes: 254990 }
+      document.peakKiB: { unit: KiB, maxBytes: 250740 }
       document.retainedKiB: { unit: KiB, maxBytes: 154300 }
     read-width-64:
-      columns.peakKiB: { unit: KiB, maxBytes: 861909 }
+      columns.peakKiB: { unit: KiB, maxBytes: 858222 }
       columns.retainedKiB: { unit: KiB, maxBytes: 541218 }
-      document.peakKiB: { unit: KiB, maxBytes: 866309 }
+      document.peakKiB: { unit: KiB, maxBytes: 862058 }
       document.retainedKiB: { unit: KiB, maxBytes: 541218 }
     read-sparse-64:
-      columns.peakKiB: { unit: KiB, maxBytes: 144955 }
+      columns.peakKiB: { unit: KiB, maxBytes: 143829 }
       columns.retainedKiB: { unit: KiB, maxBytes: 40780 }
-      document.peakKiB: { unit: KiB, maxBytes: 149813 }
+      document.peakKiB: { unit: KiB, maxBytes: 148194 }
       document.retainedKiB: { unit: KiB, maxBytes: 40780 }
     plan-depth-1:
-      columns.peakKiB: { unit: KiB, maxBytes: 23660 }
-      columns.retainedKiB: { unit: KiB, maxBytes: 16876 }
-      document.peakKiB: { unit: KiB, maxBytes: 23844 }
-      document.retainedKiB: { unit: KiB, maxBytes: 17059 }
+      columns.peakKiB: { unit: KiB, maxBytes: 22596 }
+      columns.retainedKiB: { unit: KiB, maxBytes: 16092 }
+      document.peakKiB: { unit: KiB, maxBytes: 22621 }
+      document.retainedKiB: { unit: KiB, maxBytes: 16276 }
     plan-depth-8:
-      columns.peakKiB: { unit: KiB, maxBytes: 23660 }
-      columns.retainedKiB: { unit: KiB, maxBytes: 16876 }
-      document.peakKiB: { unit: KiB, maxBytes: 23844 }
-      document.retainedKiB: { unit: KiB, maxBytes: 17059 }
+      columns.peakKiB: { unit: KiB, maxBytes: 22596 }
+      columns.retainedKiB: { unit: KiB, maxBytes: 16092 }
+      document.peakKiB: { unit: KiB, maxBytes: 22621 }
+      document.retainedKiB: { unit: KiB, maxBytes: 16276 }
     plan-width-64:
-      columns.peakKiB: { unit: KiB, maxBytes: 23661 }
-      columns.retainedKiB: { unit: KiB, maxBytes: 16877 }
-      document.peakKiB: { unit: KiB, maxBytes: 23845 }
-      document.retainedKiB: { unit: KiB, maxBytes: 17060 }
+      columns.peakKiB: { unit: KiB, maxBytes: 22597 }
+      columns.retainedKiB: { unit: KiB, maxBytes: 16093 }
+      document.peakKiB: { unit: KiB, maxBytes: 22622 }
+      document.retainedKiB: { unit: KiB, maxBytes: 16277 }
     control-guarded-1:
-      plan.cold.peakKiB: { unit: KiB, maxBytes: 42293 }
-      plan.cold.retainedKiB: { unit: KiB, maxBytes: 33784 }
+      plan.cold.peakKiB: { unit: KiB, maxBytes: 37233 }
+      plan.cold.retainedKiB: { unit: KiB, maxBytes: 29736 }
     control-guarded-2:
-      plan.cold.peakKiB: { unit: KiB, maxBytes: 56865 }
-      plan.cold.retainedKiB: { unit: KiB, maxBytes: 47220 }
+      plan.cold.peakKiB: { unit: KiB, maxBytes: 50890 }
+      plan.cold.retainedKiB: { unit: KiB, maxBytes: 42248 }
     control-guarded-3:
-      plan.cold.peakKiB: { unit: KiB, maxBytes: 70812 }
-      plan.cold.retainedKiB: { unit: KiB, maxBytes: 60067 }
+      plan.cold.peakKiB: { unit: KiB, maxBytes: 63288 }
+      plan.cold.retainedKiB: { unit: KiB, maxBytes: 54171 }
     leaf-boolean:
-      columns.peakKiB: { unit: KiB, maxBytes: 503714 }
+      columns.peakKiB: { unit: KiB, maxBytes: 500026 }
       columns.retainedKiB: { unit: KiB, maxBytes: 183023 }
-      document.peakKiB: { unit: KiB, maxBytes: 508246 }
+      document.peakKiB: { unit: KiB, maxBytes: 503995 }
       document.retainedKiB: { unit: KiB, maxBytes: 183023 }
     leaf-int32:
-      columns.peakKiB: { unit: KiB, maxBytes: 720150 }
+      columns.peakKiB: { unit: KiB, maxBytes: 716462 }
       columns.retainedKiB: { unit: KiB, maxBytes: 399287 }
-      document.peakKiB: { unit: KiB, maxBytes: 724682 }
+      document.peakKiB: { unit: KiB, maxBytes: 720431 }
       document.retainedKiB: { unit: KiB, maxBytes: 399287 }
     leaf-int64:
-      columns.peakKiB: { unit: KiB, maxBytes: 733631 }
+      columns.peakKiB: { unit: KiB, maxBytes: 729944 }
       columns.retainedKiB: { unit: KiB, maxBytes: 412808 }
-      document.peakKiB: { unit: KiB, maxBytes: 738163 }
+      document.peakKiB: { unit: KiB, maxBytes: 733913 }
       document.retainedKiB: { unit: KiB, maxBytes: 412808 }
     leaf-float32:
-      columns.peakKiB: { unit: KiB, maxBytes: 778842 }
+      columns.peakKiB: { unit: KiB, maxBytes: 776378 }
       columns.retainedKiB: { unit: KiB, maxBytes: 238780 }
-      document.peakKiB: { unit: KiB, maxBytes: 783075 }
+      document.peakKiB: { unit: KiB, maxBytes: 780400 }
       document.retainedKiB: { unit: KiB, maxBytes: 238780 }
     leaf-float64:
-      columns.peakKiB: { unit: KiB, maxBytes: 740650 }
+      columns.peakKiB: { unit: KiB, maxBytes: 738186 }
       columns.retainedKiB: { unit: KiB, maxBytes: 238780 }
-      document.peakKiB: { unit: KiB, maxBytes: 744883 }
+      document.peakKiB: { unit: KiB, maxBytes: 742208 }
       document.retainedKiB: { unit: KiB, maxBytes: 238780 }
     leaf-decimal:
-      columns.peakKiB: { unit: KiB, maxBytes: 1464865 }
+      columns.peakKiB: { unit: KiB, maxBytes: 1462982 }
       columns.retainedKiB: { unit: KiB, maxBytes: 306152 }
-      document.peakKiB: { unit: KiB, maxBytes: 1469177 }
+      document.peakKiB: { unit: KiB, maxBytes: 1467294 }
       document.retainedKiB: { unit: KiB, maxBytes: 306152 }
     leaf-bytes:
-      columns.peakKiB: { unit: KiB, maxBytes: 1074986 }
+      columns.peakKiB: { unit: KiB, maxBytes: 1072522 }
       columns.retainedKiB: { unit: KiB, maxBytes: 352616 }
-      document.peakKiB: { unit: KiB, maxBytes: 1079219 }
+      document.peakKiB: { unit: KiB, maxBytes: 1076544 }
       document.retainedKiB: { unit: KiB, maxBytes: 352616 }
     leaf-date:
-      columns.peakKiB: { unit: KiB, maxBytes: 871668 }
+      columns.peakKiB: { unit: KiB, maxBytes: 867937 }
       columns.retainedKiB: { unit: KiB, maxBytes: 217356 }
-      document.peakKiB: { unit: KiB, maxBytes: 875945 }
+      document.peakKiB: { unit: KiB, maxBytes: 872214 }
       document.retainedKiB: { unit: KiB, maxBytes: 217356 }
     leaf-time:
-      columns.peakKiB: { unit: KiB, maxBytes: 934725 }
+      columns.peakKiB: { unit: KiB, maxBytes: 932261 }
       columns.retainedKiB: { unit: KiB, maxBytes: 313122 }
-      document.peakKiB: { unit: KiB, maxBytes: 938958 }
+      document.peakKiB: { unit: KiB, maxBytes: 936283 }
       document.retainedKiB: { unit: KiB, maxBytes: 313122 }
     leaf-timestamp:
-      columns.peakKiB: { unit: KiB, maxBytes: 1077648 }
-      columns.retainedKiB: { unit: KiB, maxBytes: 341275 }
-      document.peakKiB: { unit: KiB, maxBytes: 1081936 }
-      document.retainedKiB: { unit: KiB, maxBytes: 341330 }
+      columns.peakKiB: { unit: KiB, maxBytes: 1075294 }
+      columns.retainedKiB: { unit: KiB, maxBytes: 341165 }
+      document.peakKiB: { unit: KiB, maxBytes: 1078161 }
+      document.retainedKiB: { unit: KiB, maxBytes: 341275 }
     leaf-uuid:
-      columns.peakKiB: { unit: KiB, maxBytes: 1440698 }
+      columns.peakKiB: { unit: KiB, maxBytes: 1438815 }
       columns.retainedKiB: { unit: KiB, maxBytes: 361909 }
-      document.peakKiB: { unit: KiB, maxBytes: 1445010 }
+      document.peakKiB: { unit: KiB, maxBytes: 1443127 }
       document.retainedKiB: { unit: KiB, maxBytes: 361909 }
