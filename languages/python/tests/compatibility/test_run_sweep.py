@@ -330,6 +330,7 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
 _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
     {
         "m-opt-lock-012",
+        "m-temporal-read-010",
         "m-unit-work-031",
         "m-unit-work-032",
         "m-unit-work-033",
@@ -340,7 +341,9 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 
 # The interleaved cases `test_interleaved_uow_group_run_sweep` drives through
 # `engine.run_interleaved_scenario_case` over its own dedicated executions:
-# `m-opt-lock-012`'s optimistic-lock race, and the two Repeatable Read proofs
+# `m-opt-lock-012`'s optimistic-lock race, `m-temporal-read-010`'s race of two
+# Transaction-Time-Only closes, each group at its own instant, and the two
+# Repeatable Read proofs
 # `m-unit-work-032` (a plain object find) and `m-unit-work-034` (a streamed
 # delivery) — two units of work reading and writing one row, whose second read is
 # graded against the first. The isolation arms are what make the level reach a HELD
@@ -358,10 +361,10 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 # one the harness's verbatim per-step execution has and a real unit of work does
 # not, so running it here would assert nothing about any level; and
 # `m-unit-work-033` states `expectGraph`, an oracle
-# `run_interleaved_scenario_case` refuses outright for lack of a `stepGraphs`
-# channel.
+# `run_interleaved_scenario_case` refuses outright because it fills no
+# `stepGraphs` channel.
 _INTERLEAVED_RUNNER_CASES: Final[frozenset[str]] = frozenset(
-    {"m-opt-lock-012", "m-unit-work-032", "m-unit-work-034"}
+    {"m-opt-lock-012", "m-temporal-read-010", "m-unit-work-032", "m-unit-work-034"}
 )
 
 
@@ -495,16 +498,6 @@ def _reachable_write_cases() -> list[case_format.Case]:
 
 
 _WRITE_CASES = _reachable_write_cases()
-
-
-def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] | None]:
-    """Each FIND step's declared ``expectRows`` in step order (None asserts nothing).
-
-    For the interleaved lane, which reports one row list per find step rather than
-    the pointer-addressed ``stepRows`` entries the envelope carries.
-    """
-    steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
-    return [step.get("expectRows") for step in steps if "objectQuery" in step]
 
 
 @pytest.mark.parametrize("case", _WRITE_CASES, ids=[c.case_id for c in _WRITE_CASES])
@@ -1092,22 +1085,25 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     (`engine.run_interleaved_scenario_case`), never through `adapter.run_case`
     (which cannot hold a second session open).
 
-    Grades the SAME FOUR layers `test_write_run_sweep` grades for an
-    ordinary scenario — the ordered per-step golden DML (flattened across
-    both interleaved groups plus the trailing ungrouped verify find, in
-    AUTHORED step order), `then.roundTrips`, and every find step's own
-    observed rows against its authored `expectRows` (the grouped observing
-    finds AND the trailing
-    ungrouped verify, the SAME `compare_rows` comparator/
-    canonicalization the ordinary lane uses, never a forked row-equality) —
-    PLUS each group's fate (`then.units`): the conflict a group's flush
-    reported, and a commit for every group that states none.
+    Grades the layers `test_write_run_sweep` grades for an ordinary scenario —
+    the ordered per-step golden DML (flattened across both interleaved groups
+    plus the trailing ungrouped verify find, in AUTHORED step order),
+    `then.roundTrips`, every find step's `stepRows` against its authored
+    `expectRows` (the grouped observing finds AND the trailing ungrouped verify,
+    through the same :func:`_grade_step_rows` every scenario lane's rows go
+    through), each group's fate (`then.units`): the conflict a group's flush
+    reported, and a commit for every group that states none — and, where the
+    case states it, `then.tableState`.
 
     The `expectRows` grade is each case's own teeth, and what it catches
     differs per case. For `m-opt-lock-012` a broken abort that left the doomed
     group's buffered insert durable would still emit well-formed DML and report
     the conflict, and its trailing verify find would observe account
-    9. For the Repeatable Read arms `m-unit-work-032` and `-034` the emissions
+    9. For `m-temporal-read-010` the losing close's emission is well-formed
+    whether or not the race happened, so its fate and the table it leaves — the
+    winner's successor current, the loser's close changing nothing — are what
+    show the stale gate met the database. For the Repeatable Read arms
+    `m-unit-work-032` and `-034` the emissions
     and the fates are identical whatever level the groups opened at, and the
     reader's SECOND read is the ONLY thing that differs: at the connection's own
     default it answers the peer's committed 999.00 rather than the 250.00 it
@@ -1118,11 +1114,12 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     model = engine.load_case_metamodel(case)
     profile_run.reset(model, case_fixtures(case))
 
-    emissions, round_trips, units, find_rows = engine.run_interleaved_scenario_case(
+    run = engine.run_interleaved_scenario_case(
         case, profile_run.port, profile_run.interleaved_execution
     )
 
     golden_statements = write_golden_statements(case)
+    emissions = run.emissions
     assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
     for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
         assert emission.sql == golden_sql, (case.case_id, emission)
@@ -1133,16 +1130,17 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
         )
 
     then = case_document(case)["then"]
-    assert round_trips == then["roundTrips"], case.case_id
-    _grade_units(case, {"units": units})
-
-    expected_per_find = _scenario_expect_rows(case)
-    assert len(find_rows) == len(expected_per_find), (case.case_id, find_rows)
-    for observed, expected in zip(find_rows, expected_per_find, strict=True):
-        if expected is not None:
-            compare_rows(
-                [cast("dict[str, Any]", wire_value_deep(row)) for row in observed], expected
-            )
+    assert run.round_trips == then["roundTrips"], case.case_id
+    observations: dict[str, Any] = {
+        "stepRows": run.step_rows,
+        "units": run.units,
+        "tableState": run.table_state,
+    }
+    steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+    _grade_step_rows(case, model, steps, {"observations": observations})
+    _grade_units(case, observations)
+    if "tableState" in then:
+        _grade_table_state(case, model, observations)
 
 
 # The Wire `mutate` whole-occurrence replacement cases: a find, then edits whose
@@ -1234,8 +1232,8 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
 # pk-gen `sequence` run-only set below, neither joins `WRITE_EXERCISED` (that  #
 # set couples compile AND run grading; a run-only case would fail             #
 # `test_compile_sweep`'s `status == "ok"` assert). Increment 4 adds the        #
-# temporal close-only conflict witnesses: the audit-only and bitemporal        #
-# stale-gate conflicts, the audit-only retry, the locking-mode zero-row-close  #
+# temporal close-only conflict witnesses: the bitemporal stale-gate conflict,  #
+# the audit-only retry, the locking-mode zero-row-close                        #
 # (StaleWriteError) case, the TPH composed conflict, and the non-temporal      #
 # value-object write under an optimistic gate (already tag-reachable, now      #
 # exercised). Increment 6 admits `m-opt-lock-009` (`retryOptimisticConflicts:  #
@@ -1259,7 +1257,6 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-opt-lock-007",
         "m-opt-lock-009",
         "m-opt-lock-013",
-        "m-temporal-read-010",
         "m-temporal-read-011",
         "m-temporal-read-012",
         "m-bitemp-write-005",

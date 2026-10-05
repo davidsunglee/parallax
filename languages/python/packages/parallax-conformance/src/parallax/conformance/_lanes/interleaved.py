@@ -14,30 +14,27 @@ from parallax.conformance._database_control import (
     ModeledExecution,
 )
 from parallax.conformance._lanes.scenario import (
-    INERT_CLOCK_INSTANT,
     CaseContext,
     GroupState,
     LoweredStep,
     flush_failure,
-    graph_rows,
+    group_tx_instant,
+    read_table_state,
     refuse_a_conflict_retry_opt_in,
     run_group_step,
     run_standalone_find,
     scenario_group_step_indices,
     step_query,
+    step_rows,
 )
 from parallax.conformance._lanes.turnstile import Turnstile, await_workers
 from parallax.conformance._lifecycle_observation import LifecycleObservation, LifecycleRun
 from parallax.conformance._mechanism import case_document, envelope
-from parallax.conformance._mechanism.envelope import Emission, EngineError
-from parallax.conformance._mechanism.given_state import (
-    apply_given_apply,
-    seed_shadow_from_fixtures,
-)
+from parallax.conformance._mechanism.envelope import EngineError, ScenarioRun
+from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance._mechanism.model_facts import case_serving_model
 from parallax.conformance._mechanism.transaction_control import transact
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core.base import normalize_instant
 from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import handle
@@ -45,7 +42,7 @@ from parallax.snapshot import handle
 __all__ = ["run_interleaved_scenario_case"]
 
 
-def _empty_group_rows() -> dict[int, list[Mapping[str, object]]]:
+def _empty_group_rows() -> dict[int, dict[str, object]]:
     return {}
 
 
@@ -60,16 +57,15 @@ class _InterleavedGroupResult:
     optimistic-lock conflict its flush reported (`m-case-format` *Unit fates*) —
     any OTHER exception the worker thread raised (re-raised on the main
     thread once both join — never silently swallowed), and every OWN find
-    step's own observed rows (keyed by scenario step index) — the group's own
-    oracle for `expectRows`, the
-    SAME grade the ordinary scenario run lane gives every OTHER find step through
-    its `stepRows` observation; without this the caller has no way to grade a
-    grouped find at all, only its DML shape."""
+    step's `stepRows` observation (keyed by scenario step index) — the SAME
+    observation the ordinary scenario run lane reports for every OTHER find
+    step; without this the caller has no way to grade a grouped find at all,
+    only its DML shape."""
 
     lowered: dict[int, LoweredStep]
     fate: dict[str, object] = field(default_factory=_committed)
     failure: BaseException | None = None
-    rows: dict[int, list[Mapping[str, object]]] = field(default_factory=_empty_group_rows)
+    rows: dict[int, dict[str, object]] = field(default_factory=_empty_group_rows)
     round_trips: int = 0
 
 
@@ -79,6 +75,7 @@ def _run_interleaved_group(
     context: CaseContext,
     steps: Sequence[Mapping[str, object]],
     indices: Sequence[int],
+    tx_instant: str,
     turnstile: Turnstile,
     result: _InterleavedGroupResult,
 ) -> None:
@@ -116,25 +113,27 @@ def _run_interleaved_group(
 
     ``session`` is passed beside the shared ``context`` rather than read out of
     it because the two groups run on two connections: each group's steps execute
-    on, and lower in the spelling of, the dedicated session opened for it.
+    on, and lower in the spelling of, the dedicated session opened for it. Its
+    steps run at ``tx_instant``, the group's own Transaction Instant — the same
+    instant ``session``'s Clock answers, so the oracle and the execution plan at
+    one value.
 
-    ``context`` carries the SAME single :class:`TemporalShadow` every group
-    shares (the keyed unit-of-work lane's own convention) — safe here ONLY
-    because every model this lane witnesses is entirely NON-temporal (the
-    tracker is never mutated for these instructions, so two threads never
-    contend on it, and this group's own abort has nothing to discard). A
-    genuinely temporal interleaved case would need its own per-group tracking
-    discipline — the contiguous runner's whole-tracker staging cannot serve two
-    groups advancing at once — unwitnessed and out of scope.
+    ``context`` carries no case-state tracker, and that is the invariant two
+    concurrent sessions rest on: a temporal write settles against what its own
+    group's reads retained — the value production's verb is handed, through
+    :class:`~parallax.conformance._lanes.scenario.GroupEvidence` — so the oracle
+    models nothing the other session could have changed, the two threads share
+    no mutable state, and a group's abort leaves nothing behind to discard. A
+    write whose plan would need more than those reads retained — a coverage read
+    its flush defers, or a second temporal write of a key its group already
+    settled — is refused as unwitnessed rather than modeled, because that state
+    includes the other session's commits, which only the database knows.
 
-    Every OWN find step's observed rows land in ``result.rows`` (keyed by
-    scenario step index): the caller's own
-    oracle for that step's authored ``expectRows`` — without this, a grouped
-    find's own DML is graded but its OBSERVATION never is, so a broken abort
-    that left a doomed group's writes durable, or a group opened at the wrong
-    Isolation Level, would report well-formed SQL and still pass. Keeping them
-    is the one thing this runner does with a step's
-    result that the contiguous runner does not.
+    Every OWN find step's `stepRows` observation lands in ``result.rows`` (keyed
+    by scenario step index) — without this, a grouped find's own DML is graded
+    but its OBSERVATION never is, so a broken abort that left a doomed group's
+    writes durable, or a group opened at the wrong Isolation Level, would report
+    well-formed SQL and still pass.
     """
     lowered: dict[int, LoweredStep] = {}
     state = GroupState()
@@ -146,11 +145,11 @@ def _run_interleaved_group(
             running.append(index)
             is_last = position == len(indices) - 1
             lowered[index], read = run_group_step(
-                tx, session, context, state, steps[index], index, INERT_CLOCK_INSTANT, observation
+                tx, session, context, state, steps[index], index, tx_instant, observation
             )
             if read is not None:
-                result.rows[index] = graph_rows(
-                    context.model, step_query(steps[index], context.model), read.roots
+                result.rows[index] = step_rows(
+                    context.model, index, step_query(steps[index], context.model), read.roots
                 )
             if not is_last:
                 turnstile.advance()
@@ -208,10 +207,9 @@ def _refuse_untrusted_terminations(
 def _refuse_graph_oracles(steps: Sequence[Mapping[str, object]], case_name: str) -> None:
     if any("expectGraph" in step for step in steps):
         raise EngineError(
-            f"{case_name}: this entry point reports emissions, round trips and find "
-            "rows, and carries no `stepGraphs` channel — a step stating relationship "
-            "contents is an oracle nothing here would answer, so it is refused rather "
-            "than silently unasserted"
+            f"{case_name}: this entry point fills no `stepGraphs` channel — a step "
+            "stating relationship contents is an oracle nothing here would answer, so it "
+            "is refused rather than silently unasserted"
         )
 
 
@@ -219,11 +217,11 @@ def run_interleaved_scenario_case(
     case: case_format.Case,
     port: CaseDatabase,
     execution_factory: InterleavedExecutionFactory,
-) -> tuple[list[Emission], int, dict[str, dict[str, object]], list[list[Mapping[str, object]]]]:
+) -> ScenarioRun:
     """Run a two-group interleaved-`uow`-group scenario — the optimistic-lock
     race (`m-opt-lock-012`) and the Isolation Level scenarios alike, whose ONE
     admission guard is on ORACLE SHAPE (a step stating `expectGraph` is REFUSED
-    here: this entry point carries no `stepGraphs` channel, so that oracle would
+    here: this entry point fills no `stepGraphs` channel, so that oracle would
     go unasserted — read oracles are row-valued only, and a write step, stating
     no oracle of its own, is asked for nothing):
     each
@@ -239,13 +237,18 @@ def run_interleaved_scenario_case(
     statements and any ungrouped step (each witnessed case's own trailing verify
     find), which runs AFTER both groups have resolved.
 
-    Reports the ordered emissions, total round trips, each group's fate by
-    label — committed, or rolled back by the conflict its flush reported, which
-    only the optimistic-lock race states — and
-    EVERY find step's own observed rows (grouped or ungrouped, in scenario
-    step order): the caller's own oracle for
-    every authored `expectRows`, the SAME observable the ordinary scenario
-    run lane grades for every OTHER find step. Routed to explicitly by the
+    Each group runs at its own Transaction Instant — its first write's `at`
+    (:func:`~parallax.conformance._lanes.scenario.group_tx_instant`), the rule
+    the contiguous lane applies — and the lane models no case state: each
+    temporal write settles against its own group's reads (see
+    :func:`_run_interleaved_group`).
+
+    Reports a :class:`~parallax.conformance._mechanism.envelope.ScenarioRun`:
+    the ordered emissions, total round trips, EVERY find step's `stepRows`
+    observation (grouped or ungrouped, in scenario step order), each group's
+    fate by label — committed, or rolled back by the conflict its flush
+    reported — and, where the case states `then.tableState`, the tables read
+    back once both groups have joined. Routed to explicitly by the
     run sweep (`test_run_sweep.py`) rather than through `run_scenario_case`/
     `adapter.run_case` — this shape's own peer requirement has no seat in the
     ordinary shape-dispatched entry points, the SAME reasoning the rounds
@@ -281,10 +284,7 @@ def run_interleaved_scenario_case(
     grouped = {index for indices in groups.values() for index in indices}
     ungrouped = [index for index in range(len(steps)) if index not in grouped]
     (label_a, indices_a), (label_b, indices_b) = groups.items()
-    shadow = TemporalShadow()
-    seed_shadow_from_fixtures(case, model, shadow)
-    apply_given_apply(case, port, shadow)
-    instant = normalize_instant(dt.datetime.fromisoformat(INERT_CLOCK_INSTANT))
+    apply_given_apply(case, port, None)
     # This lane reports no lifecycle oracle, and could not: two connections
     # driven at once have no single root order to state. The run is here so the
     # trailing ungrouped verify find has one to open its own Handle through.
@@ -295,7 +295,7 @@ def run_interleaved_scenario_case(
         serving,
         model,
         concurrency,
-        shadow,
+        None,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )
@@ -307,16 +307,16 @@ def run_interleaved_scenario_case(
     # — releases the first rather than leaking it, and the ordinary exit
     # releases both whatever the choreography did.
     plans = (
-        (f"uow-{label_a}", observed_a, indices_a, result_a),
-        (f"uow-{label_b}", observed_b, indices_b, result_b),
+        (f"uow-{label_a}", observed_a, indices_a, group_tx_instant(steps, indices_a), result_a),
+        (f"uow-{label_b}", observed_b, indices_b, group_tx_instant(steps, indices_b), result_b),
     )
     with contextlib.ExitStack() as stack:
         executions: dict[str, InterleavedExecution] = {}
-        for name, observed, _indices, _result in plans:
+        for name, observed, _indices, tx_instant, _result in plans:
             execution = execution_factory(
                 serving,
                 options=context.options,
-                clock=FixedClock(instant),
+                clock=FixedClock(normalize_instant(dt.datetime.fromisoformat(tx_instant))),
                 lifecycle_provider=observed.provider,
             )
             stack.callback(execution.close)
@@ -326,12 +326,21 @@ def run_interleaved_scenario_case(
             name: (
                 threading.Thread(
                     target=_run_interleaved_group,
-                    args=(executions[name], observed, context, steps, indices, turnstile, result),
+                    args=(
+                        executions[name],
+                        observed,
+                        context,
+                        steps,
+                        indices,
+                        tx_instant,
+                        turnstile,
+                        result,
+                    ),
                     name=name,
                 ),
                 executions[name],
             )
-            for name, observed, indices, result in plans
+            for name, observed, indices, tx_instant, result in plans
         }
         for thread, _execution in workers.values():
             thread.start()
@@ -358,7 +367,7 @@ def run_interleaved_scenario_case(
         )
 
     lowered: dict[int, LoweredStep] = {**result_a.lowered, **result_b.lowered}
-    rows_by_index: dict[int, list[Mapping[str, object]]] = {**result_a.rows, **result_b.rows}
+    rows_by_index: dict[int, dict[str, object]] = {**result_a.rows, **result_b.rows}
     # Each group's own transaction counted its own calls; the trailing ungrouped
     # verify finds add theirs below.
     round_trips = sum(result.round_trips for result in (result_a, result_b))
@@ -371,7 +380,9 @@ def run_interleaved_scenario_case(
                 "ungrouped step is a trailing verify find only"
             )
         read, read_observed = run_standalone_find(port, context, step, lifecycle)
-        rows_by_index[index] = graph_rows(model, step_query(step, model), read.checked().results())
+        rows_by_index[index] = step_rows(
+            model, index, step_query(step, model), read.checked().results()
+        )
         round_trips += read_observed.round_trips
         lowered[index] = LoweredStep(
             f"/scenario/{index}/objectQuery", read_observed.reads, False, False
@@ -380,5 +391,11 @@ def run_interleaved_scenario_case(
     ordered = [lowered[index] for index in sorted(lowered)]
     emissions = envelope.emissions([(step.pointer, step.statements) for step in ordered])
     units = {label_a: result_a.fate, label_b: result_b.fate}
-    find_rows = [rows_by_index[index] for index in sorted(rows_by_index)]
-    return emissions, round_trips, units, find_rows
+    observed_rows = [rows_by_index[index] for index in sorted(rows_by_index)]
+    then = case.document.get("then")
+    table_state = (
+        read_table_state(port, model)
+        if isinstance(then, Mapping) and "tableState" in then
+        else None
+    )
+    return ScenarioRun(emissions, round_trips, [], observed_rows, [], units, table_state)

@@ -288,11 +288,12 @@ def run_scenario(
     group."""
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
+    shadow = TemporalShadow()
     context = CaseContext(
         serving,
         model,
         case_document.concurrency(case),
-        TemporalShadow(),
+        shadow,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )
@@ -300,8 +301,8 @@ def run_scenario(
     # plan, so a temporal close observes the milestone the persisted history (or
     # an earlier step) actually holds — the SAME order every other lane applies:
     # fixtures, then `given.apply`, then the first step.
-    seed_shadow_from_fixtures(case, model, context.shadow)
-    apply_given_apply(case, port, context.shadow)
+    seed_shadow_from_fixtures(case, model, shadow)
+    apply_given_apply(case, port, shadow)
     observation = lifecycle.observation()
     with handle.Database.connect(
         port, serving, options=context.options, lifecycle_provider=observation.provider

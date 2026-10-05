@@ -53,10 +53,10 @@ def _versioned_conflict_cases():
 def _temporal_conflict_close_cases():
     """Transaction-Time-only temporal conflict-close cases (no version, no Valid-Time dimension).
 
-    The audit-only optimistic / locking closes (`m-temporal-read-010` through
-    `m-temporal-read-012`) gate on the observed Transaction-Time start (`in_z`), never a
-    version column. The bitemporal close (`m-bitemp-write-005`) carries a Valid-Time
-    dimension too and is pinned in `test_bitemporal`.
+    The audit-only optimistic / locking closes (`m-temporal-read-011`, `m-temporal-read-012`
+    and the table-per-hierarchy `m-inheritance-105`) gate on the observed Transaction-Time
+    start (`in_z`), never a version column. The bitemporal close (`m-bitemp-write-005`)
+    carries a Valid-Time dimension too and is pinned in `test_bitemporal`.
     """
     cases = []
     for case in _conflict_cases():
@@ -183,7 +183,6 @@ def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
     cases = _temporal_conflict_close_cases()
     # The Transaction-Time close family all carry ① (write + at [+ observedTxStart]).
     assert {_case_id(case.path.stem) for case in cases} >= {
-        "m-temporal-read-010",
         "m-temporal-read-011",
         "m-temporal-read-012",
     }
@@ -195,14 +194,15 @@ def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
 
 
 def test_audit_only_optimistic_gated_close_binds_in_z_gate() -> None:
-    # m-temporal-read-010 witnesses the OPTIMISTIC-gated close of an audit-only milestone:
+    # m-inheritance-105 witnesses the OPTIMISTIC-gated close of an audit-only milestone:
     # a single close UPDATE gating on the observed Transaction-Time start (in_z).
-    # Its ADDRESS is the pk plus one exclusive upper bound per as-of axis, which on
-    # balance's single axis is `out_z = infinity` alone — no Valid-Time bound, since the
-    # entity declares no Valid-Time dimension. It is the audit-only analogue of the
-    # bitemporal gate (m-bitemp-write-005), reusing that gate shape over a shorter address.
-    case = next(c for c in _conflict_cases() if c.path.stem.startswith("m-temporal-read-010"))
-    assert "m-temporal-read" in case.tags and "m-opt-lock" in case.tags
+    # Its ADDRESS is the pk, the subtype's tag guard, and one exclusive upper bound per
+    # as-of axis, which on reading's single axis is `out_z = infinity` alone — no
+    # Valid-Time bound, since the family declares no Valid-Time dimension. It is the
+    # audit-only analogue of the bitemporal gate (m-bitemp-write-005), reusing that gate
+    # shape over a shorter address.
+    case = next(c for c in _conflict_cases() if c.path.stem.startswith("m-inheritance-105"))
+    assert "m-txtime-write" in case.tags and "m-opt-lock" in case.tags
     assert case.concurrency_mode == "optimistic"
     assert case.observed_tx_start is not None  # the in_z gate token
     assert case.expected_affected_rows == 0  # the gate is STALE against the current milestone
@@ -222,7 +222,7 @@ def test_temporal_conflict_close_observed_tx_start_corruption_is_rejected() -> N
         next(
             c
             for c in _temporal_conflict_close_cases()
-            if c.path.stem.startswith("m-temporal-read-010")
+            if c.path.stem.startswith("m-inheritance-105")
         )
     )
     # Corrupt the observed in_z gate token: the DERIVED `and in_z = ?` gate bind no

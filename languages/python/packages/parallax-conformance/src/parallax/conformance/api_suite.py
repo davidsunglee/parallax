@@ -359,10 +359,11 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "scenario graded by the run lane alone (query-result-dependent): its developer "
         "spelling is the exercised `tx.terminate` close (`m-txtime-write-003`), and what it "
         "adds is the framework-emitted `and in_z = ?` gate no caller spells. The "
-        "optimistic-lock temporal-close conflict/retry witnesses (`-010`..`-012`: "
-        "stale-`in_z` conflict, the `when.attempts` 0-then-1 retry, and the locking-mode "
-        "non-retriable stale close) are graded by the conflict run lane: a "
-        "gated-retry/conflict choreography has no single-callback idiomatic spelling"
+        "stale-`in_z` race (`-010`) has its own case-scoped entry below. The "
+        "optimistic-lock temporal-close retry and locking witnesses (`-011`/`-012`: the "
+        "`when.attempts` 0-then-1 retry, and the locking-mode non-retriable stale close) "
+        "are graded by the conflict run lane: a gated-retry choreography has no "
+        "single-callback idiomatic spelling"
     ),
     "m-db-error": (
         "the m-db-error corpus cases are graded end-to-end by the run lanes — the "
@@ -761,8 +762,9 @@ _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
     "single-callback idiomatic developer spelling distinct from what the boundary "
     "runner already exercises directly"
 )
-# The interleaved two-session optimistic-lock race (`m-opt-lock-012`,
-# `m-case-format` unit-of-work grouping) holds two concurrent
+# The interleaved two-session optimistic-lock races (`m-opt-lock-012` over a
+# versioned row, `m-temporal-read-010` over a Transaction-Time-Only milestone;
+# `m-case-format` unit-of-work grouping) hold two concurrent
 # `db.transact` units of work, each over a dedicated session of its own,
 # sequenced in authored order — `parallax.conformance.engine.run_interleaved_scenario_case`.
 _OPT_LOCK_INTERLEAVED_RACE_REASON: Final[str] = (
@@ -1505,6 +1507,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-opt-lock-010": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-012": _OPT_LOCK_INTERLEAVED_RACE_REASON,
+    "m-temporal-read-010": _OPT_LOCK_INTERLEAVED_RACE_REASON,
     "m-read-lock-001": _READ_LOCK_HARNESS_GOLDEN_REASON,
     "m-read-lock-006": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-007": _READ_LOCK_TWO_SESSION_REASON,

@@ -1,29 +1,102 @@
-# Optimistic temporal close with a STALE observed in_z affects ZERO rows even though
-# a CURRENT row exists — the lost update the in_z gate catches (m-temporal-read +
-# m-opt-lock).
+# Optimistic Transaction-Time-Only termination gated on a STALE observed in_z affects
+# ZERO rows even though a current milestone exists — the lost update the in_z gate
+# catches (m-temporal-read + m-opt-lock). It carries the stale-gate conflict the
+# conflict form pinned — the close-only shape addressed by the key and the open
+# out_z, gated on an in_z no longer current — now produced by a public `terminate`
+# racing a concurrent unit of work's public `update` that committed first. It
+# additionally grades both units' fates and the state the race leaves: the
+# winner's close and chained successor stand, and the loser's close changes no row.
 model: models/balance.yaml
-tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-snapshot-1, slice-managed-1]
-shape: conflict
+tags: [m-temporal-read, m-opt-lock, m-txtime-write, m-unit-work, m-sql, temporal, audit-only, optimistic-lock-conflict, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
 compileEligibility:
   mode: run-only
-  reason: single-connection
-  note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
-given:
-  apply:
-    - sql: "update balance set out_z = '2024-09-01T00:00:00+00:00' where bal_id = 2 and out_z = 'infinity'"
-    - sql: "insert into balance(bal_id, acct_num, val, in_z, out_z) values (2, 'B', 999.00, '2024-09-01T00:00:00+00:00', 'infinity')"
+  reason: query-result-dependent
+  note: "each close gates on the milestone its own group's find observed, and the concurrent update's chained successor carries that milestone's unassigned members — a query result (m-case-format 'Settling against a grouped find')"
 when:
   uow:
     concurrency: optimistic
-  write: { id: 2 }
-  at: "2024-10-01T00:00:00.000000Z"
-  observedTxStart: "2024-02-01T00:00:00.000000Z"
+  scenario:
+    - uow: ours
+      objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          eq:
+            attr: parallax.compatibility.Balance.id
+            value: 2
+        temporal:
+          transaction-time:
+            asOf: latest
+      roundTrips: 1
+      note: OUR unit of work observes balance 2's current milestone (200.00, known from 2024-02-01)
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
+            mariadb: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
+          binds: [2, infinity]
+      expectRows:
+        - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
+    - uow: concurrent
+      objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          eq:
+            attr: parallax.compatibility.Balance.id
+            value: 2
+        temporal:
+          transaction-time:
+            asOf: latest
+      roundTrips: 1
+      note: a CONCURRENT unit of work observes the SAME milestone — the classic race
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
+            mariadb: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
+          binds: [2, infinity]
+      expectRows:
+        - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
+    - uow: concurrent
+      write:
+        - mutation: update
+          "on": 1
+          entity: parallax.compatibility.Balance
+          rows:
+            - { id: 2, value: "999.00" }
+          at: "2024-09-01T00:00:00.000000Z"
+      roundTrips: 2
+      note: the concurrent unit of work commits FIRST — its close gated on the in_z it observed, then the chained successor from the same instant; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+            mariadb: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+          binds: ["2024-09-01T00:00:00.000000Z", 2, infinity, "2024-02-01T00:00:00.000000Z"]
+        - sql:
+            postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+            mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+          binds: [2, B, "999.00", "2024-09-01T00:00:00.000000Z", infinity]
+    - uow: ours
+      write:
+        - mutation: terminate
+          "on": 0
+          entity: parallax.compatibility.Balance
+          rows:
+            - { id: 2 }
+          at: "2024-10-01T00:00:00.000000Z"
+      roundTrips: 1
+      note: "our close gates on OUR observed in_z 2024-02-01, which the concurrent commit closed — 0 rows; the commit's flush fails and the group ROLLS BACK after this, its last step"
+      statements:
+        - sql:
+            postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+            mariadb: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+          binds: ["2024-10-01T00:00:00.000000Z", 2, infinity, "2024-02-01T00:00:00.000000Z"]
 then:
-  statements:
-    - sql:
-        postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
-      binds: ["2024-10-01T00:00:00.000000Z", 2, infinity, "2024-02-01T00:00:00.000000Z"]
-  affectedRows: 0
+  units:
+    ours:
+      outcome: rolledBack
+      flushFailure: { at: commit, entity: parallax.compatibility.Balance, key: { id: 2 }, shortfall: optimisticConflict }
+    concurrent:
+      outcome: committed
+  roundTrips: 5
   tableState:
     balance:
       - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }

@@ -194,11 +194,10 @@ this target's four find interpreters answer it: the ungrouped standalone find,
 `_run_uow_group`'s own step loop, and the snapshot lane's find each publish a
 `stepGraphs` entry through `read_step_graph`. The fourth —
 `run_interleaved_scenario_case`, the entry point for the interleaved races (the
-optimistic-lock race and the Isolation Level scenarios) — refuses such a step by
-name before either worker thread starts, because its return is a four-tuple
-(emissions, round trips, the conflict's `actual`, every find's own rows) carrying
-no `stepGraphs` channel at all. Nothing about the interleaved shape conflicts
-with the observable: `_run_interleaved_group` drives the SAME `run_group_step`
+optimistic-lock races and the Isolation Level scenarios) — refuses such a step by
+name before either worker thread starts, because it fills no `stepGraphs` entry:
+its `ScenarioRun` reports that channel empty. Nothing about the interleaved shape
+conflicts with the observable: `_run_interleaved_group` drives the SAME `run_group_step`
 interpreter the contiguous runner does and already holds each find's own
 published output, which is exactly what `read_step_graph` takes. The limit is
 this target's rather than the case format's — the shape is unwired here, not
@@ -209,11 +208,9 @@ each stating `expectGraph`. The run sweep leaves it out of the interleaved lane
 for exactly this refusal, so the reference harness grades it alone.
 
 **Why it is still open.** The deferral waited for a case to author the
-combination, and one has. What remains is the repair's own size: this entry
-point's tuple would widen to five across the run sweep and its unit drivers,
-repeating the width `run_scenario_case` already retired into `ScenarioRun`, so
-the repair is the channel, a value object for the return, and its own DB-free
-driver, after which `m-unit-work-033` joins the interleaved lane.
+combination, and one has. What remains is the repair: filling the channel from
+each group's finds, grading it in the run sweep, and its own DB-free driver,
+after which `m-unit-work-033` joins the interleaved lane.
 
 ### D-78 — Two conformance write lanes run DML no Handle opened, so their work reaches no Execution Lifecycle
 

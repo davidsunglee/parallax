@@ -267,10 +267,12 @@ def seed_shadow_from_fixtures(
 
 
 def apply_given_apply(
-    case: case_format.Case, port: DatabaseConnection, shadow: TemporalShadow
+    case: case_format.Case, port: DatabaseConnection, shadow: TemporalShadow | None
 ) -> None:
     """Apply a case's out-of-band ``given.apply`` naive statements VERBATIM,
-    immediately (never inside our own transaction), and tell ``shadow`` they ran.
+    immediately (never inside our own transaction), and tell ``shadow`` they ran
+    — where the lane models case state at all; one that models none passes
+    ``None`` and has nothing to tell.
 
     They stand for a writer this unit of work is not: a CONCURRENT transaction
     that already committed, so its effect must survive our own eventual rollback
@@ -289,7 +291,8 @@ def apply_given_apply(
     entries = cast("Mapping[str, object]", given).get("apply")
     if not isinstance(entries, list):
         return
-    shadow.note_out_of_band_write()
+    if shadow is not None:
+        shadow.note_out_of_band_write()
     for entry in cast("list[Mapping[str, object]]", entries):
         sql = cast("str", entry["sql"])
         binds = cast("list[object]", entry.get("binds", []))
