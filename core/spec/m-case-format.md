@@ -131,9 +131,8 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
   **action** member per shape (`objectQuery` | `writeSequence` | `scenario` |
   `coherence` | `concurrency` | `boundary` | `edit` | `attempts`, plus the
   single-attempt conflict's `write`); the **context** members (`uow`, `stream`, `mutation`,
-  `at`, `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe
-  the unit-of-work mode, the streamed delivery, the written verb, transaction
-  instant, observed milestone coordinate, and alternate surface encodings.
+  `equivalentEncodings`) describe the unit-of-work mode, the streamed delivery, the
+  written verb, and alternate surface encodings.
 - **`then`** — everything the case asserts: the golden `statements`, the naive
   `referenceSql`, the observed data (`rows` / `graph` / the per-milestone `graphs` /
   `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
@@ -161,10 +160,10 @@ A case is one of **eleven shapes**, named by the required top-level `shape`:
   object-lifecycle modules — see *Lifecycle action steps*), or, under
   `grading: state`, no golden at all and the complete final `then.tableState`
   (see *State-graded scenarios*).
-- **`conflict`** — an observation-requiring keyed write (`when.mutation`:
-  `update`, the default, or `delete`; a temporal target's milestone close)
-  asserted by `then.affectedRows` for a single attempt, or an ordered
-  `when.attempts` retry sequence (`m-opt-lock`).
+- **`conflict`** — an observation-requiring keyed write against a non-temporal
+  target (`when.mutation`: `update`, the default, or `delete`) asserted by
+  `then.affectedRows` for a single attempt, or an ordered `when.attempts` retry
+  sequence (`m-opt-lock`).
 - **`coherence`** — a `when.coherence` two-node sequence (`m-coherence`).
 - **`error`** — asserts `then.errorClass` + `then.nativeCode` (`m-db-error`),
   triggered by top-level `then.statements` (single-connection `uniqueViolation`) or
@@ -382,15 +381,13 @@ in decimal space under any authored `tolerance`.
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming any of the four transaction options — `maxRetries`, `concurrency`, `retryOptimisticConflicts`, `isolation` — THAT joining call explicitly requests) |
 | `when.edit` | `when` | edit | the native edit under test: `source.origin` is `constructed` or `read`; a constructed source carries its whole authored `value`, while a read source carries the canonical `objectQuery` that produces its containing Entity; optional `source.path` names the Value Object occurrence to edit instead of that Entity. Optional `set` maps canonical member names to complete assigned values; omitting it spells a change-free edit |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
-| `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` (or temporal close) operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
-| `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete`; ignored for a temporal target, whose conflict write is always the milestone close |
+| `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
+| `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete` |
 | `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — a standalone/table-level defect, cross-entity family invariant, or relationship join type mismatch a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.evolve` | `when` | evolution | the two accepted models the case evolves between: `earlier`, a model descriptor path or the explicit fresh-provisioning sentinel `null`, and `later`, a model descriptor path. It is an `evolution` case's ONLY `when` member (see *Evolution cases*, below) |
 | `when.uow` | `when` | no | the transaction options the action's outer invocation EXPLICITLY requests (`concurrency: locking \| optimistic`, `maxRetries`, `retryOptimisticConflicts`, `isolation`); a field the case omits is omitted at the invocation and resolves to the Database Root's configured default — `given.databaseOptions`, else the built-in (`m-unit-work`, `m-auto-retry`, `m-db-port`) — and no field may be `null`; `concurrency` is the requested Concurrency Preference, not a claim that every Entity uses one strategy; descriptive apart from `isolation` |
 | `when.uow.isolation` | `when.uow` | no | the portable Isolation Level (`m-db-port`) every held session or `uow` group the case opens is opened at — `read-committed` \| `repeatable-read` \| `serializable`, the core serialized values. **Prescriptive**: the harness opens each held session at it through the provider seam, and an API Conformance Suite passes it to each group's own transaction. Omitted means the invocation requests the Database Root's configured default (`given.databaseOptions.isolation`, built-in `read-committed`), which the harness resolves the same way for the sessions it holds. A case never names an engine's own level or a session variable |
 | `when.stream` | `when` or a scenario read step | no | the streamed delivery of a `read` case (`{batchSize}`) — its presence makes the read streamed rather than eager, and its `batchSize` is the page size in ROOT positions; admitted only beside `then.graph`, and in its second placement on a `uow`-grouped scenario read step whose own `statements` are the delivery's pages (see *Streamed reads* and *Streamed read steps*, below) |
-| `when.at` / `when.observedTxStart` | `when` | conflict | the harness-supplied Transaction-Time close instant (→ new `out_z`) and observed `txStart` / physical `in_z` the optimistic gate binds |
-| `when.observedValidStart` | `when` | conflict | the observed milestone's `validStart` / physical `from_z` — with `when.observedTxStart` it is that milestone's own EDGE, naming the milestone the close observed instead of the close's address (see *Naming the observed milestone*, below) |
 | `when.equivalentEncodings` | `when` or a scenario read step | no | alternate authoring encodings of the sibling `objectQuery`; each MUST normalize and canonicalize to it |
 | `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step. *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on boundary and edit cases |
 | `then.referenceSql` | `then` | conditional | an independent naive oracle (see below) — a plain string, OR a dialect-keyed map where the naive spelling is dialect-specific; for a deep fetch it is the naive single-statement oracle for the **root** row set |
@@ -400,7 +397,7 @@ in decimal space under any authored `tolerance`.
 | `then.storedDataIssues` | `then` | read | the stored-data diagnoses a read publishes for the result positions whose stored state contradicted the declared model — one `{ordinal, hydrated, issues}` entry per invalid position, in result order (see *Classified stored data*, below) |
 | `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence, conflict, or scenario case asserts once its writes have run, keyed by table name (REQUIRED for a writeSequence case and a state-graded scenario) |
 | `then.units` | `then` | state-graded scenario | each `uow` group's fate, keyed by its label: `outcome` `committed` or `rolledBack`, and for a group a flush failure ended, its `flushFailure` (see *Unit fates*, below); a golden-graded group stating none commits |
-| `then.affectedRows` | `then` | conflict | the number of rows the golden write must affect (`0` = the zero-row shortfall — a gated conflict, or the ungated stale write only a temporal close can author, `1` = success) |
+| `then.affectedRows` | `then` | conflict | the number of rows the golden write must affect (`0` = the zero-row shortfall of a gated conflict, `1` = success) |
 | `then.errorClass` | `then` | error | the neutral `m-db-error` category a triggered error must classify to (`uniqueViolation` / `deadlock` / `lockWaitTimeout`) |
 | `then.nativeCode` | `then` | error | the per-dialect native code each driver must surface (Postgres SQLSTATE string, MariaDB vendor errno) |
 | `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind / a refused boundary option — `option-conflict`, `boundary-failed`, `connection-refused`), stated directly or as a dialect-keyed map whose omitted dialect the case makes no claim about |
@@ -1142,12 +1139,10 @@ A **grouped** scenario write step owes none of its own: its group's find steps
 are what publish the values it settles against, and those finds already declare
 their own `roundTrips`.
 
-A **non-temporal conflict attempt** owes one, and a `when.attempts` sequence owes
-one PER attempt, because every attempt settles against a state of its own
-(*Conflict cases*). That read stands OUTSIDE the transaction whose attempt it
-feeds instead of inside it, which decides WHERE it happens and not whether it
-counts. A temporal close settles against a coordinate the case names and owes
-none.
+A **conflict attempt** owes one, and a `when.attempts` sequence owes one PER
+attempt, because every attempt settles against a state of its own (*Conflict
+cases*). That read stands OUTSIDE the transaction whose attempt it feeds instead
+of inside it, which decides WHERE it happens and not whether it counts.
 
 A Bitemporal entry's resolving read is pinned at the Valid-Time instant the
 entry's `validFrom` states, because a source-backed write starts where its source
@@ -1179,10 +1174,10 @@ only the descriptor serde round-trip and the golden-SQL normalization layers
 apply (there is no `when.objectQuery`).
 
 **The interference a conflict case describes must be one a correct client can
-meet.** A NON-temporal conflict write is settled against a value a real read
-published — one of the calls `then.roundTrips` counts (*Resolving reads a write
-owes*) — and `given.apply`'s concurrent writer commits BETWEEN that read and
-the write it invalidates — which is why `when.write`'s `observedVersion` is a
+meet.** A conflict write is settled against a value a real read published —
+one of the calls `then.roundTrips` counts (*Resolving reads a write owes*) — and
+`given.apply`'s concurrent writer commits BETWEEN that read and the write it
+invalidates — which is why `when.write`'s `observedVersion` is a
 declared fact cross-checked against the read rather than evidence handed to the
 write. That ordering is reachable only under the **Optimistic** strategy, whose
 evidence is the retained observation and which therefore admits a source read
@@ -1190,20 +1185,22 @@ outside the writing transaction. A Locking target's keyed write is licensed by
 the shared row lock a read of its OWN transaction holds, so nothing can commit
 against it in between: a case that stages one is describing a write no client
 can issue, and the zero-row outcome it would grade says only that the framework's
-own locking failed. The non-temporal conflict shape is therefore Optimistic-only,
-and the Locking arm of the zero-row classification — the non-retriable stale
+own locking failed. The conflict shape is therefore Optimistic-only, and the
+Locking arm of the zero-row classification — the non-retriable stale
 write, and the never-retriable missing target an unversioned target earns — is a
 language-internal claim about the planner, the affected-row enforcer, and the
 retry loop rather than a corpus observable.
 
-The written verb is **`when.mutation`** — `update` (the default) or `delete` —
-for a NON-temporal target; a temporal target's conflict write is always the
-milestone close, so it ignores the field. The verb does not decide whether the
-golden carries a gate: `when.uow.concurrency` does, uniformly across update,
-delete, and close (`m-opt-lock`). A temporal close is the one conflict write that
-settles against a coordinate the case NAMES rather than one a read published, so
-it alone can author a `locking` case: the ungated close's zero-row outcome is the
-non-retriable stale write rather than a retriable conflict.
+The written verb is **`when.mutation`** — `update` (the default) or `delete`.
+The verb does not decide whether the golden carries a gate: `when.uow.concurrency`
+does, uniformly across update and delete (`m-opt-lock`).
+
+The write's target is **non-temporal**, and a case whose target is temporal is
+refused rather than run. A temporal write settles against a whole observed
+milestone, which no conflict attempt's row can state: its race is a scenario of
+two interleaved `uow` groups whose losing group's fate `then.units` states
+(*Grouping steps into one unit of work*, *Unit fates*), and its retry loop is a
+`boundary` case's (*Boundary cases*).
 
 A conflict case MAY instead carry a **`when.attempts`** retry sequence — an ordered
 list of golden `UPDATE`s, each with its own `statements` + `affectedRows` + `write`
@@ -1213,101 +1210,6 @@ harness applies each attempt in order and asserts its affected-row count: the fi
 re-reads the now-fresh version and re-applies affects `1`. The final
 `then.tableState` confirms the retried write — not the concurrent writer's —
 landed. (Golden SQL lives per attempt, so there is no top-level `then.statements`.)
-
-#### Naming the observed milestone
-
-A temporal close names its coordinates one of two ways, and never both.
-
-The **address** form states them directly: the write row's `validEnd` is the
-address's Valid-Time exclusive upper bound on a Bitemporal target, and
-`when.observedTxStart` is the gate candidate. This is how a case tests a KNOWN
-stale-or-fresh gate — a deliberately stale token names no current milestone at
-all, so it can only be authored, never resolved.
-
-The **observation** form states the milestone instead:
-`when.observedValidStart` with `when.observedTxStart` is that milestone's own
-**edge** — its guaranteed-selecting start instant per declared as-of axis
-(`m-temporal-read`). The close's Valid-Time address bound and its gate are then
-both **derived** from the one milestone the edge selects among those the case's
-own state holds current. An implementation MUST refuse a close that carries an
-observed edge alongside an authored `validEnd`: the two spell one fact from
-opposite ends, so agreeing they prove nothing the derivation does not and
-disagreeing one would have to silently win.
-
-Both observation coordinates are entitled by the target and by the attempt, and
-an implementation **MUST** refuse one rather than ignore it where it is not:
-
-- A **non-temporal** target has no milestone at all, so it may author **neither**
-  `observedValidStart` **nor** `observedTxStart`, on the single-attempt `when` or
-  on any attempt. Its write gates on the row's own `observedVersion`, so a
-  milestone coordinate beside it reaches nothing that could read it.
-- `observedValidStart` names a Valid-Time start, so it is legal **only on a
-  Bitemporal target**: a Transaction-Time-Only target's milestones have no
-  Valid-Time start to name.
-- The edge selects among the milestones the case's **own loaded fixtures** hold
-  current, so `observedValidStart` is legal **only on the single-attempt `when`**.
-  A retry attempt re-reads the state the concurrent `given.apply` writer left
-  behind, which no fixture edge names and no lane performs a resolving read to
-  discover, so a retry attempt states its **address** directly and gates on its
-  own `observedTxStart`.
-- A retry sequence's attempts each carry their own close, so a case authoring
-  `when.attempts` may author **neither** coordinate on the root `when`: every
-  attempt reads its own, and a root coordinate is consumed by no attempt. The two
-  authoring locations are alternatives, never a default and an override.
-- A **locking**-mode close renders no gate, so `observedTxStart` is entitled there
-  only as the **edge**'s Transaction-Time half — that is, with `observedValidStart`
-  beside it, where it selects the milestone whose Valid-Time end the address binds.
-  An address-form locking close, which names its `validEnd` directly, may not
-  author it: the close's every bind is then already spelled, and the coordinate
-  would gate nothing.
-
-Because an edge selects exactly one milestone, a case whose own state holds two
-current milestones of one key carrying the **same** edge is unaddressable, and an
-implementation MUST refuse that state rather than pick one of them.
-
-The forms differ in what they can grade, not in what they emit. One key may hold
-several disjoint Valid-Time rectangles current on Transaction Time at once
-(`m-bitemp-write`), sharing the primary key, the open Transaction-Time bound,
-and possibly the gate; only their edges tell them apart. An address-form case
-therefore grades the rendering of an address it supplied, while an
-observation-form case grades the **derivation** — an implementation that resolves
-a close's address from the primary key alone has no single answer for such a key
-and cannot render both siblings of an edge-named pair.
-
-Neither form grades how an implementation **keys** the observations its own reads
-record. A conflict case names the milestone its write observed, so the write
-consumes one observation resolved once from state the case supplies, and nothing
-here observes what a second read of one key does to the first read's evidence.
-That is a limit of this shape, not of the format: a scenario `uow` group's write
-MAY name the find step it settles against (*Settling against a grouped find*,
-below), and that reference is where the corpus grades the keying.
-
-The **gate**'s provenance stays outside both shapes, for two different reasons.
-The requirement that address and gate both derive from the one observed milestone
-is normative above; no conflict case can witness the gate half, because an
-observed edge's Transaction-Time coordinate IS the milestone's Transaction-Time
-start, which is exactly what the optimistic gate binds — so in any case that names
-an edge the coordinate the case authored and the coordinate a derivation reads off
-the resolution are the same instant, and an implementation that binds the gate
-straight from `observedTxStart` renders every conforming golden. A conflict case
-therefore grades the **address**'s derivation alone, and a header of one that
-claims the gate's is claiming what no degradation of a conforming implementation
-can falsify.
-
-A grouped write naming its source find authors no coordinate at all, so there both
-binds are read off the one resolved milestone and which of them a misresolution
-moves depends on the target's **profile**. On a Bitemporal target a key's current
-rectangles are disjoint on Valid Time, so two observations of one key differ in
-their Valid-Time end and the misresolved **address** is what fails. On a
-Transaction-Time-Only target there is no Valid-Time half at all: a close addresses
-the key plus the invariant open Transaction-Time bound, so every observation of one
-key carries the *same* address and differs only in the milestone's
-Transaction-Time start — which is the **gate**. Two observations of one key are
-what a group holds whenever it reads that key twice at different as-of
-coordinates, on either profile; the profile decides only which bind states which
-milestone was settled against. That is why this reference is legal against any
-temporal target and why a Transaction-Time-Only witness grades the **gate**'s
-derivation, the half a conflict case cannot reach.
 
 ### Scenario cases (`m-unit-work`)
 
@@ -1393,10 +1295,9 @@ answered no value. With no `on`, a write takes the value its group's own insert 
 the object answered, else the group's latest reading of it.
 
 Everywhere else, a keyed write's observed row comes from **case state**: a
-writeSequence entry and a conflict close alike consume the state the case's own
-fixtures and earlier entries left current, because those shapes carry no read to
-have observed one (*Naming the observed milestone*, above). This reference is the
-one place that rule is displaced. Where it appears, an implementation **MUST**
+writeSequence entry consumes the state the case's own fixtures and earlier entries
+left current, because that shape carries no read to have observed one. This
+reference is the one place that rule is displaced. Where it appears, an implementation **MUST**
 resolve the write's observation from the **observation store this unit of work's
 own reads filled** — the evidence the named find recorded when it ran, addressed
 by the object and by the state that read observed — and **MUST NOT** substitute
@@ -1449,8 +1350,7 @@ optimistic **gate**, which binds the observed milestone's own Transaction-Time
 start. A versioned Non-Temporal write is addressed by its key alone, so the whole
 of the difference lands on its gate too, which binds the observed version.
 No profile is the weaker witness; the two whose difference lands on the gate grade
-its derivation, which no conflict case can reach (*Naming the observed milestone*,
-above).
+its derivation.
 
 A write settling against a find's result is **query-result-dependent**: the state
 it settles against is read off a row no compile lane executes, so such a case

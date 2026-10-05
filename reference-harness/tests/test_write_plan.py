@@ -68,7 +68,6 @@ def test_write_grading_offers_operations_and_no_lexical_primitive() -> None:
         name for name in _module_level_names(Path(write_plan.__file__)) if not name.startswith("_")
     }
     assert offered == {
-        "MILESTONE_COORDINATE_KEYS",
         "OPENING_MUTATIONS",
         "ObjectAddress",
         "assert_inheritance_write_routing",

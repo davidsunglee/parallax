@@ -14,7 +14,6 @@ import datetime as dt
 import decimal
 import functools
 import re
-import uuid
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, cast
@@ -32,11 +31,8 @@ from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import predicate
-from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import (
     INFINITY,
-    TIMESTAMP,
-    UUID,
     TemporalBound,
 )
 from parallax.core.db_port import (
@@ -46,12 +42,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
-    AsOfAxisMetadata,
-    AttributeIdentity,
     EntityIdentity,
-    PrimaryKey,
-    Table,
-    TemporalDimension,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
@@ -73,11 +64,9 @@ from parallax.core.unit_work import (
     instructions,
 )
 from parallax.core.unit_work.instructions import PreparedKeyedWrite
-from parallax.core.unit_work.planned import KeyTarget
 from parallax.core.unit_work.planner import TemporalStateKey, VersionedStateKey
 from parallax.snapshot import DatabaseOptions
 from parallax.snapshot.handle import WriteEvidenceError
-from tests.unit._metamodel_support import Declaration, attribute, source
 from tests.unit._transact_support import PERSON
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._recording_ports import FakeWritePort
@@ -1479,24 +1468,6 @@ def test_a_read_step_names_its_own_object_query() -> None:
         scenario.step_query({"roundTrips": 1}, models.load_models()["account"])
 
 
-def test_the_admitted_affected_guard_reraises_an_unadmitted_write_effect_error() -> None:
-    # Every member of the family renders the same `actual` count, so admitting the
-    # wrong one would report an identical observation whichever class the write
-    # raised. Only the class the case's own declared facts imply is caught; every
-    # other one propagates and fails the case.
-    account = EntityIdentity("parallax.compatibility", "Account")
-    target = KeyTarget(
-        key_attributes=(AttributeIdentity(account, "id"),),
-        key_values=((1,),),
-    )
-
-    def raises() -> int:
-        raise StaleWriteError(account, target, expected=1, actual=0)
-
-    with pytest.raises(StaleWriteError):
-        scenario._admitted_affected(MissingTargetError, raises)  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-
-
 def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() -> None:
     # Each writeSequence entry is its
     # OWN `db.transact` unit, never the whole sequence in one transaction.
@@ -1709,13 +1680,12 @@ def test_an_insert_row_authoring_an_observed_version_is_refused() -> None:
 
 def test_a_write_row_authoring_an_observed_tx_start_is_refused_even_when_versioned() -> None:
     # `observedTxStart` is not a write-row key in any shape: the case schema's
-    # `writeRow` reserves `observedVersion` alone, and a temporal close's observed
-    # `txStart` gate is authored beside the write (`when.observedTxStart`, or a
-    # retry attempt's own field — `m-case-format`). A versioned target is the case
-    # that hides the defect: it HAS an observation, so a refusal that only asks
-    # whether the target is observable at all admits the token and then discards
-    # it, letting the write advance its version while the Transaction-Time gate
-    # the author wrote is silently ignored.
+    # `writeRow` reserves `observedVersion` alone, because a temporal write
+    # observes a whole predecessor milestone no row cell can name. A versioned
+    # target is the case that hides the defect: it HAS an observation, so a
+    # refusal that only asks whether the target is observable at all admits the
+    # token and then discards it, letting the write advance its version while the
+    # Transaction-Time gate the author wrote is silently ignored.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -2775,24 +2745,24 @@ class TestConflictShortfallClassification:
             )
 
 
-def test_run_conflict_case_refuses_a_multi_key_write_against_a_temporal_target() -> None:
-    # A temporal target's write expands into a close plus its successors per key
-    # and never collapses into one set-based statement, so the multi-key `write`
-    # array — keyed and non-temporal — names no single milestone for the close to
-    # address. It is refused rather than reduced to a row the case never chose.
+def test_run_conflict_case_refuses_a_temporal_target_before_any_read() -> None:
+    # The conflict shape is non-temporal: a temporal write's race is an
+    # interleaved scenario, graded on what each group's own reads observed. A
+    # temporal target is refused before the lane's source read or `given.apply`
+    # touches the database.
     case = case_format.Case(
         path=Path("m-unit-work-999-synthetic.yaml"),
         case_id="m-unit-work-999",
         shape="conflict",
         tags=("m-unit-work", "slice-snapshot-1"),
         model="models/balance.yaml",
-        document={
-            "model": "models/balance.yaml",
-            "when": {"write": [{"id": 1}, {"id": 2}], "at": "2024-10-01T00:00:00+00:00"},
-        },
+        document={"model": "models/balance.yaml", "when": {"write": {"id": 1}}},
     )
-    with pytest.raises(EngineError, match="closes one milestone row"):
-        scenario.run_conflict_case(case, FakeWritePort())
+    port = FakeWritePort()
+    with pytest.raises(EngineError, match="targets a non-temporal Entity"):
+        scenario.run_conflict_case(case, port)
+    assert port.reads == []
+    assert port.writes == []
 
 
 def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() -> None:
@@ -2823,126 +2793,6 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
         scenario.run_conflict_case(case, FakeWritePort())
 
 
-def test_a_temporal_close_decodes_case_carriers_before_the_probe() -> None:
-    # Compatibility's close-only form authors an integral JSON number and broad
-    # ISO timestamps, but the probe and its SQL binds must receive the declared
-    # Int64 and Timestamp managed values rather than those authored carriers.
-    case = _synthetic_write(
-        "conflict",
-        {
-            "model": "models/balance.yaml",
-            "when": {
-                "uow": {"concurrency": "optimistic"},
-                "write": {"id": 2.0},
-                "at": "2024-10-01T00:00:00+00:00",
-                "observedTxStart": "2024-02-01T00:00:00+00:00",
-            },
-        },
-    )
-    emissions, affected, _table_state, _round_trips = scenario.run_conflict_case(
-        case, FakeWritePort()
-    )
-    binds = emissions[0].binds
-    assert affected == 1
-    assert type(binds[1]) is int and binds[1] == 2
-    assert isinstance(binds[0], dt.datetime)
-    assert isinstance(binds[3], dt.datetime)
-
-
-def test_a_uuid_temporal_key_requires_its_canonical_wire_string() -> None:
-    # Compatibility's standalone close has no generic prepared-write ingress, so
-    # its local declared-type preparation must accept canonical Uuid Wire and
-    # reject a JSON number before either value can become a planned key or bind.
-    entity = EntityIdentity("parallax.test", "UuidTemporal")
-    model = form_metamodel(
-        source(
-            Declaration(
-                identity=entity,
-                container=Table("uuid_temporal"),
-                attributes=(
-                    attribute(
-                        entity,
-                        "id",
-                        type=UUID,
-                        primary_key=PrimaryKey(),
-                    ),
-                    attribute(entity, "txStart", type=TIMESTAMP),
-                    attribute(entity, "txEnd", type=TIMESTAMP),
-                ),
-                as_of_axes=(
-                    AsOfAxisMetadata(
-                        TemporalDimension.TRANSACTION_TIME,
-                        AttributeIdentity(entity, "txStart"),
-                        AttributeIdentity(entity, "txEnd"),
-                    ),
-                ),
-            )
-        )
-    )
-    accepted = scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-        model,
-        entity.canonical,
-        {"id": "123e4567-e89b-12d3-a456-426614174000"},
-        "2024-10-01T00:00:00+00:00",
-        "2024-02-01T00:00:00+00:00",
-        None,
-        None,
-    )
-    assert accepted.identity == (("id", uuid.UUID("123e4567-e89b-12d3-a456-426614174000")),)
-    with pytest.raises(EngineError, match="neutral-literal-type-mismatch"):
-        scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            model,
-            entity.canonical,
-            {"id": 12.30},
-            "2024-10-01T00:00:00+00:00",
-            "2024-02-01T00:00:00+00:00",
-            None,
-            None,
-        )
-    with pytest.raises(EngineError, match="neutral-literal-noncanonical"):
-        scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            model,
-            entity.canonical,
-            {"id": "123E4567-E89B-12D3-A456-426614174000"},
-            "2024-10-01T00:00:00+00:00",
-            "2024-02-01T00:00:00+00:00",
-            None,
-            None,
-        )
-
-
-def test_conflict_close_rejects_axis_specific_inputs_on_a_transaction_time_target() -> None:
-    model = models.load_models()["balance"]
-    target_name = "parallax.compatibility.Balance"
-    common = (model, target_name, {"id": 2}, "2024-10-01T00:00:00+00:00")
-
-    with pytest.raises(EngineError, match="exactly its primary-key members"):
-        scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            model,
-            target_name,
-            {"id": 2, "extra": 3},
-            "2024-10-01T00:00:00+00:00",
-            None,
-            None,
-            None,
-        )
-    with pytest.raises(EngineError, match="axis the target does not declare"):
-        scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            *common, None, "2024-01-01T00:00:00+00:00", None
-        )
-    for bound in ("infinity", "2024-06-01T00:00:00+00:00"):
-        with pytest.raises(EngineError, match="axis the target does not declare"):
-            scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-                *common, None, None, bound
-            )
-    assert (
-        scenario._decode_observed_conflict_bound(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            None, TemporalBound.INFINITY, position="validEnd"
-        )
-        is TemporalBound.INFINITY
-    )
-
-
 def test_predicate_writes_require_no_keyed_unit_source_read_or_framework_classification() -> None:
     model = models.load_models()["account"]
     instruction = instructions.PredicateWrite(
@@ -2971,434 +2821,6 @@ def test_a_projected_row_rejects_an_ambiguous_member() -> None:
             columns,
             None,
             {"ambiguous": 1},
-        )
-
-
-@pytest.mark.parametrize("bad_key", ["2", True, 2.5])
-def test_a_temporal_close_rejects_a_malformed_primary_key_before_planning(
-    bad_key: object,
-) -> None:
-    # Compatibility's close-only row must satisfy its family-effective primary
-    # key's declared Int64 Wire contract, so string, boolean, and fractional
-    # carriers all stop before the close probe can turn one into an SQL bind.
-    case = _synthetic_write(
-        "conflict",
-        {
-            "model": "models/balance.yaml",
-            "when": {
-                "uow": {"concurrency": "optimistic"},
-                "write": {"id": bad_key},
-                "at": "2024-10-01T00:00:00+00:00",
-                "observedTxStart": "2024-02-01T00:00:00+00:00",
-            },
-        },
-    )
-    with pytest.raises(EngineError, match="primary key `id` is neutral-literal"):
-        scenario.run_conflict_case(case, FakeWritePort())
-
-
-@pytest.mark.parametrize(
-    ("model", "when", "position"),
-    [
-        (
-            "models/balance.yaml",
-            {
-                "write": {"id": 2},
-                "at": "not-an-instant",
-                "observedTxStart": "2024-02-01T00:00:00+00:00",
-            },
-            "at",
-        ),
-        (
-            "models/balance.yaml",
-            {
-                "write": {"id": 2},
-                "at": "2024-10-01T00:00:00+00:00",
-                "observedTxStart": "not-an-instant",
-            },
-            "observedTxStart",
-        ),
-        (
-            "models/position.yaml",
-            {
-                "write": {"id": 1},
-                "at": "2024-10-01T00:00:00+00:00",
-                "observedTxStart": "2024-04-01T00:00:00+00:00",
-                "observedValidStart": "not-an-instant",
-            },
-            "observedValidStart",
-        ),
-        (
-            "models/position.yaml",
-            {
-                "write": {"id": 1, "validEnd": "not-an-instant"},
-                "at": "2024-10-01T00:00:00+00:00",
-                "observedTxStart": "2024-04-01T00:00:00+00:00",
-            },
-            "validEnd",
-        ),
-    ],
-)
-def test_a_temporal_close_rejects_each_malformed_coordinate_before_planning(
-    model: str, when: dict[str, object], position: str
-) -> None:
-    # Compatibility's temporary close form carries four independently authored
-    # coordinates; each must fail at its resolved Timestamp boundary rather than
-    # reaching milestone selection, close planning, execution, or driver binds.
-    when["uow"] = {"concurrency": "optimistic"}
-    case = _synthetic_write("conflict", {"model": model, "when": when})
-    with pytest.raises(EngineError, match=position):
-        scenario.run_conflict_case(case, FakeWritePort())
-
-
-def test_a_bitemporal_close_preserves_only_the_authored_wire_open_bound() -> None:
-    # Compatibility's address form may author the exact `infinity` Wire sentinel
-    # for Valid-Time, which remains the framework open bound while every finite
-    # coordinate is decoded to datetime; a pre-managed sentinel is not an
-    # alternative serialized spelling and is refused before planning.
-    case = _edge_named_close(
-        {
-            "uow": {"concurrency": "optimistic"},
-            "write": {"id": 1, "validEnd": "infinity"},
-            "at": "2024-10-01T00:00:00+00:00",
-            "observedTxStart": "2024-04-01T00:00:00+00:00",
-        }
-    )
-    emissions, affected, _table_state, _round_trips = scenario.run_conflict_case(
-        case, FakeWritePort()
-    )
-    assert affected == 1
-    assert emissions[0].binds[2] == "infinity"
-    managed_bound = _edge_named_close(
-        {
-            "uow": {"concurrency": "optimistic"},
-            "write": {"id": 1, "validEnd": TemporalBound.INFINITY},
-            "at": "2024-10-01T00:00:00+00:00",
-            "observedTxStart": "2024-04-01T00:00:00+00:00",
-        }
-    )
-    with pytest.raises(EngineError, match="neutral-literal-type-mismatch"):
-        scenario.run_conflict_case(managed_bound, FakeWritePort())
-
-
-@pytest.mark.parametrize(
-    ("control_key", "value", "refusal"),
-    [
-        (
-            "observedTxStart",
-            "2020-01-01T00:00:00+00:00",
-            "a write row authors no `observedTxStart`",
-        ),
-        (
-            "observedValidStart",
-            "2020-01-01T00:00:00+00:00",
-            "a write row authors no `observedValidStart`",
-        ),
-        ("observedVersion", 99, "a temporal row authors no `observedVersion`"),
-    ],
-)
-def test_a_temporal_close_row_authoring_an_observation_control_key_is_refused(
-    control_key: str, value: object, refusal: str
-) -> None:
-    # A temporal conflict's close row is the write-row shape furthest from the
-    # keyed non-temporal one: it never reaches `instructions.deserialize`, whose
-    # durable-row schema forbids every control key, because a standalone close
-    # settles straight through `handle.plan_temporal_close`, which addresses the
-    # milestone by primary key alone. Accepted, the row's own token is projected
-    # away and the close still gates on the SEPARATE `when.observedTxStart` — so
-    # a case meaning to gate on the row's stale value emits the fresh gate's SQL
-    # and passes. A temporal write is entitled to neither key: its observation is
-    # a whole predecessor milestone `TemporalShadow` holds, and a close's gate
-    # rides beside the write.
-    case = _synthetic_write(
-        "conflict",
-        {
-            "model": "models/balance.yaml",
-            "when": {
-                "uow": {"concurrency": "optimistic"},
-                "write": {"id": 2, control_key: value},
-                "at": "2024-10-01T00:00:00+00:00",
-                "observedTxStart": "2024-02-01T00:00:00+00:00",
-            },
-        },
-    )
-    with pytest.raises(EngineError, match=re.escape(refusal)):
-        scenario.run_conflict_case(case, FakeWritePort())
-
-
-def _edge_named_close(document_when: dict[str, object]) -> case_format.Case:
-    """A Bitemporal conflict close over the `position` fixtures, whose two current
-    rectangles of key 1 differ only in their Valid-Time start."""
-    return _synthetic_write(
-        "conflict",
-        {"model": "models/position.yaml", "when": document_when},
-    )
-
-
-def test_an_edge_named_close_derives_its_address_from_the_named_milestone() -> None:
-    # Key 1 has TWO rectangles current on Transaction Time, sharing every
-    # coordinate a close renders except `thru_z`. Naming the head's own edge
-    # binds the head's `thru_z` (finite) and the tail's binds infinity, so the
-    # discriminator is the observation rather than an authored address. A close
-    # that resolved its observation by primary key alone has no way to render
-    # both.
-    #
-    # The GATE is not under test and cannot be: the edge's Transaction-Time half
-    # IS the milestone's `in_z`, so both rectangles gate on the same instant and
-    # a gate copied straight from the authored coordinate renders the same bind.
-    # `temporal_state.observed_close_coordinates` is where that derivation is
-    # pinned, by construction rather than by observation.
-    heads: list[list[object]] = []
-    for valid_start in ("2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"):
-        port = FakeWritePort()
-        emissions, affected, _table_state, _round_trips = scenario.run_conflict_case(
-            _edge_named_close(
-                {
-                    "uow": {"concurrency": "optimistic"},
-                    "write": {"id": 1},
-                    "at": "2024-10-01T00:00:00+00:00",
-                    "observedTxStart": "2024-04-01T00:00:00+00:00",
-                    "observedValidStart": valid_start,
-                }
-            ),
-            port,
-        )
-        assert affected == 1
-        assert emissions[0].sql == (
-            "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? "
-            "and in_z = ?"
-        )
-        heads.append(list(emissions[0].binds))
-    assert heads[0] == [
-        _instant("2024-10-01T00:00:00+00:00"),
-        1,
-        _instant("2024-06-01T00:00:00+00:00"),
-        "infinity",
-        _instant("2024-04-01T00:00:00+00:00"),
-    ]
-    assert heads[1] == [
-        _instant("2024-10-01T00:00:00+00:00"),
-        1,
-        "infinity",
-        "infinity",
-        _instant("2024-04-01T00:00:00+00:00"),
-    ]
-
-
-def test_a_close_naming_both_an_observed_edge_and_an_authored_address_is_refused() -> None:
-    # The two spell the same fact from opposite ends. Agreeing, the authored
-    # address proves nothing the derivation does not; disagreeing, one of them
-    # would silently win — and whichever won, the case would be asserting the
-    # other one's claim.
-    with pytest.raises(EngineError, match=re.escape("never both")):
-        scenario.run_conflict_case(
-            _edge_named_close(
-                {
-                    "uow": {"concurrency": "optimistic"},
-                    "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
-                    "at": "2024-10-01T00:00:00+00:00",
-                    "observedTxStart": "2024-04-01T00:00:00+00:00",
-                    "observedValidStart": "2024-01-01T00:00:00+00:00",
-                }
-            ),
-            FakeWritePort(),
-        )
-
-
-def test_a_non_temporal_conflict_target_may_not_name_an_observed_milestone() -> None:
-    # A versioned target has one row per key and no milestone to observe, so the
-    # coordinates would be read by nothing: the versioned conflict path never
-    # looks at them, and a case authoring one would silently grade the shape it
-    # did not mean to.
-    with pytest.raises(EngineError, match=re.escape("no milestone to observe")):
-        scenario.run_conflict_case(
-            _synthetic_write(
-                "conflict",
-                {
-                    "model": "models/account.yaml",
-                    "when": {
-                        "uow": {"concurrency": "optimistic"},
-                        "write": {"id": 1, "name": "A", "observedVersion": 1},
-                        "observedTxStart": "2024-04-01T00:00:00+00:00",
-                    },
-                },
-            ),
-            FakeWritePort(),
-        )
-
-
-def test_a_non_temporal_retry_attempt_may_not_name_an_observed_milestone_either() -> None:
-    # The target's entitlement holds wherever the coordinate is spelled. Checking
-    # only the root `when` would let the same unentitled coordinate through on
-    # the retry form, where the versioned path reads it exactly as little.
-    with pytest.raises(EngineError, match=re.escape("no milestone to observe")):
-        scenario.run_conflict_case(
-            _synthetic_write(
-                "conflict",
-                {
-                    "model": "models/account.yaml",
-                    "when": {
-                        "uow": {"concurrency": "optimistic"},
-                        "attempts": [
-                            {
-                                "statements": [
-                                    {"sql": {"postgres": "update account set name = ?"}}
-                                ],
-                                "affectedRows": 1,
-                                "write": {"id": 1, "name": "A", "observedVersion": 1},
-                                "observedTxStart": "2024-04-01T00:00:00+00:00",
-                            }
-                        ],
-                    },
-                },
-            ),
-            FakeWritePort(),
-        )
-
-
-def test_a_retry_attempt_may_not_name_its_observed_milestones_edge() -> None:
-    # An edge selects among the milestones the case's own fixtures hold, while a
-    # retry re-reads what the concurrent `given.apply` writer left behind. No
-    # lane performs the resolving read that would reconcile the two, so the
-    # observation form is single-attempt only rather than resolving against
-    # state the retry has already superseded.
-    with pytest.raises(EngineError, match=re.escape("names its observed milestone")):
-        scenario.run_conflict_case(
-            _edge_named_close(
-                {
-                    "uow": {"concurrency": "optimistic"},
-                    "at": "2024-10-01T00:00:00+00:00",
-                    "attempts": [
-                        {
-                            "statements": [{"sql": {"postgres": "update position set out_z = ?"}}],
-                            "affectedRows": 1,
-                            "write": {"id": 1},
-                            "at": "2024-10-01T00:00:00+00:00",
-                            "observedTxStart": "2024-04-01T00:00:00+00:00",
-                            "observedValidStart": "2024-01-01T00:00:00+00:00",
-                        }
-                    ],
-                }
-            ),
-            FakeWritePort(),
-        )
-
-
-def test_a_retry_sequence_may_not_leave_an_observation_coordinate_on_the_root() -> None:
-    # The retry lane reads each attempt's own `at` / `observedTxStart` and never
-    # the root `when`'s, so a root coordinate beside `attempts` is consumed by no
-    # attempt and would sit in the document grading nothing. The two authoring
-    # locations are alternatives, not a default and an override.
-    with pytest.raises(EngineError, match=re.escape("consumed by no attempt")):
-        scenario.run_conflict_case(
-            _edge_named_close(
-                {
-                    "uow": {"concurrency": "optimistic"},
-                    "at": "2024-10-01T00:00:00+00:00",
-                    "observedTxStart": "2024-04-01T00:00:00+00:00",
-                    "attempts": [
-                        {
-                            "statements": [{"sql": {"postgres": "update position set out_z = ?"}}],
-                            "affectedRows": 1,
-                            "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
-                            "at": "2024-10-01T00:00:00+00:00",
-                            "observedTxStart": "2024-04-01T00:00:00+00:00",
-                        }
-                    ],
-                }
-            ),
-            FakeWritePort(),
-        )
-
-
-def test_a_locking_close_may_not_author_a_lone_observed_gate() -> None:
-    # Locking mode renders no gate at all, so the address form's gate candidate
-    # reaches nothing: `plan_temporal_close` takes the coordinate and drops it,
-    # and the case would claim a gate its own golden cannot carry.
-    with pytest.raises(EngineError, match=re.escape("renders no gate")):
-        scenario.run_conflict_case(
-            _edge_named_close(
-                {
-                    "uow": {"concurrency": "locking"},
-                    "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
-                    "at": "2024-10-01T00:00:00+00:00",
-                    "observedTxStart": "2024-04-01T00:00:00+00:00",
-                }
-            ),
-            FakeWritePort(),
-        )
-
-
-def test_a_locking_retry_attempt_may_not_author_an_observed_gate() -> None:
-    # A retry attempt never names an edge, so its `observedTxStart` is always the
-    # gate candidate — checking only the root would let the same unentitled
-    # coordinate through per attempt.
-    with pytest.raises(EngineError, match=re.escape("renders no gate")):
-        scenario.run_conflict_case(
-            _edge_named_close(
-                {
-                    "uow": {"concurrency": "locking"},
-                    "at": "2024-10-01T00:00:00+00:00",
-                    "attempts": [
-                        {
-                            "statements": [{"sql": {"postgres": "update position set out_z = ?"}}],
-                            "affectedRows": 1,
-                            "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
-                            "at": "2024-10-01T00:00:00+00:00",
-                            "observedTxStart": "2024-04-01T00:00:00+00:00",
-                        }
-                    ],
-                }
-            ),
-            FakeWritePort(),
-        )
-
-
-def test_a_locking_close_may_still_name_its_observed_milestones_edge() -> None:
-    # Beside `observedValidStart` the Transaction-Time coordinate is the edge's
-    # own half, which SELECTS the milestone whose `thru_z` the address binds.
-    # That selection happens in either mode; only the gate is optimistic-only,
-    # so the locking golden carries the derived address and no `in_z` predicate.
-    emissions, affected, _table_state, _round_trips = scenario.run_conflict_case(
-        _edge_named_close(
-            {
-                "uow": {"concurrency": "locking"},
-                "write": {"id": 1},
-                "at": "2024-10-01T00:00:00+00:00",
-                "observedTxStart": "2024-04-01T00:00:00+00:00",
-                "observedValidStart": "2024-01-01T00:00:00+00:00",
-            }
-        ),
-        FakeWritePort(),
-    )
-    assert affected == 1
-    assert emissions[0].sql == (
-        "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?"
-    )
-    assert list(emissions[0].binds) == [
-        _instant("2024-10-01T00:00:00+00:00"),
-        1,
-        _instant("2024-06-01T00:00:00+00:00"),
-        "infinity",
-    ]
-
-
-def test_a_close_naming_an_edge_no_current_milestone_carries_is_refused() -> None:
-    # A named milestone that the case's own state does not hold is an authoring
-    # defect, not a stale gate: falling back to whichever rectangle the key
-    # happens to hold is the misresolution the naming exists to remove.
-    with pytest.raises(EngineError, match=re.escape("no current milestone of this key")):
-        scenario.run_conflict_case(
-            _edge_named_close(
-                {
-                    "uow": {"concurrency": "optimistic"},
-                    "write": {"id": 1},
-                    "at": "2024-10-01T00:00:00+00:00",
-                    "observedTxStart": "2024-04-01T00:00:00+00:00",
-                    "observedValidStart": "2023-01-01T00:00:00+00:00",
-                }
-            ),
-            FakeWritePort(),
         )
 
 
@@ -3486,24 +2908,6 @@ def test_a_multi_row_temporal_scenario_write_entry_is_refused() -> None:
     case = _synthetic_write("scenario", {"model": "models/balance.yaml", "when": when})
     with pytest.raises(EngineError, match=re.escape("a temporal write entry carries ONE")):
         scenario.compile_scenario_case(case, "postgres")
-
-
-def test_a_conflict_target_resolves_to_the_inheritance_familys_sole_concrete_subtype() -> None:
-    # `when.write` names no entity of its own; for an inheritance-participant
-    # model `_conflict_target` resolves to the family's SOLE concrete subtype
-    # (MeterReading) — never the abstract root the REJECTED lane's own
-    # default-target convention resolves to.
-    from parallax.conformance import models
-
-    case = _synthetic_write(
-        "conflict", {"model": "models/reading.yaml", "when": {"write": {"id": 1}}}
-    )
-    assert (
-        scenario._conflict_target(  # pyright: ignore[reportPrivateUsage] - the lane's own target-resolution seam
-            case, models.load_models()["reading"]
-        )
-        == "parallax.compatibility.MeterReading"
-    )
 
 
 def test_scenario_case_without_when_is_rejected() -> None:

@@ -119,7 +119,6 @@ from .temporality import derive_temporal_structure, temporal_axes
 from .unit_work_scenario import assert_unit_work_scenario
 from .value_object_resolve import REJECTED_RULES, RejectionError
 from .write_plan import (
-    MILESTONE_COORDINATE_KEYS,
     OPENING_MUTATIONS,
     assert_inheritance_write_routing,
     assert_write_values,
@@ -227,14 +226,17 @@ def _assert_scenario_shape(case: Case) -> None:
 def _assert_conflict_shape(case: Case) -> None:
     if case.expected_affected_rows is None and not case.attempts:
         raise CaseFailure(f"{case.path.name}: conflict case missing affectedRows / attempts")
-    # Whether the case may name an observed milestone at all is a property of
-    # the document, not of a dialect or of an execution path, so it is decided
-    # HERE — the one layer every conflict shape reaches. The cross-check that
-    # consumes the coordinate (:func:`_assert_conflict_input`) is skipped
-    # entirely for an api-conformance lane case and for a dialect the case
-    # carries no golden for, so an entitlement left there would hold on some
-    # runs and not others.
-    _assert_observed_edge_entitlement(case, _conflict_temporal_entity(case))
+    # The target is a property of the document, not of a dialect or of an
+    # execution path, so it is refused HERE — the one layer every conflict shape
+    # reaches. A conflict case's `when.write` names no entity of its own, so its
+    # target is the model's first declared entity.
+    target = case.model.root_entity
+    if target.is_temporal:
+        raise CaseFailure(
+            f"{case.path.name}: {target.name} is temporal, and a conflict case's write targets "
+            f"a non-temporal Entity — a temporal write's race is an interleaved scenario "
+            f"(m-case-format 'Conflict cases')."
+        )
 
 
 def _assert_coherence_shape(case: Case) -> None:
@@ -960,12 +962,6 @@ _TERMINATE_MUTATIONS = ("terminate", "terminateUntil")
 
 # `m-dialect` *Unchanged-row count*.
 _COUNTS_UNCHANGED_ROWS = frozenset({"postgres"})
-
-
-# The milestone close a temporal conflict case writes. Not a `writeSequence`
-# verb: a conflict close is shaped by `when.mutation`-less close authoring, and
-# this names it for the entitlement diagnosis alone.
-_CLOSE_MUTATION = "close"
 
 
 def _is_bitemporal(entity: Entity) -> bool:
@@ -2059,50 +2055,6 @@ def _split_successors(
     return (head, *changed, *tail)
 
 
-def _edge_named_rectangle(
-    case: Case, entity: Entity, pk: Any, valid_start: Any, tx_start: Any, pointer: str
-) -> _Rectangle:
-    """The ONE fixture milestone of *pk* whose own EDGE is (*valid_start*,
-    *tx_start*) — the milestone a close named the edge of observed.
-
-    A conflict case starts from its model's fixtures, so the milestones its
-    address may select are exactly the fixture rows still current on Transaction
-    Time. A milestone's edge is its guaranteed-selecting start instant per axis
-    (`m-temporal-read`), which is what makes it a NAME for the milestone rather
-    than a restatement of the close's address: several disjoint rectangles of one
-    key may be current at once, and each carries a distinct edge while sharing
-    the key, the open Transaction-Time bound, and possibly the gate.
-
-    Both the address's Valid-Time end and the gate's Transaction-Time start are
-    then read off this one row, so a close's address and its gate cannot come
-    from two different milestones.
-    """
-    axes = {axis.dimension: axis for axis in temporal_axes(entity.runtime_facts)}
-    valid_axis, tx_axis = axes["valid-time"], axes["transaction-time"]
-    key_member = next(
-        attribute["name"] for attribute in entity.attributes if attribute.get("primaryKey")
-    )
-    open_bound = "infinity"
-    matched = [
-        row
-        for row in entity.rows
-        if write_value_equal(row.get(key_member), pk)
-        and write_value_equal(row.get(tx_axis.end.name), open_bound)
-        and write_value_equal(row.get(valid_axis.start.name), valid_start)
-        and write_value_equal(row.get(tx_axis.start.name), tx_start)
-    ]
-    if len(matched) != 1:
-        raise CaseFailure(
-            f"{case.path.name}: a close naming the observed edge "
-            f"({valid_axis.start.name} {valid_start!r}, {tx_axis.start.name} {tx_start!r}) of "
-            f"{entity.name} pk {pk!r} ({pointer}) selects {len(matched)} current fixture "
-            f"milestone(s) — an edge names exactly one, and a close derives its address and "
-            f"its gate from the one it named."
-        )
-    row = matched[0]
-    return _Rectangle(valid_start, row.get(valid_axis.end.name), tx_start)
-
-
 def _prior_steps_for_key(
     case: Case, entity: Entity, current_step: dict[str, Any], pk: Any
 ) -> Iterator[dict[str, Any]]:
@@ -2248,11 +2200,10 @@ def _current_rectangles(
 
 
 def _conflict_versioned_entity(case: Case) -> Entity | None:
-    """The versioned entity a conflict case targets, or None (a temporal close).
+    """The versioned entity a conflict case targets, or None (an unversioned one).
 
     A versioned conflict (``m-opt-lock-005`` through ``m-opt-lock-009``) gates on a
-    version column; a temporal / bitemporal close has none and carries a
-    different ① (see :func:`_assert_temporal_conflict_input`).
+    version column.
     """
     for entity in case.model.entities:
         if version_column(entity) is not None:
@@ -2260,45 +2211,23 @@ def _conflict_versioned_entity(case: Case) -> Entity | None:
     return None
 
 
-def _conflict_temporal_entity(case: Case) -> Entity | None:
-    """The Transaction-Time TEMPORAL entity a conflict-close case targets, or None.
-
-    A temporal / bitemporal conflict close carries no version column; it locks
-    via the observed Transaction-Time start (``in_z``), so the target is the first
-    CONCRETE (row-owning) entity with a Transaction-Time as-of axis. An
-    inheritance family's abstract root (m-inheritance) resolves the SAME
-    family-wide axis (`resolve_effective_definition` flattens it onto every
-    descendant), but is tableless and rowless — a conflict case's golden UPDATE
-    always targets the concrete subtype that owns the row, so an abstract node
-    is skipped even when it is the first entity in the descriptor to carry the
-    axis.
-    """
-    for entity in case.model.entities:
-        if entity.is_abstract:
-            continue
-        if any(a["dimension"] == "transaction-time" for a in entity.temporal_runtime_axes):
-            return entity
-    return None
-
-
 def _sole_conflict_write(
     case: Case, attempt: dict[str, Any], pointer: str
 ) -> dict[str, Any] | None:
-    """The ONE ① row a versioned or temporal conflict's cross-check derives from.
+    """The ONE ① row a versioned conflict's cross-check derives from.
 
-    Both derivations read a single row's key, set columns, and observation
-    against ONE golden statement. The multi-key ``write`` array is neither: a
-    versioned or temporal target materializes per-row writes rather than
-    collapsing, so a multi-key array authored against one is refused rather than
-    cross-checked against a golden that cannot describe it.
+    The derivation reads a single row's key, set columns, and observation
+    against ONE golden statement. The multi-key ``write`` array is not one: a
+    versioned target materializes per-row writes rather than collapsing, so a
+    multi-key array authored against one is refused rather than cross-checked
+    against a golden that cannot describe it.
     """
     rows = conflict_write_rows(attempt)
     if len(rows) > 1:
         raise CaseFailure(
-            f"{case.path.name}: a versioned or temporal conflict ({pointer}) authors "
-            f"{len(rows)} write rows — the multi-key `write` array is keyed and "
-            f"non-temporal, since a versioned or temporal target materializes per-row "
-            f"writes rather than collapsing into one statement."
+            f"{case.path.name}: a versioned conflict ({pointer}) authors {len(rows)} write "
+            f"rows — the multi-key `write` array is the unversioned form, since a versioned "
+            f"target materializes per-row writes rather than collapsing into one statement."
         )
     return rows[0] if rows else None
 
@@ -2309,22 +2238,14 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
     A VERSIONED keyed conflict — an ``update`` or a ``delete``, named by
     ``when.mutation`` — is cross-checked by
     :func:`_assert_versioned_conflict_input`. The single form reads a root
-    ``write``; the retry form reads a ``write`` per attempt. A temporal-close
-    conflict (no version column) carries a close-shaped ① instead, cross-checked by
-    :func:`_assert_temporal_conflict_input`. An UNVERSIONED, non-temporal
-    conflict has neither derivation to make — its golden carries no gate and no
+    ``write``; the retry form reads a ``write`` per attempt. An UNVERSIONED
+    conflict has no derivation to make — its golden carries no gate and no
     version advance — so it is left to the execution assertion alone. Comparing
     against the golden is legitimate — two AUTHORED representations, never
     grading generated output.
-
-    Whether the case may name an observed milestone at all is decided earlier and
-    unconditionally, in :func:`_assert_schema`
-    (:func:`_assert_observed_edge_entitlement`): a versioned target reaches
-    neither derivation below, and this function itself is not on every run's path.
     """
     entity = _conflict_versioned_entity(case)
     if entity is None:
-        _assert_temporal_conflict_input(case, dialect)
         return
     version_col = version_column(entity)
     mutation = case.conflict_mutation
@@ -2455,250 +2376,6 @@ def _conflict_set_binds(
             f"({pointer}) resolves to."
         )
     return [*(set_cols[column] for column in set_present), observed + 1]
-
-
-def _assert_observed_edge_entitlement(case: Case, entity: Entity | None) -> None:
-    """Refuse an observation coordinate the conflict target, mode, or attempt form
-    cannot consume.
-
-    Five entitlements, all properties of the CASE rather than of any attempt's
-    arithmetic (`m-case-format`, *Naming the observed milestone*): a NON-temporal
-    target has no milestone at all, so it may author NEITHER coordinate, wherever
-    it is spelled; a target declaring no Valid-Time axis has no
-    ``observedValidStart`` to supply, so the edge form is Bitemporal-only; a
-    RETRY attempt re-reads what the concurrent writer left behind, while an edge
-    selects among the milestones the case's own fixtures hold, so the observation
-    form is single-attempt only; a retry sequence reads each attempt's own
-    coordinates and never the root ``when``'s, so a root coordinate beside
-    ``attempts`` is consumed by nothing; and ``observedTxStart`` standing ALONE is
-    the address form's gate candidate, which a ``locking`` close never renders, so
-    it needs an explicit ``optimistic`` mode — beside ``observedValidStart`` it is
-    the edge's Transaction-Time half instead and selects the milestone in either
-    mode.
-
-    Refusing here rather than at the point of use is what turns each into a named
-    authoring diagnosis: the edge-named rectangle scan would otherwise look up an
-    axis a Transaction-Time-Only target never declares, and a non-temporal
-    conflict's own execution path reads neither coordinate at all, so an
-    unentitled one would sit in the document grading nothing.
-    """
-    attempts = case.attempts
-    sources = [
-        ("write", case.when),
-        *((f"attempts[{i}]", a) for i, a in enumerate(attempts)),
-    ]
-    observing = [
-        pointer
-        for pointer, source in sources
-        if any(key in source for key in MILESTONE_COORDINATE_KEYS)
-    ]
-    if not observing:
-        return
-    if entity is None:
-        raise CaseFailure(
-            f"{case.path.name}: a NON-temporal conflict target has no milestone to observe, "
-            f"so it may author neither of {sorted(MILESTONE_COORDINATE_KEYS)} "
-            f"({', '.join(observing)})."
-        )
-    if attempts:
-        stranded = sorted(key for key in MILESTONE_COORDINATE_KEYS if key in case.when)
-        if stranded:
-            raise CaseFailure(
-                f"{case.path.name}: the root `when` authors {stranded} beside `attempts` — a "
-                f"retry sequence reads each attempt's own coordinates, so a root one is "
-                f"consumed by no attempt."
-            )
-    if case.concurrency_mode != "optimistic":
-        ungated = [
-            pointer
-            for pointer, source in sources
-            if "observedTxStart" in source and "observedValidStart" not in source
-        ]
-        if ungated:
-            raise CaseFailure(
-                f"{case.path.name}: `locking` mode renders no gate, so a lone "
-                f"`observedTxStart` is consumed by nothing ({', '.join(ungated)}) — it is "
-                f"entitled under `optimistic`, or beside `observedValidStart` as the observed "
-                f"milestone's edge."
-            )
-    named = [pointer for pointer, source in sources if "observedValidStart" in source]
-    if not named:
-        return
-    if not any(a["dimension"] == "valid-time" for a in entity.temporal_runtime_axes):
-        raise CaseFailure(
-            f"{case.path.name}: {entity.name} declares no Valid-Time axis, so its milestones "
-            f"have no Valid-Time start for `observedValidStart` to name ({', '.join(named)}) "
-            f"— the observed-milestone edge form is Bitemporal-only."
-        )
-    retries = [pointer for pointer in named if pointer != "write"]
-    if retries:
-        raise CaseFailure(
-            f"{case.path.name}: {', '.join(retries)} names its observed milestone's edge, "
-            f"which selects among the case's own fixtures — a retry re-reads what the "
-            f"concurrent writer left, so a retry attempt names its address (`validEnd`) "
-            f"directly."
-        )
-
-
-def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
-    """Cross-check a TEMPORAL / bitemporal conflict CLOSE's ① against its golden (②).
-
-    A Transaction-Time temporal entity carries no version column, so the close gates
-    on the observed Transaction-Time start (``in_z``) — the version analogue (DQ-C). The
-    close is Family B: it always writes the single metamodel-fixed SET column
-    (``out_z``), so the cross-check is BINDS-only (OQ3 → Option A). ① carries the
-    milestone pk (→ the address's key), the close instant ``at`` (→ the new
-    ``out_z``), and — in optimistic mode — ``observedTxStart`` (the ``and in_z = ?``
-    gate); a BITEMPORAL close additionally NAMES the rectangle it addresses through the
-    Valid-Time end attribute (``validEnd`` → the ``thru_z = ?`` bound whose VALUE the
-    metamodel cannot know), which a conflict case authors explicitly rather than
-    reconstructing from a history it does not have. The single form reads root
-    ``write`` / ``at`` / ``observedTxStart``; the retry form reads them per attempt.
-
-    A Bitemporal close may name the observed MILESTONE instead of the address:
-    ``observedValidStart`` with ``observedTxStart`` is that milestone's own edge,
-    and both the address's Valid-Time end and the gate are then derived from the
-    one fixture milestone the edge selects (:func:`_edge_named_rectangle`).
-    """
-    entity = _conflict_temporal_entity(case)
-    if entity is None:
-        return
-    gated = case.concurrency_mode == "optimistic"
-    if case.attempts:
-        for index, attempt in enumerate(case.attempts):
-            pointer = f"attempts[{index}]"
-            _assert_temporal_conflict_close(
-                case,
-                entity,
-                _sole_conflict_write(case, attempt, pointer),
-                attempt.get("at"),
-                attempt.get("observedTxStart"),
-                # The edge form is single-attempt only, so a retry attempt names
-                # its address directly and observes no milestone here.
-                None,
-                gated,
-                _attempt_statements(attempt, dialect),
-                _entry_binds(attempt.get("statements"), 0, dialect),
-                pointer,
-                dialect,
-            )
-        return
-    _assert_temporal_conflict_close(
-        case,
-        entity,
-        _sole_conflict_write(case, case.when, "write"),
-        case.at,
-        case.observed_tx_start,
-        case.observed_valid_start,
-        gated,
-        case.golden_statements(dialect),
-        case.statement_binds(0),
-        "write",
-        dialect,
-    )
-
-
-def _assert_temporal_conflict_close(
-    case: Case,
-    entity: Entity,
-    write: dict[str, Any] | None,
-    at: Any,
-    observed_tx_start: Any,
-    observed_valid_start: Any,
-    gated: bool,
-    statements: list[str],
-    binds: list[Any],
-    pointer: str,
-    dialect: str,
-) -> None:
-    """Cross-check one temporal-close attempt's ① binds against its golden close.
-
-    A close sets ``out_z = at`` on the milestone its ADDRESS selects
-    (:func:`write_plan.close_address_binds`); an optimistic close appends the ``and in_z = ?``
-    gate bound to ``observedTxStart``, so the derived binds are ``[at, …address…,
-    (observedTxStart if gated)]``. A TABLE-PER-HIERARCHY concrete subtype's close ALSO
-    carries the tag GUARD among the identity predicates, immediately after the primary
-    key — the SAME composition a keyed update follows (m-inheritance x m-opt-lock
-    "Optimistic locking composes with inheritance", resolved Q9), extended to a
-    temporal close.
-
-    Because address and gate are separate, ① names EXACTLY the address's per-axis
-    upper bounds it can supply: nothing for a Transaction-Time-Only target, whose only
-    bound is the invariant infinity, and the Valid-Time end alone for a Bitemporal one.
-    A close writes no domain value, so any other ① coordinate is a defect.
-
-    An EDGE-NAMED close (``observedValidStart``) supplies neither: it names the
-    milestone it observed, and both the Valid-Time end and the gate are derived
-    from that milestone's own fixture row. ① then carries the pk alone, and an
-    authored ``validEnd`` beside the edge is refused rather than cross-checked —
-    the two spell the same fact, so a case that agrees with itself proves nothing
-    the derivation does not, and one that disagrees would have to pick a winner.
-    """
-    if write is None:
-        raise CaseFailure(
-            f"{case.path.name}: a temporal conflict close ({pointer}) carries no neutral "
-            f"write input (① `write`) — required on every conflict sub-form."
-        )
-    if len(statements) != 1:
-        raise CaseFailure(
-            f"{case.path.name}: a temporal conflict close ({pointer}) has exactly one "
-            f"golden statement, but {len(statements)} were listed."
-        )
-    if at is None:
-        raise CaseFailure(
-            f"{case.path.name}: a temporal conflict close's neutral write input "
-            f"({pointer}) MUST carry `at` (the close instant → out_z), which is DERIVED "
-            f"into the close binds, never read from the golden."
-        )
-    valid_time = next(
-        (a for a in entity.temporal_runtime_axes if a["dimension"] == "valid-time"), None
-    )
-    _, pk, set_cols, _ = classify_write_row(
-        case, entity, write, mutation=_CLOSE_MUTATION, opening=False
-    )
-    edge_named = observed_valid_start is not None
-    addressed: set[str] = set() if valid_time is None or edge_named else {valid_time["end_column"]}
-    if set(set_cols) != addressed:
-        raise CaseFailure(
-            f"{case.path.name}: a temporal conflict close's neutral write input "
-            f"({pointer}) resolves to the coordinate(s) {sorted(set_cols)}, but a close "
-            f"writes no domain value and names exactly the address bound(s) it can "
-            f"supply: {sorted(addressed)}."
-        )
-    if edge_named:
-        observed = _edge_named_rectangle(
-            case, entity, pk, observed_valid_start, observed_tx_start, pointer
-        )
-        valid_end, observed_tx_start = observed.valid_end, observed.tx_start
-    elif valid_time is None:
-        valid_end = None
-    else:
-        valid_end = set_cols[valid_time["end_column"]]
-    expected = [at, *close_address_binds(case, entity, pk, valid_end)]
-    gate_rendered = has_temporal_gate(
-        statements[0],
-        next(a for a in entity.temporal_runtime_axes if a["dimension"] == "transaction-time")[
-            "start_column"
-        ],
-        dialect,
-    )
-    if gate_rendered != gated:
-        raise CaseFailure(
-            f"{case.path.name}: the golden temporal close ({pointer}) "
-            f"{'renders' if gate_rendered else 'omits'} the observed-in_z gate under "
-            f"{case.concurrency_mode!r} mode — optimistic mode gates, locking mode does "
-            f"not, and the address is the same either way."
-        )
-    if gated:
-        if observed_tx_start is None:
-            raise CaseFailure(
-                f"{case.path.name}: an optimistic temporal conflict close's neutral write "
-                f"input ({pointer}) MUST carry observedTxStart — the `and in_z = ?` gate is "
-                f"derived from it."
-            )
-        expected.append(observed_tx_start)  # the optimistic in_z gate bind
-    assert_write_values(case, expected, binds, statements[0])
-    assert_inheritance_write_routing(case, entity, statements, [binds], dialect)
 
 
 def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:

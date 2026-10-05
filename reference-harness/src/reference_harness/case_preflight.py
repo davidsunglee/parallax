@@ -279,7 +279,7 @@ def _write_carrier(
     if isinstance(target, Mapping):
         _write_selection(case, carrier, target, where)
     _carrier_rows(case, carrier, where, fallback=fallback)
-    for name in ("at", "validFrom", "until", "observedTxStart", "observedValidStart", "ifTxStart"):
+    for name in ("at", "validFrom", "until", "ifTxStart"):
         value = carrier.get(name)
         if value is not None and value != "infinity":
             _literal(case, value, "timestamp", f"{where}.{name}")

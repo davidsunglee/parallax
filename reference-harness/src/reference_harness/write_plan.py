@@ -72,13 +72,11 @@ _KEYED_MUTATIONS = (
 _VERSION_OBSERVATION_KEY = "observedVersion"
 
 # The two halves of an observed milestone's own EDGE coordinate. Neither is a
-# write-row key in any authoring location: a temporal write observes a whole
-# predecessor milestone, which no flat row cell can name, so both ride beside the
-# write, at `when.observedTxStart` / `when.observedValidStart` — and, on a retry
-# attempt, `observedTxStart` alone, since the edge form is single-attempt only
-# (`m-case-format`). Named here so a row that spells one is refused by the rule
-# rather than by the generic "not a member" diagnosis.
-MILESTONE_COORDINATE_KEYS = ("observedTxStart", "observedValidStart")
+# write-row key in any authoring location (`compatibility-case.schema.json`
+# `$defs/writeRow`): a temporal write observes a whole predecessor milestone,
+# which no flat row cell can name. Named here so a row that spells one is refused
+# by the rule rather than by the generic "not a member" diagnosis.
+_MILESTONE_COORDINATE_KEYS = ("observedTxStart", "observedValidStart")
 
 
 # --- what one choreography unit's keyed writes owe -------------------------------
@@ -210,9 +208,7 @@ def _observation_refusal(entity: Entity, mutation: str) -> str | None:
     update or delete may spell the key; nothing else may:
 
     - a TEMPORAL target's write observes a whole predecessor MILESTONE, which no
-      flat row cell can name, and a close's Transaction-Time gate is authored
-      beside the write (``when.observedTxStart`` or the attempt's own field,
-      `m-case-format`) rather than inside the row;
+      flat row cell can name;
     - an INSERT opens a row rather than writing against one, so an observed
       version names a milestone that does not yet exist;
     - an UNVERSIONED non-temporal target has no version to observe, so an
@@ -227,8 +223,7 @@ def _observation_refusal(entity: Entity, mutation: str) -> str | None:
     if entity.is_temporal:
         return (
             f"a temporal row spells no {_VERSION_OBSERVATION_KEY!r} (m-unit-work: a temporal "
-            f"write observes a whole predecessor milestone, which no flat row cell can name, "
-            f"and a close's observed `in_z` gate rides beside the write)"
+            f"write observes a whole predecessor milestone, which no flat row cell can name)"
         )
     if mutation in OPENING_MUTATIONS:
         return (
@@ -296,13 +291,12 @@ def classify_write_row(
     pk_value: Any = None
     observed_version: Any = None
     for key, value in row.items():
-        if key in MILESTONE_COORDINATE_KEYS:
+        if key in _MILESTONE_COORDINATE_KEYS:
             raise CaseFailure(
                 f"{case.path.name}: {entity.name} {mutation!r}: a write row spells no {key!r} "
-                f"(m-case-format: an observed milestone's own edge coordinate rides beside the "
-                f"write, at `when.observedTxStart` / `when.observedValidStart`, or an "
-                f"attempt's own `observedTxStart`; a writeRow reserves "
-                f"{_VERSION_OBSERVATION_KEY!r} alone and every other key names an entity member)"
+                f"(m-case-format: a writeRow reserves {_VERSION_OBSERVATION_KEY!r} alone and "
+                f"every other key names an entity member — a temporal write observes a whole "
+                f"predecessor milestone, which no row cell can name)"
             )
         if key == _VERSION_OBSERVATION_KEY:
             refusal = _observation_refusal(entity, mutation)
