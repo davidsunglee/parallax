@@ -3792,12 +3792,10 @@ def _conflict_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     explicit reference (`m-case-format`: a conflict case's write names no
     entity of its own). For a plain model this is its SOLE entity — the same
     convention the REJECTED lane's default target follows. For an inheritance
-    family (`m-inheritance-105`'s TPH composed conflict) writes are
-    concrete-subtype only (`m-inheritance` "Concrete-subtype writes"), never
-    the abstract family root the REJECTED lane's DIFFERENT default-target
-    convention resolves to — this resolves to the family's SOLE concrete
-    subtype (every reachable temporal-inheritance conflict model declares
-    exactly one).
+    family writes are concrete-subtype only (`m-inheritance` "Concrete-subtype
+    writes"), never the abstract family root the REJECTED lane's DIFFERENT
+    default-target convention resolves to — this resolves to the family's SOLE
+    concrete subtype, and refuses a family declaring several as ambiguous.
 
     Reported by CANONICAL spelling, like every default this lane resolves: the
     subtype is selected by Identity here, so reducing it to a bare local name

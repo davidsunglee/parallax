@@ -22,7 +22,6 @@ import pytest
 from reference_harness.case import Case, discover_cases, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
-    _assert_conflict_input,
     _assert_write_input_columns,
     _assert_write_step_count,
     _write_column_order,
@@ -454,55 +453,6 @@ def test_gated_close_with_extra_placeholder_arity_mismatch_is_rejected() -> None
     assert has_temporal_gate(close["sql"]["postgres"], "in_z", "postgres")  # still gated-shaped
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
-
-
-def _bitemporal_conflict_close_cases():
-    """Bitemporal conflict-close cases (`m-bitemp-write-005`): a Valid-Time +
-    Transaction-Time dimension."""
-    return [
-        case
-        for case in discover_cases(COMPATIBILITY_ROOT)
-        if case.is_conflict
-        and any(
-            dim.get("dimension") == "valid-time"
-            for entity in case.model.entities
-            for dim in entity.temporal_runtime_axes
-        )
-    ]
-
-
-def test_bitemporal_conflict_close_input_holds_for_authored_cases() -> None:
-    cases = _bitemporal_conflict_close_cases()
-    assert {_case_id(case.path.stem) for case in cases} >= {"m-bitemp-write-005"}
-    for case in cases:
-        # Must not raise: the close ① derives [at, pk, validEnd, infinity,
-        # (observedTxStart under optimistic)] — the metamodel names the thru_z address
-        # column, ① supplies its VALUE, which the metamodel cannot know.
-        _assert_conflict_input(case, "postgres")
-
-
-def _conflict_close_case(stem_prefix: str):
-    cases = _bitemporal_conflict_close_cases()
-    return next(case for case in cases if case.path.stem.startswith(stem_prefix))
-
-
-def test_bitemporal_conflict_close_valid_end_corruption_is_rejected() -> None:
-    case = copy.deepcopy(_conflict_close_case("m-bitemp-write-005"))
-    # Corrupt the addressed Valid-Time end VALUE: ①'s address bound no longer matches the
-    # golden bind, so the bitemporal close ① ↔ ② cross-check MUST fail.
-    case.when["write"]["validEnd"] = "1999-12-31T00:00:00.000000Z"
-    with pytest.raises(CaseFailure):
-        _assert_conflict_input(case, "postgres")
-
-
-def test_bitemporal_conflict_close_naming_a_second_coordinate_is_rejected() -> None:
-    # A close writes no domain value and names exactly the address bound the metamodel
-    # cannot supply. An ① carrying anything else — here the Valid-Time START the retired
-    # gate shape bound — MUST be rejected rather than silently ordered into the binds.
-    case = copy.deepcopy(_conflict_close_case("m-bitemp-write-005"))
-    case.when["write"]["validStart"] = "2024-06-01T00:00:00.000000Z"
-    with pytest.raises(CaseFailure):
-        _assert_conflict_input(case, "postgres")
 
 
 def test_rectangle_split_has_inactivate_plus_three_inserts() -> None:

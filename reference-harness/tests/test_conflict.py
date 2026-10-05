@@ -53,10 +53,9 @@ def _versioned_conflict_cases():
 def _temporal_conflict_close_cases():
     """Transaction-Time-only temporal conflict-close cases (no version, no Valid-Time dimension).
 
-    The audit-only optimistic / locking closes (`m-temporal-read-011`, `m-temporal-read-012`
-    and the table-per-hierarchy `m-inheritance-105`) gate on the observed Transaction-Time
-    start (`in_z`), never a version column. The bitemporal close (`m-bitemp-write-005`)
-    carries a Valid-Time dimension too and is pinned in `test_bitemporal`.
+    The audit-only optimistic retry (`m-temporal-read-011`) gates each attempt's close on
+    the observed Transaction-Time start (`in_z`), never a version column; the locking close
+    (`m-temporal-read-012`) renders no gate.
     """
     cases = []
     for case in _conflict_cases():
@@ -66,6 +65,12 @@ def _temporal_conflict_close_cases():
         if not has_version and "transaction-time" in axes and "valid-time" not in axes:
             cases.append(case)
     return cases
+
+
+def _temporal_conflict_case(stem_prefix: str):
+    return copy.deepcopy(
+        next(c for c in _temporal_conflict_close_cases() if c.path.stem.startswith(stem_prefix))
+    )
 
 
 def test_conflict_cases_are_discovered_and_self_describe() -> None:
@@ -194,55 +199,33 @@ def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
 
 
 def test_audit_only_optimistic_gated_close_binds_in_z_gate() -> None:
-    # m-inheritance-105 witnesses the OPTIMISTIC-gated close of an audit-only milestone:
-    # a single close UPDATE gating on the observed Transaction-Time start (in_z).
-    # Its ADDRESS is the pk, the subtype's tag guard, and one exclusive upper bound per
-    # as-of axis, which on reading's single axis is `out_z = infinity` alone — no
-    # Valid-Time bound, since the family declares no Valid-Time dimension. It is the
-    # audit-only analogue of the bitemporal gate (m-bitemp-write-005), reusing that gate
-    # shape over a shorter address.
-    case = next(c for c in _conflict_cases() if c.path.stem.startswith("m-inheritance-105"))
-    assert "m-txtime-write" in case.tags and "m-opt-lock" in case.tags
+    # m-temporal-read-011's stale first attempt witnesses the OPTIMISTIC-gated close of an
+    # audit-only milestone: a single close UPDATE gating on the observed Transaction-Time
+    # start (in_z). Its ADDRESS is the pk plus one exclusive upper bound per as-of axis,
+    # which on balance's single axis is `out_z = infinity` alone — no Valid-Time bound,
+    # since the entity declares no Valid-Time dimension.
+    case = next(c for c in _conflict_cases() if c.path.stem.startswith("m-temporal-read-011"))
+    assert "m-temporal-read" in case.tags and "m-opt-lock" in case.tags
     assert case.concurrency_mode == "optimistic"
-    assert case.observed_tx_start is not None  # the in_z gate token
-    assert case.expected_affected_rows == 0  # the gate is STALE against the current milestone
-    (statement,) = case.golden_statements("postgres")
-    # The gated audit close carries the trailing `and in_z = ?` gate and, unlike the
-    # bitemporal close, no Valid-Time `thru_z` address bound.
+    stale = case.attempts[0]
+    assert stale["observedTxStart"] is not None  # the in_z gate token
+    assert stale["affectedRows"] == 0  # the gate is STALE against the current milestone
+    (entry,) = stale["statements"]
+    statement = entry["sql"]["postgres"]
+    # The gated audit close carries the trailing `and in_z = ?` gate and no Valid-Time
+    # `thru_z` address bound.
     assert statement.endswith("and in_z = ?")
     assert "thru_z" not in statement
     assert "from_z" not in statement
-    # Must not raise: the derived close binds [at, pk, infinity, observedTxStart] cross-check
-    # the golden binds.
+    # Must not raise: each attempt's derived close binds [at, pk, infinity,
+    # observedTxStart] cross-check its golden binds.
     _assert_conflict_input(case, "postgres")
-
-
-def test_temporal_conflict_close_observed_tx_start_corruption_is_rejected() -> None:
-    case = copy.deepcopy(
-        next(
-            c
-            for c in _temporal_conflict_close_cases()
-            if c.path.stem.startswith("m-inheritance-105")
-        )
-    )
-    # Corrupt the observed in_z gate token: the DERIVED `and in_z = ?` gate bind no
-    # longer matches the golden gate bind, so the ① ↔ ② temporal-close gate MUST fail
-    # (the gate value is derived from `observedTxStart`, never read from the golden).
-    case.when["observedTxStart"] = "1999-12-31T00:00:00+00:00"
-    with pytest.raises(CaseFailure):
-        _assert_conflict_input(case, "postgres")
 
 
 def test_locking_temporal_conflict_close_rendering_a_gate_is_rejected() -> None:
     # Gating is concurrency-driven, never data-driven: a locking-mode close that renders
     # the observed-in_z gate anyway MUST be rejected, even though its binds line up.
-    case = copy.deepcopy(
-        next(
-            c
-            for c in _temporal_conflict_close_cases()
-            if c.path.stem.startswith("m-temporal-read-012")
-        )
-    )
+    case = _temporal_conflict_case("m-temporal-read-012")
     _assert_conflict_input(case, "postgres")  # sanity: valid as authored
     close = case.then["statements"][0]
     close["sql"]["postgres"] = f"{close['sql']['postgres']} and in_z = ?"
@@ -252,13 +235,7 @@ def test_locking_temporal_conflict_close_rendering_a_gate_is_rejected() -> None:
 
 
 def test_temporal_conflict_close_retry_gates_each_attempt() -> None:
-    case = copy.deepcopy(
-        next(
-            c
-            for c in _temporal_conflict_close_cases()
-            if c.path.stem.startswith("m-temporal-read-011")
-        )
-    )
+    case = _temporal_conflict_case("m-temporal-read-011")
     # The retry form carries a close ① per attempt; corrupting the retry attempt's
     # observed in_z desyncs its derived gate bind from the golden, so the per-attempt
     # ① ↔ ② gate MUST fail.
@@ -323,17 +300,6 @@ def test_an_unparsable_statement_carries_no_gate() -> None:
     assert not has_version_gate("update account set where and", "version", "postgres")
 
 
-def _bitemporal_edge_named_case():
-    """The Bitemporal conflict close rewritten into the form that names its observed
-    milestone's own edge (R3's Valid-Time start) instead of authoring its address."""
-    case = copy.deepcopy(
-        next(c for c in _conflict_cases() if c.path.stem.startswith("m-bitemp-write-005"))
-    )
-    del case.when["write"]["validEnd"]
-    case.when["observedValidStart"] = "2024-06-01T00:00:00.000000Z"
-    return case
-
-
 def test_observed_edge_entitlement_holds_for_every_authored_conflict_case() -> None:
     cases = _conflict_cases()
     assert cases, "no conflict (m-opt-lock) case discovered"
@@ -381,14 +347,10 @@ def test_a_non_temporal_retry_attempt_may_not_name_an_observed_gate() -> None:
 
 
 def test_a_transaction_time_only_target_may_not_name_a_valid_time_start() -> None:
-    case = copy.deepcopy(
-        next(
-            c
-            for c in _conflict_cases()
-            if (entity := _conflict_temporal_entity(c)) is not None
-            and not any(a["dimension"] == "valid-time" for a in entity.temporal_runtime_axes)
-        )
-    )
+    case = _temporal_conflict_case("m-temporal-read-012")
+    entity = _conflict_temporal_entity(case)
+    assert entity is not None
+    assert not any(a["dimension"] == "valid-time" for a in entity.temporal_runtime_axes)
     case.when["observedValidStart"] = "2024-01-01T00:00:00+00:00"
     # Its milestones carry no Valid-Time start, so the coordinate names an axis
     # the target has no milestones on — the edge form is Bitemporal-only.
@@ -396,102 +358,30 @@ def test_a_transaction_time_only_target_may_not_name_a_valid_time_start() -> Non
         _assert_schema(case)
 
 
-def test_a_retry_attempt_may_not_name_its_observed_milestones_edge() -> None:
-    case = _bitemporal_edge_named_case()
-    edge = case.when.pop("observedValidStart")
-    tx_start = case.when.pop("observedTxStart")
-    case.when["attempts"] = [
-        {
-            "statements": case.when.get("statements", []),
-            "affectedRows": 1,
-            "write": {"id": 1},
-            "at": case.when["at"],
-            "observedTxStart": tx_start,
-            "observedValidStart": edge,
-        }
-    ]
-    # An edge selects among the milestones the case's own fixtures hold, while a
-    # retry re-reads what the concurrent writer left behind. Nothing performs the
-    # resolving read that would reconcile the two.
-    with pytest.raises(CaseFailure, match=re.escape("names its observed milestone")):
-        _assert_schema(case)
-
-
-def test_a_temporal_retry_attempt_may_still_name_its_observed_gate() -> None:
-    case = _bitemporal_edge_named_case()
-    case.when.pop("observedValidStart")
-    tx_start = case.when.pop("observedTxStart")
-    case.when["attempts"] = [
-        {
-            "statements": case.when.get("statements", []),
-            "affectedRows": 1,
-            "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
-            "at": case.when["at"],
-            "observedTxStart": tx_start,
-        }
-    ]
-    # Must not raise: a retry states its address directly and gates on the
-    # Transaction-Time start it observed, which is the address form, not the
-    # observation form. The root coordinates move INTO the attempt rather than
-    # being left behind, which is what the next test pins.
-    _assert_schema(case)
-
-
 def test_a_retry_sequence_may_not_leave_an_observation_coordinate_on_the_root() -> None:
-    case = _bitemporal_edge_named_case()
-    case.when.pop("observedValidStart")
-    case.when["attempts"] = [
-        {
-            "statements": case.when.get("statements", []),
-            "affectedRows": 1,
-            "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
-            "at": case.when["at"],
-            "observedTxStart": case.when["observedTxStart"],
-        }
-    ]
-    # The root `observedTxStart` survives here. Every attempt reads its own, so
-    # the root one gates nothing and grades nothing — the two authoring
-    # locations are alternatives, not a default and an override.
+    case = _temporal_conflict_case("m-temporal-read-011")
+    case.when["observedTxStart"] = case.attempts[0]["observedTxStart"]
+    # Every attempt reads its own `observedTxStart`, so a root one gates nothing and
+    # grades nothing — the two authoring locations are alternatives, not a default and
+    # an override.
     with pytest.raises(CaseFailure, match=re.escape("consumed by no attempt")):
         _assert_schema(case)
 
 
 def test_a_locking_close_may_not_author_a_lone_observed_gate() -> None:
-    case = _bitemporal_edge_named_case()
-    case.when.pop("observedValidStart")
-    case.when["write"]["validEnd"] = "2024-06-01T00:00:00+00:00"
-    case.when["uow"] = {**case.when.get("uow", {}), "concurrency": "locking"}
-    # The address form under `locking`: every bind the close renders is already
-    # spelled, and locking renders no gate, so the coordinate reaches nothing.
+    case = _temporal_conflict_case("m-temporal-read-012")
+    _assert_schema(case)  # sanity: valid as authored
+    case.when["observedTxStart"] = "2024-02-01T00:00:00+00:00"
+    # Every bind the locking close renders is already spelled, and locking renders no
+    # gate, so the coordinate reaches nothing.
     with pytest.raises(CaseFailure, match=re.escape("renders no gate")):
         _assert_schema(case)
 
 
 def test_a_locking_retry_attempt_may_not_author_an_observed_gate() -> None:
-    case = _bitemporal_edge_named_case()
-    case.when.pop("observedValidStart")
-    tx_start = case.when.pop("observedTxStart")
+    case = _temporal_conflict_case("m-temporal-read-011")
     case.when["uow"] = {**case.when.get("uow", {}), "concurrency": "locking"}
-    case.when["attempts"] = [
-        {
-            "statements": case.when.get("statements", []),
-            "affectedRows": 1,
-            "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
-            "at": case.when["at"],
-            "observedTxStart": tx_start,
-        }
-    ]
-    # A retry attempt never names an edge, so its coordinate is always the gate
-    # candidate — and locking mode has no gate to bind it into.
+    # A retry attempt's coordinate is always the gate candidate — and locking mode has
+    # no gate to bind it into.
     with pytest.raises(CaseFailure, match=re.escape("renders no gate")):
         _assert_schema(case)
-
-
-def test_a_locking_close_may_still_name_its_observed_milestones_edge() -> None:
-    case = _bitemporal_edge_named_case()
-    case.when["uow"] = {**case.when.get("uow", {}), "concurrency": "locking"}
-    # Must not raise: beside `observedValidStart` the Transaction-Time
-    # coordinate is the edge's own half, which SELECTS the milestone whose
-    # Valid-Time end the address binds. That happens in either mode; only the
-    # gate is optimistic-only.
-    _assert_schema(case)

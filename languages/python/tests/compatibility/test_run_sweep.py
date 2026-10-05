@@ -329,6 +329,8 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
 # harness.
 _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
     {
+        "m-bitemp-write-005",
+        "m-inheritance-105",
         "m-opt-lock-012",
         "m-temporal-read-010",
         "m-unit-work-031",
@@ -341,9 +343,11 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 
 # The interleaved cases `test_interleaved_uow_group_run_sweep` drives through
 # `engine.run_interleaved_scenario_case` over its own dedicated executions:
-# `m-opt-lock-012`'s optimistic-lock race, `m-temporal-read-010`'s race of two
-# Transaction-Time-Only closes, each group at its own instant, and the two
-# Repeatable Read proofs
+# `m-opt-lock-012`'s optimistic-lock race; the races of two temporal closes, each
+# group at its own instant — `m-temporal-read-010` over a Transaction-Time-Only
+# milestone, `m-bitemp-write-005` over a Valid-Time-pinned bitemporal rectangle, and
+# `m-inheritance-105` over a table-per-hierarchy subtype's tag-guarded milestone;
+# and the two Repeatable Read proofs
 # `m-unit-work-032` (a plain object find) and `m-unit-work-034` (a streamed
 # delivery) — two units of work reading and writing one row, whose second read is
 # graded against the first. The isolation arms are what make the level reach a HELD
@@ -364,7 +368,14 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 # `run_interleaved_scenario_case` refuses outright because it fills no
 # `stepGraphs` channel.
 _INTERLEAVED_RUNNER_CASES: Final[frozenset[str]] = frozenset(
-    {"m-opt-lock-012", "m-temporal-read-010", "m-unit-work-032", "m-unit-work-034"}
+    {
+        "m-bitemp-write-005",
+        "m-inheritance-105",
+        "m-opt-lock-012",
+        "m-temporal-read-010",
+        "m-unit-work-032",
+        "m-unit-work-034",
+    }
 )
 
 
@@ -1099,10 +1110,11 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     differs per case. For `m-opt-lock-012` a broken abort that left the doomed
     group's buffered insert durable would still emit well-formed DML and report
     the conflict, and its trailing verify find would observe account
-    9. For `m-temporal-read-010` the losing close's emission is well-formed
-    whether or not the race happened, so its fate and the table it leaves — the
-    winner's successor current, the loser's close changing nothing — are what
-    show the stale gate met the database. For the Repeatable Read arms
+    9. For the temporal races (`m-temporal-read-010`, `m-bitemp-write-005`,
+    `m-inheritance-105`) the losing close's emission is well-formed whether or
+    not the race happened, so its fate and the table it leaves — the winner's
+    successor current, the loser's close changing nothing — are what show the
+    stale gate met the database. For the Repeatable Read arms
     `m-unit-work-032` and `-034` the emissions
     and the fates are identical whatever level the groups opened at, and the
     reader's SECOND read is the ONLY thing that differs: at the connection's own
@@ -1232,9 +1244,8 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
 # pk-gen `sequence` run-only set below, neither joins `WRITE_EXERCISED` (that  #
 # set couples compile AND run grading; a run-only case would fail             #
 # `test_compile_sweep`'s `status == "ok"` assert). Increment 4 adds the        #
-# temporal close-only conflict witnesses: the bitemporal stale-gate conflict,  #
-# the audit-only retry, the locking-mode zero-row-close                        #
-# (StaleWriteError) case, the TPH composed conflict, and the non-temporal      #
+# temporal close-only conflict witnesses: the audit-only retry and the         #
+# locking-mode zero-row-close (StaleWriteError) case, and the non-temporal     #
 # value-object write under an optimistic gate (already tag-reachable, now      #
 # exercised). Increment 6 admits `m-opt-lock-009` (`retryOptimisticConflicts:  #
 # true` + a two-attempt `0`-then-`1` choreography) — no new machinery, the     #
@@ -1259,8 +1270,6 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-opt-lock-013",
         "m-temporal-read-011",
         "m-temporal-read-012",
-        "m-bitemp-write-005",
-        "m-inheritance-105",
         "m-value-object-046",
     }
 )

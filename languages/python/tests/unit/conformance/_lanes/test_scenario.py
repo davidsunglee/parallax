@@ -2680,13 +2680,6 @@ def test_a_conflict_attempt_writes_through_the_public_keyed_delete_verb() -> Non
 # applies first still report a row.
 _BALANCE_CLOSE_SHORTFALL: Final[tuple[str, ...]] = ("update balance set out_z = %s",)
 
-# The same for the Bitemporal close, whose case states its out-of-band writer
-# with binds: what separates the close from it is the Valid-Time end its address
-# leads with.
-_POSITION_CLOSE_SHORTFALL: Final[tuple[str, ...]] = (
-    "update position set out_z = %s where pos_id = %s and thru_z = %s",
-)
-
 
 def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() -> None:
     # m-temporal-read-012: the locking-mode close renders its address and no gate,
@@ -2743,8 +2736,8 @@ def test_an_unversioned_conflict_target_is_refused_for_want_of_a_participating_r
 
 def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> None:
     _emissions, affected, _table_state, _round_trips = scenario.run_conflict_case(
-        _load_case("m-bitemp-write-005"),
-        FakeWritePort(zero_affected_for=_POSITION_CLOSE_SHORTFALL),
+        _load_case("m-temporal-read-011"),
+        FakeWritePort(zero_affected_for=_BALANCE_CLOSE_SHORTFALL),
     )
     assert affected == 0
 
@@ -2891,19 +2884,17 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
 
 
 def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() -> None:
-    # m-bitemp-write-005: a temporal optimistic-lock CLOSE conflict (`when.at` /
-    # `when.observedTxStart`, no `observedVersion`) is driven through
-    # `handle.plan_temporal_close`, not the non-temporal versioned-UPDATE path.
-    case = _load_case("m-bitemp-write-005")
+    # m-temporal-read-012: a temporal CLOSE conflict (`when.at`, no
+    # `observedVersion`) is driven through `handle.plan_temporal_close`, not the
+    # non-temporal versioned-UPDATE path.
+    case = _load_case("m-temporal-read-012")
     port = FakeWritePort()
     emissions, affected, table_state, _round_trips = scenario.run_conflict_case(case, port)
     assert [e.case_pointer for e in emissions] == ["/when/write"]
-    assert emissions[0].sql == (
-        "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
-    )
+    assert emissions[0].sql == "update balance set out_z = ? where bal_id = ? and out_z = ?"
     assert affected == 1
-    assert len(port.writes) == 3  # given.apply's two statements + the close
-    assert table_state is not None and "position" in table_state
+    assert len(port.writes) == 2  # given.apply's one statement + the close
+    assert table_state is not None and "balance" in table_state
 
 
 def test_a_temporal_close_decodes_case_carriers_before_the_probe() -> None:
@@ -3571,20 +3562,22 @@ def test_a_multi_row_temporal_scenario_write_entry_is_refused() -> None:
         scenario.compile_scenario_case(case, "postgres")
 
 
-def test_run_conflict_case_resolves_target_from_the_inheritance_family() -> None:
-    # m-inheritance-105: `when.write` names no entity of its own; for an
-    # inheritance-participant model `_conflict_target` resolves to the family's
-    # SOLE concrete subtype (MeterReading, tag `meter`) — never the abstract
-    # root the REJECTED lane's own default-target convention resolves to.
-    case = _load_case("m-inheritance-105")
-    port = FakeWritePort()
-    emissions, affected, table_state, _round_trips = scenario.run_conflict_case(case, port)
-    assert [e.case_pointer for e in emissions] == ["/when/write"]
-    assert emissions[0].sql == (
-        "update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
+def test_a_conflict_target_resolves_to_the_inheritance_familys_sole_concrete_subtype() -> None:
+    # `when.write` names no entity of its own; for an inheritance-participant
+    # model `_conflict_target` resolves to the family's SOLE concrete subtype
+    # (MeterReading) — never the abstract root the REJECTED lane's own
+    # default-target convention resolves to.
+    from parallax.conformance import models
+
+    case = _synthetic_write(
+        "conflict", {"model": "models/reading.yaml", "when": {"write": {"id": 1}}}
     )
-    assert affected == 1
-    assert table_state is not None and "reading" in table_state
+    assert (
+        scenario._conflict_target(  # pyright: ignore[reportPrivateUsage] - the lane's own target-resolution seam
+            case, models.load_models()["reading"]
+        )
+        == "parallax.compatibility.MeterReading"
+    )
 
 
 def test_run_conflict_case_temporal_attempts_form_retries_the_gated_close() -> None:
