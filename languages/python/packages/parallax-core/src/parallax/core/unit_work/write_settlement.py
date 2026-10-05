@@ -1773,7 +1773,6 @@ def _observed_close(
     row: Mapping[str, object],
     predecessor: PredecessorRow,
 ) -> PlannedClose:
-    """The close of the one predecessor a keyed temporal write observed."""
     return _close_step(
         facts,
         close,

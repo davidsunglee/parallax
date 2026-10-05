@@ -1,12 +1,5 @@
 """Temporal writes that leave a milestone as it was, through the public verbs
-(scripted port).
-
-These grade what each flush puts on the wire: one guard on the observed address
-and start under Optimistic, nothing under Locking, the ordinary close and
-successors where the dialect's count proves no guard, the guards and closes of
-a range in their statement order, and what completion leaves of the source that
-was spent and of an independent read of a kept rectangle.
-"""
+(scripted port)."""
 
 from __future__ import annotations
 

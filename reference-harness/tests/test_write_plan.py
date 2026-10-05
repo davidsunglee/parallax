@@ -73,6 +73,7 @@ def test_write_grading_offers_operations_and_no_lexical_primitive() -> None:
         "ObjectAddress",
         "assert_inheritance_write_routing",
         "assert_write_values",
+        "assigns_itself_only",
         "classify_write_row",
         "close_address_binds",
         "has_temporal_gate",
