@@ -17,20 +17,11 @@ import pytest
 
 from reference_harness.case import discover_cases
 from reference_harness.case_assertions import CaseFailure
-from reference_harness.case_runner import (
-    _assert_conflict_input,
-    _assert_schema,
-    _conflict_temporal_entity,
-)
+from reference_harness.case_runner import _assert_conflict_input, _assert_schema
 from reference_harness.write_plan import has_version_gate
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
-
-
-def _case_id(stem: str) -> str:
-    """The per-module id prefix of a case stem (drops the trailing ``-<slug>``)."""
-    return re.match(r"(m-[a-z0-9-]+-\d{3})", stem).group(1)
 
 
 def _cases():
@@ -48,29 +39,6 @@ def _versioned_conflict_cases():
         for c in _conflict_cases()
         if any(a.get("optimisticLocking") for e in c.model.entities for a in e.attributes)
     ]
-
-
-def _temporal_conflict_close_cases():
-    """Transaction-Time-only temporal conflict-close cases (no version, no Valid-Time dimension).
-
-    The audit-only optimistic retry (`m-temporal-read-011`) gates each attempt's close on
-    the observed Transaction-Time start (`in_z`), never a version column; the locking close
-    (`m-temporal-read-012`) renders no gate.
-    """
-    cases = []
-    for case in _conflict_cases():
-        entities = case.model.entities
-        has_version = any(a.get("optimisticLocking") for e in entities for a in e.attributes)
-        axes = {dim.get("dimension") for e in entities for dim in e.temporal_runtime_axes}
-        if not has_version and "transaction-time" in axes and "valid-time" not in axes:
-            cases.append(case)
-    return cases
-
-
-def _temporal_conflict_case(stem_prefix: str):
-    return copy.deepcopy(
-        next(c for c in _temporal_conflict_close_cases() if c.path.stem.startswith(stem_prefix))
-    )
 
 
 def test_conflict_cases_are_discovered_and_self_describe() -> None:
@@ -184,66 +152,6 @@ def test_conflict_input_gate_presence_follows_the_declared_mode() -> None:
             _assert_conflict_input(flipped, "postgres")
 
 
-def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
-    cases = _temporal_conflict_close_cases()
-    # The Transaction-Time close family all carry ① (write + at [+ observedTxStart]).
-    assert {_case_id(case.path.stem) for case in cases} >= {
-        "m-temporal-read-011",
-        "m-temporal-read-012",
-    }
-    for case in cases:
-        # Must not raise: each close ① derives out_z = at (+ the in_z = observedTxStart gate
-        # in optimistic mode) and cross-checks the derived binds against the golden
-        # binds — a binds-only ① ↔ ② check (the SET column out_z stays metamodel-fixed).
-        _assert_conflict_input(case, "postgres")
-
-
-def test_audit_only_optimistic_gated_close_binds_in_z_gate() -> None:
-    # m-temporal-read-011's stale first attempt witnesses the OPTIMISTIC-gated close of an
-    # audit-only milestone: a single close UPDATE gating on the observed Transaction-Time
-    # start (in_z). Its ADDRESS is the pk plus one exclusive upper bound per as-of axis,
-    # which on balance's single axis is `out_z = infinity` alone — no Valid-Time bound,
-    # since the entity declares no Valid-Time dimension.
-    case = next(c for c in _conflict_cases() if c.path.stem.startswith("m-temporal-read-011"))
-    assert "m-temporal-read" in case.tags and "m-opt-lock" in case.tags
-    assert case.concurrency_mode == "optimistic"
-    stale = case.attempts[0]
-    assert stale["observedTxStart"] is not None  # the in_z gate token
-    assert stale["affectedRows"] == 0  # the gate is STALE against the current milestone
-    (entry,) = stale["statements"]
-    statement = entry["sql"]["postgres"]
-    # The gated audit close carries the trailing `and in_z = ?` gate and no Valid-Time
-    # `thru_z` address bound.
-    assert statement.endswith("and in_z = ?")
-    assert "thru_z" not in statement
-    assert "from_z" not in statement
-    # Must not raise: each attempt's derived close binds [at, pk, infinity,
-    # observedTxStart] cross-check its golden binds.
-    _assert_conflict_input(case, "postgres")
-
-
-def test_locking_temporal_conflict_close_rendering_a_gate_is_rejected() -> None:
-    # Gating is concurrency-driven, never data-driven: a locking-mode close that renders
-    # the observed-in_z gate anyway MUST be rejected, even though its binds line up.
-    case = _temporal_conflict_case("m-temporal-read-012")
-    _assert_conflict_input(case, "postgres")  # sanity: valid as authored
-    close = case.then["statements"][0]
-    close["sql"]["postgres"] = f"{close['sql']['postgres']} and in_z = ?"
-    close["binds"] = [*close["binds"], "2024-02-01T00:00:00+00:00"]
-    with pytest.raises(CaseFailure):
-        _assert_conflict_input(case, "postgres")
-
-
-def test_temporal_conflict_close_retry_gates_each_attempt() -> None:
-    case = _temporal_conflict_case("m-temporal-read-011")
-    # The retry form carries a close ① per attempt; corrupting the retry attempt's
-    # observed in_z desyncs its derived gate bind from the golden, so the per-attempt
-    # ① ↔ ② gate MUST fail.
-    case.when["attempts"][1]["observedTxStart"] = "1999-12-31T00:00:00+00:00"
-    with pytest.raises(CaseFailure):
-        _assert_conflict_input(case, "postgres")
-
-
 # --- gate detection (m-opt-lock "the gate binds last") ---------------------------
 #
 # Whether a statement gates is a decision about its OUTER predicate alone. Three
@@ -343,45 +251,4 @@ def test_a_non_temporal_retry_attempt_may_not_name_an_observed_gate() -> None:
     # The entitlement is a property of the target, so it holds wherever the
     # coordinate is spelled — the attempt's own fields included.
     with pytest.raises(CaseFailure, match=re.escape("no milestone to observe")):
-        _assert_schema(case)
-
-
-def test_a_transaction_time_only_target_may_not_name_a_valid_time_start() -> None:
-    case = _temporal_conflict_case("m-temporal-read-012")
-    entity = _conflict_temporal_entity(case)
-    assert entity is not None
-    assert not any(a["dimension"] == "valid-time" for a in entity.temporal_runtime_axes)
-    case.when["observedValidStart"] = "2024-01-01T00:00:00+00:00"
-    # Its milestones carry no Valid-Time start, so the coordinate names an axis
-    # the target has no milestones on — the edge form is Bitemporal-only.
-    with pytest.raises(CaseFailure, match=re.escape("declares no Valid-Time axis")):
-        _assert_schema(case)
-
-
-def test_a_retry_sequence_may_not_leave_an_observation_coordinate_on_the_root() -> None:
-    case = _temporal_conflict_case("m-temporal-read-011")
-    case.when["observedTxStart"] = case.attempts[0]["observedTxStart"]
-    # Every attempt reads its own `observedTxStart`, so a root one gates nothing and
-    # grades nothing — the two authoring locations are alternatives, not a default and
-    # an override.
-    with pytest.raises(CaseFailure, match=re.escape("consumed by no attempt")):
-        _assert_schema(case)
-
-
-def test_a_locking_close_may_not_author_a_lone_observed_gate() -> None:
-    case = _temporal_conflict_case("m-temporal-read-012")
-    _assert_schema(case)  # sanity: valid as authored
-    case.when["observedTxStart"] = "2024-02-01T00:00:00+00:00"
-    # Every bind the locking close renders is already spelled, and locking renders no
-    # gate, so the coordinate reaches nothing.
-    with pytest.raises(CaseFailure, match=re.escape("renders no gate")):
-        _assert_schema(case)
-
-
-def test_a_locking_retry_attempt_may_not_author_an_observed_gate() -> None:
-    case = _temporal_conflict_case("m-temporal-read-011")
-    case.when["uow"] = {**case.when.get("uow", {}), "concurrency": "locking"}
-    # A retry attempt's coordinate is always the gate candidate — and locking mode has
-    # no gate to bind it into.
-    with pytest.raises(CaseFailure, match=re.escape("renders no gate")):
         _assert_schema(case)

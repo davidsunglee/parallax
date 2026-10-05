@@ -6,7 +6,8 @@ Concurrency Strategy calls for, statement and
 milestone pin derivation, history statements, which of the two entry points
 stamps its participation on the values it publishes, and the evidence a read
 leaves on those values — proven through the writes they license or refuse. Also
-the stale-web-edit recipe's Docker-free halves.
+the stale-web-edit recipe's Docker-free halves, and what a close settled against a
+read does when it affects no row: under each strategy, and across a retry.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ from parallax.core.unit_work import (
     Concurrency,
     OptimisticLockConflictError,
     ReadOrigin,
+    StaleWriteError,
     TemporalObservation,
 )
 from parallax.snapshot import DeferredFeatureError, QueryTargetError
@@ -964,6 +966,53 @@ def test_stale_web_edit_balance_submit_conflict_raises_optimistic_lock_conflict(
 
     with raises_contextualized(OptimisticLockConflictError):
         stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
+
+
+def _terminate_balance_1(tx: Transaction) -> None:
+    tx.terminate(tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
+
+
+def test_a_locking_temporal_close_missing_its_row_is_a_stale_write__m_temporal_read_012() -> None:
+    # A Locking close renders no gate, so a close finding no current milestone
+    # says the row its own shared lock was meant to hold is gone: the
+    # non-retriable stale write, which the optimistic opt-in leaves unretried.
+    port = ScriptedAdapter(
+        Transact(
+            Read(rows=[balance_row(in_z=dt.datetime(2024, 2, 1, tzinfo=dt.UTC))]),
+            Write(affected=0),
+        )
+    )
+
+    with raises_contextualized(StaleWriteError):
+        db_for(BALANCE, port).transact(
+            _terminate_balance_1, concurrency="locking", retry_optimistic_conflicts=True
+        )
+    assert sum(isinstance(call, BeginCall) for call in port.calls) == 1
+    (close,) = [call for call in port.calls if isinstance(call, WriteCall)]
+    assert close.sql == POSTGRES.to_driver_sql(
+        "update balance set out_z = ? where bal_id = ? and out_z = ?"
+    )
+
+
+def test_a_retried_temporal_close_gates_on_the_start_its_retry_read__m_temporal_read_011() -> None:
+    # The retry is a fresh unit of work whose find re-reads the milestone a
+    # concurrent writer chained, so its close gates on that start rather than on
+    # the one the conflicted attempt observed.
+    observed = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    reread = dt.datetime(2024, 5, 1, tzinfo=dt.UTC)
+    port = ScriptedAdapter(
+        Transact(Read(rows=[balance_row(in_z=observed)]), Write(affected=0)),
+        Transact(Read(rows=[balance_row(in_z=reread)]), Write()),
+    )
+
+    db_for(BALANCE, port).transact(_terminate_balance_1, retry_optimistic_conflicts=True)
+    closes = [call for call in port.calls if isinstance(call, WriteCall)]
+    assert {close.sql for close in closes} == {
+        POSTGRES.to_driver_sql(
+            "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+        )
+    }
+    assert [close.binds[-1] for close in closes] == [observed, reread]
 
 
 def _branch_milestone_row(*, from_z: dt.datetime, in_z: dt.datetime) -> MappingRow:

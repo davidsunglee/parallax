@@ -39,7 +39,6 @@ from parallax.core.base import (
     UUID,
     TemporalBound,
 )
-from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     JsonDocument,
     MappingRow,
@@ -1498,21 +1497,6 @@ def test_the_admitted_affected_guard_reraises_an_unadmitted_write_effect_error()
         scenario._admitted_affected(MissingTargetError, raises)  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
 
 
-def test_run_conflict_case_temporal_close_propagates_a_failed_call() -> None:
-    # A close the port could not complete is recorded as a FAILED Database Call
-    # and then propagates: the lane admits only the shortfall class the case's own
-    # facts imply, and a transient database failure is not one.
-    with pytest.raises(DatabaseError):
-        scenario.run_conflict_case(
-            _load_case("m-temporal-read-012"),
-            FakeWritePort(
-                parameterized_write_failure=DatabaseError(
-                    category="deadlock", native_code="40P01", message="deadlock detected"
-                )
-            ),
-        )
-
-
 def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() -> None:
     # Each writeSequence entry is its
     # OWN `db.transact` unit, never the whole sequence in one transaction.
@@ -2674,26 +2658,6 @@ def test_a_conflict_attempt_writes_through_the_public_keyed_delete_verb() -> Non
     assert affected == 1
 
 
-# The DRIVER spelling of the golden milestone close a fake port reports a
-# zero-row shortfall for (the case's own `given.apply` already closed the current
-# row out of band), so the naive literal `given.apply` statements the same lane
-# applies first still report a row.
-_BALANCE_CLOSE_SHORTFALL: Final[tuple[str, ...]] = ("update balance set out_z = %s",)
-
-
-def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() -> None:
-    # m-temporal-read-012: the locking-mode close renders its address and no gate,
-    # so its shortfall is the non-retriable stale write. The close lane settles
-    # against a coordinate the case names rather than a source a read published,
-    # which is why a Locking-mode conflict is expressible here and nowhere else
-    # in this lane.
-    _emissions, affected, _table_state, _round_trips = scenario.run_conflict_case(
-        _load_case("m-temporal-read-012"),
-        FakeWritePort(zero_affected_for=_BALANCE_CLOSE_SHORTFALL),
-    )
-    assert affected == 0
-
-
 def _unversioned_conflict_case(rows: list[dict[str, object]]) -> case_format.Case:
     return _synthetic_write(
         "conflict",
@@ -2732,14 +2696,6 @@ def test_an_unversioned_conflict_target_is_refused_for_want_of_a_participating_r
         scenario.run_conflict_case(
             _unversioned_conflict_case([{"id": 1, "balance": "500.00"}]), port
         )
-
-
-def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> None:
-    _emissions, affected, _table_state, _round_trips = scenario.run_conflict_case(
-        _load_case("m-temporal-read-011"),
-        FakeWritePort(zero_affected_for=_BALANCE_CLOSE_SHORTFALL),
-    )
-    assert affected == 0
 
 
 def _always_implying(
@@ -2808,22 +2764,6 @@ class TestConflictShortfallClassification:
             is MissingTargetError
         )
 
-    def test_a_locking_shortfall_admitted_as_a_conflict_propagates(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # The regression this pins: a lane admitting the retriable conflict where
-        # the ungated locking-mode close's shortfall is the stale write. The real
-        # failure must NOT be swallowed into the same `affectedRows: 0`
-        # observation m-temporal-read-012 asserts.
-        monkeypatch.setattr(
-            scenario, "_implied_shortfall_error", _always_implying(OptimisticLockConflictError)
-        )
-        with pytest.raises(StaleWriteError):
-            scenario.run_conflict_case(
-                _load_case("m-temporal-read-012"),
-                FakeWritePort(zero_affected_for=_BALANCE_CLOSE_SHORTFALL),
-            )
-
     def test_a_gated_shortfall_admitted_as_a_stale_write_propagates(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2881,20 +2821,6 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
     case = _synthetic_write("conflict", {"when": {"write": {"id": 1, "bogus": True}}})
     with pytest.raises(EngineError, match="undeclared member"):
         scenario.run_conflict_case(case, FakeWritePort())
-
-
-def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() -> None:
-    # m-temporal-read-012: a temporal CLOSE conflict (`when.at`, no
-    # `observedVersion`) is driven through `handle.plan_temporal_close`, not the
-    # non-temporal versioned-UPDATE path.
-    case = _load_case("m-temporal-read-012")
-    port = FakeWritePort()
-    emissions, affected, table_state, _round_trips = scenario.run_conflict_case(case, port)
-    assert [e.case_pointer for e in emissions] == ["/when/write"]
-    assert emissions[0].sql == "update balance set out_z = ? where bal_id = ? and out_z = ?"
-    assert affected == 1
-    assert len(port.writes) == 2  # given.apply's one statement + the close
-    assert table_state is not None and "balance" in table_state
 
 
 def test_a_temporal_close_decodes_case_carriers_before_the_probe() -> None:
@@ -3578,23 +3504,6 @@ def test_a_conflict_target_resolves_to_the_inheritance_familys_sole_concrete_sub
         )
         == "parallax.compatibility.MeterReading"
     )
-
-
-def test_run_conflict_case_temporal_attempts_form_retries_the_gated_close() -> None:
-    # m-temporal-read-011: a TEMPORAL `when.attempts` retry — each attempt its
-    # own `db.transact` unit composing `handle.plan_temporal_close` directly
-    # (the `is_temporal` branch of the attempts loop, distinct from the
-    # non-temporal versioned-UPDATE retry `m-opt-lock-007` already covers).
-    case = _load_case("m-temporal-read-011")
-    port = FakeWritePort()
-    emissions, affected, table_state, _round_trips = scenario.run_conflict_case(case, port)
-    assert [e.case_pointer for e in emissions] == [
-        "/when/attempts/0/write",
-        "/when/attempts/1/write",
-    ]
-    assert len(port.writes) == 4  # given.apply's two out-of-band statements + two attempts
-    assert affected == 1
-    assert table_state is not None and "balance" in table_state
 
 
 def test_scenario_case_without_when_is_rejected() -> None:
