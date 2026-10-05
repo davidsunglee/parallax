@@ -8,17 +8,13 @@ from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
 from parallax.core.unit_work import (
     NO_AUDIT,
-    Concurrency,
     MilestoneTopology,
-    PlannedClose,
-    TransactionInstant,
     WritePlanner,
 )
-from parallax.core.unit_work import plan_temporal_close as _plan_temporal_close
 from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
 
-__all__ = ["build_write_planner", "plan_temporal_close"]
+__all__ = ["build_write_planner"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,28 +69,4 @@ def build_write_planner(model: Metamodel) -> WritePlanner:
         concurrency=CONCURRENCY,
         temporal=_TemporalAdapter(),
         audit=NO_AUDIT,
-    )
-
-
-def plan_temporal_close(
-    identity: Mapping[str, object],
-    entity_name: str,
-    model: Metamodel,
-    concurrency: Concurrency,
-    tx_instant: TransactionInstant,
-    observed_tx_start: object | None,
-    observed_valid_end: object | None = None,
-) -> PlannedClose:
-    """The `m-opt-lock` conflict lane's standalone close probe, wired with the
-    same concurrency adapter :func:`build_write_planner` injects — see
-    :func:`parallax.core.unit_work.plan_temporal_close`."""
-    return _plan_temporal_close(
-        identity,
-        entity_name,
-        model,
-        concurrency,
-        CONCURRENCY,
-        tx_instant,
-        observed_tx_start,
-        observed_valid_end,
     )

@@ -798,8 +798,9 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
     # OPTIMISTIC mode: an audit-only close GATES on the observed `in_z`,
     # binding LAST (`m-txtime-write.md:65`, `m-opt-lock.md:87-99`) — every
     # resolved row's own close carries THAT row's own observed `in_z`, in
-    # resolved-row order, mirroring the corpus's `m-txtime-write-006` gated-
-    # close shape (`m-value-object-047`'s own re-gated step 2).
+    # resolved-row order. Each is the gated close the corpus's
+    # `m-txtime-write-006` update emits ahead of its chained insert, here with
+    # nothing chained (`m-value-object-047`'s own re-gated step 2).
     port = ScriptedAdapter(Transact(Read(rows=_two_terminate_rows()), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
