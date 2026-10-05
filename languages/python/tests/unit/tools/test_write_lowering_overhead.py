@@ -87,7 +87,18 @@ def test_the_matrix_names_every_keyed_acquisition_and_model_case_once() -> None:
     assert len(set(report.CASE_NAMES)) == len(report.CASE_NAMES)
     assert (*response, report.MODEL_FAMILY_CASE) == report.CONTROL_CASE_NAMES
     assert (*leaf_keyed, *leaf_acquisition) == report.LEAF_TYPE_CASE_NAMES
-    before_leaf_types = [name for name in keyed if name not in leaf_keyed]
+    target = [case.name for case in lowering_support.CASES if case.addressed]
+    assert tuple(target) == report.TARGET_CASE_NAMES
+    before_targets = [name for name in keyed if name not in target]
+    assert (
+        *before_targets,
+        *acquisition,
+        *leaf_acquisition,
+        *response,
+        report.MODEL_CASE,
+        report.MODEL_FAMILY_CASE,
+    ) == report.BEFORE_TARGET_CASE_NAMES
+    before_leaf_types = [name for name in before_targets if name not in leaf_keyed]
     assert (
         *before_leaf_types,
         *acquisition,
@@ -98,6 +109,7 @@ def test_the_matrix_names_every_keyed_acquisition_and_model_case_once() -> None:
     assert (*before_leaf_types, *acquisition, report.MODEL_CASE) == report.LEGACY_CASE_NAMES
     assert report.CASE_COVERAGES == {
         "current": report.CASE_NAMES,
+        "before target writes": report.BEFORE_TARGET_CASE_NAMES,
         "before leaf types": report.BEFORE_LEAF_TYPE_CASE_NAMES,
         "legacy": report.LEGACY_CASE_NAMES,
     }
@@ -106,7 +118,9 @@ def test_the_matrix_names_every_keyed_acquisition_and_model_case_once() -> None:
 
 def test_twenty_categorical_cases_cross_every_layout_and_ingress() -> None:
     categorical = [
-        case for case in lowering_support.CASES if case.family in _CATEGORICAL_OPERATIONS
+        case
+        for case in lowering_support.CASES
+        if case.family in _CATEGORICAL_OPERATIONS and not case.addressed
     ]
     assert len(categorical) == 20
     expected = {
@@ -118,6 +132,92 @@ def test_twenty_categorical_cases_cross_every_layout_and_ingress() -> None:
     }
     assert {case.name for case in categorical} == expected
     assert all(report.WINDOWS[name] == report.KEYED_WINDOW for name in expected)
+
+
+_TARGET_TWINS = {
+    "plain": "plain.changed",
+    "txtime": "txtime.changed",
+    "bitemporal": "bitemporal.interior",
+}
+
+
+def test_target_writes_cross_every_categorical_family_and_layout_without_a_typed_patch() -> None:
+    targets = [case for case in lowering_support.CASES if case.addressed]
+    assert {case.name for case in targets} == {
+        *(
+            f"{family}.target-patch.{layout}.wire"
+            for family in _TARGET_TWINS
+            for layout in lowering_support.LAYOUTS
+        ),
+        *(
+            f"{family}.target-replace.{layout}.{ingress}"
+            for family in _TARGET_TWINS
+            for layout in lowering_support.LAYOUTS
+            for ingress in lowering_support.INGRESSES
+        ),
+    }
+    assert all(
+        case.stored is not None
+        and case.bounded == (case.family == "bitemporal")
+        and (case.instance is not None) == (case.ingress == "typed")
+        and report.WINDOWS[case.name] == report.KEYED_WINDOW
+        for case in targets
+    )
+
+
+def test_a_target_write_lowers_to_the_statements_its_observed_twin_lowers_to() -> None:
+    for case in lowering_support.CASES:
+        if not case.addressed:
+            continue
+        twin = lowering_support.case_named(f"{_TARGET_TWINS[case.family]}.{case.layout}.wire")
+        target = lowering_support.lowered(case)
+        observed = lowering_support.lowered(twin)
+        assert [statement.sql for statement in target] == [s.sql for s in observed], case.name
+        assert [statement.binds for statement in target] == [s.binds for s in observed], case.name
+
+
+class _ChronologyPort(lowering_support.AcceptingPort):
+    __slots__ = ("events",)
+    events: list[str]
+
+    def __init__(self, stored: Sequence[Mapping[str, object]]) -> None:
+        super().__init__(stored)
+        self.events = []
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        self.events.append("read")
+        return super().execute(sql, binds, document_reads)
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        self.events.append("write")
+        return super().execute_write(sql, binds)
+
+
+def test_a_target_reads_nothing_before_its_verb_and_its_one_read_inside_the_window() -> None:
+    # An unversioned Non-Temporal target acquires its row at the call under
+    # either strategy; a temporal target reads its coverage at flush.
+    for case in lowering_support.CASES:
+        if not case.addressed:
+            continue
+        assert case.stored is not None
+        port = _ChronologyPort((case.stored,))
+        with lowering_support.database(case, port) as handle:
+            lowering_support.write(
+                handle,
+                case,
+                opened=lambda port=port: port.events.append("opened"),
+                buffered=lambda port=port: port.events.append("buffered"),
+            )
+        writes = ["write"] * case.statements
+        if case.family == "plain":
+            assert port.events == ["opened", "read", "buffered", *writes], case.name
+        else:
+            assert port.events == ["opened", "buffered", "read", *writes], case.name
 
 
 def test_geometry_cases_cover_every_level_under_both_layouts_through_typed_inserts() -> None:
@@ -842,21 +942,40 @@ def test_the_control_cases_are_the_difference_between_the_two_earlier_case_cover
     assert all(not address[2].startswith("calls.") for address in before_leaf_types - legacy)
 
 
-def test_the_leaf_type_cases_are_the_difference_between_the_two_latest_case_coverages() -> None:
-    current = report.expected_addresses(("3.14",))
+def test_the_leaf_type_cases_are_the_difference_the_leaf_type_coverage_tier_adds() -> None:
+    before_targets = report.expected_addresses(
+        ("3.14",), report.CALL_NAMES, report.BEFORE_TARGET_CASE_NAMES
+    )
     before_leaf_types = report.expected_addresses(
         ("3.14",), report.CALL_NAMES, report.BEFORE_LEAF_TYPE_CASE_NAMES
     )
-    assert before_leaf_types < current
-    assert {case for _runtime, case, _cell in current - before_leaf_types} == set(
+    assert before_leaf_types < before_targets
+    assert {case for _runtime, case, _cell in before_targets - before_leaf_types} == set(
         report.LEAF_TYPE_CASE_NAMES
     )
+
+
+def test_the_target_cases_are_the_difference_between_the_two_latest_case_coverages() -> None:
+    runtimes = supported_minors()
+    current = report.expected_addresses(runtimes)
+    before_targets = report.expected_addresses(
+        runtimes, report.CALL_NAMES, report.BEFORE_TARGET_CASE_NAMES
+    )
+    assert before_targets < current
+    assert current - before_targets == {
+        (runtime, case, cell)
+        for runtime in runtimes
+        for case in report.TARGET_CASE_NAMES
+        for cell in (*report.METRICS, *(f"calls.{name}" for name in report.CALL_NAMES))
+    }
 
 
 def test_the_leaf_type_cases_are_read_on_the_newest_supported_minor_alone() -> None:
     oldest, newest = supported_minors()
     assert report.runtime_cases(newest) == report.CASE_NAMES
-    assert report.runtime_cases(oldest) == report.BEFORE_LEAF_TYPE_CASE_NAMES
+    assert report.runtime_cases(oldest) == tuple(
+        name for name in report.CASE_NAMES if name not in report.LEAF_TYPE_CASE_NAMES
+    )
     assert {
         runtime
         for runtime, case, _cell in report.expected_addresses((oldest, newest))

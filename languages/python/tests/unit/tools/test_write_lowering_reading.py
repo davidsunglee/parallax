@@ -163,6 +163,16 @@ def test_a_bitemporal_interior_update_reads_its_keyed_window() -> None:
 
 
 @in_a_child_interpreter
+def test_a_temporal_target_replacement_reads_its_keyed_window() -> None:
+    _assert_reading("bitemporal.target-replace.document.typed", units=1)
+
+
+@in_a_child_interpreter
+def test_a_non_temporal_target_patch_reads_its_keyed_window() -> None:
+    _assert_reading("plain.target-patch.columns.wire", units=1)
+
+
+@in_a_child_interpreter
 def test_a_geometry_insert_reads_its_keyed_window() -> None:
     _assert_reading("geometry.many-8.document.typed", units=1)
 

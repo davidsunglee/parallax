@@ -8,6 +8,9 @@ Four windows are read. A keyed-write case reads its row inside one
 transaction and runs from the public keyed verb until ``transact`` returns:
 preparation, buffering, and the pre-commit flush's settlement, SQL lowering,
 production bind adaptation, and psycopg's own document serialization. A
+caller-addressed target reads nothing before its verb, so its own reads — an
+unversioned target's acquisition, a temporal target's coverage read at flush —
+fall inside that window. A
 predicate-acquisition case runs one
 public bounded ``tx.wire.update_where`` from the caller's documents through
 preparation and production acquisition over freshly composed resolving rows to a
@@ -215,9 +218,10 @@ def _kept_by_the_verb(seam: Seam) -> int:
 
 
 def _keyed_driver(case: lowering_support.Case, handle: ScopedDatabase) -> Driver:
-    """A keyed write's runs. Its checkpoint samples twice, after the read and
-    after the verb has buffered, because the read the verb revises must stay
-    alive across it: what the verb kept is the difference."""
+    """A keyed write's runs. Its checkpoint samples twice, before the verb (after
+    the read, where the case makes one) and after the verb has buffered,
+    because the read the verb revises must stay alive across it: what the verb
+    kept is the difference."""
 
     def run() -> None:
         lowering_support.write(handle, case)

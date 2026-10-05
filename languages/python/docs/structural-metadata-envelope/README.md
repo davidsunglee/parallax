@@ -92,7 +92,7 @@ total of what the window allocated.
 
 | Window | Member | Contains | Excludes |
 |---|---|---|---|
-| `keyed-write` | write-lowering | one public keyed verb (`tx.insert`, `tx.update`, `tx.update_until`, or its `tx.wire` peer) until `transact` returns: Typed row serialization or the caller's Wire document; preparation; effective-change classification and buffering; the pre-commit flush's planning, settlement, and SQL lowering; production PostgreSQL bind adaptation; psycopg's own transformer dump of every bind, document binds included; the commit | the read of the row a write revises, earlier in the same transaction, and the Typed `edit` or Wire changes document authored against it; database execution and network time |
+| `keyed-write` | write-lowering | one public keyed verb (`tx.insert`, `tx.update`, a bounded `tx.update`, or its `tx.wire` peer), or one caller-addressed target write (`tx.wire.update` naming the Entity, `tx.replace`, `tx.wire.replace`), until `transact` returns: Typed row serialization or the caller's Wire document; preparation; effective-change classification and buffering; a target's own reads — the point read under the shared lock an unversioned Non-Temporal target acquires its row with at the call, and the coverage read a temporal target's flush makes — with their planning, compilation, and row conversion over provider-free rows; the pre-commit flush's planning, settlement, and SQL lowering; production PostgreSQL bind adaptation; psycopg's own transformer dump of every bind, document binds included; the commit | the read of the row an observed write revises, earlier in the same transaction, and the Typed `edit` or Wire changes document authored against it; a target's caller-authored instance or document; database execution and network time |
 | `predicate-acquisition` | write-lowering | one public `tx.wire.update_until_where` of a Bitemporal `updateUntil` over the caller's target and changes documents: document capture, instruction deserialization and preparation; the resolving read's planning and compilation; row publication and materialization; per-row no-op selection; predecessor ownership establishment from freshly composed mutable rows; aligned column construction; buffering of the Materialized Write Group | the flush and driver serialization — the transaction is abandoned after the checkpoint |
 | `model-preparation` | write-lowering | one `prepare_model` over the whole structural write model: formation from the declared Entity Classes, layouts, row codec, graph construction, and write planner | the Entity Class declarations themselves, which are retained by the importing module |
 | `wire-insert-response` | write-lowering | one public `tx.wire.insert` of a nested, polymorphic Create Payload inside an open transaction, from the payload arriving to the frozen Wire node it answers | the commit that flushes the buffered row, its lowering, and driver serialization |
@@ -106,7 +106,10 @@ total of what the window allocated.
 
 Retained checkpoints: `keyed-write` reads what the verb kept — the difference
 between a sample taken after the read and one taken once the verb has buffered,
-both inside the transaction body and before the flush; `predicate-acquisition`
+both inside the transaction body and before the flush; a target reads nothing
+before its verb, so its first sample opens the transaction body and its
+increment includes what an unversioned target's acquisition keeps, but not its
+coverage read, which runs at flush; `predicate-acquisition`
 samples inside the transaction body with the group buffered, before any flush;
 `model-preparation` samples with the prepared selection alive; a geometry or
 leaf-type read samples with the delivered results alive;
@@ -131,11 +134,13 @@ window prices that plan separately.
 
 The keyed-write source stays alive across the window as production keeps it: an
 update's source is the node the transaction's read published, edited by a Typed
-caller or handed with a changes document by a Wire one, and an insert's is the
-instance or payload the fixture holds. None is counted by the retained increment,
-which starts after the read, so what it sees is what the verb built and
-production still reaches until the flush. The keyed port composes its stored row
-per statement and keeps none. The acquisition port composes each resolving row
+caller or handed with a changes document by a Wire one, and an insert's or a
+target's is the instance or document the fixture holds. None is counted by the
+retained increment, which starts after the read, so what it sees is what the
+verb built and production still reaches until the flush. The keyed port composes
+its stored row per statement and keeps none; it copies the row without
+`detach_json_container`, so a target read inside the window adds nothing to that
+pass observation that production did not call. The acquisition port composes each resolving row
 when the statement runs and keeps none, and the handle and the caller's target
 and changes documents are composed once per reading outside the window, so the
 checkpoint sees the retained columns, the retained encoded documents, and the
@@ -183,6 +188,38 @@ Each family runs as Typed and Wire ingress under Columns and Relational Document
 layout, twelve Transaction-Time-Only cases and eight others. The Typed and Wire
 twins of a case lower to identical statements and binds, which the fixture
 suite proves.
+
+### Caller-addressed target writes — 18 cases per runtime
+
+The same categorical Entities and stored rows, revised by a target write over a
+row the transaction never read (`<family>.target-patch.<layout>.wire` and
+`<family>.target-replace.<layout>.<ingress>`). A patch is a Wire
+`tx.wire.update` naming the Entity, since no Typed target patch exists; a
+replacement is a Typed `tx.replace` or a Wire `tx.wire.replace`. Each target
+assigns every writable member the values its observed twin assigns, at the
+twin's key, and states the revision a caller last observed: the stored
+milestone's Transaction-Time start for a temporal Entity, and none for the
+unversioned Non-Temporal one. Every transaction is Optimistic.
+
+| Family | Observed twin | Window `[from, until)` | Reads inside the window | Statements |
+|---|---|---|---|---:|
+| `plain` | `plain.changed` | — | the shared-lock point read an unversioned target acquires its row with at the call | 1 |
+| `txtime` | `txtime.changed` | — | the coverage read at flush | 2 |
+| `bitemporal` | `bitemporal.interior` | `[2026-03-01, 2026-09-01)` | the coverage read at flush, from `from` | 4 |
+
+Each target lowers to the statements and binds its observed twin lowers to, and
+reads exactly once, inside the window; the fixture suite proves both. What a
+target costs beside its twin is therefore its preparation, its admission, and
+the read its twin made before the window opened. The families' Typed and Wire
+replacements lower to identical statements, as the categorical twins do.
+
+A capture taken before these cases verifies without them under the `before
+target writes` coverage (`write_lowering_overhead.CASE_COVERAGES`), and
+`--require-member write-lowering` accepts the current matrix alone, which
+includes them. The categorical owner claims their addresses by family prefix
+(*Memory gates* › *Ownership*); they carry no ceiling until a capture that reads
+them becomes the basis, and their gates are then derived under the rule in
+*Basis*.
 
 ### Geometry families — 9 levels, both flows, both layouts
 
@@ -385,7 +422,8 @@ once when a handle connects rather than per delivery.
 
 `../../spec/memory-gates.yaml` is the blocking half of this evidence: one
 ceiling per byte-unit reading address of the structural windows — the retained
-checkpoint and the high-water mark of each of the 46 keyed-write cases, the six
+checkpoint and the high-water mark of each of the 46 keyed-write cases the basis
+reads (the target writes are not among them), the six
 acquisition levels, the two model-preparation checkpoints, and the leaf-type
 families' 46 keyed inserts and 24 acquisitions (248 gates, in bytes per row or
 bytes), and the retained and peak readings of the eighteen geometry reads, nine
