@@ -1,11 +1,7 @@
 """A state-graded Scenario, and every group's fate.
 
-A state-graded case carries no golden SQL, so the package provisions, reads back
-the rows the case starts from, and proves its stated rows consistent with them:
-nothing a submission does not name changes, every temporal row is a starting row
-or one a committed group opened, current rows never overlap, each declared
-refusal has the structure its code needs, a rolled-back group leaves what only it
-names as it started, and a flush failure names an object its group writes. Each
+A state-graded case carries no golden SQL, so the package executes none of it and
+grades only that its stated rows are consistent with the rows it starts from. Each
 test seeds one mistake a check must catch beside a control that passes, and goes
 through the package's one export.
 """
@@ -217,7 +213,18 @@ def test_an_inserted_object_refusal_is_a_caller_addressed_write_of_an_insert(
 def test_a_flush_failure_names_an_object_its_group_writes(damaged_case: CaseLoader) -> None:
     case = damaged_case(_ROLLBACK)
     case.then["units"]["stale"]["flushFailure"]["key"] = {"id": 3}
-    with pytest.raises(CaseFailure, match="no submission of the group writes it"):
+    with pytest.raises(CaseFailure, match="no submission pending at that flush writes it"):
+        _grade(case)
+
+
+def test_a_flush_failure_names_an_object_its_flush_writes(damaged_case: CaseLoader) -> None:
+    # Span 3 is written before the group's read flushes it, so the commit that
+    # fails never writes it.
+    case = damaged_case(_ROLLBACK)
+    case.when["scenario"][7]["write"][0]["row"]["id"] = 3
+    case.when["scenario"][7]["write"][0]["ifTxStart"] = _T0
+    case.then["units"]["stale"]["flushFailure"]["key"] = {"id": 3}
+    with pytest.raises(CaseFailure, match="no submission pending at that flush writes it"):
         _grade(case)
 
 
@@ -226,7 +233,7 @@ def test_a_flush_failure_names_a_shortfall_its_group_can_reach(damaged_case: Cas
     # shortfall is a failed precondition, never an observed write's conflict.
     case = damaged_case(_ROLLBACK)
     case.then["units"]["stale"]["flushFailure"]["shortfall"] = "optimisticConflict"
-    with pytest.raises(CaseFailure, match="no submission of the group writes it"):
+    with pytest.raises(CaseFailure, match="no submission pending at that flush writes it"):
         _grade(case)
 
 

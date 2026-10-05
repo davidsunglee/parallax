@@ -1,10 +1,4 @@
-"""The scenario lane's state-graded groups over a recording port.
-
-A state-graded scenario drives every submission through the public verb its form
-names and reports what the run left: each group's fate, each refusal at its
-submission's pointer, each find's published rows, and the tables read back. It
-reports no emissions, since nothing grades which statements a flush chose.
-"""
+"""The scenario lane's state-graded groups over a recording port."""
 
 from __future__ import annotations
 

@@ -2,18 +2,7 @@
 # execute on their own sides, and a later one carries the condition an earlier unit of
 # the same flush proved (m-unit-work Buffered, batched, ordered writes; m-bitemp-write
 # Barrier continuation). Every group's effects stand at its one Transaction Instant,
-# with no history of its own:
-#
-#   span 1: a patch of [2024-02-01, 2024-04-01), the barrier, then a patch of
-#     [2024-06-01, 2024-08-01); both state T0, which the first unit's close proves for
-#     the second.
-#   span 2: the same around a barrier, through two observed sources read at February
-#     and at June.
-#   span 3: a patch of [2024-02-01, 2024-03-01), the barrier, then an observed write of
-#     the same window, which keeps the amount the patch left rather than its source's.
-#   span 5: inserted before the barrier and terminated whole after it, through the
-#     value the insert answered; the opening runs before the barrier and its removal
-#     after, so a fresh insertion of the key is a first opening. Only its row stands.
+# with no history of its own.
 model: models/buffered-sequence-layout-twin-document.yaml
 tags: [m-bitemp-write, m-unit-work, m-batch-write, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, readless, barrier, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario

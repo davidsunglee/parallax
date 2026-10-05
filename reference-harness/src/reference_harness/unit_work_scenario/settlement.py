@@ -5,9 +5,9 @@ lazily at the group's first step and closed at its own last one: committed, or �
 where ``then.units`` states the group ``rolledBack`` — rolled back. A group's
 steps need not be contiguous, so two groups may hold two live sessions at once,
 each closing at its own boundary. A rolled-back group that states a
-``flushFailure`` is one its own flush ended, and the golden it executed is graded
-for that failure: exactly one statement addressing the object it names affected
-no row, gated as its Shortfall says.
+``flushFailure`` is one its own flush ended, and the golden that flush executed is
+graded for that failure: exactly one statement addressing the object it names
+affected no row, gated as its Shortfall says.
 
 A state-graded Scenario carries no golden SQL, so nothing of it executes here.
 What is graded instead is that the case is consistent with the rows it starts
@@ -27,8 +27,9 @@ rows is. The proofs read the document and those rows alone:
   already-claimed submission meets an earlier pending write of its object in its
   group, and an inserted-object refusal is a caller-addressed write of an object
   the group inserted earlier;
-- **flush failures** — the object a failure names is one the group writes, by a
-  submission the Shortfall can arise from.
+- **flush failures** — the object a failure names is one the failing flush
+  writes, by a submission still pending when it began that the Shortfall can
+  arise from.
 """
 
 from __future__ import annotations
@@ -68,14 +69,14 @@ class GroupSession:
     """One group's held session and the writes it executed.
 
     The session is ``None`` until the group's FIRST step lazily opens it and again
-    once the group has closed. ``executed`` accumulates each ``(statement, binds,
-    affected)`` the group's writes produced, which is what a flush failure is
-    graded on.
+    once the group has closed. ``executed`` accumulates each ``(step, statement,
+    binds, affected)`` the group's writes produced, which is what a flush failure
+    is graded on.
     """
 
     fate: UnitFate
     session: Any = None
-    executed: list[tuple[str, list[Any], int]] = field(default_factory=list)
+    executed: list[tuple[int, str, list[Any], int]] = field(default_factory=list)
 
 
 def group_sessions(scenario: CompiledScenario) -> dict[str, GroupSession]:
@@ -112,15 +113,19 @@ def finish_group(
 
 
 def _assert_flush_failure(
-    case: Case, failure: FlushFailure, executed: list[tuple[str, list[Any], int]], dialect: str
+    case: Case,
+    failure: FlushFailure,
+    executed: list[tuple[int, str, list[Any], int]],
+    dialect: str,
 ) -> None:
-    """Assert the group's golden carries the shortfall its flush reports.
+    """Assert the failing flush's golden carries the shortfall it reports.
 
-    Exactly one executed statement addressing the object the failure names
-    affected no row; it is gated where the Shortfall is a gate's — an optimistic
-    conflict or a failed precondition, both of which only the Optimistic strategy
-    gates — and ungated otherwise. A rollback that merely discarded writes that
-    all succeeded therefore fails the case rather than passing on the rollback.
+    Exactly one statement of the write steps that flush ran, addressing the
+    object the failure names, affected no row; it is gated where the Shortfall is
+    a gate's — an optimistic conflict or a failed precondition, both of which only
+    the Optimistic strategy gates — and ungated otherwise. A rollback that merely
+    discarded writes that all succeeded therefore fails the case rather than
+    passing on the rollback.
 
     Failures here are authored as local detail: this runs inside the step boundary
     that names the Scenario position.
@@ -129,13 +134,16 @@ def _assert_flush_failure(
     key = _identity_value(entity, failure.key)
     short = [
         statement
-        for statement, binds, affected in executed
-        if affected == 0 and _addresses(statement, binds, dialect, entity, key)
+        for step, statement, binds, affected in executed
+        if step in failure.flushed
+        and affected == 0
+        and _addresses(statement, binds, dialect, entity, key)
     ]
     if len(short) != 1:
         raise CaseFailure(
             f"the group's flush failure names {entity.name} {dict(failure.key)!r}, so exactly "
-            f"one statement addressing it MUST have affected no row; found {len(short)}."
+            f"one statement of the failing flush addressing it MUST have affected no row; "
+            f"found {len(short)}."
         )
     gated = _gated(short[0], entity, dialect)
     if failure.shortfall in ("optimisticConflict", "failedPrecondition"):
@@ -445,12 +453,11 @@ def _assert_failure_subject(
     scenario: CompiledScenario, fate: UnitFate, failure: FlushFailure
 ) -> None:
     case = scenario.case
-    group_of = {step.index: step.group for step in scenario.steps}
     writers = [
         submission
         for submission in scenario.submissions()
         if submission.refusal is None
-        and group_of[submission.step] == fate.label
+        and submission.step in failure.flushed
         and submission.names(failure.entity, failure.key)
     ]
     if failure.shortfall == "failedPrecondition":
@@ -467,7 +474,7 @@ def _assert_failure_subject(
         raise CaseFailure(
             f"{case.path.name}: then.units.{fate.label}.flushFailure names "
             f"{failure.entity.name} {dict(failure.key)!r} with {failure.shortfall!r}, but no "
-            f"submission of the group writes it so that a flush could fall short that way."
+            f"submission pending at that flush writes it so that it could fall short that way."
         )
 
 

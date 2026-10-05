@@ -2,14 +2,6 @@
 # precondition, which is never retried and dooms the unit of work: every effect rolls
 # back, the earlier units' included, and a refusal the caller caught along the way
 # changes nothing of that (m-unit-work Caller-addressed writes, Abort; m-opt-lock).
-#
-#   stale: an observed write of span 1 and a target of span 4 stating T0, which T1
-#     superseded; the commit's flush executes span 1's unit, then finds span 4 at
-#     another start.
-#   caught: a target of span 2, a refused unequal second target, and a target of
-#     span 3 stating T0 where its June rectangle is known from T1.
-#   control: span 2 written again in a fresh unit of work, which finds the rectangle
-#     the rolled-back group left standing.
 model: models/buffered-sequence-layout-twin-columns.yaml
 tags: [m-opt-lock, m-unit-work, m-bitemp-write, m-storage-layout, m-sql, scenario, target-write, abort, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario

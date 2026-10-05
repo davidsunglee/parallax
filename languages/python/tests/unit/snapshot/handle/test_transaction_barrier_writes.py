@@ -2,11 +2,7 @@
 public verbs (scripted port).
 
 A readless predicate write is an ordering barrier: it does not say which rows
-it matches, so moving a write across it could change what it writes. Two writes
-of one Non-Temporal state, or a write of an object whose insert is still
-pending, therefore execute on their own sides of it. The later one starts from
-the state the earlier one leaves: a versioned row it follows is gated on, and
-advanced from, the version that write produced.
+it matches, so moving a write across it could change what either one writes.
 """
 
 from __future__ import annotations

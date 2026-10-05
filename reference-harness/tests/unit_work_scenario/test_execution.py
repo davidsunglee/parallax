@@ -283,6 +283,38 @@ def test_an_ungated_shortfall_the_failing_statement_gates_is_refused(damaged_cas
         assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
 
 
+_GATED_UPDATE = "update account set balance = ?, version = ? where id = ? and version = ?"
+
+
+def test_a_flush_failure_is_graded_on_the_flush_that_failed(damaged_case) -> None:
+    # The conflicting update now flushes at a re-read the group goes on past, so
+    # the commit that `then.units` says failed runs only a later, successful write.
+    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    steps = case.when["scenario"]
+    reread = {
+        **steps[0],
+        "expectRows": [{"id": 2, "owner": "Linus", "balance": "999.00", "version": 2}],
+    }
+    later = {
+        "uow": "ours",
+        "write": [
+            {
+                "mutation": "update",
+                "entity": "parallax.compatibility.Account",
+                "rows": [{"id": 9, "balance": "6.00"}],
+            }
+        ],
+        "roundTrips": 1,
+        "statements": [{"sql": {"postgres": _GATED_UPDATE}, "binds": ["6.00", 2, 9, 1]}],
+    }
+    steps[4:4] = [reread, later]
+    case.then["roundTrips"] += reread["roundTrips"] + later["roundTrips"]
+    ours, concurrent, again, after = _observed(case)
+    script = [ours, concurrent, Affected(1), Affected(1), Affected(0), again, Affected(1), after]
+    with pytest.raises(CaseFailure, match="of the failing flush addressing it MUST have"):
+        assert_unit_work_scenario(case, ScriptedProvider(script=script))
+
+
 def test_a_flush_failure_reported_before_the_groups_last_flush_is_refused(damaged_case) -> None:
     case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
     case.then["units"]["ours"]["flushFailure"]["at"] = 3

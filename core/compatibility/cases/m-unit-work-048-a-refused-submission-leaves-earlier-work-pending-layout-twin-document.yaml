@@ -1,17 +1,7 @@
 # A submission that cannot join its object's pending writes is refused at its verb,
 # before anything is buffered, and the unit of work keeps every earlier submission
 # (m-unit-work Observed-State Coalescing, Caller-addressed writes). Each refused entry
-# is one a caller catches and continues past; every group then commits what it kept:
-#
-#   span 1: a target and an observed write share [2024-03-01, 2024-05-01); an observed
-#     write over [2024-04-01, 2024-06-01) overlaps that window unequally and is refused.
-#   span 2: two targets over disjoint windows stand as separate operations; a third
-#     over [2024-03-15, 2024-05-01) is disjoint from the latest but overlaps the first
-#     unequally, and is refused.
-#   span 3: a target, then an observed termination of the same window; an assignment
-#     after the destruction would resurrect it and is refused.
-#   span 9: inserted by this unit of work, so a caller-addressed write of it is refused
-#     whatever revision it states; the insert itself commits.
+# is one a caller catches and continues past; every group then commits what it kept.
 model: models/buffered-sequence-layout-twin-document.yaml
 tags: [m-unit-work, m-bitemp-write, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, refusal, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario

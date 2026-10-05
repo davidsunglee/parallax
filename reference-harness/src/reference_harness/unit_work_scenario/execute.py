@@ -102,7 +102,7 @@ def _apply_grouped_write(
     contributes is the executed statements the group's fate is graded on.
     """
     for statement, binds in step.statements.pairs(dialect):
-        state.executed.append((statement, binds, session.execute(statement, binds)))
+        state.executed.append((step.index, statement, binds, session.execute(statement, binds)))
 
 
 def _apply_ungrouped_write(

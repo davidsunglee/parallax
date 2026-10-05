@@ -271,7 +271,7 @@
   ],
   "allOf": [
     {
-      "description": "A state-graded case is a scenario carrying no golden SQL anywhere (m-case-format *State-graded scenarios*): no step lists `statements` or `referenceSql`, and `then` states no `executionLifecycle`, whose events index golden statements. It states the complete final `then.tableState` and every group's fate in `then.units`, and is run-only, since no golden exists for a compile lane to compare against.",
+      "description": "A state-graded case is a scenario carrying no golden SQL anywhere (m-case-format *State-graded scenarios*): no step lists `statements` or `referenceSql`, and `then` states no `executionLifecycle`, whose events index golden statements. Its steps are finds and buffers of submissions, each keyed submission writing one row: it carries no action step and states no graph or identity observable, which nothing its run reports could grade. It states the complete final `then.tableState` and every group's fate in `then.units`, and is run-only, since no golden exists for a compile lane to compare against.",
       "if": { "required": ["grading"] },
       "then": {
         "required": ["compileEligibility", "then"],
@@ -283,8 +283,18 @@
                 "items": {
                   "allOf": [
                     { "not": { "required": ["statements"] } },
-                    { "not": { "required": ["referenceSql"] } }
-                  ]
+                    { "not": { "required": ["referenceSql"] } },
+                    { "not": { "required": ["action"] } },
+                    { "not": { "required": ["expectGraph"] } },
+                    { "not": { "required": ["sameObjectAs"] } },
+                    { "not": { "required": ["differentObjectFrom"] } }
+                  ],
+                  "properties": {
+                    "write": {
+                      "type": "array",
+                      "items": { "properties": { "rows": { "maxItems": 1 } } }
+                    }
+                  }
                 }
               }
             }

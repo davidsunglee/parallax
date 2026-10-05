@@ -2,17 +2,7 @@
 # operation per window (m-unit-work Observed-State Coalescing, m-bitemp-write
 # Caller-addressed writes span their requested extent). Each group writes one span's
 # window [validFrom, until) inside the rectangle its own read observed, and flushes it
-# at commit, at the group's one Transaction Instant:
-#
-#   span 1, P -> O -> O over [2024-03-01, 2024-05-01): the target's amount 150 is
-#     overwritten by 160, then by 175 with label x; the window still closes the
-#     original under the caller's start T0 and opens one piece.
-#   span 2, R -> O -> P over the same window: the replacement states 300 / r / rr, the
-#     observed write overlays label o, the patch amount 350; the replacement's memo
-#     survives because the later writes never name it.
-#   span 3, O -> R -> D over [2024-02-01, 2024-04-01) inside its first rectangle: the
-#     termination supersedes the assignment and the replacement, so the window is
-#     destroyed and no gap is filled; its second rectangle is untouched.
+# at commit, at the group's one Transaction Instant.
 model: models/buffered-sequence-layout-twin-document.yaml
 tags: [m-unit-work, m-bitemp-write, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, composition, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario

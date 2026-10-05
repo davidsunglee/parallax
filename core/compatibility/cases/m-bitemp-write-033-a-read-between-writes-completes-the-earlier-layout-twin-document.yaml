@@ -1,15 +1,7 @@
 # A read inside a unit of work flushes what is pending, so what follows it writes
 # against completed work under its own conditions and never combines with it
 # (m-unit-work Caller-addressed writes, Execution units complete before later work
-# runs):
-#
-#   span 1: a target, a read that flushes it, then an observed write through that read;
-#     the attempt revises the row it opened in place, at its one instant.
-#   span 2: an observed write, a read that flushes it, then a target stating the
-#     milestone that read reports, which is the attempt's own.
-#   span 4: a target stating T1, a read that flushes it, then a target of a disjoint
-#     window stating T1 again; the first flush closed that milestone, so the second
-#     start no longer holds and the commit's flush fails. Everything rolls back.
+# runs).
 model: models/buffered-sequence-layout-twin-document.yaml
 tags: [m-bitemp-write, m-unit-work, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, dependent-read, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario

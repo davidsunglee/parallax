@@ -1,15 +1,6 @@
 # No two writes combine across a readless predicate write, which is an ordering
 # barrier (m-unit-work Buffered, batched, ordered writes): the predicate observes
 # exactly what was buffered before it.
-#
-#   tag 1: two writes of the one state a read observed, quantity 1 before the barrier
-#     and 7 after; the barrier selects quantity below 2, so it labels the row.
-#   account 1: two writes of version 1 around a barrier; the later starts from the
-#     version the earlier leaves, so the row ends at version 3.
-#   tag 3: inserted before a barrier and revised after it through the value the insert
-#     answered; the barrier sees the inserted quantity 1.
-#   tag 4: inserted before a barrier and deleted after it; the deletion lets a
-#     reinsertion of the same key open its row once it has run.
 model: models/buffered-sequence-layout-twin-document.yaml
 tags: [m-unit-work, m-batch-write, m-opt-lock, m-read-lock, m-storage-layout, m-sql, scenario, readless, barrier, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario

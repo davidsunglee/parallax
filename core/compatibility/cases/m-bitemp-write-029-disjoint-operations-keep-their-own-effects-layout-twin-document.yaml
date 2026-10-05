@@ -1,17 +1,7 @@
 # Writes of one span over disjoint windows stand as separate operations, each with its
 # own condition, even where one stored rectangle holds both starts (m-bitemp-write
 # Disjoint operations, m-unit-work Observed-State Coalescing). A flush transforms each
-# original once:
-#
-#   span 1: a patch over [2024-02-01, 2024-04-01) and a replacement over
-#     [2024-06-01, 2024-08-01), separated, earlier window first; both state T0 and
-#     both lie inside the one rectangle, which is closed once.
-#   span 2: an observed termination of [2024-04-01, 2024-06-01), then a replacement of
-#     the adjacent [2024-02-01, 2024-04-01): later window first, and the replacement
-#     fills nothing of the destroyed window beside it.
-#   span 3: a patch over [2024-02-01, 2024-03-01) stating T0, the first rectangle's
-#     start, and an observed write over [2024-07-01, 2024-08-01) through a read of the
-#     second rectangle, known from T1: two originals, each meeting its own condition.
+# original once.
 model: models/buffered-sequence-layout-twin-document.yaml
 tags: [m-bitemp-write, m-unit-work, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, disjoint, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario
@@ -108,7 +98,14 @@ when:
           validFrom: "2024-07-01T00:00:00.000000Z"
           until: "2024-08-01T00:00:00.000000Z"
           at: "2024-11-03T00:00:00.000000Z"
-      note: "a target of the first original and an observed write of the second"
+        - mutation: updateUntil
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 3, amount: 120 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-04-01T00:00:00.000000Z"
+          until: "2024-05-01T00:00:00.000000Z"
+          at: "2024-11-03T00:00:00.000000Z"
+      note: "a target of the first original, an observed write of the second, then the first again: an earlier window after a later one"
 then:
   units:
     shared: { outcome: committed }
@@ -196,6 +193,18 @@ then:
         payload: { amount: 110, label: c, memo: { note: n3 } }
       - id: 3
         from_z: "2024-03-01T00:00:00.000000Z"
+        thru_z: "2024-04-01T00:00:00.000000Z"
+        in_z: "2024-11-03T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: c, memo: { note: n3 } }
+      - id: 3
+        from_z: "2024-04-01T00:00:00.000000Z"
+        thru_z: "2024-05-01T00:00:00.000000Z"
+        in_z: "2024-11-03T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 120, label: c, memo: { note: n3 } }
+      - id: 3
+        from_z: "2024-05-01T00:00:00.000000Z"
         thru_z: "2024-06-01T00:00:00.000000Z"
         in_z: "2024-11-03T00:00:00.000000Z"
         out_z: infinity

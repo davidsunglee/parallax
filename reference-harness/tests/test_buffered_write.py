@@ -66,6 +66,7 @@ _ORDERS = _defs("models/orders.yaml")
 _BALANCE = _defs("models/balance.yaml")
 _POSITION = _defs("models/position.yaml")
 _PK_SEQUENCE = _defs("models/pk-sequence.yaml")
+_SEQUENCE = _defs("models/buffered-sequence-layout-twin-columns.yaml")
 
 
 def _accepted(instructions: list[Any], entity_defs: list[dict[str, Any]]) -> bool:
@@ -256,6 +257,133 @@ def test_a_golden_graded_buffer_is_keyed_and_a_state_graded_one_carries_barriers
         compileEligibility={"mode": "run-only", "reason": "query-result-dependent"},
     )
     assert next(validator.iter_errors(state), None) is None
+
+
+_STATE_FIND = {"uow": "g", "objectQuery": {"target": "OrderItem", "predicate": {"all": {}}}}
+_STATE_INSERT = {
+    "mutation": "insert",
+    "entity": "OrderItem",
+    "rows": [{"id": 1, "quantity": 1, "sku": "A"}],
+}
+
+_STATE_GRAPH_FIND = {
+    "uow": "g",
+    "objectQuery": {
+        "target": "parallax.compatibility.Order",
+        "predicate": {"all": {}},
+        "includes": [{"segments": [{"rel": "parallax.compatibility.Order.items"}]}],
+    },
+    "expectGraph": {"OrderItem": []},
+}
+
+
+def _state_graded(steps: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "model": "models/orders.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        "grading": "state",
+        "compileEligibility": {"mode": "run-only", "reason": "query-result-dependent"},
+        "when": {"scenario": steps},
+        "then": {
+            "tableState": {"order_item": []},
+            "units": {"g": {"outcome": "committed"}},
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        pytest.param(
+            [
+                {
+                    "uow": "g",
+                    "write": [
+                        {**_STATE_INSERT, "rows": [*_STATE_INSERT["rows"], {"id": 2, "sku": "B"}]}
+                    ],
+                }
+            ],
+            id="a-keyed-submission-of-two-rows",
+        ),
+        pytest.param([{"uow": "g", "write": _BARRIER}], id="an-unbuffered-predicate-write"),
+        pytest.param([{"uow": "g", "write": "update"}], id="a-write-label"),
+        pytest.param([_STATE_FIND, {"action": "flush"}], id="an-action-step"),
+        pytest.param([_STATE_GRAPH_FIND], id="a-graph-observable"),
+        pytest.param([_STATE_FIND, {**_STATE_FIND, "sameObjectAs": 0}], id="an-identity-claim"),
+        pytest.param(
+            [_STATE_FIND, {**_STATE_FIND, "differentObjectFrom": 0}], id="a-distinctness-claim"
+        ),
+    ],
+)
+def test_a_state_graded_case_states_only_what_its_run_reports(steps: list[dict[str, Any]]) -> None:
+    validator = Draft202012Validator({"$ref": _CASE_URL}, registry=_REGISTRY)
+    control = _state_graded([_STATE_FIND, {"uow": "g", "write": [_STATE_INSERT]}])
+    assert next(validator.iter_errors(control), None) is None
+    assert next(validator.iter_errors(_state_graded(steps)), None) is not None
+
+
+_T0 = "2023-12-01T00:00:00.000000Z"
+_ACCOUNT_TARGET = {
+    "mutation": "update",
+    "entity": "SequenceAccount",
+    "row": {"id": 1, "balance": 5},
+}
+_TAG_TARGET = {"mutation": "update", "entity": "SequenceTag", "row": {"id": 1, "quantity": 2}}
+_SPAN_TARGET = {
+    "mutation": "update",
+    "entity": "SequenceSpan",
+    "row": {"id": 1, "amount": 5},
+    "validFrom": _T0,
+}
+_BALANCE_TARGET = {"mutation": "update", "entity": "Balance", "row": {"id": 1, "value": 5.0}}
+
+
+@pytest.mark.parametrize(
+    ("entry", "entity_defs"),
+    [
+        pytest.param({**_ACCOUNT_TARGET, "ifVersion": 1}, _SEQUENCE, id="versioned"),
+        pytest.param(_TAG_TARGET, _SEQUENCE, id="unversioned"),
+        pytest.param({**_SPAN_TARGET, "ifTxStart": _T0}, _SEQUENCE, id="bitemporal"),
+        pytest.param({**_BALANCE_TARGET, "ifTxStart": _T0}, _BALANCE, id="transaction-time-only"),
+    ],
+)
+def test_a_target_submission_states_the_condition_its_target_takes(
+    entry: dict[str, Any], entity_defs: list[dict[str, Any]]
+) -> None:
+    assert _accepted([entry], entity_defs)
+
+
+@pytest.mark.parametrize(
+    ("entry", "entity_defs"),
+    [
+        pytest.param(_ACCOUNT_TARGET, _SEQUENCE, id="a-versioned-target-without-its-version"),
+        pytest.param(
+            {**_ACCOUNT_TARGET, "ifTxStart": _T0}, _SEQUENCE, id="a-versioned-target-by-its-start"
+        ),
+        pytest.param({**_TAG_TARGET, "ifVersion": 1}, _SEQUENCE, id="an-unversioned-revision"),
+        pytest.param(
+            {**_SPAN_TARGET, "ifVersion": 1}, _SEQUENCE, id="a-temporal-target-by-a-version"
+        ),
+        pytest.param(
+            {key: value for key, value in _SPAN_TARGET.items() if key != "validFrom"}
+            | {"ifTxStart": _T0},
+            _SEQUENCE,
+            id="a-bitemporal-target-without-its-window",
+        ),
+        pytest.param(
+            {**_BALANCE_TARGET, "ifTxStart": _T0, "validFrom": _T0},
+            _BALANCE,
+            id="a-transaction-time-only-target-with-a-window",
+        ),
+    ],
+)
+def test_a_target_submission_stating_another_condition_is_refused(
+    entry: dict[str, Any], entity_defs: list[dict[str, Any]]
+) -> None:
+    errors: list[str] = []
+    _validate_buffered_write([entry], entity_defs, _OP, "probe", errors)
+    assert any("caller-addressed write" in error for error in errors)
 
 
 # --- a row naming a non-member is REJECTED (member honesty, harness) -------------
