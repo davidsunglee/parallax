@@ -1089,3 +1089,19 @@ def test_a_transaction_time_target_after_a_barrier_revises_the_row_the_first_ope
     db_for(DomainModel(mm.Balance, WhereTag), port).transact(fn)
     revision = _writes(port)[-1]
     assert revision.sql.startswith("update balance set acct_num = %s where bal_id = %s")
+
+
+def test_a_transaction_time_target_restating_the_row_the_first_opened_writes_nothing() -> None:
+    owned = {**balance_row(in_z=FIXED), "val": Decimal("150.00")}
+    port = ScriptedAdapter(
+        Transact(Read(rows=[balance_row(in_z=_T0)]), Write(times=2), Write(), Read(rows=[owned]))
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.wire.update("Balance", {"id": 1, "value": "150.00"}, if_tx_start=_T0)
+        _barrier(tx)
+        tx.wire.update("Balance", {"id": 1, "acctNum": owned["acct_num"]}, if_tx_start=_T0)
+
+    db_for(DomainModel(mm.Balance, WhereTag), port).transact(fn)
+    assert _sql_kinds(port) == ["read", "close", "insert", "barrier", "read"]
+    assert isinstance(port.calls[-1], CommitCall)
