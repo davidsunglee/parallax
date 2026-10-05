@@ -632,6 +632,8 @@ class _Borrowing:
 
     def write_completed(self, affected_rows: int, /) -> None: ...
 
+    def write_rows_completed(self, returned_rows: object, /) -> None: ...
+
 
 class _ReturningPort(ScriptedAdapter):
     """A port that keeps the exact list object each read returned.

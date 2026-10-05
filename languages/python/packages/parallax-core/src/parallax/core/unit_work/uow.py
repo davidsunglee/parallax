@@ -47,6 +47,7 @@ from parallax.core.unit_work.materialized import (
     target_write,
 )
 from parallax.core.unit_work.plan import (
+    AllocatedOpening,
     BoundRange,
     Derivation,
     Descent,
@@ -87,6 +88,7 @@ __all__ = [
     "TransactionSettings",
     "UnitOfWork",
     "UnitOfWorkError",
+    "UnitReport",
     "WriteBatchTrigger",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
@@ -110,6 +112,22 @@ trigger goes through.
 """
 
 
+class UnitReport(Protocol):
+    """How a :class:`FlushExecutor` reports one execution unit it completed:
+    with the range its coverage bound, if deferred, and the key each of its
+    inserts answered for a row whose key the database allocated, in step
+    order."""
+
+    def __call__(
+        self,
+        unit: ExecutionUnit,
+        bound: BoundRange | None,
+        /,
+        *,
+        allocated: tuple[object, ...] = (),
+    ) -> None: ...
+
+
 class FlushExecutor(Protocol):
     """The composition-layer sink a Write Plan is handed to for lowering and
     execution. It is neutral because m-unit-work takes no m-sql edge.
@@ -123,7 +141,8 @@ class FlushExecutor(Protocol):
     as soon as every step of that unit has executed and been enforced, and
     before any step of a later unit executes. A unit with a deferred range is
     reported with the range its acquired coverage bound, once the bound steps
-    have executed; every other unit with ``None``. A normal return reports
+    have executed; every other unit with ``None``. A unit opening rows whose keys
+    the database allocates is reported with those keys. A normal return reports
     every unit not yet reported; an exception reports none after it.
     """
 
@@ -133,7 +152,7 @@ class FlushExecutor(Protocol):
         /,
         *,
         trigger: WriteBatchTrigger,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
+        completed: UnitReport,
     ) -> None: ...
 
 
@@ -581,6 +600,20 @@ class _TargetWriteState:
         self._tags.clear()
         self._owning.clear()
         self.release_continuity()
+
+
+def _with_allocated(opened: Openings, allocated: tuple[object, ...]) -> Openings:
+    """``opened`` with each row whose key the database allocated named by the
+    key its insert answered."""
+    named = tuple(
+        _allocated_endpoint(opening, key)
+        for opening, key in zip(opened.allocated, allocated, strict=True)
+    )
+    return Openings(fresh=(*opened.fresh, *named), continued=opened.continued)
+
+
+def _allocated_endpoint(opening: AllocatedOpening, key: object) -> OwnedEndpoint:
+    return OwnedEndpoint(opening.entity, (key,), opening.ends)
 
 
 class _Continuity:
@@ -1415,7 +1448,14 @@ class UnitOfWork:
             self._reporting = ()
             self._targets.release_continuity()
 
-    def _report(self, unit: ExecutionUnit, bound: BoundRange | None) -> None:
+    def _report(
+        self,
+        unit: ExecutionUnit,
+        bound: BoundRange | None,
+        /,
+        *,
+        allocated: tuple[object, ...] = (),
+    ) -> None:
         reported = self._reported
         units = self._reporting
         if reported >= len(units) or unit is not units[reported]:
@@ -1427,6 +1467,11 @@ class UnitOfWork:
                 "a deferred range is reported with the range its coverage bound, and no other "
                 "unit is"
             )
+        if len(allocated) != len(unit.opened.allocated):
+            raise UnitOfWorkError(
+                f"an execution unit opening {len(unit.opened.allocated)} row(s) whose keys the "
+                f"database allocates was reported with {len(allocated)} key(s)"
+            )
         self._reported = reported + 1
         if bound is None:
             self._complete(
@@ -1435,7 +1480,7 @@ class UnitOfWork:
                 and unit.end > (units[reported - 1].end if reported else 0),
                 changed=unit.changed,
                 removed=unit.removed,
-                opened=unit.opened,
+                opened=_with_allocated(unit.opened, allocated) if allocated else unit.opened,
                 derived=unit.derived,
             )
             return

@@ -120,13 +120,24 @@ class DatabaseWriteCompleted:
 
 
 @dataclass(frozen=True, slots=True)
+class DatabaseWriteRowsCompleted:
+    """A row-producing DML call's completion: the PHYSICAL number of rows the
+    statement returned — neither an affected-row count nor a count of the
+    mutations it made, since one returned row may describe several."""
+
+    returned_rows: int
+
+
+@dataclass(frozen=True, slots=True)
 class DatabaseCallFailed:
     """The port could not complete the call."""
 
     diagnostic: DatabaseFailureDiagnostic
 
 
-type DatabaseCallOutcome = DatabaseReadCompleted | DatabaseWriteCompleted | DatabaseCallFailed
+type DatabaseCallOutcome = (
+    DatabaseReadCompleted | DatabaseWriteCompleted | DatabaseWriteRowsCompleted | DatabaseCallFailed
+)
 """How a Database Call ended, a closed union of exactly one member."""
 
 

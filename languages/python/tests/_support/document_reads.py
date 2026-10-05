@@ -85,7 +85,18 @@ _TRAILING_ALIAS = re.compile(r"\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*$")
 _IDENTIFIER = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
+def _returning(sql: str) -> tuple[tuple[str, str | None], ...]:
+    """The columns row-producing DML answers: its ``returning`` list."""
+    returning = sql.lower().rfind(" returning ")
+    if returning < 0:
+        return ()
+    columns = (column.strip().strip('`"') for column in sql[returning + 11 :].split(","))
+    return tuple((column, column) for column in columns)
+
+
 def _projection(sql: str) -> tuple[tuple[str, str | None], ...]:
+    if not sql.lower().startswith("select "):
+        return _returning(sql)
     start = len("select ")
     end = _select_list_end(sql, start)
     if end < 0:

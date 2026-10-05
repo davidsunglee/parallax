@@ -20,6 +20,13 @@ The port names a
 `executePipeline` are row/result oriented;
 DML that needs write-outcome classification uses `executeWrite` and **MUST NOT**
 append dialect-specific row-returning clauses merely to infer an affected count.
+**Row-producing DML** — a statement that answers facts no plan holds, such as
+the key the database allocated for a row it inserts — runs through `execute`
+instead, which returns its one result set as positional managed rows exactly as
+it returns a read's. The distinction is the result's shape, not the statement's
+verb: the rows are the statement's answer, never its affected-row count, and
+interpreting them is the caller's (`m-unit-work`). An adapter closes the result
+before returning and translates a failing statement as it translates any other.
 `documentReads` is the compiled read's ordered sequence of adjacent zero-based
 projection ordinal pairs `(presence, document)`; it is empty for a result with no
 selected Structured Column. It carries no model, member, layout, or driver type.

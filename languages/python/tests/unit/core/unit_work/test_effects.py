@@ -35,15 +35,20 @@ from parallax.core.unit_work import (
     StaleWriteError,
     WriteEffectError,
     WritePreconditionError,
+    WriteResultError,
+    allocated_keys,
     enforce_affected_rows,
+    returns_rows,
 )
 from parallax.core.unit_work.planned import (
     ANY_COUNT,
     FAILED_PRECONDITION,
     INFINITY,
+    MAX_PLUS_ONE,
     MISSING_TARGET,
     NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,
+    RETURNED_MAX_PLUS_ONE,
     STALE_WRITE,
     UNGATED,
     UNVERSIONED,
@@ -260,6 +265,61 @@ def test_an_excess_over_a_milestone_count_is_cardinality_corruption(
 @pytest.mark.parametrize("actual", [0, 1, 3])
 def test_an_insert_carries_no_policy_and_is_accepted(actual: int) -> None:
     enforce_affected_rows(_insert(), actual)
+
+
+def _allocating(key: object = RETURNED_MAX_PLUS_ONE) -> PlannedInsert:
+    return PlannedInsert(
+        entity=_ACCOUNT,
+        entries=(
+            InsertEntry(row=PlannedRow(attributes={_ID: key, _OWNER: "Ada"}), origin=NEW_LINEAGE),
+        ),
+    )
+
+
+def test_only_an_insert_returning_its_allocated_key_answers_rows() -> None:
+    assert returns_rows(_allocating())
+    assert not returns_rows(_allocating(MAX_PLUS_ONE))
+    assert not returns_rows(_insert())
+    assert not returns_rows(_update())
+
+
+def test_the_allocated_key_is_read_from_the_one_row_its_insert_answered() -> None:
+    assert allocated_keys(_allocating(), [(8,)]) == (8,)
+
+
+@pytest.mark.parametrize(
+    ("rows", "reason"),
+    [
+        ([], "a missing row"),
+        ([(8,), (9,)], "an excess row"),
+        ([(8, "Ada")], "a row of 2 cell"),
+        ([("8",)], "a key of type str"),
+        ([(True,)], "a key of type bool"),
+    ],
+    ids=["missing", "excess", "wide", "text", "boolean"],
+)
+def test_an_answer_the_insert_cannot_produce_is_a_result_invariant_failure(
+    rows: list[tuple[object, ...]], reason: str
+) -> None:
+    with pytest.raises(WriteResultError, match=reason) as raised:
+        allocated_keys(_allocating(), rows)
+    assert (raised.value.entity, raised.value.expected, raised.value.actual) == (
+        _ACCOUNT,
+        1,
+        len(rows),
+    )
+
+
+def test_a_key_answered_twice_is_a_result_invariant_failure() -> None:
+    two = PlannedInsert(
+        entity=_ACCOUNT,
+        entries=tuple(
+            InsertEntry(row=PlannedRow(attributes={_ID: RETURNED_MAX_PLUS_ONE}), origin=NEW_LINEAGE)
+            for _ in range(2)
+        ),
+    )
+    with pytest.raises(WriteResultError, match="the key 8 twice"):
+        allocated_keys(two, [(8,), (8,)])
 
 
 @pytest.mark.parametrize("actual", [0, 1, 4096])

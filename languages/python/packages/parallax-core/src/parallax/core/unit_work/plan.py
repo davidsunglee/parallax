@@ -15,6 +15,7 @@ __all__ = [
     "NO_OWNERSHIP",
     "OPEN_BITEMPORAL_ENDS",
     "TRANSACTION_TIME_ENDS",
+    "AllocatedOpening",
     "BoundRange",
     "Completion",
     "Completions",
@@ -274,13 +275,24 @@ class RangeAcquisition:
 
 
 @dataclass(frozen=True, slots=True)
+class AllocatedOpening:
+    """A row an execution unit opens whose key the database allocates: its
+    address is complete once the insert that opens it answers the key."""
+
+    entity: EntityIdentity
+    ends: tuple[TemporalUpperBound, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Openings:
     """The owned rows an execution unit opens, by what each derives from:
     ``continued`` holds an insert's row and every successor of a row an
-    admitted insertion opened, and ``fresh`` every other row."""
+    admitted insertion opened, and ``fresh`` every other row. ``allocated``
+    holds, in step order, each row whose key its insert answers."""
 
     fresh: Iterable[OwnedEndpoint] = ()
     continued: Iterable[OwnedEndpoint] = ()
+    allocated: tuple[AllocatedOpening, ...] = ()
 
 
 NO_OPENINGS: Final[Openings] = Openings()

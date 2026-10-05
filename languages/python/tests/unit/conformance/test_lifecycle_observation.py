@@ -53,6 +53,7 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
     DatabaseReadCompleted,
     DatabaseWriteCompleted,
+    DatabaseWriteRowsCompleted,
     DirectFailure,
     ExecutionEvent,
     JoinedInvocation,
@@ -219,6 +220,12 @@ def test_a_database_call_outcome_carries_its_own_count_or_its_category() -> None
     write = DatabaseCallFinished(_EXECUTION, 1, 1, None, _STATEMENT, 7, DatabaseWriteCompleted(0))
     assert _transition(write) == {
         "databaseCallFinished": {"outcome": "writeCompleted", "affectedRows": 0}
+    }
+    rows = DatabaseCallFinished(
+        _EXECUTION, 1, 1, None, _STATEMENT, 7, DatabaseWriteRowsCompleted(1)
+    )
+    assert _transition(rows) == {
+        "databaseCallFinished": {"outcome": "writeRowsCompleted", "returnedRows": 1}
     }
     failure = DatabaseCallFailed(DatabaseFailureDiagnostic(_diagnostic(), "deadlock", "40P01"))
     failed = DatabaseCallFinished(_EXECUTION, 1, 1, None, _STATEMENT, 7, failure)

@@ -121,6 +121,11 @@ For every supported adapter, the smoke suite covers:
   one is not visible in the other, and becomes visible when it commits
 - a bytes write round trip through the dialect bind seam
 - affected-row semantics for matched and unmatched DML
+- **row-producing DML** through `execute` (`m-db-port`): an insert answering the
+  key the database allocated returns it as a positional managed row inside a
+  transaction that also runs a count-only write, and a row-producing statement
+  that fails translates like any other and leaves the connection usable for the
+  next statement
 - feasible transient classification through the portable database error surface
 - a **derived Physical Index Name at exactly this engine's identifier limit**,
   applied and then read back from the engine's own catalog and found unchanged.

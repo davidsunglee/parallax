@@ -49,6 +49,7 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
     DatabaseReadCompleted,
     DatabaseWriteCompleted,
+    DatabaseWriteRowsCompleted,
     DirectFailure,
     ExecutionEvent,
     ExecutionLifecycleHandlerError,
@@ -251,7 +252,7 @@ def test_a_database_call_reports_its_duration_row_count_and_neutral_category(
     failed = database_diagnostic_for(
         DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
     )
-    completed, write, failure = _records(
+    completed, write, returned, failure = _records(
         caplog,
         [
             DatabaseCallFinished(EXECUTION.id, 1, 2, 1, STATEMENT, 4_000, DatabaseReadCompleted(3)),
@@ -259,13 +260,21 @@ def test_a_database_call_reports_its_duration_row_count_and_neutral_category(
                 EXECUTION.id, 2, 3, 1, STATEMENT, 8_000, DatabaseWriteCompleted(2)
             ),
             DatabaseCallFinished(
-                EXECUTION.id, 3, 4, 1, STATEMENT, 1_000, DatabaseCallFailed(failed)
+                EXECUTION.id, 3, 5, 1, STATEMENT, 2_000, DatabaseWriteRowsCompleted(1)
+            ),
+            DatabaseCallFinished(
+                EXECUTION.id, 4, 4, 1, STATEMENT, 1_000, DatabaseCallFailed(failed)
             ),
         ],
     )
     assert completed.fields["outcome"] == "readCompleted"
     assert (completed.fields["returned_rows"], completed.fields["duration_ns"]) == (3, 4_000)
     assert (write.fields["outcome"], write.fields["affected_rows"]) == ("writeCompleted", 2)
+    assert (returned.fields["outcome"], returned.fields["returned_rows"]) == (
+        "writeRowsCompleted",
+        1,
+    )
+    assert "affected_rows" not in returned.fields
     assert failure.fields["outcome"] == "failed"
     assert failure.fields["database_category"] == "deadlock"
     assert failure.fields["database_native_code"] == "40P01"

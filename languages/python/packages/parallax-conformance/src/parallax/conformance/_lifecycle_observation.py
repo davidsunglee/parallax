@@ -37,6 +37,7 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
     DatabaseReadCompleted,
     DatabaseWriteCompleted,
+    DatabaseWriteRowsCompleted,
     DirectFailure,
     ExecutionEvent,
     ExecutionLifecycleProvider,
@@ -602,7 +603,10 @@ def _write_batch_outcome(outcome: WriteBatchCompleted | WriteBatchFailed) -> dic
 
 
 def _database_call_outcome(
-    outcome: DatabaseReadCompleted | DatabaseWriteCompleted | DatabaseCallFailed,
+    outcome: DatabaseReadCompleted
+    | DatabaseWriteCompleted
+    | DatabaseWriteRowsCompleted
+    | DatabaseCallFailed,
 ) -> dict[str, object]:
     """A call's own terminal outcome.
 
@@ -616,6 +620,8 @@ def _database_call_outcome(
             return {"outcome": "readCompleted", "returnedRows": returned_rows}
         case DatabaseWriteCompleted(affected_rows):
             return {"outcome": "writeCompleted", "affectedRows": affected_rows}
+        case DatabaseWriteRowsCompleted(returned_rows):
+            return {"outcome": "writeRowsCompleted", "returnedRows": returned_rows}
         case DatabaseCallFailed(diagnostic):
             failed: dict[str, object] = {"outcome": "failed", "category": diagnostic.category}
             if diagnostic.failure.code is not None:
