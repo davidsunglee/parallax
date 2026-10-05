@@ -359,11 +359,8 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "scenario graded by the run lane alone (query-result-dependent): its developer "
         "spelling is the exercised `tx.terminate` close (`m-txtime-write-003`), and what it "
         "adds is the framework-emitted `and in_z = ?` gate no caller spells. The "
-        "stale-`in_z` race (`-010`) has its own case-scoped entry below. The "
-        "optimistic-lock temporal-close retry and locking witnesses (`-011`/`-012`: the "
-        "`when.attempts` 0-then-1 retry, and the locking-mode non-retriable stale close) "
-        "are graded by the conflict run lane: a gated-retry choreography has no "
-        "single-callback idiomatic spelling"
+        "stale-`in_z` race (`-010`) and the root opt-in retrying a conflicted "
+        "Transaction-Time-Only write (`-011`) have their own case-scoped entries below"
     ),
     "m-db-error": (
         "the m-db-error corpus cases are graded end-to-end by the run lanes — the "
@@ -1338,11 +1335,13 @@ _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON: Final[str] = (
 
 # The root-configured boundary witnesses (m-case-format *Root configuration*):
 # what each proves is what the loop DOES under a configured root — a zero root
-# bound, a root level over every attempt, a root opt-in, and each one's explicit
-# override, plus the four-field join rule under a configured root — graded by the
-# SAME case-driven boundary runner, which connects the case's root record and
-# forwards only the authored request. The developer spelling those cases share
-# is the one executable story above (`m-unit-work-041`).
+# bound, a root level over every attempt, a root opt-in (over a versioned row,
+# `m-opt-lock-024`, and over a Transaction-Time-Only milestone,
+# `m-temporal-read-011`), and each one's explicit override, plus the four-field
+# join rule under a configured root — graded by the SAME case-driven boundary
+# runner, which connects the case's root record and forwards only the authored
+# request. The developer spelling those cases share is the one executable story
+# above (`m-unit-work-041`).
 _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON: Final[str] = (
     "a Database Root's configured transaction default reaching the loop it governs — "
     "a zero root bound disabling the loop, a root level requested on every attempt, a "
@@ -1542,6 +1541,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-auto-retry-011": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-024": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-025": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-temporal-read-011": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-unit-work-037": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-unit-work-038": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-unit-work-039": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,

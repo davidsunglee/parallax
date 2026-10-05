@@ -3,12 +3,15 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from types import TracebackType
+from pathlib import Path
+from types import MappingProxyType, TracebackType
 from typing import Any, Final, Literal, cast
 
 from parallax.conformance import case_format, sweep
 from parallax.conformance._decoration import DecoratingAdapter
+from parallax.conformance.read_models import Balance
 from parallax.conformance.story_models import Account
+from parallax.core import Entity
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     BeginFailed,
@@ -37,9 +40,11 @@ __all__ = [
     "TARGET_ID",
     "BoundaryAbort",
     "BoundaryStep",
+    "BoundaryTarget",
     "FaultInjectingPort",
     "ResourceFaultingContext",
     "boundary_steps",
+    "boundary_target",
     "expected_attempts",
     "fault_injecting_adapter",
     "fault_kind",
@@ -50,15 +55,67 @@ __all__ = [
     "translated_fault",
 ]
 
-# The SAME versioned row every reachable m-opt-lock/m-read-lock case targets
-# (account.yaml fixtures: id 2, Linus, balance 250.00, version 1) — every
-# boundary case's model is `models/account.yaml`.
+# The key every boundary target reads: account.yaml's versioned row (Linus,
+# balance 250.00, version 1) — the SAME row every reachable m-opt-lock/m-read-lock
+# case targets — and balance.yaml's current milestone (acct B, value 200.00).
 TARGET_ID: Final[int] = 2
 
 # A no-op update's effective change set would elide to zero DML (m-opt-lock
 # "No-op updates issue no DML") — every boundary `update` action therefore
-# advances the balance by a fixed, non-zero amount so it always issues real DML.
+# advances the target's amount by a fixed, non-zero step so it always issues real DML.
 _BUMP: Final[Decimal] = Decimal("1.00")
+
+
+@dataclass(frozen=True, slots=True)
+class BoundaryTarget[E: Entity]:
+    """The row a boundary case's `read` and `update` actions move, chosen by the
+    case's model — the choreography a boundary case cannot author, since its
+    `when.boundary` names actions only.
+
+    ``amount`` reads the decimal member ``edit`` advances, so a committed update
+    reads back ``committed`` and an outcome that persisted nothing reads back
+    ``baseline``, the fixture value.
+    """
+
+    find: Callable[[Transaction], E]
+    edit: Callable[[E], E]
+    amount: Callable[[E], Decimal]
+    baseline: Decimal
+    committed: Decimal
+
+
+_ACCOUNT_TARGET: Final = BoundaryTarget[Account](
+    find=lambda tx: tx.find(Account.where(Account.id == TARGET_ID)).result(),
+    edit=lambda row: row.edit(balance=row.balance + _BUMP),
+    amount=lambda row: row.balance,
+    baseline=Decimal("250.00"),
+    committed=Decimal("251.00"),
+)
+
+_TARGETS: Final[Mapping[str, BoundaryTarget[Any]]] = MappingProxyType(
+    {
+        "account": _ACCOUNT_TARGET,
+        "balance": BoundaryTarget[Balance](
+            find=lambda tx: tx.find(Balance.where(Balance.id == TARGET_ID)).result(),
+            edit=lambda row: row.edit(value=row.value + _BUMP),
+            amount=lambda row: row.value,
+            baseline=Decimal("200.00"),
+            committed=Decimal("201.00"),
+        ),
+    }
+)
+
+
+def boundary_target(case: case_format.Case) -> BoundaryTarget[Any]:
+    """The target the case's model declares; a model no target is declared for is
+    refused rather than guessed."""
+    stem = Path(case.model).stem
+    try:
+        return _TARGETS[stem]
+    except KeyError as undeclared:
+        raise AssertionError(
+            f"{case.case_id}: no boundary target is declared for model {stem!r}"
+        ) from undeclared
 
 
 class BoundaryAbort(RuntimeError):
@@ -147,29 +204,29 @@ def outcome(case: case_format.Case, dialect: Dialect) -> str | None:
     return cast("str | None", cast("dict[str, Any]", declared).get(dialect.name))
 
 
-def run_boundary_actions(
+def run_boundary_actions[E: Entity](
     tx: Transaction,
     steps: Sequence[BoundaryStep],
+    target: BoundaryTarget[E],
     *,
     database: ScopedDatabase | None = None,
     scope_for: Callable[[case_format.ActorSelection], ScopedDatabase] | None = None,
-) -> Account | None:
+) -> E | None:
     """The ONE deterministic `when.boundary` action -> verb mapping every
-    boundary case shares (never a per-case hand function): every
-    reachable case targets `models/account.yaml`'s versioned :data:`TARGET_ID`
-    row.
+    boundary case shares (never a per-case hand function), over the
+    :class:`BoundaryTarget` its model declares.
 
-    - ``read`` observes the target row (`tx.find`) — licenses a later keyed
-      write's version advance/gate (`m-opt-lock`) and, read-your-own-writes,
-      forces the flush of an ALREADY-buffered write (`m-unit-work-004`'s own
-      "a dependent find observes the flushed write" step).
-    - ``update`` bumps the last-read row's balance by :data:`_BUMP` (a real,
+    - ``read`` observes the target row (``target.find``) — licenses a later keyed
+      write's gate (`m-opt-lock`) and, read-your-own-writes, forces the flush of
+      an ALREADY-buffered write (`m-unit-work-004`'s own "a dependent find
+      observes the flushed write" step).
+    - ``update`` advances the last-read row's amount by :data:`_BUMP` (a real,
       non-no-op change, `m-opt-lock` "No-op updates issue no DML") and
       buffers it.
-    - ``create`` inserts a synthetic new row (id 90, outside the fixture
+    - ``create`` inserts a synthetic new account (id 90, outside the fixture
       range 1-3) — no reachable corpus witness authors this action, but the
       mapping is total, not partial.
-    - ``delete`` removes the last-read row.
+    - ``delete`` removes the last-read account.
     - ``join`` opens a joined unit of work through the enclosing scope, naming exactly
       the options the step authors, and runs every REMAINING action inside it,
       carrying the row already observed. A joined call shares the outer transaction
@@ -180,36 +237,43 @@ def run_boundary_actions(
       an independent scope from the same root. An option the transaction was not opened with is
       refused there rather than here: the refusal under test is production's
       own.
-    - ``terminate`` has no legal target on this NON-temporal model — a loud
-      refusal (no reachable corpus witness authors it either).
+    - ``terminate`` is a loud refusal: no target declares one, and no reachable
+      corpus witness authors it either.
 
-    Returns the LAST tracked :class:`Account` (the closure's own return
-    value — `then.outcome: committed`'s "callback value returned" half),
-    ``None`` after a ``delete``.
+    ``create`` and ``delete`` exist only on the account target, and are refused
+    on any other.
+
+    Returns the LAST tracked row (the closure's own return value —
+    `then.outcome: committed`'s "callback value returned" half), ``None``
+    after a ``delete``.
     """
-    return _run_actions(tx, list(steps), None, database, scope_for)
+    return cast("E | None", _run_actions(tx, list(steps), target, None, database, scope_for))
 
 
 def _run_actions(
     tx: Transaction,
     steps: list[BoundaryStep],
-    current: Account | None,
+    target: BoundaryTarget[Any],
+    current: Entity | None,
     database: ScopedDatabase | None,
     scope_for: Callable[[case_format.ActorSelection], ScopedDatabase] | None,
-) -> Account | None:
+) -> Entity | None:
     for index, step in enumerate(steps):
         action = step.action
         if action == "read":
-            current = tx.find(Account.where(Account.id == TARGET_ID)).result()
+            current = target.find(tx)
         elif action == "update":
             if current is None:
                 raise AssertionError("an `update` action needs a prior `read` observation")
-            current = current.edit(balance=current.balance + _BUMP)
-            tx.update(current)
+            edited: Entity = target.edit(current)
+            tx.update(edited)
+            current = edited
         elif action == "create":
+            _refuse_beyond_the_account(action, target)
             current = Account(id=90, owner="Boundary", balance=Decimal("0.00"))
             tx.insert(current)
         elif action == "delete":
+            _refuse_beyond_the_account(action, target)
             if current is None:
                 raise AssertionError("a `delete` action needs a prior `read` observation")
             tx.delete(current)
@@ -218,18 +282,26 @@ def _run_actions(
             joining_database = _joining_database(step, database, scope_for)
             return joining_database.transact(
                 lambda joined, rest=steps[index + 1 :], seen=current, scope=joining_database: (
-                    _run_actions(joined, rest, seen, scope, scope_for)
+                    _run_actions(joined, rest, target, seen, scope, scope_for)
                 ),
                 **step.keywords,
             )
         elif action == "terminate":
             raise AssertionError(
-                "`terminate` has no legal target on the non-temporal account.yaml model "
+                "`terminate` has no legal target: no boundary target declares one "
                 "(no reachable boundary case authors it)"
             )
         else:  # pragma: no cover - m-case-format's `when.boundary.action` enum is closed
             raise AssertionError(f"unrecognized boundary action {action!r}")
     return current
+
+
+def _refuse_beyond_the_account(action: str, target: BoundaryTarget[Any]) -> None:
+    if target is not _ACCOUNT_TARGET:
+        raise AssertionError(
+            f"a `{action}` action is declared only on the account.yaml target "
+            "(no reachable boundary case authors it on another model)"
+        )
 
 
 def _joining_database(

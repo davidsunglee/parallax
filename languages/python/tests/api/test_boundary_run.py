@@ -24,9 +24,13 @@ from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
     execution_lifecycle_observation,
 )
-from parallax.conformance.boundary_runner import BoundaryAbort, fault_injecting_adapter
+from parallax.conformance.boundary_runner import (
+    BoundaryAbort,
+    BoundaryTarget,
+    fault_injecting_adapter,
+)
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.story_models import Account
+from parallax.core import Entity
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ConnectionAcquisitionError
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
@@ -62,13 +66,16 @@ class _Principal:
 
 def _make_body(
     steps: list[boundary_runner.BoundaryStep],
+    target: BoundaryTarget[Any],
     *,
     raise_after: bool,
     db: ScopedDatabase,
     scope_for: Callable[[case_format.ActorSelection], ScopedDatabase],
-) -> Any:  # Callable[[Transaction], Account | None]
-    def body(tx: Transaction) -> Account | None:
-        result = boundary_runner.run_boundary_actions(tx, steps, database=db, scope_for=scope_for)
+) -> Any:  # Callable[[Transaction], Entity | None]
+    def body(tx: Transaction) -> Entity | None:
+        result = boundary_runner.run_boundary_actions(
+            tx, steps, target, database=db, scope_for=scope_for
+        )
         if raise_after:
             raise BoundaryAbort("scripted abort — no injected fault (m-unit-work-004)")
         return result
@@ -79,28 +86,29 @@ def _make_body(
 def _assert_outcome(
     case: case_format.Case,
     outcome: str,
-    run: Callable[[], Account | None],
+    run: Callable[[], Entity | None],
     *,
     steps: list[boundary_runner.BoundaryStep],
+    target: BoundaryTarget[Any],
     fault: str | None,
     verify_db: ScopedDatabase,
 ) -> None:
     """Invoke the boundary and assert it ends as ``outcome`` states, leaving the
-    persisted balance that outcome implies."""
+    persisted amount that outcome implies."""
     if outcome == "committed":
         result = run()
         assert result is not None
-        expected_balance = (
-            Decimal("251.00")
-            if any(step.action == "update" for step in steps)
-            else Decimal("250.00")
+        expected_amount = (
+            target.committed if any(step.action == "update" for step in steps) else target.baseline
         )
-        assert result.balance == expected_balance
-        assert _persisted_balance(verify_db) == expected_balance, "the committed write must persist"
+        assert target.amount(result) == expected_amount
+        assert _persisted_amount(verify_db, target) == expected_amount, (
+            "the committed write must persist"
+        )
     elif outcome == "aborted":
         with raises_contextualized(BoundaryAbort):
             run()
-        assert _persisted_balance(verify_db) == Decimal("250.00"), (
+        assert _persisted_amount(verify_db, target) == target.baseline, (
             "the withheld, force-flushed write must never persist"
         )
     elif outcome == "optimistic-lock-conflict":
@@ -109,7 +117,7 @@ def _assert_outcome(
     elif outcome == "option-conflict":
         with raises_contextualized(TransactionOptionConflictError):
             run()
-        assert _persisted_balance(verify_db) == Decimal("250.00"), (
+        assert _persisted_amount(verify_db, target) == target.baseline, (
             "a refused joining option dooms the boundary it tried to renegotiate"
         )
     elif outcome == "authority-mismatch":
@@ -143,11 +151,8 @@ def _assert_outcome(
         assert excinfo.value.category == category, (case.case_id, excinfo.value)
 
 
-def _persisted_balance(verify_db: ScopedDatabase) -> Decimal:
-    verify = verify_db.transact(
-        lambda tx: tx.find(Account.where(Account.id == boundary_runner.TARGET_ID)).result()
-    )
-    return verify.balance
+def _persisted_amount(verify_db: ScopedDatabase, target: BoundaryTarget[Any]) -> Decimal:
+    return target.amount(verify_db.transact(target.find))
 
 
 @pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
@@ -163,6 +168,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
         pytest.skip(f"{case.case_id} states no outcome for {dialect.name}")
     profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
     meta = MODELS[Path(case.model).stem]
+    target = boundary_runner.boundary_target(case)
 
     # Two seams, each carried its own way: the root record the case configures
     # goes to `connect`, and exactly the fields `when.uow` authored go to the
@@ -229,12 +235,14 @@ def test_boundary_case_runs_through_the_shipped_surface(
     request.addfinalizer(verify_root.close)
     verify_db = verify_root.using_database_login()
     raise_after = fault is None and outcome == "aborted"
-    body = _make_body(steps, raise_after=raise_after, db=db, scope_for=scope_for)
+    body = _make_body(steps, target, raise_after=raise_after, db=db, scope_for=scope_for)
 
-    def run() -> Account | None:
+    def run() -> Entity | None:
         return db.transact(body, **requests)
 
-    _assert_outcome(case, outcome, run, steps=steps, fault=fault, verify_db=verify_db)
+    _assert_outcome(
+        case, outcome, run, steps=steps, target=target, fault=fault, verify_db=verify_db
+    )
 
     # How many attempts ran is what the boundary itself did — one Transaction
     # Attempt activity is one physical attempt — never a count the fault
@@ -275,7 +283,8 @@ def test_boundary_case_runs_through_the_shipped_surface(
 
 def test_reachable_boundary_cases_cover_the_expected_population() -> None:
     # Grep-verified complete set (the corpus's complete boundary
-    # population): `m-auto-retry-001..011`, `m-opt-lock-010/011/024/025`,
+    # population): `m-auto-retry-001..011`, `m-opt-lock-010/011/024/025`, its
+    # Transaction-Time-Only analogue `m-temporal-read-011`,
     # `m-unit-work-004`, the isolation pair `m-unit-work-035/036`, the five
     # root-configured join cases `m-unit-work-037..041`, and the six
     # `m-execution-lifecycle` spine cases whose observables need an injected
@@ -309,6 +318,7 @@ def test_reachable_boundary_cases_cover_the_expected_population() -> None:
         "m-opt-lock-011",
         "m-opt-lock-024",
         "m-opt-lock-025",
+        "m-temporal-read-011",
         "m-unit-work-004",
         "m-unit-work-035",
         "m-unit-work-036",

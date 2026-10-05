@@ -1,45 +1,33 @@
-# Optimistic temporal close RETRY after conflict — the `attempts` 0-then-1
-# transition on the gated close (m-temporal-read + m-opt-lock retry contract, the
-# m-opt-lock-007 analogue for a temporal entity).
+# Boundary case (m-temporal-read, m-opt-lock retry contract): a Database Root
+# configured with `retryOptimisticConflicts: true` auto-retries an optimistic-lock
+# conflict on a Transaction-Time-Only milestone write — the temporal analogue of
+# `m-opt-lock-024` — `api-conformance` lane.
+#
+# It carries the retry the conflict form pinned: the gated close of the observed
+# milestone conflicts once, and the retry re-reads and closes it, so the temporal
+# write re-runs through the real retry loop and commits on its second attempt. The
+# stale gate itself is `m-temporal-read-010`'s race. That the retried close gates on
+# the Transaction-Time start its retry re-read is no observable a boundary case
+# carries (it states no golden SQL), so it rests with each binding's own
+# unit-of-work tests.
 model: models/balance.yaml
-tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-snapshot-1, slice-managed-1]
-shape: conflict
+tags: [m-temporal-read, m-opt-lock, m-auto-retry, m-txtime-write, m-api-conformance, temporal, audit-only, conflict, success, database-options, slice-snapshot-1, slice-managed-1]
+lane: api-conformance
+shape: boundary
 compileEligibility:
   mode: run-only
   reason: single-connection
-  note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
 given:
-  apply:
-    - sql: "update balance set out_z = '2024-09-01T00:00:00+00:00' where bal_id = 2 and out_z = 'infinity'"
-    - sql: "insert into balance(bal_id, acct_num, val, in_z, out_z) values (2, 'B', 999.00, '2024-09-01T00:00:00+00:00', 'infinity')"
+  fault: optimistic-lock-conflict
+  databaseOptions:
+    retryOptimisticConflicts: true
 when:
-  uow:
-    concurrency: optimistic
-  attempts:
-    - note: stale close — gates on the observed in_z 2024-02-01, which no longer matches ⇒ 0 rows
-      write: { id: 2 }
-      at: "2024-10-01T00:00:00.000000Z"
-      observedTxStart: "2024-02-01T00:00:00.000000Z"
-      statements:
-        - sql:
-            postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
-          binds: ["2024-10-01T00:00:00.000000Z", 2, infinity, "2024-02-01T00:00:00.000000Z"]
-      affectedRows: 0
-    - note: retry — re-read the fresh current in_z (2024-09-01) and re-apply ⇒ 1 row closed
-      write: { id: 2 }
-      at: "2024-10-01T00:00:00.000000Z"
-      observedTxStart: "2024-09-01T00:00:00.000000Z"
-      statements:
-        - sql:
-            postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
-          binds: ["2024-10-01T00:00:00.000000Z", 2, infinity, "2024-09-01T00:00:00.000000Z"]
-      affectedRows: 1
+  boundary:
+    - action: read
+      note: observe the current milestone (records its Transaction-Time start)
+    - action: update
+      note: the gated close conflicts once before its chained insert runs, then the root's opt-in re-reads, closes, and chains
 then:
-  roundTrips: 2
-  tableState:
-    balance:
-      - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
-      - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
-      - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: "2024-09-01T00:00:00.000000Z" }
-      - { bal_id: 2, acct_num: B, val: "999.00", in_z: "2024-09-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
-      - { bal_id: 3, acct_num: C, val: "50.00", in_z: "2024-03-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }
+  outcome: committed
+  roundTrips: 5
