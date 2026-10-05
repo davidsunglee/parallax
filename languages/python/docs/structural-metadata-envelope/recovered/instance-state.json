@@ -69,14 +69,14 @@
   "errors": [],
   "incomplete": [],
   "provenance": {
-    "budgetContract": "schemaVersion: 1\nauthority:\n  machine: Mac17,4\n  cpu: Apple M5\n  cores: 10\n  ramGiB: 32\n  cpython: 3.14.7\n  postgres: \"18.6\"\nsampling:\n  timing:\n    warmups: 3\n    measured: 9\n    medianMeetsCeiling: true\n    secondSlowestMax: 1.25\n  memory:\n    children: 3\n    collectAtPageBoundary: true\n    medianMeetsCeiling: true\n    individualMax: 1.10\n    scalingArms: [200, 2000]\n    armGrowthMaxKiB: 16\nworkloads:\n  conventional-fanout:\n    fixture: benchmarks/stream.yaml\n    cells:\n      live:\n        eager: { maxMs: 12.5, minRootsPerSecond: 16000 }\n        page32: { maxMs: 20, minRootsPerSecond: 10000 }\n        page128: { maxMs: 15.5, minRootsPerSecond: 12903 }\n      firstResult:\n        page1: { maxMs: 1.5 }\n        page32: { maxMs: 2.5 }\n      providerFreeCpu:\n        eager: { maxMs: 10.5, minRootsPerSecond: 19048 }\n        page32: { maxMs: 13, minRootsPerSecond: 15385 }\n      eagerMemory: { retainedKiB: 800, peakKiB: 1350 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 256\n        page128PeakKiB: 768\n  duplicate-include:\n    fixture: benchmarks/duplicate-include.yaml\n    cells:\n      live:\n        eager: { maxMs: 18, minRootsPerSecond: 11111 }\n        page32: { maxMs: 24, minRootsPerSecond: 8333 }\n        page128: { maxMs: 22, minRootsPerSecond: 9091 }\n      firstResult:\n        page1: { maxMs: 1.5 }\n        page32: { maxMs: 3.0 }\n      providerFreeCpu:\n        eager: { maxMs: 14.5, minRootsPerSecond: 13793 }\n        page32: { maxMs: 17, minRootsPerSecond: 11765 }\n      eagerMemory: { retainedKiB: 820, peakKiB: 1500 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 320\n        page128PeakKiB: 1200\n  document-heavy:\n    fixture: benchmarks/document-layout.yaml\n    cells:\n      live:\n        eager: { maxMs: 22, minRootsPerSecond: 9091 }\n        page32: { maxMs: 28, minRootsPerSecond: 7143 }\n        page128: { maxMs: 27, minRootsPerSecond: 7407 }\n      firstResult:\n        page1: { maxMs: 2.0 }\n        page32: { maxMs: 3.5 }\n      eagerMemory: { retainedKiB: 975, peakKiB: 1900 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 96\n        page32PeakKiB: 400\n        page128PeakKiB: 1280\n  versioned-document:\n    fixture: benchmarks/versioned-document.yaml\n    cells:\n      live:\n        eager: { maxMs: 5.5, minRootsPerSecond: 36364 }\n        page32: { maxMs: 8, minRootsPerSecond: 25000 }\n        page128: { maxMs: 6.75, minRootsPerSecond: 29630 }\n      firstResult:\n        page1: { maxMs: 0.6 }\n        page32: { maxMs: 1.0 }\n      eagerMemory: { retainedKiB: 275, peakKiB: 475 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 144\n        page128PeakKiB: 336\n  bitemporal-current:\n    fixture: benchmarks/bitemporal-current.yaml\n    cells:\n      live:\n        eager: { maxMs: 6.5, minRootsPerSecond: 30769 }\n        page32: { maxMs: 10, minRootsPerSecond: 20000 }\n        page128: { maxMs: 8, minRootsPerSecond: 25000 }\n      firstResult:\n        page1: { maxMs: 1.0 }\n        page32: { maxMs: 1.25 }\n      eagerMemory: { retainedKiB: 330, peakKiB: 425 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 144\n        page128PeakKiB: 352\n  stress-columns:\n    fixture: benchmarks/materialization-stress-columns.yaml\n    cells:\n      stress:\n        maxUsPerProjection: 175\n        minProjectionsPerSecond: 5714\n        retainedBPerProjection: 2800\n        transientBPerProjection: 3328\n        peakFor64KiB: 400\n        preparedSetKiB: 64\n  stress-document:\n    fixture: benchmarks/materialization-stress-document.yaml\n    cells:\n      stress:\n        maxUsPerProjection: 210\n        minProjectionsPerSecond: 4762\n        retainedBPerProjection: 3200\n        transientBPerProjection: 3328\n        peakFor64KiB: 425\n        preparedSetKiB: 80\n",
-    "budgetContractDigest": "f128baab568d9a50e30e569fa12e5d77f6dc67f4b7407970b0af4790608a9257",
-    "commit": "dc65ef88487bcf556658389e320c20dd646825ac",
+    "budgetContract": "schemaVersion: 1\nauthority:\n  machine: Mac17,4\n  cpu: Apple M5\n  cores: 10\n  ramGiB: 32\n  cpython: 3.14.8\n  postgres: \"18.6\"\nsampling:\n  timing:\n    warmups: 3\n    measured: 9\n    medianMeetsCeiling: true\n    secondSlowestMax: 1.25\n  memory:\n    children: 3\n    collectAtPageBoundary: true\n    medianMeetsCeiling: true\n    individualMax: 1.10\n    scalingArms: [200, 2000]\n    armGrowthMaxKiB: 16\nworkloads:\n  conventional-fanout:\n    fixture: benchmarks/stream.yaml\n    cells:\n      live:\n        eager: { maxMs: 12.5, minRootsPerSecond: 16000 }\n        page32: { maxMs: 20, minRootsPerSecond: 10000 }\n        page128: { maxMs: 15.5, minRootsPerSecond: 12903 }\n      firstResult:\n        page1: { maxMs: 1.5 }\n        page32: { maxMs: 2.5 }\n      providerFreeCpu:\n        eager: { maxMs: 10.5, minRootsPerSecond: 19048 }\n        page32: { maxMs: 13, minRootsPerSecond: 15385 }\n      eagerMemory: { retainedKiB: 800, peakKiB: 1350 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 256\n        page128PeakKiB: 768\n  duplicate-include:\n    fixture: benchmarks/duplicate-include.yaml\n    cells:\n      live:\n        eager: { maxMs: 18, minRootsPerSecond: 11111 }\n        page32: { maxMs: 24, minRootsPerSecond: 8333 }\n        page128: { maxMs: 22, minRootsPerSecond: 9091 }\n      firstResult:\n        page1: { maxMs: 1.5 }\n        page32: { maxMs: 3.0 }\n      providerFreeCpu:\n        eager: { maxMs: 14.5, minRootsPerSecond: 13793 }\n        page32: { maxMs: 17, minRootsPerSecond: 11765 }\n      eagerMemory: { retainedKiB: 820, peakKiB: 1500 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 320\n        page128PeakKiB: 1200\n  document-heavy:\n    fixture: benchmarks/document-layout.yaml\n    cells:\n      live:\n        eager: { maxMs: 22, minRootsPerSecond: 9091 }\n        page32: { maxMs: 28, minRootsPerSecond: 7143 }\n        page128: { maxMs: 27, minRootsPerSecond: 7407 }\n      firstResult:\n        page1: { maxMs: 2.0 }\n        page32: { maxMs: 3.5 }\n      eagerMemory: { retainedKiB: 975, peakKiB: 1900 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 96\n        page32PeakKiB: 400\n        page128PeakKiB: 1280\n  versioned-document:\n    fixture: benchmarks/versioned-document.yaml\n    cells:\n      live:\n        eager: { maxMs: 5.5, minRootsPerSecond: 36364 }\n        page32: { maxMs: 8, minRootsPerSecond: 25000 }\n        page128: { maxMs: 6.75, minRootsPerSecond: 29630 }\n      firstResult:\n        page1: { maxMs: 0.6 }\n        page32: { maxMs: 1.0 }\n      eagerMemory: { retainedKiB: 275, peakKiB: 475 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 144\n        page128PeakKiB: 336\n  bitemporal-current:\n    fixture: benchmarks/bitemporal-current.yaml\n    cells:\n      live:\n        eager: { maxMs: 6.5, minRootsPerSecond: 30769 }\n        page32: { maxMs: 10, minRootsPerSecond: 20000 }\n        page128: { maxMs: 8, minRootsPerSecond: 25000 }\n      firstResult:\n        page1: { maxMs: 1.0 }\n        page32: { maxMs: 1.25 }\n      eagerMemory: { retainedKiB: 330, peakKiB: 425 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 144\n        page128PeakKiB: 352\n  stress-columns:\n    fixture: benchmarks/materialization-stress-columns.yaml\n    cells:\n      stress:\n        maxUsPerProjection: 175\n        minProjectionsPerSecond: 5714\n        retainedBPerProjection: 2800\n        transientBPerProjection: 3328\n        peakFor64KiB: 400\n        preparedSetKiB: 64\n  stress-document:\n    fixture: benchmarks/materialization-stress-document.yaml\n    cells:\n      stress:\n        maxUsPerProjection: 210\n        minProjectionsPerSecond: 4762\n        retainedBPerProjection: 3200\n        transientBPerProjection: 3328\n        peakFor64KiB: 425\n        preparedSetKiB: 80\n",
+    "budgetContractDigest": "422106570ad6bcf7e945c173f3627277e33fc896aabc52f61ce9d4ee6fede9c0",
+    "commit": "189def2327fc0749f4c7cddfb8e1326850602852",
     "cores": 10,
     "cpu": "Apple M5",
-    "cpython": "3.14.7",
+    "cpython": "3.14.8",
     "dirty": false,
-    "lockDigest": "e8c852747e67dffa08cab5899fd071e1373cf7a9ed47a34558c26e1af06b43d3",
+    "lockDigest": "49998acc6af068bac67833bbcb1680b01bbcac35a9c10e3406cf9b30b208c8f1",
     "machine": "Mac17,4",
     "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
     "postgres": "not-used",
@@ -169,14 +169,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 781.091648968868,
+      "value": 799.0896003320813,
       "workload": "cpython-3.13/shallow"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 175.57535611558706,
+      "value": 223.7433916889131,
       "workload": "cpython-3.13/shallow"
     },
     {
@@ -197,14 +197,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 25.942750653484836,
+      "value": 25.984372769016773,
       "workload": "cpython-3.13/shallow"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 714.2500035115518,
+      "value": 723.1454947032034,
       "workload": "cpython-3.13/shallow"
     },
     {
@@ -253,14 +253,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 2789.7687497898005,
+      "value": 2772.858351818286,
       "workload": "cpython-3.13/shallow"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 188.85625177063048,
+      "value": 196.47464796435088,
       "workload": "cpython-3.13/shallow"
     },
     {
@@ -281,14 +281,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 25.37500040489249,
+      "value": 25.89062205515802,
       "workload": "cpython-3.13/shallow"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 700.8335014688782,
+      "value": 718.3539855759591,
       "workload": "cpython-3.13/shallow"
     },
     {
@@ -337,42 +337,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 2054.3437502055895,
+      "value": 2038.2874994538724,
       "workload": "cpython-3.13/shallow"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1333.2187438209075,
+      "value": 1345.796009991318,
       "workload": "cpython-3.13/shallow"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 204.9907823675312,
+      "value": 213.77071388997138,
       "workload": "cpython-3.13/shallow"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 204.9907823675312,
+      "value": 213.77071388997138,
       "workload": "cpython-3.13/shallow"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 88.71350109984633,
+      "value": 87.6615013112314,
       "workload": "cpython-3.13/shallow"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1354.3750028475188,
+      "value": 1390.5204832553864,
       "workload": "cpython-3.13/shallow"
     },
     {
@@ -428,21 +428,21 @@
       "cell": "compact.projectionNs",
       "samples": [],
       "unit": "ns",
-      "value": 8690.082999237347,
+      "value": 8957.354497397318,
       "workload": "cpython-3.13/shallow"
     },
     {
       "cell": "compact.projectionReuseNs",
       "samples": [],
       "unit": "ns",
-      "value": 5279.383349989076,
+      "value": 5507.195799145848,
       "workload": "cpython-3.13/shallow"
     },
     {
       "cell": "compact.directWireNs",
       "samples": [],
       "unit": "ns",
-      "value": 6941.72899966361,
+      "value": 7142.749993363395,
       "workload": "cpython-3.13/shallow"
     },
     {
@@ -505,14 +505,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 1754.929200251354,
+      "value": 1733.3229508949444,
       "workload": "cpython-3.13/wide"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 167.50829890952446,
+      "value": 197.07253959495574,
       "workload": "cpython-3.13/wide"
     },
     {
@@ -533,14 +533,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 22.818999696028186,
+      "value": 22.45703035441693,
       "workload": "cpython-3.13/wide"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1145.6664942670614,
+      "value": 1122.0834858249873,
       "workload": "cpython-3.13/wide"
     },
     {
@@ -589,14 +589,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 7945.622949773679,
+      "value": 7994.156249333173,
       "workload": "cpython-3.13/wide"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 210.73105090181343,
+      "value": 121.92726135253906,
       "workload": "cpython-3.13/wide"
     },
     {
@@ -617,14 +617,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 22.345062461681664,
+      "value": 21.880217900616117,
       "workload": "cpython-3.13/wide"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1187.958499940578,
+      "value": 1164.7914943750948,
       "workload": "cpython-3.13/wide"
     },
     {
@@ -673,42 +673,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 2612.9041500098538,
+      "value": 2608.737497939728,
       "workload": "cpython-3.13/wide"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1382.1583495882805,
+      "value": 1327.0540250232443,
       "workload": "cpython-3.13/wide"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 216.35090961353853,
+      "value": 222.687516361475,
       "workload": "cpython-3.13/wide"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 216.35090961353853,
+      "value": 222.687516361475,
       "workload": "cpython-3.13/wide"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 79.25781255835318,
+      "value": 79.26953185233288,
       "workload": "cpython-3.13/wide"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 2407.5419933069497,
+      "value": 2428.6455009132624,
       "workload": "cpython-3.13/wide"
     },
     {
@@ -764,21 +764,21 @@
       "cell": "compact.projectionNs",
       "samples": [],
       "unit": "ns",
-      "value": 9286.729502491653,
+      "value": 9387.541504111141,
       "workload": "cpython-3.13/wide"
     },
     {
       "cell": "compact.projectionReuseNs",
       "samples": [],
       "unit": "ns",
-      "value": 7323.435349826468,
+      "value": 7442.610451835208,
       "workload": "cpython-3.13/wide"
     },
     {
       "cell": "compact.directWireNs",
       "samples": [],
       "unit": "ns",
-      "value": 6881.542001792695,
+      "value": 6761.541502783075,
       "workload": "cpython-3.13/wide"
     },
     {
@@ -841,14 +841,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 6079.741649591597,
+      "value": 6004.841698450036,
       "workload": "cpython-3.13/nested"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 281.13334919908084,
+      "value": 279.44980829488486,
       "workload": "cpython-3.13/nested"
     },
     {
@@ -869,14 +869,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 26.295799762010574,
+      "value": 26.237504789605737,
       "workload": "cpython-3.13/nested"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 2531.125006498769,
+      "value": 2507.604018319398,
       "workload": "cpython-3.13/nested"
     },
     {
@@ -925,14 +925,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 10265.000000072177,
+      "value": 10196.229151915759,
       "workload": "cpython-3.13/nested"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 93.33299822174013,
+      "value": 301.8128336407244,
       "workload": "cpython-3.13/nested"
     },
     {
@@ -953,14 +953,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 25.195800117217004,
+      "value": 25.2666010055691,
       "workload": "cpython-3.13/nested"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 2526.896001654677,
+      "value": 2733.8960207998753,
       "workload": "cpython-3.13/nested"
     },
     {
@@ -1009,42 +1009,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 6811.037549778119,
+      "value": 6859.150002128445,
       "workload": "cpython-3.13/nested"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1510.10794870672,
+      "value": 1511.5999995032325,
       "workload": "cpython-3.13/nested"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 343.56079850112565,
+      "value": 333.53307808283716,
       "workload": "cpython-3.13/nested"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 343.56079850112565,
+      "value": 333.53307808283716,
       "workload": "cpython-3.13/nested"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 85.10000043315813,
+      "value": 82.91659760288894,
       "workload": "cpython-3.13/nested"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 5916.395493841264,
+      "value": 5913.500004680827,
       "workload": "cpython-3.13/nested"
     },
     {
@@ -1100,21 +1100,21 @@
       "cell": "compact.projectionNs",
       "samples": [],
       "unit": "ns",
-      "value": 14179.750003677327,
+      "value": 14493.708498775959,
       "workload": "cpython-3.13/nested"
     },
     {
       "cell": "compact.projectionReuseNs",
       "samples": [],
       "unit": "ns",
-      "value": 12181.295800110096,
+      "value": 12462.306252564307,
       "workload": "cpython-3.13/nested"
     },
     {
       "cell": "compact.directWireNs",
       "samples": [],
       "unit": "ns",
-      "value": 10584.79149651248,
+      "value": 10529.646009672433,
       "workload": "cpython-3.13/nested"
     },
     {
@@ -1177,14 +1177,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 1208.6832997738384,
+      "value": 1258.2249502884224,
       "workload": "cpython-3.13/nullable"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 214.40020063892007,
+      "value": 205.5045304587111,
       "workload": "cpython-3.13/nullable"
     },
     {
@@ -1205,14 +1205,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 21.41250006388873,
+      "value": 25.174999609589577,
       "workload": "cpython-3.13/nullable"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 861.3544996478595,
+      "value": 917.5210143439472,
       "workload": "cpython-3.13/nullable"
     },
     {
@@ -1261,14 +1261,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 5431.612499523908,
+      "value": 5517.349948058836,
       "workload": "cpython-3.13/nullable"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 261.80400454904884,
+      "value": 152.6920619653538,
       "workload": "cpython-3.13/nullable"
     },
     {
@@ -1289,14 +1289,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 20.716700237244368,
+      "value": 20.77289973385632,
       "workload": "cpython-3.13/nullable"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 868.3330015628599,
+      "value": 894.1454871091992,
       "workload": "cpython-3.13/nullable"
     },
     {
@@ -1345,42 +1345,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 2298.320850240998,
+      "value": 2309.0020491508767,
       "workload": "cpython-3.13/nullable"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1361.1791480798274,
+      "value": 1357.0814538979903,
       "workload": "cpython-3.13/nullable"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 211.9752243743278,
+      "value": 217.8948459913954,
       "workload": "cpython-3.13/nullable"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 211.9752243743278,
+      "value": 217.8948459913954,
       "workload": "cpython-3.13/nullable"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 75.1270999899134,
+      "value": 75.04170062020421,
       "workload": "cpython-3.13/nullable"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1803.1459985650145,
+      "value": 1804.0415016002953,
       "workload": "cpython-3.13/nullable"
     },
     {
@@ -1436,21 +1436,21 @@
       "cell": "compact.projectionNs",
       "samples": [],
       "unit": "ns",
-      "value": 7853.874994907528,
+      "value": 7729.916484095156,
       "workload": "cpython-3.13/nullable"
     },
     {
       "cell": "compact.projectionReuseNs",
       "samples": [],
       "unit": "ns",
-      "value": 6005.641700176058,
+      "value": 6160.725050722249,
       "workload": "cpython-3.13/nullable"
     },
     {
       "cell": "compact.directWireNs",
       "samples": [],
       "unit": "ns",
-      "value": 5515.45850612456,
+      "value": 5603.1249987427145,
       "workload": "cpython-3.13/nullable"
     },
     {
@@ -1513,14 +1513,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 951.4396006125025,
+      "value": 943.7937493203208,
       "workload": "cpython-3.13/partial"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 203.01889890106395,
+      "value": 215.68524825852364,
       "workload": "cpython-3.13/partial"
     },
     {
@@ -1541,14 +1541,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 21.595849830191582,
+      "value": 22.716648527421057,
       "workload": "cpython-3.13/partial"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 886.6665011737496,
+      "value": 905.0210064742714,
       "workload": "cpython-3.13/partial"
     },
     {
@@ -1597,14 +1597,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 5074.187499849359,
+      "value": 5140.500050038099,
       "workload": "cpython-3.13/partial"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 264.50000077602454,
+      "value": 185.7914379797876,
       "workload": "cpython-3.13/partial"
     },
     {
@@ -1625,14 +1625,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 21.052049851277843,
+      "value": 22.808299399912357,
       "workload": "cpython-3.13/partial"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 867.4165001139045,
+      "value": 886.3124821800739,
       "workload": "cpython-3.13/partial"
     },
     {
@@ -1681,42 +1681,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 2149.2874504474457,
+      "value": 2115.358298760839,
       "workload": "cpython-3.13/partial"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1345.192046574084,
+      "value": 1350.7042109267786,
       "workload": "cpython-3.13/partial"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 213.56554789235815,
+      "value": 227.25070593878627,
       "workload": "cpython-3.13/partial"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 213.56554789235815,
+      "value": 227.25070593878627,
       "workload": "cpython-3.13/partial"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 75.43335013906471,
+      "value": 75.84794948343188,
       "workload": "cpython-3.13/partial"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1831.895497161895,
+      "value": 1850.6665073800832,
       "workload": "cpython-3.13/partial"
     },
     {
@@ -1772,21 +1772,21 @@
       "cell": "compact.projectionNs",
       "samples": [],
       "unit": "ns",
-      "value": 6946.228997549042,
+      "value": 7016.083021881059,
       "workload": "cpython-3.13/partial"
     },
     {
       "cell": "compact.projectionReuseNs",
       "samples": [],
       "unit": "ns",
-      "value": 5357.464600820094,
+      "value": 5503.931298153475,
       "workload": "cpython-3.13/partial"
     },
     {
       "cell": "compact.directWireNs",
       "samples": [],
       "unit": "ns",
-      "value": 5017.395997128915,
+      "value": 4997.854004614055,
       "workload": "cpython-3.13/partial"
     },
     {
@@ -1849,14 +1849,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 1046.14380034036,
+      "value": 1106.6625476814806,
       "workload": "cpython-3.13/polymorphic"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 190.2102005260531,
+      "value": 151.42046031542122,
       "workload": "cpython-3.13/polymorphic"
     },
     {
@@ -1877,14 +1877,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 24.163642332756094,
+      "value": 22.151786002463528,
       "workload": "cpython-3.13/polymorphic"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 769.1249993513338,
+      "value": 816.6455081664026,
       "workload": "cpython-3.13/polymorphic"
     },
     {
@@ -1933,14 +1933,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 4170.1604503032295,
+      "value": 4221.1249499814585,
       "workload": "cpython-3.13/polymorphic"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 150.50604924908748,
+      "value": 129.54205449204892,
       "workload": "cpython-3.13/polymorphic"
     },
     {
@@ -1961,14 +1961,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 23.931499786808022,
+      "value": 22.583287708195193,
       "workload": "cpython-3.13/polymorphic"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 794.6250043460168,
+      "value": 809.2710049822927,
       "workload": "cpython-3.13/polymorphic"
     },
     {
@@ -2017,42 +2017,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 2229.743700445397,
+      "value": 2204.452099977061,
       "workload": "cpython-3.13/polymorphic"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1284.6732955949847,
+      "value": 1349.9018852598965,
       "workload": "cpython-3.13/polymorphic"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 214.13113427115604,
+      "value": 197.81070295721292,
       "workload": "cpython-3.13/polymorphic"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 214.13113427115604,
+      "value": 197.81070295721292,
       "workload": "cpython-3.13/polymorphic"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 80.21128659103331,
+      "value": 77.40178261883557,
       "workload": "cpython-3.13/polymorphic"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1591.0000001895241,
+      "value": 1648.4165098518133,
       "workload": "cpython-3.13/polymorphic"
     },
     {
@@ -2108,21 +2108,21 @@
       "cell": "compact.projectionNs",
       "samples": [],
       "unit": "ns",
-      "value": 7573.729002615437,
+      "value": 7754.45849285461,
       "workload": "cpython-3.13/polymorphic"
     },
     {
       "cell": "compact.projectionReuseNs",
       "samples": [],
       "unit": "ns",
-      "value": 5794.522899668664,
+      "value": 5872.4561997223645,
       "workload": "cpython-3.13/polymorphic"
     },
     {
       "cell": "compact.directWireNs",
       "samples": [],
       "unit": "ns",
-      "value": 5794.81250315439,
+      "value": 5720.708519220352,
       "workload": "cpython-3.13/polymorphic"
     },
     {
@@ -2185,14 +2185,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 1759.0353993000463,
+      "value": 1745.2438012696803,
       "workload": "cpython-3.13/warmed"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 190.67310204263777,
+      "value": 190.54768490605056,
       "workload": "cpython-3.13/warmed"
     },
     {
@@ -2213,14 +2213,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 25.86974915175233,
+      "value": 25.76037513790652,
       "workload": "cpython-3.13/warmed"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 716.4374983403832,
+      "value": 726.0415004566312,
       "workload": "cpython-3.13/warmed"
     },
     {
@@ -2269,14 +2269,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 3910.5500502046207,
+      "value": 3932.1562479017302,
       "workload": "cpython-3.13/warmed"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 85.59544658055438,
+      "value": 89.13525671232492,
       "workload": "cpython-3.13/warmed"
     },
     {
@@ -2297,14 +2297,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 25.301998903159983,
+      "value": 25.473877030890435,
       "workload": "cpython-3.13/warmed"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 711.5210028132424,
+      "value": 736.3749900832772,
       "workload": "cpython-3.13/warmed"
     },
     {
@@ -2353,42 +2353,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 4176.831200311427,
+      "value": 4122.991699841805,
       "workload": "cpython-3.13/warmed"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1586.0022976994505,
+      "value": 1765.195801272057,
       "workload": "cpython-3.13/warmed"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 245.99255702924575,
+      "value": 241.40336317941546,
       "workload": "cpython-3.13/warmed"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 245.99255702924575,
+      "value": 241.40336317941546,
       "workload": "cpython-3.13/warmed"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 91.82812391372863,
+      "value": 90.02087608678266,
       "workload": "cpython-3.13/warmed"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1718.4794996865094,
+      "value": 1784.437510650605,
       "workload": "cpython-3.13/warmed"
     },
     {
@@ -2486,63 +2486,63 @@
       "cell": "operation.construction.armAgainstArm",
       "samples": [],
       "unit": "ratio",
-      "value": 0.5088983698541458,
+      "value": 0.5059672114224106,
       "workload": "cpython-3.13"
     },
     {
       "cell": "operation.construction.likeForLike",
       "samples": [],
       "unit": "ratio",
-      "value": 0.4896220009077212,
+      "value": 0.4867777885816613,
       "workload": "cpython-3.13"
     },
     {
       "cell": "operation.construction.vsOrdinary",
       "samples": [],
       "unit": "ratio",
-      "value": 1.5357462872648058,
+      "value": 1.53090378147455,
       "workload": "cpython-3.13"
     },
     {
       "cell": "operation.attribute-read.armAgainstArm",
       "samples": [],
       "unit": "ratio",
-      "value": 3.490525313627207,
+      "value": 3.43485949536947,
       "workload": "cpython-3.13"
     },
     {
       "cell": "operation.attribute-read.likeForLike",
       "samples": [],
       "unit": "ratio",
-      "value": 3.490525313627207,
+      "value": 3.43485949536947,
       "workload": "cpython-3.13"
     },
     {
       "cell": "operation.attribute-read.vsOrdinary",
       "samples": [],
       "unit": "ratio",
-      "value": 3.4018463594596984,
+      "value": 3.3038372424585867,
       "workload": "cpython-3.13"
     },
     {
       "cell": "operation.serialization.armAgainstArm",
       "samples": [],
       "unit": "ratio",
-      "value": 2.1457270167687272,
+      "value": 2.086342358174621,
       "workload": "cpython-3.13"
     },
     {
       "cell": "operation.serialization.likeForLike",
       "samples": [],
       "unit": "ratio",
-      "value": 2.1457270167687272,
+      "value": 2.086342358174621,
       "workload": "cpython-3.13"
     },
     {
       "cell": "operation.serialization.vsOrdinary",
       "samples": [],
       "unit": "ratio",
-      "value": 2.157491234323132,
+      "value": 2.150421390759751,
       "workload": "cpython-3.13"
     },
     {
@@ -2605,14 +2605,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 810.783400083892,
+      "value": 825.5833497969434,
       "workload": "cpython-3.14/shallow"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 204.04959650477394,
+      "value": 185.249638161622,
       "workload": "cpython-3.14/shallow"
     },
     {
@@ -2633,14 +2633,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 28.04687392199412,
+      "value": 26.9009979092516,
       "workload": "cpython-3.14/shallow"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 744.4165021297522,
+      "value": 743.5625011567026,
       "workload": "cpython-3.14/shallow"
     },
     {
@@ -2689,14 +2689,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 2839.3603999575134,
+      "value": 2838.352051912807,
       "workload": "cpython-3.14/shallow"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 180.0770995032508,
+      "value": 244.50244673062116,
       "workload": "cpython-3.14/shallow"
     },
     {
@@ -2717,14 +2717,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 28.765625756932423,
+      "value": 27.515619876794517,
       "workload": "cpython-3.14/shallow"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 735.2914981311187,
+      "value": 741.5209838654846,
       "workload": "cpython-3.14/shallow"
     },
     {
@@ -2773,42 +2773,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 2106.99589952128,
+      "value": 2145.5354493809864,
       "workload": "cpython-3.14/shallow"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1412.9621020401828,
+      "value": 1352.04755642917,
       "workload": "cpython-3.14/shallow"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 211.99749171501026,
+      "value": 234.55852060578763,
       "workload": "cpython-3.14/shallow"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 211.99749171501026,
+      "value": 234.55852060578763,
       "workload": "cpython-3.14/shallow"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 87.55212365940679,
+      "value": 94.4895000429824,
       "workload": "cpython-3.14/shallow"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1423.7080031307414,
+      "value": 1421.9794829841703,
       "workload": "cpython-3.14/shallow"
     },
     {
@@ -2864,21 +2864,21 @@
       "cell": "compact.projectionNs",
       "samples": [],
       "unit": "ns",
-      "value": 9139.45799402427,
+      "value": 9155.16697568819,
       "workload": "cpython-3.14/shallow"
     },
     {
       "cell": "compact.projectionReuseNs",
       "samples": [],
       "unit": "ns",
-      "value": 5694.347950338852,
+      "value": 5839.987451327033,
       "workload": "cpython-3.14/shallow"
     },
     {
       "cell": "compact.directWireNs",
       "samples": [],
       "unit": "ns",
-      "value": 7209.312498162035,
+      "value": 7203.020475571975,
       "workload": "cpython-3.14/shallow"
     },
     {
@@ -2941,14 +2941,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 1745.1478997827508,
+      "value": 1679.1375004686415,
       "workload": "cpython-3.14/wide"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 171.26910097431391,
+      "value": 220.9455065894872,
       "workload": "cpython-3.14/wide"
     },
     {
@@ -2969,14 +2969,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 25.64453143349965,
+      "value": 24.718749045860022,
       "workload": "cpython-3.14/wide"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1168.2295007631183,
+      "value": 1142.4584954511374,
       "workload": "cpython-3.14/wide"
     },
     {
@@ -3025,14 +3025,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 7885.833299951628,
+      "value": 7866.204148740508,
       "workload": "cpython-3.14/wide"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 204.41669767023996,
+      "value": 307.44184914510697,
       "workload": "cpython-3.14/wide"
     },
     {
@@ -3053,14 +3053,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 25.401031052751932,
+      "value": 24.880187993403524,
       "workload": "cpython-3.14/wide"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1168.228998722043,
+      "value": 1169.7500012814999,
       "workload": "cpython-3.14/wide"
     },
     {
@@ -3109,42 +3109,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 2547.912549925968,
+      "value": 2560.943752177991,
       "workload": "cpython-3.14/wide"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1450.7539497571997,
+      "value": 1420.6812396878377,
       "workload": "cpython-3.14/wide"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 227.27743125869893,
+      "value": 223.90190861187875,
       "workload": "cpython-3.14/wide"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 227.27743125869893,
+      "value": 223.90190861187875,
       "workload": "cpython-3.14/wide"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 80.66796863204218,
+      "value": 84.4401256472338,
       "workload": "cpython-3.14/wide"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 2421.0835035773925,
+      "value": 2318.145503522828,
       "workload": "cpython-3.14/wide"
     },
     {
@@ -3200,21 +3200,21 @@
       "cell": "compact.projectionNs",
       "samples": [],
       "unit": "ns",
-      "value": 9612.125002604444,
+      "value": 9676.062501966953,
       "workload": "cpython-3.14/wide"
     },
     {
       "cell": "compact.projectionReuseNs",
       "samples": [],
       "unit": "ns",
-      "value": 7785.491649701726,
+      "value": 7966.462499462068,
       "workload": "cpython-3.14/wide"
     },
     {
       "cell": "compact.directWireNs",
       "samples": [],
       "unit": "ns",
-      "value": 6998.604003456421,
+      "value": 7035.645510768518,
       "workload": "cpython-3.14/wide"
     },
     {
@@ -3277,14 +3277,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 6220.191650209019,
+      "value": 6292.1625503804535,
       "workload": "cpython-3.14/nested"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 237.05834755673823,
+      "value": 167.00394917279482,
       "workload": "cpython-3.14/nested"
     },
     {
@@ -3305,14 +3305,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 26.60000027390197,
+      "value": 26.595802046358585,
       "workload": "cpython-3.14/nested"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 2616.833502543159,
+      "value": 2662.6250182744116,
       "workload": "cpython-3.14/nested"
     },
     {
@@ -3361,14 +3361,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 11036.497900931863,
+      "value": 10971.814600634389,
       "workload": "cpython-3.14/nested"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 286.0020940715913,
+      "value": 23.08140101376921,
       "workload": "cpython-3.14/nested"
     },
     {
@@ -3389,14 +3389,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 26.5499998931773,
+      "value": 27.300004148855805,
       "workload": "cpython-3.14/nested"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 2614.7085009142756,
+      "value": 2678.0415209941566,
       "workload": "cpython-3.14/nested"
     },
     {
@@ -3445,42 +3445,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 6584.3458505696635,
+      "value": 6679.8333515180275,
       "workload": "cpython-3.14/nested"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1612.1331500471551,
+      "value": 1618.3331521460786,
       "workload": "cpython-3.14/nested"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 299.56761427456877,
+      "value": 279.5218664687127,
       "workload": "cpython-3.14/nested"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 299.56761427456877,
+      "value": 279.5218664687127,
       "workload": "cpython-3.14/nested"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 85.40000126231462,
+      "value": 90.99160088226199,
       "workload": "cpython-3.14/nested"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 6112.0419995859265,
+      "value": 6245.374999707565,
       "workload": "cpython-3.14/nested"
     },
     {
@@ -3536,21 +3536,21 @@
       "cell": "compact.projectionNs",
       "samples": [],
       "unit": "ns",
-      "value": 15238.082996802405,
+      "value": 15489.771001739427,
       "workload": "cpython-3.14/nested"
     },
     {
       "cell": "compact.projectionReuseNs",
       "samples": [],
       "unit": "ns",
-      "value": 13305.879200197523,
+      "value": 13486.94164771587,
       "workload": "cpython-3.14/nested"
     },
     {
       "cell": "compact.directWireNs",
       "samples": [],
       "unit": "ns",
-      "value": 11369.93749969406,
+      "value": 11578.167002880946,
       "workload": "cpython-3.14/nested"
     },
     {
@@ -3613,14 +3613,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 1269.3291500909254,
+      "value": 1225.5937501322478,
       "workload": "cpython-3.14/nullable"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 199.56684991484508,
+      "value": 206.90624369308352,
       "workload": "cpython-3.14/nullable"
     },
     {
@@ -3641,14 +3641,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 25.489599647698924,
+      "value": 26.61460021045059,
       "workload": "cpython-3.14/nullable"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 902.4374958244152,
+      "value": 922.4790264852345,
       "workload": "cpython-3.14/nullable"
     },
     {
@@ -3697,14 +3697,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 5485.2708002727,
+      "value": 5475.187499541789,
       "workload": "cpython-3.14/nullable"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 228.4166963363541,
+      "value": 261.77099789492786,
       "workload": "cpython-3.14/nullable"
     },
     {
@@ -3725,14 +3725,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 23.906250135041773,
+      "value": 23.733300622552633,
       "workload": "cpython-3.14/nullable"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 919.9375053867698,
+      "value": 927.4579933844507,
       "workload": "cpython-3.14/nullable"
     },
     {
@@ -3781,42 +3781,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 2282.2999992058612,
+      "value": 2294.6561977732927,
       "workload": "cpython-3.14/nullable"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1495.4500045860186,
+      "value": 1405.8023050893098,
       "workload": "cpython-3.14/nullable"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 207.01671310234815,
+      "value": 207.94329175259918,
       "workload": "cpython-3.14/nullable"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 207.01671310234815,
+      "value": 207.94329175259918,
       "workload": "cpython-3.14/nullable"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 78.08959999238141,
+      "value": 81.92289969883859,
       "workload": "cpython-3.14/nullable"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1866.8544944375753,
+      "value": 1854.1874887887388,
       "workload": "cpython-3.14/nullable"
     },
     {
@@ -3872,21 +3872,21 @@
       "cell": "compact.projectionNs",
       "samples": [],
       "unit": "ns",
-      "value": 8009.479497559369,
+      "value": 8266.166492830962,
       "workload": "cpython-3.14/nullable"
     },
     {
       "cell": "compact.projectionReuseNs",
       "samples": [],
       "unit": "ns",
-      "value": 6510.885350144235,
+      "value": 6769.843751681037,
       "workload": "cpython-3.14/nullable"
     },
     {
       "cell": "compact.directWireNs",
       "samples": [],
       "unit": "ns",
-      "value": 5842.478996783029,
+      "value": 5955.917004030198,
       "workload": "cpython-3.14/nullable"
     },
     {
@@ -3949,14 +3949,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 956.2333500070963,
+      "value": 962.443751632236,
       "workload": "cpython-3.14/partial"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 207.9121484712232,
+      "value": 216.57724573742598,
       "workload": "cpython-3.14/partial"
     },
     {
@@ -3977,14 +3977,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 24.78749956935644,
+      "value": 23.5999992582947,
       "workload": "cpython-3.14/partial"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 886.021000042092,
+      "value": 916.4789807982743,
       "workload": "cpython-3.14/partial"
     },
     {
@@ -4033,14 +4033,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 5016.285400051856,
+      "value": 5241.952050710097,
       "workload": "cpython-3.14/partial"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 203.81860158522613,
+      "value": 142.0479384250939,
       "workload": "cpython-3.14/partial"
     },
     {
@@ -4061,14 +4061,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 23.57915000175126,
+      "value": 26.88750100787729,
       "workload": "cpython-3.14/partial"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 906.0209995368496,
+      "value": 960.7704996597022,
       "workload": "cpython-3.14/partial"
     },
     {
@@ -4117,42 +4117,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 2160.9250499750488,
+      "value": 2205.497949034907,
       "workload": "cpython-3.14/partial"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1393.6789517174475,
+      "value": 1416.4185704430565,
       "workload": "cpython-3.14/partial"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 225.826717360178,
+      "value": 234.96088106185198,
       "workload": "cpython-3.14/partial"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 225.826717360178,
+      "value": 234.96088106185198,
       "workload": "cpython-3.14/partial"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 78.33334966562688,
+      "value": 81.21459977701306,
       "workload": "cpython-3.14/partial"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1856.478993431665,
+      "value": 1897.3750120494515,
       "workload": "cpython-3.14/partial"
     },
     {
@@ -4208,21 +4208,21 @@
       "cell": "compact.projectionNs",
       "samples": [],
       "unit": "ns",
-      "value": 7238.37500117952,
+      "value": 7676.062494283542,
       "workload": "cpython-3.14/partial"
     },
     {
       "cell": "compact.projectionReuseNs",
       "samples": [],
       "unit": "ns",
-      "value": 5729.499999870313,
+      "value": 5934.241649811156,
       "workload": "cpython-3.14/partial"
     },
     {
       "cell": "compact.directWireNs",
       "samples": [],
       "unit": "ns",
-      "value": 5146.895993675571,
+      "value": 5284.874991048127,
       "workload": "cpython-3.14/partial"
     },
     {
@@ -4285,14 +4285,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 1095.722949685296,
+      "value": 1056.8062483798712,
       "workload": "cpython-3.14/polymorphic"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 189.56855274154805,
+      "value": 273.1312648393214,
       "workload": "cpython-3.14/polymorphic"
     },
     {
@@ -4313,14 +4313,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 25.988142754483437,
+      "value": 27.377998256789787,
       "workload": "cpython-3.14/polymorphic"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 799.3749968591146,
+      "value": 832.499994430691,
       "workload": "cpython-3.14/polymorphic"
     },
     {
@@ -4369,14 +4369,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 4026.8729004310444,
+      "value": 4142.010447685607,
       "workload": "cpython-3.14/polymorphic"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 208.18960038013756,
+      "value": 222.65605221036822,
       "workload": "cpython-3.14/polymorphic"
     },
     {
@@ -4397,14 +4397,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 26.458286031681514,
+      "value": 25.81842792486506,
       "workload": "cpython-3.14/polymorphic"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 800.4164992598817,
+      "value": 820.9790103137493,
       "workload": "cpython-3.14/polymorphic"
     },
     {
@@ -4453,42 +4453,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 2200.893749250099,
+      "value": 2219.97500048019,
       "workload": "cpython-3.14/polymorphic"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1412.7102578640915,
+      "value": 1400.9624952450395,
       "workload": "cpython-3.14/polymorphic"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 229.96239786152728,
+      "value": 224.56007718574256,
       "workload": "cpython-3.14/polymorphic"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 229.96239786152728,
+      "value": 224.56007718574256,
       "workload": "cpython-3.14/polymorphic"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 80.22914283044103,
+      "value": 86.8690715703581,
       "workload": "cpython-3.14/polymorphic"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1663.3544946671464,
+      "value": 1659.2704923823476,
       "workload": "cpython-3.14/polymorphic"
     },
     {
@@ -4544,21 +4544,21 @@
       "cell": "compact.projectionNs",
       "samples": [],
       "unit": "ns",
-      "value": 7873.729497077875,
+      "value": 7950.3954912070185,
       "workload": "cpython-3.14/polymorphic"
     },
     {
       "cell": "compact.projectionReuseNs",
       "samples": [],
       "unit": "ns",
-      "value": 6209.09790013684,
+      "value": 6306.252101785503,
       "workload": "cpython-3.14/polymorphic"
     },
     {
       "cell": "compact.directWireNs",
       "samples": [],
       "unit": "ns",
-      "value": 5838.000004587229,
+      "value": 5872.770998394117,
       "workload": "cpython-3.14/polymorphic"
     },
     {
@@ -4621,14 +4621,14 @@
       "cell": "ordinary.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 1787.545849219896,
+      "value": 1856.152102118358,
       "workload": "cpython-3.14/warmed"
     },
     {
       "cell": "ordinary.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 211.74565481487662,
+      "value": 215.5768859665841,
       "workload": "cpython-3.14/warmed"
     },
     {
@@ -4649,14 +4649,14 @@
       "cell": "ordinary.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 28.609376386157237,
+      "value": 27.59374910965562,
       "workload": "cpython-3.14/warmed"
     },
     {
       "cell": "ordinary.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 722.4164946819656,
+      "value": 738.6664801742882,
       "workload": "cpython-3.14/warmed"
     },
     {
@@ -4705,14 +4705,14 @@
       "cell": "legacy.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 3949.131250556092,
+      "value": 4087.587501271628,
       "workload": "cpython-3.14/warmed"
     },
     {
       "cell": "legacy.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 145.20224649459215,
+      "value": 200.10000735055655,
       "workload": "cpython-3.14/warmed"
     },
     {
@@ -4733,14 +4733,14 @@
       "cell": "legacy.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 28.36974999809172,
+      "value": 26.354122383054346,
       "workload": "cpython-3.14/warmed"
     },
     {
       "cell": "legacy.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 734.0000011026859,
+      "value": 736.1460011452436,
       "workload": "cpython-3.14/warmed"
     },
     {
@@ -4789,42 +4789,42 @@
       "cell": "compact.constructNs",
       "samples": [],
       "unit": "ns",
-      "value": 4229.2270496545825,
+      "value": 4272.510399459861,
       "workload": "cpython-3.14/warmed"
     },
     {
       "cell": "compact.callNs",
       "samples": [],
       "unit": "ns",
-      "value": 1688.4604505321477,
+      "value": 1662.4895943095908,
       "workload": "cpython-3.14/warmed"
     },
     {
       "cell": "compact.scaffoldingNs",
       "samples": [],
       "unit": "ns",
-      "value": 233.2276635570479,
+      "value": 226.79417743347585,
       "workload": "cpython-3.14/warmed"
     },
     {
       "cell": "compact.unreproducedNs",
       "samples": [],
       "unit": "ns",
-      "value": 233.2276635570479,
+      "value": 226.79417743347585,
       "workload": "cpython-3.14/warmed"
     },
     {
       "cell": "compact.readNs",
       "samples": [],
       "unit": "ns",
-      "value": 89.44275032263249,
+      "value": 97.66675066202879,
       "workload": "cpython-3.14/warmed"
     },
     {
       "cell": "compact.dumpNs",
       "samples": [],
       "unit": "ns",
-      "value": 1742.666499922052,
+      "value": 1775.6664892658591,
       "workload": "cpython-3.14/warmed"
     },
     {
@@ -4922,63 +4922,63 @@
       "cell": "operation.construction.armAgainstArm",
       "samples": [],
       "unit": "ratio",
-      "value": 0.4927890222658071,
+      "value": 0.49558460654950826,
       "workload": "cpython-3.14"
     },
     {
       "cell": "operation.construction.likeForLike",
       "samples": [],
       "unit": "ratio",
-      "value": 0.474463617416808,
+      "value": 0.4772266752126876,
       "workload": "cpython-3.14"
     },
     {
       "cell": "operation.construction.vsOrdinary",
       "samples": [],
       "unit": "ratio",
-      "value": 1.4782813398823824,
+      "value": 1.5036415851007656,
       "workload": "cpython-3.14"
     },
     {
       "cell": "operation.attribute-read.armAgainstArm",
       "samples": [],
       "unit": "ratio",
-      "value": 3.1699928820801606,
+      "value": 3.329987889817208,
       "workload": "cpython-3.14"
     },
     {
       "cell": "operation.attribute-read.likeForLike",
       "samples": [],
       "unit": "ratio",
-      "value": 3.1699928820801606,
+      "value": 3.329987889817208,
       "workload": "cpython-3.14"
     },
     {
       "cell": "operation.attribute-read.vsOrdinary",
       "samples": [],
       "unit": "ratio",
-      "value": 3.131596093523443,
+      "value": 3.3369744043593834,
       "workload": "cpython-3.14"
     },
     {
       "cell": "operation.serialization.armAgainstArm",
       "samples": [],
       "unit": "ratio",
-      "value": 2.147567798668852,
+      "value": 2.10951438913598,
       "workload": "cpython-3.14"
     },
     {
       "cell": "operation.serialization.likeForLike",
       "samples": [],
       "unit": "ratio",
-      "value": 2.147567798668852,
+      "value": 2.10951438913598,
       "workload": "cpython-3.14"
     },
     {
       "cell": "operation.serialization.vsOrdinary",
       "samples": [],
       "unit": "ratio",
-      "value": 2.155802546943427,
+      "value": 2.1324253700562217,
       "workload": "cpython-3.14"
     }
   ],

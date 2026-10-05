@@ -1,4 +1,18 @@
 {
+  "adjustment": {
+    "date": "2026-10-05",
+    "reclassified": {
+      "contractDigest": {
+        "atCapture": "f128baab568d9a50e30e569fa12e5d77f6dc67f4b7407970b0af4790608a9257",
+        "reclassifiedUnder": "422106570ad6bcf7e945c173f3627277e33fc896aabc52f61ce9d4ee6fede9c0"
+      },
+      "evidence": "$HOME/.local/share/parallax/evidence/cor-156/: attempt-1-cpython-3.14.8/ holds the capture as taken; reclassify/ holds reclassify.py and reclassify.txt",
+      "how": "every envelope's embedded Budget Contract text and digest replaced by the committed contract's, and its authority recomputed by classify_authority from its unchanged provenance; summary.md re-rendered from the result",
+      "reason": "Homebrew moved the capture runner's CPython from 3.14.7 to 3.14.8 on 2026-10-01, so the run measured 3.14.8 under a Budget Contract whose authority fingerprint named 3.14.7 and classified the snapshot-delivery envelope non-authoritative. The contract's authority.cpython now names 3.14.8.",
+      "unchanged": "every reading, sample, and comparison: the two contracts differ in authority.cpython alone, and comparisons read only the authority minor (3.14)"
+    },
+    "schemaVersion": 1
+  },
   "members": {
     "instance-state": {
       "runtimes": {
@@ -6,13 +20,13 @@
           "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-instance-state-3.13/bin/python",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.13.15"
+          "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/.claude/worktrees/agent-a3cee48e5189954ff/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax-cor-156-capture/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.14.7"
+          "version": "3.14.8"
         }
       },
       "sources": {
@@ -29,10 +43,10 @@
           "status": "unavailable"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/.claude/worktrees/agent-a3cee48e5189954ff/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax-cor-156-capture/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.14.7"
+          "version": "3.14.8"
         }
       },
       "sources": {
@@ -45,20 +59,20 @@
           "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-snapshot-delivery-3.13/bin/python",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.13.15"
+          "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/.claude/worktrees/agent-a3cee48e5189954ff/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax-cor-156-capture/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.14.7"
+          "version": "3.14.8"
         }
       },
       "sources": {
         "tests/unit/_delivery_control_support.py": "0ecc84095d7bef7051a6a7e103683130b355bd769fcffa3bd46ec0dc813144db",
         "tests/unit/_leaf_type_support.py": "3236a2c55f73ca00b8a8a45a9637a019b592c6bdccb6ccff9b94fc10cc1fe5aa",
         "tests/unit/_snapshot_materialization_support.py": "a11927a3cd3bf62336977f627303687488504bf55f200b2b0c0a4841fa03821d",
-        "tests/unit/_structural_geometry_support.py": "392f575838735da962f88078de395eac6e4438080f0d614512a2c6be654214d7",
+        "tests/unit/_structural_geometry_support.py": "d8f5eafd4cd8cfc4069fc169243fde4b936c692cb8aac4a4761829b1754a1bf1",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
         "tools/snapshot_delivery_overhead.py": "7a3ff6bfb1da3a15f8d6063f43d76bd5043b69e3a2f6fcdd0783d2b8539cba04",
@@ -71,24 +85,24 @@
           "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-write-lowering-3.13/bin/python",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.13.15"
+          "version": "3.13.16"
         },
         "3.14": {
-          "executable": "/Users/david/Code/parallax/.claude/worktrees/agent-a3cee48e5189954ff/languages/python/.venv/bin/python",
+          "executable": "/Users/david/Code/parallax-cor-156-capture/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.14.7"
+          "version": "3.14.8"
         }
       },
       "sources": {
         "tests/unit/_leaf_type_support.py": "3236a2c55f73ca00b8a8a45a9637a019b592c6bdccb6ccff9b94fc10cc1fe5aa",
-        "tests/unit/_predicate_acquisition_support.py": "95fc69f0fb0c20fb0ecad748b0d5cd0e15b2121ea2a8657b25fc37b92f130ce7",
-        "tests/unit/_structural_geometry_support.py": "392f575838735da962f88078de395eac6e4438080f0d614512a2c6be654214d7",
+        "tests/unit/_predicate_acquisition_support.py": "beb99783a72e9e352a56373326fe7aad559d4f74a8a819baec98fe25f474d8a4",
+        "tests/unit/_structural_geometry_support.py": "d8f5eafd4cd8cfc4069fc169243fde4b936c692cb8aac4a4761829b1754a1bf1",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
-        "tests/unit/_write_lowering_support.py": "b3becf97cde5dbb7458587c77f7071c9c0ab82a12a89143a056d7f1d0f463650",
+        "tests/unit/_write_lowering_support.py": "1233ff4aca6b18af0621cf1f0dcf05a2891b39a97ac87f80623777b4537477e0",
         "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
-        "tools/write_lowering_overhead.py": "1be3a55ad0ac0f2eb20071838b26bf7ce64e9aed6076d92e775aaa5e6feac4d4",
-        "tools/write_lowering_reading.py": "33987ac3e5229e58c33877688a9d290f1d50218706b411c75f38e0917f647ae3"
+        "tools/write_lowering_overhead.py": "521ad3c421aa1747a4d5fa52ba84946df171386a676e8c1b8d7388ba657fb39b",
+        "tools/write_lowering_reading.py": "8c03d1e62dc2f0ef0c86cf8626942d7bedf830e43bcb41be78a2e7d41b8c08f0"
       }
     }
   },
