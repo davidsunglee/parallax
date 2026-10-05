@@ -5,12 +5,17 @@ starts, the conflict either group's last write may report, a group's non-last
 write buffering without a flush, and the lane's own refusals — a step stating
 relationship contents, an execution granting no termination trust, a second
 session that will not open — each releasing every session it had opened.
+
+The temporal race runs each group at its own instant and settles each temporal
+write against its own group's reads, modeling no case state: what a group's
+reads did not retain is refused rather than modeled.
 """
 
 from __future__ import annotations
 
 import copy
 import dataclasses
+import datetime as dt
 import decimal
 import functools
 from collections.abc import Mapping, Sequence
@@ -23,7 +28,8 @@ from parallax.conformance import case_format
 from parallax.conformance._database_control import TerminationReport
 from parallax.conformance._lanes.interleaved import run_interleaved_scenario_case
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.core.db_port import MappingRow
+from parallax.core.base import INFINITY
+from parallax.core.db_port import MappingRow, Row
 from parallax.core.dialect import Dialect
 from parallax.snapshot import DatabaseOptions, handle
 from tests._support.root_ownership import own_root
@@ -165,11 +171,11 @@ def _wire_row(row: MappingRow) -> dict[str, object]:
     return {key: wire_value(value) for key, value in row.items()}
 
 
-def _shortfalls(units: dict[str, dict[str, object]]) -> list[object]:
+def _shortfalls(units: dict[str, dict[str, object]] | None) -> list[object]:
     """The Shortfall each group's flush failure names, in group order."""
     return [
         cast("dict[str, object]", fate["flushFailure"])["shortfall"]
-        for fate in units.values()
+        for fate in (units or {}).values()
         if "flushFailure" in fate
     ]
 
@@ -194,13 +200,12 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     peer_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
     executions = _ScriptedExecutions(ours_port, peer_port)
 
-    emissions, round_trips, units, find_rows = run_interleaved_scenario_case(
-        case, caller_port, executions
-    )
+    run = run_interleaved_scenario_case(case, caller_port, executions)
 
-    assert round_trips == 6
+    emissions = run.emissions
+    assert run.round_trips == 6
     assert len(emissions) == 6
-    assert units == {
+    assert run.units == {
         "ours": {
             "outcome": "rolledBack",
             "flushFailure": {
@@ -226,12 +231,18 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     assert emissions[4].sql.startswith("update account set")
     assert len(ours_port.writes) == 2  # the doomed group's insert + gated update
     assert len(peer_port.writes) == 1  # the concurrent group's own gated update
-    # Every find step's own observed rows, in
-    # scenario step order (0, 1, then the trailing ungrouped verify at 4) —
-    # the doomed group's discarded insert leaves account 9 absent. The rows are
-    # the Wire result re-keyed by column, so a `decimal` reads as its canonical
-    # string exactly as the grader's own wire space compares it.
-    assert find_rows == [[_wire_row(row_v1)], [_wire_row(row_v1)], []]
+    # Every find step's own `stepRows`, in scenario step order (0, 1, then the
+    # trailing ungrouped verify at 4) — the doomed group's discarded insert leaves
+    # account 9 absent. The rows are the Wire result re-keyed by column, so a
+    # `decimal` reads as its canonical string exactly as the grader's own wire
+    # space compares it.
+    assert run.step_rows == [
+        {"at": "/scenario/0", "rows": [_wire_row(row_v1)]},
+        {"at": "/scenario/1", "rows": [_wire_row(row_v1)]},
+        {"at": "/scenario/4", "rows": []},
+    ]
+    # The case states no final tables, so none are read back.
+    assert run.table_state is None
 
 
 def test_each_interleaved_group_lowers_in_its_own_connections_dialect() -> None:
@@ -252,9 +263,9 @@ def test_each_interleaved_group_lowers_in_its_own_connections_dialect() -> None:
     ours_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 0])
     peer_port = ScriptedPort(dialect=BACKTICKED, read_rows=[[row_v1]], write_affected=[1])
 
-    emissions, _round_trips, _units, _find_rows = run_interleaved_scenario_case(
+    emissions = run_interleaved_scenario_case(
         case, caller_port, _ScriptedExecutions(ours_port, peer_port)
-    )
+    ).emissions
 
     concurrent_write = next(e for e in emissions if e.case_pointer == "/scenario/2/write")
     ours_writes = [e for e in emissions if e.case_pointer == "/scenario/3/write"]
@@ -359,11 +370,11 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
     ours_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
     peer_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[0])
 
-    _emissions, _round_trips, units, _find_rows = run_interleaved_scenario_case(
+    run = run_interleaved_scenario_case(
         case, ScriptedPort(), _ScriptedExecutions(ours_port, peer_port)
     )
 
-    assert _shortfalls(units) == ["optimisticConflict"]
+    assert _shortfalls(run.units) == ["optimisticConflict"]
 
 
 def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> None:
@@ -434,20 +445,23 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
     ours_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 1])
     peer_port = ScriptedPort(read_rows=[[row3]])
 
-    emissions, round_trips, units, find_rows = run_interleaved_scenario_case(
+    run = run_interleaved_scenario_case(
         case, ScriptedPort(), _ScriptedExecutions(ours_port, peer_port)
     )
 
-    assert _shortfalls(units) == []
-    assert round_trips == 4
+    assert _shortfalls(run.units) == []
+    assert run.round_trips == 4
     assert len(ours_port.writes) == 2  # buffered together, flushed once at the group's last step
-    assert [e.case_pointer for e in emissions] == [
+    assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/write",
         "/scenario/2/write",
         "/scenario/3/objectQuery",
     ]
-    assert find_rows == [[_wire_row(row_v1)], [_wire_row(row3)]]
+    assert run.step_rows == [
+        {"at": "/scenario/0", "rows": [_wire_row(row_v1)]},
+        {"at": "/scenario/3", "rows": [_wire_row(row3)]},
+    ]
 
 
 def test_run_interleaved_scenario_case_reraises_an_unexpected_worker_failure() -> None:
@@ -521,15 +535,15 @@ def test_run_interleaved_scenario_case_releases_the_first_when_the_second_will_n
 
 
 def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_contents() -> None:
-    # That entry point reports emissions, round trips and find rows and carries no
-    # `stepGraphs` channel, so an `expectGraph` authored on an interleaved case
-    # would be an oracle nothing answers. It is refused rather than left silent.
+    # That entry point fills no `stepGraphs` channel, so an `expectGraph` authored
+    # on an interleaved case would be an oracle nothing answers. It is refused
+    # rather than left silent.
     case = _own_copy(_load_case("m-opt-lock-012"))
     when = cast("dict[str, Any]", case.document["when"])
     steps = cast("list[dict[str, Any]]", when["scenario"])
     steps[0]["expectGraph"] = {"Account": [{"id": 2}]}
 
-    with pytest.raises(EngineError, match="carries no `stepGraphs` channel"):
+    with pytest.raises(EngineError, match="fills no `stepGraphs` channel"):
         run_interleaved_scenario_case(
             case, ScriptedPort(), _ScriptedExecutions(ScriptedPort(), ScriptedPort())
         )
@@ -595,12 +609,10 @@ def test_an_interleaved_case_whose_opt_in_is_bounded_at_zero_runs_each_group_onc
     peer_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
     executions = _ScriptedExecutions(ours_port, peer_port)
 
-    _emissions, round_trips, units, _rows = run_interleaved_scenario_case(
-        case, caller_port, executions
-    )
+    run = run_interleaved_scenario_case(case, caller_port, executions)
 
-    assert round_trips == 6
-    assert _shortfalls(units) == ["optimisticConflict"]
+    assert run.round_trips == 6
+    assert _shortfalls(run.units) == ["optimisticConflict"]
     assert len(ours_port.levels) == 1
     assert len(peer_port.levels) == 1
     assert len(ours_port.writes) == 2
@@ -641,3 +653,285 @@ def test_each_interleaved_group_is_composed_over_the_cases_own_root_record() -> 
     # The trailing ungrouped verify find runs on the caller's port through a
     # Handle of its own, connected with the same root.
     assert caller_port.levels == ["serializable"]
+
+
+_FEB = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+_MAR = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_SEP = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+_OCT = dt.datetime(2024, 10, 1, tzinfo=dt.UTC)
+
+
+def _balance(key: int, *, in_z: dt.datetime, value: str = "200.00") -> MappingRow:
+    """One current Transaction-Time-Only `Balance` milestone, as a find reads it."""
+    return {
+        "bal_id": key,
+        "acct_num": "B",
+        "val": decimal.Decimal(value),
+        "in_z": in_z,
+        "out_z": INFINITY,
+    }
+
+
+def _race(
+    *,
+    ours_reads: Sequence[list[MappingRow]] = ([_balance(2, in_z=_FEB)],),
+    ours_affected: Sequence[int] = (0,),
+    caller: ScriptedPort | None = None,
+) -> tuple[Any, ScriptedPort, ScriptedPort]:
+    """`m-temporal-read-010` over scripted sessions: ``ours`` finds balance 2,
+    ``concurrent`` finds it, updates it and commits, then ``ours`` terminates it.
+    """
+    ours_port = ScriptedPort(read_rows=ours_reads, write_affected=ours_affected)
+    peer_port = ScriptedPort(read_rows=[[_balance(2, in_z=_FEB)]], write_affected=[1, 1])
+    run = run_interleaved_scenario_case(
+        _load_case("m-temporal-read-010"),
+        caller if caller is not None else ScriptedPort(),
+        _ScriptedExecutions(ours_port, peer_port),
+    )
+    return run, ours_port, peer_port
+
+
+def test_a_temporal_race_reports_the_stale_close_as_the_losing_groups_conflict() -> None:
+    run, ours_port, peer_port = _race()
+
+    assert run.units == {
+        "ours": {
+            "outcome": "rolledBack",
+            "flushFailure": {
+                "at": "commit",
+                "entity": "parallax.compatibility.Balance",
+                "key": {"id": 2},
+                "shortfall": "optimisticConflict",
+            },
+        },
+        "concurrent": {"outcome": "committed"},
+    }
+    assert [e.case_pointer for e in run.emissions] == [
+        "/scenario/0/objectQuery",
+        "/scenario/1/objectQuery",
+        "/scenario/2/write",
+        "/scenario/2/write",
+        "/scenario/3/write",
+    ]
+    assert run.round_trips == 5
+    assert [sql.split(" ")[0] for sql, _binds in peer_port.writes] == ["update", "insert"]
+    assert [sql.split(" ")[0] for sql, _binds in ours_port.writes] == ["update"]
+
+
+def test_each_interleaved_group_runs_at_its_own_first_writes_instant() -> None:
+    # The concurrent group's first write is `at` September and ours is `at`
+    # October, so the two closes stamp two different instants: one Clock shared by
+    # both sessions would stamp both with the same one.
+    run, ours_port, peer_port = _race()
+
+    (close, insert) = peer_port.writes
+    assert close[1][0] == _SEP
+    assert insert[1][3] == _SEP
+    assert ours_port.writes[0][1][0] == _OCT
+    assert [e.binds[0] for e in run.emissions if e.sql.startswith("update")] == [_SEP, _OCT]
+
+
+def test_a_temporal_write_settles_against_its_own_groups_reading() -> None:
+    # Ours read a milestone opened in March, the concurrent group one opened in
+    # February. Each close gates on the start its own group read, which no
+    # case-wide account of the fixtures could have answered for both.
+    _run, ours_port, peer_port = _race(ours_reads=([_balance(2, in_z=_MAR)],))
+
+    assert peer_port.writes[0][1][-1] == _FEB
+    assert ours_port.writes[0][1][-1] == _MAR
+
+
+def test_the_race_fate_follows_the_port_rather_than_any_model_of_the_other_session() -> None:
+    # Nothing models the concurrent group's commit: the losing close is a
+    # conflict only because the database answered zero rows. Answered one, both
+    # groups commit.
+    run, _ours_port, _peer_port = _race(ours_affected=(1,))
+
+    assert run.units == {"ours": {"outcome": "committed"}, "concurrent": {"outcome": "committed"}}
+
+
+class _TableReadPort(ScriptedPort):
+    """A caller port recording how many writes each group session had delivered
+    when the tables were read back."""
+
+    def __init__(self, sessions: Sequence[ScriptedPort], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._sessions = sessions
+        self.delivered_at_read: list[list[int]] = []
+
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
+        self.delivered_at_read.append([len(session.writes) for session in self._sessions])
+        return super().execute(sql, binds, document_reads)
+
+
+def test_a_race_stating_its_final_tables_reads_them_once_after_both_groups_joined() -> None:
+    ours_port = ScriptedPort(read_rows=[[_balance(2, in_z=_FEB)]], write_affected=[0])
+    peer_port = ScriptedPort(read_rows=[[_balance(2, in_z=_FEB)]], write_affected=[1, 1])
+    table = [_balance(2, in_z=_SEP, value="999.00")]
+    caller = _TableReadPort((ours_port, peer_port), read_rows=[table])
+
+    run = run_interleaved_scenario_case(
+        _load_case("m-temporal-read-010"), caller, _ScriptedExecutions(ours_port, peer_port)
+    )
+
+    assert [sql.split(" from ")[1] for sql, _binds in caller.reads] == ["balance"]
+    assert caller.delivered_at_read == [[1, 2]]
+    assert run.table_state is not None
+    assert [row["val"] for row in run.table_state["balance"]] == ["999.00"]
+
+
+def _race_case(
+    ours: Sequence[Mapping[str, object]],
+    concurrent: Sequence[Mapping[str, object]],
+    model: str = "models/balance.yaml",
+) -> case_format.Case:
+    """A two-group scenario over ``model``: ``ours``'s steps, then
+    ``concurrent``'s, then ``ours``'s last step — so the groups interleave."""
+    steps = [
+        *({"uow": "ours", **step} for step in ours[:-1]),
+        *({"uow": "concurrent", **step} for step in concurrent),
+        {"uow": "ours", **ours[-1]},
+    ]
+    return case_format.Case(
+        path=Path("m-temporal-read-999-synthetic.yaml"),
+        case_id="m-temporal-read-999",
+        shape="scenario",
+        tags=("m-temporal-read", "slice-snapshot-1"),
+        model=model,
+        document={
+            "model": model,
+            "when": {"uow": {"concurrency": "optimistic"}, "scenario": steps},
+            "then": {"roundTrips": 0},
+        },
+    )
+
+
+def _find_balance(key: int) -> dict[str, object]:
+    return {
+        "objectQuery": {
+            "target": "parallax.compatibility.Balance",
+            "predicate": {"eq": {"attr": "parallax.compatibility.Balance.id", "value": key}},
+            "temporal": {"transaction-time": {"asOf": "latest"}},
+        }
+    }
+
+
+def _balance_write(mutation: str, row: Mapping[str, object], **fields: object) -> dict[str, object]:
+    entry = {
+        "mutation": mutation,
+        "entity": "parallax.compatibility.Balance",
+        "rows": [dict(row)],
+        "at": "2024-10-01T00:00:00+00:00",
+        **fields,
+    }
+    return {"write": [entry]}
+
+
+@pytest.mark.parametrize(
+    ("reference", "gate"),
+    [({"on": 0}, _FEB), ({"on": 1}, _MAR), ({}, _MAR)],
+    ids=["first-find-named", "second-find-named", "latest-reading"],
+)
+def test_a_grouped_temporal_write_settles_against_the_find_it_names_else_the_latest(
+    reference: dict[str, object], gate: dt.datetime
+) -> None:
+    case = _race_case(
+        [
+            _find_balance(2),
+            _find_balance(2),
+            _balance_write("terminate", {"id": 2}, **reference),
+        ],
+        [_find_balance(1)],
+    )
+    ours_port = ScriptedPort(read_rows=[[_balance(2, in_z=_FEB)], [_balance(2, in_z=_MAR)]])
+    peer_port = ScriptedPort(read_rows=[[_balance(1, in_z=_FEB)]])
+
+    run_interleaved_scenario_case(case, ScriptedPort(), _ScriptedExecutions(ours_port, peer_port))
+
+    ((_sql, binds),) = ours_port.writes
+    assert binds[-1] == gate
+
+
+def test_a_temporal_write_of_a_key_its_group_inserted_is_refused() -> None:
+    # The group's own insert is the value the write would be handed, and it
+    # carries no reading: what the write settles against is a buffered write.
+    case = _race_case(
+        [
+            _balance_write("insert", {"id": 7, "acctNum": "G", "value": "1.00"}),
+            _balance_write("terminate", {"id": 7}),
+        ],
+        [_find_balance(1)],
+    )
+    executions = _ScriptedExecutions(
+        ScriptedPort(), ScriptedPort(read_rows=[[_balance(1, in_z=_FEB)]])
+    )
+
+    with pytest.raises(EngineError, match="composes onto the row its own `uow` group inserted"):
+        run_interleaved_scenario_case(case, ScriptedPort(), executions)
+
+
+def test_a_second_temporal_write_of_a_key_its_group_settled_is_refused() -> None:
+    case = _race_case(
+        [
+            _find_balance(2),
+            _balance_write("terminate", {"id": 2}, on=0),
+            _balance_write("update", {"id": 2, "value": "5.00"}, on=0),
+        ],
+        [_find_balance(1)],
+    )
+    executions = _ScriptedExecutions(
+        ScriptedPort(read_rows=[[_balance(2, in_z=_FEB)]]),
+        ScriptedPort(read_rows=[[_balance(1, in_z=_FEB)]]),
+    )
+
+    with pytest.raises(EngineError, match="a second temporal write"):
+        run_interleaved_scenario_case(case, ScriptedPort(), executions)
+
+
+def test_a_temporal_write_needing_coverage_its_reading_does_not_hold_is_refused() -> None:
+    # A plain terminate from the start of a BOUNDED rectangle reaches the
+    # rectangle after it, which no read of the group observed: its flush would
+    # read that coverage itself, and what it would find includes the other
+    # session's commits, which this lane does not model.
+    jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    jun = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    bounded: MappingRow = {
+        "pos_id": 1,
+        "acct_num": "A",
+        "val": decimal.Decimal("100.00"),
+        "from_z": jan,
+        "thru_z": jun,
+        "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+        "out_z": INFINITY,
+    }
+    find = {
+        "objectQuery": {
+            "target": "parallax.compatibility.Position",
+            "predicate": {"eq": {"attr": "parallax.compatibility.Position.id", "value": 1}},
+            "temporal": {
+                "valid-time": {"asOf": "2024-01-01T00:00:00.000000Z"},
+                "transaction-time": {"asOf": "latest"},
+            },
+        }
+    }
+    terminate = {
+        "write": [
+            {
+                "mutation": "terminate",
+                "entity": "parallax.compatibility.Position",
+                "rows": [{"id": 1}],
+                "validFrom": "2024-01-01T00:00:00.000000Z",
+                "at": "2024-10-01T00:00:00+00:00",
+                "on": 0,
+            }
+        ]
+    }
+    case = _race_case([find, terminate], [find], "models/position.yaml")
+    executions = _ScriptedExecutions(
+        ScriptedPort(read_rows=[[bounded]]), ScriptedPort(read_rows=[[bounded]])
+    )
+
+    with pytest.raises(EngineError, match="tracks no case state to bind it to"):
+        run_interleaved_scenario_case(case, ScriptedPort(), executions)

@@ -2251,7 +2251,7 @@ def _conflict_versioned_entity(case: Case) -> Entity | None:
     """The versioned entity a conflict case targets, or None (a temporal close).
 
     A versioned conflict (``m-opt-lock-005`` through ``m-opt-lock-009``) gates on a
-    version column; a temporal / bitemporal close (``m-temporal-read-010`` through
+    version column; a temporal / bitemporal close (``m-temporal-read-011``,
     ``m-temporal-read-012`` / ``m-bitemp-write-005``) has none
     and carries a different ① (see :func:`_assert_temporal_conflict_input`).
     """
@@ -2264,7 +2264,7 @@ def _conflict_versioned_entity(case: Case) -> Entity | None:
 def _conflict_temporal_entity(case: Case) -> Entity | None:
     """The Transaction-Time TEMPORAL entity a conflict-close case targets, or None.
 
-    A temporal / bitemporal conflict close (``m-temporal-read-010`` through
+    A temporal / bitemporal conflict close (``m-temporal-read-011``,
     ``m-temporal-read-012`` / ``m-bitemp-write-005``) carries no
     version column; it locks via the observed Transaction-Time start (``in_z``),
     so the target is the first CONCRETE (row-owning) entity with a Transaction-Time

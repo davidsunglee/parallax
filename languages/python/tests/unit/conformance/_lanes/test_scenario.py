@@ -377,7 +377,7 @@ def test_a_group_opening_with_a_predicate_write_runs_at_that_writes_own_instant(
         {"uow": "g", "write": {"mutation": "delete", "at": "2024-05-01T00:00:00+00:00"}},
         {"uow": "g", "write": [{"mutation": "delete", "at": "2025-01-01T00:00:00+00:00"}]},
     ]
-    assert scenario._group_tx_instant(steps, 0, 1) == "2024-05-01T00:00:00+00:00"  # pyright: ignore[reportPrivateUsage]
+    assert scenario.group_tx_instant(steps, range(2)) == "2024-05-01T00:00:00+00:00"
 
 
 def _account(identifier: int, owner: str, balance: str, version: int) -> MappingRow:
@@ -1045,10 +1045,7 @@ def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> N
             },
         },
     ]
-    assert (
-        scenario._group_tx_instant(steps, 0, 1)  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-        == scenario.INERT_CLOCK_INSTANT
-    )
+    assert scenario.group_tx_instant(steps, range(2)) == scenario.INERT_CLOCK_INSTANT
 
 
 def test_versioned_non_temporal_version_attribute_is_none_for_a_temporal_entity() -> None:
@@ -1181,7 +1178,7 @@ def test_a_settled_write_names_a_versioned_targets_own_read_generation() -> None
         write = scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
-            TemporalShadow(),
+            scenario.CaseStateEvidence(meta, TemporalShadow(), (node,)),
             set(),
             [],
             (node,),
@@ -1200,7 +1197,7 @@ def test_a_settled_write_is_refused_when_its_named_find_observed_no_such_row() -
         scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
-            TemporalShadow(),
+            scenario.CaseStateEvidence(meta, TemporalShadow(), ()),
             set(),
             [],
             (),
@@ -1246,7 +1243,7 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
                 "rows": [{"id": 1, "value": "5.00"}],
             },
             meta,
-            TemporalShadow(),
+            scenario.CaseStateEvidence(meta, TemporalShadow(), (node,)),
             set(),
             [],
             (node,),
@@ -1507,7 +1504,7 @@ def test_run_conflict_case_temporal_close_propagates_a_failed_call() -> None:
     # facts imply, and a transient database failure is not one.
     with pytest.raises(DatabaseError):
         scenario.run_conflict_case(
-            _load_case("m-temporal-read-010"),
+            _load_case("m-temporal-read-012"),
             FakeWritePort(
                 parameterized_write_failure=DatabaseError(
                     category="deadlock", native_code="40P01", message="deadlock detected"
@@ -2683,6 +2680,13 @@ def test_a_conflict_attempt_writes_through_the_public_keyed_delete_verb() -> Non
 # applies first still report a row.
 _BALANCE_CLOSE_SHORTFALL: Final[tuple[str, ...]] = ("update balance set out_z = %s",)
 
+# The same for the Bitemporal close, whose case states its out-of-band writer
+# with binds: what separates the close from it is the Valid-Time end its address
+# leads with.
+_POSITION_CLOSE_SHORTFALL: Final[tuple[str, ...]] = (
+    "update position set out_z = %s where pos_id = %s and thru_z = %s",
+)
+
 
 def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() -> None:
     # m-temporal-read-012: the locking-mode close renders its address and no gate,
@@ -2739,8 +2743,8 @@ def test_an_unversioned_conflict_target_is_refused_for_want_of_a_participating_r
 
 def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> None:
     _emissions, affected, _table_state, _round_trips = scenario.run_conflict_case(
-        _load_case("m-temporal-read-010"),
-        FakeWritePort(zero_affected_for=_BALANCE_CLOSE_SHORTFALL),
+        _load_case("m-bitemp-write-005"),
+        FakeWritePort(zero_affected_for=_POSITION_CLOSE_SHORTFALL),
     )
     assert affected == 0
 
@@ -2887,19 +2891,19 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
 
 
 def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() -> None:
-    # m-temporal-read-010: a temporal optimistic-lock CLOSE conflict (`when.at` /
+    # m-bitemp-write-005: a temporal optimistic-lock CLOSE conflict (`when.at` /
     # `when.observedTxStart`, no `observedVersion`) is driven through
     # `handle.plan_temporal_close`, not the non-temporal versioned-UPDATE path.
-    case = _load_case("m-temporal-read-010")
+    case = _load_case("m-bitemp-write-005")
     port = FakeWritePort()
     emissions, affected, table_state, _round_trips = scenario.run_conflict_case(case, port)
     assert [e.case_pointer for e in emissions] == ["/when/write"]
     assert emissions[0].sql == (
-        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+        "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
     )
     assert affected == 1
     assert len(port.writes) == 3  # given.apply's two statements + the close
-    assert table_state is not None and "balance" in table_state
+    assert table_state is not None and "position" in table_state
 
 
 def test_a_temporal_close_decodes_case_carriers_before_the_probe() -> None:
@@ -4353,6 +4357,23 @@ def test_the_case_context_carries_the_root_record_beside_the_sparse_request() ->
     )
     assert context.requests == {"max_retries": 3}
     assert context.concurrency == "locking"
+
+
+def test_a_case_context_modeling_no_case_state_answers_for_none() -> None:
+    # The interleaved lane builds its context with no tracker; a unit that settles
+    # against tracked case state is refused there rather than handed an empty one.
+    case = _case("m-unit-work-001")
+    serving = model_facts.case_serving_model(case)
+    context = scenario.CaseContext(
+        serving,
+        models.accepted_model_of(serving.current().model),
+        "optimistic",
+        None,
+        {},
+        DatabaseOptions(),
+    )
+    with pytest.raises(EngineError, match="tracked case state"):
+        context.case_state()
 
 
 def test_a_conflict_attempt_opens_at_the_roots_level_and_forwards_no_retry_field() -> None:

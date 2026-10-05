@@ -162,9 +162,7 @@ class TemporalShadow:
 
         The whole tracker is captured rather than a per-key undo log, which is
         exact because one unit at a time advances it: the state before a doomed
-        unit IS the state its abort restores. The interleaved two-group lane is
-        the one place two units advance together, and its own instructions never
-        reach this tracker (`m-opt-lock-012` is entirely non-temporal).
+        unit IS the state its abort restores.
         """
         if not doomed:
             yield

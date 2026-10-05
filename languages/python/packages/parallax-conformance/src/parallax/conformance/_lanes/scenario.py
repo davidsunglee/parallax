@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final, Literal, cast
+from typing import Final, Literal, Protocol, cast
 
 from parallax.conformance import (
     _case_ingress,
@@ -156,6 +156,7 @@ __all__ = [
     "execute_keyed_unit",
     "flush_failure",
     "graph_rows",
+    "group_tx_instant",
     "is_materializing_write_step",
     "is_predicate_write_step",
     "lower_writes",
@@ -318,10 +319,15 @@ class _ResolvedWrite:
     its mutation names, against the value this unit's own read published, so what
     that write settles against is the claim the value already carries. An entry
     needing no evidence at all carries none.
+
+    ``source_node`` is that value, where the lane's evidence already resolved it
+    (:class:`GroupEvidence`), so the real write is addressed by the very node the
+    oracle's evidence came from rather than by a second resolution of it.
     """
 
     instruction: PreparedWrite | PreparedTargetWrite
     oracle_observation: WriteObservation | None
+    source_node: handle.WireEntity | None = None
 
 
 def _versioned_non_temporal_version_attribute(
@@ -502,28 +508,123 @@ def _temporal_entry_row(
     return raw_rows[0]
 
 
+class TemporalEvidence(Protocol):
+    """Where a grouped or ungrouped temporal write's predecessor comes from — the
+    one decision about a temporal write that differs by lane.
+
+    ``settle`` answers the observation the write's close and chain consume, and
+    the published value it came from where the answer was resolved from one.
+    """
+
+    def settle(
+        self,
+        entity: EntityMetadata,
+        key: ObjectKey | None,
+        row: Mapping[str, object],
+        valid_from: dt.datetime | None,
+    ) -> tuple[TemporalObservation | None, handle.WireEntity | None]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CaseStateEvidence:
+    """Evidence for a lane that models case state: the milestone ``shadow``
+    tracks for the key (`m-txtime-write` / `m-bitemp-write` "the engine supplies
+    observed rows from case state" — never an implicit resolving read), or, where
+    the entry named a find of its `uow` group with ``on``, the claim that find
+    retained (:func:`_settled_against_source`).
+
+    A milestone a materializing predicate write of this case already moved
+    (:func:`_refuse_materialized_case_state`), and one whose tracked members can
+    no longer account for the whole stored row
+    (:func:`_refuse_unaccounted_document_milestone`), are both refused before
+    the tracker answers. Whichever answers, the milestone it names is retired
+    from the tracker, because the write's close consumes it.
+    """
+
+    model: AcceptedMetamodel
+    shadow: TemporalShadow
+    named: ObservedNodes | None
+
+    def settle(
+        self,
+        entity: EntityMetadata,
+        key: ObjectKey | None,
+        row: Mapping[str, object],
+        valid_from: dt.datetime | None,
+    ) -> tuple[TemporalObservation | None, handle.WireEntity | None]:
+        observation: TemporalObservation | None
+        if self.named is None:
+            _refuse_materialized_case_state(self.model, entity, row, self.shadow)
+            _refuse_unaccounted_document_milestone(self.model, entity, row, self.shadow)
+            observation = self.shadow.resolve(self.model, entity, row)
+        else:
+            settled = _settled_against_source(entity.identity.canonical, key, self.named)
+            # A temporal row's evidence is its whole predecessor milestone; a
+            # versioned target's Version Observation can never answer a lookup
+            # this branch reached, because the branch is chosen by temporality.
+            assert isinstance(settled, TemporalObservation)
+            observation = settled
+        if observation is not None:
+            self.shadow.retire(self.model, entity, observation)
+        return observation, None
+
+
+@dataclass(frozen=True, slots=True)
+class GroupEvidence:
+    """Evidence for a lane that models no case state: the claim production
+    retained onto the value the write is handed, chosen as an application would
+    choose it (:func:`_group_source_node` — the ``on``-named find, else the
+    group's own insert, else its latest reading).
+
+    Nothing here computes a predecessor, so the evidence is exactly what that
+    group's own reads saw, whatever any other session has since committed. A
+    write whose plan would need more than that is refused as unwitnessed rather
+    than modeled: a key its group already settled would compose onto a buffered
+    write, and a key its group opened carries no reading at all.
+    """
+
+    state: GroupState
+    named: Sequence[handle.WireEntity] | None
+
+    def settle(
+        self,
+        entity: EntityMetadata,
+        key: ObjectKey | None,
+        row: Mapping[str, object],
+        valid_from: dt.datetime | None,
+    ) -> tuple[TemporalObservation | None, handle.WireEntity | None]:
+        name = entity.identity.canonical
+        if key is not None and key in self.state.settled:
+            raise EngineError(
+                f"{name!r}: a second temporal write of {key!r} in one `uow` group composes "
+                "onto the write its group already buffered — state no read of the group "
+                "retained, which this lane does not model"
+            )
+        node = _group_source_node(name, key, self.state, self.named, valid_from)
+        origin = read_origin_of(node)
+        retained = None if origin is None else origin.observation
+        if retained is None:
+            raise EngineError(
+                f"{name!r}: a temporal write of {key!r} composes onto the row its own `uow` "
+                "group inserted — state no read of the group retained, which this lane does "
+                "not model"
+            )
+        evidence = retained.evidence
+        assert isinstance(evidence, TemporalObservation)  # chosen by temporality, as above
+        if key is not None:
+            self.state.settled.add(key)
+        return evidence, node
+
+
 def _build_temporal_instruction(
     entry: Mapping[str, object],
     model: AcceptedMetamodel,
-    shadow: TemporalShadow,
+    evidence: TemporalEvidence,
     unit_inserted: set[ObjectKey],
-    source: ObservedNodes | None,
 ) -> _ResolvedWrite:
     """One TEMPORAL writeSequence/scenario entry -> its canonical keyed
-    instruction plus the observation its close/chain consumes.
-
-    Where the observation comes from is what ``source`` decides. Absent one, it is
-    the milestone ``shadow`` tracks for this key (`m-txtime-write` /
-    `m-bitemp-write` "the engine supplies observed rows from case state" — never
-    an implicit resolving read), which is how every writeSequence entry and every
-    ungrouped scenario write resolves; a milestone a materializing predicate write
-    of this case already moved (:func:`_refuse_materialized_case_state`), and one
-    whose tracked members can no longer account for the whole stored row
-    (:func:`_refuse_unaccounted_document_milestone`), are both refused first.
-    Given one, the entry named a find of its `uow` group with ``on``, and the
-    evidence is the
-    Observed State Key the claim that node carries is addressed by
-    (:func:`_settled_against_source`).
+    instruction plus the observation its close/chain consumes, which
+    ``evidence`` answers (:class:`TemporalEvidence`).
 
     The corpus and canonical instruction share the same ``validFrom`` / ``until``
     spelling. Bounds are instruction-level fields; temporal row payloads never
@@ -541,11 +642,11 @@ def _build_temporal_instruction(
     `m-bitemp-write-014`): a later entry targeting one of them is a
     same-buffer coalescing candidate whose OWN close/chain arithmetic never
     runs (the planner folds it into the pending insert before finalization
-    ever sees it) — its observation is forced to `None`, and with no observation
-    consumed there is no milestone for it to retire. What the ledger ends up
-    holding for the key is the COALESCED row: :func:`_lower_resolved` tracks the
-    surviving Planned Insert off the finished plan, so the tracked state is the
-    milestone the flush actually writes rather than a stand-in for it.
+    ever sees it) — its observation is forced to `None`, and ``evidence`` is never
+    asked. What the ledger ends up holding for the key is the COALESCED row:
+    :func:`_lower_resolved` tracks the surviving Planned Insert off the finished
+    plan, so the tracked state is the milestone the flush actually writes rather
+    than a stand-in for it.
     """
     mutation = cast("str", entry["mutation"])
     entity_name = cast("str", entry["entity"])
@@ -568,23 +669,14 @@ def _build_temporal_instruction(
     is_insert = mutation in _TEMPORAL_INSERT_MUTATIONS
     is_coalescing_candidate = not is_insert and pk_key is not None and pk_key in unit_inserted
     observation: TemporalObservation | None = None
+    source_node: handle.WireEntity | None = None
     if not is_insert and not is_coalescing_candidate:
-        if source is None:
-            _refuse_materialized_case_state(model, entity_metadata, row, shadow)
-            _refuse_unaccounted_document_milestone(model, entity_metadata, row, shadow)
-            observation = shadow.resolve(model, entity_metadata, row)
-        else:
-            settled = _settled_against_source(entity_name, pk_key, source)
-            # A temporal row's evidence is its whole predecessor milestone; a
-            # versioned target's Version Observation can never answer a lookup
-            # this branch reached, because the branch is chosen by temporality.
-            assert isinstance(settled, TemporalObservation)
-            observation = settled
-    if observation is not None and not is_coalescing_candidate:
-        shadow.retire(model, entity_metadata, observation)
+        observation, source_node = evidence.settle(
+            entity_metadata, pk_key, row, prepared.bounds.valid_from
+        )
     if is_insert and pk_key is not None:
         unit_inserted.add(pk_key)
-    return _ResolvedWrite(prepared, observation)
+    return _ResolvedWrite(prepared, observation, source_node)
 
 
 def _settled_against_source(
@@ -906,7 +998,7 @@ def _seed_insert_version(
 def _build_instructions(
     entry: Mapping[str, object],
     model: AcceptedMetamodel,
-    shadow: TemporalShadow,
+    evidence: TemporalEvidence,
     unit_inserted: set[ObjectKey],
     group_observations: GroupObservations,
     source: ObservedNodes | None,
@@ -923,7 +1015,8 @@ def _build_instructions(
     writeSequence vocabulary is keyed-only).
 
     A TEMPORAL entity's entry dispatches to :func:`_build_temporal_instruction`,
-    which admits exactly ONE row: its authored ``statements`` count is the DML
+    settling against what ``evidence`` answers, and admits exactly ONE row: its
+    authored ``statements`` count is the DML
     STATEMENT count (a close plus zero-to-three chained opens), a DIFFERENT
     accounting from the row-decomposition below, which assumes non-temporal
     semantics and is never applied to a temporal entry's entry. Decomposition
@@ -980,7 +1073,7 @@ def _build_instructions(
     if "row" in entry:
         return [_build_target_instruction(entry, model)]
     if _is_temporal_entity(model, entity_name):
-        return [_build_temporal_instruction(entry, model, shadow, unit_inserted, source)]
+        return [_build_temporal_instruction(entry, model, evidence, unit_inserted)]
     mutation = cast("str", entry["mutation"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
     durable = _durable_rows(model, entity_name, mutation, raw_rows)
@@ -1066,9 +1159,10 @@ def _resolve_entries(
     its own ``on`` names (:func:`run_group_step`)."""
     resolved: list[_ResolvedWrite] = []
     unit_inserted: set[ObjectKey] = set()
+    evidence = CaseStateEvidence(model, shadow, None)
     for entry in entries:
         resolved.extend(
-            _build_instructions(entry, model, shadow, unit_inserted, group_observations, None)
+            _build_instructions(entry, model, evidence, unit_inserted, group_observations, None)
         )
     return resolved
 
@@ -1129,7 +1223,7 @@ def _lower_resolved(
     dialect: Dialect,
     concurrency: Concurrency,
     tx_instant: str,
-    shadow: TemporalShadow,
+    advances: TemporalShadow | None,
 ) -> tuple[LoweredStatement, ...]:
     """Plan one write buffer through the SAME ``build_write_planner`` factory
     the composition layer uses (`parallax.snapshot.handle.ScopedDatabase.transact`)
@@ -1144,7 +1238,7 @@ def _lower_resolved(
     this ONE plan actually emits (:func:`_check_statement_count_consistency`) —
     the count is never derived from a second, reconstructed plan.
 
-    The case-state ledger advances HERE, from THIS plan's own opened rows
+    The case-state ledger, ``advances``, moves HERE, from THIS plan's own opened rows
     (:meth:`TemporalShadow.track_opened`), and keeps every milestone a write left
     unchanged (:meth:`TemporalShadow.keep_unchanged`) — the milestone a later choreography
     unit observes is the one this write actually plans, so there is no second
@@ -1152,14 +1246,17 @@ def _lower_resolved(
     happened at resolution, where the observation it consumed is known. Both
     advances belong to the boundary the caller stages them on
     (:meth:`TemporalShadow.staged`), so a doomed unit's are discarded with its
-    rows.
+    rows. A lane that models no case state passes ``None``: nothing advances, and
+    a range whose coverage no observation holds is refused rather than bound.
     """
     buffer = [_buffered(write.instruction, write.oracle_observation, model) for write in resolved]
     plan, statements = _plan_and_lower(
-        model, dialect, concurrency, tx_instant, buffer, coverage=shadow
+        model, dialect, concurrency, tx_instant, buffer, coverage=advances
     )
     _check_statement_count_consistency(entries, len(statements))
-    shadow.keep_unchanged(
+    if advances is None:
+        return statements
+    advances.keep_unchanged(
         model,
         plan.steps,
         (
@@ -1169,7 +1266,7 @@ def _lower_resolved(
             and isinstance(write.oracle_observation, TemporalObservation)
         ),
     )
-    shadow.track_opened(model, plan.steps, retired=plan.changed)
+    advances.track_opened(model, plan.steps, retired=plan.changed)
     return statements
 
 
@@ -1629,7 +1726,7 @@ def _lower_scenario_step(
         context.model,
         dialect,
         context.concurrency,
-        context.shadow,
+        context.case_state(),
         entry_instant(entries[0]),
         group_observations,
     )
@@ -1692,15 +1789,16 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
     model = models.accepted_model_of(serving.current().model)
     concurrency = case_document.concurrency(case)
     dialect = dialect_for(dialect_name)
+    shadow = TemporalShadow()
     context = CaseContext(
         serving,
         model,
         concurrency,
-        TemporalShadow(),
+        shadow,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )
-    seed_shadow_from_fixtures(case, model, context.shadow)
+    seed_shadow_from_fixtures(case, model, shadow)
     group_observations: GroupObservations = []
     lowered: list[LoweredStep] = []
     try:
@@ -1710,7 +1808,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
         while index < len(steps):
             end = doomed_spans.get(index)
             if end is not None:
-                with context.shadow.staged(doomed=True):
+                with shadow.staged(doomed=True):
                     for grouped in range(index, end + 1):
                         lowered.append(
                             _lower_scenario_step(
@@ -1720,7 +1818,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
                 index = end + 1
                 continue
             step = steps[index]
-            with context.shadow.staged(doomed=step.get("rollback") is True):
+            with shadow.staged(doomed=step.get("rollback") is True):
                 lowered.append(
                     _lower_scenario_step(context, dialect, step, index, group_observations)
                 )
@@ -2175,8 +2273,9 @@ def execute_keyed_unit(
     the plan and being what the database saw are one claim rather than two.
     """
     tx_instant = entry_instant(entries[0])
-    with context.shadow.staged(doomed=rollback):
-        resolved = _resolve_entries(entries, context.model, context.shadow, group_observations)
+    shadow = context.case_state()
+    with shadow.staged(doomed=rollback):
+        resolved = _resolve_entries(entries, context.model, shadow, group_observations)
         statements = _lower_resolved(
             resolved,
             entries,
@@ -2184,7 +2283,7 @@ def execute_keyed_unit(
             port.dialect,
             context.concurrency,
             tx_instant,
-            context.shadow,
+            shadow,
         )
         ran, unit_trips = _execute_write_unit(
             port,
@@ -2320,7 +2419,7 @@ def _run_materializing_pair(
     aborted pair moved nothing.
     """
     model = context.model
-    shadow = context.shadow
+    shadow = context.case_state()
     find_step = steps[index]
     write_step = steps[index + 1]
     instruction = is_materializing_write_step(write_step, model)
@@ -2454,13 +2553,14 @@ def _scenario_uow_spans(
     )
 
 
-def _group_tx_instant(steps: Sequence[Mapping[str, object]], start: int, end: int) -> str:
+def group_tx_instant(steps: Sequence[Mapping[str, object]], indices: Iterable[int]) -> str:
     """The Clock instant a `uow` group's own choreography unit runs at — its
     first write entry's own instant (m-txtime-write/m-bitemp-write `at`; ADR
     0010), or the inert default when the group carries no write (or every
     write entry names none, i.e. every group this round targets a
-    non-temporal entity)."""
-    for i in range(start, end + 1):
+    non-temporal entity). ``indices`` are the group's own steps, in authored
+    order, whether or not they are contiguous."""
+    for i in indices:
         step = steps[i]
         if "write" in step:
             raw_write = step["write"]
@@ -2491,9 +2591,12 @@ class CaseContext:
     neutral lowering surface is stated over. The tracker is the ONE case-spanning
     :class:`TemporalShadow` every unit shares rather than a per-unit copy — a
     later unit's temporal close observes the milestone an earlier one's write
-    opened. The record is frozen because none of the four is ever REBOUND inside
-    a case; the tracker's own contents advance, which is exactly the state a
-    shared tracker exists to carry.
+    opened. It is ``None`` on a lane that models no case state, and that alone
+    selects how a grouped temporal write settles: against the tracker
+    (:class:`CaseStateEvidence`) or against its own group's reads
+    (:class:`GroupEvidence`). The record is frozen because none of the four is
+    ever REBOUND inside a case; the tracker's own contents advance, which is
+    exactly the state a shared tracker exists to carry.
 
     The dialect is deliberately NOT one of them. It is fixed by the connection a
     unit executes through rather than by the case, and one case's steps do not
@@ -2521,9 +2624,18 @@ class CaseContext:
     serving: ServingModel
     model: AcceptedMetamodel
     concurrency: Concurrency
-    shadow: TemporalShadow
+    shadow: TemporalShadow | None
     requests: case_format.TransactionKeywords
     options: DatabaseOptions
+
+    def case_state(self) -> TemporalShadow:
+        """The tracker of a lane that models case state."""
+        if self.shadow is None:
+            raise EngineError(
+                "this choreography unit settles against tracked case state, which a lane "
+                "modeling none cannot supply"
+            )
+        return self.shadow
 
 
 def _empty_published() -> list[handle.WireEntity]:
@@ -2538,6 +2650,10 @@ def _empty_opened() -> dict[ObjectKey, handle.WireEntity]:
     return {}
 
 
+def _empty_settled() -> set[ObjectKey]:
+    return set()
+
+
 @dataclass(frozen=True, slots=True)
 class GroupState:
     """What ONE `uow` group accumulates as its own steps run, and nothing wider.
@@ -2549,14 +2665,16 @@ class GroupState:
     by the step that published them — what a write step naming a find with ``on``
     addresses (`m-case-format` *Settling against a grouped find*) — and
     ``opened`` holds what this group's own inserts answered, which is how
-    read-your-own-writes reaches a row no find could have returned. All three are
-    built fresh per group, never a scenario-wide store, so no value crosses a
-    transaction boundary.
+    read-your-own-writes reaches a row no find could have returned. ``settled``
+    holds the keys whose temporal write already settled against this group's
+    reads (:class:`GroupEvidence`). All four are built fresh per group, never a
+    scenario-wide store, so no value crosses a transaction boundary.
     """
 
     published: list[handle.WireEntity] = field(default_factory=_empty_published)
     finds: dict[int, tuple[handle.WireEntity, ...]] = field(default_factory=_empty_group_finds)
     opened: dict[ObjectKey, handle.WireEntity] = field(default_factory=_empty_opened)
+    settled: set[ObjectKey] = field(default_factory=_empty_settled)
 
 
 def _published_nodes(snapshot: handle.Snapshot[handle.WireEntity]) -> tuple[handle.WireEntity, ...]:
@@ -2783,11 +2901,12 @@ def _buffer_wire_write(
     An insert opens a row no find can have returned, so the node the verb answers
     is recorded for the rest of the group — the read-your-own-writes source a
     later entry of the same unit resolves against — and returned. Every other
-    mutation takes its source from what this group published, or ``source``
-    where the submission named the insert whose answered value it writes
-    through, and its change set is the durable row less the identity that source
-    already carries: a PK-only row therefore states the empty change set, which
-    is the ordinary no-op.
+    mutation takes its source from ``source`` where the submission named the
+    insert whose answered value it writes through, else from the node its
+    evidence already resolved (``write.source_node``), else from what this group
+    published, and its change set is the durable row less the identity that
+    source already carries: a PK-only row therefore states the empty change set,
+    which is the ordinary no-op.
     """
     instruction = write.instruction
     if isinstance(instruction, PreparedTargetWrite):
@@ -2816,6 +2935,8 @@ def _buffer_wire_write(
     node = (
         source
         if source is not None
+        else write.source_node
+        if write.source_node is not None
         else _group_source_node(entity_name, key, state, named, valid_from)
     )
     identity = dict(key.primary_key) if key is not None else {}
@@ -2980,7 +3101,10 @@ def run_group_step(
     list alike.
 
     A WRITE step resolves its entries against this group's own published values
-    (never a scenario-wide store), records the pure re-lowering every
+    (never a scenario-wide store) — a temporal entry's predecessor through the
+    evidence ``context`` selects (:class:`CaseStateEvidence` where the lane models
+    case state, :class:`GroupEvidence` where it models none) — records the pure
+    re-lowering every
     other write path uses (:func:`_lower_resolved`) BEFORE the group's flush
     executes anything — the runner reconciles the group's whole plan against what
     that flush delivered — and then buffers each resolved write through the PUBLIC
@@ -3041,9 +3165,12 @@ def run_group_step(
         for entry in entries:
             named = _source_find_nodes(entry, index, state.finds)
             source = None if named is None else tuple(_published_claims(named))
-            written = _build_instructions(
-                entry, model, context.shadow, unit_inserted, published, source
+            evidence: TemporalEvidence = (
+                GroupEvidence(state, named)
+                if context.shadow is None
+                else CaseStateEvidence(model, context.shadow, source)
             )
+            written = _build_instructions(entry, model, evidence, unit_inserted, published, source)
             resolved.extend(written)
             sources.extend(named for _ in written)
         framework = _framework_writes(resolved, model)
@@ -3112,7 +3239,7 @@ def _run_uow_group(
 
     What this runner owns beyond that interpreter is the group's own BOUNDARY:
     the single Transaction Instant every step in the span runs at
-    (:func:`_group_tx_instant`), and the doom decision — `rollback: true` on any
+    (:func:`group_tx_instant`), and the doom decision — `rollback: true` on any
     of the group's own write steps dooms the WHOLE group, which then runs on the
     aborting port, so the boundary's pre-commit flush still puts the buffered
     DML on the wire before the provider rolls it back (the `m-unit-work` abort
@@ -3127,7 +3254,7 @@ def _run_uow_group(
     (:func:`read_step_graph`). Both are what that read observed THROUGH this
     transaction, which is where read-your-own-writes becomes visible at all.
     """
-    tx_instant = _group_tx_instant(steps, start, end)
+    tx_instant = group_tx_instant(steps, range(start, end + 1))
     doomed = _group_is_doomed(case, cast("str", steps[start]["uow"]))
     state = GroupState()
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
@@ -3156,7 +3283,7 @@ def _run_uow_group(
                 if observed is not None:
                     step_graphs.append(observed)
 
-        with context.shadow.staged(doomed=doomed), absorbing_rollback():
+        with context.case_state().staged(doomed=doomed), absorbing_rollback():
             transact(session.database, body, **context.requests)
         # The group's writes reach the wire in ONE flush at its boundary, so a step's
         # own plan is reconciled against the group's whole delivery rather than
@@ -3325,7 +3452,9 @@ def _run_state_graded_group(
     label = cast("str", steps[start]["uow"])
     fate = case_document.unit_fate(case, label)
     abandoned = fate.get("outcome") == "rolledBack" and "flushFailure" not in fate
-    instant = normalize_instant(dt.datetime.fromisoformat(_group_tx_instant(steps, start, end)))
+    instant = normalize_instant(
+        dt.datetime.fromisoformat(group_tx_instant(steps, range(start, end + 1)))
+    )
     observation = lifecycle.observation()
     session = GroupSession(write_adapter(port, rollback=abandoned), context, instant, observation)
     state = GroupState()
@@ -3604,11 +3733,12 @@ def run_write_sequence_case(
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
     lifecycle = lifecycle_run(lifecycle)
+    shadow = TemporalShadow()
     context = CaseContext(
         serving,
         model,
         case_document.concurrency(case),
-        TemporalShadow(),
+        shadow,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )
@@ -3616,8 +3746,8 @@ def run_write_sequence_case(
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
     round_trips = 0
     try:
-        seed_shadow_from_fixtures(case, model, context.shadow)
-        apply_given_apply(case, port, context.shadow)
+        seed_shadow_from_fixtures(case, model, shadow)
+        apply_given_apply(case, port, shadow)
         for index, entry in enumerate(case_document.write_sequence_entries(case)):
             statements, unit_trips = execute_keyed_unit(
                 port, context, [entry], group_observations, lifecycle, rollback=False
