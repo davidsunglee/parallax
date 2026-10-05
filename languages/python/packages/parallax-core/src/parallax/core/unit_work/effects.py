@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from types import MappingProxyType
+from typing import TypeGuard
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work.planned import (
     AnyCount,
     FailedPrecondition,
     KeyTarget,
+    MaxPlusOne,
     MilestoneTarget,
     MissingTarget,
     NonTemporalConcurrency,
@@ -28,7 +30,10 @@ __all__ = [
     "StaleWriteError",
     "WriteEffectError",
     "WritePreconditionError",
+    "WriteResultError",
+    "allocated_keys",
     "enforce_affected_rows",
+    "returns_rows",
 ]
 
 type AddressedTarget = KeyTarget | MilestoneTarget
@@ -125,6 +130,71 @@ class WritePreconditionError(RuntimeError):
             f"{entity.name}: the state this write starts from no longer matches its "
             f"precondition — key={dict(key)!r}, expected revision {expected!r}"
         )
+
+
+class WriteResultError(RuntimeError):
+    """A row-producing write answered rows its statement cannot produce: a row
+    missing or in excess of the rows it opened, a row of another width, a cell
+    of another type, or one key answered twice.
+
+    Like an excess count, this is an invariant failure rather than a
+    concurrency outcome, and it is never retriable. ``expected`` and ``actual``
+    count rows; the rows themselves are not retained.
+    """
+
+    def __init__(self, entity: EntityIdentity, expected: int, actual: int, reason: str) -> None:
+        self.entity = entity
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"{entity.name}: the write answered {actual} row(s) for {expected} it opened — {reason}"
+        )
+
+
+def returns_rows(step: PlannedWrite) -> TypeGuard[PlannedInsert]:
+    """Whether ``step``'s statement answers rows: an insert whose key the
+    database allocates and returns. Every entry of one Planned Insert carries
+    the same generated-value shape, so the first answers for all."""
+    if not isinstance(step, PlannedInsert):
+        return False
+    for value in step.entries[0].row.attributes.values():
+        if isinstance(value, MaxPlusOne) and value.returned:
+            return True
+    return False
+
+
+def allocated_keys(step: PlannedInsert, rows: Sequence[Sequence[object]]) -> tuple[object, ...]:
+    """The key the database allocated for each of ``step``'s entries, in entry
+    order, read from the rows its statement answered.
+
+    The statement answers one row per entry, each holding exactly the
+    allocated key: an integer, distinct from every other the statement
+    answered. Anything else raises :class:`WriteResultError` before any key is
+    used.
+    """
+    expected = len(step.entries)
+    if len(rows) != expected:
+        raise WriteResultError(
+            step.entity,
+            expected,
+            len(rows),
+            "a missing row" if len(rows) < expected else "an excess row",
+        )
+    keys: list[object] = []
+    for row in rows:
+        if len(row) != 1:
+            raise WriteResultError(
+                step.entity, expected, len(rows), f"a row of {len(row)} cell(s), not the key alone"
+            )
+        (key,) = row
+        if not isinstance(key, int) or isinstance(key, bool):
+            raise WriteResultError(
+                step.entity, expected, len(rows), f"a key of type {type(key).__name__}"
+            )
+        if key in keys:
+            raise WriteResultError(step.entity, expected, len(rows), f"the key {key} twice")
+        keys.append(key)
+    return tuple(keys)
 
 
 def enforce_affected_rows(step: PlannedWrite, actual_count: int) -> None:

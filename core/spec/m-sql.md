@@ -1000,6 +1000,17 @@ Under Relational Document Layout a revision patches the Structured Column at the
 assigned members exactly as a Non-Temporal update does. Each statement **MUST**
 affect exactly one row, with the same shortfall classification as a close.
 
+The address of a row whose key the database allocates (`m-pk-gen` `max`) is
+known only once its insert has run, so the insert that opens such a temporal row
+answers the key, spelled alike on both dialects:
+
+```text
+insert into <table>(<key>, …) select coalesce(max(t0.<key>), ?) + ?, ? … from <table> t0 returning <key>
+```
+
+It is row-producing DML (`m-db-port`) and answers one row holding the key alone.
+A `max` insert of a Non-Temporal row answers nothing.
+
 ### Requested ranges — coverage read and statement order
 
 An observed write whose requested extent reaches current rectangles no read of

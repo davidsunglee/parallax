@@ -148,7 +148,8 @@ def compile_write_step(step: PlannedWrite, meta: Metamodel, dialect: Dialect) ->
 def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
     """`insert into <table>(<participating columns in Table Layout order>) values
     (?, …)[, (?, …)…]`, or the pk-gen `max` INSERT…SELECT form when a cell
-    carries a generated-value expression.
+    carries a generated-value expression, ending `returning <column>` where
+    that allocation is returned.
 
     Only the columns the step's entries name are emitted — an entry omitting a
     nullable member produces a narrower `INSERT`, never an explicit `NULL` bind
@@ -200,16 +201,21 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Low
             "folds into the statement itself, so it renders one row at a time (m-pk-gen)"
         )
     select_parts: list[str] = []
+    returned: list[str] = []
     for column, value, neutral_type in rows[0]:
         if isinstance(value, MaxPlusOne):
             select_parts.append(f"coalesce(max(t0.{dialect.quote(column)}), ?) + ?")
             ctx.bind_framework(0)
             ctx.bind_framework(1)
+            if value.returned:
+                returned.append(dialect.quote(column))
         else:
             select_parts.append("?")
             _bind(ctx, value, neutral_type)
+    returning = f" returning {', '.join(returned)}" if returned else ""
     return ctx.finish(
         f"insert into {table}({columns}) select {', '.join(select_parts)} from {table} t0"
+        f"{returning}"
     )
 
 

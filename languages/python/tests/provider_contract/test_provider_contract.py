@@ -87,6 +87,44 @@ def test_an_update_leaving_its_row_unchanged_is_counted_as_its_dialect_declares(
     assert profile_run.port.execute_write("update grade set id = id where id = %s", [99]) == 0
 
 
+def test_row_producing_dml_answers_its_rows_beside_a_count_only_write(profile_run: Any) -> None:
+    # `m-db-port`: an insert answering the key the database allocated runs through
+    # `execute` and returns positional managed rows; a count-only write in the
+    # same transaction still reports its native count.
+    case = _grade_case()
+    meta = engine.load_case_metamodel(case)
+    profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
+
+    def body(port: Any) -> tuple[object, int]:
+        allocated = port.execute(
+            'insert into grade(id, "order", label) '
+            "select coalesce(max(t0.id), %s) + %s, %s, %s from grade t0 returning id",
+            [0, 1, 40, "new"],
+        )
+        renamed = port.execute_write(
+            "update grade set label = %s where id = %s", ["renamed", allocated[0][0]]
+        )
+        return allocated, renamed
+
+    assert profile_run.port.transaction(body) == Committed(([(4,)], 1))
+    assert profile_run.port.execute("select t0.label from grade t0 where t0.id = %s", [4]) == [
+        ("renamed",)
+    ]
+
+
+def test_a_failing_row_producing_statement_leaves_the_connection_usable(profile_run: Any) -> None:
+    case = _grade_case()
+    meta = engine.load_case_metamodel(case)
+    profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
+    with pytest.raises(DatabaseError) as raised:
+        profile_run.port.execute(
+            'insert into grade(id, "order", label) values (%s, %s, %s) returning id',
+            [1, 1, "duplicate"],
+        )
+    assert raised.value.violates_unique_index
+    assert profile_run.port.execute("select count(*) from grade", []) == [(3,)]
+
+
 def test_scalar_read_returns_managed_values(profile_run: Any) -> None:
     (row,) = profile_run.port.execute("select 1 as one, 'x'::text as who", [])
     assert row == (1, "x")

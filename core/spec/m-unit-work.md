@@ -863,7 +863,10 @@ computes from the row being written rather than binding as a literal, and
 statement, and the registry advance an update applies to the stored value. Each
 is legal only where the statement that renders it can express it, so a Planned
 Row and Planned Assignments admit different members of the set rather than
-different value vocabularies. What neither admits is an **authored assignment
+different value vocabularies. A `max` allocation is **returned** where the row it
+opens is temporal: the statement then answers the allocated key, because the
+attempt records that row by its complete address (*Rows the attempt opened*)
+and nothing else names it. What neither admits is an **authored assignment
 expression** — anything a caller composes out of Predicate — because
 the planner resolves every caller-supplied value before a step is settled.
 
@@ -1575,6 +1578,12 @@ earlier flush closed. The attempt therefore records, by complete physical
 address, every current row its successful execution units open — keyed inserts,
 temporal successors, and the successors of Materialized Write Groups alike —
 and retires a row from that record when a unit removes it. Reads record nothing.
+A row whose key the database allocates has no address until its insert
+executes, so that insert answers the key as row-producing DML (`m-db-port`) and
+the unit records the row under it. The answer is validated before it is used:
+one row per row opened, each holding the key alone, an integer, none twice.
+Anything else is a **Write Result Error**, an invariant failure that is never
+retriable and, like any failure while executing, dooms the attempt.
 Every admitted insertion stays recorded until the attempt ends, even once
 everything it opened was removed or a pending removal cancelled it, because a
 caller-addressed write of the object is refused on that admission alone

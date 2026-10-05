@@ -80,6 +80,7 @@ from parallax.core.unit_work.plan import (
     NO_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
+    AllocatedOpening,
     BoundRange,
     Completion,
     Completions,
@@ -101,6 +102,7 @@ from parallax.core.unit_work.planned import (
     INFINITY,
     MAX_PLUS_ONE,
     NEW_LINEAGE,
+    RETURNED_MAX_PLUS_ONE,
     SUPERSEDED,
     TERMINATED,
     UNGATED,
@@ -873,6 +875,7 @@ class WriteSettlement:
         )
         predecessor = None if observed is None else observed.predecessor
         close = facts.close
+        allocates = close is None and _returns_allocated_key(facts, authored_attributes)
         if (
             preserves
             and close is not None
@@ -905,7 +908,13 @@ class WriteSettlement:
             for resolved in facts.resolved_successors
         )
         if close is None:
-            return _Settled(successors, Openings(continued=_openings(facts, successors)))
+            return _Settled(
+                successors,
+                Openings(
+                    continued=_openings(facts, successors),
+                    allocated=_allocated(facts, successors) if allocates else (),
+                ),
+            )
         assert predecessor is not None  # a closing topology refuses an unobserved mutation
         closing = _observed_close(facts, close, row, predecessor)
         return _dispose(facts, closing, successors, predecessor, ownership)
@@ -2030,15 +2039,44 @@ def _openings(facts: _TemporalFacts, inserts: Sequence[PlannedInsert]) -> tuple[
 def _entry_endpoint(facts: _TemporalFacts, entry: InsertEntry) -> OwnedEndpoint | None:
     attributes = entry.row.attributes
     value = attributes.get(facts.view.primary_key.identity)
-    # A key the database allocates has no address this attempt can name before
-    # the insert executes, so the row it opens is not recorded as owned.
+    # A key the database allocates is named only once its insert answers it
+    # (:func:`_allocated`).
     if value is None or isinstance(value, MaxPlusOne):
         return None
+    return OwnedEndpoint(facts.entity.identity, (value,), _entry_ends(facts, attributes))
+
+
+def _returns_allocated_key(
+    facts: _TemporalFacts, attributes: dict[AttributeIdentity, PlannedValue]
+) -> bool:
+    """Ask the insert that opens a row whose key the database allocates to
+    answer that key, so the row is recorded by its complete address."""
+    key = facts.view.primary_key.identity
+    if not isinstance(attributes.get(key), MaxPlusOne):
+        return False
+    attributes[key] = RETURNED_MAX_PLUS_ONE
+    return True
+
+
+def _allocated(
+    facts: _TemporalFacts, inserts: Sequence[PlannedInsert]
+) -> tuple[AllocatedOpening, ...]:
+    key = facts.view.primary_key.identity
+    return tuple(
+        AllocatedOpening(facts.entity.identity, _entry_ends(facts, entry.row.attributes))
+        for insert in inserts
+        for entry in insert.entries
+        if entry.row.attributes.get(key) == RETURNED_MAX_PLUS_ONE
+    )
+
+
+def _entry_ends(
+    facts: _TemporalFacts, attributes: Mapping[AttributeIdentity, PlannedValue]
+) -> tuple[TemporalUpperBound, ...]:
     shape = facts.shape
-    ends = TRANSACTION_TIME_ENDS
     if isinstance(shape, Bitemporal):
-        ends = _bitemporal_ends(attributes[shape.valid_time.end_attribute])
-    return OwnedEndpoint(facts.entity.identity, (value,), ends)
+        return _bitemporal_ends(attributes[shape.valid_time.end_attribute])
+    return TRANSACTION_TIME_ENDS
 
 
 def _target_endpoint(facts: _TemporalFacts, target: MilestoneTarget) -> OwnedEndpoint:

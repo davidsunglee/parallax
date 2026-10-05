@@ -20,6 +20,7 @@ __all__ = [
     "INFINITY",
     "MAX_PLUS_ONE",
     "NEW_LINEAGE",
+    "RETURNED_MAX_PLUS_ONE",
     "SUPERSEDED",
     "TERMINATED",
     "UNGATED",
@@ -76,11 +77,16 @@ class MaxPlusOne:
 
     The allocation folds into the emitted statement rather than binding a
     literal, so the planner decides *that* a cell is allocated this way and
-    lowering decides how that reads in one dialect.
+    lowering decides how that reads in one dialect. A ``returned`` allocation
+    is one the statement also answers, because the row it opens is recorded by
+    its complete address and nothing else names the key.
     """
+
+    returned: bool = False
 
 
 MAX_PLUS_ONE: Final[MaxPlusOne] = MaxPlusOne()
+RETURNED_MAX_PLUS_ONE: Final[MaxPlusOne] = MaxPlusOne(returned=True)
 
 
 @dataclass(frozen=True, slots=True)

@@ -48,6 +48,7 @@ from parallax.core.execution_lifecycle._events import (
     DatabaseCallStarted,
     DatabaseReadCompleted,
     DatabaseWriteCompleted,
+    DatabaseWriteRowsCompleted,
     ExecutionEvent,
     JoinedInvocation,
     JoinedInvocationRaised,
@@ -276,6 +277,11 @@ class DatabaseCallActivity(Protocol):
     def write_completed(self, affected_rows: int, /) -> None:
         """The DML call reported ``affected_rows``, however short of what the
         step addressed that count falls."""
+        ...
+
+    def write_rows_completed(self, returned_rows: Sized, /) -> None:
+        """The row-producing DML call returned ``returned_rows``, passed whole
+        for the reason :meth:`read_completed` takes its rows."""
         ...
 
 
@@ -784,6 +790,8 @@ class _InertActivity:
     def read_completed(self, returned_rows: Sized, /) -> None: ...
 
     def write_completed(self, affected_rows: int, /) -> None: ...
+
+    def write_rows_completed(self, returned_rows: Sized, /) -> None: ...
 
     def begin_failed(self, error: Exception, /) -> None: ...
 
@@ -1310,6 +1318,9 @@ class _LiveDatabaseCall(_LiveActivity):
 
     def write_completed(self, affected_rows: int, /) -> None:
         self._outcome = DatabaseWriteCompleted(affected_rows)
+
+    def write_rows_completed(self, returned_rows: Sized, /) -> None:
+        self._outcome = DatabaseWriteRowsCompleted(len(returned_rows))
 
 
 class _LiveEnforcement:

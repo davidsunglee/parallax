@@ -37,12 +37,16 @@ from parallax.core.unit_work import (
     WritePlan,
     WritePlanner,
     active_unit_of_work,
+    allocated_keys,
     concurrency_preference,
     enforce_affected_rows,
+    returns_rows,
     run_unit_of_work,
 )
-from parallax.core.unit_work.plan import BoundRange, ExecutionUnit
+from parallax.core.unit_work.plan import ExecutionUnit
+from parallax.core.unit_work.planned import PlannedInsert
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
+from parallax.core.unit_work.uow import UnitReport
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -649,7 +653,7 @@ class _FlushEdge:
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
-        completed: Callable[[ExecutionUnit, BoundRange | None], None],
+        completed: UnitReport,
     ) -> None:
         """Lower each planned step, execute every statement in order, hand each
         result back to the unit of work to interpret, and report each execution
@@ -678,6 +682,11 @@ class _FlushEdge:
         shortfall is judged AFTER the call it judges has already completed: the
         bracket is what lets the batch's failure name that completed call
         instead of the enforcement being read as a failure of the batch itself.
+
+        An insert whose key the database allocates for a row the unit records
+        answers that key: it runs as row-producing DML, core reads the key from
+        the rows it returned (:func:`~parallax.core.unit_work.allocated_keys`)
+        inside the same bracket, and the unit is reported with it.
         """
         # The trigger is the batch's, and the batch this runs inside already
         # carries it; taking it again here would be a second spelling of one
@@ -688,22 +697,28 @@ class _FlushEdge:
         units = iter(plan.units)
         unit = next(units, None)
         executed = 0
+        allocated: tuple[object, ...] = ()
         for step, statement in stream_lowered(plan, meta, dialect):
             while unit is not None and unit.end == executed:
-                self._complete(unit, completed)
+                self._complete(unit, completed, allocated)
+                allocated = ()
                 unit = next(units, None)
-            self._run(step, statement)
+            if unit is not None and unit.opened.allocated and returns_rows(step):
+                allocated = (*allocated, *self._run_returning(step, statement))
+            else:
+                self._run(step, statement)
             executed += 1
         while unit is not None and unit.end == executed:
-            self._complete(unit, completed)
+            self._complete(unit, completed, allocated)
+            allocated = ()
             unit = next(units, None)
 
     def _complete(
-        self, unit: ExecutionUnit, completed: Callable[[ExecutionUnit, BoundRange | None], None]
+        self, unit: ExecutionUnit, completed: UnitReport, allocated: tuple[object, ...]
     ) -> None:
         deferred = unit.deferred
         if deferred is None:
-            completed(unit, None)
+            completed(unit, None, allocated=allocated)
             return
         rows = acquire_coverage(self._model, self._conn, self._batch, deferred.acquisition)
         bound = deferred.bind(rows)
@@ -722,3 +737,15 @@ class _FlushEdge:
             call.write_completed(affected)
         with batch.enforcing(call):
             enforce_affected_rows(step, affected)
+
+    def _run_returning(
+        self, step: PlannedInsert, statement: LoweredStatement
+    ) -> tuple[object, ...]:
+        batch = self._batch
+        with batch.database_call(statement, "write", step.entity) as call:
+            rows = self._conn.execute(
+                self._conn.dialect.to_driver_sql(statement.sql), list(statement.binds)
+            )
+            call.write_rows_completed(rows)
+        with batch.enforcing(call):
+            return allocated_keys(step, rows)

@@ -76,7 +76,12 @@ from parallax.core.unit_work.plan import NO_OPENINGS, BoundRange, ExecutionUnit
 from parallax.core.unit_work.planned import PlannedClose, PlannedUpdate
 from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.core.unit_work.retain import InsertionIdentity
-from parallax.core.unit_work.uow import EscapedTransactionError, FlushExecutor, WriteBatchOpening
+from parallax.core.unit_work.uow import (
+    EscapedTransactionError,
+    FlushExecutor,
+    UnitReport,
+    WriteBatchOpening,
+)
 from parallax.core.unit_work.write_planner import compose_writes
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock
@@ -1229,6 +1234,24 @@ def test_a_bound_range_reported_for_a_planned_unit_dooms_the_attempt() -> None:
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_account_write("update", 1, 7))
         with pytest.raises(UnitOfWorkError, match="deferred range"):
+            uow.read(lambda: None)
+
+    with pytest.raises(RollbackOnlyError):
+        _run(body, executor=executor)
+
+
+def test_a_unit_reported_with_keys_it_never_allocated_dooms_the_attempt() -> None:
+    def executor(
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        completed: UnitReport,
+    ) -> None:
+        completed(plan.units[0], None, allocated=(8,))
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_account_write("update", 1, 7))
+        with pytest.raises(UnitOfWorkError, match=r"opening 0 row\(s\).*with 1 key"):
             uow.read(lambda: None)
 
     with pytest.raises(RollbackOnlyError):

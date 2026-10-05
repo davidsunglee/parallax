@@ -26,7 +26,10 @@ from parallax.core.unit_work.effects import (
     StaleWriteError,
     WriteEffectError,
     WritePreconditionError,
+    WriteResultError,
+    allocated_keys,
     enforce_affected_rows,
+    returns_rows,
 )
 from parallax.core.unit_work.instructions import (
     BOUNDED_MUTATIONS,
@@ -198,7 +201,9 @@ __all__ = [
     "WritePlanningError",
     "WritePreconditionError",
     "WriteRejectedError",
+    "WriteResultError",
     "active_unit_of_work",
+    "allocated_keys",
     "buffered_write",
     "claim_scope",
     "claimed_object",
@@ -208,6 +213,7 @@ __all__ = [
     "object_key",
     "observed_state_key",
     "plan_temporal_close",
+    "returns_rows",
     "run_unit_of_work",
     "whole",
 ]

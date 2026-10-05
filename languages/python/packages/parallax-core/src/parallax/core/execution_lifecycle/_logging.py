@@ -31,6 +31,7 @@ from parallax.core.execution_lifecycle._events import (
     DatabaseCallStarted,
     DatabaseReadCompleted,
     DatabaseWriteCompleted,
+    DatabaseWriteRowsCompleted,
     ExecutionEvent,
     JoinedInvocation,
     JoinedInvocationRaised,
@@ -371,6 +372,17 @@ def _database_write_fields(
     }
 
 
+def _database_write_rows_fields(
+    event: DatabaseCallFinished, _detail: LifecycleLogDetail
+) -> dict[str, object]:
+    outcome = cast(DatabaseWriteRowsCompleted, event.outcome)
+    return {
+        "outcome": "writeRowsCompleted",
+        "returned_rows": outcome.returned_rows,
+        "duration_ns": event.duration_ns,
+    }
+
+
 def _database_call_failed_fields(
     event: DatabaseCallFinished, detail: LifecycleLogDetail
 ) -> dict[str, object]:
@@ -518,6 +530,11 @@ def _database_call_projection(event: DatabaseCallFinished, transition: str) -> _
         case DatabaseWriteCompleted():
             projected = _Projected(
                 _finished_level(event, False), transition, True, event, _database_write_fields
+            )
+            return projected
+        case DatabaseWriteRowsCompleted():
+            projected = _Projected(
+                _finished_level(event, False), transition, True, event, _database_write_rows_fields
             )
             return projected
         case DatabaseCallFailed():

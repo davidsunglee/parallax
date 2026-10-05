@@ -223,10 +223,16 @@ DatabaseCallStarted(target, kind, statement)
 DatabaseCallFinished(statement, durationNs,
     DatabaseReadCompleted(returnedRows)
   | DatabaseWriteCompleted(affectedRows)
+  | DatabaseWriteRowsCompleted(returnedRows)
   | DatabaseCallFailed(diagnostic))
 ```
 
-`kind` is `read` or `write`. `statement` is the exact deeply immutable Lowered
+`kind` is `read` or `write`. A write is count-only or row-producing
+(`m-db-port`): `DatabaseWriteCompleted` carries the native affected-row count of
+the first, `DatabaseWriteRowsCompleted` the physical number of rows the second
+returned. That number is neither an affected-row count nor a count of the
+mutations the statement made, since one returned row may describe several, so
+no observer reads one as the other. `statement` is the exact deeply immutable Lowered
 Statement presented to the port and is repeated on Finished. It is borrowed for
 synchronous delivery: core does not copy its text or binds, and a Handler must
 not retain it. `durationNs` is monotonic elapsed time around the port invocation

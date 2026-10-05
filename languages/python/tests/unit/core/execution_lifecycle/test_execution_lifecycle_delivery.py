@@ -30,6 +30,7 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
     DatabaseFailureDiagnostic,
     DatabaseWriteCompleted,
+    DatabaseWriteRowsCompleted,
     ExecutionEvent,
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
@@ -458,3 +459,17 @@ def test_a_database_call_reports_a_write_count_the_same_way_it_reports_a_read() 
     assert isinstance(finished, DatabaseCallFinished)
     assert finished.outcome == DatabaseWriteCompleted(3)
     assert finished.statement is statement
+
+
+def test_a_row_producing_write_reports_the_rows_it_returned_not_a_count() -> None:
+    recorder = RecordingLifecycleProvider()
+    ledger = EntityIdentity(None, "Ledger")
+    root = open_read_root(_installed(recorder), target=ledger, interface="typed", edition="edition")
+    statement = LoweredStatement("insert into ledger(id) select 1 returning id")
+    with root as read, read.database_call(statement, "write", ledger) as call:
+        call.write_rows_completed([(8,)])
+
+    (recorded,) = recorder.roots
+    finished = recorded.events[2]
+    assert isinstance(finished, DatabaseCallFinished)
+    assert finished.outcome == DatabaseWriteRowsCompleted(1)

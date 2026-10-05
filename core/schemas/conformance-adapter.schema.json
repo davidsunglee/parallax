@@ -527,12 +527,12 @@
       }
     },
     "lifecycleDatabaseCallFinished": {
-      "description": "The round trip came back, however it came back — a CLOSED union of exactly one outcome. `readCompleted` carries the PHYSICAL row count the statement returned, never a count of result roots, unique graph nodes, or projection views; `writeCompleted` the affected-row count, which is a COMPLETION even when it falls short of what the step addressed. `failed` carries the neutral `m-db-error` category the failure classified to, `null` where it classified to none — the ONE place a category is portable at all, because a failed Database Call is the one activity carrying a Database Failure Diagnostic, and begin, commit, and rollback are no Database Call. The monotonic duration, the message, the native code, and the raised type are not portable and are absent.",
+      "description": "The round trip came back, however it came back — a CLOSED union of exactly one outcome. `readCompleted` carries the PHYSICAL row count the statement returned, never a count of result roots, unique graph nodes, or projection views; `writeCompleted` the affected-row count, which is a COMPLETION even when it falls short of what the step addressed; `writeRowsCompleted` the PHYSICAL row count a row-producing write returned, which is neither an affected-row count nor a count of the mutations it made. `failed` carries the neutral `m-db-error` category the failure classified to, `null` where it classified to none — the ONE place a category is portable at all, because a failed Database Call is the one activity carrying a Database Failure Diagnostic, and begin, commit, and rollback are no Database Call. The monotonic duration, the message, the native code, and the raised type are not portable and are absent.",
       "type": "object",
       "additionalProperties": false,
       "required": ["outcome"],
       "properties": {
-        "outcome": {"enum": ["readCompleted", "writeCompleted", "failed"]},
+        "outcome": {"enum": ["readCompleted", "writeCompleted", "writeRowsCompleted", "failed"]},
         "returnedRows": {"type": "integer", "minimum": 0},
         "affectedRows": {"type": "integer", "minimum": 0},
         "category": {"enum": ["uniqueViolation", "deadlock", "lockWaitTimeout", null]},
@@ -557,6 +557,17 @@
             "required": ["affectedRows"],
             "allOf": [
               {"not": {"required": ["returnedRows"]}},
+              {"not": {"required": ["category"]}},
+              {"not": {"required": ["code"]}}
+            ]
+          }
+        },
+        {
+          "if": {"required": ["outcome"], "properties": {"outcome": {"const": "writeRowsCompleted"}}},
+          "then": {
+            "required": ["returnedRows"],
+            "allOf": [
+              {"not": {"required": ["affectedRows"]}},
               {"not": {"required": ["category"]}},
               {"not": {"required": ["code"]}}
             ]
