@@ -1357,7 +1357,8 @@ advisory: document-heavy.streamedMemory.page128PeakKiB grows 69.961 KiB between 
 ```
 
 Against the outgoing capture's eleven advisories, the live timing advisories
-grow from five to twenty-one; *Against COR-191's capture* places them. The
+grow from five to twenty-one, from live timings this capture reads inflated
+relative to its code (*Against COR-191's capture*). The
 `duplicate-include` provider-free CPU advisories narrow to its eager pair, and
 the `bitemporal-current` page-32 arm growth no longer exceeds its limit, while
 `document-heavy`'s page-128 arms grow 69.961 KiB where the outgoing capture's
@@ -1386,8 +1387,9 @@ writes' −84.9% to −87.9% are `txtime.unchanged`, which now writes nothing.
 
 Every family median in an unchanged window outside live delivery is at or
 below `after/` on both runtimes. Live delivery is the exception, and the
-outgoing capture read it at or below `after/` too; *Against COR-191's capture*
-places the move. `model.prepared` retains 426,856 and 438,520 B against
+outgoing capture read it at or below `after/` too; this capture's live timings
+are inflated relative to its code and are no baseline for live timing
+(*Against COR-191's capture*). `model.prepared` retains 426,856 and 438,520 B against
 `after/`'s 415,992 and 427,016, and forms in 3,350 and 3,428 µs against 3,738
 and 3,673. Both bases ran on macOS 26.6.2 and this capture on 27.0.1; a
 diagnostic of one producing commit on both found memory OS-invariant and no
@@ -1535,8 +1537,13 @@ every one is within its ceiling.
   (medians −5.4% to +2.3%), while the outgoing tree reads 15–89% slower than its
   own capture did: the move is not in code. OrbStack, the PostgreSQL image, the
   macOS build, and the libpq psycopg bundles were unchanged; the interpreters
-  were not, and provider-free delivery did not move. It is accepted into this
-  baseline unattributed between the interpreters and the host.
+  were not, and provider-free delivery did not move. These live timings are
+  therefore known to be inflated relative to the code they measure, by a cause
+  between the interpreters and the host that no reading here separates, and
+  they are not a baseline for live timing. Read a live timing change against
+  the capture this one replaces (`recovered/` at `dc65ef88` in Git history) or
+  a same-day pair, never against these cells. The live byte readings are
+  unaffected, and no live reading is gated.
 - instance-state's timing and ratio cells move in both directions on both
   runtimes, as between the outgoing capture and `1749ee3e`.
 
