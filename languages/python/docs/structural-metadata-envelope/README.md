@@ -93,7 +93,7 @@ total of what the window allocated.
 | Window | Member | Contains | Excludes |
 |---|---|---|---|
 | `keyed-write` | write-lowering | one public keyed verb (`tx.insert`, `tx.update`, a bounded `tx.update`, or its `tx.wire` peer), or one caller-addressed target write (`tx.wire.update` naming the Entity, `tx.replace`, `tx.wire.replace`), until `transact` returns: Typed row serialization or the caller's Wire document; preparation; effective-change classification and buffering; a target's own reads — the point read under the shared lock an unversioned Non-Temporal target acquires its row with at the call, and the coverage read a temporal target's flush makes — with their planning, compilation, and row conversion over provider-free rows; the pre-commit flush's planning, settlement, and SQL lowering; production PostgreSQL bind adaptation; psycopg's own transformer dump of every bind, document binds included; the commit | the read of the row an observed write revises, earlier in the same transaction, and the Typed `edit` or Wire changes document authored against it; a target's caller-authored instance or document; database execution and network time |
-| `predicate-acquisition` | write-lowering | one public `tx.wire.update_until_where` of a Bitemporal `updateUntil` over the caller's target and changes documents: document capture, instruction deserialization and preparation; the resolving read's planning and compilation; row publication and materialization; per-row no-op selection; predecessor ownership establishment from freshly composed mutable rows; aligned column construction; buffering of the Materialized Write Group | the flush and driver serialization — the transaction is abandoned after the checkpoint |
+| `predicate-acquisition` | write-lowering | one public `tx.wire.update_where` bounded by `until`, a Bitemporal `updateUntil`, over the caller's target and changes documents: document capture, instruction deserialization and preparation; the resolving read's planning and compilation; row publication and materialization; per-row no-op selection; predecessor ownership establishment from freshly composed mutable rows; aligned column construction; buffering of the Materialized Write Group | the flush and driver serialization — the transaction is abandoned after the checkpoint |
 | `model-preparation` | write-lowering | one `prepare_model` over the whole structural write model: formation from the declared Entity Classes, layouts, row codec, graph construction, and write planner | the Entity Class declarations themselves, which are retained by the importing module |
 | `wire-insert-response` | write-lowering | one public `tx.wire.insert` of a nested, polymorphic Create Payload inside an open transaction, from the payload arriving to the frozen Wire node it answers | the commit that flushes the buffered row, its lowering, and driver serialization |
 | `live-delivery` | snapshot-delivery | a connected Wire find or stream against PostgreSQL, parsing included | nothing |
@@ -216,10 +216,9 @@ replacements lower to identical statements, as the categorical twins do.
 A capture taken before these cases verifies without them under the `before
 target writes` coverage (`write_lowering_overhead.CASE_COVERAGES`), and
 `--require-member write-lowering` accepts the current matrix alone, which
-includes them. The categorical owner claims their addresses by family prefix
-(*Memory gates* › *Ownership*); they carry no ceiling until a capture that reads
-them becomes the basis, and their gates are then derived under the rule in
-*Basis*.
+includes them. Their retained and high-water readings are gated like every
+other keyed-write case's, under the rule in *Basis*, and the categorical owner
+claims their addresses by family prefix (*Memory gates* › *Ownership*).
 
 ### Geometry families — 9 levels, both flows, both layouts
 
@@ -422,13 +421,13 @@ once when a handle connects rather than per delivery.
 
 `../../spec/memory-gates.yaml` is the blocking half of this evidence: one
 ceiling per byte-unit reading address of the structural windows — the retained
-checkpoint and the high-water mark of each of the 46 keyed-write cases the basis
-reads (the target writes are not among them), the six
-acquisition levels, the two model-preparation checkpoints, and the leaf-type
-families' 46 keyed inserts and 24 acquisitions (248 gates, in bytes per row or
+checkpoint and the high-water mark of each of the 64 keyed-write cases (the 46
+categorical, geometry, and changed-ancestor cases and the 18 target writes), the
+six acquisition levels, the two model-preparation checkpoints, and the leaf-type
+families' 46 keyed inserts and 24 acquisitions (284 gates, in bytes per row or
 bytes), and the retained and peak readings of the eighteen geometry reads, nine
 cold plan compilations, and twenty-two leaf-type reads (98 gates, in KiB
-converted to bytes) — 346 in all, beside the scaling domains and the advisory
+converted to bytes) — 382 in all, beside the scaling domains and the advisory
 allowances. The cost
 class grades them, under both layouts and through the same reading children the
 capture uses, in `tests/unit/tools/test_write_lowering_reading_gates.py` and
@@ -436,7 +435,8 @@ capture uses, in `tests/unit/tools/test_write_lowering_reading_gates.py` and
 nowhere. The gates live in a file of their own rather than in
 `budget-contract.yaml` because that contract's digest is part of the
 `authority` fingerprint the baseline's Snapshot member was classified under:
-editing it would reclassify the retained captures or demand a fresh one.
+editing it demands a fresh capture or a recorded re-classification of the
+canonical one.
 
 ### Basis
 
@@ -444,7 +444,7 @@ Every ceiling is the rule's output, not an edit: the largest reading of the
 address on either runtime in the capture the file names as its basis —
 `recovered/portfolio.json` — scaled by **1.10** and rounded up to a whole byte, and
 `test_every_memory_gate_is_the_basis_reading_under_the_stated_rule`
-recomputes all 346 from it. The headroom is the Budget Contract's own
+recomputes all 382 from it. The headroom is the Budget Contract's own
 `individualMax` for a memory cell; the run-to-run agreement recorded under
 *Measured noise floor* — retained checkpoints within 2.8% and high-water marks
 within 1% on this runner, and a further 1–3% between the two runtimes, which
@@ -462,18 +462,33 @@ canonical `recovered/`. Git history keeps each earlier derivation's account
 beside the capture it came from. The present basis is the capture described
 under *Recovered capture*, and every reading of it had first been graded against
 the ceilings the outgoing basis set (*Recovered capture*, *Memory*). Its
-derivation kept all 346 addresses: 341 ceilings are unchanged to the byte, four
-rose, and one fell.
+derivation grew the file from 346 to 382 addresses: the retained and
+high-water readings of the 18 target writes entered, and of the 346 existing
+ceilings 42 are unchanged to the byte, 174 fell, and 130 rose.
 
-- **Rose:** the two `leaf-timestamp` read peaks by 2.5% (1,051,688 to
-  1,077,648 B and 1,055,921 to 1,081,936 B), `leaf-timestamp` Columns retained
-  by 0.05%, and `plan-depth-8`'s Document peak by 4 bytes.
-- **Fell:** `leaf-timestamp` Document retained, by 0.06%.
+- **Entered:** the target writes' retained ceilings at 2,280–2,764 B/row and
+  their high-water ceilings at 15,901–26,780 B/row, `plain` the smallest and
+  `bitemporal` the largest.
+- **Rose, every one a write-lowering ceiling:** the high-water mark of every
+  insert (the geometry and leaf-type inserts by 0.5–4.0%, `txtime.opening` by
+  4.0–6.7%), every Wire insert's checkpoint (+0.4% to +6.2%), every
+  acquisition checkpoint (+0.2% to +5.8%), the two `rows-128` acquisition
+  high-water marks (+0.5% and +6.1%), and the four model-preparation ceilings
+  (up to +0.33%).
+- **Fell:** every categorical-update, `txtime.unchanged` high-water, and
+  changed-ancestor ceiling (−1.8% to −55.4%), every Typed insert's checkpoint
+  (−0.8% to −7.4%), the other acquisition high-water marks (−0.4% to −5.8%),
+  and on the read side every geometry and leaf-type read peak (−0.1% to
+  −1.8%), the two `leaf-timestamp` retained ceilings (−0.03% and −0.02%), the
+  cold plans (−4.5% to −5.1%), and the guarded plans (−9.8% to −12.0%).
+- **Held:** the geometry and other leaf-type reads' retained ceilings and
+  `txtime.unchanged`'s checkpoints.
 
-Neither movement is a code change. The `leaf-timestamp` reads differ between
-reading children on production's aware-datetime path, and the read-plan
-readings flicker by 4 bytes between children (*Recovered capture*, *Against
-COR-178's capture*).
+*Recovered capture* › *Against COR-191's capture* attributes each movement:
+the rises to the attempt-scoped insertion admission and unit-of-work state
+that keyed update and replacement brought, and to `eb70a89e`'s acquisition
+transient; the falls to the same change's write composition and body-only
+ancestor workload, and to the prepared-read work before it.
 
 A gate's
 sensitivity is therefore the headroom alone at every address: a retained
@@ -524,7 +539,7 @@ worth less than the headroom is invisible to its gate.
 
 `tests/unit/_memory_gate_support.py` names the cost item owning each gate;
 `tests/unit/test_memory_gate_ownership.py` grades that every named item is
-collected in the cost class and that the owners partition the 346 gates, so a
+collected in the cost class and that the owners partition the 382 gates, so a
 gate is never owned by a report member's registration. The prepared-model owner
 claims both preparation cases, `model.prepared` and `model.prepared.family`; the
 cold-plan owner claims the geometry levels under `plan-` and the guarded include
@@ -1237,96 +1252,116 @@ memory cell, and the two scaling arms named above is within its limit.
 ## Recovered capture — `recovered/`
 
 The repository's canonical current cost portfolio: one complete capture of the
-head of `main`, taken immediately after the Snapshot reading child came to run
-only the support module its address reads (`c6e43f24..dc65ef88`) and nothing
-else had merged. `before/` stays the recovery reference and `after/` the fixed
-regression baseline; neither is recaptured. `comparison-before.md`,
-`comparison-after.md` and `comparison-cor-178.md` are this capture's plain
+head of `main`, taken immediately after keyed update and replacement with
+caller-supplied preconditions merged (`b36fb6af..189def23`) and nothing else
+had. `before/` stays the recovery reference and `after/` the fixed regression
+baseline; neither is recaptured. `comparison-before.md`,
+`comparison-after.md` and `comparison-cor-191.md` are this capture's plain
 `--compare` renderings against `before/`, `after/`, and the capture it
 replaces. This capture is the basis every memory gate is derived from
 (*Memory gates* › *Basis*).
 
-The capture this one replaces was taken at `9676ec8a` on the same machine, OS
-build, and interpreters, and narrated here as the canonical portfolio after
-COR-178 aligned every cost source with the path production runs, amended in
-place for the UTC fast path (364 re-measured readings, recorded in its own
-`conditions.json`). That account belongs to the tree it was taken from and is
-not restated here. Git history keeps its bytes, and a byte-for-byte copy is
-kept outside Git at
-`$HOME/.local/share/parallax/evidence/cor-191/outgoing-recovered/`, beside the
+The capture this one replaces was taken at `dc65ef88` on the same machine and
+OS build, under CPython 3.14.7 and 3.13.15, after the Snapshot reading child
+came to run only the support module its address reads. That account belongs to
+the tree it was taken from and is not restated here. Git history keeps its
+bytes, and a byte-for-byte copy is kept outside Git at
+`$HOME/.local/share/parallax/evidence/cor-156/outgoing-recovered/`, beside the
 other retained captures the comparisons are rendered against; no tool, test, or
 workflow reads that path.
 
 ### Provenance
 
-Produced from clean commit `dc65ef88487bcf556658389e320c20dd646825ac`
-(`test(cost): select memory-gate owners by the shared workload prefixes`, the
-head of `main` at capture time and already published) by `uv run --project
-languages/python python languages/python/tools/cost_report.py --out
-languages/python/docs/structural-metadata-envelope/recovered`, 2026-09-30
-05:42:48–06:37:45 EDT (09:42:48–10:37:45 UTC, 55 minutes wall clock and
-3296.601 s of recorded collection span; collector exit 0), on the same Mac17,4
+Produced from clean commit `189def2327fc0749f4c7cddfb8e1326850602852`
+(`test(python): measure caller-addressed target writes in the write-lowering
+instrument`, the head of `main` at capture time and already published) by `uv
+run --project languages/python python languages/python/tools/cost_report.py
+--out languages/python/docs/structural-metadata-envelope/recovered`, 2026-10-05
+09:30:03–10:27:33 EDT (13:30:03–14:27:33 UTC, 57.5 minutes wall clock and
+3448.067 s of recorded collection span; collector exit 0), on the same Mac17,4
 (Apple M5, 10 cores, 32 GiB, arm64) on macOS 27.0.1 build 26A434, with CPython
-3.14.7 in the project environment and 3.13.15 in a per-member throwaway
+3.14.8 in the project environment and 3.13.16 in a per-member throwaway
 environment, and PostgreSQL 18.6 (`postgres:18.6-alpine` through
-Testcontainers). `uv.lock` has moved since the outgoing capture — pydantic
-2.13.5 to 2.14.0b2 with pydantic-core 2.46.5 to 2.49.0, botocore, psycopg-pool,
-and ruff — and this one records its digest `e8c85274…`. OrbStack was restarted
-(`orb stop && orb start`) before the run. The machine was on AC power, the
-collector and every child ran at nice 5 under `caffeinate`, Backblaze was
-stopped, and no process was above 20% of one core before the run. It did not
-stay idle: `spotlightknowledged`, a macOS Spotlight process, started at
-05:59:54, 17 minutes in, and held one core at about 100% until past the end,
-so every reading from the 3.14 `duplicate-include` workload onward was taken
-beside it (*Against COR-178's capture* reads its effect); the capture is
-accepted as the basis with it. Of the collection
-span, snapshot-delivery took 2937.5 s (1297.6 s of it the leaf-type reads on
-3.14), write-lowering 331.2 s, instance-state 15.1 s, and lifecycle-overhead
-12.7 s.
+Testcontainers). Homebrew had moved both interpreters on 2026-10-01, from
+3.14.7 and 3.13.15. `uv.lock` has moved since the outgoing capture by urllib3
+2.7.0 to 2.8.0 alone, and this capture records its digest `49998acc…`.
+OrbStack was restarted (`orb stop && orb start`) 85 seconds before the run. The
+machine was on AC power, the collector and every child ran at nice 5 under
+`caffeinate`, and Backblaze was stopped. At the start a macOS Shortcut held
+66% of one core in `BackgroundShortcutRunner` and 29% in `siriactionsd`; a
+sample seconds later found neither, and the process table recorded when the
+run ended shows nothing above 2% of a core. Of the collection span, snapshot-delivery took 3042.8 s
+(1363.5 s of it the leaf-type reads on 3.14), write-lowering 377.0 s,
+instance-state 14.7 s, and lifecycle-overhead 13.4 s.
 
-All four members name that commit and a clean tree, none carries an incomplete
-cell or an error, snapshot-delivery classifies authoritative, and no reading
-was changed after the run. The write-lowering `workloadDigest` `53fd984e…` and
-the Snapshot `workloadDigest` `b6af4d92…` equal `write_lowering_digest()` and
-`workload_digest()` at the producing commit. The portfolio's sha256 is
-`08ac4db8b5822d6810d8e77a3932df1a619aac8970f474631f877aa20393579d`.
+All four members name that commit and a clean tree, and none carries an
+incomplete cell or an error. The write-lowering `workloadDigest` `40499cb2…`
+and the Snapshot `workloadDigest` `b6af4d92…` equal `write_lowering_digest()`
+and `workload_digest()` at the producing commit. The portfolio's sha256 is
+`e33fd41c646498088a2098688563d7e9c53891b3a990dc49526a50177e9c28c0`.
+
+**Re-classified after the run.** The run embedded the Budget Contract of its
+producing commit, whose `authority` fingerprint named CPython 3.14.7, so its
+snapshot-delivery envelope classified non-authoritative on 3.14.8. The
+contract's `authority.cpython` now names 3.14.8, and every envelope was
+re-classified under it: its embedded contract text and digest are the committed
+contract's (`422106570ad6…`, from `f128baab568d…`), and its authority is
+`classify_authority`'s answer over its unchanged provenance. Snapshot-delivery
+alone changes, to authoritative. No reading, sample, or comparison changed:
+the two contracts differ in `authority.cpython` alone, and comparisons read the
+authority minor, 3.14, which did not move. `summary.md` is re-rendered by the
+collector's own renderer, and the `adjustment` of `conditions.json` records the
+re-classification, which every mode that states a capture reports.
 
 | Member | Authority | Runtimes | Readings | Within | Outside |
 |---|---|---|---:|---:|---:|
-| snapshot-delivery | authoritative | 3.13, 3.14 | 596 | 81 | 9 |
-| lifecycle-overhead | non-authoritative | - | 87 | 5 | 10 |
+| snapshot-delivery | authoritative | 3.13, 3.14 | 596 | 67 | 23 |
+| lifecycle-overhead | non-authoritative | - | 87 | 6 | 9 |
 | instance-state | non-authoritative | - | 696 | 4 | 4 |
-| write-lowering | non-authoritative | 3.13, 3.14 | 1230 | 0 | 0 |
+| write-lowering | non-authoritative | 3.13, 3.14 | 1518 | 0 | 0 |
 
-`cost_report.py --verify recovered/portfolio.json` **exits 0** and reports
-eleven advisories: nine timing ceilings over five cells and two scaling-arm
-growths, none of them a memory ceiling or a memory *gate*. The run opens with
+`cost_report.py --verify recovered/portfolio.json` **exits 0**. It opens with
 `snapshot-delivery lock freshness matches`, which names the recorded and the
-inspected `lockDigest`, both `e8c85274…`, and then the path of the `uv.lock` it
-read. That path is whatever clone ran the command, so it is left out here; the
-rest is verbatim.
+inspected `lockDigest`, both `49998acc…`, and then the path of the `uv.lock` it
+read; that path is whatever clone ran the command, so it is left out here. The
+rest is verbatim: the re-classification, then 23 timing-ceiling advisories over
+fourteen cells and one scaling-arm growth, none of them a memory ceiling or a
+memory *gate*.
 
 ```text
+the capture is amended: envelopes re-classified under a later Budget Contract after the run its provenance names, recorded in the adjustment of conditions.json
+advisory: conventional-fanout.live.page32.maxMs is outside its timing ceiling
+advisory: conventional-fanout.firstResult.page1.maxMs is outside its timing ceiling
+advisory: duplicate-include.live.eager.maxMs is outside its timing ceiling
+advisory: duplicate-include.live.eager.minRootsPerSecond is outside its timing ceiling
+advisory: duplicate-include.live.page32.maxMs is outside its timing ceiling
+advisory: duplicate-include.live.page32.minRootsPerSecond is outside its timing ceiling
+advisory: duplicate-include.firstResult.page1.maxMs is outside its timing ceiling
 advisory: duplicate-include.providerFreeCpu.eager.maxMs is outside its timing ceiling
 advisory: duplicate-include.providerFreeCpu.eager.minRootsPerSecond is outside its timing ceiling
-advisory: duplicate-include.providerFreeCpu.page32.maxMs is outside its timing ceiling
-advisory: duplicate-include.providerFreeCpu.page32.minRootsPerSecond is outside its timing ceiling
 advisory: document-heavy.live.eager.maxMs is outside its timing ceiling
 advisory: document-heavy.live.eager.minRootsPerSecond is outside its timing ceiling
+advisory: document-heavy.live.page32.maxMs is outside its timing ceiling
+advisory: document-heavy.live.page32.minRootsPerSecond is outside its timing ceiling
+advisory: document-heavy.live.page128.maxMs is outside its timing ceiling
+advisory: document-heavy.live.page128.minRootsPerSecond is outside its timing ceiling
+advisory: versioned-document.live.eager.maxMs is outside its timing ceiling
 advisory: versioned-document.live.eager.minRootsPerSecond is outside its timing ceiling
 advisory: versioned-document.live.page32.maxMs is outside its timing ceiling
 advisory: versioned-document.live.page32.minRootsPerSecond is outside its timing ceiling
-advisory: document-heavy.streamedMemory.page128PeakKiB grows 40.524 KiB between memory arms
-advisory: bitemporal-current.streamedMemory.page32PeakKiB grows 16.677 KiB between memory arms
+advisory: versioned-document.live.page128.maxMs is outside its timing ceiling
+advisory: versioned-document.live.page128.minRootsPerSecond is outside its timing ceiling
+advisory: versioned-document.firstResult.page1.maxMs is outside its timing ceiling
+advisory: versioned-document.firstResult.page32.maxMs is outside its timing ceiling
+advisory: document-heavy.streamedMemory.page128PeakKiB grows 69.961 KiB between memory arms
 ```
 
-Against the outgoing capture's ten advisories under its own tree, two changed.
-`versioned-document.live.eager` sits on the other side of its ceiling pair: its
-`maxMs` reads 5.423 against 5.5, where the outgoing capture read 5.518, and its
-`minRootsPerSecond` reads 34,188 against a floor of 36,364, which the outgoing
-capture's 36,854 met. And `bitemporal-current.streamedMemory.page32PeakKiB`
-grows 16.677 KiB between the 200- and 2,000-root arms against a 16 KiB limit
-(*Against COR-178's capture*).
+Against the outgoing capture's eleven advisories, the live timing advisories
+grow from five to twenty-one; *Against COR-191's capture* places them. The
+`duplicate-include` provider-free CPU advisories narrow to its eager pair, and
+the `bitemporal-current` page-32 arm growth no longer exceeds its limit, while
+`document-heavy`'s page-128 arms grow 69.961 KiB where the outgoing capture's
+grew 40.524.
 
 ### Against `before/` and `after/`
 
@@ -1336,230 +1371,245 @@ those deltas beside each — never a ratio of pooled durations:
 
 | Family, per runtime | Cells | vs `before/` 3.13 | vs `before/` 3.14 | vs `after/` 3.13 | vs `after/` 3.14 |
 |---|---:|---|---|---|---|
-| Acquisition (`acquisition.*` / `elapsedUs`) † | 6 | −49.4% (−67.3% to −36.5%) | −58.5% (−63.3% to −47.6%) | −73.1% (−77.2% to −61.4%) | −74.1% (−77.1% to −62.2%) |
-| Keyed writes (46 cases / `elapsedUs`) † | 46 | −27.0% (−65.7% to +45.3%) | −30.7% (−63.9% to +14.4%) | −21.7% (−60.4% to +33.3%) | −20.3% (−59.1% to +32.5%) |
-| Geometry reads (`read-*` / `<layout>.elapsedUsPerRoot`) | 18 | −6.4% (−29.3% to +4.5%) | −2.5% (−26.2% to +7.2%) | −22.1% (−45.0% to −14.6%) | −24.8% (−44.8% to −11.7%) |
-| Cold plans (`plan-*` / `<layout>.elapsedUs`) | 6 | −32.6% (−46.1% to −24.8%) | −21.8% (−26.3% to −18.7%) | −19.1% (−19.8% to −15.0%) | −20.4% (−22.2% to −16.5%) |
-| Positional materialization (`stress-*`) † | 2 | −2.3% (−4.4% to −0.2%) | +3.1% (−1.0% to +7.1%) | −32.5% (−36.6% to −28.4%) | −38.5% (−41.6% to −35.3%) |
-| Eager live delivery (`live.eager.maxMs`) | 5 | +0.6% (−17.4% to +16.6%) | −0.5% (−19.2% to +23.9%) | −15.6% (−20.6% to −8.7%) | −14.6% (−19.7% to −3.0%) |
-| Page-32 live delivery (`live.page32.maxMs`) | 5 | −2.3% (−18.3% to +8.0%) | −5.1% (−16.3% to −1.5%) | −12.9% (−20.9% to −8.0%) | −12.7% (−14.5% to +7.3%) |
+| Acquisition (`acquisition.*` / `elapsedUs`) † | 6 | −53.5% (−70.5% to −42.6%) | −61.2% (−65.0% to −54.4%) | −75.4% (−79.1% to −65.1%) | −76.1% (−78.5% to −65.8%) |
+| Keyed writes (46 cases / `elapsedUs`) † | 46 | −35.8% (−87.9% to −8.2%) | −34.7% (−86.8% to −17.6%) | −28.4% (−86.1% to −9.5%) | −25.3% (−84.9% to −3.6%) |
+| Geometry reads (`read-*` / `<layout>.elapsedUsPerRoot`) | 18 | −8.8% (−30.5% to −0.3%) | −3.6% (−28.2% to +4.9%) | −23.7% (−47.9% to −18.5%) | −25.7% (−45.8% to −16.0%) |
+| Cold plans (`plan-*` / `<layout>.elapsedUs`) | 6 | −34.8% (−47.9% to −24.1%) | −22.3% (−27.2% to −18.5%) | −20.8% (−22.8% to −14.2%) | −20.7% (−22.0% to −17.0%) |
+| Positional materialization (`stress-*`) † | 2 | −24.2% (−28.3% to −20.1%) | −17.2% (−22.0% to −12.3%) | −47.8% (−49.2% to −46.3%) | −50.6% (−52.2% to −49.0%) |
+| Eager live delivery (`live.eager.maxMs`) | 5 | +26.4% (−12.1% to +40.8%) | −1.3% (−11.7% to +41.1%) | −2.3% (−24.9% to +10.2%) | −0.2% (−20.6% to +10.4%) |
+| Page-32 live delivery (`live.page32.maxMs`) | 5 | +59.8% (+7.9% to +65.7%) | +12.3% (−4.7% to +76.0%) | +35.0% (−6.0% to +46.1%) | +21.5% (−12.6% to +52.8%) |
 
 † A window whose source was aligned with production's path after those
 captures: the pair sets a new baseline beside two captures that measured less
-of production's path, and is not an optimization or a regression.
+of production's path, and is not an optimization or a regression. The keyed
+writes' −84.9% to −87.9% are `txtime.unchanged`, which now writes nothing.
 
-Every family median in an unchanged window is at or below `after/` on both
-runtimes. `model.prepared` retains 426,776 and 438,440 B against `after/`'s
-415,992 and 427,016, and forms in 3,302 and 3,316 µs against 3,738 and 3,673.
-Both bases ran on macOS 26.6.2 and this capture on 27.0.1; a diagnostic of one
-producing commit on both found memory OS-invariant and no non-live timing cell
-more than 5% slower, and no offset enters this record. Timing evidence for a
-change is a same-day pair, not these comparisons.
+Every family median in an unchanged window outside live delivery is at or
+below `after/` on both runtimes. Live delivery is the exception, and the
+outgoing capture read it at or below `after/` too; *Against COR-191's capture*
+places the move. `model.prepared` retains 426,856 and 438,520 B against
+`after/`'s 415,992 and 427,016, and forms in 3,350 and 3,428 µs against 3,738
+and 3,673. Both bases ran on macOS 26.6.2 and this capture on 27.0.1; a
+diagnostic of one producing commit on both found memory OS-invariant and no
+non-live timing cell more than 5% slower, and no offset enters this record.
+Timing evidence for a change is a same-day pair, not these comparisons.
 
-The rows `--compare` reports missing on the base — 980 in each rendering — are
+The rows `--compare` reports missing on the base — 1,268 in each rendering — are
 the 506 leaf-type cells, the 184 current-vocabulary counter cells of the keyed
-cases, and the 290 other addresses the instruments gained after those captures
-(`control-delivery`, `compact` instance-state, guarded read-plan,
-`result-held-metadata`, `model-preparation` and `wire-insert-response` cells).
-The 368 rows missing on the head are the legacy `calls.*` cells those captures
-recorded. The `incomparable` rows are zero-valued instance-state cells (72
-against `before/`, 70 against `after/`).
+cases, the 288 cells of the target writes, and the 290 other addresses the
+instruments gained after those captures (`control-delivery`, `compact`
+instance-state, guarded read-plan, `result-held-metadata`, `model-preparation`
+and `wire-insert-response` cells). The 368 rows missing on the head are the
+legacy `calls.*` cells those captures recorded. The `incomparable` rows are
+zero-valued instance-state cells (72 against `before/`, 70 against `after/`).
 
-### Against COR-178's capture
+### Against COR-191's capture
 
-`comparison-cor-178.md` renders `--compare
-$HOME/.local/share/parallax/evidence/cor-191/outgoing-recovered/portfolio.json
+`comparison-cor-191.md` renders `--compare
+$HOME/.local/share/parallax/evidence/cor-156/outgoing-recovered/portfolio.json
 recovered/portfolio.json`; the base is byte-identical to `recovered/` at
 `dc65ef88` in Git history. `--require-compatible` refuses the pair over
 snapshot-delivery and write-lowering, as it should: their envelopes disagree on
-`lockDigest`, write-lowering's also on `workloadDigest`, and the control and
-instrument sources judged below differ. Both captures ran on the same machine,
-OS build, and interpreters, the Snapshot `workloadDigest` is unchanged, and no
-row is present on one side alone; the 70 `incomparable` rows are zero-valued
-instance-state cells. The judgements below are what a reader comparing across
-them relies on; they do not make the pair strictly compatible.
+`budgetContractDigest`, `lockDigest`, and `cpython`, write-lowering's also on
+`workloadDigest` and its keyed-write window's description, the interpreters and
+the control and instrument sources judged below differ, and the 288 target-write
+cells are present on the head alone. The Snapshot `workloadDigest` is
+unchanged, no row is present on the base alone, and the 70 `incomparable` rows
+are zero-valued instance-state cells. The judgements below are what a reader
+comparing across them relies on; they do not make the pair strictly
+compatible.
 
-**What moved between the captures.** Three changes, and no other production,
-instrument, or control source:
+**What moved between the captures.**
 
-- The Snapshot reading child ran all four families' support modules at start,
-  whatever address it read, and now runs only the one its address reads
-  (`c6e43f24`, `6ad0e7e4`, `dc65ef88`). A child enters its window carrying
-  about 95,000–165,000 GC-tracked objects instead of about 188,000, and one full
-  collection costs 6.5–9 ms instead of 11–13 (paired on the change, 3.14). A
-  live child now runs no support module. No window, workload, or reading
-  changed.
-- The UTC fast path (`ecbdd36f`) returns an instant already in UTC unchanged
-  and spells a Timestamp from its fields. The outgoing capture's amendment
-  re-measured its byte readings with it in the tree; its timings are the ones
-  taken before it.
-- The lock: pydantic 2.13.5 to 2.14.0b2 with pydantic-core 2.46.5 to 2.49.0,
-  botocore 1.43.100 to 1.43.102, psycopg-pool 3.3.2 to 3.3.3, and ruff 0.16.8
-  to 0.16.9.
+- The interpreters, CPython 3.14.7 to 3.14.8 and 3.13.15 to 3.13.16.
+- The lock, urllib3 2.7.0 to 2.8.0, which no measured path imports.
+- Production: the unit of work's ownership of write claims and evidence and
+  write ingress by representation (`835eca11..9d28a644`); prepared-read
+  extraction, bound row conversion, page-owned payload decoding, and reduced-row
+  registration (`ab924f7b..1749ee3e`); primary keys restricted to identifier
+  types (`026ef5fc`) and matching relationship join types (`eb70a89e`); and
+  keyed update and replacement with caller-supplied preconditions, with the
+  temporal write semantics they rest on (`b36fb6af..189def23`).
+- The workloads and instruments, all with the last of these: the changed
+  ancestor cases author only the occurrence they replace, the acquisition
+  workloads reach the renamed `tx.wire.update_where` bounded by `until`, and
+  the keyed-write window gains the 18 target writes.
 
-**Memory.** Every write-lowering and instance-state byte reading, every
-provider-free, stress, and control byte reading, `control-held` included, and
-every live byte reading of `conventional-fanout` and `duplicate-include` equals
-the outgoing capture's to the byte. The 39 byte readings that moved:
+Two diagnostic captures taken during the last change, with this runner, these
+interpreters, and this lock, separate the moves. One is a clean capture of
+`1749ee3e`, `main` before it; the other a capture of its final tree before
+rebasing onto `026ef5fc` and `eb70a89e`. Paired diagnostic readings of the
+cells that moved after the second then separate those two commits. Readings,
+scripts, and both captures are kept outside Git at
+`$HOME/.local/share/parallax/evidence/cor-156/acceptance/`.
 
-- The four `leaf-timestamp` reads on 3.14: peaks +2.5% (933.7 to 956.7 and
-  937.4 to 960.5 KiB), retained +0.05% and −0.06%. Their reading children still
-  disagree between processes on production's aware-datetime path, as the
-  outgoing capture's amendment recorded, and their ceilings follow them
-  (*Memory gates* › *Basis*).
-- Three read-plan readings by 4 bytes: `plan-depth-1`'s Document peak and
-  retained on 3.13, and `plan-depth-8`'s Document peak on 3.14. Each cell's
-  children already disagreed by that amount.
-- 32 live readings of `document-heavy`, `versioned-document`, and
-  `bitemporal-current`. Paired reruns, described under the next heading, place
-  them. The streamed page-1 peaks rose with the child change where the two
-  trees separate: `document-heavy` on 3.13 by 5.7% (57.2 to 60.5 KiB; the pair
-  +8.7%, disjoint) and `bitemporal-current` on 3.14 by 8.5% (40.5 to 43.9 KiB;
-  the pair +5.8%, disjoint). Both rises are accepted into this baseline.
-  `versioned-document`'s 3.13 page-1 peak reads
-  +25.9% (27.9 to 35.1 KiB), but both trees read it at 31–35 KiB, so the
-  outgoing reading was the low one. The rest move by less than the 3%
-  allowance or, for `bitemporal-current`, within the spread seven readings of
-  the outgoing tree showed. No live reading is gated, and every one is within
-  its ceiling.
+**Memory.** Every instance-state byte reading equals the outgoing capture's to
+the byte. Every write-lowering byte reading of this capture equals that of the
+last change's final tree before the rebase, except the acquisition transients
+below and four `bitemporal.interior` readings within 50 B; and every insert,
+changed-ancestor, and leaf-type insert byte reading of the clean capture of
+`1749ee3e` equals the outgoing capture's, while `1749ee3e` had already moved
+`plain.changed` and the Wire `bitemporal.interior` cases, `txtime.unchanged`'s
+Typed transients by 56 B, and the model and response readings. The write-side
+moves, then, against the outgoing capture:
 
-**Timing, as expected.**
+- Retained, falling: the categorical updates by 72–632 B/row (−3.5% to
+  −27.6%; `txtime.changed.columns.wire` 2,208 to 1,672 B/row on 3.14), which
+  `1749ee3e` had moved by −96 to +168 B and the last change by the rest, since
+  a composed write keeps per contribution only its bounds, observation and
+  claim; the changed-ancestor cases by 536 B/row (−18.9% to −37.4%), the
+  body-only workload; and every Typed insert by 48–88 B/row.
+- Transient, falling: `txtime.unchanged` by 47.5–55.4%, which now writes
+  nothing for an unchanged milestone; the changed-ancestor cases by 3.6–21.3%;
+  and the categorical updates by up to 13.3%, 296 B of it before `1749ee3e`.
+- Retained, rising: every Wire insert by 120–144 B/row (`txtime.opening.*.wire`
+  +6.2% / +7.7%; the leaf-type Wire inserts +0.4% to +2.0%), and
+  `response.insert.family.wire` by 824–864 B (+9.4% / +11.5%), 48 B of it
+  before `1749ee3e` and the rest the attempt-scoped insertion admission; and
+  the acquisitions by 108 B/row at 8 rows, 27 at 32, and 7 at 128 against
+  `1749ee3e`, the 864 B of attempt-scoped state each unit of work now owns,
+  amortized over its rows.
+- Transient, rising: every insert by 224–712 B/row (+0.5% to +6.7%; the
+  `txtime.opening` cases +3.6% to +6.7%).
+- Acquisition transients: 77–348 B/row lower at `1749ee3e`, then 35–273 B/row
+  higher at `eb70a89e`, most at `rows-128.columns` (1,862.5 to 2,114.4 B/row on
+  3.13, +13.5% / +14.4%); net −6.0% to +6.1% against the outgoing capture.
+- `model.prepared` retains 80 B more, 72 of them before `1749ee3e`.
 
-- `control-delivery` `page32.roots200`, the cells the old child inflated most:
-  Typed −21.6% / −21.7% and Wire −24.7% / −24.7% on `conventional-fanout`,
-  Typed −14.9% / −18.0% and Wire −16.6% / −17.4% on `duplicate-include`
-  (3.13 / 3.14). `page32.roots2000` is 2.9–4.9% faster, except
-  `duplicate-include` Wire on 3.14 at +1.3%. All eight `page32.roots200`
-  cells also read 10.9–25.1% below the capture before the outgoing one, taken before
-  the child imported the leaf-type support module.
-- The other Snapshot timing cells are unchanged within the 5% allowance or
-  faster: the medians are −0.5% on both runtimes, geometry reads 0.0% / −0.8%,
-  cold plans +1.5% / +0.3%, guarded controls −0.4% / −0.5%, and first-result
-  latency −6.1% / −5.7%. Exceptions are itemized below.
-- The Timestamp cells, from the UTC fast path: `leaf-timestamp` reads −15.4%
-  and −16.4%, the four Timestamp inserts −17.0% to −18.2%, and the two
-  Timestamp acquisitions −12.3% and −15.3%. The `txtime`, `bitemporal`,
-  `ancestor` and acquisition cases, which reach `utc_instant` but spell no
-  Timestamp, move −1.1% / −0.9% at the median.
-- The rest of write-lowering is unchanged: medians −1.1% / −0.5%, with every
-  count identical.
+Snapshot-delivery's byte readings split three ways:
 
-**Timing beyond the allowance, and other movements.** Paired reruns — three
-per tree, alternating, with the tree just before the child change as the
-control — separate what the change moved from what this run caught. The
-scripts and readings are kept outside Git at
-`$HOME/.local/share/parallax/evidence/cor-191/acceptance/`.
+- Between the outgoing capture and `1749ee3e`: cold plans retain and peak
+  4.0–5.0% lower, the guarded plans 13–14% lower, and the positional stress
+  cells retain 23–25% less per projection; the geometry and leaf-type reads,
+  `control-held`, and the control delivery bytes are within 2%. The outgoing
+  capture's tree, read again on these interpreters, reproduces 169 of its 170
+  plan, stress, and control byte readings within 3%, so these falls are the
+  unit-of-work and prepared-read changes' (`835eca11..1749ee3e`).
+- Nothing between `1749ee3e` and the last change's final tree outside live
+  delivery.
+- `eb70a89e`, which rewrote Page and root materialization and the compilation
+  context: the stress cells retain 55–59 B more per projection (+12.8% /
+  +12.9%), carry 33–42 B more transient (+17.9% to +32.0%), and peak 5.5–6.4
+  KiB higher (+14.3% to +17.2%); the guarded plans compile 0.5–1.9 KiB larger
+  (+1.6% to +3.7%). Paired readings reproduce `stress-*` and
+  `control-guarded-3` on `eb70a89e` and not on `026ef5fc` before it. The
+  retained rise is the 32 back-references of a stress Page: each now holds a
+  `LogicalReference` and a tuple of its logical claims, 112 B, where it held a
+  projection index, and the level rebuilds its admitted set, 216 B. The
+  control-delivery high-water marks also move at `eb70a89e` and nowhere else,
+  both ways: eager peaks +5% to +6% and 3.14's page-32 peaks +5%, 3.13's
+  page-32 peaks −5% to −12% and its guarded eager peaks −3% to −4%.
 
-- `control-delivery-conventional-fanout` `typed.eager.roots2000.elapsedUs` on
-  3.13 reads +7.2% (100.9 to 108.1 ms), and the pair reproduces it: +8.0%,
-  disjoint. On 3.14 the pair reads +0.2%. It is the lean child's, not
-  production's; a plausible reading is that 3.13's full collections, whose
-  trigger scales with the tracked heap, now run more often during a
-  2,000-root Typed delivery. Timing is never gated, and it is accepted into
-  this baseline.
-- The rest reproduce on neither tree. 3.14's `conventional-fanout` provider-free
-  CPU cells (+6.2% to +7.3%), `versioned-document` live and first-result cells
-  (+7.0% to +10.6%), `bitemporal-current` and `duplicate-include` rate floors
-  (−5.6% and −6.3%), `leaf-decimal` Columns read (+12.9%) and `leaf-bytes`
-  Document read (+7.4%) all read back within about 2% of the outgoing capture
-  on both trees. `control-delivery-duplicate-include` `typed.eager.roots2000`
-  on 3.14 (+11.2%) read 207 ms in one of three reruns with the lean child and
-  none of three without it, and is accepted into this baseline unattributed.
-  All but the
-  provider-free CPU cells were taken while `spotlightknowledged` held a core;
-  the family medians taken beside it — write-lowering, and 3.14's geometry
-  reads and cold plans — moved 1.1% or less.
-- instance-state's `nested` `dumpNs` reads +6.2% to +6.5% on both lanes built
-  on pydantic models, `legacy` and `ordinary`, on both runtimes. On 3.14, three
-  runs under the locked pydantic 2.14.0b2 against three under 2.13.5 with
-  pydantic-core 2.46.5 reproduce it (+6.4% and +6.8%, disjoint) and put
-  `legacy.constructNs` 0.9–3.1% slower; the `compact` lane does not move. It
-  is accepted into this baseline. Its
-  other nanosecond and ratio cells move in both directions between runtimes,
-  and its `callNs`, `scaffoldingNs` and `unreproducedNs` cells are differences
-  of two timings.
-- lifecycle-overhead's source and path are unchanged; its p95 dispatch reads
-  11–12% faster in two scenarios, and its overhead ratios move 3–13% in both
-  directions.
-- The Float32 Columns inserts read −12.5% (Typed) and −15.7% (Wire): the
-  outgoing capture's stood 14–17% above their Document siblings, which these
-  now match.
-- The new `bitemporal-current` page-32 arm-growth advisory straddles its limit
-  on either tree: the arms grow 13.3–16.5 KiB in reruns of this tree and
-  12.5–18.0 KiB in reruns of the one before.
+Net of all three, the stress cells retain 13.3–15.8% less per projection than
+the outgoing capture's and the guarded plans compile 9.8–12.9% smaller. Live
+byte readings move in both directions by up to 24%, within their run-to-run
+spread; the `document-heavy` page-128 streamed peaks read 1,093.7 and 1,127.8
+KiB, 4.4% / 4.3% below the outgoing capture's. No live reading is gated, and
+every one is within its ceiling.
+
+**Timing.**
+
+- Keyed writes: the categorical updates −7.6% to −24.0%, `txtime.unchanged`
+  −61.0% to −64.9%, and the changed-ancestor cases −22.9% to −61.6%. The
+  `txtime.opening` inserts are 4.1–7.4% slower and the geometry inserts 3.4% /
+  3.1% at the median, which the last change's final tree read too: the
+  insertion admission. The leaf-type inserts are +0.8% at the median. One
+  outlier, `geometry.sparse-64.document.typed` on 3.13 at +20.8%, reads
+  159.0–160.9 µs/row in three reruns, in line with the other geometry inserts;
+  one rerun caught the same spike on its Columns sibling (191.0 against
+  160.8–161.5).
+  Every count is identical.
+- Acquisition: −4.6% to −12.9%, and the leaf-type acquisitions −0.6% to
+  −4.8%. lifecycle-overhead's unobserved arm is 17.7–18.8 µs (+5.2% to +5.5%)
+  slower in every scenario, which the last change's final tree read too; its
+  overhead ratios move in both directions, and nothing the lifecycle instrument
+  owns changed.
+- Provider-free reads, cold plans, read-plan reuse, and the control matrix are
+  unchanged within the 5% allowance at the median on both runtimes, with
+  scattered cells beyond it in both directions (provider-free −12.9% to +9.5%).
+- Live delivery is 8–12% slower at the median and up to 146% slower in
+  first-result latency, on both runtimes. The clean capture of `1749ee3e`
+  already read it so: against it, this capture's live timings move −0.7% /
+  −0.4% at the median. A pair taken the same day, the outgoing capture's tree
+  and this capture's alternating on these interpreters, reads them alike
+  (medians −5.4% to +2.3%), while the outgoing tree reads 15–89% slower than its
+  own capture did: the move is not in code. OrbStack, the PostgreSQL image, the
+  macOS build, and the libpq psycopg bundles were unchanged; the interpreters
+  were not, and provider-free delivery did not move. It is accepted into this
+  baseline unattributed between the interpreters and the host.
+- instance-state's timing and ratio cells move in both directions on both
+  runtimes, as between the outgoing capture and `1749ee3e`.
 
 **Instrument sources.** `conditions.json` records a digest of every
 instrument and control source each member was measured through. Against the
-outgoing capture, only these differ, each judged here:
+outgoing capture, only these differ, each judged above:
 
-- `tools/snapshot_delivery_reading.py` is the child change above. Its one
-  composition change is the large `control-held` read, which the child now
-  builds itself — the same depth-1 Columns geometry read over the same model
-  and port — and whose four readings are unchanged to the byte.
-- `tests/unit/_workload_spelling_support.py` is new: the family workload
-  prefixes and the geometry leaf spelling, importing no model, digested for
-  both members that read it. `tests/unit/_delivery_control_support.py`,
-  `tests/unit/_leaf_type_support.py`, and
-  `tests/unit/_structural_geometry_support.py` take those names from it, and the
-  leaf-type and control modules stop importing the geometry module; no value,
-  model, or query changes. That write-lowering's `workloadDigest` moved with
-  these bytes while all 1,050 of its byte and count readings reproduced exactly
-  is the check.
-- `tools/snapshot_delivery_overhead.py` imports the same prefixes, in the
-  parent, which takes no reading.
+- `tests/unit/_write_lowering_support.py`, `tools/write_lowering_overhead.py`,
+  and `tools/write_lowering_reading.py`: the target-write cases, their coverage
+  tier, and the keyed-write window that contains a target's own reads.
+- `tests/unit/_structural_geometry_support.py`, digested for both members:
+  the changed-ancestor workload names the one occurrence it replaces.
+- `tests/unit/_predicate_acquisition_support.py`: the renamed verb.
 
 `tests/unit/memory_instruments.py` and every instance-state and
 lifecycle-overhead source are unchanged.
 
 ### Leaf-type readings
 
-On 3.14, Columns layout (the Document layout's reads are within 2% of these
+On 3.14, Columns layout (the Document layout's reads are within 3% of these
 except where noted below):
 
 | Type | Read (µs/root) | Read retained (KiB) | Typed insert (µs/row) | Wire insert (µs/row) | Acquisition (µs/row) |
 |---|---:|---:|---:|---:|---:|
-| String (control) | 145.7 | 480.5 | 553.4 | 678.8 | 154.1 |
-| Boolean | 110.4 | 162.5 | 486.7 | 551.0 | 116.9 |
-| Int32 | 156.2 | 354.5 | 509.3 | 651.0 | 168.0 |
-| Int64 | 165.1 | 366.5 | 532.8 | 675.8 | 174.0 |
-| Float32 | 808.8 | 212.0 | 893.8 | 1,279.5 | 596.9 |
-| Float64 | 317.7 | 212.0 | 566.6 | 651.8 | 271.0 |
-| Decimal | 1,055.7 | 271.8 | 1,038.1 | 1,858.8 | 727.2 |
-| Bytes | 398.8 | 313.0 | 561.8 | 726.5 | 328.2 |
-| Date | 428.7 | 193.0 | 627.9 | 851.6 | 376.8 |
-| Time | 566.6 | 278.0 | 675.3 | 929.0 | 483.8 |
-| Timestamp | 841.8 | 303.0 | 790.1 | 1,180.6 | 694.4 |
-| Uuid | 577.8 | 321.3 | 911.4 | 1,270.5 | 431.1 |
+| String (control) | 144.1 | 480.5 | 554.6 | 678.9 | 148.2 |
+| Boolean | 109.3 | 162.5 | 511.8 | 559.3 | 114.2 |
+| Int32 | 153.8 | 354.5 | 522.3 | 659.0 | 160.0 |
+| Int64 | 160.0 | 366.5 | 533.3 | 680.9 | 168.0 |
+| Float32 | 856.6 | 212.0 | 903.0 | 1,293.3 | 585.3 |
+| Float64 | 315.0 | 212.0 | 574.2 | 660.9 | 263.7 |
+| Decimal | 919.9 | 271.8 | 1,034.2 | 1,853.8 | 711.7 |
+| Bytes | 396.3 | 313.0 | 573.7 | 739.4 | 322.2 |
+| Date | 421.2 | 193.0 | 629.5 | 868.7 | 369.9 |
+| Time | 560.3 | 278.0 | 683.2 | 940.1 | 469.7 |
+| Timestamp | 831.6 | 302.9 | 796.0 | 1,186.7 | 690.5 |
+| Uuid | 568.1 | 321.3 | 923.4 | 1,274.1 | 424.9 |
 
 The String read and Typed insert are the `read-width-64` and
-`geometry.width-64.columns.typed` controls. Float32 reads cost 2.5 times
+`geometry.width-64.columns.typed` controls. Float32 reads cost 2.7 times
 Float64's because decoding and publication each search for the shortest
-spelling that rounds back to the value. The Decimal Columns read and the
-Bytes Document read (433.3 µs/root) are this run's two slow outliers and the
-two exceptions to the Document layout's agreement; reruns of this tree read
-them at 947 and 404 µs/root (*Against COR-178's capture*). The Timestamp cells
-include the UTC fast path.
+spelling that rounds back to the value. The Float32 Document read (−6.8%) and
+the Date Document read (+10.7%) are the two exceptions to the Document layout's
+agreement.
 
 ### Memory
 
 **Against the ceilings in force when the capture was taken.** Of the 508 gated
 readings the outgoing basis had a ceiling for (346 addresses; the 184 leaf-type
-addresses are read on 3.14 alone), all 508 are under it. Every one that
-reproduced the outgoing capture's reading sits at or below 90.9% of its
-ceiling, the rule's own headroom; the closest above it are the two
-`leaf-timestamp` peaks at 93.2% and 93.1%, `leaf-timestamp` Columns retained at
-91.0%, and `plan-depth-8`'s Document peak, 4 bytes over its old basis reading.
-The old-ceiling result is recorded before any re-derivation, so a new basis
-cannot hide a regression behind a raised ceiling.
+addresses are read on 3.14 alone), all 508 are under it. The closest are the
+Wire inserts' rises and `eb70a89e`'s acquisition transient:
+`txtime.opening.columns.wire` transient at 97.0% and retained at 96.6% on 3.14,
+`txtime.opening.document.wire` retained at 96.6%, `acquisition.rows-128.columns`
+transient at 96.4%, and `acquisition.rows-8.columns` retained at 96.2%. The
+old-ceiling result is recorded before any re-derivation, so a new basis cannot
+hide a regression behind a raised ceiling.
+
+**The target writes.** The 18 cases read on both runtimes for the first time
+in a capture, and their readings agree with the diagnostic readings taken when
+they entered the instrument. Against its observed twin of the same layout and
+ingress, a target retains 488–568 B/row more for `plain`, 416–432 for `txtime`,
+and 416–466 for `bitemporal`, carries 5.1–7.8 KB, 9.9–11.5 KB and 7.5–9.2 KB
+more transient, and takes 1.67–2.11 times as long. Those are not the price of a
+target over an observed write: the target's window holds its own read, its
+planning and conversion, and the observed write's excludes the read that
+licenses it.
 
 **Scaling domains.** Both acquisition domains are monotone non-increasing on
-both runtimes across the 8, 32 and 128-row levels, and every reading equals the
-outgoing capture's. `acquisition.columns` retained 1,523.0 → 1,032.5 → 911.9
-and transient 4,640.2 → 2,650.8 → 2,003.5 B/row on 3.13, retained 1,742.5 →
-1,135.4 → 985.6 and transient 4,822.4 → 2,696.1 → 2,050.8 on 3.14.
-`acquisition.document` retained 2,547.0 → 2,038.5 → 1,913.4 and transient
-4,862.8 → 3,010.7 → 2,469.8 on 3.13, retained 2,768.5 → 2,141.9 → 1,987.2 and
-transient 5,052.9 → 3,022.2 → 2,436.3 on 3.14.
+both runtimes across the 8, 32 and 128-row levels. `acquisition.columns`
+retained 1,625.0 → 1,058.0 → 918.2 and transient 4,419.2 → 2,540.6 → 2,114.4
+B/row on 3.13, retained 1,844.5 → 1,160.9 → 992.0 and transient 4,587.9 →
+2,534.5 → 2,175.7 on 3.14. `acquisition.document` retained 2,649.0 → 2,064.0 →
+1,919.8 and transient 4,655.8 → 3,000.9 → 2,481.4 on 3.13, retained 2,870.5 →
+2,167.4 → 1,993.6 and transient 4,832.4 → 2,961.1 → 2,387.0 on 3.14.
 
 **Re-derivation.** The gates were then re-derived from this capture under the
 unchanged rule, and `spec/memory-gates.yaml` names this
