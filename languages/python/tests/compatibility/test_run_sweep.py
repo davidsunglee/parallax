@@ -1242,14 +1242,10 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
 # concurrency intent), so `run` is the ONLY lane that ever grades it —        #
 # mirroring the pk-gen `sequence` run-only set below, neither joins           #
 # `WRITE_EXERCISED` (that set couples compile AND run grading; a run-only     #
-# case would fail `test_compile_sweep`'s `status == "ok"` assert). Increment  #
-# 4 adds the non-temporal value-object write under an optimistic gate         #
-# (already tag-reachable, now exercised). Increment 6 admits `m-opt-lock-009` #
-# (`retryOptimisticConflicts: true` + a two-attempt `0`-then-`1`              #
-# choreography) — no new machinery, the SAME `when.attempts` retry lane       #
-# `m-opt-lock-007` already exercises (pinned semantics #7: the attempts       #
-# sequence is caller-visible choreography here, not the runtime auto-retry    #
-# loop, which `m-opt-lock-011`'s boundary case proves instead). Every         #
+# case would fail `test_compile_sweep`'s `status == "ok"` assert). A          #
+# `when.attempts` sequence (`m-opt-lock-007`, `m-opt-lock-009`) is            #
+# caller-visible retry choreography, not the runtime auto-retry loop, which   #
+# `m-opt-lock-011`'s boundary case proves instead. Every                      #
 # non-temporal conflict case here settles against a state a REAL read of this #
 # lane observed, so the concurrent writer commits between that read and the   #
 # write it invalidates. The zero-row shapes whose interference no correct     #
