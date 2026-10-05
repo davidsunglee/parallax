@@ -324,6 +324,9 @@ def _state_graded(steps: list[dict[str, Any]]) -> dict[str, Any]:
         pytest.param(
             [{"uow": "g", "write": [_STATE_INSERT], "expectRows": []}], id="a-write-step-result"
         ),
+        pytest.param([_STATE_FIND, {**_STATE_FIND, "on": 0}], id="a-step-level-source"),
+        pytest.param([{**_STATE_FIND, "identityAttr": "id"}], id="an-identity-attribute"),
+        pytest.param([{"write": [_STATE_INSERT], "rollback": True}], id="a-step-level-fate"),
     ],
 )
 def test_a_state_graded_case_states_only_what_its_run_reports(steps: list[dict[str, Any]]) -> None:
@@ -346,7 +349,7 @@ _SPAN_TARGET = {
     "row": {"id": 1, "amount": 5},
     "validFrom": _T0,
 }
-_BALANCE_TARGET = {"mutation": "update", "entity": "Balance", "row": {"id": 1, "value": 5.0}}
+_BALANCE_TARGET = {"mutation": "update", "entity": "Balance", "row": {"id": 1, "value": "5.00"}}
 
 
 @pytest.mark.parametrize(
@@ -356,6 +359,11 @@ _BALANCE_TARGET = {"mutation": "update", "entity": "Balance", "row": {"id": 1, "
         pytest.param(_TAG_TARGET, _SEQUENCE, id="unversioned"),
         pytest.param({**_SPAN_TARGET, "ifTxStart": _T0}, _SEQUENCE, id="bitemporal"),
         pytest.param({**_BALANCE_TARGET, "ifTxStart": _T0}, _BALANCE, id="transaction-time-only"),
+        pytest.param(
+            {**_ACCOUNT_TARGET, "mutation": "replace", "ifVersion": 1},
+            _SEQUENCE,
+            id="a-replacement-omitting-only-nullable-members",
+        ),
     ],
 )
 def test_a_target_submission_states_the_condition_its_target_takes(
@@ -371,6 +379,31 @@ def test_a_target_submission_states_the_condition_its_target_takes(
             {**_ACCOUNT_TARGET, "row": {"balance": 5}, "ifVersion": 1},
             _SEQUENCE,
             id="a-target-without-its-key",
+        ),
+        pytest.param(
+            {**_ACCOUNT_TARGET, "row": {"id": None, "balance": 5}, "ifVersion": 1},
+            _SEQUENCE,
+            id="a-target-keyed-by-null",
+        ),
+        pytest.param(
+            {**_ACCOUNT_TARGET, "row": {"id": "not-an-int", "balance": 5}, "ifVersion": 1},
+            _SEQUENCE,
+            id="a-target-keyed-by-another-type",
+        ),
+        pytest.param(
+            {**_ACCOUNT_TARGET, "row": {"id": 1, "balance": "five"}, "ifVersion": 1},
+            _SEQUENCE,
+            id="a-target-assigning-another-type",
+        ),
+        pytest.param(
+            {**_ACCOUNT_TARGET, "row": {"id": 1, "version": 2}, "ifVersion": 1},
+            _SEQUENCE,
+            id="a-target-assigning-a-framework-owned-member",
+        ),
+        pytest.param(
+            {**_ACCOUNT_TARGET, "mutation": "replace", "row": {"id": 1}, "ifVersion": 1},
+            _SEQUENCE,
+            id="a-replacement-omitting-a-required-member",
         ),
         pytest.param(_ACCOUNT_TARGET, _SEQUENCE, id="a-versioned-target-without-its-version"),
         pytest.param(
