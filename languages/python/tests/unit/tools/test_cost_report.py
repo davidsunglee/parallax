@@ -656,10 +656,10 @@ def _to_legacy(document: dict[str, Any]) -> None:
 
 
 # The two retained captures carry the legacy counter vocabulary on every keyed
-# case and both runtimes. Their original workload digests remain untouched when
-# the source defining a workload later changes without a recapture, and
-# verification names each mismatch rather than presenting the old readings as
-# current evidence.
+# case and both runtimes. Their original workload and Budget Contract digests
+# remain untouched when the source defining a workload or the contract later
+# changes without a recapture, and verification names each mismatch rather than
+# presenting the old readings as current evidence.
 @pytest.mark.parametrize("name", ["before", "after"])
 @pytest.mark.usefixtures("committed_cost_evidence")
 def test_each_retained_historical_portfolio_preserves_its_original_provenance(
@@ -677,7 +677,9 @@ def test_each_retained_historical_portfolio_preserves_its_original_provenance(
     )
     assert verify(portfolio) == [
         "the snapshot-delivery envelope's workload digest is stale",
+        "the snapshot-delivery envelope's Budget Contract digest is stale",
         "the write-lowering envelope's workload digest is stale",
+        "the write-lowering envelope's Budget Contract digest is stale",
     ]
 
 
