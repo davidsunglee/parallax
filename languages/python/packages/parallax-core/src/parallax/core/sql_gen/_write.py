@@ -62,6 +62,7 @@ from parallax.core.unit_work.planned import (
     PlannedClose,
     PlannedDelete,
     PlannedInsert,
+    PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedUpdate,
@@ -140,6 +141,8 @@ def compile_write_step(step: PlannedWrite, meta: Metamodel, dialect: Dialect) ->
             return _lower_delete(step, meta, dialect)
         case PlannedTemporalRemoval():
             return _lower_milestone_removal(step, meta, dialect)
+        case PlannedTemporalGuard():
+            return _lower_milestone_guard(step, meta, dialect)
 
 
 def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
@@ -267,6 +270,25 @@ def _lower_milestone_removal(
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
     return ctx.finish(f"delete from {view.layout.table.name} where {where_sql}{gate_sql}")
+
+
+def _lower_milestone_guard(
+    step: PlannedTemporalGuard, meta: Metamodel, dialect: Dialect
+) -> LoweredStatement:
+    """`update <table> set <axis start> = <axis start> where <milestone target> and <gate>`.
+
+    The gated Transaction-Time start is assigned to itself, so the statement
+    matches and locks exactly the row a close would and changes no value of it.
+    """
+    entity = _entity(meta, step.entity)
+    view = _layout(meta, entity)
+    ctx = _ctx(meta, dialect)
+    column = dialect.quote(_column(view, step.concurrency.start_attribute, entity))
+    where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
+    gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
+    return ctx.finish(
+        f"update {view.layout.table.name} set {column} = {column} where {where_sql}{gate_sql}"
+    )
 
 
 def _lower_delete(step: PlannedDelete, meta: Metamodel, dialect: Dialect) -> LoweredStatement:

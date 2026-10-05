@@ -32,9 +32,16 @@ Key invariants the suite pins down:
   observable state is **two** rows.
 - After a **terminate**, **no** row has `out_z = infinity`.
 - A keyed **update** assigns literally (`m-unit-work` *Comparing an assigned
-  member with its persisted value*): an assigned value equal to the current
-  row's still closes it and chains the successor, while an update assigning no
-  member writes nothing.
+  member with its persisted value*), and an update assigning no member writes
+  nothing. An observed or insertion-authored update every assigned value of
+  which the current row already holds leaves that row **unchanged**
+  (`m-unit-work` *Unchanged milestones*): under Optimistic, where the database's
+  write count includes unchanged rows, one guard keeps it —
+  `update … set in_z = in_z where pk and out_z = ? and in_z = ?`
+  (`[infinity, observedTxStart]`) — closing and chaining nothing, so the
+  observable state stays **one** row; under Locking, and for a row the attempt
+  opened, nothing is written at all. Without that proof the row is closed and
+  its equal successor chained, as for a changed value.
 
 This matches `AuditOnlyTemporalDirector` / `GenericBiTemporalDirector`'s
 close-old-insert-new discipline (research §6), restricted to Transaction Time.
@@ -92,7 +99,8 @@ addresses the row by the same Milestone Target and keeps its
 | **terminate** | remove the row: `delete from … where pk and out_z = ?` (`[infinity]`) |
 
 Under Optimistic the address is followed by the observed-`in_z` gate exactly as
-a close's is. Ownership is the attempt's record of what it opened, never an
+a close's is. An update every assigned value of which the row already holds
+writes nothing. Ownership is the attempt's record of what it opened, never an
 `in_z` that happens to equal `txInstant`: a row an earlier attempt committed at
 the same instant is closed as usual. After the attempt, the Transaction-Time
 history holds each pre-attempt milestone closed once and one current row per
@@ -109,7 +117,8 @@ writes*) observed no row either: it states the `in_z` of the current row its
 caller last observed as `ifTxStart`, and takes no Valid-Time bound. The current
 row is read inside the flush that writes it, and is closed and chained as an
 `update` is — a patch's chained row keeps every member it does not assign, a
-replacement's states the complete writable state. Where that read finds no
+replacement's states the complete writable state — even where it assigns only
+values the row already holds, since its caller asked for the revision. Where that read finds no
 current row, or one at another `in_z`, the write is its caller's failed
 precondition before any statement executes; where it finds more than one current
 row, the write fails sooner, as Cardinality Corruption (`m-unit-work`). Under Optimistic the close's gate

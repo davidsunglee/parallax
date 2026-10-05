@@ -36,6 +36,14 @@ the first names nothing about, acquires its own start while the first stays
 pending. The point read protects that one row; the later rectangles a temporal
 write's window reaches are read under the same lock inside the flush.
 
+A write under Locking that leaves a locked row exactly as it was
+(`m-unit-work` *Unchanged milestones*) issues no statement for it: the lock taken
+when the row was read, or read for the write inside its flush, holds until the
+transaction ends, so the row is still what was read and no optimistic guard is
+added. The lock protects only the rows read under it; the starting-row lock a
+caller-addressed write acquires never stands in for the rows its window reaches,
+and a caller-addressed write is never kept unchanged anyway.
+
 ### What one temporal observation locks
 
 A lock is taken on the **physical rows the read selected** — nothing wider. For a

@@ -1,0 +1,55 @@
+# Logical rows shared by both unchanged-milestone descriptors. Each row authors
+# declared member names rather than physical cells, so one file describes one
+# logical state under either layout.
+#
+#   span 1  three rectangles with a gap, each its own label and memo:
+#           [2024-01-01, 2024-04-01) amount 100 known from T0 = 2023-12-01,
+#           [2024-05-01, 2024-08-01) amount 180 known from T1 = 2023-12-15, and
+#           [2024-08-01, 2024-12-01) amount 100 known from T2 = 2024-01-02
+#   span 2  one rectangle [2024-01-01, infinity) amount 100 known from T0
+#   log 1   amount 100 known from T0
+#   log 2   amount 100 known from T0
+parallax.compatibility.KeptSpan:
+  - id: 1
+    amount: 100
+    label: a
+    memo: { note: n1 }
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: "2024-04-01T00:00:00.000000Z"
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 1
+    amount: 180
+    label: b
+    memo: { note: n2 }
+    validStart: "2024-05-01T00:00:00.000000Z"
+    validEnd: "2024-08-01T00:00:00.000000Z"
+    txStart: "2023-12-15T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 1
+    amount: 100
+    label: c
+    memo: { note: n3 }
+    validStart: "2024-08-01T00:00:00.000000Z"
+    validEnd: "2024-12-01T00:00:00.000000Z"
+    txStart: "2024-01-02T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 2
+    amount: 100
+    label: d
+    memo: { note: n4 }
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: infinity
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+parallax.compatibility.KeptLog:
+  - id: 1
+    amount: 100
+    memo: { note: n5 }
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 2
+    amount: 100
+    memo: { note: n6 }
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity

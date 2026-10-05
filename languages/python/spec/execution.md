@@ -146,6 +146,19 @@ assigns every member touched along the value's `edit` chain and a Wire `update`
 every key its change document names, equal values included; a change touching
 nothing writes nothing.
 
+A temporal milestone such an update leaves exactly as it was keeps its
+Transaction-Time start and gains no history (`m-unit-work` *Unchanged
+milestones*). The shipped PostgreSQL adapter's dialect counts unchanged rows, so
+under Optimistic each such milestone that existed before the transaction costs
+one guarding `UPDATE` rather than a close and its successors: it fires `UPDATE`
+triggers, creates a new row version, and holds the row's write lock until the
+transaction ends, including across any later dependent read. Another
+transaction that read the same milestone can still write it once this one
+commits, where a close would have made it conflict. Under Locking, and for rows
+the transaction opened itself, nothing is written. The update still spends its
+source, so a later write needs a fresh read either way. A target write, below,
+always writes the revision its caller asked for, equal values included.
+
 An insertion's authority (`m-unit-work` *Insertion authority*) rides its source
 privately. `tx.insert` binds it to the instance it took, beside any Snapshot
 state that instance already carries, and `edit` carries it to every value

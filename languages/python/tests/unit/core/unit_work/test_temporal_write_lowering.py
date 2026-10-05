@@ -71,6 +71,7 @@ from parallax.core.unit_work.planned import (
     ExactCount,
     Finite,
     NewLineage,
+    PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     TemporalGate,
@@ -1256,6 +1257,93 @@ def test_tph_txtime_terminate_carries_the_tag_guard() -> None:
             (_instant("2024-08-01T00:00:00+00:00"), 1, "meter", "infinity"),
         )
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Unchanged milestones (m-unit-work): a guard on the observed address and      #
+# start, assigning the start to itself, where the dialect's count proves it.   #
+# --------------------------------------------------------------------------- #
+_GUARDED_AT = "2024-01-01T00:00:00+00:00"
+
+
+def test_a_transaction_time_update_its_row_already_holds_lowers_to_one_guard() -> None:
+    update = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("100.00")},))
+    lowered = _lower_steps(
+        update,
+        BALANCE,
+        "2024-08-01T00:00:00+00:00",
+        observation=_observed(
+            tx_start=_GUARDED_AT, payload={"id": 1, "acctNum": "A", "value": 100}
+        ),
+        concurrency="optimistic",
+    )
+    ((step, statement),) = lowered
+    assert isinstance(step, PlannedTemporalGuard)
+    assert (statement.sql, statement.binds) == (
+        "update balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?",
+        (1, "infinity", _instant(_GUARDED_AT)),
+    )
+
+
+def test_a_bitemporal_guard_addresses_its_rectangle_by_both_ends() -> None:
+    update = KeyedWrite(
+        "updateUntil",
+        "Position",
+        ({"id": 1, "value": Decimal("100.00")},),
+        _instant("2024-03-01T00:00:00+00:00"),
+        _instant("2024-05-01T00:00:00+00:00"),
+    )
+    lowered = _lower(
+        update,
+        POSITION,
+        "2024-08-01T00:00:00+00:00",
+        observation=_observed(
+            tx_start=_GUARDED_AT,
+            valid_start="2024-01-01T00:00:00+00:00",
+            valid_end="2024-06-01T00:00:00+00:00",
+            payload=_R1_PAYLOAD,
+        ),
+        concurrency="optimistic",
+    )
+    assert lowered == [
+        (
+            "update position set in_z = in_z where pos_id = ? and thru_z = ? and out_z = ? "
+            "and in_z = ?",
+            (1, _instant("2024-06-01T00:00:00+00:00"), "infinity", _instant(_GUARDED_AT)),
+        )
+    ]
+
+
+def test_a_table_per_hierarchy_guard_carries_the_tag_guard_after_the_key() -> None:
+    update = KeyedWrite("update", "MeterReading", ({"id": 1, "celsius": Decimal("21.50")},))
+    lowered = _lower(
+        update,
+        READING,
+        "2024-08-01T00:00:00+00:00",
+        observation=_observed(tx_start=_GUARDED_AT, payload={"id": 1, "celsius": Decimal("21.50")}),
+        concurrency="optimistic",
+    )
+    assert lowered == [
+        (
+            "update reading set in_z = in_z where id = ? and kind = ? and out_z = ? and in_z = ?",
+            (1, "meter", "infinity", _instant(_GUARDED_AT)),
+        )
+    ]
+
+
+def test_a_dialect_whose_count_cannot_prove_a_guard_closes_and_chains_instead() -> None:
+    update = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("100.00")},))
+    lowered = _lower_steps(
+        update,
+        BALANCE,
+        "2024-08-01T00:00:00+00:00",
+        observation=_observed(
+            tx_start=_GUARDED_AT, payload={"id": 1, "acctNum": "A", "value": 100}
+        ),
+        dialect=dataclasses.replace(POSTGRES, counts_unchanged_rows=False),
+        concurrency="optimistic",
+    )
+    assert [type(step) for step, _ in lowered] == [PlannedClose, PlannedInsert]
 
 
 def test_tpcs_txtime_terminate_has_no_tag_guard() -> None:

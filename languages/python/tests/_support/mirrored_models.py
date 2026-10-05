@@ -565,6 +565,13 @@ _BUFFERED_SEQUENCE_TWIN = (
     "root-owned layout `write-transparency-layout-twin-document` already proves"
 )
 
+_UNCHANGED_MILESTONE_TWIN = (
+    "no mirror authored; its Bitemporal and Transaction-Time-Only Entities repeat the "
+    "mirrored `position` and `balance` declarations with one nullable Value Object, and "
+    "its Document arm the root-owned layout `write-transparency-layout-twin-document` "
+    "already proves"
+)
+
 UNMIRRORED: Mapping[str, str] = MappingProxyType(
     {
         "appliance": (
@@ -814,6 +821,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "cross-layout corpus proof, and the twin-layout gate compares its logical model "
             "directly with the Columns arm"
         ),
+        "unchanged-milestone-layout-twin-columns": _UNCHANGED_MILESTONE_TWIN,
+        "unchanged-milestone-layout-twin-document": _UNCHANGED_MILESTONE_TWIN,
         "write-transparency-layout-twin-columns": (
             "no mirror authored; this production descriptor is the Columns arm of the "
             "cross-layout Value Object write proof, and the twin-layout gate compares its "

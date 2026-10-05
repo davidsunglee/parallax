@@ -22,6 +22,7 @@ contract owners; this index does not add requirements.
 | Unit of Work | Transactional buffering and settlement boundary | [Unit of work](core/spec/m-unit-work.md) |
 | Observed / Insertion-Authoring Write | A write authorized by genuine read provenance versus one authorized by an admitted insertion's own source | [Unit of work](core/spec/m-unit-work.md) |
 | Target Write | A caller-addressed patch or replacement, conditioned by the revision its caller states rather than by any source | [Unit of work](core/spec/m-unit-work.md) |
+| Unchanged Milestone / Guard | A milestone a write leaves exactly as it was and keeps, versus the write that proves it still stands as observed | [Unit of work](core/spec/m-unit-work.md) |
 | Concurrency Preference / Strategy | Requested policy versus the strategy resolved for an entity | [Read locks](core/spec/m-read-lock.md) |
 | Transaction Time / Valid Time | Audit history versus effective-world history | [Temporal reads](core/spec/m-temporal-read.md) |
 | Snapshot | A published value graph with explicit loading state | [Snapshot reads](core/spec/m-snapshot-read.md) |

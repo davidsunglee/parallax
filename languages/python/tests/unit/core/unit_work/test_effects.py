@@ -56,6 +56,7 @@ from parallax.core.unit_work.planned import (
     PlannedAssignments,
     PlannedDelete,
     PlannedRow,
+    PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedUpdate,
@@ -175,6 +176,32 @@ def _removal(shortfall: Shortfall = STALE_WRITE) -> PlannedTemporalRemoval:
 _MILESTONE_STEPS = pytest.mark.parametrize(
     "build", [_close, _revision, _removal], ids=["close", "revision", "removal"]
 )
+
+
+def _guard() -> PlannedTemporalGuard:
+    concurrency = _CLOSE_CONCURRENCY[OPTIMISTIC_CONFLICT]
+    assert isinstance(concurrency, TemporalGate)
+    return PlannedTemporalGuard(
+        entity=_ACCOUNT,
+        target=_CURRENT_SLOT,
+        concurrency=concurrency,
+        affected_rows=ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT),
+    )
+
+
+@pytest.mark.parametrize(
+    ("actual", "error"),
+    [(1, None), (0, OptimisticLockConflictError), (2, CardinalityCorruptionError)],
+    ids=["matched", "unmatched", "excess"],
+)
+def test_a_guard_matches_its_one_milestone_or_conflicts(
+    actual: int, error: type[Exception] | None
+) -> None:
+    if error is None:
+        enforce_affected_rows(_guard(), actual)
+        return
+    with pytest.raises(error):
+        enforce_affected_rows(_guard(), actual)
 
 
 def _insert() -> PlannedInsert:

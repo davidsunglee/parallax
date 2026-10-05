@@ -80,6 +80,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | typed bind normalization | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind adapted to the max sentinel |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
 | error-code classification (`m-db-error`) | SQLSTATE: `23505` unique, `40P01`/`40001` deadlock, `55P03` lock timeout | errno: `1062`/`1022`/`1169`/`1859` duplicate, `1213`/`1020` deadlock, `1205` lock timeout |
+| **unchanged-row count** (`m-unit-work` / `m-db-port`) | yes — an `UPDATE`'s count includes every row it matched | no — the default count reports only rows whose values changed (see below) |
 
 The read-lock application and infinity representation are the original two
 decision points the second dialect was chosen to exercise; they are detailed
@@ -546,6 +547,26 @@ A `PhysicalIndexName` validates only that it is a nonempty identifier. A name re
 back off a driver diagnostic is as legitimate as a generated one, and the
 identifier byte limit is the generating rule's concern — `m-schema-delta`'s —
 rather than the value's.
+
+### Unchanged-row count
+
+Whether a write count proves a match is a dialect fact: **`countsUnchangedRows`**
+says that the native affected-row count an `UPDATE` reports through `executeWrite`
+(`m-db-port`) includes every row its predicate matched, rows whose values it left
+unchanged among them. Only then can an `UPDATE` that changes nothing prove that
+the row it addresses still stands as observed, which is what an unchanged
+milestone's guard relies on (`m-unit-work` *Unchanged milestones*).
+
+Postgres answers **yes**: its command tag counts every row the `UPDATE` wrote,
+including matched rows whose values did not change. A row a `BEFORE UPDATE`
+trigger skips — `suppress_redundant_updates_trigger` skips exactly the unchanged
+ones — is not written and not counted, so a guard on such a table matches nothing
+and fails as the milestone's conflict rather than passing unproven. MariaDB answers **no**: its
+default count reports only rows whose values changed, so an unchanged match and
+a missing row both count zero; a connection flag that would count matched rows is
+no part of this contract. A dialect answering no keeps every write's ordinary
+close-and-chain, and no planning or lowering step substitutes another proof for
+the count.
 
 ### Identifier byte limit
 

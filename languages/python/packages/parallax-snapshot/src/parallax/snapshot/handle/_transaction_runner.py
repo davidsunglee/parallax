@@ -329,7 +329,10 @@ class TransactionRunner:
 
                             return run_unit_of_work(
                                 body,
-                                settings=TransactionSettings(concurrency=options.concurrency),
+                                settings=TransactionSettings(
+                                    concurrency=options.concurrency,
+                                    counts_unchanged_rows=conn.dialect.counts_unchanged_rows,
+                                ),
                                 clock=self._clock,
                                 meta=meta,
                                 flush_executor=edge.execute,

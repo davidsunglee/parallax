@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, cast
 
 from parallax.core.base import retain_document_value
+from parallax.core.document_codec import classify_effective_change, prepare_effective_change
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -370,6 +371,19 @@ class PredecessorRow:
             else:
                 value_objects[binding.identity] = value
         return attributes, value_objects
+
+    def holds(self, selection: EntityMemberSelection, assigned: Mapping[str, object]) -> bool:
+        """Whether every member ``assigned`` names, by declared name, already
+        holds here the value it assigns — the codec's effective-change
+        classification (`m-document-codec`) over those members alone, so no
+        other member is read or compared."""
+        shape = selection.shape
+        if any(shape.position(name) is None for name in assigned):
+            return False
+        if self._selection is selection:
+            change = prepare_effective_change(shape, assigned, absent=self._absent)
+            return not change.any_effective(self._row)
+        return not classify_effective_change(shape, assigned, self.members).effective
 
     def carries(self, member: AttributeIdentity | ValueObjectIdentity, value: object) -> bool:
         """Whether ``value`` is this row's own cell for ``member``, or the view

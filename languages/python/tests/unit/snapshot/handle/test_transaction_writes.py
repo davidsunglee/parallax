@@ -42,7 +42,6 @@ from parallax.core.unit_work import (
     WriteInstructionError,
     instructions,
 )
-from parallax.core.unit_work import write_settlement as write_settlement_module
 from parallax.core.unit_work.temporal import is_open_bound
 from parallax.snapshot import InvalidData, handle
 from parallax.snapshot.handle import (
@@ -54,7 +53,6 @@ from parallax.snapshot.handle import (
     TransactionTimePinReadOnlyError,
     WriteEvidenceError,
 )
-from parallax.snapshot.handle import _predicate_writes as predicate_writes_module
 from parallax.snapshot.handle._options import OMITTED
 from parallax.snapshot.handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
@@ -463,17 +461,12 @@ def test_update_of_a_copy_expressing_no_member_issues_no_dml() -> None:
 
 
 @pytest.mark.parametrize("representation", ["typed", "wire"])
-def test_a_keyed_update_compares_no_value_with_its_source(
-    monkeypatch: pytest.MonkeyPatch, representation: str
+def test_a_keyed_update_changing_one_member_writes_its_whole_literal_set(
+    representation: str,
 ) -> None:
-    # An update's assignments are its literal set, so neither the verb nor
-    # settlement weighs them against what the source observed: no comparison
-    # the document codec offers is reached on the way to the write.
-    def refused(*_args: Any, **_kwargs: Any) -> Any:
-        raise AssertionError("a keyed update compared a value with its source")
-
-    monkeypatch.setattr(write_settlement_module, "prepare_effective_change", refused)
-    monkeypatch.setattr(predicate_writes_module, "prepare_effective_change", refused)
+    # An update's assignments are its literal set: a member restating its stored
+    # value beside one that changes it is still assigned, so the milestone is
+    # closed and chained rather than kept.
     port = ScriptedAdapter(
         Transact(
             Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]), Write(times=2)
@@ -483,7 +476,7 @@ def test_a_keyed_update_compares_no_value_with_its_source(
     def fn(tx: Transaction) -> None:
         if representation == "typed":
             fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
-            tx.update(fetched.edit(value=Decimal("150.00")))
+            tx.update(fetched.edit(acct_num="A-1", value=Decimal("150.00")))
         else:
             node = tx.wire.find(
                 {
@@ -492,7 +485,7 @@ def test_a_keyed_update_compares_no_value_with_its_source(
                     "temporal": {"transaction-time": {"asOf": "latest"}},
                 }
             ).result()
-            tx.wire.update(node, {"value": "150.00"})
+            tx.wire.update(node, {"acctNum": "A-1", "value": "150.00"})
 
     db_for(BALANCE, port).transact(fn)
     assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2

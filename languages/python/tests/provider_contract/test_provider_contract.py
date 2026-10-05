@@ -73,6 +73,20 @@ def test_exec_affected_rows_matched_and_unmatched(profile_run: Any) -> None:
     assert unmatched == 0
 
 
+def test_an_update_leaving_its_row_unchanged_is_counted_as_its_dialect_declares(
+    profile_run: Any,
+) -> None:
+    # The count an unchanged milestone's guard relies on (`m-dialect`
+    # "Unchanged-row count"): a row the update matched and left as it was counts.
+    case = _grade_case()
+    meta = engine.load_case_metamodel(case)
+    profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
+    assert profile_run.port.dialect.counts_unchanged_rows
+    unchanged = profile_run.port.execute_write("update grade set label = label where id = %s", [3])
+    assert unchanged == 1
+    assert profile_run.port.execute_write("update grade set id = id where id = %s", [99]) == 0
+
+
 def test_scalar_read_returns_managed_values(profile_run: Any) -> None:
     (row,) = profile_run.port.execute("select 1 as one, 'x'::text as who", [])
     assert row == (1, "x")

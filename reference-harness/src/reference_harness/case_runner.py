@@ -957,6 +957,11 @@ _PLAIN_SPLIT_MUTATIONS = ("update", "terminate")
 _TERMINATE_MUTATIONS = ("terminate", "terminateUntil")
 
 
+# The dialects whose UPDATE count includes the rows it matched and left
+# unchanged, which is what lets a guard prove a milestone (`m-dialect`).
+_COUNTS_UNCHANGED_ROWS = frozenset({"postgres"})
+
+
 # The milestone close a temporal conflict case writes. Not a `writeSequence`
 # verb: a conflict close is shaped by `when.mutation`-less close authoring, and
 # this names it for the entitlement diagnosis alone.
@@ -1258,6 +1263,10 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         ):
             _assert_until_input(
                 case, entity, classified, step, step_statements, step_binds, dialect
+            )
+        elif entity.is_temporal and mutation == "update" and count == 1:
+            _assert_milestone_guard(
+                case, entity, step, classified[0][1], step_statements[0], step_binds[0], dialect
             )
         elif entity.is_temporal:
             _assert_temporal_input(
@@ -1746,6 +1755,89 @@ def _assert_temporal_input(
         )
 
 
+def _assert_milestone_guard(
+    case: Case,
+    entity: Entity,
+    step: dict[str, Any],
+    pk: Any,
+    statement: str,
+    binds: list[Any],
+    dialect: str,
+) -> None:
+    """Grade a Transaction-Time-Only update emitting one statement: the guard
+    that keeps a milestone every assigned value of which it already holds
+    (`m-txtime-write`).
+
+    It assigns the observed Transaction-Time start to itself on the milestone's
+    address and gates on that start, which the case's own history leaves
+    (:func:`_observed_milestone_start`), and the step's ① row assigns exactly the
+    values that milestone holds — a guard for a changed value would keep stale
+    state.
+    """
+    if dialect not in _COUNTS_UNCHANGED_ROWS:
+        raise CaseFailure(
+            f"{case.path.name}: a guard golden is stated for {dialect}, whose write count "
+            f"does not report an unchanged row (`m-dialect` 'Unchanged-row count'), so no "
+            f"guard can prove the milestone there."
+        )
+    transaction_time = next(
+        a for a in entity.temporal_runtime_axes if a["dimension"] == "transaction-time"
+    )
+    in_z = transaction_time["start_column"]
+    if parse_set_columns(statement) != [in_z] or not has_temporal_gate(statement, in_z, dialect):
+        raise CaseFailure(
+            f"{case.path.name}: a one-statement Transaction-Time-Only update is the guard that "
+            f"keeps its milestone — `set {in_z} = {in_z}` on the milestone's address, gated on "
+            f"its observed {in_z} — not {statement!r}."
+        )
+    expected = [
+        *close_address_binds(case, entity, pk, None),
+        _observed_milestone_start(case, entity, step, pk),
+    ]
+    assert_write_values(case, expected, binds, statement)
+    current = _current_milestone_row(case, entity, step, pk)
+    key_member = next(
+        attribute["name"] for attribute in entity.attributes if attribute.get("primaryKey")
+    )
+    for member, value in step["rows"][0].items():
+        if member != key_member and not write_value_equal(value, current.get(member)):
+            raise CaseFailure(
+                f"{case.path.name}: a guard keeps the milestone of {entity.name} pk {pk!r}, so "
+                f"every value its step assigns is the one that milestone holds — {member} "
+                f"assigns {value!r}, and the milestone holds {current.get(member)!r}."
+            )
+
+
+def _current_milestone_row(
+    case: Case, entity: Entity, step: dict[str, Any], pk: Any
+) -> dict[str, Any]:
+    """The member values of the one milestone of *pk* the case's own history
+    leaves current before *step*: its fixture row, or the row the latest earlier
+    step that opened or chained one wrote."""
+    tx_axis = next(
+        axis for axis in temporal_axes(entity.runtime_facts) if axis.dimension == "transaction-time"
+    )
+    key_member = next(
+        attribute["name"] for attribute in entity.attributes if attribute.get("primaryKey")
+    )
+    current: dict[str, Any] = {}
+    if case.load_fixtures:
+        open_rows = [
+            row
+            for row in entity.rows
+            if write_value_equal(row.get(key_member), pk)
+            and write_value_equal(row.get(tx_axis.end.name), "infinity")
+        ]
+        if len(open_rows) == 1:
+            current = dict(open_rows[0])
+    for prior in _prior_steps_for_key(case, entity, step, pk):
+        if prior["mutation"] in _TERMINATE_MUTATIONS:
+            current = {}
+        else:
+            current = {**current, **prior["rows"][0]}
+    return current
+
+
 def _assert_milestone_open(
     case: Case,
     entity: Entity,
@@ -2067,7 +2159,10 @@ def _observed_milestone_start(case: Case, entity: Entity, step: dict[str, Any], 
     for prior in _prior_steps_for_key(case, entity, step, pk):
         # An `insert` opens a milestone and an `update` chains a successor; both
         # leave one current at the step's own instant, and a `terminate` leaves
-        # none for a later close to address.
+        # none for a later close to address. A one-statement update is a guard
+        # that kept the milestone already current (:func:`_assert_milestone_guard`).
+        if prior["mutation"] == "update" and prior.get("statements", 1) == 1:
+            continue
         current = None if prior["mutation"] in _TERMINATE_MUTATIONS else prior.get("at")
     if current is None:
         raise CaseFailure(

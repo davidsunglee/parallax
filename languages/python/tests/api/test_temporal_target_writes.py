@@ -652,10 +652,22 @@ def test_a_row_another_session_revises_after_the_flush_read_it_fails_by_whose_it
                 )
             )
             return
+        if lost == "start-same-value":
+            # A caller-addressed patch revises the start even though it assigns the
+            # value the row holds; an observed one would keep the milestone instead.
+            peer_db.transact(
+                lambda tx: tx.wire.update(
+                    _name(entity),
+                    {"id": 1, "label": "a"},
+                    valid_from=_FEB,
+                    until=_APR,
+                    if_tx_start=_T0,
+                )
+            )
+            return
         at, until = (_JUL, _SEP) if lost == "later" else (_FEB, _APR)
-        label = "a" if lost == "start-same-value" else "peer"
         peer_db.transact(
-            lambda tx: tx.update(_span_find(tx, entity, at).edit(label=label), until=until)
+            lambda tx: tx.update(_span_find(tx, entity, at).edit(label="peer"), until=until)
         )
 
     interleaving = AfterCoverageRead(_TABLES[entity], peer)

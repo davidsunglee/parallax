@@ -1022,6 +1022,20 @@ revision, or removal is emitted before any successor is inserted — rectangles 
 Valid-Time order, each rectangle's successors in Valid-Time order — so a lost
 condition fails before the range writes anything new.
 
+A rectangle the write leaves unchanged (`m-unit-work` *Unchanged milestones*) is
+neither inactivated nor reopened. Under Optimistic, where the dialect's write
+count includes unchanged rows (`m-dialect`), its place in that order is taken by
+a guard on its own address, gated on its observed `in_z`:
+
+| Target | Guard | Binds |
+|---|---|---|
+| Bitemporal | `update position set in_z = in_z where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?` | `[pk, validEnd, infinity, observedTxStart]` |
+| Transaction-Time-Only | `update balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?` | `[pk, infinity, observedTxStart]` |
+
+A table-per-hierarchy subtype's tag guard follows the key, as in an
+inactivation. Under Locking, and for a rectangle the attempt opened, nothing is
+emitted for an unchanged rectangle.
+
 A caller-addressed temporal write (`m-bitemp-write` *Caller-addressed writes span
 their requested extent*) observed nothing, so its coverage read starts at its own
 `validFrom`; a Transaction-Time-Only one reads `… where t0.bal_id = ? and t0.out_z

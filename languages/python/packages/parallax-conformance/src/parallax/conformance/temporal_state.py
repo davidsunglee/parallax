@@ -5,7 +5,7 @@ import datetime as dt
 from collections.abc import Generator, Iterable, Mapping, Sequence
 
 from parallax.core import inheritance, temporal_read
-from parallax.core.base import INFINITY_LITERAL, normalize_instant
+from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityMetadata,
@@ -21,7 +21,13 @@ from parallax.core.unit_work import (
     TemporalObservation,
 )
 from parallax.core.unit_work.plan import RangeAcquisition
-from parallax.core.unit_work.planned import PlannedWrite
+from parallax.core.unit_work.planned import (
+    Finite,
+    PlannedClose,
+    PlannedTemporalRemoval,
+    PlannedTemporalRevision,
+    PlannedWrite,
+)
 from parallax.core.unit_work.planner import TemporalStateKey
 
 __all__ = [
@@ -359,6 +365,44 @@ class TemporalShadow:
                 key = self._key(entity.identity.name, pk_names, start_names, predecessor.members)
                 self._track(key, TemporalObservation(predecessor=predecessor))
 
+    def keep_unchanged(
+        self,
+        model: Metamodel,
+        steps: Iterable[PlannedWrite],
+        observed: Iterable[tuple[EntityMetadata, TemporalObservation]],
+    ) -> None:
+        """Track again each ``observed`` milestone — retired as its write
+        resolved (:meth:`retire`) — that no step of ``steps`` closes, revises, or
+        removes: a write that leaves a milestone as it was keeps it current
+        (`m-txtime-write`, `m-bitemp-write`)."""
+        changed: set[tuple[str, tuple[object, ...], tuple[dt.datetime | None, ...]]] = set()
+        for step in steps:
+            if isinstance(step, PlannedClose | PlannedTemporalRevision | PlannedTemporalRemoval):
+                target = step.target
+                changed.add(
+                    (
+                        step.entity.name,
+                        target.key_values,
+                        tuple(
+                            _end_coordinate(end.instant) if isinstance(end, Finite) else None
+                            for end in target.end_values
+                        ),
+                    )
+                )
+        for entity, observation in observed:
+            members = observation.predecessor.members
+            pk_names = _primary_key_names(model, entity)
+            ends: list[dt.datetime | None] = []
+            for dimension in _declared_dimensions(model, entity):
+                ends.append(_end_coordinate(members[_axis_names(model, entity, dimension)[1]]))
+            address = (entity.identity.name, tuple(members[name] for name in pk_names))
+            if (*address, tuple(ends)) in changed:
+                continue
+            key = self._key(
+                entity.identity.name, pk_names, _axis_start_names(model, entity), members
+            )
+            self._track(key, observation)
+
     def coverage(
         self, model: Metamodel, acquisition: RangeAcquisition
     ) -> tuple[PredecessorRow, ...]:
@@ -524,6 +568,14 @@ def observed_close_coordinates(
 
 
 _NOT_AN_INSTANT = "an as-of axis start is a finite instant, and {value!r} is not one"
+
+
+def _end_coordinate(value: object) -> dt.datetime | None:
+    """One axis-end value as the comparable an address is keyed by, ``None`` for
+    the open bound."""
+    if value is TemporalBound.INFINITY or _is_open(value):
+        return None
+    return _coordinate(value)
 
 
 def _is_open(value: object) -> bool:

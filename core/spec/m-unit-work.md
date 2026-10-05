@@ -721,7 +721,9 @@ register the rows the unit opened
 ```
 
 A deferred range unit's changed states, removals, and openings are those its
-binding produced. A source that carries no observation — an unversioned
+binding produced. A milestone a unit kept unchanged (*Unchanged milestones*) is
+no changed state, even where a guard executed for it, and derives nothing a
+later unit relies on: it still stands. A source that carries no observation — an unversioned
 Non-Temporal read's — has no state for a unit to name; its authority is spent
 on the source itself once the flush that held its write succeeds, and every
 value derived from that source shares it. Removals are retired before openings
@@ -760,6 +762,7 @@ PlannedWrite =
   | PlannedDelete(entity, target, concurrency, affected_rows)
   | PlannedTemporalRevision(entity, target, assignments, concurrency, affected_rows)
   | PlannedTemporalRemoval(entity, target, concurrency, affected_rows)
+  | PlannedTemporalGuard(entity, target, concurrency: TemporalGate, affected_rows)
 ```
 
 The algebra is **semantic and Attribute-keyed**. It contains no SQL, dialect
@@ -788,6 +791,11 @@ object, driver value, physical column name, property name, or SQL ordering.
   attempt itself opened. Its expected effect is exactly one row. It removes
   uncommitted state of the attempt's own: a milestone that existed before the
   attempt is never revised or removed, only closed (*Rows the attempt opened*).
+- **Planned Temporal Guard** proves that one current milestone that existed
+  before the attempt still stands as it was observed, for a write that leaves it
+  unchanged (*Unchanged milestones*). It addresses the milestone as a close does
+  and always carries the close's Temporal Gate, assigns nothing it represents,
+  and its expected effect is exactly one row. It changes no observed state.
 
 ### Insert Origin and Close Cause
 
@@ -1098,10 +1106,48 @@ A **keyed** write's assignments are **literal**. The members its author
 expressed — a Typed edit's cumulative touched members, a Wire change document's
 keys — are assigned whatever the source published for them, so an assignment
 equal to the stored value is still written: it advances a version, and for a
-temporal entity it closes and chains like any other assignment. A keyed
-temporal write's changed successor overlays every member the write assigns and
-carries every other member's persisted state. Only an update expressing **no**
-member is empty; it buffers nothing and claims nothing.
+temporal entity it is applied like any other assignment. A keyed temporal
+write's changed successor overlays every member the write assigns and carries
+every other member's persisted state. Only an update expressing **no** member is
+empty; it buffers nothing and claims nothing.
+
+#### Unchanged milestones
+
+A temporal write is applied to each current milestone it reaches, and a
+milestone it leaves exactly as it was is **unchanged**: the write's final
+composed effect keeps every interval of it, assigns no member a value other than
+the one it already holds there — compared by `m-document-codec`'s
+effective-change classification over the assigned members alone, never over a
+source's earlier value or an intermediate edit — and no caller-addressed write's
+window reaches it. A caller-addressed write asked for a revision, so a milestone
+its window reaches is never unchanged, whatever values it assigns. An
+observed or insertion-authored write keeps an unchanged milestone rather than
+closing it and chaining an equal successor, wherever its unchanged state is
+proven without changing it:
+
+- a milestone the attempt opened is invisible to every other transaction, so it
+  needs no proof and no statement;
+- under the effective Locking strategy the shared lock the attempt holds on every
+  row the write reaches (`m-read-lock`) keeps the row as it was read, so it needs
+  no statement either;
+- under Optimistic a milestone that existed before the attempt is proven by a
+  **Planned Temporal Guard**: a write that matches the milestone only at its
+  observed address and Transaction-Time start, changes no value, and holds the
+  row's write lock until the transaction ends. Matching is the proof, so a
+  database whose write count reports only the rows an update changed cannot give
+  it (`m-dialect` *Unchanged-row count*); there the milestone is closed and
+  chained as a changed one is, a choice made before anything executes. A guard
+  that matches no row is the milestone's ordinary conflict, never a reason to
+  fall back.
+
+Either way nothing is closed or opened, the milestone keeps its Transaction-Time
+start and its history gains nothing, and the unit's other milestones transform
+as usual. The unit still completes: it spends every source it composed, and it
+changes no state of the kept milestone, so an observation of that state from
+another source stays eligible and another transaction's revision token for it
+still holds. A guard is not zero work: it is a database write that fires update
+triggers and keeps its lock through any later dependent read until the
+transaction ends.
 
 A predicate-selected write compares instead. The write-input comparison of a
 Materialized Write Group below, and the no-op elimination it performs before

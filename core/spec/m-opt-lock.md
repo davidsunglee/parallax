@@ -237,7 +237,9 @@ an update that assigns **no** attribute **MUST** issue **no DML** at all (zero
 round trips). A keyed update's assignments are literal sets (`m-unit-work`), so
 a keyed update assigning an attribute the value its source observed is not
 empty: it issues its `UPDATE`, gated as any other, and advances the version. A
-predicate-selected update instead compares each resolved row, below. Neither
+temporal one keeps a milestone it leaves unchanged, proven by a guard under
+Optimistic (*Temporal entities derive the version from Transaction Time*, below).
+A predicate-selected update instead compares each resolved row, below. Neither
 empty write needs to bump the version — the concurrent editor that races it
 advances the version itself, so nothing slips through.
 
@@ -319,7 +321,25 @@ observed `in_z`, each **MUST** affect exactly one row), and the chained replacem
 rows are plain ungated `INSERT`s whose fresh `in_z = txInstant` **is** the advance.
 A **zero-row** close is an error under **either** strategy (never silent) — a
 retriable conflict under Optimistic, a distinct non-retriable stale/consistency
-error under Locking. The write shapes and the current-row-predicate-is-not-a-gate
+error under Locking.
+
+A milestone an observed or insertion-authored write leaves unchanged
+(`m-unit-work` *Unchanged milestones*) is not closed, and under Optimistic the
+same gate rides a **guard** instead: an `UPDATE` of that milestone's own address
+that assigns its `in_z` to itself, binds the observed `in_z` last, and **MUST**
+affect exactly one row. A zero-row guard is the same retriable conflict a stale
+close is, so a peer that revised the milestone after it was observed — even to
+equal values — is still detected, and the guarded row stays write-locked until
+the transaction ends. The guard advances nothing: the milestone keeps the `in_z`
+another transaction may have observed, and that transaction's own gated write of
+it still matches once this one commits. The guard relies on the database
+counting a matched row it left unchanged (`m-dialect` *Unchanged-row count*);
+without that count no guard is issued and the milestone is closed and chained.
+Under Locking the shared lock already proves the unchanged milestone and no
+statement is issued for it (`m-read-lock`). A caller-stated `ifTxStart` is never
+satisfied by a guard: a caller-addressed write asked for the revision.
+
+The write shapes and the current-row-predicate-is-not-a-gate
 rationale are `m-txtime-write` / `m-bitemp-write`; the conflict/retry contract is
 this module (the `m-opt-lock --> m-temporal-read` composition edge). Combining an
 explicit `optimisticLocking` attribute with a temporal `temporality`

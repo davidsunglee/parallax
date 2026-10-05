@@ -1,0 +1,207 @@
+model: models/unchanged-milestone-layout-twin-document.yaml
+tags: [m-read-lock, m-unit-work, m-bitemp-write, m-txtime-write, m-storage-layout, scenario, update, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: each flush writes against coverage its own reads leave, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - uow: kept
+      objectQuery:
+        target: parallax.compatibility.KeptSpan
+        predicate: { eq: { attr: parallax.compatibility.KeptSpan.id, value: 1 } }
+        temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-03-01T00:00:00.000000Z" } }
+      note: "observe span 1 at March, under the shared lock"
+      expectRows:
+        - id: 1
+          amount: 100
+          label: a
+          memo: { note: n1 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: "2024-04-01T00:00:00.000000Z"
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+    - uow: kept
+      write:
+        - mutation: updateUntil
+          "on": 0
+          entity: parallax.compatibility.KeptSpan
+          rows:
+            - { id: 1, amount: 100 }
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          until: "2024-10-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+      note: "amount 100 over [March, October): only [May, August) holds another amount"
+    - uow: kept
+      objectQuery:
+        target: parallax.compatibility.KeptSpan
+        predicate: { eq: { attr: parallax.compatibility.KeptSpan.id, value: 2 } }
+        temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-02-01T00:00:00.000000Z" } }
+      note: "flush the range, then observe span 2 at February"
+      expectRows:
+        - id: 2
+          amount: 100
+          label: d
+          memo: { note: n4 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+    - uow: kept
+      write:
+        - mutation: updateUntil
+          "on": 2
+          entity: parallax.compatibility.KeptSpan
+          rows:
+            - { id: 2, amount: 150 }
+          validFrom: "2024-02-01T00:00:00.000000Z"
+          until: "2024-06-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+        - mutation: updateUntil
+          "on": 2
+          entity: parallax.compatibility.KeptSpan
+          rows:
+            - { id: 2, amount: 100 }
+          validFrom: "2024-02-01T00:00:00.000000Z"
+          until: "2024-06-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+      note: "150 then back to 100 over one window: the composition leaves span 2 as it was"
+    - uow: kept
+      objectQuery:
+        target: parallax.compatibility.KeptLog
+        predicate: { eq: { attr: parallax.compatibility.KeptLog.id, value: 1 } }
+        temporal: { transaction-time: { asOf: latest } }
+      expectRows:
+        - id: 1
+          amount: 100
+          memo: { note: n5 }
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+    - uow: kept
+      write:
+        - mutation: update
+          "on": 4
+          entity: parallax.compatibility.KeptLog
+          rows:
+            - { id: 1, amount: 100, memo: { note: n5 } }
+          at: "2024-11-01T00:00:00.000000Z"
+      note: "every assigned value, the whole memo included, is the one log 1 holds"
+    - uow: kept
+      objectQuery:
+        target: parallax.compatibility.KeptLog
+        predicate: { eq: { attr: parallax.compatibility.KeptLog.id, value: 2 } }
+        temporal: { transaction-time: { asOf: latest } }
+      expectRows:
+        - id: 2
+          amount: 100
+          memo: { note: n6 }
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+    - uow: kept
+      write:
+        - mutation: update
+          "on": 6
+          entity: parallax.compatibility.KeptLog
+          rows:
+            - { id: 2, amount: 150 }
+          at: "2024-11-01T00:00:00.000000Z"
+      note: "a changed amount closes log 2 and chains its successor"
+    - uow: changed
+      objectQuery:
+        target: parallax.compatibility.KeptSpan
+        predicate: { eq: { attr: parallax.compatibility.KeptSpan.id, value: 2 } }
+        temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-07-01T00:00:00.000000Z" } }
+      note: "span 2 is still the rectangle it started as"
+      expectRows:
+        - id: 2
+          amount: 100
+          label: d
+          memo: { note: n4 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+    - uow: changed
+      write:
+        - mutation: updateUntil
+          "on": 8
+          entity: parallax.compatibility.KeptSpan
+          rows:
+            - { id: 2, memo: { note: x } }
+          validFrom: "2024-07-01T00:00:00.000000Z"
+          until: "2024-09-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+      note: "another memo over [July, September) splits the rectangle as usual"
+then:
+  units:
+    kept: { outcome: committed }
+    changed: { outcome: committed }
+  tableState:
+    kept_span:
+      - id: 1
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-04-01T00:00:00.000000Z"
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: a, memo: { note: n1 } }
+      - id: 1
+        from_z: "2024-05-01T00:00:00.000000Z"
+        thru_z: "2024-08-01T00:00:00.000000Z"
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: "2024-11-01T00:00:00.000000Z"
+        payload: { amount: 180, label: b, memo: { note: n2 } }
+      - id: 1
+        from_z: "2024-05-01T00:00:00.000000Z"
+        thru_z: "2024-08-01T00:00:00.000000Z"
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: b, memo: { note: n2 } }
+      - id: 1
+        from_z: "2024-08-01T00:00:00.000000Z"
+        thru_z: "2024-12-01T00:00:00.000000Z"
+        in_z: "2024-01-02T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: c, memo: { note: n3 } }
+      - id: 2
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-11-02T00:00:00.000000Z"
+        payload: { amount: 100, label: d, memo: { note: n4 } }
+      - id: 2
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-07-01T00:00:00.000000Z"
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: d, memo: { note: n4 } }
+      - id: 2
+        from_z: "2024-07-01T00:00:00.000000Z"
+        thru_z: "2024-09-01T00:00:00.000000Z"
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: d, memo: { note: x } }
+      - id: 2
+        from_z: "2024-09-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: d, memo: { note: n4 } }
+    kept_log:
+      - id: 1
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, memo: { note: n5 } }
+      - id: 2
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-11-01T00:00:00.000000Z"
+        payload: { amount: 100, memo: { note: n6 } }
+      - id: 2
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 150, memo: { note: n6 } }

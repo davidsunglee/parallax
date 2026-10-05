@@ -1425,6 +1425,13 @@ _BUFFERED_SEQUENCE_REASON: Final[str] = (
     "developer surface"
 )
 
+_UNCHANGED_MILESTONE_REASON: Final[str] = (
+    "a state-graded buffered sequence, run per layout arm through the public verbs by "
+    "the run conformance lane and checked for consistency by the reference harness; "
+    "its developer spellings are the real-database public witnesses of the "
+    "unchanged-milestone suite, so a story here would add no developer surface"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-relationship-005": _RELATIONSHIP_FORMATION_REASON,
     "m-relationship-006": _RELATIONSHIP_FORMATION_REASON,
@@ -1483,6 +1490,10 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
             "m-opt-lock-031",
         ),
         _BUFFERED_SEQUENCE_REASON,
+    ),
+    **dict.fromkeys(
+        ("m-read-lock-021", "m-read-lock-022", "m-bitemp-write-034", "m-bitemp-write-035"),
+        _UNCHANGED_MILESTONE_REASON,
     ),
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     "m-opt-lock-005": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,

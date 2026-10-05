@@ -249,10 +249,13 @@ def test_one_verb_over_a_participating_source_answers_its_target(scenario: Scena
 # The change axis. An untouched copy, and a Wire document naming no member,    #
 # express no assignment and buffer nothing. A net-zero chain — a member set    #
 # and then set back to the value its source published — expresses that member #
-# and writes it, exactly as a changed one does: assignments are literal sets,  #
-# never compared with the source. The document targets carry it past a scalar: #
-# a Value Object occurrence with a nested occurrence and a nested many, and a  #
-# member stored absent whose restoration states an explicit null.              #
+# and writes it: assignments are literal sets, never compared with the source. #
+# A Non-Temporal row is updated as for a changed value. A temporal milestone   #
+# that already holds the value is kept rather than closed: one guard proves it #
+# under Optimistic, and the shared lock already does under Locking. The        #
+# document targets carry it past a scalar: a Value Object occurrence with a    #
+# nested occurrence and a nested many, and a member stored absent whose        #
+# restoration states an explicit null.                                         #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "scenario",
@@ -269,10 +272,12 @@ def test_an_update_expressing_no_member_buffers_nothing(scenario: Scenario) -> N
     ids=str,
 )
 def test_a_net_zero_chain_writes_the_member_it_expressed(scenario: Scenario) -> None:
+    profile = scenario.target.profile
+    kept = 0 if scenario.concurrency == "locking" else 1
     _answers(
         scenario,
         _applicability_refusal(scenario)
-        or _wrote(_STATEMENTS[scenario.target.profile, scenario.verb]),
+        or _wrote(_STATEMENTS[profile, scenario.verb] if profile == "non_temporal" else kept),
     )
 
 
@@ -408,7 +413,7 @@ def test_a_same_transaction_insert_licenses_the_write_whoever_opened_it(
 # write settles against: an insertion this transaction admitted lends nothing  #
 # to a source a read published. The row it observed is one this attempt opened,#
 # so the write revises or removes it in place rather than closing it into      #
-# history.                                                                     #
+# history — or, for a net-zero chain over a temporal row, leaves it alone.     #
 # --------------------------------------------------------------------------- #
 _OWN_ROW_STATEMENTS: Final[Mapping[tuple[Profile, Verb], int]] = {
     ("non_temporal", "update"): 1,
@@ -426,7 +431,14 @@ update — a revision of the kept tail's start beside the new head."""
 
 
 def _over_a_reread_insert(scenario: Scenario) -> Answer:
-    return _wrote(1 + _OWN_ROW_STATEMENTS[scenario.target.profile, scenario.verb])
+    profile = scenario.target.profile
+    if (
+        scenario.change == "net_zero"
+        and profile != "non_temporal"
+        and scenario.verb in ("update", "bounded_update")
+    ):
+        return _wrote(1)
+    return _wrote(1 + _OWN_ROW_STATEMENTS[profile, scenario.verb])
 
 
 @pytest.mark.parametrize(

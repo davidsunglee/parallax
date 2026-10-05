@@ -73,6 +73,7 @@ from parallax.core.unit_work.planned import (
     PlannedAssignments,
     PlannedDelete,
     PlannedRow,
+    PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedUpdate,
@@ -491,6 +492,36 @@ def test_an_owned_revision_and_removal_each_address_one_current_milestone() -> N
             target=_CURRENT_SLOT,
             concurrency=UNGATED,
             affected_rows=ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT),
+        )
+
+
+def test_a_guard_is_gated_and_addresses_one_current_milestone() -> None:
+    gate = TemporalGate(start_attribute=_TX_START, observed_start="2024-01-01")
+    one = ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT)
+    guard = PlannedTemporalGuard(
+        entity=_ACCOUNT, target=_CURRENT_SLOT, concurrency=gate, affected_rows=one
+    )
+    assert guard.affected_rows == one
+    with pytest.raises(ValueError, match="so it is gated"):
+        PlannedTemporalGuard(
+            entity=_ACCOUNT,
+            target=_CURRENT_SLOT,
+            concurrency=UNGATED,  # type: ignore[arg-type]
+            affected_rows=ExactCount(expected=1, on_shortfall=STALE_WRITE),
+        )
+    with pytest.raises(ValueError, match="addresses one current milestone"):
+        PlannedTemporalGuard(
+            entity=_ACCOUNT,
+            target=_CURRENT_SLOT,
+            concurrency=gate,
+            affected_rows=ExactCount(expected=2, on_shortfall=OPTIMISTIC_CONFLICT),
+        )
+    with pytest.raises(ValueError, match="classifies a shortfall as"):
+        PlannedTemporalGuard(
+            entity=_ACCOUNT,
+            target=_CURRENT_SLOT,
+            concurrency=gate,
+            affected_rows=ExactCount(expected=1, on_shortfall=STALE_WRITE),
         )
 
 
