@@ -1,7 +1,4 @@
-"""Temporal rows whose key the database allocates, written again in the attempt
-that opened them, against real Postgres.
-
-No public verb states a `max` allocation, so the insert is buffered on the
+"""No public verb states a `max` allocation, so the insert is buffered on the
 transaction's own unit of work, as the conformance lanes' framework writes are;
 every later write goes through the public verbs.
 """
@@ -119,7 +116,6 @@ def test_a_transaction_time_row_whose_key_the_database_allocated_is_revised_in_p
         f"{_amount(entity)} from {_TABLES[entity]} where id = 8 order by in_z",
         [],
     )
-    # One row at the attempt's instant: no `[T, T)` history and no second row.
     assert [_plain(row) for row in rows] == [(_T, None, 175)]
 
 
