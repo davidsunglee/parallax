@@ -30,9 +30,8 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 3 }
-      rollback: true
       roundTrips: 1
-      note: "apply a gated delete of the OBSERVED account 3 — dooms the group (rollback: true)"
+      note: "apply a gated delete of the OBSERVED account 3; the group's fate is rolledBack"
       statements:
         - sql:
             postgres: delete from account where id = ? and version = ?
@@ -66,4 +65,6 @@ when:
       expectRows:
         - { id: 3, owner: Grace, balance: "10.00", version: 1 }
 then:
+  units:
+    doomed-delete: { outcome: rolledBack }
   roundTrips: 4

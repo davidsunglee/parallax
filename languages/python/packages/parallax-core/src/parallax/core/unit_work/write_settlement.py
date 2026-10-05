@@ -59,6 +59,7 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.unit_work.materialized import (
     ChainedTemporalWrite,
     ComposedTemporalWrite,
+    FollowingKeyedWrite,
     GroupStates,
     InsertionKeyedWrite,
     MaterializedWriteGroup,
@@ -184,6 +185,7 @@ type OrderedWrite = (
     | ObservedKeyedWrite
     | InsertionKeyedWrite
     | TargetKeyedWrite
+    | FollowingKeyedWrite
     | ComposedTemporalWrite
     | MaterializedWriteGroup
 )
@@ -454,6 +456,10 @@ class WriteSettlement:
                 pending.clear()
 
         for item in ordered_writes:
+            advances = 0
+            if isinstance(item, FollowingKeyedWrite):
+                advances = item.advances
+                item = item.write
             if isinstance(item, MaterializedWriteGroup):
                 flush_pending()
                 segment = self._settle_group(item, concurrency, transaction_instant, ownership)
@@ -493,7 +499,7 @@ class WriteSettlement:
                 continue
             assert not isinstance(item, ComposedTemporalWrite | MaterializedWriteGroup)
             settled, unit_parts = self._settle_keyed(
-                item, concurrency, transaction_instant, ownership, shape
+                item, concurrency, transaction_instant, ownership, shape, advances
             )
             for step in settled.steps:
                 pending.append(
@@ -526,12 +532,15 @@ class WriteSettlement:
         tx_instant: TransactionInstant,
         ownership: Ownership,
         shape: TemporalShape | None,
+        advances: int = 0,
     ) -> tuple[
         _Settled, tuple[Completion | None, VersionedStateKey | None, ObservedStateKey | None]
     ]:
         """One ordered keyed write's steps, beside what its unit records: the
         claim it spends, the state its carrier itself names as changed, and the
-        one state several twinned observations of it share."""
+        one state several twinned observations of it share. ``advances`` is how
+        many versions earlier writes of its scope a barrier kept before it
+        advance the row past the state that scope names."""
         own_state: VersionedStateKey | None = None
         twinned: ObservedStateKey | None = None
         observation: WriteObservation | None = None
@@ -542,7 +551,13 @@ class WriteSettlement:
         elif isinstance(item, TargetKeyedWrite | InsertionKeyedWrite):
             instruction = item.instruction
             scope = item.scope
-            own_state = scope if isinstance(scope, VersionedStateKey) else None
+            if isinstance(scope, VersionedStateKey):
+                own_state = (
+                    VersionedStateKey(scope.object, self._advanced(scope.version, advances))
+                    if advances
+                    else scope
+                )
+                advances = 0
             if isinstance(item, TargetKeyedWrite):
                 claim = _target_claim(item)
         else:
@@ -556,8 +571,15 @@ class WriteSettlement:
             shape,
             own_version=None if own_state is None else own_state.version,
             conditioned=isinstance(item, TargetKeyedWrite),
+            advances=advances,
         )
         return settled, (claim, own_state, twinned)
+
+    def _advanced(self, version: int, advances: int) -> int:
+        arithmetic = self._concurrency.version_arithmetic()
+        for _ in range(advances):
+            version = arithmetic.advance(version)
+        return version
 
     # Stages 5, 6, 7: validate the observation the item arrived carrying, #
 
@@ -572,12 +594,15 @@ class WriteSettlement:
         *,
         own_version: int | None = None,
         conditioned: bool = False,
+        advances: int = 0,
     ) -> _Settled:
         """One ordered write's steps. ``own_version`` is the version a write
         advances from in place of an observed one: the version this attempt's
         own writes left a row it inserted at, or the version a caller's
         condition requires. ``conditioned`` says the gate binds that caller's
-        condition, so a shortfall against it is a failed precondition."""
+        condition, so a shortfall against it is a failed precondition.
+        ``advances`` moves an observed version past the writes of its state a
+        barrier kept before this one."""
         if isinstance(instruction, PreparedPredicateWrite):
             return _Settled(self._settle_predicate(instruction))
         entity = instruction.target
@@ -596,6 +621,8 @@ class WriteSettlement:
             if own_version is not None
             else self._observed_version(entity, instruction, facts.version_attribute, observation)
         )
+        if advances and observed_version is not None:
+            observed_version = self._advanced(observed_version, advances)
         return _Settled(
             (
                 _non_temporal_step(

@@ -27,7 +27,7 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core import bitemp_write, relationship, temporal_read, txtime_write
+from parallax.core import bitemp_write, opt_lock, relationship, temporal_read, txtime_write
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, FrozenMap
@@ -53,6 +53,7 @@ from parallax.core.metamodel import (
     TemporalDimension,
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedRelationshipJoin,
+    entity_by_name,
 )
 from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.sql_gen._write import compile_write_step
@@ -84,6 +85,7 @@ from parallax.core.unit_work import (
     buffered_write,
     object_key,
 )
+from parallax.core.unit_work import instructions as instructions_module
 from parallax.core.unit_work import planner as planner_module
 from parallax.core.unit_work import write_settlement as write_settlement_module
 from parallax.core.unit_work.instructions import (
@@ -1369,6 +1371,27 @@ def test_materialized_group_rejects_an_authored_version_assignment() -> None:
     # whole group, since every resolved row shares the same assignment.
     with pytest.raises(WriteInstructionError, match="framework-owned"):
         _version_group("Account", "update", "id", [(1, 1)], [WriteAssignment("Account.version", 9)])
+
+
+def test_settlement_refuses_a_group_that_reaches_it_assigning_the_version() -> None:
+    # Preparation already refuses the assignment above; settlement refuses it
+    # again for a group whose prepared write assigns it anyway.
+    group = _version_group(
+        "Account", "update", "id", [(1, 1)], [WriteAssignment("Account.balance", Decimal("2.00"))]
+    )
+    prepared = group.mutation
+    (balance,) = prepared.managed_assignments
+    entity = entity_by_name(_ACCOUNT, "Account")
+    assert entity is not None
+    assigning_the_version = instructions_module._prepared_predicate_write(  # pyright: ignore[reportPrivateUsage] - the one producer, handed what preparation refuses
+        prepared.mutation,
+        prepared.selection,
+        (dataclasses.replace(balance, member=entity.attribute("version")),),
+        prepared.bounds,
+    )
+    forged = dataclasses.replace(group, mutation=assigning_the_version)
+    with pytest.raises(opt_lock.CallerAuthoredVersionError):
+        _plan([forged], _ACCOUNT)
 
 
 def test_materialized_group_is_exempt_from_same_object_coalescing() -> None:

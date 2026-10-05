@@ -27,14 +27,15 @@ when:
     - uow: duplicate-delete
       write:
         - mutation: delete
+          "on": 0
           entity: parallax.compatibility.Account
           rows:
             - { id: 1 }
         - mutation: delete
+          "on": 0
           entity: parallax.compatibility.Account
           rows:
             - { id: 1 }
-      on: 0
       roundTrips: 1
       note: the second delete says what the first already said, so ONE gated DELETE is emitted
       statements:

@@ -935,6 +935,12 @@ class Case:
         return self.then.get("tableState", {})
 
     @property
+    def state_graded(self) -> bool:
+        """Whether a scenario is graded on the state it states rather than on
+        golden SQL per step (top-level ``grading: state``)."""
+        return self.raw.get("grading") == "state"
+
+    @property
     def load_fixtures(self) -> bool:
         """Whether the case loads the model's fixtures first (``given.fixtures``).
 

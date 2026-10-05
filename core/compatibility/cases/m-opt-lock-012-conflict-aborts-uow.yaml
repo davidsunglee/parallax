@@ -66,9 +66,8 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 2, balance: "300.00" }
-      rollback: true
       roundTrips: 2
-      note: "our UoW inserts account 9 then hits a stale-version conflict on account 2 (gated on OUR OWN observed version 1, now stale) — 0 rows; dooms the group (rollback: true), which ROLLS BACK after this, its last step"
+      note: "our UoW inserts account 9 then hits a stale-version conflict on account 2 (gated on OUR OWN observed version 1, now stale) — 0 rows; the commit's flush fails and the group ROLLS BACK after this, its last step"
       statements:
         - sql:
             postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
@@ -90,5 +89,8 @@ when:
           binds: [9]
       expectRows: []
 then:
-  affectedRows: 0
+  units:
+    ours:
+      outcome: rolledBack
+      flushFailure: { at: commit, entity: parallax.compatibility.Account, key: { id: 2 }, shortfall: optimisticConflict }
   roundTrips: 6

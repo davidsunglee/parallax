@@ -70,7 +70,7 @@ from parallax.core.unit_work.retain import (
     RetainedObservation,
 )
 from parallax.core.unit_work.strategy import ActorIdentity, Concurrency, EvidencePolicyLookup
-from parallax.core.unit_work.temporal import covers, instant_order, precedes
+from parallax.core.unit_work.temporal import TemporalTransform, covers, instant_order, precedes
 from parallax.core.unit_work.write_planner import (
     PendingWrites,
     PlanningRequest,
@@ -450,6 +450,15 @@ class _TargetWriteState:
         record.advanced_from = None
         return identity
 
+    def store_pending_insert(self, target: ObjectKey) -> None:
+        """Count the pending insertion of ``target`` as stored, because a later
+        pending write removes the whole row it opens: what is pending of the
+        object is then that removal."""
+        record = self._records.get(target)
+        if record is not None and record.pending_insert:
+            record.pending_insert = False
+            record.row = True
+
     def cancel_insert(self, target: ObjectKey) -> None:
         # The record stays: the attempt admitted an insertion of the object
         # whatever became of it, and a caller-addressed write consults that.
@@ -673,6 +682,22 @@ def _address(target: ObjectKey) -> _Address:
     return (target.entity, tuple(value for _name, value in target.primary_key))
 
 
+def _destroys(transforms: Iterable[TemporalTransform], start: object, end: object) -> bool:
+    """Whether ``transforms`` together destroy all coverage in [start, end)."""
+    destroyed = tuple(
+        sorted(
+            (
+                (segment.start, segment.end)
+                for transform in transforms
+                for segment in transform.segments
+                if segment.assigned is None
+            ),
+            key=_start_order,
+        )
+    )
+    return bool(destroyed) and covers(destroyed, start, end) is None
+
+
 def _start_order(interval: tuple[object, object]) -> dt.datetime:
     return instant_order(interval[0])
 
@@ -854,12 +879,7 @@ class UnitOfWork:
             self._pending.add(
                 item,
                 key,
-                after_removal=(
-                    record is not None
-                    and not record.pending_insert
-                    and record.stored
-                    and self._removes_stored(key, record)
-                ),
+                after_removal=record is not None and self._removed_whole(key, record),
             )
             targets.open_insert(
                 key,
@@ -868,10 +888,20 @@ class UnitOfWork:
                 bitemporal=self._pending.is_bitemporal_target(instruction),
             )
             return BufferOutcome.BUFFERED
+        folds = key is not None and self._pending.folds_into_opening(key)
         if self._pending.add(item, key):
             assert key is not None  # only a write of one object cancels its insert
             targets.cancel_insert(key)
             return BufferOutcome.CANCELLED_PENDING_INSERT
+        if (
+            key is not None
+            and not folds
+            and instruction.mutation in DESTRUCTIVE_MUTATIONS
+            and self._pending.removes(key)
+        ):
+            # A barrier kept this removal after the object's pending insert,
+            # which therefore executes and opens the row this one removes.
+            targets.store_pending_insert(key)
         return BufferOutcome.BUFFERED
 
     def buffer_target(self, prepared: PreparedTargetWrite, *, acquire: TargetAcquisition) -> None:
@@ -1000,7 +1030,7 @@ class UnitOfWork:
                 "through no longer stands in this unit of work"
             )
         key = item.identity.object_key
-        if record.pending_insert:
+        if record.pending_insert and self._pending.folds_into_opening(key):
             if not self._pending.opening_admits(key, instruction):
                 raise _already_claimed(instruction.target, key)
             return item
@@ -1009,6 +1039,30 @@ class UnitOfWork:
         version = self._planner.inserted_version(instruction.target.identity, record.advanced_from)
         scope = key if version is None else VersionedStateKey(key, version)
         return InsertionKeyedWrite(instruction=instruction, identity=item.identity, scope=scope)
+
+    def _removed_whole(self, key: ObjectKey, record: _TargetRecord) -> bool:
+        """Whether the pending writes of ``key`` remove everything its
+        admissions opened, so a further insertion of it is a first opening.
+
+        An insertion still pending is removed whole only from beyond a barrier,
+        since a removal beside it cancels it instead. A Non-Temporal or
+        Transaction-Time-Only removal there already counts the insertion as
+        stored, so only a Bitemporal opening is judged here: the writes buffered
+        after it must destroy all the coverage it opens.
+        """
+        if not record.pending_insert:
+            return record.stored and self._removes_stored(key, record)
+        bounds = record.bounds
+        assert not record.bitemporal or bounds.valid_from is not None  # it states its start
+        return (
+            record.bitemporal
+            and not self._pending.folds_into_opening(key)
+            and _destroys(
+                self._pending.transforms(key, after_opening=True),
+                bounds.valid_from,
+                INFINITY_LITERAL if bounds.until is None else bounds.until,
+            )
+        )
 
     def _removes_stored(self, key: ObjectKey, record: _TargetRecord) -> bool:
         """Whether the pending writes of ``key`` remove everything its admitted
@@ -1022,22 +1076,9 @@ class UnitOfWork:
         """
         if not record.bitemporal:
             return self._pending.removes(key)
-        destroyed = tuple(
-            sorted(
-                (
-                    (segment.start, segment.end)
-                    for transform in self._pending.transforms(key)
-                    for segment in transform.segments
-                    if segment.assigned is None
-                ),
-                key=_start_order,
-            )
-        )
-        if not destroyed:
-            return False
         floor = record.floor
         assert floor is not None  # a Bitemporal opening states its start
-        return covers(destroyed, floor, self._targets.max_end(record)) is None
+        return _destroys(self._pending.transforms(key), floor, self._targets.max_end(record))
 
     def insertion_identity(self, target: ObjectKey) -> InsertionIdentity | None:
         """The authority the standing admitted insertion of ``target`` grants,
@@ -1069,13 +1110,9 @@ class UnitOfWork:
         """
         self._ensure_open()
         record = self._targets.record(target)
-        if record is None:
+        if record is None or self._removed_whole(target, record):
             return None
-        if record.pending_insert:
-            return record.opener
-        if not record.stored or self._removes_stored(target, record):
-            return None
-        return record.opener
+        return record.opener if record.pending_insert or record.stored else None
 
     def _addressed_object(self, item: BufferItem) -> ObjectKey | None:
         """The one object ``item`` addresses where buffering needs it — to claim

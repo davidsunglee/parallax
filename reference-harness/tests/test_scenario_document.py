@@ -67,30 +67,42 @@ def _anchored(step: dict[str, Any], index: int) -> list[str]:
 # --- which find a write may settle against ----------------------------------
 
 
+def _settling(on: object, *, grouped: bool = True) -> dict[str, Any]:
+    entry = {**_WRITE["write"][0], "on": on}
+    step = {**_WRITE, "write": [entry]}
+    return step if grouped else {"write": [entry]}
+
+
 def test_a_settling_write_names_an_earlier_step() -> None:
-    assert not _settled({**_WRITE, "on": 0}, [_FIND])
-    assert _settled({**_WRITE, "on": 1}, [_FIND]) == [
-        "probe: settles against step 1, which is not a real EARLIER step (0 <= source < 1)"
+    assert not _settled(_settling(0), [_FIND])
+    assert _settled(_settling(1), [_FIND]) == [
+        "probe write[0]: settles against step 1, which is not a real EARLIER step (0 <= source < 1)"
     ]
-    assert _settled({**_WRITE, "on": -1}, [_FIND])
+    assert _settled(_settling(-1), [_FIND])
 
 
 def test_a_settling_write_names_a_find_of_its_own_group() -> None:
     # Evidence a write consumes is transaction-scoped and published by a read, so a
-    # find of another group and a step that observed nothing both name evidence
-    # that never reaches this write.
-    refusal = "probe: settles against step 0, which is not a find step of its own `uow` group 'g'"
-    assert not _settled({**_WRITE, "on": 1}, [_OTHER_FIND, _FIND])
-    assert _settled({**_WRITE, "on": 0}, [_OTHER_FIND, _FIND]) == [refusal]
-    assert _settled({**_WRITE, "on": 0}, [_WRITE, _FIND]) == [refusal]
+    # find of another group, a step that observed nothing, and a find reached
+    # from an ungrouped write all name evidence that never reaches the write.
+    refusal = (
+        "probe write[0]: settles against step 0, which is not a find step of its own "
+        "`uow` group 'g'"
+    )
+    assert not _settled(_settling(1), [_OTHER_FIND, _FIND])
+    assert _settled(_settling(0), [_OTHER_FIND, _FIND]) == [refusal]
+    assert _settled(_settling(0), [_WRITE, _FIND]) == [refusal]
+    assert _settled(_settling(0, grouped=False), [_FIND]) == [
+        "probe write[0]: settles against step 0 from an ungrouped write"
+    ]
 
 
 def test_a_reference_the_case_schema_types_is_left_to_the_case_schema() -> None:
     # A reference whose shape the schema already refuses is reported there, in the
-    # schema's own vocabulary, rather than a second time here in a different one.
-    ungrouped = {key: value for key, value in _WRITE.items() if key != "uow"}
-    assert not _settled({**_WRITE, "on": "0"}, [_FIND])
-    assert not _settled({**ungrouped, "on": 0}, [_FIND])
+    # schema's own vocabulary, rather than a second time here in a different one;
+    # and a pointer names an insert, which the Scenario compilation judges.
+    assert not _settled(_settling("0"), [_FIND])
+    assert not _settled(_settling("/scenario/0/write/0"), [_FIND])
 
 
 # --- which step an identity observable anchors to ---------------------------
@@ -196,7 +208,8 @@ def test_whole_tree_validation_asks_every_rule_of_an_api_conformance_case(tmp_pa
     steps = case["when"]["scenario"]
     # A write settling against a find that belongs to no group of its own.
     steps[1]["uow"] = "g"
-    steps[1]["on"] = 0
+    for entry in steps[1]["write"]:
+        entry["on"] = 0
     # An independent oracle authored for the one dialect this read has no golden for.
     steps[0]["referenceSql"] = {"mariadb": "select id from orders where id = 3"}
     # An identity observable anchored to a step the Scenario never authored.

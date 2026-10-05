@@ -40,7 +40,7 @@ def _named_once(failure: CaseFailure, case_name: str, step: int) -> None:
 
 def test_a_compile_phase_refusal_names_its_step_once(damaged_case) -> None:
     case = damaged_case(_SETTLED)
-    case.when["scenario"][2]["on"] = 1000
+    case.when["scenario"][2]["write"][0]["on"] = 1000
     with pytest.raises(CaseFailure) as raised:
         assert_unit_work_scenario(case, RefusingProvider())
     _named_once(raised.value, case.path.name, 2)
@@ -153,7 +153,7 @@ def test_a_structural_defect_precedes_a_dialect_keyed_one(damaged_case) -> None:
     # broken in both places therefore reports the structural defect, and reports it
     # identically on every dialect.
     case = damaged_case(_SETTLED)
-    case.when["scenario"][2]["on"] = 1000
+    case.when["scenario"][2]["write"][0]["on"] = 1000
     case.when["scenario"][2]["roundTrips"] += 1
 
     for dialect in ("postgres", "mariadb"):

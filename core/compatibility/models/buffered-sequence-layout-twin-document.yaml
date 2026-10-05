@@ -1,0 +1,79 @@
+# Relational Document Layout member of the buffered-sequence twin. This is an
+# ordinary production descriptor consumed without a harness override: the root-owned
+# layout block on each Entity is its only difference from the Columns member, so every
+# member rides inside the shared `payload` document rather than in a Column of its
+# own. The fixture twin authors the same logical rows and the case twins author the
+# same submissions, so what one unit of work's several writes leave stored is what the
+# pair proves layout cannot change.
+#
+# The three Entities divide the write surface the way a buffered sequence crosses it.
+# `SequenceSpan` is Bitemporal, so its writes are ranges over current coverage that
+# compose, stay apart over disjoint windows, and continue across a barrier.
+# `SequenceAccount` is a versioned Non-Temporal row, whose writes on two sides of a
+# barrier advance its version once each. `SequenceTag` is an unversioned Non-Temporal
+# row, which a readless predicate write can select, so it carries the barrier and the
+# Non-Temporal same-key writes the barrier must keep on their own sides.
+#
+# Every member name is its Column's name, so a read publishes the same row under
+# either layout.
+entities:
+  - name: SequenceSpan
+    namespace: parallax.compatibility
+    table: sequence_span
+    layout:
+      document:
+        column: payload
+    temporality: bitemporal
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: amount
+        type: int64
+      - name: label
+        type: string
+        maxLength: 16
+    valueObjects:
+      - name: memo
+        nullable: true
+        attributes:
+          - name: note
+            type: string
+            nullable: true
+  - name: SequenceAccount
+    namespace: parallax.compatibility
+    table: sequence_account
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: balance
+        type: int64
+      - name: version
+        type: int32
+        optimisticLocking: true
+    valueObjects:
+      - name: memo
+        nullable: true
+        attributes:
+          - name: note
+            type: string
+            nullable: true
+  - name: SequenceTag
+    namespace: parallax.compatibility
+    table: sequence_tag
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: quantity
+        type: int64
+      - name: label
+        type: string
+        maxLength: 16

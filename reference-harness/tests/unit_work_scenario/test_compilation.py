@@ -37,12 +37,17 @@ def test_scenario_cases_are_discovered_and_self_describe(scenario_cases) -> None
         assert case.scenario
         assert "objectQuery" not in case.when
         for step in case.scenario:
-            assert "roundTrips" in step
             # A step is EXACTLY ONE of a read step (carries `objectQuery`), a write
             # step (carries `write`), or a lifecycle-action step (carries `action`,
             # m-case-format).
             kinds = ("objectQuery" in step) + ("write" in step) + ("action" in step)
             assert kinds == 1, "a scenario step is exactly one of objectQuery / write / action"
+            if case.state_graded:
+                # A state-graded step states its effect in the table state, never as
+                # golden SQL.
+                assert not step.get("statements")
+                continue
+            assert "roundTrips" in step
             if "write" in step:
                 # A committed / rolled-back write lists golden DML; a NO-OP write
                 # (a versioned UPDATE that changes no attribute, m-opt-lock) issues no DML,
@@ -81,7 +86,12 @@ def test_cache_hit_scenario_has_a_zero_round_trip_step(corpus_case) -> None:
 
 def test_rollback_scenario_step_is_discovered_and_self_describes(corpus_case) -> None:
     case = corpus_case("m-unit-work-002-rollback-discards-writes.yaml")
-    rollback_steps = [step for step in case.scenario if step.get("rollback")]
+    abandoned = {
+        label for label, fate in case.then["units"].items() if fate["outcome"] == "rolledBack"
+    }
+    rollback_steps = [
+        step for step in case.scenario if step.get("uow") in abandoned and "write" in step
+    ]
     assert rollback_steps, "no rollback scenario step discovered"
     for step in rollback_steps:
         # An ABORTED write step is still a write step that lists golden DML (it is
@@ -216,7 +226,7 @@ def test_a_settling_writes_on_reference_is_bounded_by_the_same_rule(damaged_case
     case = damaged_case(
         "m-unit-work-015-close-settles-against-the-milestone-its-own-find-observed.yaml"
     )
-    case.when["scenario"][2]["on"] = len(case.scenario)
+    case.when["scenario"][2]["write"][0]["on"] = len(case.scenario)
     with pytest.raises(CaseFailure, match="not a real EARLIER step"):
         assert_unit_work_scenario(case, RefusingProvider())
 

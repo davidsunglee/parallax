@@ -120,6 +120,96 @@
       }
     }
   },
+  "models/buffered-sequence-layout-twin-columns.yaml": {
+    "parallax.compatibility.SequenceAccount": {
+      "attribute": {
+        "balance": "balance",
+        "id": "id",
+        "version": "version"
+      },
+      "documentPath": {
+        "memo.note": "memo:note"
+      },
+      "valueObject": {
+        "memo": "memo"
+      }
+    },
+    "parallax.compatibility.SequenceSpan": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {
+        "memo.note": "memo:note"
+      },
+      "valueObject": {
+        "memo": "memo"
+      }
+    },
+    "parallax.compatibility.SequenceTag": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "quantity": "quantity"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/buffered-sequence-layout-twin-document.yaml": {
+    "parallax.compatibility.SequenceAccount": {
+      "attribute": {
+        "balance": "balance",
+        "id": "id",
+        "version": "version"
+      },
+      "documentPath": {
+        "balance": "payload:balance",
+        "memo": "payload:memo",
+        "memo.note": "payload:memo.note"
+      },
+      "valueObject": {
+        "memo": "memo"
+      }
+    },
+    "parallax.compatibility.SequenceSpan": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {
+        "amount": "payload:amount",
+        "label": "payload:label",
+        "memo": "payload:memo",
+        "memo.note": "payload:memo.note"
+      },
+      "valueObject": {
+        "memo": "memo"
+      }
+    },
+    "parallax.compatibility.SequenceTag": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "quantity": "quantity"
+      },
+      "documentPath": {
+        "label": "payload:label",
+        "quantity": "payload:quantity"
+      },
+      "valueObject": {}
+    }
+  },
   "models/classification-transparency-layout-twin-columns.yaml": {
     "parallax.compatibility.ClassificationTwinChild": {
       "attribute": {

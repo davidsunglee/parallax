@@ -22,6 +22,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.conformance.story_models import Wallet
 from parallax.conformance.vo_models import (
     CONTACT_MODEL,
     Contact,
@@ -32,6 +33,7 @@ from parallax.conformance.vo_models import (
 from parallax.core.base import DocumentValue, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
+from parallax.core.entity import DomainModel
 from parallax.core.unit_work import MissingTargetError, WriteInstructionError
 from parallax.snapshot import InvalidData
 from parallax.snapshot._inspection import insertion_of, snapshot_state_of
@@ -652,6 +654,97 @@ def test_a_failed_reinsertion_after_its_removal_rolls_the_attempt_back() -> None
     with raises_contextualized(DatabaseError):
         _transact(port, fn)
     assert RollbackCall() in port.calls
+
+
+# --------------------------------------------------------------------------- #
+# A readless predicate write keeps a pending opening from the writes after it:  #
+# the opening executes before the barrier, so only what those writes destroy    #
+# removes it, and only a removal of all of it admits a fresh insertion.         #
+# --------------------------------------------------------------------------- #
+_BARRIER_MODEL = DomainModel(WherePosition, Wallet)
+
+
+def _barrier(tx: Transaction) -> None:
+    tx.update_where(Wallet.where(Wallet.balance < Decimal("2.00")), Wallet.owner.set("Low"))
+
+
+def _refused_as_a_repeat(write: Callable[[], object]) -> None:
+    with pytest.raises(KeyedWriteValueError) as refused:
+        write()
+    assert refused.value.code == "write-value-already-stored"
+
+
+class _Abandoned(Exception):
+    pass
+
+
+@pytest.mark.parametrize("opening_end", [None, _SEP], ids=["unbounded", "finite"])
+def test_an_opening_a_barrier_kept_back_and_removed_whole_admits_a_reinsertion(
+    opening_end: dt.datetime | None,
+) -> None:
+    opened = _rectangle(_JAN, INFINITY_INSTANT if opening_end is None else opening_end)
+    port = ScriptedAdapter(Transact(Write(times=2), Read(rows=[opened]), Write(times=2)))
+
+    def fn(tx: Transaction) -> None:
+        first = _position()
+        if opening_end is None:
+            tx.insert(first, valid_from=_JAN)
+        else:
+            tx.insert(first, valid_from=_JAN, until=opening_end)
+        _barrier(tx)
+        tx.terminate(first)
+        tx.insert(_position("200.00"), valid_from=_JAN)
+        _refused_as_not_stored(lambda: tx.update(first.edit(value=Decimal("1.00"))))
+
+    db_for(_BARRIER_MODEL, port).transact(fn)
+    assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == [
+        "insert",
+        "update",
+        "delete",
+        "insert",
+    ]
+    assert _opened(port) == [
+        (Decimal("100.00"), _JAN, _OPEN if opening_end is None else opening_end),
+        (Decimal("200.00"), _JAN, _OPEN),
+    ]
+
+
+def test_an_opening_a_barrier_kept_back_and_removed_in_part_refuses_a_reinsertion() -> None:
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: Transaction) -> None:
+        first = _position()
+        tx.insert(first, valid_from=_JAN)
+        _barrier(tx)
+        tx.terminate(first, until=_MAR)
+        _refused_as_a_repeat(lambda: tx.insert(_position("200.00"), valid_from=_JAN))
+        raise _Abandoned
+
+    with raises_contextualized(_Abandoned):
+        db_for(_BARRIER_MODEL, port).transact(fn)
+
+
+def test_a_removal_before_a_pending_reinsertion_never_counts_against_it() -> None:
+    # The first insertion's stored coverage is removed before the reinsertion
+    # opens; only what the writes after the reinsertion destroy removes it, and
+    # those leave its coverage from March standing.
+    row = _rectangle(_MAR, INFINITY_INSTANT)
+    port = ScriptedAdapter(Transact(Write(), Read(rows=[row])))
+
+    def fn(tx: Transaction) -> None:
+        first = _position()
+        tx.insert(first, valid_from=_MAR)
+        _read_at(tx, _MAR)
+        tx.terminate(first)
+        second = _position("200.00")
+        tx.insert(second, valid_from=_JAN)
+        _barrier(tx)
+        tx.terminate(second, until=_MAR)
+        _refused_as_a_repeat(lambda: tx.insert(_position("300.00"), valid_from=_JAN))
+        raise _Abandoned
+
+    with raises_contextualized(_Abandoned):
+        db_for(_BARRIER_MODEL, port).transact(fn)
 
 
 def _balance_row(key: int, in_z: dt.datetime, value: str = "1.00") -> MappingRow:

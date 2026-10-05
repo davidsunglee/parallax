@@ -25,14 +25,13 @@ from reference_harness.case_runner import (
     _assert_write_step_count,
     _increment_marker,
     _is_computed_marker,
-    _read_table,
-    _table_layout,
     _write_column_order,
 )
 from reference_harness.ddl_builder import ddl_for, declared_contributors
 from reference_harness.providers.mariadb import _statement_binds as mariadb_statement_binds
 from reference_harness.providers.postgres import _statement_binds as postgres_statement_binds
 from reference_harness.storage_layout import derived_primary_key_index
+from reference_harness.table_state import read_table, table_layout
 from reference_harness.write_plan import classify_write_row, tag, unit_resolving_reads
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -337,9 +336,9 @@ def test_table_observation_reads_a_shared_table_once_over_every_slot() -> None:
     # sibling-only `tendered` slot included, so a CardPayment row reports it as null.
     case = _write_case_by_id("m-inheritance-007")
     provider = _RecordingReadProvider()
-    rows = _read_table(
+    rows = read_table(
         cast("Any", provider),
-        _table_layout(case, "payment"),
+        table_layout(case, "payment"),
         declared_contributors(case.model),
     )
     assert rows == []
@@ -355,9 +354,9 @@ def test_table_observation_normalizes_values_by_slot_provenance() -> None:
     customer = load_model(COMPATIBILITY_ROOT, "models/customer.yaml")
     customer_case = Case(path=Path("synthetic.yaml"), raw={}, model=customer)
     documents = _RecordingReadProvider([{"id": 1, "name": "Ada", "address": '{"city": "Rome"}'}])
-    (document_row,) = _read_table(
+    (document_row,) = read_table(
         cast("Any", documents),
-        _table_layout(customer_case, "customer"),
+        table_layout(customer_case, "customer"),
         declared_contributors(customer),
     )
     assert document_row["address"] == {"city": "Rome"}
@@ -365,9 +364,9 @@ def test_table_observation_normalizes_values_by_slot_provenance() -> None:
     scalars = load_model(COMPATIBILITY_ROOT, "models/scalars.yaml")
     scalars_case = Case(path=Path("synthetic.yaml"), raw={}, model=scalars)
     binaries = _RecordingReadProvider([{"id": 1, "payload": b"\xde\xad\xbe\xef"}])
-    (binary_row,) = _read_table(
+    (binary_row,) = read_table(
         cast("Any", binaries),
-        _table_layout(scalars_case, "scalar_thing"),
+        table_layout(scalars_case, "scalar_thing"),
         declared_contributors(scalars),
     )
     assert binary_row["payload"] == "deadbeef"
@@ -376,7 +375,7 @@ def test_table_observation_normalizes_values_by_slot_provenance() -> None:
 def test_table_observation_refuses_a_table_the_model_does_not_map() -> None:
     case = _write_case_by_id("m-inheritance-007")
     with pytest.raises(CaseFailure):
-        _table_layout(case, "not_a_table")
+        table_layout(case, "not_a_table")
 
 
 def test_multi_attribute_audit_update_chains_all_new_values() -> None:

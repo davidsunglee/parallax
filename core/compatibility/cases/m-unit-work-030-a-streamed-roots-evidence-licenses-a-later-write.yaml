@@ -35,9 +35,9 @@ when:
         - { id: 2, owner: Linus, balance: "250.00", version: 1 }
         - { id: 3, owner: Grace, balance: "10.00", version: 1 }
     - uow: two-deliveries
-      "on": 0
       write:
         - mutation: update
+          "on": 0
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "125.00" }
@@ -72,9 +72,9 @@ when:
         - { id: 2, owner: Linus, balance: "250.00", version: 1 }
         - { id: 3, owner: Grace, balance: "10.00", version: 1 }
     - uow: two-deliveries
-      "on": 2
       write:
         - mutation: update
+          "on": 2
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "175.00" }

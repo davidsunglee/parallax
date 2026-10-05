@@ -33,6 +33,7 @@ from parallax.core.unit_work.materialized import (
     ChainedTemporalWrite,
     ClaimedKeyedWrite,
     ComposedTemporalWrite,
+    FollowingKeyedWrite,
     InsertionKeyedWrite,
     MaterializedWriteGroup,
     ObjectClaimedWrite,
@@ -306,7 +307,11 @@ class WritePlanner:
                 else:
                     deletes.append((self._ranked(item.target), item))
                 continue
-            instruction = buffered_instruction(item)
+            instruction = (
+                item.write.instruction
+                if isinstance(item, FollowingKeyedWrite)
+                else buffered_instruction(item)
+            )
             if instruction.mutation in UPDATE_MUTATIONS:
                 updates.append(item)
             elif instruction.mutation in INSERT_MUTATIONS:
@@ -385,6 +390,12 @@ class PendingWrites:
       (:class:`~parallax.core.unit_work.materialized.ChainedTemporalWrite`),
       though admission still judges each arriving write against all of them.
 
+    No write composes across a readless predicate write, which is an ordering
+    barrier: a write of an object whose insert stands before one is a write of
+    the row that insert opens, and a Non-Temporal write of a scope whose
+    earlier write stands before one follows it as a write of its own
+    (:class:`~parallax.core.unit_work.materialized.FollowingKeyedWrite`).
+
     A pair the algebra calls incompatible is one no verb admitted — a caller
     reached the buffer another way — and both writes are left standing rather
     than combined by a rule neither states.
@@ -397,8 +408,8 @@ class PendingWrites:
         "_inserts",
         "_items",
         "_objects",
+        "_regions",
         "_removals",
-        "_sealed",
         "_sources",
         "_targets",
         "_temporal",
@@ -427,10 +438,9 @@ class PendingWrites:
         # such write, since a buffer holding none needs neither.
         self._objects: dict[ObjectKey, Hashable] | None = None
         self._targets: dict[ObjectKey, Hashable] | None = None
-        # Where each temporal object's compositions in barrier regions already
-        # closed stand, in order — allocated by the first barrier that closes a
-        # region holding one.
-        self._sealed: dict[ObjectKey, list[int]] | None = None
+        # Where the latest barrier stands and what the regions before it hold —
+        # allocated by the first barrier, since most buffers carry none.
+        self._regions: _Regions | None = None
 
     def __bool__(self) -> bool:
         return bool(self._items)
@@ -445,14 +455,18 @@ class PendingWrites:
         assert isinstance(held, _TEMPORAL)
         return held
 
-    def _compositions(self, key: ObjectKey) -> tuple[PendingTemporal, ...]:
-        """Every pending composition of temporal object ``key``, in authored
-        order, one per barrier region that writes it."""
+    def _compositions(self, key: ObjectKey, after: int = -1) -> tuple[PendingTemporal, ...]:
+        """Every pending composition of temporal object ``key`` buffered after
+        position ``after``, in authored order, one per barrier region that
+        writes it."""
         held = self.temporal(key)
-        sealed = None if self._sealed is None else self._sealed.get(key)
+        # The current region follows every position a caller asks after.
+        assert held is None or self._temporal[key] > after
+        sealed = None if self._regions is None else self._regions.temporal.get(key)
         if sealed is None:
             return () if held is None else (held,)
-        earlier = tuple(cast("PendingTemporal", self._items[index]) for index in sealed)
+        items = self._items
+        earlier = tuple(cast("PendingTemporal", items[index]) for index in sealed if index > after)
         return earlier if held is None else (*earlier, held)
 
     def states_window(self, key: ObjectKey, bounds: PreparedTemporalBounds) -> bool:
@@ -651,14 +665,17 @@ class PendingWrites:
         removals = self._removals
         return () if removals is None else tuple(removals)
 
-    def transforms(self, key: ObjectKey) -> tuple[TemporalTransform, ...]:
+    def transforms(
+        self, key: ObjectKey, *, after_opening: bool = False
+    ) -> tuple[TemporalTransform, ...]:
         """What the pending writes of temporal object ``key`` do to its
-        existing coverage, one transform per barrier region that writes it."""
+        existing coverage, one transform per barrier region that writes it —
+        with ``after_opening``, only those buffered after its pending insert."""
         return tuple(
             held.transform
             if isinstance(held, ComposedTemporalWrite)
             else composed_alone(held, _key_name(self._families, held.instruction.target)).transform
-            for held in self._compositions(key)
+            for held in self._compositions(key, self._inserts[key] if after_opening else -1)
         )
 
     def _held_intent(self, scope: Hashable) -> WriteIntent | None:
@@ -718,7 +735,7 @@ class PendingWrites:
                     self._after_removal = set()
                 self._after_removal.add(index)
             return False
-        if key in self._inserts:
+        if self.folds_into_opening(key):
             return self._fold_into_opening(instruction, key)
         self._add_existing(item, instruction, key)
         return False
@@ -815,6 +832,18 @@ class PendingWrites:
                 self._index_objects()
         index = self._claims.get(scope)
         verdict = self.verdict(item, key)
+        if index is not None and self._closed(index) and verdict in ("coalesce", "supersede"):
+            # A barrier stands between the two: each keeps its own side, and
+            # this one starts from the state the earlier one leaves.
+            regions = self._regions
+            assert regions is not None  # a closed region exists only behind a barrier
+            items.append(item)
+            position = len(items) - 1
+            regions.follows[position] = regions.follows.get(index, 0) + 1
+            self._claims[scope] = position
+            if self._objects is not None:
+                _note_scope(self._objects, key, scope)
+            return
         if verdict == "coalesce":
             assert index is not None  # an unclaimed scope admits
             base = items[index]
@@ -838,24 +867,35 @@ class PendingWrites:
             _note_scope(self._objects, key, scope)
 
     def _seal(self) -> None:
-        """Close the current barrier region: a later write of a temporal object
-        composes apart from the object's writes before the barrier."""
+        """Close the current barrier region at the barrier about to be
+        appended: no later write combines with a write before it."""
+        regions = self._regions
+        if regions is None:
+            regions = self._regions = _Regions()
+        regions.start = len(self._items)
         temporal = self._temporal
-        if not temporal:
-            return
-        sealed = self._sealed
-        if sealed is None:
-            sealed = self._sealed = {}
         for key, index in temporal.items():
-            sealed.setdefault(key, []).append(index)
+            regions.temporal.setdefault(key, []).append(index)
         temporal.clear()
+
+    def _closed(self, index: int) -> bool:
+        """Whether the pending write at ``index`` stands before the latest
+        barrier."""
+        regions = self._regions
+        return regions is not None and index < regions.start
+
+    def folds_into_opening(self, key: ObjectKey) -> bool:
+        """Whether a write of ``key`` composes with the object's still-pending
+        insert: one is pending, and no barrier stands between them."""
+        index = self._inserts.get(key)
+        return index is not None and not self._closed(index)
 
     def _add_temporal(self, item: TemporalKeyedWrite, key: ObjectKey) -> None:
         items = self._items
         index = self._temporal.get(key)
         held = None if index is None else items[index]
         if index is None or held is None:
-            sealed = None if self._sealed is None else self._sealed.get(key)
+            sealed = None if self._regions is None else self._regions.temporal.get(key)
             if sealed is None:
                 items.append(item)
             else:
@@ -910,6 +950,7 @@ class PendingWrites:
         insert that must follow a removal marked as such."""
         written: list[BufferedWrite] = []
         after_removal = self._after_removal or ()
+        follows = {} if self._regions is None else self._regions.follows
         for index, item in enumerate(self._items):
             if item is None:
                 continue
@@ -919,7 +960,15 @@ class PendingWrites:
                 assert isinstance(item, PreparedKeyedWrite)  # an insert is a bare instruction
                 inserts = (item,)
             else:
-                written.append(item.instruction if isinstance(item, ObjectClaimedWrite) else item)
+                advances = follows.get(index)
+                if advances is not None and isinstance(
+                    item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
+                ):
+                    written.append(FollowingKeyedWrite(item, advances))
+                else:
+                    written.append(
+                        item.instruction if isinstance(item, ObjectClaimedWrite) else item
+                    )
                 continue
             if index in after_removal:
                 written.append(AfterRemoval(inserts))
@@ -947,7 +996,25 @@ class PendingWrites:
         self._after_removal = None
         self._objects = None
         self._targets = None
-        self._sealed = None
+        self._regions = None
+
+
+class _Regions:
+    """The barrier regions of a buffer that holds a readless predicate write.
+
+    ``start`` is the position of the latest barrier: every write before it
+    stands in a closed region. ``temporal`` holds where each temporal object's
+    compositions in closed regions stand, in order, and ``follows`` how many
+    earlier writes of its scope each Non-Temporal write a barrier kept apart
+    follows.
+    """
+
+    __slots__ = ("follows", "start", "temporal")
+
+    def __init__(self) -> None:
+        self.start = 0
+        self.temporal: dict[ObjectKey, list[int]] = {}
+        self.follows: dict[int, int] = {}
 
 
 _CLAIMED = (ObservedKeyedWrite, ObjectClaimedWrite, InsertionKeyedWrite, TargetKeyedWrite)
@@ -1230,7 +1297,7 @@ def _without_noop_rows(
     eliminated whole or passed through untouched, and is never rebuilt around a
     narrower instruction.
     """
-    if isinstance(item, ComposedTemporalWrite | AfterRemoval):
+    if isinstance(item, ComposedTemporalWrite | AfterRemoval | FollowingKeyedWrite):
         return item
     if isinstance(item, TargetKeyedWrite) and isinstance(item.expectation, ExpectedVersion):
         # A caller-conditioned write of a versioned row still advances its

@@ -73,12 +73,15 @@ class ScenarioRun:
     A scenario reports several observation channels of the SAME shape, so each is
     named rather than placed: ``errors`` holds one entry per `expectError` step
     whose verb raised its declared application-lifecycle error, and is filled by
-    the snapshot action-step lane alone; ``step_rows`` one per read step the run
+    the snapshot action-step lane and by each refused submission of a
+    state-graded group; ``step_rows`` one per read step the run
     itself drove plus each row-observing `mutate`, carrying the values that step published
     (`m-conformance-adapter`); ``step_graphs`` one per step declaring
     `expectGraph`, from either placement of that observable — an `access` step's
     retained view on the snapshot lane, a find step's own materialized graph on
-    both. All three are in step order.
+    both. All three are in step order. ``units`` holds each `uow` group's fate by
+    label, and ``table_state`` the tables read back once every step ran, where
+    the case states them.
     """
 
     emissions: list[Emission]
@@ -86,6 +89,8 @@ class ScenarioRun:
     errors: list[dict[str, object]]
     step_rows: list[dict[str, object]]
     step_graphs: list[dict[str, object]]
+    units: dict[str, dict[str, object]] | None = None
+    table_state: dict[str, list[MappingRow]] | None = None
 
 
 def delivered(

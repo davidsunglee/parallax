@@ -60,6 +60,7 @@ from .keyed_write_validate import (
 from .metamodel import validate_index_identities
 from .predicate_write_validate import (
     PredicateWriteValidationError,
+    requires_predicate_write_materialization,
     validate_predicate_write,
     validate_predicate_write_materialization,
 )
@@ -367,9 +368,15 @@ def _validate_buffered_write(
         if not isinstance(instruction, dict):
             continue  # the case schema owns non-object entries
         if "target" in instruction:
-            _validate_predicate_write(
+            entity = _validate_predicate_write(
                 instruction, entity_defs, predicate_schema, entry_label, errors, registry
             )
+            if entity is not None and requires_predicate_write_materialization(entity):
+                errors.append(
+                    f"{entry_label}: a predicate submission of {entity.name} would materialize "
+                    f"through a resolving read, which flushes the buffer it stands in; a "
+                    f"buffered predicate write is readless"
+                )
             continue
         entity = _valid_keyed_entry_entity(instruction, entity_defs, entry_label, errors)
         if entity is not None and states_framework_marker(entity, instruction):
@@ -406,7 +413,12 @@ def _valid_keyed_entry_entity(
     if entity is None:
         errors.append(f"{entry_label}: keyed write entity {entity_name!r} is not declared")
         return None
-    unknown = undeclared_row_members(entity, instruction)
+    row = instruction.get("row")
+    unknown = (
+        sorted(undeclared_members(entity, row))
+        if isinstance(row, dict)
+        else undeclared_row_members(entity, instruction)
+    )
     if unknown:
         errors.append(
             f"{entry_label}: keyed write row names {unknown} which are not "
@@ -527,16 +539,15 @@ def _validate_scenario_reference_sql(
 
 
 def _validate_settled_write(steps: list[Any], index: int, label: str, errors: list[str]) -> None:
-    """Validate which find a scenario write settles against (`m-case-format`
-    *Settling against a grouped find*).
+    """Validate which find each submission of a scenario write settles against
+    (`m-case-format` *Settling against a grouped find*).
 
-    The case schema settles the SHAPE of the reference — that the step declares a
-    `uow` group, names ONE index rather than a set, and carries the buffered keyed
-    ``write`` an observation can reach. What one step cannot state about another is
-    left: the named step MUST be an earlier step, and a find of this write's own
-    group. Evidence a write consumes is transaction-scoped and published by a read,
-    so a reference to a later step, to a write, or to a find of another group names
-    evidence that never reaches it.
+    The case schema settles the SHAPE of the reference — that a submission names
+    ONE index rather than a set. What one step cannot state about another is
+    left: the named step MUST be an earlier step, and a find of the write's own
+    `uow` group. Evidence a write consumes is transaction-scoped and published by
+    a read, so a reference from an ungrouped write, to a later step, to a write,
+    or to a find of another group names evidence that never reaches it.
 
     Every target profile is nameable, because on every one of them a unit of work
     may hold more than one piece of evidence about a key: a milestone chain holds
@@ -544,21 +555,31 @@ def _validate_settled_write(steps: list[Any], index: int, label: str, errors: li
     generation per read of it.
     """
     step = steps[index]
-    source, group = step.get("on"), step.get("uow")
-    if not isinstance(source, int) or isinstance(source, bool) or not isinstance(group, str):
-        return  # the case schema owns the reference's shape
-    if not names_earlier_step(source, index):
-        errors.append(
-            f"{label}: settles against step {source}, which is not a real EARLIER step "
-            f"(0 <= source < {index})"
-        )
-        return
-    origin = steps[source]
-    if not isinstance(origin, dict) or "objectQuery" not in origin or origin.get("uow") != group:
-        errors.append(
-            f"{label}: settles against step {source}, which is not a find step of its own "
-            f"`uow` group {group!r}"
-        )
+    group = step.get("uow")
+    for position, entry in enumerate(step.get("write") or ()):
+        source = entry.get("on") if isinstance(entry, dict) else None
+        if not isinstance(source, int) or isinstance(source, bool):
+            continue  # a pointer names an insert, and the case schema owns the shape
+        where = f"{label} write[{position}]"
+        if not isinstance(group, str):
+            errors.append(f"{where}: settles against step {source} from an ungrouped write")
+            continue
+        if not names_earlier_step(source, index):
+            errors.append(
+                f"{where}: settles against step {source}, which is not a real EARLIER step "
+                f"(0 <= source < {index})"
+            )
+            continue
+        origin = steps[source]
+        if (
+            not isinstance(origin, dict)
+            or "objectQuery" not in origin
+            or origin.get("uow") != group
+        ):
+            errors.append(
+                f"{where}: settles against step {source}, which is not a find step of its own "
+                f"`uow` group {group!r}"
+            )
 
 
 _IDENTITY_ANCHORS: tuple[str, ...] = ("sameObjectAs", "differentObjectFrom")
@@ -1195,7 +1216,7 @@ def _validate_scenario_step(
             encodings=step.get("equivalentEncodings"),
             encodings_label=f"{step_label}.equivalentEncodings",
         )
-    if "write" in step and "on" in step:
+    if isinstance(step.get("write"), list):
         _validate_settled_write(scenario, index, step_label, errors)
     if isinstance(step.get("write"), dict):
         entity = _validate_predicate_write(

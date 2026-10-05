@@ -21,15 +21,25 @@ Dialect-free by construction. A step's golden SQL is dialect-keyed, so a compile
 step holds the entries it authored rather than one dialect's resolution of them,
 and :class:`_Golden` is where that resolution happens for whichever dialect is
 executing.
+
+Each buffered entry is a **submission**, addressed by its own pointer
+``/scenario/<n>/write/<k>``, and each `uow` group has a **fate** read from
+``then.units``. The rules those readings settle are refused here too: a
+submission's ``on`` names an earlier find of its own group or an earlier,
+unrefused insert of it; every label ``then.units`` names is a group; a flush
+failure is reported where the group last flushes; a group's submissions share one
+Transaction Instant; and the submission forms and refusals only a state-graded
+case may carry appear nowhere else.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
-from ..case import Case, entry_pairs, entry_statements, names_earlier_step
+from ..case import Case, Entity, entry_pairs, entry_statements, names_earlier_step
 from ..case_assertions import CaseFailure
 
 # A mutate publishes rows conditionally, only when it declares expectRows.
@@ -94,6 +104,50 @@ class _Step:
     statements: _Golden
 
 
+type SubmissionKind = Literal["keyed", "target", "predicate"]
+
+
+@dataclass(frozen=True)
+class Submission:
+    """One entry of a buffered write step, read once.
+
+    ``pointer`` is the entry's own case pointer, which a refusal and a reference
+    name it by. ``entity`` and ``key`` name the one object a keyed or
+    caller-addressed submission writes — the canonical Entity spelling and its
+    primary-key values by attribute name — and are ``None`` for a predicate
+    write, which names rows only its predicate selects. ``refusal`` is the code
+    the entry declares its verb refuses it with, and ``settles_on`` the find its
+    ``on`` names, resolved.
+    """
+
+    pointer: str
+    step: int
+    position: int
+    kind: SubmissionKind
+    entry: Mapping[str, Any]
+    entity: Entity | None
+    key: Mapping[str, Any] | None
+    refusal: str | None
+    settles_on: _SettledOn | None
+
+    @property
+    def mutation(self) -> str:
+        return str(self.entry.get("mutation"))
+
+    @property
+    def inserts(self) -> bool:
+        return self.kind == "keyed" and self.mutation in _INSERT_MUTATIONS
+
+    def names(self, entity: Entity, key: Mapping[str, Any]) -> bool:
+        """Whether this submission writes the object ``key`` names of ``entity``."""
+        return (
+            self.entity is not None
+            and self.key is not None
+            and self.entity.canonical_name == entity.canonical_name
+            and dict(self.key) == dict(key)
+        )
+
+
 @dataclass(frozen=True)
 class _GroupedWrite(_Step):
     """A buffered write inside a `uow` group: it applies on the group's held
@@ -102,12 +156,12 @@ class _GroupedWrite(_Step):
     ``entries`` are the step's buffered keyed instructions in the neutral form
     write grading takes them in, which is why they are carried rather than
     resolved: the rows and mutations are :mod:`..write_plan`'s vocabulary, not a
-    Scenario one.
+    Scenario one. ``submissions`` are the same entries as this package reads
+    them.
     """
 
     entries: tuple[dict[str, Any], ...]
-    rolls_back: bool
-    settles_on: _SettledOn | None
+    submissions: tuple[Submission, ...]
 
 
 @dataclass(frozen=True)
@@ -149,17 +203,59 @@ type _CompiledStep = (
     _GroupedWrite | _UngroupedWrite | _BoundaryAction | _RowPublishingStep | _UnresolvedList
 )
 
+type Shortfall = Literal["missingTarget", "staleWrite", "optimisticConflict", "failedPrecondition"]
+
+
+@dataclass(frozen=True)
+class FlushFailure:
+    """The failure a rolled-back group's flush reports: where the flush ran — a
+    step index, or ``"commit"`` — and the object and Shortfall it names."""
+
+    at: int | Literal["commit"]
+    entity: Entity
+    key: Mapping[str, Any]
+    shortfall: Shortfall
+
+
+@dataclass(frozen=True)
+class UnitFate:
+    """One `uow` group as a unit of work: its own steps, in order, whether it
+    commits or rolls back after its last one, the flush failure that rolled it
+    back where one did, and the one Transaction Instant its submissions state."""
+
+    label: str
+    steps: tuple[int, ...]
+    rolls_back: bool
+    flush_failure: FlushFailure | None
+    instant: str | None
+
+    @property
+    def last_step(self) -> int:
+        return self.steps[-1]
+
 
 @dataclass(frozen=True)
 class CompiledScenario:
-    """One Scenario's steps as this package reads them, in authored order."""
+    """One Scenario's steps as this package reads them, in authored order, and
+    each `uow` group's fate."""
 
     case: Case
     steps: tuple[_CompiledStep, ...]
+    units: Mapping[str, UnitFate]
+    state_graded: bool
 
     def has_golden(self, dialect: str) -> bool:
         """True if any step lists golden SQL for *dialect*."""
         return any(step.statements.sql(dialect) for step in self.steps)
+
+    def submissions(self) -> tuple[Submission, ...]:
+        """Every submission of every grouped write step, in authored order."""
+        return tuple(
+            submission
+            for step in self.steps
+            if isinstance(step, _GroupedWrite)
+            for submission in step.submissions
+        )
 
 
 def compile_scenario(case: Case) -> CompiledScenario:
@@ -171,10 +267,21 @@ def compile_scenario(case: Case) -> CompiledScenario:
     """
     if not case.scenario:
         raise CaseFailure(f"{case.path.name}: scenario case has no steps")
-    return CompiledScenario(
-        case=case,
-        steps=tuple(_compile_step(case, index, step) for index, step in enumerate(case.scenario)),
-    )
+    state_graded = case.state_graded
+    steps = tuple(_compile_step(case, index, step) for index, step in enumerate(case.scenario))
+    submissions = [
+        submission
+        for step in steps
+        if isinstance(step, _GroupedWrite)
+        for submission in step.submissions
+    ]
+    _assert_submission_sources(case, steps, submissions)
+    if not state_graded:
+        _assert_golden_submissions(case, submissions)
+    units = _unit_fates(case, steps, state_graded=state_graded)
+    if state_graded:
+        _assert_state_graded_document(case, steps, submissions)
+    return CompiledScenario(case=case, steps=steps, units=units, state_graded=state_graded)
 
 
 def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep:
@@ -183,7 +290,8 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
     "Does this publish rows?" is written as its complement: the closed set of
     kinds this package executes itself is a write, an action other than ``load``,
     ``access``, or a ``mutate`` declaring ``expectRows``, and the
-    zero-round-trip construction of a query-backed list that has not resolved.
+    zero-round-trip construction of a query-backed list that has not resolved —
+    which a state-graded Scenario's find, listing no golden of its own, is not.
     Every other step publishes rows, and the observation oracle grades whichever
     step it is handed rather than asking that question again.
 
@@ -207,13 +315,13 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
 
     if "write" in step:
         entries = _write_entries(step)
-        rolls_back = step.get("rollback") is True
         if group is not None:
-            return _GroupedWrite(*common, entries, rolls_back, _settled_on(case, step))
-        return _UngroupedWrite(*common, entries, rolls_back)
+            return _GroupedWrite(*common, entries, _submissions(case, index, entries))
+        return _UngroupedWrite(*common, entries, step.get("rollback") is True)
 
     if (
-        step.get("action") is None
+        not case.state_graded
+        and step.get("action") is None
         and not step.get("statements")
         and "stream" not in step
         and step.get("sameObjectAs") is None
@@ -293,17 +401,23 @@ def _assert_identity_anchor(case: Case, index: int, step: Mapping[str, Any]) -> 
         )
 
 
-def _settled_on(case: Case, step: Mapping[str, Any]) -> _SettledOn | None:
-    """The find *step* settles against, or ``None`` when it settles against none.
+def _settled_on(case: Case, index: int, entry: Mapping[str, Any]) -> _SettledOn | None:
+    """The find *entry* settles against, or ``None`` when its ``on`` names no
+    find — none at all, or the insert whose value it writes through.
 
     The reference's shape is the case schema's and which step it may name is
     :mod:`~reference_harness.schema_validate`'s, both asked of every case before an
-    executor sees it, and the bound is asserted above — so what is left is to read
-    the named step once.
+    executor sees it, so what is left is to bound it and read the named step once.
     """
-    source = step.get("on")
-    if source is None:
+    source = entry.get("on")
+    if not isinstance(source, int) or isinstance(source, bool):
         return None
+    if not names_earlier_step(source, index):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] has a write entry whose `on` references "
+            f"step {source!r}, which is not a real EARLIER step (0 <= source < {index}); a "
+            f"write settles against a result some earlier step already produced."
+        )
     origin = case.scenario[source]
     return _SettledOn(
         index=source,
@@ -312,12 +426,235 @@ def _settled_on(case: Case, step: Mapping[str, Any]) -> _SettledOn | None:
     )
 
 
+_INSERT_MUTATIONS = frozenset({"insert", "insertUntil"})
+_POINTER = re.compile(r"^/scenario/(\d+)/write/(\d+)$")
+
+
+def _submissions(
+    case: Case, index: int, entries: tuple[dict[str, Any], ...]
+) -> tuple[Submission, ...]:
+    """Each entry of a grouped write step as the submission it is."""
+    return tuple(
+        _submission(case, index, position, entry) for position, entry in enumerate(entries)
+    )
+
+
+def _submission(case: Case, index: int, position: int, entry: Mapping[str, Any]) -> Submission:
+    kind: SubmissionKind = (
+        "predicate" if "target" in entry else "target" if "row" in entry else "keyed"
+    )
+    entity: Entity | None = None
+    key: Mapping[str, Any] | None = None
+    if kind != "predicate":
+        entity = case.model.entity(str(entry.get("entity", "")))
+        row = entry.get("row") if kind == "target" else (entry.get("rows") or [None])[0]
+        if isinstance(row, Mapping):
+            key = {
+                attribute["name"]: row.get(attribute["name"])
+                for attribute in entity.attributes
+                if attribute.get("primaryKey")
+            }
+    refusal = entry.get("expectError")
+    return Submission(
+        pointer=f"/scenario/{index}/write/{position}",
+        step=index,
+        position=position,
+        kind=kind,
+        entry=entry,
+        entity=entity,
+        key=key,
+        refusal=refusal if isinstance(refusal, str) else None,
+        settles_on=_settled_on(case, index, entry),
+    )
+
+
+def _assert_submission_sources(
+    case: Case, steps: tuple[_CompiledStep, ...], submissions: list[Submission]
+) -> None:
+    """Refuse a submission ``on`` naming anything a value could not come from.
+
+    An index names an earlier find, which :func:`_settled_on` bounds and
+    :mod:`~reference_harness.schema_validate` holds to the submission's own
+    group. A pointer names the value an earlier insert of the same group
+    answered, so it must address an insert submission of that group that the
+    verb accepted: a refused insert answered no value to write through.
+    """
+    by_pointer = {submission.pointer: submission for submission in submissions}
+    group_of = {step.index: step.group for step in steps}
+    for submission in submissions:
+        source = submission.entry.get("on")
+        if source is None:
+            continue
+        where = f"{case.path.name}: {submission.pointer}"
+        if submission.kind != "keyed" or submission.inserts:
+            raise CaseFailure(
+                f"{where} carries `on`, which only an observed keyed write takes: an insert "
+                f"opens its row and a caller-addressed or predicate write names its own."
+            )
+        if not isinstance(source, str):
+            continue
+        match = _POINTER.match(source)
+        named = by_pointer.get(source) if match else None
+        earlier = named is not None and (named.step, named.position) < (
+            submission.step,
+            submission.position,
+        )
+        if (
+            named is None
+            or not earlier
+            or group_of[named.step] != group_of[submission.step]
+            or not named.inserts
+        ):
+            raise CaseFailure(
+                f"{where} writes through {source!r}, which is not an earlier insert submission "
+                f"of its own `uow` group — a pointer names the value an insert answered."
+            )
+        if named.refusal is not None:
+            raise CaseFailure(
+                f"{where} writes through {source!r}, a submission its verb refuses, which "
+                f"answered no value to write through."
+            )
+
+
+def _assert_golden_submissions(case: Case, submissions: list[Submission]) -> None:
+    """Refuse the forms only a state-graded case carries.
+
+    A golden-graded step's SQL is the independent lowering of its keyed buffer,
+    graded statement by statement against the find each write settles against;
+    neither a caller-addressed nor a predicate submission, nor a refused one, has
+    a golden statement that grading could align it with.
+    """
+    for submission in submissions:
+        if submission.kind != "keyed" or submission.refusal is not None:
+            raise CaseFailure(
+                f"{case.path.name}: {submission.pointer} is a "
+                f"{'refused' if submission.refusal is not None else submission.kind} "
+                f"submission, which only a `grading: state` scenario carries."
+            )
+
+
+def _unit_fates(
+    case: Case, steps: tuple[_CompiledStep, ...], *, state_graded: bool
+) -> dict[str, UnitFate]:
+    """Each `uow` group's fate, read off ``then.units``.
+
+    A golden-graded group the case states no fate for commits; a state-graded
+    case states every group's. A flush failure is reported where the group's
+    work last reaches the database: at its last step where that is a find with
+    writes pending before it, and otherwise at commit, which flushes what is
+    still pending. Every submission of a group states the same instant, because
+    one unit of work holds one Transaction Instant.
+    """
+    authored = case.then.get("units") or {}
+    groups: dict[str, list[_CompiledStep]] = {}
+    for step in steps:
+        if step.group is not None:
+            groups.setdefault(step.group, []).append(step)
+    unknown = sorted(set(authored) - set(groups))
+    if unknown:
+        raise CaseFailure(
+            f"{case.path.name}: then.units names {unknown}, which label no `uow` group."
+        )
+    missing = sorted(set(groups) - set(authored))
+    if state_graded and missing:
+        raise CaseFailure(
+            f"{case.path.name}: then.units states no fate for group(s) {missing}; a "
+            f"state-graded case states every group's."
+        )
+    fates: dict[str, UnitFate] = {}
+    for label, members in groups.items():
+        fate = authored.get(label) or {}
+        fates[label] = UnitFate(
+            label=label,
+            steps=tuple(step.index for step in members),
+            rolls_back=fate.get("outcome") == "rolledBack",
+            flush_failure=_flush_failure(case, label, members, fate.get("flushFailure")),
+            instant=_group_instant(case, label, members),
+        )
+    return fates
+
+
+def _flush_failure(
+    case: Case, label: str, members: list[_CompiledStep], authored: Any
+) -> FlushFailure | None:
+    if not isinstance(authored, Mapping):
+        return None
+    last = members[-1]
+    if isinstance(last, _GroupedWrite):
+        flushes_at: int | str | None = "commit"
+    else:
+        pending = False
+        for step in members[:-1]:
+            pending = isinstance(step, _GroupedWrite) or (
+                pending and not isinstance(step, _RowPublishingStep)
+            )
+        flushes_at = last.index if pending else None
+    if flushes_at is None or authored.get("at") != flushes_at:
+        where = "nothing" if flushes_at is None else f"at {flushes_at!r}"
+        raise CaseFailure(
+            f"{case.path.name}: then.units.{label}.flushFailure.at is {authored.get('at')!r}, "
+            f"but the group's last flush runs {where} — a failed flush ends the unit of work, "
+            f"so it is the last thing the group does."
+        )
+    return FlushFailure(
+        at=authored["at"],
+        entity=case.model.entity(str(authored.get("entity", ""))),
+        key=dict(authored.get("key") or {}),
+        shortfall=authored["shortfall"],
+    )
+
+
+def _group_instant(case: Case, label: str, members: list[_CompiledStep]) -> str | None:
+    instants = {
+        submission.entry["at"]
+        for step in members
+        if isinstance(step, _GroupedWrite)
+        for submission in step.submissions
+        if "at" in submission.entry
+    }
+    if len(instants) > 1:
+        raise CaseFailure(
+            f"{case.path.name}: group {label!r} states the Transaction Instants "
+            f"{sorted(instants)}; one unit of work holds one."
+        )
+    return next(iter(instants), None)
+
+
+def _assert_state_graded_document(
+    case: Case, steps: tuple[_CompiledStep, ...], submissions: list[Submission]
+) -> None:
+    """Refuse what a state-graded case leaves its fates or its rows unable to say.
+
+    Every write belongs to a group, so every write's fate is stated; and the
+    final ``then.tableState`` states every table a submission writes, so what the
+    groups did is stated whole.
+    """
+    for step in steps:
+        if isinstance(step, _UngroupedWrite):
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{step.index}] is an ungrouped write in a "
+                f"state-graded case, whose fate then.units cannot state."
+            )
+    written: set[str] = set()
+    for submission in submissions:
+        if submission.entity is not None:
+            written.add(submission.entity.table)
+        else:
+            target = submission.entry.get("target") or {}
+            written.add(case.model.entity(str(target.get("entity", ""))).table)
+    unstated = sorted(written - set(case.expected_table_state))
+    if unstated:
+        raise CaseFailure(
+            f"{case.path.name}: then.tableState states no rows for {unstated}, which a "
+            f"submission writes; a state-graded case states every table it writes."
+        )
+
+
 def _write_entries(step: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
-    """One write step's own buffered KEYED entries, or none.
+    """One write step's own buffered entries, or none.
 
     A write step's ``write`` is a legacy string label, a single predicate-selected
-    instruction (a mapping), or the buffered keyed sequence (a list) — only the
-    last is a list of ``{mutation, entity, rows}`` entries.
+    instruction (a mapping), or the buffered sequence of submissions (a list).
     """
     write = step.get("write")
     if not isinstance(write, list):

@@ -36,6 +36,7 @@ from .conftest import (
     RolledBack,
     Rows,
     ScriptedProvider,
+    assert_judged,
 )
 
 
@@ -233,44 +234,60 @@ def _conflict_abort_script(case: Case, gated_affected: int) -> list[Any]:
 
 
 def test_a_doomed_group_accepts_the_authored_conflict(corpus_case) -> None:
-    # The genuine conflict: the stale-version gate matched nothing, which is
-    # `then.affectedRows` 0. The rejections below therefore bite the corruptions
-    # rather than everything.
+    # The genuine conflict: the stale-version gate matched nothing, which is the
+    # flush failure `then.units` states. The rejections below therefore bite the
+    # corruptions rather than everything.
     case = corpus_case("m-opt-lock-012-conflict-aborts-uow.yaml")
     with ScriptedProvider(script=_conflict_abort_script(case, 0)) as db:
         assert_unit_work_scenario(case, db)
     assert RolledBack(0) in db.chronology
 
 
-def test_a_gated_write_affecting_one_row_is_no_conflict(damaged_case) -> None:
+def test_a_flush_failure_with_no_statement_falling_short_is_refused(damaged_case) -> None:
     case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
-    with pytest.raises(CaseFailure, match="a gated write affecting 1 row is NO conflict"):
+    with pytest.raises(CaseFailure, match="MUST have affected no row; found 0"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 1)))
 
 
-def test_an_abort_with_no_gated_write_detected_no_conflict(damaged_case) -> None:
-    # The doomed group's writes list no version-gated statement at all, so nothing
-    # in it ever detected a conflict and the rollback is vacuous.
+def test_a_flush_failure_naming_another_object_is_refused(damaged_case) -> None:
+    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case.then["units"]["ours"]["flushFailure"]["key"] = {"id": 9}
+    with pytest.raises(CaseFailure, match="MUST have affected no row; found 0"):
+        assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
+
+
+def test_an_optimistic_conflict_the_failing_statement_does_not_gate_is_refused(
+    damaged_case,
+) -> None:
     case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
     gated = case.when["scenario"][3]["statements"][1]
     gated["sql"]["postgres"] = "update account set balance = ?, version = ? where id = ?"
     gated["binds"] = ["300.00", 2, 2]
-    with pytest.raises(CaseFailure, match="exactly one version-gated write"):
+    with pytest.raises(CaseFailure, match="a gate's shortfall, but the statement"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
 
 
-def test_a_conflict_abort_needs_the_version_gate_the_unit_of_work_declares(damaged_case) -> None:
+def test_a_gate_shortfall_needs_the_optimistic_strategy_the_unit_of_work_declares(
+    damaged_case,
+) -> None:
     case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
     case.when["uow"]["concurrency"] = "locking"
-    with pytest.raises(CaseFailure, match="requires the version gate"):
+    with pytest.raises(CaseFailure, match="under `concurrency: locking`"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
 
 
-def test_affected_rows_of_one_is_not_a_conflict_signal(damaged_case) -> None:
+def test_an_ungated_shortfall_the_failing_statement_gates_is_refused(damaged_case) -> None:
     case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
-    case.then["affectedRows"] = 1
-    with pytest.raises(CaseFailure, match="which is NOT a conflict"):
-        assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 1)))
+    case.then["units"]["ours"]["flushFailure"]["shortfall"] = "staleWrite"
+    with pytest.raises(CaseFailure, match="an ungated shortfall"):
+        assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
+
+
+def test_a_flush_failure_reported_before_the_groups_last_flush_is_refused(damaged_case) -> None:
+    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case.then["units"]["ours"]["flushFailure"]["at"] = 3
+    with pytest.raises(CaseFailure, match="last flush runs at 'commit'"):
+        assert_judged(case)
 
 
 # --- what a failed step leaves behind ---------------------------------------

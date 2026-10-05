@@ -55,7 +55,6 @@ from typing import Any, NamedTuple
 
 from . import errors, serde
 from ._case_execution import CaseExecution
-from ._declared_contributor import DeclaredContributor
 from .case import (
     Case,
     Entity,
@@ -68,16 +67,14 @@ from .case import (
 from .case_assertions import (
     CaseFailure,
     coerce_identity_key,
-    rows_equal,
     write_value_equal,
 )
 from .case_preflight import preflight_case_literals
 from .ddl_builder import (
     ddl_for,
     declared_contributors,
-    quote_identifier,
 )
-from .document_codec import decode_stored, encode_document, encode_leaf
+from .document_codec import encode_document, encode_leaf
 from .evolution_validate import validate_evolution
 from .inheritance import (
     MODEL_REJECTED_RULES,
@@ -114,11 +111,9 @@ from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
 )
 from .storage_layout import (
-    ColumnContributor,
-    ColumnTier,
-    TableLayout,
     validate_storage_layout,
 )
+from .table_state import assert_table_state, read_table, table_layout
 from .temporal_selection_validate import normalize_authored_temporal_selections
 from .temporality import derive_temporal_structure, temporal_axes
 from .unit_work_scenario import assert_unit_work_scenario
@@ -611,7 +606,7 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
     pk_column = pk_attr["column"]
 
     declarations = declared_contributors(case.model)
-    actual_rows = _read_table(db, _table_layout(case, entity.table), declarations)
+    actual_rows = read_table(db, table_layout(case, entity.table), declarations)
     # Assumes target starts empty; row count equals ids allocated from initialValue
     # (a pre-seeded table would mismatch loudly, not silently).
     count = len(actual_rows)
@@ -627,7 +622,7 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
     registry = _pk_sequence_registry(case.model, entity)
     name_column = next(a for a in registry.attributes if a.get("primaryKey"))["column"]
     counter_column = _pk_sequence_counter_column(registry)
-    reg_rows = _read_table(db, _table_layout(case, registry.table), declarations)
+    reg_rows = read_table(db, table_layout(case, registry.table), declarations)
     reg_row = next((r for r in reg_rows if r.get(name_column) == seq_name), None)
     if reg_row is None:
         raise CaseFailure(f"{case.path.name}: {registry.name} has no row for sequence {seq_name!r}")
@@ -2615,51 +2610,6 @@ def _assert_temporal_conflict_close(
     assert_inheritance_write_routing(case, entity, statements, [binds], dialect)
 
 
-def _table_layout(case: Case, table: str) -> TableLayout:
-    """The compiled layout of one physical *table* an observation reads back."""
-    layout = case.model.storage_layout.table(table)
-    if layout is None:
-        raise CaseFailure(
-            f"{case.path.name}: an observation names table {table!r} "
-            f"which the model does not declare."
-        )
-    return layout
-
-
-def _read_table(
-    db: DatabaseProvider,
-    layout: TableLayout,
-    declarations: Mapping[ColumnContributor, DeclaredContributor],
-) -> list[dict[str, Any]]:
-    """Read the full state of *layout*'s table, projecting every slot in order.
-
-    The layout is the whole physical row, so a table-per-hierarchy shared table
-    reports a sibling-only column as ``null`` rather than omitting it. Each
-    slot's own provenance decides its normalization: a document slot is decoded
-    to a Python structure (m-value-object), because Postgres returns its
-    ``jsonb`` already parsed while MariaDB returns raw JSON text, and both
-    dialects must collapse to the same ``dict`` / ``list`` / ``None`` a
-    ``then.tableState`` document row is authored as. A ``bytes`` contributor
-    reads back as raw driver bytes (Postgres ``memoryview`` / MariaDB
-    ``bytes``); it renders to lowercase hex text so a write round-trip compares
-    dialect-agnostically to the authored hex string.
-    """
-    projection = ", ".join(
-        f"t0.{quote_identifier(slot.column, db.dialect)}" for slot in layout.columns
-    )
-    rows = db.query(f"select {projection} from {quote_identifier(layout.table, db.dialect)} t0")
-    for row in rows:
-        for slot in layout.columns:
-            value = row.get(slot.column)
-            if slot.tier is ColumnTier.DOCUMENT:
-                row[slot.column] = decode_stored(value)
-                continue
-            declared = declarations.get(slot.contributor)
-            if declared is not None:
-                row[slot.column] = declared.observed_wire(value)
-    return rows
-
-
 def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
     """Apply the ordered DML golden SQL, then assert the resulting table state.
 
@@ -2676,17 +2626,7 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
         binds = case.statement_binds(index, dialect)
         execution.execute(statement, binds)
 
-    expected = case.expected_table_state
-    declarations = declared_contributors(case.model)
-    for table, expected_rows in expected.items():
-        actual = _read_table(db, _table_layout(case, table), declarations)
-        if not rows_equal(actual, expected_rows, case.tolerance):
-            raise CaseFailure(
-                f"{case.path.name}: table {table!r} state after the write "
-                f"sequence != then.tableState.\n"
-                f"  actual:   {actual!r}\n"
-                f"  expected: {expected_rows!r}"
-            )
+    assert_table_state(case, db, after="the write sequence")
 
 
 # --- conflict cases (m-opt-lock optimistic locking) ----------------------------------
@@ -2736,17 +2676,7 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
             f"mutation duplicated is matched more than once."
         )
 
-    if case.expected_table_state:
-        declarations = declared_contributors(case.model)
-        for table, expected_rows in case.expected_table_state.items():
-            actual = _read_table(db, _table_layout(case, table), declarations)
-            if not rows_equal(actual, expected_rows, case.tolerance):
-                raise CaseFailure(
-                    f"{case.path.name}: table {table!r} state after the conflict "
-                    f"case != then.tableState.\n"
-                    f"  actual:   {actual!r}\n"
-                    f"  expected: {expected_rows!r}"
-                )
+    assert_table_state(case, db, after="the conflict case")
 
 
 # --- conflict RETRY cases (m-opt-lock retry contract) ------------------------------
@@ -2812,22 +2742,7 @@ def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
                 f"affect 1."
             )
 
-    _assert_table_state(case, db)
-
-
-def _assert_table_state(case: Case, db: DatabaseProvider) -> None:
-    """Assert each table named in ``then.tableState`` matches (order-insensitive)."""
-    if not case.expected_table_state:
-        return
-    declarations = declared_contributors(case.model)
-    for table, expected_rows in case.expected_table_state.items():
-        actual = _read_table(db, _table_layout(case, table), declarations)
-        if not rows_equal(actual, expected_rows, case.tolerance):
-            raise CaseFailure(
-                f"{case.path.name}: table {table!r} state != then.tableState.\n"
-                f"  actual:   {actual!r}\n"
-                f"  expected: {expected_rows!r}"
-            )
+    assert_table_state(case, db, after="the retried attempts")
 
 
 # --- error-code classification cases (m-db-error dialect seam) ----------------------

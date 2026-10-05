@@ -521,7 +521,8 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     sequence in one transaction. Grading: the envelope's per-step emissions equal the
     golden DML and its total round trips the case's `then.roundTrips`; every scenario
     row-observing step's `stepRows` observation equals its `expectRows`
-    (:func:`_grade_step_rows`);
+    (:func:`_grade_step_rows`), each group's fate the one `then.units` states, and
+    the tables a scenario's `then.tableState` states hold its rows;
     a writeSequence's committed `tableState` observation equals `then.tableState`,
     table for table. The binds each golden write handed the driver carry the
     golden's zero sign at every declared float position
@@ -554,6 +555,9 @@ def _grade_write_run(
     """
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
+    if case.document.get("grading") == "state":
+        _grade_state_run(case, model, envelope)
+        return
 
     golden_statements = write_golden_statements(case)
     emissions = envelope["emissions"]
@@ -592,15 +596,88 @@ def _grade_write_run(
         observed_errors = envelope["observations"].get("errors", [])
         assert observed_errors == expected_errors, (case.case_id, observed_errors)
         _grade_step_graphs(case, model, steps, envelope)
+        _grade_units(case, envelope["observations"])
+        if "tableState" in case_document(case)["then"]:
+            _grade_table_state(case, model, envelope["observations"])
     else:
-        expected_state = cast(
-            "dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"]
+        _grade_table_state(case, model, envelope["observations"])
+
+
+def _grade_table_state(
+    case: case_format.Case, model: Metamodel, observations: dict[str, Any]
+) -> None:
+    """The tables the run read back hold exactly the rows `then.tableState`
+    states, table for table."""
+    expected_state = cast(
+        "dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"]
+    )
+    observed_state = observations["tableState"]
+    _assert_layout_shaped_table_state(case, model, observed_state)
+    assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
+    for table, expected_rows in expected_state.items():
+        compare_rows(observed_state[table], expected_rows)
+
+
+def _expected_units(case: case_format.Case) -> dict[str, Any]:
+    """Each `uow` group's fate as the case states it, a group it states none
+    for committing."""
+    steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+    stated = cast("dict[str, Any]", case_document(case)["then"].get("units", {}))
+    labels = dict.fromkeys(step["uow"] for step in steps if isinstance(step.get("uow"), str))
+    return {label: stated.get(label, {"outcome": "committed"}) for label in labels}
+
+
+def _grade_units(case: case_format.Case, observations: dict[str, Any]) -> None:
+    """Each group's reported fate is the one the case states: its outcome, and
+    the flush failure that ended it — where it ran, the object it reports, and
+    its Shortfall."""
+    observed = cast("dict[str, Any]", observations.get("units", {}))
+    expected = _expected_units(case)
+    assert set(observed) == set(expected), (case.case_id, observed)
+    for label, fate in expected.items():
+        reported = observed[label]
+        assert reported["outcome"] == fate["outcome"], (case.case_id, label, reported)
+        failure = fate.get("flushFailure")
+        if failure is None:
+            assert "flushFailure" not in reported, (case.case_id, label, reported)
+            continue
+        actual = reported["flushFailure"]
+        assert actual["at"] == failure["at"], (case.case_id, label, actual)
+        assert actual["shortfall"] == failure["shortfall"], (case.case_id, label, actual)
+        assert _same_entity(actual["entity"], failure["entity"]), (case.case_id, label, actual)
+        assert wire_value_deep(actual["key"]) == wire_value_deep(failure["key"]), (
+            case.case_id,
+            label,
+            actual,
         )
-        observed_state = envelope["observations"]["tableState"]
-        _assert_layout_shaped_table_state(case, model, observed_state)
-        assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
-        for table, expected_rows in expected_state.items():
-            compare_rows(observed_state[table], expected_rows)
+
+
+def _same_entity(reported: str, stated: str) -> bool:
+    """Whether a reported canonical Entity spelling is the one a case states,
+    canonically or by its bare local name."""
+    return reported == stated or reported.rpartition(".")[2] == stated
+
+
+def _grade_state_run(case: case_format.Case, model: Metamodel, envelope: dict[str, Any]) -> None:
+    """Grade a state-graded scenario on what it states: each find's published
+    rows, each submission its verb refused, each group's fate, and the final
+    tables. It authors no golden, so neither the statements a flush chose nor
+    the round trips they cost are graded."""
+    steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+    observations = envelope["observations"]
+    assert envelope["emissions"] == [], (case.case_id, envelope["emissions"])
+    _grade_step_rows(case, model, steps, envelope)
+    expected_errors = [
+        {"at": f"/scenario/{index}/write/{position}", "errorClass": entry["expectError"]}
+        for index, step in enumerate(steps)
+        for position, entry in enumerate(
+            step["write"] if isinstance(step.get("write"), list) else []
+        )
+        if "expectError" in entry
+    ]
+    assert observations.get("errors", []) == expected_errors, (case.case_id, observations)
+    _grade_units(case, observations)
+    _grade_table_state(case, model, observations)
 
 
 def _write_case(case_id: str) -> case_format.Case:
@@ -1023,16 +1100,15 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     finds AND the trailing
     ungrouped verify, the SAME `compare_rows` comparator/
     canonicalization the ordinary lane uses, never a forked row-equality) —
-    PLUS the scenario shape's own extra top-level assertion where a case
-    authors one, `then.affectedRows`: a conflicting write's actual
-    affected-row count, and `None` for a case in which no group conflicts.
+    PLUS each group's fate (`then.units`): the conflict a group's flush
+    reported, and a commit for every group that states none.
 
     The `expectRows` grade is each case's own teeth, and what it catches
     differs per case. For `m-opt-lock-012` a broken abort that left the doomed
-    group's buffered insert durable would still emit well-formed DML and a
-    correct `affectedRows`, and its trailing verify find would observe account
+    group's buffered insert durable would still emit well-formed DML and report
+    the conflict, and its trailing verify find would observe account
     9. For the Repeatable Read arms `m-unit-work-032` and `-034` the emissions
-    and the count are identical whatever level the groups opened at, and the
+    and the fates are identical whatever level the groups opened at, and the
     reader's SECOND read is the ONLY thing that differs: at the connection's own
     default it answers the peer's committed 999.00 rather than the 250.00 it
     read first — for `-034` on the second DELIVERY, every page of which is
@@ -1042,7 +1118,7 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     model = engine.load_case_metamodel(case)
     profile_run.reset(model, case_fixtures(case))
 
-    emissions, round_trips, conflict_actual, find_rows = engine.run_interleaved_scenario_case(
+    emissions, round_trips, units, find_rows = engine.run_interleaved_scenario_case(
         case, profile_run.port, profile_run.interleaved_execution
     )
 
@@ -1058,7 +1134,7 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
 
     then = case_document(case)["then"]
     assert round_trips == then["roundTrips"], case.case_id
-    assert conflict_actual == then.get("affectedRows"), case.case_id
+    _grade_units(case, {"units": units})
 
     expected_per_find = _scenario_expect_rows(case)
     assert len(find_rows) == len(expected_per_find), (case.case_id, find_rows)

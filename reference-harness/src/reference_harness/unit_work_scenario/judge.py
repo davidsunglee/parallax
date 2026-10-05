@@ -116,14 +116,14 @@ def _resolving_reads(case: Case, step: Any) -> int:
     extent its named find's rectangle does not cover (:func:`_coverage_reads`). A
     find step owes none either — a read IS the SQL it lists.
     """
-    if isinstance(step, _GroupedWrite) and step.settles_on is not None:
-        return _coverage_reads(case, step, step.settles_on)
+    if isinstance(step, _GroupedWrite):
+        return _coverage_reads(case, step)
     if not isinstance(step, _UngroupedWrite):
         return 0
     return unit_resolving_reads(case, list(step.entries))
 
 
-def _coverage_reads(case: Case, step: _GroupedWrite, origin: _SettledOn) -> int:
+def _coverage_reads(case: Case, step: _GroupedWrite) -> int:
     """One read per Bitemporal object a settled step writes beyond the rectangle
     its named find observed (`m-bitemp-write` *Observed writes span their
     requested extent*; `m-sql` *Requested ranges*).
@@ -134,7 +134,11 @@ def _coverage_reads(case: Case, step: _GroupedWrite, origin: _SettledOn) -> int:
     earlier.
     """
     uncovered: set[tuple[str, Any]] = set()
-    for entry in step.entries:
+    for submission in step.submissions:
+        origin = submission.settles_on
+        if origin is None:
+            continue
+        entry = dict(submission.entry)
         entity = case.model.entity(entry["entity"])
         axes = {axis.dimension: axis for axis in temporal_axes(entity.runtime_facts)}
         valid_axis = axes.get("valid-time")
@@ -211,17 +215,23 @@ def _assert_settled_write(scenario: CompiledScenario, dialect: str) -> None:
     """
     case = scenario.case
     for step in scenario.steps:
-        if not isinstance(step, _GroupedWrite) or step.settles_on is None:
+        if not isinstance(step, _GroupedWrite) or all(
+            submission.settles_on is None for submission in step.submissions
+        ):
             continue
         # The write-grading operations this delegates to speak of the statement
         # they were handed rather than of the Scenario position that handed it
         # over, so the position is added here, at the boundary that knows it.
         with reported_against(case, step.index):
-            _assert_settled_step(case, step, step.settles_on, dialect)
+            _assert_settled_step(case, step, dialect)
 
 
-def _assert_settled_step(case: Case, step: _GroupedWrite, origin: _SettledOn, dialect: str) -> None:
-    """Grade one settled write step's golden against its named find's own rows."""
+def _assert_settled_step(case: Case, step: _GroupedWrite, dialect: str) -> None:
+    """Grade one settled write step's golden against each entry's named find.
+
+    Every existing-row statement belongs to an entry of the step once every entry
+    names its find; a step whose other entries name none leaves their statements
+    to the table state."""
     index = step.index
     settling = [
         (_statement_address(case, index, statement, binds, dialect), statement, binds)
@@ -229,7 +239,12 @@ def _assert_settled_step(case: Case, step: _GroupedWrite, origin: _SettledOn, di
         if is_existing_row_statement(statement)
     ]
     aligned: set[int] = set()
-    for entry in step.entries:
+    every_entry_settles = all(submission.settles_on is not None for submission in step.submissions)
+    for submission in step.submissions:
+        origin = submission.settles_on
+        if origin is None:
+            continue
+        entry = dict(submission.entry)
         entity = case.model.entity(entry["entity"])
         row = _sole_settled_row(case, index, entity, entry)
         temporal = bool(temporal_axes(entity.runtime_facts))
@@ -253,7 +268,7 @@ def _assert_settled_step(case: Case, step: _GroupedWrite, origin: _SettledOn, di
             expected.append(observed.tx_start)
         statement, binds = _settled_close(case, index, entity, pk, settling, aligned, expected)
         assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
-    if len(aligned) != len(settling):
+    if every_entry_settles and len(aligned) != len(settling):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] carries {len(settling) - len(aligned)} "
             f"existing-row statement(s) for {dialect} addressing an object no entry of its "

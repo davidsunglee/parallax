@@ -243,18 +243,23 @@ def _ledger_update(
     return step
 
 
-def _synthetic_ledger_scenario(steps: list[dict[str, object]]) -> case_format.Case:
+def _synthetic_ledger_scenario(
+    steps: list[dict[str, object]], units: dict[str, object] | None = None
+) -> case_format.Case:
+    document: dict[str, object] = {
+        "model": "models/ledger.yaml",
+        "shape": "scenario",
+        "when": {"uow": {"concurrency": "optimistic"}, "scenario": steps},
+    }
+    if units is not None:
+        document["then"] = {"units": units}
     return case_format.Case(
         path=Path("m-unit-work-998-synthetic.yaml"),
         case_id="m-unit-work-998",
         shape="scenario",
         tags=("m-unit-work", "slice-snapshot-1"),
         model="models/ledger.yaml",
-        document={
-            "model": "models/ledger.yaml",
-            "shape": "scenario",
-            "when": {"uow": {"concurrency": "optimistic"}, "scenario": steps},
-        },
+        document=document,
     )
 
 
@@ -362,7 +367,8 @@ def test_run_scenario_case_holds_a_grouped_readless_predicate_write_in_the_group
         "insert into orders",
         "insert into order_item",
     ]
-    assert len(port.reads) == 1
+    # One participating read, then the case's own tables read back once it ran.
+    assert len(port.reads) == 1 + len(run.table_state or {})
     assert port.commits == 1 and port.rollbacks == 0
 
 
@@ -461,7 +467,9 @@ def test_run_scenario_case_settles_on_the_named_delivery_rather_than_the_latest_
         "dict[str, Any]",
         case_format.safe_load_yaml(source.path.read_text(encoding="utf-8")),
     )
-    cast("list[dict[str, Any]]", cast("dict[str, Any]", document["when"])["scenario"])[3]["on"] = 0
+    steps = cast("list[dict[str, Any]]", cast("dict[str, Any]", document["when"])["scenario"])
+    for entry in cast("list[dict[str, Any]]", steps[3]["write"]):
+        entry["on"] = 0
     port = _two_delivery_port()
 
     with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
@@ -873,12 +881,11 @@ def test_scenario_compile_lane_stages_a_doomed_uow_groups_case_state() -> None:
     case = _synthetic_ledger_scenario(
         [
             _ledger_insert("2025-01-01T00:00:00+00:00"),
-            _ledger_chain_update(
-                "999.00", "2026-01-01T00:00:00+00:00", uow="doomed", rollback=True
-            ),
+            _ledger_chain_update("999.00", "2026-01-01T00:00:00+00:00", uow="doomed"),
             _ledger_chain_update("888.00", "2026-01-01T00:00:00+00:00", uow="doomed"),
             _ledger_chain_update("300.00", "2026-02-01T00:00:00+00:00"),
-        ]
+        ],
+        {"doomed": {"outcome": "rolledBack"}},
     )
     compiled, _round_trips = scenario.compile_scenario_case(case, "postgres")
     _insert, doomed_close, _doomed_successor, own_close, _own_successor, close, _successor = (
@@ -946,8 +953,13 @@ def test_scenario_compile_lane_stages_nothing_for_a_doomed_interleaved_group() -
     # run-only`, so the lane lowers the steps in authored order and stages
     # nothing rather than refusing.
     steps = _two_group_interleave_steps()
-    steps[2]["rollback"] = True
-    case = _synthetic_write("scenario", {"when": {"scenario": steps}, "then": {"roundTrips": 3}})
+    case = _synthetic_write(
+        "scenario",
+        {
+            "when": {"scenario": steps},
+            "then": {"roundTrips": 3, "units": {"a": {"outcome": "rolledBack"}}},
+        },
+    )
     emissions, _round_trips = scenario.compile_scenario_case(case, "postgres")
     assert [e.case_pointer for e in emissions] == [
         "/scenario/0/objectQuery",
@@ -3951,12 +3963,12 @@ def test_a_named_find_publishing_no_row_of_a_writes_key_settles_nothing() -> Non
                         "uow": "g",
                         "write": [
                             {
+                                "on": 0,
                                 "mutation": "update",
                                 "entity": "Account",
                                 "rows": [{"id": 1, "balance": "5.00", "observedVersion": 1}],
                             }
                         ],
-                        "on": 0,
                         "roundTrips": 1,
                     },
                 ]

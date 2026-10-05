@@ -500,9 +500,10 @@ flush dooms the attempt like any other execution failure.
 
 An object this attempt **admitted an insertion** of is refused to every
 nonempty caller-addressed write, before and after a flush, whatever became of
-the insertion: until commit, it is written through its insertion's source or a
-fresh read. The attempt keeps that admission for its whole life for this reason
-alone (*Rows the attempt opened*). An object the attempt only rewrote is no
+the insertion, as a write-evidence failure tagged **`write-evidence-inserted`**:
+until commit, it is written through its insertion's source or a fresh read. The
+attempt keeps that admission for its whole life for this reason alone (*Rows the
+attempt opened*). An object the attempt only rewrote is no
 insertion, and a later transaction addresses a committed insertion like any
 other row.
 
@@ -1216,10 +1217,24 @@ no write crosses the barrier in either direction. A readless predicate does not
 reveal which rows it matches, so moving a write across it could change what it
 writes (ADR 0043). The barrier is **private planning structure only** — it
 produces no group, wrapper, flag, or identifier in the Write Plan, just a
-position nothing passes. A temporal object's writes on each side of a barrier
-therefore compose apart, each region's into its own execution unit, though
-admission judges every one of them together (*Observed-State Coalescing*); the
-later unit binds to what the earlier left (*deferred range unit*).
+position nothing passes. No two writes combine across it, whatever they have in
+common, so every effect executes on the side of the barrier it was buffered on:
+
+- A temporal object's writes on each side of a barrier compose apart, each
+  region's into its own execution unit, though admission judges every one of
+  them together (*Observed-State Coalescing*); the later unit binds to what the
+  earlier left (*deferred range unit*).
+- Two Non-Temporal writes of one claim scope on two sides of a barrier stay two
+  writes. Admission still judges the later against the earlier, and an
+  assignment after a destruction is refused as it is within a region, while a
+  repeated destruction still adds nothing. Otherwise the later write executes
+  after the barrier against the state the earlier one leaves: a versioned row
+  is gated on, and advances from, the version the earlier write produced.
+- A write of an object whose insert was buffered before a barrier does not fold
+  into that insert (*Same-transaction write coalescing*): the insert executes
+  before the barrier, and the write revises or removes the row it opened after
+  it, as a write through the insertion's source does once that insert has
+  flushed (*Insertion authority*).
 
 ## Same-transaction write coalescing
 
@@ -1254,6 +1269,10 @@ pending insert.
   for that object — the net-zero effective-change-set elision, extended across two
   verbs. A bounded termination of part of a Bitemporal opening removes only its
   own window; the pair does not cancel, and the flush opens what survives.
+
+These combinations hold within one barrier region; a write buffered after a
+readless predicate write never combines with a pending insert buffered before
+it (*Buffered, batched, ordered writes*).
 
 Coalescing is a property of **one** unit of work; across two committed transactions
 the milestone modules chain and split as usual. The rule is centralized here because
@@ -1400,8 +1419,10 @@ conditions are validated when the composition executes (`m-opt-lock`).
 
 An incompatible intent is refused **synchronously at the verb**, before buffering
 and before any database access, and the refusal is a write-evidence failure naming
-the object it addressed. The remedy is the ordinary one: a participating read
-force-flushes the buffered intent and returns fresh state, which nothing claims.
+the object it addressed, tagged **`write-evidence-already-claimed`**: what the
+write would settle against is already claimed by pending work it cannot join. The
+remedy is the ordinary one: a participating read force-flushes the buffered intent
+and returns fresh state, which nothing claims.
 
 A **Materialized Write Group** claims every state its predicate resolution
 selected. A later keyed write of one of those states is refused rather than merged
@@ -1729,7 +1750,10 @@ what it requires, so no step may assert a phantom or a write skew.
 
 A scenario's declared round-trip counts **MUST** be internally consistent with
 the golden SQL it lists: each step's `roundTrips` equals the number of golden SQL
-statements that step emits. The harness asserts this consistency without ever
+statements that step emits. A scenario whose groups compose several submissions
+into one flush is graded on the state it states instead, because the statements a
+composed flush issues are this module's to choose (`m-case-format` *State-graded
+scenarios*). The harness asserts this consistency without ever
 compiling a query to SQL — proving the round-trip contract from the fixture
 itself — and executes the listed golden SQL against the real database to confirm
 result-correctness.

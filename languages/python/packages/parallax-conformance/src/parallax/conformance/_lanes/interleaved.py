@@ -18,6 +18,7 @@ from parallax.conformance._lanes.scenario import (
     CaseContext,
     GroupState,
     LoweredStep,
+    flush_failure,
     graph_rows,
     refuse_a_conflict_retry_opt_in,
     run_group_step,
@@ -48,12 +49,15 @@ def _empty_group_rows() -> dict[int, list[Mapping[str, object]]]:
     return {}
 
 
+def _committed() -> dict[str, object]:
+    return {"outcome": "committed"}
+
+
 @dataclass(slots=True)
 class _InterleavedGroupResult:
     """One interleaved group's own report: its lowered steps (keyed by
-    scenario step index), the conflict's own `actual` affected-row count
-    when its LAST write step doomed the group via a genuine optimistic-lock
-    conflict (`None` for a group that committed, or that never conflicts),
+    scenario step index), its fate — committed, or rolled back by the
+    optimistic-lock conflict its flush reported (`m-case-format` *Unit fates*) —
     any OTHER exception the worker thread raised (re-raised on the main
     thread once both join — never silently swallowed), and every OWN find
     step's own observed rows (keyed by scenario step index) — the group's own
@@ -63,7 +67,7 @@ class _InterleavedGroupResult:
     grouped find at all, only its DML shape."""
 
     lowered: dict[int, LoweredStep]
-    conflict_actual: int | None = None
+    fate: dict[str, object] = field(default_factory=_committed)
     failure: BaseException | None = None
     rows: dict[int, list[Mapping[str, object]]] = field(default_factory=_empty_group_rows)
     round_trips: int = 0
@@ -94,20 +98,19 @@ def _run_interleaved_group(
     flush may itself raise
     :class:`~parallax.core.unit_work.OptimisticLockConflictError` (the SAME
     signal a caller-driven retry catches, the keyed unit-of-work lane's own
-    conflict-write precedent) — caught HERE, its ``actual`` recorded, and the
-    transaction aborts (never retried: a case whose groups would resolve the
-    ``retryOptimisticConflicts`` opt-in under a positive bound — from `when.uow`
-    or from its root — is refused before either worker starts, so
+    conflict-write precedent) — caught HERE, recorded as the group's flush
+    failure where the flush ran, and the transaction aborts (never retried: a
+    case whose groups would resolve the ``retryOptimisticConflicts`` opt-in
+    under a positive bound — from `when.uow` or from its root — is refused
+    before either worker starts, so
     :func:`~parallax.core.auto_retry.run_with_retry` surfaces the conflict after
     exactly one attempt). Unlike
-    :func:`~parallax.conformance._lanes.scenario._run_uow_group`'s own OWN
-    ``doomed``/``rollback: true`` convention
-    (an authored, EXPLICIT abort signal independent of any real conflict),
-    this lane's ONE conflicting witness (`m-opt-lock-012`) authors
-    ``rollback: true``
-    ONLY on the step whose OWN flush already conflicts — the CONFLICT itself
-    is what dooms the group, so no separate explicit-rollback trigger exists
-    here; a genuinely non-conflict-driven interleaved abort is unwitnessed
+    :func:`~parallax.conformance._lanes.scenario._run_uow_group`'s own
+    `rolledBack` fate with no flush failure (an authored, EXPLICIT abandonment
+    independent of any real conflict), this lane's ONE conflicting witness
+    (`m-opt-lock-012`) states the flush failure its OWN commit raises — the
+    CONFLICT itself is what rolls the group back, so no separate explicit
+    trigger exists here; a genuinely non-conflict-driven interleaved abort is unwitnessed
     and out of scope (pinned semantics #10, "unwitnessed surfaces stay
     honest"). The turnstile only ADVANCES past the group's own last step once
     ``session.database.transact`` itself RETURNS (a REAL commit — the underlying
@@ -139,10 +142,12 @@ def _run_interleaved_group(
     """
     lowered: dict[int, LoweredStep] = {}
     state = GroupState()
+    running: list[int] = []
 
     def body(tx: handle.Transaction) -> None:
         for position, index in enumerate(indices):
             turnstile.wait_for(index)
+            running.append(index)
             is_last = position == len(indices) - 1
             lowered[index], read = run_group_step(
                 tx, session, context, state, steps[index], index, INERT_CLOCK_INSTANT, observation
@@ -153,13 +158,16 @@ def _run_interleaved_group(
                 )
             if not is_last:
                 turnstile.advance()
+        running.clear()
 
     committed = False
     try:
         transact(session.database, body, **context.requests)
         committed = True
     except OptimisticLockConflictError as exc:
-        result.conflict_actual = exc.actual
+        at = running[-1] if running else "commit"
+        reported = flush_failure(context.model, exc, at)
+        result.fate = {"outcome": "rolledBack", "flushFailure": reported}
     except BaseException as exc:  # re-raised on the main thread below
         result.failure = exc
         turnstile.release_all()  # never leave a partner thread hanging on this thread's own defect
@@ -215,7 +223,7 @@ def run_interleaved_scenario_case(
     case: case_format.Case,
     port: CaseDatabase,
     execution_factory: InterleavedExecutionFactory,
-) -> tuple[list[Emission], int, int | None, list[list[Mapping[str, object]]]]:
+) -> tuple[list[Emission], int, dict[str, dict[str, object]], list[list[Mapping[str, object]]]]:
     """Run a two-group interleaved-`uow`-group scenario — the optimistic-lock
     race (`m-opt-lock-012`) and the Isolation Level scenarios alike, whose ONE
     admission guard is on ORACLE SHAPE (a step stating `expectGraph` is REFUSED
@@ -235,11 +243,9 @@ def run_interleaved_scenario_case(
     statements and any ungrouped step (each witnessed case's own trailing verify
     find), which runs AFTER both groups have resolved.
 
-    Reports the ordered emissions, total round trips, and — when a group's
-    own last write step conflicted — the conflict's ``actual`` affected-row
-    count (`then.affectedRows`, the scenario shape's own EXTRA top-level
-    assertion only the optimistic-lock race authors; ``None`` when no group
-    conflicted), and
+    Reports the ordered emissions, total round trips, each group's fate by
+    label — committed, or rolled back by the conflict its flush reported, which
+    only the optimistic-lock race states — and
     EVERY find step's own observed rows (grouped or ungrouped, in scenario
     step order): the caller's own oracle for
     every authored `expectRows`, the SAME observable the ordinary scenario
@@ -377,8 +383,6 @@ def run_interleaved_scenario_case(
 
     ordered = [lowered[index] for index in sorted(lowered)]
     emissions = envelope.emissions([(step.pointer, step.statements) for step in ordered])
-    conflict_actual = result_a.conflict_actual
-    if conflict_actual is None:
-        conflict_actual = result_b.conflict_actual
+    units = {label_a: result_a.fate, label_b: result_b.fate}
     find_rows = [rows_by_index[index] for index in sorted(rows_by_index)]
-    return emissions, round_trips, conflict_actual, find_rows
+    return emissions, round_trips, units, find_rows

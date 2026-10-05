@@ -114,6 +114,7 @@ from parallax.core.unit_work import (
     WriteObservation,
     WritePlan,
     WritePlanningError,
+    WritePreconditionError,
     buffered_write,
     enforce_affected_rows,
     instructions,
@@ -130,7 +131,7 @@ from parallax.core.unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core.unit_work.materialized import target_write
-from parallax.core.unit_work.planned import PlannedWrite
+from parallax.core.unit_work.planned import KeyTarget, PlannedWrite
 from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.snapshot import DatabaseOptions, handle
@@ -153,6 +154,7 @@ __all__ = [
     "compile_write_sequence_case",
     "entry_instant",
     "execute_keyed_unit",
+    "flush_failure",
     "graph_rows",
     "is_materializing_write_step",
     "is_predicate_write_step",
@@ -518,8 +520,8 @@ def _build_temporal_instruction(
     of this case already moved (:func:`_refuse_materialized_case_state`), and one
     whose tracked members can no longer account for the whole stored row
     (:func:`_refuse_unaccounted_document_milestone`), are both refused first.
-    Given one, the entry's own
-    step named a find of its `uow` group with ``on``, and the evidence is the
+    Given one, the entry named a find of its `uow` group with ``on``, and the
+    evidence is the
     Observed State Key the claim that node carries is addressed by
     (:func:`_settled_against_source`).
 
@@ -948,7 +950,7 @@ def _build_instructions(
     ``observedVersion`` stripped into one — `m-opt-lock`; ADR 0013), which in
     turn tells the planner to keep that row separately identifiable rather than
     merging it. A row that authors no observed version takes its evidence from
-    the group instead: from the find its step NAMED with ``on``
+    the group instead: from the find the entry NAMED with ``on``
     (:func:`_settled_against_source`) where it named one, and otherwise from
     ``group_observations`` — a writeSequence's own permanently-empty sequence, or
     (the scenario RUN lane only) a `uow` GROUP's own prior find step(s), scanned
@@ -1046,7 +1048,6 @@ def _resolve_entries(
     model: AcceptedMetamodel,
     shadow: TemporalShadow,
     group_observations: GroupObservations,
-    source: ObservedNodes | None = None,
 ) -> list[_ResolvedWrite]:
     """Every entry in one choreography unit's buffer -> its resolved
     instructions (retiring from ``shadow`` the milestone each close consumes) —
@@ -1060,19 +1061,14 @@ def _resolve_entries(
     writeSequence entry or an ungrouped scenario write step (neither ever
     consults a find-derived observation), or (the scenario RUN lane only) the
     nodes a `uow` GROUP's own find steps published (:func:`_run_uow_group`) before
-    this unit ran — never a store spanning the whole scenario.
-
-    ``source`` is what the step's own ``on`` named (`m-case-format` *Settling
-    against a grouped find*): the observed states ONE earlier find of this same
-    group recorded, which every entry of this step settles against instead of
-    against tracked case state — a milestone on a temporal target, a generation on
-    a versioned Non-Temporal one. It defaults to absence, which is every lane but
-    a grouped scenario write step naming a find."""
+    this unit ran — never a store spanning the whole scenario. A grouped write
+    step resolves its submissions one at a time instead, each against the find
+    its own ``on`` names (:func:`run_group_step`)."""
     resolved: list[_ResolvedWrite] = []
     unit_inserted: set[ObjectKey] = set()
     for entry in entries:
         resolved.extend(
-            _build_instructions(entry, model, shadow, unit_inserted, group_observations, source)
+            _build_instructions(entry, model, shadow, unit_inserted, group_observations, None)
         )
     return resolved
 
@@ -1628,7 +1624,9 @@ def _lower_scenario_step(
     return LoweredStep(f"/scenario/{index}/write", statements, True, rollback)
 
 
-def _doomed_group_spans(case_name: str, steps: Sequence[Mapping[str, object]]) -> dict[int, int]:
+def _doomed_group_spans(
+    case: case_format.Case, steps: Sequence[Mapping[str, object]]
+) -> dict[int, int]:
     """Each DOOMED `uow` group's own step span, keyed ``start -> end`` inclusive.
 
     Only the doomed ones: a committing group's steps need no staging, so leaving
@@ -1638,10 +1636,10 @@ def _doomed_group_spans(case_name: str, steps: Sequence[Mapping[str, object]]) -
     pure lowering has no way to model, and every case carrying that shape is
     `compileEligibility: run-only` for the same reason.
     """
-    spans = _scenario_uow_spans(case_name, steps)
+    spans = _scenario_uow_spans(case.path.name, steps)
     if spans is None:
         return {}
-    return {start: end for start, end in spans.values() if _group_is_doomed(steps, start, end)}
+    return {start: end for label, (start, end) in spans.items() if _group_is_doomed(case, label)}
 
 
 def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[LoweredStep]:
@@ -1695,7 +1693,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
     lowered: list[LoweredStep] = []
     try:
         steps = case_document.scenario_steps(case)
-        doomed_spans = _doomed_group_spans(case.path.name, steps)
+        doomed_spans = _doomed_group_spans(case, steps)
         index = 0
         while index < len(steps):
             end = doomed_spans.get(index)
@@ -2462,14 +2460,10 @@ def _group_tx_instant(steps: Sequence[Mapping[str, object]], start: int, end: in
     return INERT_CLOCK_INSTANT
 
 
-def _group_is_doomed(steps: Sequence[Mapping[str, object]], start: int, end: int) -> bool:
-    """Whether a `uow` group ROLLS BACK after its last step: at least one of
-    its OWN write steps declares `rollback: true` — the WHOLE group is then
-    the doomed unit of work (`m-case-format` scenario `uow` grouping), not
-    just that one step."""
-    return any(
-        "write" in steps[i] and steps[i].get("rollback") is True for i in range(start, end + 1)
-    )
+def _group_is_doomed(case: case_format.Case, label: str) -> bool:
+    """Whether a `uow` group ROLLS BACK after its last step: its fate in
+    ``then.units`` is `rolledBack` (`m-case-format` *Unit fates*)."""
+    return case_document.unit_fate(case, label).get("outcome") == "rolledBack"
 
 
 @dataclass(frozen=True, slots=True)
@@ -2493,7 +2487,7 @@ class CaseContext:
     unit executes through rather than by the case, and one case's steps do not
     all run through one connection — each interleaved group runs on a dedicated
     session of its own. Each lowering therefore reads it off the port about to execute the
-    statement (:class:`_GroupSession` for a group, the unit's own port
+    statement (:class:`GroupSession` for a group, the unit's own port
     otherwise), so this record can travel beside any of them.
 
     The concurrency is the preference the case's writes are PLANNED under —
@@ -2724,12 +2718,14 @@ def _pinned_at(node: handle.WireEntity, valid_from: dt.datetime | None) -> bool:
 
 
 def _source_find_nodes(
-    step: Mapping[str, object], index: int, group_finds: Mapping[int, tuple[handle.WireEntity, ...]]
+    entry: Mapping[str, object],
+    index: int,
+    group_finds: Mapping[int, tuple[handle.WireEntity, ...]],
 ) -> tuple[handle.WireEntity, ...] | None:
-    """What the find step this WRITE step names with ``on`` published
-    (`m-case-format` *Settling against a grouped find*) — ``None`` when it names
-    no source, which is every write step but one settling against its group's own
-    read.
+    """What the find step a submission of the WRITE step at ``index`` names with
+    ``on`` published (`m-case-format` *Settling against a grouped find*) —
+    ``None`` when it names no find, which is every submission but one settling
+    against its group's own read.
 
     ``group_finds`` holds one entry per find step of THIS group that has already
     run, so a reference it cannot satisfy names a step outside the group, a step
@@ -2737,12 +2733,12 @@ def _source_find_nodes(
     authoring defect and all three are refused here, rather than resolved to an
     empty tuple that would read as "the find published nothing".
     """
-    source = step.get("on")
-    if source is None:
+    source = entry.get("on")
+    if source is None or isinstance(source, str):
         return None
     if not isinstance(source, int) or isinstance(source, bool):
         raise EngineError(
-            f"scenario[{index}]: a write step settles against ONE find step, named by its "
+            f"scenario[{index}]: a write settles against ONE find step, named by its "
             f"index — {source!r} is not one (m-case-format 'Settling against a grouped find')"
         )
     published = group_finds.get(source)
@@ -2761,7 +2757,8 @@ def _buffer_wire_write(
     state: GroupState,
     write: _ResolvedWrite,
     named: Sequence[handle.WireEntity] | None,
-) -> None:
+    source: handle.WireEntity | None = None,
+) -> handle.WireEntity | None:
     """Buffer ONE resolved keyed write through the public ``tx.wire`` verb its
     mutation names.
 
@@ -2773,15 +2770,17 @@ def _buffer_wire_write(
 
     An insert opens a row no find can have returned, so the node the verb answers
     is recorded for the rest of the group — the read-your-own-writes source a
-    later entry of the same unit resolves against. Every other mutation takes its
-    source from what this group published, and its change set is the durable row
-    less the identity that source already carries: a PK-only row therefore states
-    the empty change set, which is the ordinary no-op.
+    later entry of the same unit resolves against — and returned. Every other
+    mutation takes its source from what this group published, or ``source``
+    where the submission named the insert whose answered value it writes
+    through, and its change set is the durable row less the identity that source
+    already carries: a PK-only row therefore states the empty change set, which
+    is the ordinary no-op.
     """
     instruction = write.instruction
     if isinstance(instruction, PreparedTargetWrite):
         _buffer_wire_target(tx, model, instruction)
-        return
+        return None
     assert isinstance(
         instruction, PreparedKeyedWrite
     )  # every other resolved entry this lane buffers is keyed
@@ -2800,9 +2799,13 @@ def _buffer_wire_write(
             else tx.wire.insert(entity_name, payload, valid_from=valid_from)
         )
         state.opened[_node_object_key(opened)] = opened
-        return
+        return opened
     key = object_key(instruction, model)
-    node = _group_source_node(entity_name, key, state, named, valid_from)
+    node = (
+        source
+        if source is not None
+        else _group_source_node(entity_name, key, state, named, valid_from)
+    )
     identity = dict(key.primary_key) if key is not None else {}
     changes = ActualWireProjection(model).entity_values(
         entity_metadata,
@@ -2819,6 +2822,7 @@ def _buffer_wire_write(
             tx.wire.terminate(node)
         case _:
             tx.wire.terminate(node, until=_required(until))
+    return None
 
 
 def _buffer_wire_target(
@@ -2902,7 +2906,7 @@ class _GroupRun:
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class _GroupSession:
+class GroupSession:
     """The connection ONE `uow` group runs on: the port it executes through, and
     the Handle opened over that port.
 
@@ -3018,11 +3022,18 @@ def run_group_step(
         )
     if "write" in step:
         entries = write_entries(step["write"])
-        named = _source_find_nodes(step, index, state.finds)
-        source = None if named is None else tuple(_published_claims(named))
-        resolved = _resolve_entries(
-            entries, model, context.shadow, _published_claims(state.published), source
-        )
+        published = _published_claims(state.published)
+        resolved: list[_ResolvedWrite] = []
+        sources: list[Sequence[handle.WireEntity] | None] = []
+        unit_inserted: set[ObjectKey] = set()
+        for entry in entries:
+            named = _source_find_nodes(entry, index, state.finds)
+            source = None if named is None else tuple(_published_claims(named))
+            written = _build_instructions(
+                entry, model, context.shadow, unit_inserted, published, source
+            )
+            resolved.extend(written)
+            sources.extend(named for _ in written)
         framework = _framework_writes(resolved, model)
         if framework:
             raise EngineError(
@@ -3039,12 +3050,25 @@ def run_group_step(
             tx_instant,
             context.shadow,
         )
-        for write in resolved:
+        for write, named in zip(resolved, sources, strict=True):
             _buffer_wire_write(tx, model, state, write, named)
-        return (
-            LoweredStep(f"/scenario/{index}/write", statements, True, step.get("rollback") is True),
-            None,
-        )
+        return LoweredStep(f"/scenario/{index}/write", statements, True, False), None
+    return _group_read(tx, context, state, step, index, observation)
+
+
+def _group_read(
+    tx: handle.Transaction,
+    context: CaseContext,
+    state: GroupState,
+    step: Mapping[str, object],
+    index: int,
+    observation: LifecycleObservation,
+) -> tuple[LoweredStep, _StepRead]:
+    """One `uow` group's find step, through ``tx.wire.find`` or, for a step
+    carrying `stream`, ``tx.wire.stream`` at its page size — recording into
+    ``state`` the nodes it published, which a later write of the group is
+    addressed by."""
+    model = context.model
     mark = observation.round_trips
     batch_size = case_document.batch_size_of(step, f"/scenario/{index}/stream")
     if batch_size is None:
@@ -3092,11 +3116,11 @@ def _run_uow_group(
     transaction, which is where read-your-own-writes becomes visible at all.
     """
     tx_instant = _group_tx_instant(steps, start, end)
-    doomed = _group_is_doomed(steps, start, end)
+    doomed = _group_is_doomed(case, cast("str", steps[start]["uow"]))
     state = GroupState()
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observation = lifecycle.observation()
-    session = _GroupSession(write_adapter(port, rollback=doomed), context, instant, observation)
+    session = GroupSession(write_adapter(port, rollback=doomed), context, instant, observation)
     try:
         lowered: list[LoweredStep] = []
         rows_observed: list[dict[str, object]] = []
@@ -3139,6 +3163,249 @@ def _run_uow_group(
         session.close()
 
 
+# --------------------------------------------------------------------------- #
+# State-graded groups: public verbs only, graded on what they leave.           #
+# --------------------------------------------------------------------------- #
+
+
+def _empty_answered() -> dict[str, handle.WireEntity]:
+    return {}
+
+
+def _empty_refusals() -> list[dict[str, object]]:
+    return []
+
+
+@dataclass(frozen=True, slots=True)
+class _Submitted:
+    """What a state-graded group's submissions left for the rest of the run:
+    the value each accepted insert answered, by its pointer, and the refusal
+    each refused submission raised."""
+
+    opened: dict[str, handle.WireEntity] = field(default_factory=_empty_answered)
+    refusals: list[dict[str, object]] = field(default_factory=_empty_refusals)
+
+
+def _submission_writes(
+    entry: Mapping[str, object], model: AcceptedMetamodel
+) -> list[_ResolvedWrite]:
+    """One keyed submission as the instructions its verb is handed, one per row.
+
+    A state-graded group drives public verbs only, so nothing here resolves an
+    observation: the value a verb is handed carries its own.
+    """
+    entity_name = cast("str", entry["entity"])
+    mutation = cast("str", entry["mutation"])
+    bounds = {name: entry[name] for name in ("validFrom", "until") if name in entry}
+    writes: list[_ResolvedWrite] = []
+    for raw_row in cast("Sequence[Mapping[str, object]]", entry["rows"]):
+        row, _observation = _durable_row(model, entity_name, mutation, raw_row)
+        row = _seed_insert_version(model, entity_name, mutation, row)
+        instruction = instructions.deserialize(
+            {"mutation": mutation, "entity": entity_name, "rows": [row], **bounds}
+        )
+        writes.append(_ResolvedWrite(_case_ingress.prepare_case_write(instruction, model), None))
+    return writes
+
+
+def _submit(
+    tx: handle.Transaction,
+    model: AcceptedMetamodel,
+    state: GroupState,
+    submitted: _Submitted,
+    entry: Mapping[str, object],
+    pointer: str,
+    index: int,
+) -> None:
+    """Hand one submission to the public verb its form names, catching the one
+    refusal it declares, as a caller that continues past it does."""
+    refusal = entry.get("expectError")
+    try:
+        if "target" in entry:
+            prepared = _prepared_case_predicate_write(entry, model)
+            _buffer_wire_predicate_write(tx, model, entry, prepared)
+        elif "row" in entry:
+            target = _build_target_instruction(entry, model).instruction
+            assert isinstance(target, PreparedTargetWrite)  # a `row` entry is caller-addressed
+            _buffer_wire_target(tx, model, target)
+        else:
+            on = entry.get("on")
+            source = submitted.opened.get(on) if isinstance(on, str) else None
+            if isinstance(on, str) and source is None:
+                raise EngineError(f"{pointer}: writes through {on!r}, which opened no value")
+            named = _source_find_nodes(entry, index, state.finds)
+            for write in _submission_writes(entry, model):
+                opened = _buffer_wire_write(tx, model, state, write, named, source)
+                if opened is not None:
+                    submitted.opened[pointer] = opened
+    except handle.WriteEvidenceError as exc:
+        if exc.code != refusal:
+            raise
+        submitted.refusals.append({"at": pointer, "errorClass": exc.code})
+
+
+_FLUSH_FAILURES = (
+    MissingTargetError,
+    StaleWriteError,
+    OptimisticLockConflictError,
+    WritePreconditionError,
+)
+_SHORTFALLS: Final[dict[type[WriteEffectError], str]] = {
+    MissingTargetError: "missingTarget",
+    StaleWriteError: "staleWrite",
+    OptimisticLockConflictError: "optimisticConflict",
+}
+
+
+def flush_failure(
+    model: AcceptedMetamodel,
+    failure: WriteEffectError | WritePreconditionError,
+    at: int | Literal["commit"],
+) -> dict[str, object]:
+    """The ``flushFailure`` a group reports: where its flush ran, and the object
+    and Shortfall the failure names, in the case's own spelling."""
+    if isinstance(failure, WritePreconditionError):
+        entity, key, shortfall = failure.entity, dict(failure.key), "failedPrecondition"
+    else:
+        entity = failure.entity
+        target = failure.target
+        names = tuple(attribute.name for attribute in target.key_attributes)
+        values = target.key_values[0] if isinstance(target, KeyTarget) else target.key_values
+        key = dict(zip(names, values, strict=True))
+        shortfall = _SHORTFALLS[type(failure)]
+    metadata = case_entity(model, entity.canonical)
+    return {
+        "at": at,
+        "entity": entity.canonical,
+        "key": ActualWireProjection(model).entity_values(metadata, key),
+        "shortfall": shortfall,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class _StateGroupRun:
+    """One state-graded group's report: its fate, the rows each of its finds
+    published, the refusals its submissions raised, and its round trips."""
+
+    fate: dict[str, object]
+    step_rows: list[dict[str, object]]
+    refusals: list[dict[str, object]]
+    round_trips: int
+
+
+def _run_state_graded_group(
+    case: case_format.Case,
+    port: CaseDatabase,
+    context: CaseContext,
+    steps: Sequence[Mapping[str, object]],
+    start: int,
+    end: int,
+    lifecycle: LifecycleRun,
+) -> _StateGroupRun:
+    """Execute one state-graded `uow` group through public verbs alone.
+
+    Each submission goes to the verb its form names; each find reads through the
+    group's transaction. A group whose fate is a plain rollback abandons its unit
+    of work once its last step ran; any other runs to commit, and a flush that
+    fails ends it where it ran — at the find whose read flushed, or at commit —
+    which is the fate it reports.
+    """
+    label = cast("str", steps[start]["uow"])
+    fate = case_document.unit_fate(case, label)
+    abandoned = fate.get("outcome") == "rolledBack" and "flushFailure" not in fate
+    instant = normalize_instant(dt.datetime.fromisoformat(_group_tx_instant(steps, start, end)))
+    observation = lifecycle.observation()
+    session = GroupSession(write_adapter(port, rollback=abandoned), context, instant, observation)
+    state = GroupState()
+    submitted = _Submitted()
+    rows_observed: list[dict[str, object]] = []
+    running: list[int] = []
+
+    def body(tx: handle.Transaction) -> None:
+        for index in range(start, end + 1):
+            running.append(index)
+            step = steps[index]
+            if "write" in step:
+                for position, entry in enumerate(write_entries(step["write"])):
+                    pointer = f"/scenario/{index}/write/{position}"
+                    _submit(tx, context.model, state, submitted, entry, pointer, index)
+            else:
+                _lowered, read = _group_read(tx, context, state, step, index, observation)
+                query = step_query(step, context.model)
+                rows_observed.append(step_rows(context.model, index, query, read.roots))
+        running.clear()
+
+    outcome: dict[str, object] = {"outcome": "rolledBack" if abandoned else "committed"}
+    try:
+        with absorbing_rollback():
+            transact(session.database, body, **context.requests)
+    except _FLUSH_FAILURES as failure:
+        at: int | Literal["commit"] = running[-1] if running else "commit"
+        reported = flush_failure(context.model, failure, at)
+        outcome = {"outcome": "rolledBack", "flushFailure": reported}
+    finally:
+        session.close()
+    return _StateGroupRun(outcome, rows_observed, submitted.refusals, observation.round_trips)
+
+
+def _run_state_graded_case(
+    case: case_format.Case, port: CaseDatabase, lifecycle: LifecycleRun
+) -> ScenarioRun:
+    """Run a state-graded scenario (`m-case-format` *State-graded scenarios*):
+    every group through :func:`_run_state_graded_group`, every ungrouped find
+    on committed state, then the tables read back. It reports no emissions:
+    nothing here grades which statements a flush chose."""
+    steps = case_document.scenario_steps(case)
+    serving = case_serving_model(case)
+    model = models.accepted_model_of(serving.current().model)
+    spans = _scenario_uow_spans(case.path.name, steps)
+    if spans is None:
+        raise EngineError(f"{case.path.name}: a state-graded case runs its groups one at a time")
+    starts = {start: (label, end) for label, (start, end) in spans.items()}
+    context = CaseContext(
+        serving,
+        model,
+        case_document.concurrency(case),
+        TemporalShadow(),
+        case_format.transaction_keywords(case),
+        case_format.database_options(case),
+    )
+    units: dict[str, dict[str, object]] = {}
+    refusals: list[dict[str, object]] = []
+    rows_observed: list[dict[str, object]] = []
+    round_trips = 0
+    try:
+        apply_given_apply(case, port, context.shadow)
+        index = 0
+        while index < len(steps):
+            group = starts.get(index)
+            if group is not None:
+                label, end = group
+                run = _run_state_graded_group(case, port, context, steps, index, end, lifecycle)
+                units[label] = run.fate
+                refusals.extend(run.refusals)
+                rows_observed.extend(run.step_rows)
+                round_trips += run.round_trips
+                index = end + 1
+                continue
+            step = steps[index]
+            if "write" in step:
+                raise EngineError(
+                    f"{case.path.name}: scenario[{index}] is an ungrouped write, which a "
+                    "state-graded case states no fate for"
+                )
+            read, read_observed = run_standalone_find(port, context, step, lifecycle)
+            round_trips += read_observed.round_trips
+            query = step_query(step, model)
+            rows_observed.append(step_rows(model, index, query, read.checked().results()))
+            index += 1
+    except LOWERING_ERRORS as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc
+    return ScenarioRun(
+        [], round_trips, refusals, rows_observed, [], units, read_table_state(port, model)
+    )
+
+
 def run_scenario_case(
     case: case_format.Case,
     port: CaseDatabase,
@@ -3171,8 +3438,10 @@ def run_scenario_case(
     production performs that read internally while planning the write and hands
     its rows to no caller, so the step reports no entry (`m-conformance-adapter`
     *Per-step row observations*)."""
-    steps = case_document.scenario_steps(case)
     lifecycle = lifecycle_run(lifecycle)
+    if case.document.get("grading") == "state":
+        return _run_state_graded_case(case, port, lifecycle)
+    steps = case_document.scenario_steps(case)
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
     dialect = port.dialect
@@ -3197,6 +3466,7 @@ def run_scenario_case(
         case_format.database_options(case),
     )
     lowered: list[LoweredStep] = []
+    units: dict[str, dict[str, object]] = {}
     round_trips = 0
     try:
         seed_shadow_from_fixtures(case, model, shadow)
@@ -3217,6 +3487,9 @@ def run_scenario_case(
             if label is not None:
                 start, end = spans[label]
                 group = _run_uow_group(case, port, context, steps, start, end, lifecycle)
+                units[label] = {
+                    "outcome": "rolledBack" if _group_is_doomed(case, label) else "committed"
+                }
                 lowered.extend(group.lowered)
                 rows_observed.extend(group.step_rows)
                 step_graphs.extend(group.step_graphs)
@@ -3286,7 +3559,13 @@ def run_scenario_case(
     except LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = envelope.emissions([(step.pointer, step.statements) for step in lowered])
-    return ScenarioRun(emissions, round_trips, [], rows_observed, step_graphs)
+    then = case.document.get("then")
+    table_state = (
+        read_table_state(port, model)
+        if isinstance(then, Mapping) and "tableState" in then
+        else None
+    )
+    return ScenarioRun(emissions, round_trips, [], rows_observed, step_graphs, units, table_state)
 
 
 def run_write_sequence_case(

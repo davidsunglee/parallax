@@ -559,6 +559,12 @@ _EVOLUTION_ENDPOINT = (
 )
 """Why an evolution endpoint pair is unmirrored, shared by every one of them."""
 
+_BUFFERED_SEQUENCE_TWIN = (
+    "no mirror authored; its Bitemporal, versioned and unversioned Entities repeat the "
+    "mirrored `position`, `account` and `wallet` declarations, and its Document arm the "
+    "root-owned layout `write-transparency-layout-twin-document` already proves"
+)
+
 UNMIRRORED: Mapping[str, str] = MappingProxyType(
     {
         "appliance": (
@@ -566,6 +572,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "table-per-concrete-subtype shape plus the root-owned optimistic-lock version "
             "`account` already proves"
         ),
+        "buffered-sequence-layout-twin-columns": _BUFFERED_SEQUENCE_TWIN,
+        "buffered-sequence-layout-twin-document": _BUFFERED_SEQUENCE_TWIN,
         "document-layout-nested-many": (
             "no mirror authored; its nested one/one/many declaration is exercised by the "
             "focused predicate-write runtime model and gives the independent compatibility "

@@ -143,9 +143,9 @@ def _settled_write_scenario_case() -> dict[str, Any]:
                 },
                 {
                     "uow": "g",
-                    "on": 0,
                     "write": [
                         {
+                            "on": 0,
                             "mutation": "update",
                             "entity": "Position",
                             "rows": [{"id": 1, "value": 150.00}],
@@ -1160,7 +1160,7 @@ def _settled_write_on_array() -> dict[str, Any]:
     action step's spelling alone.
     """
     doc = _settled_write_scenario_case()
-    doc["when"]["scenario"][1]["on"] = [0]
+    doc["when"]["scenario"][1]["write"][0]["on"] = [0]
     return doc
 
 
@@ -1172,6 +1172,7 @@ def _settled_write_legacy_string() -> dict[str, Any]:
     """
     doc = _settled_write_scenario_case()
     doc["when"]["scenario"][1]["write"] = "correct the position"
+    doc["when"]["scenario"][1]["on"] = 0
     return doc
 
 
@@ -1191,6 +1192,7 @@ def _settled_write_predicate_selected() -> dict[str, Any]:
         },
         "assignments": [{"attr": "Position.value", "value": 150.00}],
     }
+    doc["when"]["scenario"][1]["on"] = 0
     return doc
 
 

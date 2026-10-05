@@ -6,9 +6,11 @@ from ..case import Case
 from ..case_preflight import preflight_case_literals
 from ..providers import DatabaseProvider
 from ..provisioning import apply_given, provision
+from ..table_state import read_tables
 from .compile import compile_scenario
 from .execute import execute_scenario
 from .judge import judge_document
+from .settlement import assert_settled_state
 
 __all__ = ["assert_unit_work_scenario"]
 
@@ -19,14 +21,21 @@ def assert_unit_work_scenario(
     """Grade *case*'s Unit Work Scenario against *db*.
 
     Compilation runs on every dialect, because everything it decides is a
-    property of the document. The cross-checks that follow read the golden SQL,
-    so a dialect the case lists none for has nothing here to grade and nothing to
-    execute — exactly as a step's own golden is what says whether it is
+    property of the document. A state-graded Scenario carries no golden SQL, so
+    what follows it is the consistency of its stated rows with the rows it starts
+    from, on every dialect. Otherwise the cross-checks that follow read the golden
+    SQL, so a dialect the case lists none for has nothing here to grade and nothing
+    to execute — exactly as a step's own golden is what says whether it is
     executable at all.
     """
     if not literals_preflighted:
         preflight_case_literals(case)
     scenario = compile_scenario(case)
+    if scenario.state_graded:
+        provision(case, db)
+        apply_given(case, db)
+        assert_settled_state(scenario, read_tables(case, db, tuple(case.expected_table_state)))
+        return
     if not scenario.has_golden(db.dialect):
         return
     judge_document(scenario, db.dialect)

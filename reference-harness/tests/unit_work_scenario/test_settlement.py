@@ -407,9 +407,9 @@ def _versioned_settled_case(
                 },
                 {
                     "uow": "generations",
-                    "on": 0,
                     "write": [
                         {
+                            "on": 0,
                             "mutation": "update",
                             "entity": "Account",
                             "rows": [{"id": 1, "balance": "175.00"}],
@@ -459,9 +459,9 @@ def _reserved_version_column_case(*, advance: int) -> Case:
                 },
                 {
                     "uow": "reserved",
-                    "on": 0,
                     "write": [
                         {
+                            "on": 0,
                             "mutation": "update",
                             "entity": "Account",
                             "rows": [{"id": 1, "balance": "175.00"}],
@@ -503,14 +503,15 @@ def _multi_object_settled_case(*, second_version: int = 5) -> Case:
                 },
                 {
                     "uow": "two-objects",
-                    "on": 0,
                     "write": [
                         {
+                            "on": 0,
                             "mutation": "update",
                             "entity": "Account",
                             "rows": [{"id": 1, "balance": "175.00"}],
                         },
                         {
+                            "on": 0,
                             "mutation": "update",
                             "entity": "Account",
                             "rows": [{"id": 2, "balance": "60.00"}],
@@ -550,9 +551,9 @@ def _shared_table_settled_case(*, tag: str = "dog") -> Case:
                 },
                 {
                     "uow": "shared-table",
-                    "on": 0,
                     "write": [
                         {
+                            "on": 0,
                             "mutation": "update",
                             "entity": "parallax.compatibility.Dog",
                             "rows": [{"id": 1, "barkVolume": 9}],
@@ -670,9 +671,9 @@ def _settled_close_case(
                 },
                 {
                     "uow": "polymorphic",
-                    "on": 0,
                     "write": [
                         {
+                            "on": 0,
                             # Bounded inside the observed rectangle, so the flush
                             # reads no coverage beyond it.
                             "mutation": "updateUntil",
@@ -732,9 +733,9 @@ def _transaction_time_only_settled_case(*, on: int) -> Case:
                 ),
                 {
                     "uow": "observe-then-close",
-                    "on": on,
                     "write": [
                         {
+                            "on": on,
                             "mutation": "update",
                             "entity": "Balance",
                             "rows": [{"id": 1, "value": "150.00"}],

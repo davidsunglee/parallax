@@ -31,14 +31,15 @@ when:
       expectRows:
         - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
     - uow: superseded-chain
-      "on": 0
       write:
         - mutation: update
+          "on": 0
           entity: parallax.compatibility.Balance
           rows:
             - { id: 1, acctNum: A, value: "175.00" }
           at: "2024-10-01T00:00:00.000000Z"
         - mutation: terminate
+          "on": 0
           entity: parallax.compatibility.Balance
           rows:
             - { id: 1 }
