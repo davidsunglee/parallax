@@ -123,11 +123,11 @@ from .write_plan import (
     OPENING_MUTATIONS,
     assert_inheritance_write_routing,
     assert_write_values,
-    assigns_itself_only,
     classify_write_row,
     close_address_binds,
     has_temporal_gate,
     has_version_gate,
+    is_milestone_guard_statement,
     parse_insert_columns,
     parse_set_columns,
     tag,
@@ -1785,9 +1785,7 @@ def _assert_milestone_guard(
         a for a in entity.temporal_runtime_axes if a["dimension"] == "transaction-time"
     )
     in_z = transaction_time["start_column"]
-    if not assigns_itself_only(statement, in_z, dialect) or not has_temporal_gate(
-        statement, in_z, dialect
-    ):
+    if not is_milestone_guard_statement(statement, entity, dialect):
         raise CaseFailure(
             f"{case.path.name}: a one-statement Transaction-Time-Only update is the guard that "
             f"keeps its milestone — `set {in_z} = {in_z}` on the milestone's address, gated on "

@@ -228,6 +228,18 @@ def _rewritten_start(raw: dict[str, Any]) -> None:
     )
 
 
+def _incomplete_address(raw: dict[str, Any]) -> None:
+    raw["then"]["statements"][1]["sql"]["postgres"] = (
+        "update balance set in_z = in_z where bal_id = ? and ? is not null and in_z = ?"
+    )
+
+
+def _extra_predicate(raw: dict[str, Any]) -> None:
+    raw["then"]["statements"][1]["sql"]["postgres"] = (
+        "update balance set in_z = in_z where bal_id = ? and out_z = ? and 1 = 0 and in_z = ?"
+    )
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -235,8 +247,17 @@ def _rewritten_start(raw: dict[str, Any]) -> None:
         (_stale_gate, "golden bind"),
         (_close_shape, "the guard that keeps its milestone"),
         (_rewritten_start, "the guard that keeps its milestone"),
+        (_incomplete_address, "the guard that keeps its milestone"),
+        (_extra_predicate, "the guard that keeps its milestone"),
     ],
-    ids=["a-changed-value", "a-gate-its-history-does-not-leave", "a-close", "a-rewritten-start"],
+    ids=[
+        "a-changed-value",
+        "a-gate-its-history-does-not-leave",
+        "a-close",
+        "a-rewritten-start",
+        "an-incomplete-address",
+        "an-extra-predicate",
+    ],
 )
 def test_a_guard_golden_its_history_does_not_prove_is_refused(
     mutate: Callable[[dict[str, Any]], None], message: str

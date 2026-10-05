@@ -849,20 +849,51 @@ def has_temporal_gate(statement: str, in_z: str, dialect: str) -> bool:
     return write is not None and _gates_on(write.conjuncts[-1], in_z)
 
 
-def assigns_itself_only(statement: str, column: str, dialect: str) -> bool:
-    """Whether *statement* is an ``UPDATE`` whose one assignment sets *column* to
-    itself."""
+def is_milestone_guard_statement(statement: str, entity: Entity, dialect: str) -> bool:
+    """Whether *statement* is exactly the guard that keeps *entity*'s milestone: an
+    ``UPDATE`` of its table assigning the Transaction-Time start to itself, whose
+    predicate is the close address (:func:`close_address_binds`) followed by the
+    observed-start gate, every conjunct a bound equality.
+
+    Judged whole because a guard changes no value: neither the table state nor its
+    affected count can tell an incomplete address from the complete one.
+    """
+    in_z = next(
+        axis["start_column"]
+        for axis in entity.temporal_runtime_axes
+        if axis["dimension"] == "transaction-time"
+    )
+    discriminator = tag(entity)
+    predicate = [
+        *_primary_key_columns(entity),
+        *([discriminator[0]] if discriminator is not None else []),
+        *(axis["end_column"] for axis in _as_of_axes(entity)),
+        in_z,
+    ]
     with contextlib.suppress(sqlglot.ParseError):
         tree = sqlglot.parse_one(statement, read=sqlglot_dialect(dialect))
-        if isinstance(tree, exp.Update) and len(tree.expressions) == 1:
-            assignment = tree.expressions[0]
-            return isinstance(assignment, exp.EQ) and all(
+        table, where = _dml_target_of(tree), tree.args.get("where")
+        if not isinstance(tree, exp.Update) or table is None or not isinstance(where, exp.Where):
+            return False
+        conjuncts = tuple(_conjuncts(where.this))
+        assignments = tree.expressions
+        return (
+            _names(table, entity.table)
+            and len(assignments) == 1
+            and isinstance(assignments[0], exp.EQ)
+            and all(
                 isinstance(side, exp.Column)
                 and not side.table
                 and isinstance(side.this, exp.Identifier)
-                and _names(side.this, column)
-                for side in (assignment.left, assignment.right)
+                and _names(side.this, in_z)
+                for side in (assignments[0].left, assignments[0].right)
             )
+            and len(conjuncts) == len(predicate)
+            and all(
+                _gates_on(conjunct, column)
+                for conjunct, column in zip(conjuncts, predicate, strict=True)
+            )
+        )
     return False
 
 
