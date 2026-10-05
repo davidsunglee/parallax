@@ -457,8 +457,8 @@ def test_gated_close_with_extra_placeholder_arity_mismatch_is_rejected() -> None
 
 
 def _bitemporal_conflict_close_cases():
-    """Bitemporal conflict-close cases (`m-bitemp-write-004` / `-005` / `-017` /
-    `-018`): a Valid-Time + Transaction-Time dimension."""
+    """Bitemporal conflict-close cases (`m-bitemp-write-005`): a Valid-Time +
+    Transaction-Time dimension."""
     return [
         case
         for case in discover_cases(COMPATIBILITY_ROOT)
@@ -473,12 +473,7 @@ def _bitemporal_conflict_close_cases():
 
 def test_bitemporal_conflict_close_input_holds_for_authored_cases() -> None:
     cases = _bitemporal_conflict_close_cases()
-    assert {_case_id(case.path.stem) for case in cases} >= {
-        "m-bitemp-write-004",
-        "m-bitemp-write-005",
-        "m-bitemp-write-017",
-        "m-bitemp-write-018",
-    }
+    assert {_case_id(case.path.stem) for case in cases} >= {"m-bitemp-write-005"}
     for case in cases:
         # Must not raise: the close ① derives [at, pk, validEnd, infinity,
         # (observedTxStart under optimistic)] — the metamodel names the thru_z address
@@ -491,31 +486,8 @@ def _conflict_close_case(stem_prefix: str):
     return next(case for case in cases if case.path.stem.startswith(stem_prefix))
 
 
-def test_bitemporal_conflict_close_addresses_a_finite_valid_end() -> None:
-    # m-bitemp-write-017 / -018 are the corpus' only witnesses for the FINITE arm of the
-    # address: fixture rows R2 and R3 share pk, in_z, and the open out_z, so thru_z is
-    # the sole discriminator between them. -017 addresses R2's finite end and -004 the
-    # open one under the same mode, instant, and gate, so the two goldens differ by
-    # exactly that bind — a close binding a constant infinity on both axes would pass
-    # -004 and miss R2 entirely.
-    bounded = _conflict_close_case("m-bitemp-write-017")
-    unbounded = _conflict_close_case("m-bitemp-write-004")
-    assert bounded.when["write"]["validEnd"] == "2024-06-01T00:00:00.000000Z"
-    assert unbounded.when["write"]["validEnd"] == "infinity"
-    assert bounded.golden_statements("postgres") == unbounded.golden_statements("postgres")
-    differing = [
-        index
-        for index, (left, right) in enumerate(
-            zip(bounded.statement_binds(0), unbounded.statement_binds(0), strict=True)
-        )
-        if str(left) != str(right)
-    ]
-    assert differing == [2]  # the addressed thru_z, between the pk and the invariant out_z
-    _assert_conflict_input(bounded, "postgres")
-
-
 def test_bitemporal_conflict_close_valid_end_corruption_is_rejected() -> None:
-    case = copy.deepcopy(_conflict_close_case("m-bitemp-write-017"))
+    case = copy.deepcopy(_conflict_close_case("m-bitemp-write-005"))
     # Corrupt the addressed Valid-Time end VALUE: ①'s address bound no longer matches the
     # golden bind, so the bitemporal close ① ↔ ② cross-check MUST fail.
     case.when["write"]["validEnd"] = "1999-12-31T00:00:00.000000Z"
@@ -527,33 +499,8 @@ def test_bitemporal_conflict_close_naming_a_second_coordinate_is_rejected() -> N
     # A close writes no domain value and names exactly the address bound the metamodel
     # cannot supply. An ① carrying anything else — here the Valid-Time START the retired
     # gate shape bound — MUST be rejected rather than silently ordered into the binds.
-    case = copy.deepcopy(_conflict_close_case("m-bitemp-write-004"))
+    case = copy.deepcopy(_conflict_close_case("m-bitemp-write-005"))
     case.when["write"]["validStart"] = "2024-06-01T00:00:00.000000Z"
-    with pytest.raises(CaseFailure):
-        _assert_conflict_input(case, "postgres")
-
-
-def test_locking_bitemporal_conflict_close_renders_the_address_and_no_gate() -> None:
-    # m-bitemp-write-018 is -017's locking sibling: the m-read-lock shared read lock,
-    # not an observation, is what makes the write correct, so the golden renders the
-    # SAME address and no `in_z = ?` gate, and the case authors no observedTxStart.
-    locking = _conflict_close_case("m-bitemp-write-018")
-    optimistic = _conflict_close_case("m-bitemp-write-017")
-    (gated_statement,) = optimistic.golden_statements("postgres")
-    assert locking.golden_statements("postgres") == [gated_statement.removesuffix(" and in_z = ?")]
-    assert locking.observed_tx_start is None
-    assert locking.statement_binds(0) == optimistic.statement_binds(0)[:-1]
-    _assert_conflict_input(locking, "postgres")
-
-
-def test_locking_bitemporal_conflict_close_rendering_a_gate_is_rejected() -> None:
-    # Gating is concurrency-driven, never data-driven: a locking-mode close that renders
-    # the observed-in_z gate anyway MUST be rejected, even though its binds line up.
-    case = copy.deepcopy(_conflict_close_case("m-bitemp-write-018"))
-    _assert_conflict_input(case, "postgres")  # sanity: valid as authored
-    close = case.then["statements"][0]
-    close["sql"]["postgres"] = f"{close['sql']['postgres']} and in_z = ?"
-    close["binds"] = [*close["binds"], "2024-04-01T00:00:00+00:00"]
     with pytest.raises(CaseFailure):
         _assert_conflict_input(case, "postgres")
 

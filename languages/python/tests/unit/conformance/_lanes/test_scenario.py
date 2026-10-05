@@ -2887,10 +2887,10 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
 
 
 def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() -> None:
-    # m-txtime-write-006: a temporal optimistic-lock CLOSE conflict (`when.at` /
+    # m-temporal-read-010: a temporal optimistic-lock CLOSE conflict (`when.at` /
     # `when.observedTxStart`, no `observedVersion`) is driven through
     # `handle.plan_temporal_close`, not the non-temporal versioned-UPDATE path.
-    case = _load_case("m-txtime-write-006")
+    case = _load_case("m-temporal-read-010")
     port = FakeWritePort()
     emissions, affected, table_state, _round_trips = scenario.run_conflict_case(case, port)
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -2898,7 +2898,7 @@ def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() ->
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     )
     assert affected == 1
-    assert len(port.writes) == 1
+    assert len(port.writes) == 3  # given.apply's two statements + the close
     assert table_state is not None and "balance" in table_state
 
 
