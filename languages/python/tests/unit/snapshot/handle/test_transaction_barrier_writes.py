@@ -1,9 +1,5 @@
 """Non-Temporal writes on either side of a readless predicate write, through the
-public verbs (scripted port).
-
-A readless predicate write is an ordering barrier: it does not say which rows
-it matches, so moving a write across it could change what either one writes.
-"""
+public verbs (scripted port)."""
 
 from __future__ import annotations
 

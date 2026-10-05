@@ -322,6 +322,16 @@ def test_a_flush_failure_reported_before_the_groups_last_flush_is_refused(damage
         assert_judged(case)
 
 
+def test_a_list_constructed_after_pending_writes_leaves_them_to_commit(damaged_case) -> None:
+    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    steps = case.when["scenario"]
+    steps.insert(4, {"uow": "ours", "objectQuery": steps[0]["objectQuery"], "roundTrips": 0})
+    assert_judged(case)
+    case.then["units"]["ours"]["flushFailure"]["at"] = 4
+    with pytest.raises(CaseFailure, match="last flush runs at 'commit'"):
+        assert_judged(case)
+
+
 # --- what a failed step leaves behind ---------------------------------------
 
 

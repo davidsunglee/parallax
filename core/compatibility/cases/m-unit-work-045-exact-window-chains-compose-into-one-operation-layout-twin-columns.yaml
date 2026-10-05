@@ -1,8 +1,3 @@
-# Exact-window chains of caller-addressed and observed writes compose into one
-# operation per window (m-unit-work Observed-State Coalescing, m-bitemp-write
-# Caller-addressed writes span their requested extent). Each group writes one span's
-# window [validFrom, until) inside the rectangle its own read observed, and flushes it
-# at commit, at the group's one Transaction Instant.
 model: models/buffered-sequence-layout-twin-columns.yaml
 tags: [m-unit-work, m-bitemp-write, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, composition, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario

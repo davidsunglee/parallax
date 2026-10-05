@@ -1,8 +1,3 @@
-# A readless predicate write is an ordering barrier: a span's writes on each side of it
-# execute on their own sides, and a later one carries the condition an earlier unit of
-# the same flush proved (m-unit-work Buffered, batched, ordered writes; m-bitemp-write
-# Barrier continuation). Every group's effects stand at its one Transaction Instant,
-# with no history of its own.
 model: models/buffered-sequence-layout-twin-document.yaml
 tags: [m-bitemp-write, m-unit-work, m-batch-write, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, readless, barrier, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario

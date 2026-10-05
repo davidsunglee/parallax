@@ -1,6 +1,3 @@
-# No two writes combine across a readless predicate write, which is an ordering
-# barrier (m-unit-work Buffered, batched, ordered writes): the predicate observes
-# exactly what was buffered before it.
 model: models/buffered-sequence-layout-twin-columns.yaml
 tags: [m-unit-work, m-batch-write, m-opt-lock, m-read-lock, m-storage-layout, m-sql, scenario, readless, barrier, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario

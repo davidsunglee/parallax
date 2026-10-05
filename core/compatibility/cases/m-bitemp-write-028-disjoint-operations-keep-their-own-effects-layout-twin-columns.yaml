@@ -1,7 +1,3 @@
-# Writes of one span over disjoint windows stand as separate operations, each with its
-# own condition, even where one stored rectangle holds both starts (m-bitemp-write
-# Disjoint operations, m-unit-work Observed-State Coalescing). A flush transforms each
-# original once.
 model: models/buffered-sequence-layout-twin-columns.yaml
 tags: [m-bitemp-write, m-unit-work, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, disjoint, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario

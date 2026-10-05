@@ -1,10 +1,4 @@
-"""A state-graded Scenario, and every group's fate.
-
-A state-graded case carries no golden SQL, so the package executes none of it and
-grades only that its stated rows are consistent with the rows it starts from. Each
-test seeds one mistake a check must catch beside a control that passes, and goes
-through the package's one export.
-"""
+"""A state-graded Scenario, and every group's fate."""
 
 from __future__ import annotations
 

@@ -425,7 +425,7 @@ def _valid_keyed_entry_entity(
             f"attributes or value objects of {entity_name}"
         )
         return None
-    condition = _target_condition_refusal(entity, instruction) if isinstance(row, dict) else None
+    condition = _target_refusal(entity, instruction) if isinstance(row, dict) else None
     if condition is not None:
         errors.append(f"{entry_label}: {condition}")
         return None
@@ -437,15 +437,24 @@ def _valid_keyed_entry_entity(
     return entity
 
 
-def _target_condition_refusal(entity: Entity, instruction: dict[str, Any]) -> str | None:
-    """Why a caller-addressed submission's revision or window does not fit its
-    target, or ``None`` (`m-unit-work` *Caller-addressed writes*).
+def _target_refusal(entity: Entity, instruction: dict[str, Any]) -> str | None:
+    """Why a caller-addressed submission's key, revision or window does not fit
+    its target, or ``None`` (`m-unit-work` *Caller-addressed writes*).
 
-    The model selects both, which the case schema cannot see: a temporal target
-    states ``ifTxStart``, a versioned Non-Temporal one ``ifVersion``, and an
-    unversioned one neither; a Bitemporal target states ``validFrom``, and a
-    Transaction-Time-Only or Non-Temporal one no window.
+    The model selects all three, which the case schema cannot see: the row states
+    every primary-key member; a temporal target states ``ifTxStart``, a versioned
+    Non-Temporal one ``ifVersion``, and an unversioned one neither; a Bitemporal
+    target states ``validFrom``, and a Transaction-Time-Only or Non-Temporal one
+    no window.
     """
+    row = instruction["row"]
+    unkeyed = [
+        attribute["name"]
+        for attribute in entity.attributes
+        if attribute.get("primaryKey") and attribute["name"] not in row
+    ]
+    if unkeyed:
+        return f"a caller-addressed write of {entity.name} states no primary key {unkeyed}"
     axes = {axis.dimension for axis in temporal_axes(entity.runtime_facts)}
     versioned = any(attribute.get("optimisticLocking") for attribute in entity.attributes)
     revision = "ifTxStart" if axes else "ifVersion" if versioned else None
