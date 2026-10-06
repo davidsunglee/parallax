@@ -37,7 +37,7 @@ pending. The point read protects that one row; the later rectangles a temporal
 write's window reaches are read under the same lock inside the flush.
 
 A write under Locking that leaves a locked row exactly as it was
-(`m-unit-work` *Unchanged milestones*) issues no statement for it: the lock taken
+(`m-temporal-write` *Unchanged milestones*) issues no statement for it: the lock taken
 when the row was read, or read for the write inside its flush, holds until the
 transaction ends, so the row is still what was read and no optimistic guard is
 added. The lock protects only the rows read under it; the starting-row lock a
@@ -61,7 +61,7 @@ on both:
   (`m-opt-lock`). Observing one rectangle licenses closing that rectangle alone.
   An observed keyed write whose requested extent reaches rectangles no read of
   it observed therefore reads them inside the flush before changing them
-  (`m-bitemp-write` *Observed writes span their requested extent*), and under
+  (`m-temporal-write` *Observed writes span their requested extent*), and under
   Locking that read takes this same shared lock on every row it selects.
 - A temporal observation names **one milestone** and records nothing about the
   read that produced it, so what it says about lock scope is exactly what this

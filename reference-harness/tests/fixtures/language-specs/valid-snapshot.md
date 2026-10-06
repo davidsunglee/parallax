@@ -45,6 +45,7 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
 | `m-sql` | `sql` |
 | `m-relationship` | `relationship` |
 | `m-temporal-read` | `temporal-read` |
+| `m-temporal-write` | `temporal-write` |
 | `m-unit-work` | `unit-work` |
 | `m-value-object` | `value-object` |
 | `m-wire` | `wire` |

@@ -46,9 +46,11 @@ from parallax.core.write_plan.plan import (
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import (
+    TERMINATED,
     Finite,
     PlannedClose,
     PlannedInsert,
+    PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedWrite,
 )
@@ -62,11 +64,16 @@ from tests.unit.core.unit_work._ownership_support import OpenedRows
 _SPANS = model("buffered-sequence-layout-twin-columns")
 _SPAN = EntityIdentity("parallax.compatibility", "SequenceSpan")
 _T0 = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
+_T1 = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 _PLANNED_AT = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
-_JAN, _MAR, _JUN, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 6, 9))
+_JAN, _MAR, _APR, _MAY, _JUN, _JUL, _SEP = (
+    dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 4, 5, 6, 7, 9)
+)
 
 
-def _span(start: dt.datetime, end: object, amount: int) -> PredecessorRow:
+def _span(
+    start: dt.datetime, end: object, amount: int, tx_start: dt.datetime = _T0
+) -> PredecessorRow:
     return PredecessorRow(
         members={
             "id": 1,
@@ -75,7 +82,7 @@ def _span(start: dt.datetime, end: object, amount: int) -> PredecessorRow:
             "memo": None,
             "validStart": start,
             "validEnd": end,
-            "txStart": _T0,
+            "txStart": tx_start,
             "txEnd": INFINITY,
         }
     )
@@ -120,7 +127,11 @@ def _target(valid_from: dt.datetime, until: dt.datetime) -> BufferItem:
     return target_write(prepared, inheritance.view(_SPANS))
 
 
-def _plan(*writes: BufferItem, instant: TransactionInstant | None = None) -> WritePlan:
+def _plan(
+    *writes: BufferItem,
+    instant: TransactionInstant | None = None,
+    ownership: Ownership = NO_OWNERSHIP,
+) -> WritePlan:
     return (
         build_write_planner(_SPANS)
         .finalize(
@@ -129,6 +140,7 @@ def _plan(*writes: BufferItem, instant: TransactionInstant | None = None) -> Wri
                 transaction_instant=instant or instant_at(_PLANNED_AT.isoformat()),
                 concurrency="optimistic",
                 buffered_writes=compose_writes(_SPANS, list(writes)),
+                ownership=ownership,
             )
         )
         .plan
@@ -299,3 +311,45 @@ def test_a_planner_binds_only_a_deferred_range_it_finalized() -> None:
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at(_PLANNED_AT.isoformat()),
         )
+
+
+@pytest.mark.parametrize(
+    ("ownership", "retired"),
+    [
+        (NO_OWNERSHIP, PlannedClose),
+        (
+            OpenedRows(frozenset({OwnedEndpoint(_SPAN, (1,), (Finite(instant=_JUN), OPEN_END))})),
+            PlannedTemporalRemoval,
+        ),
+    ],
+    ids=["stored", "opened-by-the-attempt"],
+)
+def test_an_overlapped_observation_is_retired_by_whoever_owns_its_row(
+    ownership: Ownership, retired: type[PlannedWrite]
+) -> None:
+    earlier = _retained(_span(_JAN, _JUN, 100))
+    later = _retained(_span(_MAR, INFINITY, 200, tx_start=_T1))
+    plan = _plan(_update(earlier, _MAR, _APR), _update(later, _MAY, _JUL), ownership=ownership)
+    (unit,) = plan.units
+    assert unit.deferred is None
+    validation, closing, *successors = plan.steps
+    # The earlier observation is only validated: it retires its own row ahead
+    # of the later one's close, and every successor derives from the later one.
+    assert type(validation) is retired
+    assert validation.target.end_values == (Finite(instant=_JUN), OPEN_END)  # type: ignore[union-attr]
+    if isinstance(validation, PlannedClose):
+        assert validation.cause is TERMINATED
+    assert isinstance(closing, PlannedClose)
+    assert closing.concurrency.observed_start == _T1  # type: ignore[union-attr]
+    assert _windows(successors) == [
+        (_MAR, _APR, 300),
+        (_APR, _MAY, 200),
+        (_MAY, _JUL, 300),
+        (_JUL, INFINITY, 200),
+    ]
+    assert tuple(unit.changed) == (earlier.key, later.key)
+    assert tuple(unit.removed) == (
+        ()
+        if retired is PlannedClose
+        else (OwnedEndpoint(_SPAN, (1,), (Finite(instant=_JUN), OPEN_END)),)
+    )

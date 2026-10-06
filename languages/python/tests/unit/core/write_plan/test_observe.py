@@ -322,8 +322,10 @@ def test_a_mapping_backed_predecessor_carries_only_its_own_stored_values() -> No
     assert not predecessor.carries(_TAGS, ())
 
 
-def test_a_mapping_backed_predecessor_refuses_a_member_its_selection_lacks() -> None:
-    with pytest.raises(ValueError, match="'nickname' is not a member"):
+def test_a_predecessor_member_its_selection_lacks_is_a_broken_invariant() -> None:
+    # Row construction and case ingress refuse an undeclared logical member, so
+    # one reaching identity mapping is a defect, never an input to report.
+    with pytest.raises(AssertionError, match="'nickname' is not a selection member"):
         PredecessorRow({"id": 7, "nickname": "Ada"}).identity_maps(_SELECTION)
 
 

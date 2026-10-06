@@ -99,7 +99,7 @@ class TransactionTimePinReadOnlyError(ValueError):
     transaction-time-pin-read-only`` (`m-conformance-adapter`), distinct from
     the `m-db-error` database taxonomy. A ``LATEST`` Transaction-Time pin and
     a finite Valid-Time pin stay writable — the Valid-Time case is the
-    retroactive correction that lowers to the `m-bitemp-write` rectangle
+    retroactive correction that lowers to the `m-temporal-write` rectangle
     split."""
 
     code: Final[str] = "transaction-time-pin-read-only"
@@ -496,7 +496,7 @@ def validate_source_pin(identity: EntityIdentity, pin: Pin | None) -> None:
     :class:`TransactionTimePinReadOnlyError` at the verb call, before any
     buffering, so no DML is ever emitted. An absent pin, a ``LATEST``
     Transaction-Time pin, and a finite Valid-Time pin all pass — the finite
-    Valid-Time pin is the writable retroactive correction (`m-bitemp-write`).
+    Valid-Time pin is the writable retroactive correction (`m-temporal-write`).
     Shared by both keyed doors of the ingress and by the conformance engine's
     scenario ``mutate`` grading, so the callers can never drift. The
     predicate-selected ``_where`` family needs no counterpart: a set-based write

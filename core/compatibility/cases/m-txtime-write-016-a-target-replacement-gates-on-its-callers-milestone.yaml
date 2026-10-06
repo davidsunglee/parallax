@@ -1,5 +1,5 @@
 model: models/balance.yaml
-tags: [m-txtime-write, m-opt-lock, m-unit-work, m-sql, write-sequence, audit-only, slice-snapshot-1, slice-managed-1]
+tags: [m-txtime-write, m-temporal-write, m-opt-lock, m-unit-work, m-sql, write-sequence, audit-only, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   uow:

@@ -1662,7 +1662,7 @@ def test_a_bounded_terminate_of_a_pending_insert_leaves_its_tail_and_refuses_a_r
 
 def test_an_insert_after_a_bounded_terminate_of_a_flushed_insert_is_still_refused() -> None:
     # The same verb over a row the flush already wrote holes only
-    # `[valid_from, until)` and preserves head and tail (m-bitemp-write), so the
+    # `[valid_from, until)` and preserves head and tail (m-temporal-write), so the
     # object is anything but absent — and the ledger keeps it, because the
     # insert it holds is no longer pending. The re-opening is a repeat.
     port = ScriptedAdapter(Transact(Write(), Read(rows=[_position_row_dt()]), Write(times=6)))

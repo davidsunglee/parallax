@@ -356,7 +356,11 @@ class PredecessorRow:
         self, selection: EntityMemberSelection
     ) -> tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object]]:
         """One fresh pair of this row's members keyed by ``selection``'s
-        identities, each value the row's own cell or a view over it."""
+        identities, each value the row's own cell or a view over it.
+
+        Every member is one ``selection`` declares: whoever builds a Predecessor
+        Row refuses any other logical member name first, so meeting one here is
+        a broken invariant rather than an input error."""
         attributes: dict[AttributeIdentity, object] = {}
         value_objects: dict[ValueObjectIdentity, object] = {}
         if self._selection is selection:
@@ -374,8 +378,7 @@ class PredecessorRow:
             return attributes, value_objects
         for name, value in self.members.items():
             binding = selection.binding(name)
-            if binding is None:
-                raise ValueError(f"predecessor member {name!r} is not a member of the selection")
+            assert binding is not None, f"predecessor member {name!r} is not a selection member"
             if isinstance(binding, AttributeMetadata):
                 attributes[binding.identity] = value
             else:

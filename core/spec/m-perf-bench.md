@@ -50,7 +50,7 @@ the spec calls out:
 | **query mix** (point + range reads) | the point and range reads `m-predicate` / `m-sql` compile to, paired with the query-cache hit a caching target serves without one (`m-process-cache`) | `read-mix.yaml` |
 | **deep-fetch shapes** (to-one, to-many, multi-hop) | `m-deep-fetch`'s N+1-eliminated fetch — `1 + levels` statements regardless of fan-out | `deep-fetch.yaml` |
 | **streamed delivery** (one result at several page sizes) | `m-snapshot-read` streamed delivery — that same `1 + levels` shape once per page, and the page-size / round-trip trade | `stream.yaml` |
-| **milestone workloads** (insert / update / terminate chains) | `m-txtime-write` milestone chaining — the close-and-chain write pair | `milestone-write.yaml` |
+| **milestone workloads** (insert / update / terminate chains) | `m-temporal-write` milestone chaining — the close-and-chain write pair | `milestone-write.yaml` |
 | **aggregation** (group-by / having) | the `m-agg` aggregate statement | folded into `read-mix.yaml` |
 
 **What the reference harness observes, in all five families.** A workload declares

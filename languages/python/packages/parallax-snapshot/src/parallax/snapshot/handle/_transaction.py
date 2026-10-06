@@ -232,7 +232,7 @@ class Transaction:
         was authored with — and applies to every interval of the object's current
         coverage from there: through infinity when ``until`` is omitted, or up to
         the exclusive ``until``. Each interval keeps its own unassigned members,
-        and gaps stay gaps (`m-bitemp-write`). A source read at Valid-Time
+        and gaps stay gaps (`m-temporal-write`). A source read at Valid-Time
         ``LATEST`` names no start and is refused. ``until`` follows
         :meth:`insert`'s rules, and is judged at THIS call even when the set is
         empty."""
@@ -311,7 +311,7 @@ class Transaction:
     ) -> None:
         """Buffer a keyed terminate: end ``node_or_instance``'s current coverage,
         keyed off its primary key alone (the temporal delete-equivalent,
-        `m-txtime-write` / `m-bitemp-write`).
+        `m-temporal-write`).
 
         A Transaction-Time-Only target closes its current milestone. A Bitemporal
         one starts where its source was read, as :meth:`update` does, and ends

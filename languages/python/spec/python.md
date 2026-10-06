@@ -317,6 +317,7 @@ tree fails the sync check.
 | `m-sql` | `parallax.core.sql_gen` |
 | `m-storage-layout` | `parallax.core.storage_layout` |
 | `m-temporal-read` | `parallax.core.temporal_read` |
+| `m-temporal-write` | `parallax.core.temporal_write` |
 | `m-txtime-write` | `parallax.core.txtime_write` |
 | `m-unit-work` | `parallax.core.unit_work` |
 | `m-value-object` | `parallax.core.value_object` |

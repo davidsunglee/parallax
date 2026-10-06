@@ -121,6 +121,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-execution-lifecycle": "parallax.core.execution_lifecycle",
     "m-opt-lock": "parallax.core.opt_lock",
     "m-temporal-read": "parallax.core.temporal_read",
+    "m-temporal-write": "parallax.core.temporal_write",
     "m-txtime-write": "parallax.core.txtime_write",
     "m-bitemp-write": "parallax.core.bitemp_write",
     "m-batch-write": "parallax.core.batch_write",

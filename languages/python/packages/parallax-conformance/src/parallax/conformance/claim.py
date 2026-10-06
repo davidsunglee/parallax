@@ -96,6 +96,7 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-sql",
         "m-storage-layout",
         "m-temporal-read",
+        "m-temporal-write",
         "m-txtime-write",
         "m-unit-work",
         "m-value-object",

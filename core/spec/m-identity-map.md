@@ -74,19 +74,18 @@ the key and the resulting object identities are mandated.
 A managed **temporal** object is a *view of its milestone timeline pinned at its
 coordinates*, not a copy of one row:
 
-- After an in-transaction milestone-chaining write (`m-txtime-write`,
-  `m-bitemp-write`), **every held view reflects the post-write timeline at its
+- After an in-transaction milestone-chaining write (`m-temporal-write`), **every held view reflects the post-write timeline at its
   own pin**: a latest-pinned view shows the newly chained milestone; a view
   pinned at a finite past instant keeps showing the milestone its pin selects.
 - A view pinned at a **finite Transaction-Time instant** is **read-only** — this
-  lifecycle's instance of `m-txtime-write`'s invariant that the Transaction-Time
+  lifecycle's instance of `m-temporal-write`'s invariant that the Transaction-Time
   past is never rewritten. Mutating such a view raises the neutral
   **`transaction-time-pin-read-only`** error and emits no DML — an
   application-lifecycle error, distinct from the `m-db-error` taxonomy, asserted
   by a compatibility case with a step-level
   `expectError: transaction-time-pin-read-only` (`m-case-format`) and graded by
   the API Conformance Suite. A finite Valid-Time pin is writable: mutating it is
-  the retroactive correction that lowers to the `m-bitemp-write` rectangle split.
+  the retroactive correction that lowers to the `m-temporal-write` rectangle split.
 - A `history` / `asOfRange` read materializes **one view per milestone**, each
   interned at its **edge pin** — the milestone's own from-instant, the one
   instant guaranteed to select exactly that milestone (`m-temporal-read`,

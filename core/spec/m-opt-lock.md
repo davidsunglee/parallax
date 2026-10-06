@@ -227,7 +227,7 @@ A temporal caller-addressed write states the Transaction-Time start of the
 milestone it starts from instead (`ifTxStart`): the starting inactivation's gate
 binds it under Optimistic, and under Locking the locked read's `in_z` is compared
 with it. Every later milestone the write's window reaches is gated on its own
-`in_z`, read inside the flush (`m-bitemp-write` *Caller-addressed writes span
+`in_z`, read inside the flush (`m-temporal-write` *Caller-addressed writes span
 their requested extent*).
 
 ### Empty updates issue no DML
@@ -251,10 +251,12 @@ source it admitted. Each observed rectangle it reaches is inactivated with that
 rectangle's own gate, so a source that went stale fails its statement whether
 or not any of its values survived the composition. Two observations of one
 object whose rectangles overlap cannot both be current: the later-authored one
-is the rectangle the composition rewrites, and the earlier is closed on its own
-gated address before anything is opened, so a lost condition aborts the unit of
-work before the composition writes anything new. A rectangle the flush read
-for the range (`m-bitemp-write` *Observed writes span their requested extent*)
+is the rectangle the composition rewrites, and the earlier is retired on its own
+gated address before anything is opened — closed, or removed where the attempt
+opened it (`m-temporal-write` *An overlapped observation is retired, not
+transformed*) — so a lost condition aborts the unit of work before the
+composition writes anything new. A rectangle the flush read
+for the range (`m-temporal-write` *Observed writes span their requested extent*)
 is gated on the `in_z` that read observed, exactly as an observed one is.
 
 ### Predicate-selected writes materialize when observations are needed
@@ -324,7 +326,7 @@ retriable conflict under Optimistic, a distinct non-retriable stale/consistency
 error under Locking.
 
 A milestone an observed or insertion-authored write leaves unchanged
-(`m-unit-work` *Unchanged milestones*) is not closed, and under Optimistic the
+(`m-temporal-write` *Unchanged milestones*) is not closed, and under Optimistic the
 same gate rides a **guard** instead: an `UPDATE` of that milestone's own address
 that assigns its `in_z` to itself, binds the observed `in_z` last, and **MUST**
 affect exactly one row. A zero-row guard is the same retriable conflict a stale
@@ -340,7 +342,7 @@ statement is issued for it (`m-read-lock`). A caller-stated `ifTxStart` is never
 satisfied by a guard: a caller-addressed write asked for the revision.
 
 The write shapes and the current-row-predicate-is-not-a-gate
-rationale are `m-txtime-write` / `m-bitemp-write`; the conflict/retry contract is
+rationale are `m-temporal-write`; the conflict/retry contract is
 this module (the `m-opt-lock --> m-temporal-read` composition edge). Combining an
 explicit `optimisticLocking` attribute with a temporal `temporality`
 profile is invalid

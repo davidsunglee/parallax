@@ -89,12 +89,24 @@ def decode_case_row(
     Timestamp leaf stays finite-only. A ``WireDecodingError`` surfaces as the
     :class:`~parallax.core.unit_work.instructions.InstructionRejectedError` Wire
     preparation raises for it.
+
+    A logical member name the family-effective selection does not declare is
+    refused rather than dropped: the row is the whole persisted state a later
+    write carries forward. Keys inside a Structured Column value are the
+    document's own and are not judged here.
     """
     position = inheritance.view(model).entity(entity.identity)
     if position is None:  # pragma: no cover - every accepted Entity has a view
         raise ValueError(f"{entity.identity.canonical}: no inheritance position")
+    shape = position.member_selection.shape
+    undeclared = sorted(name for name in row if shape.position(name) is None)
+    if undeclared:
+        raise ValueError(
+            f"{entity.identity.canonical}: a case row names {undeclared!r}, which the "
+            "Entity's family declares no member of"
+        )
     return prepare_authoring(
-        position.member_selection.shape,
+        shape,
         row,
         source_access=MAPPING_SOURCE_ACCESS,
         normalize_leaf=_CaseRowLeaves(_temporal_ends(model, entity)).normalize,

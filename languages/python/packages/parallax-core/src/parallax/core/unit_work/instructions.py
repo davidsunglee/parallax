@@ -791,7 +791,7 @@ def _temporal_delete_refusal(
 
     ``delete`` is physical row removal and carries no temporal meaning at all,
     so a target that milestones its rows spells its removal ``terminate`` and
-    rejects ``delete`` outright (`m-txtime-write` / `m-bitemp-write`). Settling
+    rejects ``delete`` outright (`m-temporal-write`). Settling
     one anyway would erase the history the target exists to keep.
     """
     if mutation != "delete":
@@ -812,7 +812,7 @@ def _non_temporal_milestone_refusal(
     ``terminate`` closes a milestone, and a non-temporal target has no axis to
     hold one; settling it anyway would keep its row effect and silently drop its
     temporal meaning, so the refusal names ``delete``, which keeps the row
-    effect (`m-txtime-write` / `m-bitemp-write`). Every bounded milestone verb
+    effect (`m-temporal-write`). Every bounded milestone verb
     states an ``until``, which the window judgment has already refused.
     """
     if mutation != "terminate":

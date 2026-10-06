@@ -67,7 +67,7 @@ def insert_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
     """Whether same-entity ``insert`` rows collapse into one multi-row ``INSERT``
     (`m-batch-write.md` "Batching is a membership decision"). ``False`` for a
     temporal entity (its keyed
-    writes are `m-txtime-write` / `m-bitemp-write` territory, never this
+    writes are `m-temporal-write` territory, never this
     module's decision) or a pk-gen-**managed** entity; ``True`` otherwise,
     versioned or not (the initial version is a derived constant, never an
     observation, `m-opt-lock.INITIAL_VERSION`)."""
@@ -110,9 +110,9 @@ def delete_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
     """Whether same-entity ``delete`` rows collapse into one
     ``DELETE ... WHERE id IN (...)`` statement (`m-batch-write.md` "Batching is a
     membership decision" — the delete analogue of the multi-row INSERT). ``False``
-    for a temporal entity (`terminate`/`terminateUntil` are `m-txtime-write` /
-    `m-bitemp-write` territory) or a VERSIONED one — a versioned entity's set-based
-    delete NEVER collapses: each row is removed under its own
+    for a temporal entity (`terminate`/`terminateUntil` are `m-temporal-write`
+    territory) or a VERSIONED one — a versioned entity's set-based delete NEVER
+    collapses: each row is removed under its own
     prior observation and its own exactly-one affected-row expectation, in
     either concurrency mode, and optimistic mode binds that row's version as its
     own gate on top (`m-batch-write-004` is the ungated locking form,

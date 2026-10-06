@@ -298,6 +298,24 @@ def test_case_row_decoding_takes_declared_axis_ends_to_the_managed_open_bound() 
     assert decoded["validEnd"] is INFINITY
 
 
+@pytest.mark.parametrize(
+    "row",
+    [
+        {**_STORED_SHIPMENT, "nickname": "Ada"},
+        {"id": 1, "validStart": "2024-01-01T00:00:00.000000Z", "nickname": "Ada"},
+    ],
+    ids=["whole-row", "address-only"],
+)
+def test_case_row_decoding_refuses_a_logical_member_the_family_does_not_declare(
+    row: Mapping[str, object],
+) -> None:
+    # The row is the whole persisted state a later write carries forward, or
+    # retires with nothing carried, so a name decoding would drop is refused
+    # before any write sees the row.
+    with pytest.raises(ValueError, match=r"names \['nickname'\]"):
+        _case_ingress.decode_case_row(row, _SHIPMENT, _SHIPMENT_ENTITY)
+
+
 def test_case_row_decoding_recognizes_the_axis_ends_a_concrete_subtype_inherits() -> None:
     rate = models.load_models()["rate"]
     decoded = _case_ingress.decode_case_row(

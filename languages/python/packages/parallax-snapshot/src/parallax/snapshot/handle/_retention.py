@@ -480,7 +480,7 @@ def _temporal_observation(
     mentioned, and because the close's own address and gate are read off the same
     observed row rather than from separate per-axis fields. The bounds are the
     only members every consumer names; the rest ride through as the payload a
-    chained or split successor carries forward (`m-bitemp-write` "head/tail old
+    chained or split successor carries forward (`m-temporal-write` "head/tail old
     values"; `m-value-object` "the document rides every chained/split row
     whole").
 
