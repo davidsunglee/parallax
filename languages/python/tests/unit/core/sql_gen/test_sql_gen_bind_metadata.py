@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import math
 from decimal import Decimal
@@ -7,13 +8,15 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core import inheritance, storage_layout
+from parallax.core import deep_fetch, inheritance, storage_layout
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import DATE, FLOAT32, INFINITY, INT64, STRING, ManagedValue
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
 from parallax.core.predicate._validated import DeferredKeySet, ValidatedPredicate
+from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen import _predicate as sql_predicate
+from parallax.core.sql_gen._compile import CompiledTemplate, compile_read
 from parallax.core.sql_gen._context import (
     LoweredStatement,
     SqlGenError,
@@ -25,15 +28,10 @@ from parallax.core.sql_gen._context import (
 from parallax.core.sql_gen._predicate import EntityScope
 from parallax.core.unit_work import KeyedWrite
 from parallax.core.wire import loads
-from tests._support.binary32 import narrowed
 from tests._support.lowering_probes import lower_instruction
 from tests.unit._corpus_model_support import model as corpus_model
 
 WALLET = corpus_model("wallet")
-# Float32 carriers whose canonical Wire values differ from the carriers themselves,
-# so a projection that skips encoding cannot pass.
-_ONE_POINT_TWO = narrowed(1.2)
-_FLOAT32_KEYS = (_ONE_POINT_TWO, narrowed(0.1), narrowed(3.4))
 
 
 def _builder() -> StatementBuilder:
@@ -42,6 +40,23 @@ def _builder() -> StatementBuilder:
         inheritance.view(WALLET),
         storage_layout.view(WALLET),
         POSTGRES,
+    )
+
+
+def _template(statement: LoweredStatement, *, postgres_array: bool) -> CompiledTemplate:
+    entity = WALLET.entities[0]
+    compiled = compile_read(
+        deep_fetch.ValidatedEntityQuery(
+            target=entity.identity,
+            entity=entity,
+            validated_predicate=ValidatedPredicate(predicate_algebra.All()),
+            projection=deep_fetch.ResolvedReadProjection((), False),
+        ),
+        WALLET,
+        POSTGRES,
+    )
+    return sql_compile._template(  # pyright: ignore[reportPrivateUsage]
+        dataclasses.replace(compiled, statement=statement), postgres_array=postgres_array
     )
 
 
@@ -144,64 +159,6 @@ def test_framework_bind_can_report_an_explicit_wire_null() -> None:
     assert statement.wire_bind_overrides == (_WireBindOverride(0, None),)
 
 
-def test_expanding_a_key_set_grows_its_covering_span_and_moves_later_metadata() -> None:
-    builder = _builder()
-    builder.bind_framework("driver-infinity", wire_value="infinity")
-    builder.bind_managed("before", STRING)
-    builder.bind_managed(_ONE_POINT_TWO, FLOAT32)
-    builder.bind_managed(DeferredKeySet(FLOAT32), FLOAT32)
-    builder.bind_framework("driver-infinity", wire_value="infinity")
-    builder.bind_comparison_text("after", STRING)
-    statement = builder.finish("select ?, ?, ?, ?, ?, ?")
-
-    expanded = statement.replace_bind(3, _FLOAT32_KEYS)
-
-    assert expanded.binds == (
-        "driver-infinity",
-        "before",
-        _ONE_POINT_TWO,
-        *_FLOAT32_KEYS,
-        "driver-infinity",
-        "after",
-    )
-    assert expanded.typed_bind_spans == (
-        _TypedBindSpan(1, 2, STRING, "MANAGED"),
-        _TypedBindSpan(2, 6, FLOAT32, "MANAGED"),
-        _TypedBindSpan(7, 8, STRING, "COMPARISON_TEXT"),
-    )
-    assert expanded.wire_bind_overrides == (
-        _WireBindOverride(0, "infinity"),
-        _WireBindOverride(6, "infinity"),
-    )
-    assert expanded.wire_binds() == (
-        "infinity",
-        "before",
-        1.2,
-        1.2,
-        0.1,
-        3.4,
-        "infinity",
-        "after",
-    )
-
-
-def test_an_array_key_set_reuses_the_statement_metadata_and_holds_the_keys_by_reference() -> None:
-    builder = _builder()
-    builder.bind_managed("before", STRING)
-    builder.bind_managed_array(DeferredKeySet(FLOAT32), FLOAT32)
-    builder.bind_framework("driver-infinity", wire_value="infinity")
-    statement = builder.finish("select ?, ?, ?")
-    keys = list(_FLOAT32_KEYS)
-
-    rendered = statement.replace_bind(1, (keys,))
-
-    assert rendered.binds[1] is keys
-    assert rendered.typed_bind_spans is statement.typed_bind_spans
-    assert rendered.wire_bind_overrides is statement.wire_bind_overrides
-    assert rendered.typed_bind_spans[1] == _TypedBindSpan(1, 2, FLOAT32, "MANAGED_ARRAY")
-    assert rendered.wire_binds() == ("before", [1.2, 0.1, 3.4], "infinity")
-
-
 @pytest.mark.parametrize("postgres_array", [False, True], ids=["mariadb", "postgres"])
 def test_multiple_key_occurrences_transform_surrounding_metadata_once(
     postgres_array: bool,
@@ -221,10 +178,10 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
     builder.bind_typed_rows((("a",), ("b",)), ((STRING, "MANAGED"),))
     member = "any(?)" if postgres_array else "(__parallax_deferred_keys__)"
     statement = builder.finish(f"select ?, ?, {member}, ?, ?, {member}, {member}, ?, ?, ?, ?")
-    template = statement.defer_keys(postgres_array=postgres_array)
+    template = _template(statement, postgres_array=postgres_array)
     indexes = (2, 5, 6)
     keys: list[ManagedValue] = [10, 20, 30]
-    rendered = template.render(keys)
+    rendered = template.render(keys).statement
     values: tuple[object, ...] = (keys,) if postgres_array else tuple(keys)
     assert rendered.binds == (
         "leading-driver",
@@ -271,7 +228,7 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
         )
     assert keys == [10, 20, 30]
     assert statement.binds[2] is statement.binds[5] is statement.binds[6] is marker
-    again = template.render([40])
+    again = template.render([40]).statement
     assert again.typed_bind_spans is statement.typed_bind_spans
     assert again.wire_bind_overrides is statement.wire_bind_overrides
     assert rendered.binds != again.binds
@@ -285,7 +242,7 @@ def test_a_deferred_set_cannot_be_inserted_into_repeated_write_row_metadata() ->
         (_RepeatedTypedBindSpan(0, 1, 1, 2, STRING, "MANAGED"),),
     )
     with pytest.raises(SqlGenError, match="repeated row-bind metadata"):
-        statement.defer_keys(postgres_array=False)
+        _template(statement, postgres_array=False)
 
 
 @pytest.mark.parametrize("form", ["MANAGED", "MANAGED_ARRAY"])

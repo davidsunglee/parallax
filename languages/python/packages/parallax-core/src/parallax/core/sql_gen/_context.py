@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, field, replace
-from itertools import chain
+from dataclasses import dataclass, field
+from itertools import islice
 from typing import Literal, Protocol, cast
 
 from parallax.core.base import (
@@ -54,9 +54,6 @@ class _TypedBindSpan:
 
     def shifted(self, offset: int) -> _TypedBindSpan:
         return _TypedBindSpan(self.start + offset, self.stop + offset, self.neutral_type, self.form)
-
-    def resized(self, growth: int) -> _TypedBindSpan:
-        return _TypedBindSpan(self.start, self.stop + growth, self.neutral_type, self.form)
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,131 +127,69 @@ class LoweredStatement:
                 projected[index] = _wire_bind(self.binds[index])
         return cast("tuple[WireValue, ...]", tuple(projected))
 
-    def replace_bind(self, index: int, values: Sequence[object]) -> LoweredStatement:
-        """Replace one bind with ``values``, which the typed span covering it then covers."""
-        binds = (*self.binds[:index], *values, *self.binds[index + 1 :])
+    def deferred_key_markers(self) -> tuple[int, ...]:
+        """Every bind position of this statement's one deferred key set, which a
+        table-per-concrete-subtype union places once per branch."""
+        binds = self.binds
+        markers = tuple(
+            [index for index, value in enumerate(binds) if isinstance(value, DeferredKeySet)]
+        )
+        if not markers or any(binds[index] is not binds[markers[0]] for index in markers):
+            raise SqlGenError("a child read template must carry exactly one deferred key set")
+        for span in self._typed_bind_spans:
+            if not isinstance(span, _RepeatedTypedBindSpan):
+                continue
+            stop = span.start + (span.repetitions - 1) * span.stride + span.width
+            if bisect_left(markers, span.start) != bisect_left(markers, stop):
+                raise SqlGenError("a deferred key set cannot occupy repeated row-bind metadata")
+        return markers
+
+    def with_keys(
+        self, sql: str, markers: tuple[int, ...], values: Sequence[object]
+    ) -> LoweredStatement:
+        """This statement as ``sql``, with ``values`` in place of the bind at each of
+        ``markers``. A typed span covering a marker grows with it and later metadata
+        moves; when nothing grows, the statement's own metadata is reused."""
+        binds = self.binds
+        bound: list[object] = []
+        start = 0
+        for marker in markers:
+            bound += islice(binds, start, marker)
+            bound += values
+            start = marker + 1
+        bound += islice(binds, start, None)
         growth = len(values) - 1
         if not growth:
             return LoweredStatement(
-                self.sql,
-                binds,
+                sql,
+                tuple(bound),
                 self._typed_bind_spans,
                 self._wire_bind_overrides,
                 self._compiler_proven,
             )
-
-        def moved(span: _BindSpan) -> _BindSpan:
-            if span.start > index:
-                return span.shifted(growth)
-            if isinstance(span, _TypedBindSpan) and index < span.stop:
-                return span.resized(growth)
-            return span
-
-        return LoweredStatement(
-            self.sql,
-            binds,
-            tuple(moved(span) for span in self._typed_bind_spans),
-            tuple(
-                _WireBindOverride(override.index + growth, override.value)
-                if override.index > index
-                else override
-                for override in self._wire_bind_overrides
-            ),
-            self._compiler_proven,
-        )
-
-    def defer_keys(self, *, postgres_array: bool) -> DeferredKeyTemplate:
-        """Prepare all physical occurrences of one marker, compared by identity."""
-        indexes = tuple(
-            index for index, value in enumerate(self.binds) if isinstance(value, DeferredKeySet)
-        )
-        if not indexes or any(self.binds[index] is not self.binds[indexes[0]] for index in indexes):
-            raise SqlGenError("a child read template must carry exactly one deferred key set")
-        boundaries = (0, *(index + 1 for index in indexes))
-        runs = tuple(
-            self.binds[start:stop]
-            for start, stop in zip(boundaries, (*indexes, len(self.binds)), strict=True)
-        )
         spans = tuple(
-            (
-                span,
-                bisect_left(indexes, span.start),
-                bisect_left(
-                    indexes,
-                    span.stop
-                    if isinstance(span, _TypedBindSpan)
-                    else span.start + (span.repetitions - 1) * span.stride + span.width,
-                ),
-            )
-            for span in self._typed_bind_spans
-        )
-        if any(
-            isinstance(span, _RepeatedTypedBindSpan) and before != after
-            for span, before, after in spans
-        ):
-            raise SqlGenError("a deferred key set cannot occupy repeated row-bind metadata")
-        overrides = tuple(
-            (override, bisect_left(indexes, override.index))
-            for override in self._wire_bind_overrides
-        )
-        return DeferredKeyTemplate(
-            self,
-            postgres_array,
-            runs,
-            spans,
-            overrides,
-            () if postgres_array else tuple(self.sql.split("__parallax_deferred_keys__")),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class DeferredKeyTemplate:
-    """Statement-owned access prepared once, without retaining execution keys."""
-
-    statement: LoweredStatement
-    postgres_array: bool
-    _runs: tuple[tuple[object, ...], ...]
-    _spans: tuple[tuple[_BindSpan, int, int], ...]
-    _overrides: tuple[tuple[_WireBindOverride, int], ...]
-    _sql_parts: tuple[str, ...]
-
-    def render(self, keys: list[ManagedValue]) -> LoweredStatement:
-        if not keys:
-            raise SqlGenError("a child read template requires at least one gathered key")
-        statement = self.statement
-        values = (keys,) if self.postgres_array else keys
-        binds = tuple(
-            chain(
-                chain.from_iterable(chain(run, values) for run in self._runs[:-1]),
-                self._runs[-1],
-            )
-        )
-        growth = len(values) - 1
-        if not growth:
-            spans = statement.typed_bind_spans
-            overrides = statement.wire_bind_overrides
-        else:
-            spans = tuple(
+            [
                 _TypedBindSpan(
-                    span.start + before * growth,
-                    span.stop + after * growth,
+                    span.start + bisect_left(markers, span.start) * growth,
+                    span.stop + bisect_left(markers, span.stop) * growth,
                     span.neutral_type,
                     span.form,
                 )
                 if isinstance(span, _TypedBindSpan)
-                else span.shifted(before * growth)
-                for span, before, after in self._spans
-            )
-            overrides = tuple(
-                replace(override, index=override.index + before * growth)
-                for override, before in self._overrides
-            )
-        sql = (
-            statement.sql
-            if self.postgres_array
-            else ", ".join("?" for _ in keys).join(self._sql_parts)
+                else span.shifted(bisect_left(markers, span.start) * growth)
+                for span in self._typed_bind_spans
+            ]
         )
-        return LoweredStatement(sql, binds, spans, overrides, statement.is_compiler_proven)
+        overrides = tuple(
+            [
+                _WireBindOverride(
+                    override.index + bisect_left(markers, override.index) * growth,
+                    override.value,
+                )
+                for override in self._wire_bind_overrides
+            ]
+        )
+        return LoweredStatement(sql, tuple(bound), spans, overrides, self._compiler_proven)
 
 
 def _typed_wire_bind(value: object, neutral_type: NeutralType, form: _BindForm) -> WireValue:

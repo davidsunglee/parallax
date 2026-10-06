@@ -34,7 +34,6 @@ from parallax.core.object_query._validated import (
 from parallax.core.predicate import Narrow, Or
 from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.sql_gen._context import (
-    DeferredKeyTemplate,
     LoweredStatement,
     SqlGenError,
     StatementBuilder,
@@ -374,12 +373,23 @@ class CompiledTemplate:
     """One compiled child read whose parent key set is supplied per execution."""
 
     compiled: CompiledRead
-    _keys: DeferredKeyTemplate
+    postgres_array: bool
+    _markers: tuple[int, ...]
+    _sql_parts: tuple[str, ...] = ()
 
     def render(self, keys: list[ManagedValue]) -> CompiledRead:
-        """Bind ``keys``; the Postgres array bind is the list itself, so the caller
-        hands it over and must not mutate it afterwards."""
-        return replace(self.compiled, statement=self._keys.render(keys))
+        """Bind ``keys`` at every position of the deferred key set; the Postgres array
+        bind is the list itself, so the caller hands it over and must not mutate it
+        afterwards."""
+        if not keys:
+            raise SqlGenError("a child read template requires at least one gathered key")
+        statement = self.compiled.statement
+        if self.postgres_array:
+            rendered = statement.with_keys(statement.sql, self._markers, (keys,))
+        else:
+            holes = ", ".join("?" for _ in keys)
+            rendered = statement.with_keys(holes.join(self._sql_parts), self._markers, keys)
+        return replace(self.compiled, statement=rendered)
 
 
 def compile_template(
@@ -392,8 +402,16 @@ def compile_template(
 ) -> CompiledTemplate:
     """Compile a child read once, deferring only its gathered parent keys."""
     compiled = compile_read(query, model, dialect, result_form=result_form, lock=lock)
+    return _template(compiled, postgres_array=dialect.name == "postgres")
+
+
+def _template(compiled: CompiledRead, *, postgres_array: bool) -> CompiledTemplate:
+    statement = compiled.statement
     return CompiledTemplate(
-        compiled, compiled.statement.defer_keys(postgres_array=dialect.name == "postgres")
+        compiled,
+        postgres_array,
+        statement.deferred_key_markers(),
+        () if postgres_array else tuple(statement.sql.split("__parallax_deferred_keys__")),
     )
 
 
