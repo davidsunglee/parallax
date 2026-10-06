@@ -39,6 +39,7 @@ from parallax.core.predicate._validated import framework_comparison as _framewor
 from parallax.core.predicate._validated import managed_comparison as _managed_comparison
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import (
+    TimeInterval,
     inject_resolved_as_of,
     resolved_pinned_instants,
     validated_hop_as_of_terms,
@@ -287,13 +288,13 @@ def plan_coverage_read(
     model: Metamodel,
     key: str,
     key_value: ManagedValue,
-    valid_from: ManagedValue | None,
-    until: ManagedValue | None,
+    valid_time_window: TimeInterval | None,
 ) -> ValidatedEntityQuery:
     """The one flat read of a temporal object's current coverage overlapping
-    ``[valid_from, until)`` — through the open bound when ``until`` is ``None``
-    — that an execution-bound range transforms. A Transaction-Time-Only object
-    has no Valid Time to bound, so its read selects its current row.
+    ``valid_time_window`` that an execution-bound range transforms, bounded by
+    the window's endpoints as they are, with no upper term where it runs to the
+    open bound. A Transaction-Time-Only object has no Valid Time to bound, so
+    its read selects its current row.
 
     Every row it selects is current on Transaction Time and is projected whole,
     every document included, because the range carries each row's unassigned
@@ -318,11 +319,14 @@ def plan_coverage_read(
         if axis.dimension is TemporalDimension.TRANSACTION_TIME:
             terms.append(_framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY))
             continue
-        assert valid_from is not None  # a Valid-Time axis bounds every range over it
+        assert valid_time_window is not None  # a Valid-Time axis bounds every range over it
         terms.append(
-            _managed_comparison(op="greaterThan", attr=end_ref, member=end, value=valid_from)
+            _managed_comparison(
+                op="greaterThan", attr=end_ref, member=end, value=valid_time_window.start
+            )
         )
-        if until is not None:
+        until = valid_time_window.end
+        if until is not INFINITY:
             terms.append(
                 _managed_comparison(op="lessThan", attr=start_ref, member=start, value=until)
             )

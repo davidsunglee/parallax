@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import datetime as dt
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
 from parallax.core import inheritance, temporal_read
-from parallax.core.base import INFINITY
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.temporal_read import TemporalShape, milestone_edge
+from parallax.core.temporal_read import TemporalShape, TimeInterval, milestone_edge
 from parallax.core.unit_work.claims import SettledEvidence, WriteIntent, keyed_intent
 from parallax.core.unit_work.columns import ChunkedColumnBuilder, ColumnSlice, whole
 from parallax.core.unit_work.instructions import (
@@ -19,7 +17,6 @@ from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     PreparedTargetWrite,
-    PreparedTemporalBounds,
     PreparedWrite,
     TargetExpectation,
     derive_opening,
@@ -39,7 +36,6 @@ from parallax.core.unit_work.temporal import (
     EMPTY_TRANSFORM,
     BoundPiece,
     TemporalTransform,
-    is_open_bound,
 )
 
 if TYPE_CHECKING:
@@ -486,7 +482,7 @@ class TemporalContribution:
     """
 
     kind: Literal["assignment", "destructive"]
-    bounds: PreparedTemporalBounds
+    valid_time_window: TimeInterval | None
     observation: WriteObservation | None
     claim: RetainedObservation | None
     condition: ExpectedTxStart | None = None
@@ -566,7 +562,7 @@ def temporal_contribution(item: TemporalKeyedWrite) -> TemporalContribution:
     expectation = item.expectation if isinstance(item, TargetKeyedWrite) else None
     return TemporalContribution(
         kind="assignment" if item.instruction.mutation in UPDATE_MUTATIONS else "destructive",
-        bounds=item.instruction.bounds,
+        valid_time_window=item.instruction.valid_time_window,
         observation=item.observation if observed else None,
         claim=item.claim if observed else None,
         condition=expectation if isinstance(expectation, ExpectedTxStart) else None,
@@ -628,14 +624,13 @@ def _composed_transform(
     *,
     replaces: bool = False,
 ) -> TemporalTransform:
-    bounds = instruction.bounds
     assigned = (
         {name: value for name, value in instruction.rows[0].items() if name != key_name}
         if instruction.mutation in UPDATE_MUTATIONS
         else None
     )
     return transform.then(
-        valid_from=bounds.valid_from, until=bounds.until, assigned=assigned, replaces=replaces
+        valid_time_window=instruction.valid_time_window, assigned=assigned, replaces=replaces
     )
 
 
@@ -678,24 +673,21 @@ class PendingOpening:
         row = insert.rows[0]
         pieces: list[PreparedKeyedWrite] = []
         for piece in self._bound_pieces():
-            assert isinstance(piece.start, dt.datetime)  # an opening's own bound or an edit's
-            end = piece.end
+            coverage = piece.valid_time_coverage
+            assert coverage is not None  # a Bitemporal opening's pieces lie on Valid Time
             pieces.append(
                 derive_opening(
                     insert,
                     row if piece.assigned is None else {**row, **piece.assigned},
-                    valid_from=piece.start,
-                    until=None if is_open_bound(end) else cast("dt.datetime", end),
+                    valid_time_window=coverage,
                 )
             )
         return tuple(pieces)
 
     def _bound_pieces(self) -> tuple[BoundPiece, ...]:
-        bounds = self.insert.bounds
-        valid_from = bounds.valid_from
-        assert valid_from is not None  # a Bitemporal opening states its start
-        until = bounds.until
-        return self.transform.pieces(valid_from, INFINITY if until is None else until)
+        window = self.insert.valid_time_window
+        assert window is not None  # a Bitemporal opening states its window
+        return self.transform.pieces(window)
 
 
 @dataclass(frozen=True, slots=True)

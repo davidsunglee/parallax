@@ -42,6 +42,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import AttributeIdentity
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work.plan import RangeAcquisition
 from tests._support.db_port import body_outcome
 from tests.unit.conformance._recording_ports import FakeWritePort
@@ -353,8 +354,7 @@ def test_fixture_seeding_tracks_current_milestones_with_managed_axis_ends() -> N
             entity=entity,
             key_attribute=AttributeIdentity(entity.identity, "id"),
             key_value=1,
-            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-            until=None,
+            valid_time_window=TimeInterval(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), INFINITY),
             locking=False,
         ),
     )

@@ -10,6 +10,7 @@ from typing import Final, Literal, cast, overload
 from parallax.core import inheritance, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import (
+    INFINITY,
     TIMESTAMP,
     InstantError,
     NeutralType,
@@ -40,6 +41,7 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.predicate import PredicateNode
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work.columns import freeze_retained_value
 from parallax.core.unit_work.planned import UNVERSIONED, Unversioned, ValidatedMutationSelection
 from parallax.core.unit_work.write_validate import WriteRejectedError, validate_write
@@ -62,7 +64,6 @@ __all__ = [
     "PreparedKeyedWrite",
     "PreparedPredicateWrite",
     "PreparedTargetWrite",
-    "PreparedTemporalBounds",
     "PreparedWrite",
     "TargetExpectation",
     "TargetMutation",
@@ -289,14 +290,6 @@ WriteInstruction = KeyedWrite | PredicateWrite | TargetWrite
 
 
 @dataclass(frozen=True, slots=True)
-class PreparedTemporalBounds:
-    """Managed Valid-Time bounds retained as one inseparable semantic value."""
-
-    valid_from: dt.datetime | None
-    until: dt.datetime | None
-
-
-@dataclass(frozen=True, slots=True)
 class PreparedAssignment:
     """One resolved assignment member and its owned managed value."""
 
@@ -314,28 +307,30 @@ class PreparedAssignment:
 class PreparedKeyedWrite:
     """A keyed mutation over an exact resolved target and owned managed rows.
 
-    Only this module's producers construct one, so holding one means the write
-    was judged admissible against its target.
+    ``valid_time_window`` is the judged window, ``None`` for a target without
+    Valid Time. Only this module's producers construct one, so holding one
+    means the write was judged admissible against its target.
     """
 
     mutation: KeyedMutation
     target: EntityMetadata
     rows: tuple[Mapping[str, object], ...]
-    bounds: PreparedTemporalBounds
+    valid_time_window: TimeInterval | None
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class PreparedPredicateWrite:
     """A predicate mutation over a resolved selection and managed assignments.
 
-    Only this module's producers construct one, so holding one means the write
-    was judged admissible against its target.
+    ``valid_time_window`` is the judged window, ``None`` for a target without
+    Valid Time. Only this module's producers construct one, so holding one
+    means the write was judged admissible against its target.
     """
 
     mutation: PredicateMutation
     selection: ValidatedMutationSelection
     managed_assignments: tuple[PreparedAssignment, ...]
-    bounds: PreparedTemporalBounds
+    valid_time_window: TimeInterval | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,7 +358,8 @@ than a missing one."""
 @dataclass(frozen=True, slots=True, init=False)
 class PreparedTargetWrite:
     """A caller-addressed write over an exact resolved target, its owned managed
-    row, its bounds, and its validated starting expectation.
+    row, its judged Valid-Time window — ``None`` for a target without Valid
+    Time — and its validated starting expectation.
 
     ``replaces`` distinguishes a complete replacement, whose row states every
     writable member, from a sparse patch, whose row states only the members it
@@ -376,7 +372,7 @@ class PreparedTargetWrite:
     assigns: bool
     target: EntityMetadata
     row: Mapping[str, object]
-    bounds: PreparedTemporalBounds
+    valid_time_window: TimeInterval | None
     expectation: TargetExpectation
 
 
@@ -388,13 +384,13 @@ def _prepared_keyed_write(
     mutation: KeyedMutation,
     target: EntityMetadata,
     rows: tuple[Mapping[str, object], ...],
-    bounds: PreparedTemporalBounds,
+    valid_time_window: TimeInterval | None,
 ) -> PreparedKeyedWrite:
     prepared = object.__new__(PreparedKeyedWrite)
     object.__setattr__(prepared, "mutation", mutation)
     object.__setattr__(prepared, "target", target)
     object.__setattr__(prepared, "rows", rows)
-    object.__setattr__(prepared, "bounds", bounds)
+    object.__setattr__(prepared, "valid_time_window", valid_time_window)
     return prepared
 
 
@@ -402,13 +398,13 @@ def _prepared_predicate_write(
     mutation: PredicateMutation,
     selection: ValidatedMutationSelection,
     managed_assignments: tuple[PreparedAssignment, ...],
-    bounds: PreparedTemporalBounds,
+    valid_time_window: TimeInterval | None,
 ) -> PreparedPredicateWrite:
     prepared = object.__new__(PreparedPredicateWrite)
     object.__setattr__(prepared, "mutation", mutation)
     object.__setattr__(prepared, "selection", selection)
     object.__setattr__(prepared, "managed_assignments", managed_assignments)
-    object.__setattr__(prepared, "bounds", bounds)
+    object.__setattr__(prepared, "valid_time_window", valid_time_window)
     return prepared
 
 
@@ -417,7 +413,7 @@ def _prepared_target_write(
     assigns: bool,
     target: EntityMetadata,
     row: Mapping[str, object],
-    bounds: PreparedTemporalBounds,
+    valid_time_window: TimeInterval | None,
     expectation: TargetExpectation,
 ) -> PreparedTargetWrite:
     prepared = object.__new__(PreparedTargetWrite)
@@ -425,23 +421,24 @@ def _prepared_target_write(
     object.__setattr__(prepared, "assigns", assigns)
     object.__setattr__(prepared, "target", target)
     object.__setattr__(prepared, "row", row)
-    object.__setattr__(prepared, "bounds", bounds)
+    object.__setattr__(prepared, "valid_time_window", valid_time_window)
     object.__setattr__(prepared, "expectation", expectation)
     return prepared
 
 
 def target_instruction(prepared: PreparedTargetWrite) -> PreparedKeyedWrite:
     """The keyed update a prepared target write executes as: its row, written
-    against the object its key names, over its bounds.
+    against the object its key names, over its window.
 
     A replacement's row already states every writable member, so the update
     is the replacement; nothing is judged again.
     """
+    window = prepared.valid_time_window
     return _prepared_keyed_write(
-        "update" if prepared.bounds.until is None else "updateUntil",
+        "update" if window is None or window.end is INFINITY else "updateUntil",
         prepared.target,
         (prepared.row,),
-        prepared.bounds,
+        window,
     )
 
 
@@ -456,28 +453,29 @@ def derive_keyed_write(
 ) -> PreparedKeyedWrite:
     """Derive a keyed prepared product while retaining owned values by identity."""
     sealed = tuple(cast("Mapping[str, object]", retain_document_value(row)) for row in rows)
-    return _prepared_keyed_write(prepared.mutation, prepared.target, sealed, prepared.bounds)
+    return _prepared_keyed_write(
+        prepared.mutation, prepared.target, sealed, prepared.valid_time_window
+    )
 
 
 def derive_opening(
     prepared: PreparedKeyedWrite,
     row: Mapping[str, object],
     *,
-    valid_from: dt.datetime,
-    until: dt.datetime | None,
+    valid_time_window: TimeInterval,
 ) -> PreparedKeyedWrite:
     """One piece of an admitted Bitemporal opening: ``row`` opened over
-    ``[valid_from, until)``, through the open bound when ``until`` is ``None``.
+    ``valid_time_window``.
 
     The piece states the same target and an already-judged window inside the
     opening's own, so nothing is judged again.
     """
     sealed = (cast("Mapping[str, object]", retain_document_value(row)),)
     return _prepared_keyed_write(
-        "insert" if until is None else "insertUntil",
+        "insert" if valid_time_window.end is INFINITY else "insertUntil",
         prepared.target,
         sealed,
-        PreparedTemporalBounds(valid_from, until),
+        valid_time_window,
     )
 
 
@@ -960,7 +958,7 @@ def _prepare_write(
         )
     keyed = isinstance(instruction, KeyedWrite)
     entity = resolve_target(model, instruction.entity if keyed else instruction.target.entity)
-    bounds = _judge_target(model, entity, instruction)
+    window = _judge_target(model, entity, instruction)
     selection = _member_selection(model, entity)
     if isinstance(instruction, KeyedWrite):
         return _prepare_keyed_payload(
@@ -968,7 +966,7 @@ def _prepare_write(
             model,
             entity,
             selection,
-            bounds,
+            window,
             converter=converter,
             source_access=source_access,
             authored_members=authored_members,
@@ -978,7 +976,7 @@ def _prepare_write(
         model,
         entity,
         selection,
-        bounds,
+        window,
         converter=converter,
         source_access=source_access,
     )
@@ -986,9 +984,10 @@ def _prepare_write(
 
 def _judge_target(
     model: AcceptedMetamodel, entity: EntityMetadata, instruction: KeyedWrite | PredicateWrite
-) -> PreparedTemporalBounds:
+) -> TimeInterval | None:
     """Judge the verb, window, and row count against ``entity``'s Temporal
-    Shape, and answer the managed bounds.
+    Shape, and answer the managed window, ``None`` for a target without Valid
+    Time.
 
     A temporal ``delete`` is refused before the window: ``delete`` states no
     bound in any spelling, so answering it by naming the ``valid_from`` a
@@ -1006,7 +1005,7 @@ def _judge_target(
         refusal = _temporal_delete_refusal(name, instruction.mutation, surface=surface)
         if refusal is not None:
             raise WriteInstructionError(refusal)
-    bounds = _judge_window(
+    window = _judge_window(
         _family_root(model, entity),
         shape,
         instruction.mutation,
@@ -1021,7 +1020,7 @@ def _judge_target(
         refusal = _non_temporal_milestone_refusal(name, instruction.mutation, surface=surface)
         if refusal is not None:
             raise WriteInstructionError(refusal)
-    return bounds
+    return window
 
 
 def _judge_window(
@@ -1030,8 +1029,10 @@ def _judge_window(
     mutation: str,
     valid_from: object,
     until: object,
-) -> PreparedTemporalBounds:
-    """One write's Valid-Time window, judged once per call.
+) -> TimeInterval | None:
+    """One write's Valid-Time window, judged once per call: ``[valid_from,
+    until)``, through :data:`~parallax.core.base.INFINITY` where ``until`` is
+    omitted, or ``None`` for a target without Valid Time.
 
     Four questions in a fixed order, because each presupposes the one before
     it. Does the target's Temporal Shape admit a bounded form at all — only a
@@ -1078,19 +1079,17 @@ def _judge_window(
             f"({root.name!r} declares no Valid-Time dimension to bound)"
         )
     else:
-        managed_from = None
+        # A target without Valid Time is refused any stated `until` above.
+        return None
     if until is None:
-        return PreparedTemporalBounds(managed_from, None)
-    # A stated `until` belongs to a bounded verb, whose pair and profile were
-    # both judged above, so a Bitemporal `valid_from` stands beside it.
-    assert managed_from is not None
+        return TimeInterval(managed_from, INFINITY)
     managed_until = normalize_instant(_stated_instant(root, mutation, "until", until))
     if managed_until <= managed_from:
         raise WriteInstructionError(
             f"{root.name}: {mutation!r} requires valid_from < until "
             f"— got valid_from={valid_from!r}, until={until!r}"
         )
-    return PreparedTemporalBounds(managed_from, managed_until)
+    return TimeInterval(managed_from, managed_until)
 
 
 def _prepare_target_write(
@@ -1112,7 +1111,7 @@ def _prepare_target_write(
     entity = resolve_target(model, instruction.entity)
     shape = temporal_read.view(model).shape(entity.identity)
     root = _family_root(model, entity)
-    bounds = _judge_window(
+    window = _judge_window(
         root, shape, instruction.mutation, instruction.valid_from, instruction.until
     )
     position = _family_position(model, entity)
@@ -1127,7 +1126,7 @@ def _prepare_target_write(
         authored_members=authored_members,
     )
     return _prepared_target_write(
-        instruction.mutation in _REPLACEMENTS, assigns, entity, row, bounds, expectation
+        instruction.mutation in _REPLACEMENTS, assigns, entity, row, window, expectation
     )
 
 
@@ -1329,7 +1328,7 @@ def _prepare_keyed_payload(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     selection: inheritance.EntityMemberSelection,
-    bounds: PreparedTemporalBounds,
+    valid_time_window: TimeInterval | None,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
@@ -1397,7 +1396,10 @@ def _prepare_keyed_payload(
             known_failures=result.failures,
         )
     return _prepared_keyed_write(
-        instruction.mutation, entity, tuple(result.row for result in transformed), bounds
+        instruction.mutation,
+        entity,
+        tuple(result.row for result in transformed),
+        valid_time_window,
     )
 
 
@@ -1421,7 +1423,7 @@ def _prepare_predicate_payload(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     selection: inheritance.EntityMemberSelection,
-    bounds: PreparedTemporalBounds,
+    valid_time_window: TimeInterval | None,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
@@ -1483,7 +1485,7 @@ def _prepare_predicate_payload(
         instruction.mutation,
         ValidatedMutationSelection(entity, validated),
         tuple(prepared),
-        bounds,
+        valid_time_window,
     )
 
 

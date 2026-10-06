@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Hashable, Sequence
+import heapq
+from collections.abc import Hashable, Iterator, Sequence
 from dataclasses import dataclass, replace
-from operator import itemgetter
+from operator import attrgetter, itemgetter
 from typing import Final, cast
 
 from parallax.core import inheritance, relationship, temporal_read
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.temporal_read import milestone_edge
+from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
 from parallax.core.unit_work.claims import (
     ClaimVerdict,
     WriteIntent,
@@ -23,7 +24,6 @@ from parallax.core.unit_work.instructions import (
     ExpectedVersion,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
-    PreparedTemporalBounds,
     PreparedWrite,
     derive_keyed_write,
 )
@@ -44,7 +44,6 @@ from parallax.core.unit_work.materialized import (
     TemporalKeyedWrite,
     buffered_instruction,
     chained,
-    composed_alone,
     composed_temporal_write,
     temporal_contribution,
 )
@@ -65,7 +64,7 @@ from parallax.core.unit_work.strategy import (
     ConcurrencyStrategy,
     TemporalStrategy,
 )
-from parallax.core.unit_work.temporal import EMPTY_TRANSFORM, TemporalTransform, precedes
+from parallax.core.unit_work.temporal import EMPTY_TRANSFORM
 from parallax.core.unit_work.write_settlement import (
     OrderedWrite,
     WritePlanningResult,
@@ -258,7 +257,7 @@ class WritePlanner:
                     run
                     and run[-1].target == item.target
                     and run[-1].mutation == item.mutation
-                    and run[-1].bounds == item.bounds
+                    and run[-1].valid_time_window == item.valid_time_window
                     and item_group == run_group
                 ):
                     run.append(item)
@@ -344,7 +343,7 @@ def _merge_update_into_insert(
 ) -> PreparedKeyedWrite:
     """Overlay ``update``'s non-key row fields onto ``insert``'s row.
 
-    The coalesced write keeps the insert's mutation verb and Valid-Time bounds
+    The coalesced write keeps the insert's mutation verb and Valid-Time window
     (so it still opens a current milestone / fully-current rectangle at
     settling per temporal flavor) but carries the FINAL values — no
     ``INSERT`` + ``UPDATE``.
@@ -474,11 +473,11 @@ class PendingWrites:
         earlier = tuple(cast("PendingTemporal", items[index]) for index in sealed if index > after)
         return earlier if held is None else (*earlier, held)
 
-    def states_window(self, key: ObjectKey, bounds: PreparedTemporalBounds) -> bool:
+    def states_window(self, key: ObjectKey, window: TimeInterval | None) -> bool:
         """Whether a pending write of temporal object ``key`` states exactly
-        ``bounds`` as its window."""
+        ``window`` as its own."""
         return any(
-            contribution.bounds == bounds
+            contribution.valid_time_window == window
             for held in self._compositions(key)
             for contribution in _contributions(held)
         )
@@ -600,13 +599,18 @@ class PendingWrites:
         """Whether two writes of one temporal object, at least one a caller
         addressed, can stand together: as one exact-window operation, or as
         separate ones over disjoint windows (:meth:`admits_temporal`)."""
-        if held.bounds == arriving.bounds:
+        held_window = held.valid_time_window
+        arriving_window = arriving.valid_time_window
+        if held_window == arriving_window:
             return (
                 not (held.kind == "destructive" and arriving.kind == "assignment")
                 and start is not None
                 and self._starting_revision(entity, held) == start
             )
-        if not _disjoint(held.bounds, arriving.bounds):
+        # Writes without Valid Time span the whole axis, so every two of an
+        # object's are equal and only Valid-Time windows differ.
+        assert held_window is not None and arriving_window is not None
+        if held_window.overlaps(arriving_window):
             return False
         return self._rectangle_admits(entity, held, arriving) and self._rectangle_admits(
             entity, arriving, held
@@ -626,11 +630,11 @@ class PendingWrites:
             return True
         shape = self._temporal_facet.shape(entity.identity)
         assert isinstance(shape, temporal_read.Bitemporal)  # disjoint windows are Valid Time's
-        at = addressed.bounds.valid_from
+        window = addressed.valid_time_window
         predecessor = observation.predecessor
-        if precedes(at, predecessor.cell(shape.valid_time.start_attribute)) or not precedes(
-            at, predecessor.cell(shape.valid_time.end_attribute)
-        ):
+        coverage = valid_time_coverage(shape, predecessor, None)
+        assert window is not None and coverage is not None  # both lie on Valid Time
+        if not coverage.contains(window.start):
             return True
         return milestone_edge(shape, predecessor, None).tx_time == condition.instant
 
@@ -670,18 +674,28 @@ class PendingWrites:
         removals = self._removals
         return () if removals is None else tuple(removals)
 
-    def transforms(
+    def destroyed_coverage(
         self, key: ObjectKey, *, after_opening: bool = False
-    ) -> tuple[TemporalTransform, ...]:
-        """What the pending writes of temporal object ``key`` do to its
-        existing coverage, one transform per barrier region that writes it —
-        with ``after_opening``, only those buffered after its pending insert."""
-        return tuple(
-            held.transform
-            if isinstance(held, ComposedTemporalWrite)
-            else composed_alone(held, _key_name(self._families, held.instruction.target)).transform
+    ) -> Iterator[TimeInterval]:
+        """The Valid-Time intervals the pending writes of Bitemporal object
+        ``key`` destroy, ordered by start — with ``after_opening``, only those
+        buffered after its pending insert.
+
+        Each barrier region's composition yields its own destroyed segments,
+        already ordered, and a lone destructive write its prepared window.
+        Regions stand in authored order rather than temporal order, so their
+        streams are merged by start, holding one interval per region rather
+        than copying any. Duplicate and overlapping intervals may remain. The
+        view reads the buffer as it stands, so it is consumed before the buffer
+        changes.
+        """
+        streams = [
+            _destroyed(held)
             for held in self._compositions(key, self._inserts[key] if after_opening else -1)
-        )
+        ]
+        if len(streams) == 1:
+            return streams[0]
+        return heapq.merge(*streams, key=_START)
 
     def _held_intent(self, scope: Hashable) -> WriteIntent | None:
         index = self._claims.get(scope)
@@ -925,7 +939,7 @@ class PendingWrites:
         ):
             held_intent = keyed_intent(held.instruction)
             assert held_intent is not None
-            if held_intent.region == intent.region:
+            if held_intent.valid_time_window == intent.valid_time_window:
                 verdict = admits(held_intent, intent)
                 if verdict == "coalesce":
                     items[index] = _merged_claimed(held, item)
@@ -1070,23 +1084,26 @@ def _scope(contribution: TemporalContribution) -> ObservedStateKey | None:
 
 
 def _intent(contribution: TemporalContribution) -> WriteIntent:
-    return WriteIntent(
-        kind=contribution.kind,
-        valid_from=contribution.bounds.valid_from,
-        until=contribution.bounds.until,
-    )
+    return WriteIntent(kind=contribution.kind, valid_time_window=contribution.valid_time_window)
 
 
-def _disjoint(first: PreparedTemporalBounds, second: PreparedTemporalBounds) -> bool:
-    """Whether two unequal requested Valid-Time windows share no instant:
-    half-open, so adjacent windows are disjoint. A Transaction-Time-Only window
-    spans the whole axis, so every two of an object's are equal."""
-    assert first.valid_from is not None and second.valid_from is not None
-    return _ends_by(first.until, second.valid_from) or _ends_by(second.until, first.valid_from)
+def _destroyed(held: PendingTemporal) -> Iterator[TimeInterval]:
+    """The Valid-Time intervals ``held`` destroys, ordered by start."""
+    if isinstance(held, ComposedTemporalWrite):
+        for segment in held.transform.segments:
+            if segment.assigned is None:
+                window = segment.valid_time_window
+                assert window is not None  # only a Bitemporal object's coverage is asked for
+                yield window
+        return
+    instruction = held.instruction
+    if instruction.mutation not in UPDATE_MUTATIONS:
+        window = instruction.valid_time_window
+        assert window is not None  # only a Bitemporal object's coverage is asked for
+        yield window
 
 
-def _ends_by(until: object | None, instant: object) -> bool:
-    return until is not None and not precedes(instant, until)
+_START: Final = attrgetter("start")
 
 
 def _targeted(held: PendingTemporal) -> bool:
@@ -1137,8 +1154,8 @@ type _Claimed = ClaimedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
 def _merged_claimed(base: _Claimed, arriving: _Claimed) -> _Claimed:
     """``base`` carrying ``arriving``'s assignments too, later value winning.
 
-    The surviving carrier keeps ``base``'s position, mutation, bounds, and claim
-    — the two claim one scope over one region, which is what let them coalesce —
+    The surviving carrier keeps ``base``'s position, mutation, window, and claim
+    — the two claim one scope over one window, which is what let them coalesce —
     and gains the merged row.
     """
     merged = dict(base.instruction.rows[0])
@@ -1253,7 +1270,7 @@ def _key_name(families: inheritance.InheritanceFacet, entity: EntityMetadata) ->
 def _merge_rows(run: Sequence[PreparedKeyedWrite]) -> PreparedKeyedWrite:
     """One multi-row :class:`PreparedKeyedWrite` carrying every row of ``run``'s
     single-row instructions, in run (buffer) order — the same
-    entity/mutation/Valid-Time bounds every member of the run already shares."""
+    entity/mutation/Valid-Time window every member of the run already shares."""
     first = run[0]
     return derive_keyed_write(first, tuple(row for w in run for row in w.rows))
 

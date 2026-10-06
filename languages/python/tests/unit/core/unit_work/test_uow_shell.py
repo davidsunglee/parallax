@@ -26,7 +26,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, Metamodel
-from parallax.core.temporal_read import TemporalReadError
+from parallax.core.temporal_read import TemporalReadError, TimeInterval
 from parallax.core.unit_work import (
     SUPERSEDED,
     TERMINATED,
@@ -72,17 +72,28 @@ from parallax.core.unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core.unit_work.materialized import InsertionKeyedWrite, ObservedKeyedWrite
-from parallax.core.unit_work.plan import NO_OPENINGS, BoundRange, ExecutionUnit
-from parallax.core.unit_work.planned import PlannedClose, PlannedUpdate
+from parallax.core.unit_work.plan import (
+    NO_OPENINGS,
+    OPEN_BITEMPORAL_ENDS,
+    BoundRange,
+    Derivation,
+    ExecutionUnit,
+    Openings,
+    OwnedEndpoint,
+)
+from parallax.core.unit_work.planned import INFINITY as PLANNED_INFINITY
+from parallax.core.unit_work.planned import Finite, PlannedClose, PlannedUpdate
 from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.unit_work.uow import (
+    NO_INSERTION_AUTHORITY,
     EscapedTransactionError,
     FlushExecutor,
     UnitReport,
     WriteBatchOpening,
+    _TargetWriteState,  # pyright: ignore[reportPrivateUsage] - the owner of the removal window and lineage it is tested at
 )
-from parallax.core.unit_work.write_planner import compose_writes
+from parallax.core.unit_work.write_planner import PendingWrites, compose_writes
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
@@ -449,10 +460,12 @@ def test_a_write_carrying_an_authority_no_standing_insertion_granted_is_refused(
         with pytest.raises(UnitOfWorkError, match="no longer stands"):
             tx.buffer(buffered_write(update, None, authority=stranger))
         tx.buffer(_account_insert(1))
-        superseded = tx.insertion_identity(corpus_object_key("Account", ("id", 1)))
-        assert superseded is not None
-        assert tx.insertion_authority(stranger) is None
-        assert tx.insertion_authority(superseded) is not None
+        standing = tx.insertion_identity(corpus_object_key("Account", ("id", 1)))
+        assert standing is not None
+        assert tx.insertion_authority(stranger) is NO_INSERTION_AUTHORITY
+        # A standing insertion of an object without Valid Time has no window,
+        # which is not the absence of its authority.
+        assert tx.insertion_authority(standing) is None
 
     _run(body)
 
@@ -1617,3 +1630,144 @@ def test_an_objects_proofs_end_when_its_last_following_unit_completes() -> None:
 
 def _never_acquired(*_arguments: object) -> None:
     raise AssertionError("an Optimistic caller-addressed write reads nothing at its call")
+
+
+def _position_destroy(start: dt.datetime, until: dt.datetime) -> ObservedKeyedWrite:
+    prepared = prepare_wire_write(
+        KeyedWrite("terminateUntil", "WherePosition", ({"id": 1},), valid_from=start, until=until),
+        _BARRIERED,
+    )
+    assert isinstance(prepared, PreparedKeyedWrite)
+    return ObservedKeyedWrite(
+        instruction=prepared, observation=TemporalObservation(predecessor=_position_row(_JAN, _T0))
+    )
+
+
+def _shell_barrier() -> PreparedPredicateWrite:
+    barrier = prepare_wire_write(
+        PredicateWrite(
+            "update",
+            PredicateSelection("ShellTag", predicate_algebra.Comparison("eq", "ShellTag.id", 1)),
+            assignments=(WriteAssignment("ShellTag.label", "q"),),
+        ),
+        _BARRIERED,
+    )
+    assert isinstance(barrier, PreparedPredicateWrite)
+    return barrier
+
+
+def _window(start: dt.datetime, end: dt.datetime) -> TimeInterval:
+    return TimeInterval(start, end)
+
+
+def test_pending_destruction_is_merged_into_start_order_across_authored_barrier_regions() -> None:
+    key = corpus_object_key("WherePosition", ("id", 1))
+    pending = PendingWrites(_BARRIERED)
+    later = _position_destroy(_JUN, _AUG)
+    pending.add(later, key)
+    pending.add(_position_destroy(_SEP, _OCT), key)
+    pending.add(_shell_barrier())
+    earlier = _position_destroy(_FEB, _APR)
+    pending.add(earlier, key)
+    destroyed = list(pending.destroyed_coverage(key))
+    assert destroyed == [_window(_FEB, _APR), _window(_JUN, _AUG), _window(_SEP, _OCT)]
+    # Each region hands on intervals it already holds rather than copies.
+    assert destroyed[0] is earlier.instruction.valid_time_window
+
+
+def test_pending_destruction_after_an_opening_leaves_out_what_precedes_the_insert() -> None:
+    key = corpus_object_key("WherePosition", ("id", 1))
+    insert = prepare_wire_write(
+        KeyedWrite(
+            "insert",
+            "WherePosition",
+            ({"id": 1, "acctNum": "A", "value": "1.00"},),
+            valid_from=_FEB,
+        ),
+        _BARRIERED,
+    )
+    assert isinstance(insert, PreparedKeyedWrite)
+    pending = PendingWrites(_BARRIERED)
+    pending.add(_position_destroy(_JUN, _AUG), key)
+    pending.add(insert, key)
+    pending.add(_shell_barrier())
+    pending.add(_position_destroy(_FEB, _APR), key)
+    assert list(pending.destroyed_coverage(key, after_opening=True)) == [_window(_FEB, _APR)]
+    assert list(pending.destroyed_coverage(key)) == [_window(_FEB, _APR), _window(_JUN, _AUG)]
+
+
+def _position_endpoint(end: dt.datetime | None) -> OwnedEndpoint:
+    entity = corpus_object_key("WherePosition", ("id", 1)).entity
+    if end is None:
+        return OwnedEndpoint(entity, (1,), OPEN_BITEMPORAL_ENDS)
+    return OwnedEndpoint(entity, (1,), (Finite(instant=end), PLANNED_INFINITY))
+
+
+def test_a_stored_insertions_removal_window_is_kept_until_what_it_derives_from_changes() -> None:
+    key = corpus_object_key("WherePosition", ("id", 1))
+    targets = _TargetWriteState()
+    targets.open_insert(key, None, TimeInterval(_FEB, INFINITY), bitemporal=True)
+    targets.end_flush(())
+    record = targets.record(key)
+    assert record is not None
+    open_row = _position_endpoint(None)
+    targets.complete((), Openings(continued=(open_row,)))
+    window = targets.removal_window(record)
+    assert window == TimeInterval(_FEB, INFINITY)
+    assert targets.removal_window(record) is window
+    # Retiring the open row and tagging a bounded one leaves an earlier end.
+    bounded = _position_endpoint(_JUN)
+    targets.complete((open_row,), Openings(continued=(bounded,)))
+    narrowed = targets.removal_window(record)
+    assert narrowed == TimeInterval(_FEB, _JUN)
+    assert narrowed is not window
+    # A stored object's further admission keeps its floor until a flush
+    # executes it, and cancelling authority changes neither tags nor floor.
+    targets.open_insert(key, None, TimeInterval(_APR, INFINITY), bitemporal=True)
+    assert targets.removal_window(record) is narrowed
+    targets.end_flush(())
+    moved = targets.removal_window(record)
+    assert moved == TimeInterval(_APR, _JUN)
+    targets.cancel_insert(key)
+    assert targets.removal_window(record) is moved
+
+
+def test_a_proven_originals_descendants_are_exactly_those_overlapping_the_window() -> None:
+    key = corpus_object_key("WherePosition", ("id", 1))
+    original = observed_state_key(
+        key, TemporalObservation(predecessor=_position_row(_JAN, _T0)), _barriered_shape()
+    )
+    rows = (
+        (_position_endpoint(_FEB), TimeInterval(_JAN, _FEB)),
+        (_position_endpoint(_JUN), TimeInterval(_APR, _JUN)),
+        (_position_endpoint(None), TimeInterval(_AUG, INFINITY)),
+    )
+    targets = _TargetWriteState()
+    for endpoint, _coverage in rows:
+        targets.complete((), Openings(fresh=(endpoint,)))
+    targets.complete(
+        (), NO_OPENINGS, (Derivation(original, TimeInterval(_JAN, INFINITY), None, rows),)
+    )
+    # [Feb, Sep) starts where the first row ends: the start index still
+    # reaches that row, which the window does not overlap.
+    reached = list(targets.descendants(original, TimeInterval(_FEB, _SEP)))
+    assert [(endpoint, descent.valid_time_coverage) for endpoint, descent in reached] == [
+        rows[1],
+        rows[2],
+    ]
+    assert all(
+        descent.valid_time_coverage is coverage
+        for (_e, descent), (_r, coverage) in zip(reached, rows[1:], strict=True)
+    )
+    assert list(targets.descendants(original, TimeInterval(_FEB, _APR))) == []
+    assert [endpoint for endpoint, _descent in targets.descendants(original, None)] == [
+        endpoint for endpoint, _coverage in rows
+    ]
+
+
+def _barriered_shape() -> temporal_read.TemporalShape:
+    shape = temporal_read.view(_BARRIERED).shape(
+        corpus_object_key("WherePosition", ("id", 1)).entity
+    )
+    assert shape is not None
+    return shape

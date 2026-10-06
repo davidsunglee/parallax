@@ -19,7 +19,7 @@ from parallax.core.unit_work import (
     MilestoneClosure,
     MilestoneSuccessor,
     MilestoneTopology,
-    ValidTimeWindow,
+    SuccessorWindow,
 )
 
 __all__ = ["RECTANGLE_SPLIT"]
@@ -35,22 +35,22 @@ _TERMINATES: Final = MilestoneClosure(
 )
 
 _HEAD: Final = MilestoneSuccessor(
-    state=CARRIED_STATE, valid_window=ValidTimeWindow(start=PREDECESSOR_START, end=AUTHORED_FROM)
+    state=CARRIED_STATE, valid_window=SuccessorWindow(start=PREDECESSOR_START, end=AUTHORED_FROM)
 )
 _OLD_TAIL: Final = MilestoneSuccessor(
-    state=CARRIED_STATE, valid_window=ValidTimeWindow(start=AUTHORED_UNTIL, end=PREDECESSOR_END)
+    state=CARRIED_STATE, valid_window=SuccessorWindow(start=AUTHORED_UNTIL, end=PREDECESSOR_END)
 )
 _MIDDLE: Final = MilestoneSuccessor(
-    state=CHANGED_STATE, valid_window=ValidTimeWindow(start=AUTHORED_FROM, end=AUTHORED_UNTIL)
+    state=CHANGED_STATE, valid_window=SuccessorWindow(start=AUTHORED_FROM, end=AUTHORED_UNTIL)
 )
 _NEW_TAIL: Final = MilestoneSuccessor(
-    state=CHANGED_STATE, valid_window=ValidTimeWindow(start=AUTHORED_FROM, end=PREDECESSOR_END)
+    state=CHANGED_STATE, valid_window=SuccessorWindow(start=AUTHORED_FROM, end=PREDECESSOR_END)
 )
 _OPEN_RECTANGLE: Final = MilestoneSuccessor(
-    state=AUTHORED_STATE, valid_window=ValidTimeWindow(start=AUTHORED_FROM, end=OPEN_END)
+    state=AUTHORED_STATE, valid_window=SuccessorWindow(start=AUTHORED_FROM, end=OPEN_END)
 )
 _BOUNDED_RECTANGLE: Final = MilestoneSuccessor(
-    state=AUTHORED_STATE, valid_window=ValidTimeWindow(start=AUTHORED_FROM, end=AUTHORED_UNTIL)
+    state=AUTHORED_STATE, valid_window=SuccessorWindow(start=AUTHORED_FROM, end=AUTHORED_UNTIL)
 )
 
 _TOPOLOGIES: Final[dict[str, MilestoneTopology]] = {

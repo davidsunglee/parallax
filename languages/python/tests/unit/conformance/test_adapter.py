@@ -39,6 +39,7 @@ from parallax.core.predicate import (
     NestedExists,
 )
 from parallax.core.predicate import serialize as serialize_predicate
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPredicateWrite
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
@@ -144,7 +145,9 @@ def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
     )
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["position"])
     assert isinstance(prepared, PreparedKeyedWrite)
-    assert prepared.bounds.valid_from == dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    assert prepared.valid_time_window == TimeInterval(
+        dt.datetime(2024, 7, 1, tzinfo=dt.UTC), INFINITY
+    )
 
 
 def test_case_write_adapter_carries_the_decoded_case_temporal_bounds() -> None:
@@ -159,7 +162,9 @@ def test_case_write_adapter_carries_the_decoded_case_temporal_bounds() -> None:
     assert instruction.valid_from == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["position"])
     assert isinstance(prepared, PreparedKeyedWrite)
-    assert prepared.bounds.valid_from == instruction.valid_from
+    assert prepared.valid_time_window == TimeInterval(
+        dt.datetime(2024, 2, 1, tzinfo=dt.UTC), INFINITY
+    )
 
 
 @pytest.mark.parametrize(

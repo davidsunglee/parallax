@@ -455,8 +455,7 @@ def acquire_coverage(
         model=meta,
         key=acquisition.key_attribute.name,
         key_value=acquisition.key_value,
-        valid_from=acquisition.valid_from,
-        until=acquisition.until,
+        valid_time_window=acquisition.valid_time_window,
     )
     compiled = compile_read(
         query,

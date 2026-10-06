@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Literal
 
-from parallax.core.base import INFINITY, normalize_instant
+from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.metamodel import AsOfAxisMetadata, AttributeIdentity, ValueObjectIdentity
-from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
+from parallax.core.temporal_read import Bitemporal, TimeInterval, TransactionTimeOnly
 from parallax.core.unit_work.observe import PredecessorRow
 from parallax.core.unit_work.planned import (
     NEW_LINEAGE,
@@ -32,6 +32,8 @@ from parallax.core.unit_work.strategy import (
     ValidTimeBound,
 )
 
+type _Cursor = dt.datetime | Literal[TemporalBound.INFINITY]
+
 __all__ = [
     "EMPTY_TRANSFORM",
     "BoundPiece",
@@ -39,11 +41,7 @@ __all__ = [
     "TemporalSegment",
     "TemporalTransform",
     "bind_successor",
-    "covers",
-    "instant_order",
-    "is_open_bound",
     "literal_successor",
-    "precedes",
     "resolve_successors",
     "successor_bounds",
 ]
@@ -88,8 +86,7 @@ class ResolvedSuccessor:
 def resolve_successors(
     successors: tuple[MilestoneSuccessor, ...],
     *,
-    valid_from: object | None = None,
-    until: object | None = None,
+    valid_time_window: TimeInterval | None = None,
 ) -> tuple[ResolvedSuccessor, ...]:
     """``successors`` with every Valid-Time bound group-wide data can decide.
 
@@ -105,8 +102,8 @@ def resolve_successors(
                 None
                 if successor.valid_window is None
                 else ResolvedWindow(
-                    start=_resolve_bound(successor.valid_window.start, valid_from, until),
-                    end=_resolve_bound(successor.valid_window.end, valid_from, until),
+                    start=_resolve_bound(successor.valid_window.start, valid_time_window),
+                    end=_resolve_bound(successor.valid_window.end, valid_time_window),
                 )
             ),
         )
@@ -114,16 +111,14 @@ def resolve_successors(
     )
 
 
-def _resolve_bound(
-    bound: ValidTimeBound, valid_from: object | None, until: object | None
-) -> ResolvedBound:
+def _resolve_bound(bound: ValidTimeBound, window: TimeInterval | None) -> ResolvedBound:
     match bound:
         case AuthoredFrom():
-            assert valid_from is not None  # every windowed mutation authors one
-            return _Literal(valid_from)
+            assert window is not None  # every windowed mutation authors one
+            return _Literal(window.start)
         case AuthoredUntil():
-            assert until is not None  # every bounded mutation authors one
-            return _Literal(until)
+            assert window is not None and window.end is not INFINITY  # a bounded mutation's
+            return _Literal(window.end)
         case OpenEnd():
             return _Literal(INFINITY)
         case PredecessorStart() | PredecessorEnd():
@@ -212,51 +207,15 @@ def _bind_bound(
             return predecessor.cell(valid_time.end_attribute)
 
 
-def literal_successor(state: SuccessorState, start: object, end: object) -> ResolvedSuccessor:
-    """One successor whose Valid-Time bounds are already concrete values, or
-    which has no Valid-Time window when both are ``None``."""
-    if start is None and end is None:
+def literal_successor(state: SuccessorState, coverage: TimeInterval | None) -> ResolvedSuccessor:
+    """One successor whose Valid-Time bounds are ``coverage``'s own endpoints,
+    or which has no Valid-Time window where ``coverage`` is ``None``."""
+    if coverage is None:
         return ResolvedSuccessor(state=state)
     return ResolvedSuccessor(
-        state=state, window=ResolvedWindow(start=_Literal(start), end=_Literal(end))
+        state=state,
+        window=ResolvedWindow(start=_Literal(coverage.start), end=_Literal(coverage.end)),
     )
-
-
-def is_open_bound(bound: object) -> bool:
-    """Whether one Valid-Time end is the open upper bound."""
-    return bound is INFINITY
-
-
-def precedes(earlier: object, later: object) -> bool:
-    """Whether managed Valid-Time bound ``earlier`` lies strictly before
-    ``later``, the open upper bound after every instant."""
-    if is_open_bound(later):
-        return not is_open_bound(earlier)
-    if is_open_bound(earlier):
-        return False
-    return _instant(earlier) < _instant(later)
-
-
-def instant_order(bound: object | None) -> dt.datetime:
-    """A sort key placing finite Valid-Time bounds in exact time order, and
-    ``None`` — the start a Transaction-Time-Only row lacks — at the earliest."""
-    return _EARLIEST if bound is None else _instant(bound)
-
-
-_EARLIEST: Final = dt.datetime.min.replace(tzinfo=dt.UTC)
-
-
-def _instant(bound: object) -> dt.datetime:
-    assert isinstance(bound, dt.datetime)  # a finite Valid-Time bound is an instant
-    return normalize_instant(bound)
-
-
-def _earliest(first: object, second: object) -> object:
-    return second if precedes(second, first) else first
-
-
-def _latest(first: object, second: object) -> object:
-    return second if precedes(first, second) else first
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,17 +223,16 @@ class TemporalSegment:
     """One requested Valid-Time interval of a finalized transform, and what every
     existing interval inside it becomes.
 
-    ``start`` and ``end`` are managed bounds, ``end`` the open bound for an
-    unbounded window; on a Transaction-Time-Only target both are ``None`` and the
-    one segment spans the whole axis. ``assigned`` maps each assigned member's
-    declared name to its managed value, the last authored value per member, or
-    is ``None`` where the segment destroys existing coverage. ``fills`` marks a
-    replacement's extent: ``assigned`` there is a complete state, which a gap in
-    existing coverage takes too.
+    ``valid_time_window`` is the segment's extent, or ``None`` on a
+    Transaction-Time-Only target, whose one segment spans the whole axis.
+    ``assigned`` maps each assigned member's declared name to its managed value,
+    the last authored value per member, or is ``None`` where the segment
+    destroys existing coverage. ``fills`` marks a replacement's extent:
+    ``assigned`` there is a complete state, which a gap in existing coverage
+    takes too.
     """
 
-    start: object | None
-    end: object | None
+    valid_time_window: TimeInterval | None
     assigned: Mapping[str, object] | None
     fills: bool = False
 
@@ -283,10 +241,10 @@ class TemporalSegment:
 class BoundPiece:
     """One nonempty interval of one predecessor's coverage after a transform:
     the predecessor's own state where ``assigned`` is ``None``, or that state
-    with ``assigned`` overlaid."""
+    with ``assigned`` overlaid. ``valid_time_coverage`` is ``None`` on a
+    Transaction-Time-Only target."""
 
-    start: object | None
-    end: object | None
+    valid_time_coverage: TimeInterval | None
     assigned: Mapping[str, object] | None
 
 
@@ -307,15 +265,14 @@ class TemporalTransform:
     def then(
         self,
         *,
-        valid_from: object | None,
-        until: object | None,
+        valid_time_window: TimeInterval | None,
         assigned: Mapping[str, object] | None,
         replaces: bool = False,
     ) -> TemporalTransform:
-        """This transform followed by one more write over ``[valid_from, until)``
-        — the whole axis when ``valid_from`` is ``None`` — which assigns
-        ``assigned`` there, later values winning per member, or destroys coverage
-        there when ``assigned`` is ``None``.
+        """This transform followed by one more write over ``valid_time_window``
+        — the whole axis where it is ``None`` — which assigns ``assigned``
+        there, later values winning per member, or destroys coverage there when
+        ``assigned`` is ``None``.
 
         A write that ``replaces`` states a complete state, and its window becomes
         a replacement's extent. A later assignment over that extent keeps it, so
@@ -325,150 +282,167 @@ class TemporalTransform:
         A destroyed interval is never assigned again: admission refuses such a
         resurrection before a transform is asked for it.
         """
-        if valid_from is None:
+        window = valid_time_window
+        if window is None:
             previous = self.segments[0] if self.segments else None
-            return TemporalTransform(
-                (_overlaid(None, None, previous, assigned, replaces=replaces),)
-            )
-        start: object = valid_from
-        end: object = INFINITY if until is None else until
+            return TemporalTransform((_overlaid(None, previous, assigned, replaces=replaces),))
         composed: list[TemporalSegment] = []
-        cursor = start
+        # Where the part of the window no earlier segment reaches resumes; the
+        # window's end once that part is composed.
+        cursor: _Cursor = window.start
         for segment in self.segments:
-            if not precedes(segment.start, end) or not precedes(start, segment.end):
+            extent = segment.valid_time_window
+            assert extent is not None  # every segment of a Valid-Time transform has an extent
+            overlap = extent.intersection(window)
+            if overlap is None:
+                if not window.ends_after(extent.start):
+                    cursor = _rest(composed, window, cursor, assigned, replaces)
                 composed.append(segment)
                 continue
-            if precedes(segment.start, start):
-                composed.append(
-                    TemporalSegment(segment.start, start, segment.assigned, segment.fills)
-                )
-            overlap_start = _latest(segment.start, start)
-            overlap_end = _earliest(segment.end, end)
-            if precedes(cursor, overlap_start):
-                composed.append(TemporalSegment(cursor, overlap_start, assigned, replaces))
-            composed.append(
-                _overlaid(overlap_start, overlap_end, segment, assigned, replaces=replaces)
-            )
-            if precedes(end, segment.end):
-                composed.append(TemporalSegment(end, segment.end, segment.assigned, segment.fills))
-            cursor = overlap_end
-        if precedes(cursor, end):
-            composed.append(TemporalSegment(cursor, end, assigned, replaces))
-        composed.sort(key=_segment_order)
+            if window.starts_after(extent.start):
+                head = extent.clipped(end=window.start)
+                composed.append(TemporalSegment(head, segment.assigned, segment.fills))
+            if cursor is not INFINITY and overlap.starts_after(cursor):
+                stretch = window.clipped(start=cursor, end=overlap.start)
+                composed.append(TemporalSegment(stretch, assigned, replaces))
+            composed.append(_overlaid(overlap, segment, assigned, replaces=replaces))
+            end = window.end
+            if end is not INFINITY and extent.ends_after(end):
+                tail = extent.clipped(start=end)
+                composed.append(TemporalSegment(tail, segment.assigned, segment.fills))
+            cursor = overlap.end
+        _rest(composed, window, cursor, assigned, replaces)
         return TemporalTransform(_joined(composed))
 
-    @property
-    def start(self) -> object | None:
-        """Where the transform's first segment starts."""
-        return self.segments[0].start
-
-    @property
-    def end(self) -> object | None:
-        """Where the transform's last segment ends."""
-        return self.segments[-1].end
+    def enclosing_window(self) -> TimeInterval | None:
+        """The one Valid-Time interval from the first segment's start to the
+        last one's end — gaps between segments included, so it is a window
+        rather than a claim of continuous coverage — or ``None`` on a
+        Transaction-Time-Only target. A single segment answers its own
+        extent."""
+        first = self.segments[0].valid_time_window
+        last = self.segments[-1].valid_time_window
+        if first is None or last is None or last is first:
+            return first
+        return TimeInterval(first.start, last.end)
 
     @property
     def assigns(self) -> bool:
         """Whether some segment assigns rather than destroys."""
         return any(segment.assigned is not None for segment in self.segments)
 
-    def pieces(self, start: object | None, end: object | None) -> tuple[BoundPiece, ...]:
-        """The nonempty intervals one predecessor covering ``[start, end)``
-        becomes; both bounds are ``None`` on a Transaction-Time-Only target."""
-        if start is None:
+    def pieces(self, coverage: TimeInterval | None) -> tuple[BoundPiece, ...]:
+        """The nonempty intervals one predecessor covering ``coverage`` becomes;
+        ``coverage`` is ``None`` on a Transaction-Time-Only target."""
+        if coverage is None:
             (segment,) = self.segments
             assigned = segment.assigned
-            return () if assigned is None else (BoundPiece(None, None, assigned),)
+            return () if assigned is None else (BoundPiece(None, assigned),)
         pieces: list[BoundPiece] = []
-        cursor = start
+        cursor = coverage.start
         for segment in self.segments:
-            if not precedes(segment.start, end) or not precedes(cursor, segment.end):
+            extent = segment.valid_time_window
+            assert extent is not None  # every segment of a Valid-Time transform has an extent
+            overlap = extent.intersection(coverage)
+            if overlap is None:
                 continue
-            overlap_start = _latest(segment.start, cursor)
-            if precedes(cursor, overlap_start):
-                pieces.append(BoundPiece(cursor, overlap_start, None))
-            overlap_end = _earliest(segment.end, end)
+            if overlap.starts_after(cursor):
+                carried = coverage.clipped(start=cursor, end=overlap.start)
+                pieces.append(BoundPiece(carried, None))
             if segment.assigned is not None:
-                pieces.append(BoundPiece(overlap_start, overlap_end, segment.assigned))
-            cursor = overlap_end
-        if precedes(cursor, end):
-            pieces.append(BoundPiece(cursor, end, None))
+                pieces.append(BoundPiece(overlap, segment.assigned))
+            end = overlap.end
+            if end is INFINITY:
+                return tuple(pieces)
+            cursor = end
+        if coverage.ends_after(cursor):
+            pieces.append(BoundPiece(coverage.clipped(start=cursor), None))
         return tuple(pieces)
 
-    def touches(self, start: object | None, end: object | None) -> bool:
-        """Whether a predecessor covering ``[start, end)`` lies inside some
+    def touches(self, coverage: TimeInterval | None) -> bool:
+        """Whether a predecessor covering ``coverage`` lies inside some
         segment."""
-        if start is None:
+        if coverage is None:
             return bool(self.segments)
         return any(
-            precedes(segment.start, end) and precedes(start, segment.end)
+            segment.valid_time_window is not None and segment.valid_time_window.overlaps(coverage)
             for segment in self.segments
         )
 
-    def gaps(self, coverage: Sequence[tuple[object, object]]) -> tuple[BoundPiece, ...]:
+    def gaps(self, coverage: Iterable[TimeInterval]) -> tuple[BoundPiece, ...]:
         """The nonempty intervals of a replacement's extent that ``coverage`` —
         the existing intervals, disjoint and ordered by start — leaves
         uncovered, each with the complete state it takes there.
 
-        A Transaction-Time-Only transform has no Valid Time for a gap to lie on.
+        ``coverage`` is consumed once, forward, across every segment: an
+        interval reaching past one segment stays current for the next, and a
+        segment that fills nothing consumes none of it. A Transaction-Time-Only
+        transform has no Valid Time for a gap to lie on.
         """
         pieces: list[BoundPiece] = []
+        remaining = iter(coverage)
+        current = next(remaining, None)
         for segment in self.segments:
-            if not segment.fills or segment.start is None:
+            window = segment.valid_time_window
+            if not segment.fills or window is None:
                 continue
-            assert segment.assigned is not None  # a destruction ends a replacement's extent
-            cursor = segment.start
-            for start, end in coverage:
-                if not precedes(cursor, segment.end):
+            assigned = segment.assigned
+            assert assigned is not None  # a destruction ends a replacement's extent
+            cursor = window.start
+            while True:
+                while current is not None and not current.ends_after(cursor):
+                    current = next(remaining, None)
+                if current is None:
+                    pieces.append(BoundPiece(window.clipped(start=cursor), assigned))
                     break
-                if not precedes(cursor, end):
-                    continue
-                if precedes(cursor, start):
-                    gap_end = _earliest(start, segment.end)
-                    pieces.append(BoundPiece(cursor, gap_end, segment.assigned))
-                cursor = end
-            if precedes(cursor, segment.end):
-                pieces.append(BoundPiece(cursor, segment.end, segment.assigned))
+                if current.starts_after(cursor):
+                    pieces.append(
+                        BoundPiece(window.clipped(start=cursor, end=current.start), assigned)
+                    )
+                    if not window.ends_after(current.start):
+                        break
+                covered = current.end
+                if covered is INFINITY or not window.ends_after(covered):
+                    break
+                cursor = covered
+                current = next(remaining, None)
         return tuple(pieces)
 
 
 EMPTY_TRANSFORM: Final[TemporalTransform] = TemporalTransform()
 
 
-def covers(
-    intervals: tuple[tuple[object, object], ...], start: object, end: object
-) -> object | None:
-    """The first point of ``[start, end)`` the ordered, disjoint ``intervals``
-    leave uncovered, or ``None`` where they cover it whole."""
-    cursor = start
-    for interval_start, interval_end in intervals:
-        if not precedes(cursor, end):
-            return None
-        if precedes(cursor, interval_start):
-            return cursor
-        if precedes(cursor, interval_end):
-            cursor = interval_end
-    return cursor if precedes(cursor, end) else None
+def _rest(
+    composed: list[TemporalSegment],
+    window: TimeInterval,
+    cursor: _Cursor,
+    assigned: Mapping[str, object] | None,
+    replaces: bool,
+) -> _Cursor:
+    """Compose the part of ``window`` from ``cursor`` on that no earlier segment
+    reached, where any is left, answering the window's end."""
+    if cursor is not INFINITY and window.ends_after(cursor):
+        composed.append(TemporalSegment(window.clipped(start=cursor), assigned, replaces))
+    return window.end
 
 
 def _overlaid(
-    start: object | None,
-    end: object | None,
+    window: TimeInterval | None,
     previous: TemporalSegment | None,
     assigned: Mapping[str, object] | None,
     *,
     replaces: bool,
 ) -> TemporalSegment:
-    """One write over ``[start, end)`` where ``previous`` already stated
-    something, or nothing did."""
+    """One write over ``window`` where ``previous`` already stated something, or
+    nothing did."""
     if assigned is None:
-        return TemporalSegment(start, end, None)
+        return TemporalSegment(window, None)
     if previous is None or previous.assigned is None:
         assert previous is None  # admission refuses an assignment over destroyed coverage
-        return TemporalSegment(start, end, assigned, replaces)
+        return TemporalSegment(window, assigned, replaces)
     if replaces:
-        return TemporalSegment(start, end, assigned, fills=True)
-    return TemporalSegment(start, end, {**previous.assigned, **assigned}, previous.fills)
+        return TemporalSegment(window, assigned, fills=True)
+    return TemporalSegment(window, {**previous.assigned, **assigned}, previous.fills)
 
 
 def _joined(segments: list[TemporalSegment]) -> tuple[TemporalSegment, ...]:
@@ -480,17 +454,17 @@ def _joined(segments: list[TemporalSegment]) -> tuple[TemporalSegment, ...]:
         previous = joined[-1] if joined else None
         if (
             previous is not None
-            and previous.end == segment.start
+            and previous.valid_time_window is not None
+            and segment.valid_time_window is not None
+            and previous.valid_time_window.meets(segment.valid_time_window)
             and previous.assigned == segment.assigned
             and previous.fills == segment.fills
         ):
             joined[-1] = TemporalSegment(
-                previous.start, segment.end, previous.assigned, previous.fills
+                TimeInterval(previous.valid_time_window.start, segment.valid_time_window.end),
+                previous.assigned,
+                previous.fills,
             )
         else:
             joined.append(segment)
     return tuple(joined)
-
-
-def _segment_order(segment: TemporalSegment) -> dt.datetime:
-    return _instant(segment.start)
