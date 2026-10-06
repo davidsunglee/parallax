@@ -618,9 +618,7 @@ class PageBuilder:
         self._slots: list[SourceViewLayout] = []
         self._views: list[list[object] | tuple[()]] = []
         self._overwritten_edges: dict[int, list[object]] = {}
-        self._identity: dict[
-            tuple[EntityIdentity, object], int | dict[tuple[object, ...], int]
-        ] = {}
+        self._identity: dict[EntityIdentity, dict[object, int | tuple[int, ...]]] = {}
         self._first: list[int] = []
         self._claims: list[int | list[int]] = []
         self._decoders: dict[int, PayloadDecoder | None] = {}
@@ -660,27 +658,10 @@ class PageBuilder:
             self._last_layout = layout
             self._last_slots = slots
         projection = len(self._layouts)
-        identity = None if key is None else (key.family, key.primary_key)
-        coordinates = None if identity is None else self._identity.get(identity)
-        if isinstance(coordinates, dict):
-            assert key is not None
-            existing = coordinates.get(key.coordinates)
-        else:
-            existing = coordinates
-        if existing is None:
-            logical = self._fresh(projection)
-            if identity is not None and key is not None:
-                if key.coordinates:
-                    if coordinates is None:
-                        coordinates = {}
-                        self._identity[identity] = coordinates
-                    assert isinstance(coordinates, dict)
-                    coordinates[key.coordinates] = logical
-                else:
-                    self._identity[identity] = logical
-        else:
-            logical = existing
-            key = self._keys[self._first[logical]]
+        logical = self._fresh(projection) if key is None else self._keyed(key, projection)
+        first = self._first[logical]
+        if first != projection:
+            key = self._keys[first]
             claims = self._claims[logical]
             if isinstance(claims, int):
                 self._claims[logical] = [claims, projection]
@@ -778,13 +759,14 @@ class PageBuilder:
         if key is None or key is ABSENT:
             row[slot] = None
             return
-        entry = self._identity.get((family, key))
+        by_key = self._identity.get(family)
+        entry = None if by_key is None else by_key.get(key)
         if entry is None:
             raise ValueError(
                 f"back-reference {view.relationship.name!r}: no already-converted "
                 f"{family.canonical} claim for key {key!r} on this Page"
             )
-        row[slot] = entry if isinstance(entry, int) else tuple(entry.values())
+        row[slot] = entry
 
     def _slot(self, projection: int, view: RelationshipViewKey) -> int:
         slot = self._slots[projection].index_of.get(view)
@@ -918,6 +900,36 @@ class PageBuilder:
         logical = len(self._first)
         self._first.append(projection)
         self._claims.append(projection)
+        return logical
+
+    def _keyed(self, key: LogicalKey, projection: int) -> int:
+        """The logical ``key`` joins, else a fresh one for ``projection``.
+
+        A primary key's entry is the value :meth:`write_reference` shares, so a
+        coordinate-distinct claim replaces it with a longer tuple rather than
+        changing what an earlier back-reference already recorded.
+        """
+        by_key = self._identity.get(key.family)
+        if by_key is None:
+            by_key = self._identity[key.family] = {}
+        entry = by_key.get(key.primary_key)
+        if entry is None:
+            logical = by_key[key.primary_key] = self._fresh(projection)
+            return logical
+        keys = cast("list[LogicalKey]", self._keys)
+        first = self._first
+        coordinates = key.coordinates
+        if isinstance(entry, int):
+            if keys[first[entry]].coordinates == coordinates:
+                return entry
+            logical = self._fresh(projection)
+            by_key[key.primary_key] = (entry, logical)
+            return logical
+        for claimed in entry:
+            if keys[first[claimed]].coordinates == coordinates:
+                return claimed
+        logical = self._fresh(projection)
+        by_key[key.primary_key] = (*entry, logical)
         return logical
 
     def _require_open(self) -> None:
