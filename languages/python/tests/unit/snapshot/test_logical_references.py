@@ -121,6 +121,65 @@ def test_an_inverse_neither_reaches_an_unrelated_root_nor_extends_its_lifetime()
     assert not rows.view_rows
 
 
+def test_a_later_root_resolves_an_inverse_to_a_released_claim_to_null() -> None:
+    fixture = PageFixture(INVERSE_MODEL, "InverseParent.links", references=_BOTH_PARENTS)
+    other = fixture.node("InverseBeta", {**PARENT_ROWS[1], "id": 2})
+    released = fixture.node("InverseAlpha", PARENT_ROWS[0])
+    link = fixture.node("InverseLink", LINK_ROW)
+    fixture.attach(released, "InverseParent.links", (link,))
+    fixture.attach(other, "InverseParent.links", (link,))
+    fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
+    page = fixture.page(released, other)
+    rows = page_rows(page)
+    logical = rows.logical_ids[released]
+    last_uses = root_last_uses(page)
+    first = RootView(page, 0)
+    slot = first.view_layout(1).index_of[fixture.view_key("InverseLink.parent")]
+    assert first.view(1, slot) == 0
+    first.release_finished_page_rows(0, last_uses)
+    assert rows.claims[logical] == other
+    second = RootView(page, 1)
+    assert [entity.name for entity in second.order] == ["InverseBeta", "InverseLink"]
+    assert second.view(1, slot) is None
+
+
+def test_an_inverse_to_a_grouped_claim_this_root_never_reached_is_null() -> None:
+    fixture = PageFixture(INVERSE_MODEL, "InverseParent.links", references=_BOTH_PARENTS)
+    other = fixture.node("InverseBeta", {**PARENT_ROWS[1], "id": 2})
+    for row in PARENT_ROWS:
+        fixture.node(str(row["family_variant"]), row)
+    link = fixture.node("InverseLink", LINK_ROW)
+    fixture.attach(other, "InverseParent.links", (link,))
+    fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
+    root = RootView(fixture.page(other), 0)
+    slot = root.view_layout(1).index_of[fixture.view_key("InverseLink.parent")]
+    assert root.view(1, slot) is None
+
+
+def test_every_root_of_a_multi_root_view_resolves_its_edges_and_inverse_to_its_own_nodes() -> None:
+    fixture = PageFixture(
+        INVERSE_MODEL,
+        "InverseParent.links",
+        references={"InverseLink.parent": ("InverseAlpha",)},
+    )
+    parents = (
+        fixture.node("InverseAlpha", PARENT_ROWS[0]),
+        fixture.node("InverseAlpha", PARENT_ROWS[0]),
+    )
+    link = fixture.node("InverseLink", LINK_ROW)
+    for parent in parents:
+        fixture.attach(parent, "InverseParent.links", (link,))
+    fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
+    root = RootView(fixture.page(*parents), defer_states=True)
+    links = root.view_layout(0).index_of[fixture.view_key("InverseParent.links")]
+    parent = root.view_layout(1).index_of[fixture.view_key("InverseLink.parent")]
+    assert root.roots == (0, 2)
+    assert [(root.view(node, links), root.view(node + 1, parent)) for node in (0, 2)] == [
+        ((1,), 0),
+        ((3,), 2),
+    ]
+
+
 def test_an_inverse_resolves_only_to_a_reached_node_its_targets_admit() -> None:
     fixture = PageFixture(
         INVERSE_MODEL, "InverseParent.links", references={"InverseLink.parent": ("InverseBeta",)}
