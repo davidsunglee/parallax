@@ -46,6 +46,7 @@ is about the resolved row rather than the arm that addresses it.
 
 from __future__ import annotations
 
+import datetime as dt
 import sys
 import tracemalloc
 from collections.abc import Callable, Sequence
@@ -53,6 +54,7 @@ from dataclasses import replace
 from typing import Final, NamedTuple
 
 from parallax.core._formation_profile import form_metamodel
+from parallax.core.base import INFINITY
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -199,6 +201,9 @@ def _temporal_model() -> Metamodel:
     )
 
 
+_OPENED: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+
 def _temporal_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
     """A temporal Materialized Write Group of ``rows`` observed predecessors.
 
@@ -216,8 +221,8 @@ def _temporal_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
             {
                 "id": row + 1,
                 "value": row,
-                "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "infinity",
+                "txStart": _OPENED,
+                "txEnd": INFINITY,
             }
             for row in range(rows)
         ],

@@ -1430,8 +1430,8 @@ def test_the_lane_assigns_a_restated_occurrence_literally_and_keeps_unassigned_k
                 "crew": 12,
                 "manifest": {"cargo": "grain"},
                 "legs": [{"port": "Oslo"}],
-                "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "infinity",
+                "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "txEnd": INFINITY,
             },
             document=stored,
         )

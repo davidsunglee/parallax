@@ -110,6 +110,7 @@ _ACCOUNT = _MODELS["account"]
 _BALANCE = _MODELS["balance"]
 _BRANCH = _MODELS["branch"]
 _POSITION = _MODELS["position"]
+_OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
 # --------------------------------------------------------------------------- #
@@ -521,7 +522,7 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
                 "id": row_id,
                 "acctNum": "A",
                 "value": 1.00 * row_id,
-                "txStart": "2024-01-01T00:00:00+00:00",
+                "txStart": _OPENED,
                 "txEnd": INFINITY,
             },
         )
@@ -625,7 +626,7 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
                 "id": row_id,
                 "acctNum": "A",
                 "value": 1.00 * row_id,
-                "txStart": "2024-01-01T00:00:00+00:00",
+                "txStart": _OPENED,
                 "txEnd": INFINITY,
             },
         )
@@ -728,7 +729,7 @@ def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step
                 "id": row_id,
                 "acctNum": "A",
                 "value": 1.00 * row_id,
-                "txStart": "2024-01-01T00:00:00+00:00",
+                "txStart": _OPENED,
                 "txEnd": INFINITY,
             },
         )
@@ -782,7 +783,7 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
                 "id": row_id,
                 "acctNum": "A",
                 "value": 1.00 * row_id,
-                "txStart": "2024-01-01T00:00:00+00:00",
+                "txStart": _OPENED,
                 "txEnd": INFINITY,
             },
         )
@@ -921,7 +922,7 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
                 "id": 1,
                 "acctNum": "A",
                 "value": 1.00,
-                "txStart": "2024-01-01T00:00:00+00:00",
+                "txStart": _OPENED,
                 "txEnd": INFINITY,
             },
         )
@@ -959,7 +960,7 @@ def test_mutating_a_materialized_groups_assignments_leaves_steps_unaffected() ->
             "id": 1,
             "acctNum": "A",
             "value": 1.00,
-            "txStart": "2024-01-01T00:00:00+00:00",
+            "txStart": _OPENED,
             "txEnd": INFINITY,
         }
     ]
@@ -1002,9 +1003,9 @@ def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predec
         {
             "id": 1,
             "name": "Central Branch",
-            "validStart": "2024-01-01T00:00:00+00:00",
+            "validStart": _OPENED,
             "validEnd": INFINITY,
-            "txStart": "2024-01-01T00:00:00+00:00",
+            "txStart": _OPENED,
             "txEnd": INFINITY,
             "address": {
                 "street": "10 Old Road",
@@ -1069,7 +1070,7 @@ def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predec
         cast("dict[str, object]", predecessor_address)["city"] = "Espoo"
 
     assert plan.steps[2] == changed
-    statement = compile_write_step(plan.steps[2], _BRANCH, POSTGRES)
+    *_carried, statement = (compile_write_step(step, _BRANCH, POSTGRES) for step in plan.steps)
     assert statement.binds[-1] == JsonDocument(
         {
             "street": "30 New Road",

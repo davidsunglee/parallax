@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from decimal import Decimal
 
 from parallax.conformance import models
 from parallax.core import predicate as predicate_algebra
+from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
@@ -160,8 +162,8 @@ def test_a_temporal_close_and_chain_is_actor_neutral() -> None:
                 "id": 1,
                 "acctNum": "A",
                 "value": Decimal("100.00"),
-                "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "infinity",
+                "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "txEnd": INFINITY,
             }
         )
     )
