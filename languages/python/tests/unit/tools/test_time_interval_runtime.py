@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib
 import json
 import math
+import subprocess
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -389,10 +390,19 @@ def _document(
             cell: (
                 {"status": "failed", "reason": "the child exited 1"}
                 if samples is None
-                else {"status": "measured", "samplesUs": list(samples)}
+                else _measured(cell, samples)
             )
             for cell, samples in cells.items()
         },
+    }
+
+
+def _measured(cell_id: str, samples: Sequence[float]) -> dict[str, object]:
+    return {
+        "status": "measured",
+        "samplesUs": list(samples),
+        "windows": 1,
+        "outcome": support.expected_outcome(support.cell_named(cell_id)).document(),
     }
 
 
@@ -579,7 +589,7 @@ def test_a_cell_one_capture_never_selected_is_missing_evidence(tmp_path: Path) -
     ("conditions", "problem"),
     [
         ({"support_digest": "other"}, "measurement-support digests differ"),
-        ({"sampling": {"warmups": 1}}, "sampling differs"),
+        ({"sampling": {**tool.sampling(), "warmups": 1}}, "sampling differs"),
         ({"environment": {"pythonVersion": "3.13.1"}}, "pythonVersion differs"),
         ({"environment": {"node": "elsewhere"}}, "node differs"),
     ],
@@ -705,6 +715,40 @@ def test_an_unreadable_capture_is_refused(tmp_path: Path) -> None:
         tool.load_capture(tmp_path / "absent")
 
 
+@pytest.mark.parametrize(
+    ("section", "key", "fact"),
+    [
+        ("subject", "productionDigest", "production digest"),
+        ("support", "digest", "measurement-support digest"),
+        (None, "executionSeam", "execution seam"),
+        ("environment", "node", "environment node"),
+        ("sampling", "measured", "sampling measured"),
+    ],
+)
+def test_captures_lacking_the_same_provenance_are_refused_rather_than_compatible(
+    tmp_path: Path, section: str | None, key: str, fact: str
+) -> None:
+    document = _document({_SOURCE_KEYED: _samples(100)})
+    del cast("dict[str, object]", document if section is None else document[section])[key]
+    before = _written(tmp_path / "baseline", document)
+    after = _written(tmp_path / "candidate", document)
+    with pytest.raises(tool.CaptureError, match=f"records no {fact}"):
+        tool.compare(before, after, tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("dropped", ["outcome", "windows"])
+def test_a_measured_record_without_its_complete_run_is_missing_evidence(
+    tmp_path: Path, dropped: str
+) -> None:
+    document = _document({_SOURCE_KEYED: _samples(100)})
+    cells = cast("dict[str, dict[str, object]]", document["cells"])
+    del cells[_SOURCE_KEYED][dropped]
+    before = _written(tmp_path / "baseline", document)
+    after = _written(tmp_path / "candidate", document)
+    assert tool.compare(before, after, tmp_path / "out") == "missing-or-incompatible-evidence"
+
+
 def test_the_compare_command_exits_zero_only_without_any_detected_regression(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -763,3 +807,25 @@ def test_a_worktree_repetition_captures_one_cell_through_that_worktrees_environm
     failure = repeater("baseline", cell, tmp_path / "round")
     assert isinstance(failure, str)
     assert "could not be started" in failure
+
+
+def test_a_worktree_repetition_writes_a_relative_destination_where_the_comparison_reads_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started: list[tuple[list[str], Path]] = []
+
+    def run(
+        command: list[str], *, cwd: Path, **options: object
+    ) -> subprocess.CompletedProcess[str]:
+        del options
+        started.append((command, cwd))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(tool.subprocess, "run", run)
+    repeater = tool.WorktreeRepeater(tmp_path / "baseline-tree", tmp_path / "candidate-tree")
+    taken = repeater("baseline", support.cell_named(_SOURCE_KEYED), Path("out/round"))
+    ((command, cwd),) = started
+    assert cwd == tmp_path / "baseline-tree" / "languages" / "python"
+    assert taken == (tmp_path / "out" / "round").resolve()
+    assert command[-2:] == ["--output", str(taken)]

@@ -40,9 +40,11 @@ Columns transaction:
   terminated in a barrier region of its own, authored in an order that differs
   from Valid-Time order; the window is the reinsertion verb whose admission
   depends on that destruction coverage;
-* ``removal-window`` — the same stored insertion with a pending partial
-  removal; the window is four refused reinsertions, then (outside it) a flush
-  that removes one tagged row, then four refused reinsertions again.
+* ``removal-window`` — the same stored insertion, admitted over the pending
+  removal of an earlier insertion from an earlier anchor, so the flush storing
+  it moves the retained anchor, and then given a pending partial removal; the
+  window is four refused reinsertions, then (outside it) a flush that removes
+  one tagged row, then four refused reinsertions again.
 
 The provider-free ports cross every DML statement's binds through the
 production PostgreSQL bind adaptation and psycopg's own dump and report one
@@ -171,6 +173,8 @@ _DAY: Final = dt.timedelta(days=1)
 _ORIGIN: Final = lowering_support.VALID_START
 _KEY: Final = 7
 """The object the destruction and removal workloads insert, split, and remove."""
+_PREVIOUS_ANCHOR: Final = _ORIGIN - _DAY
+"""Where the removal workload's superseded insertion of :data:`_KEY` starts."""
 _TARGET_KEY: Final = 901
 """The stored object the replacement workloads address."""
 
@@ -285,7 +289,7 @@ def expected_outcome(cell: Cell) -> Outcome:
             return Outcome(statements=2 * size, reads=1)
         if cell.algorithm == "destruction-merge":
             return Outcome(statements=size + 1, reads=size // 2 + size, admitted=1)
-        return Outcome(statements=size + 2, reads=size // 2 + 2, refused=2 * _REFUSALS_PER_WINDOW)
+        return Outcome(statements=size + 4, reads=size // 2 + 4, refused=2 * _REFUSALS_PER_WINDOW)
     match cell.flow:
         case "source-keyed" | "target-patch":
             return Outcome(statements=4, reads=1)
@@ -355,8 +359,10 @@ _ALGORITHM_STAGES: Final[Mapping[Algorithm, str]] = {
     ),
     "removal-window": (
         "four refused reinsertions of an object whose stored insertion spans size tagged rows "
-        "under a pending partial removal, then, after a flush outside the window removes one "
-        "tagged row, four refused reinsertions under a new pending partial removal"
+        "under a pending partial removal, that insertion having been admitted over the "
+        "removal of an earlier one from an earlier anchor before the window, then, after a "
+        "flush outside the window removes one tagged row, four refused reinsertions under a "
+        "new pending partial removal"
     ),
 }
 _ALGORITHM_SETUP: Final = (
@@ -800,6 +806,19 @@ class _Insertion:
         query = entity.where(entity.id == _KEY).as_of(valid_time=pin, tx_time=LATEST)
         return cast("Entity", self.tx.find(query).result())
 
+    def supersede(self) -> None:
+        """Insert and store the object from :data:`_PREVIOUS_ANCHOR`, then
+        remove all of it by a pending termination: the insertion :meth:`split`
+        makes next is admitted by judging that removal against the stored
+        insertion's removal window, and the flush storing it moves the
+        record's retained anchor to the origin."""
+        tx, size = self.tx, self.size
+        tx.insert(_instance(_KEY, "previous"), valid_from=_PREVIOUS_ANCHOR, until=_day(size))
+        previous = _milestone(
+            _KEY, _PREVIOUS_ANCHOR, _day(size), "previous", lowering_support.INSTANT
+        )
+        tx.terminate(self._observed(previous, _PREVIOUS_ANCHOR))
+
     def split(self) -> None:
         """Insert and store the object, then reassign every even row of
         ``[origin, day(size))`` by a bounded update of its own, each from a
@@ -870,6 +889,7 @@ def _destruction(insertion: _Insertion, stopwatch: Stopwatch) -> Outcome:
 
 
 def _removal(insertion: _Insertion, stopwatch: Stopwatch) -> Outcome:
+    insertion.supersede()
     insertion.split()
     insertion.terminate(0, insertion.source(0))
     refused = insertion.refusals(stopwatch)

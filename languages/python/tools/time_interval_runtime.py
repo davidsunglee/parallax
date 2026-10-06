@@ -17,8 +17,11 @@ child fails is recorded as failed and the command exits 3.
 cell, and writes ``comparison.json`` into a new or empty output directory.
 Before judging any timing it requires the two captures to share the
 measurement-support digest, the sampling, the execution seam, and the
-environment's implementation, Python version, system, machine, and host; and it
-requires every cell either capture selected to be measured in both. Each cell
+environment's implementation, Python version, system, machine, and host — a
+capture missing any of these facts, or its production digest, is refused
+rather than read — and it requires every cell either capture selected
+to be measured in both, its record stating the outcome of a complete run and
+its timed windows. Each cell
 answers exactly one result:
 
 * ``missing-or-incompatible-evidence`` — the captures are incompatible, the
@@ -507,12 +510,23 @@ class Capture:
 
     def samples(self, cell_id: str) -> tuple[float, ...] | None:
         """``cell_id``'s measured samples, or ``None`` where it is absent,
-        failed, or malformed."""
+        failed, malformed, or not recorded as a complete run of a supported
+        cell."""
         record = self.document["cells"].get(cell_id)
         if not isinstance(record, Mapping):
             return None
         fields = cast("Mapping[str, object]", record)
-        if fields.get("status") != "measured":
+        try:
+            expected = support.expected_outcome(support.cell_named(cell_id)).document()
+        except KeyError:
+            return None
+        windows = fields.get("windows")
+        if (
+            fields.get("status") != "measured"
+            or fields.get("outcome") != expected
+            or not isinstance(windows, int)
+            or windows <= 0
+        ):
             return None
         samples = _positive_samples(fields.get("samplesUs"))
         return None if samples is None else tuple(samples)
@@ -535,7 +549,25 @@ def load_capture(path: Path) -> Capture:
             raise CaptureError(f"{file} carries no {key} object")
     if not isinstance(fields.get("selections"), list):
         raise CaptureError(f"{file} carries no selections")
+    missing = _missing_provenance(fields)
+    if missing:
+        raise CaptureError(f"{file} records no {', '.join(missing)}")
     return Capture(file, fields)
+
+
+def _missing_provenance(fields: Mapping[str, Any]) -> list[str]:
+    """The provenance facts compatibility is judged by that ``fields`` lacks,
+    so two captures lacking the same fact never compare as compatible."""
+    stated = {
+        "production digest": fields["subject"].get("productionDigest"),
+        "measurement-support digest": fields["support"].get("digest"),
+        "execution seam": fields.get("executionSeam"),
+        **{f"environment {key}": fields["environment"].get(key) for key in ENVIRONMENT_KEYS},
+    }
+    missing = [name for name, value in stated.items() if not isinstance(value, str) or not value]
+    recorded = fields["sampling"]
+    missing.extend(f"sampling {key}" for key in sampling() if key not in recorded)
+    return missing
 
 
 def incompatibilities(baseline: Capture, candidate: Capture) -> list[str]:
@@ -747,6 +779,9 @@ class WorktreeRepeater:
 
     def __call__(self, subject: Subject, cell: support.Cell, destination: Path) -> Path | str:
         worktree = self.baseline if subject == "baseline" else self.candidate
+        # The child runs in the worktree, so a relative destination would name
+        # a directory there rather than the one the comparison reads back.
+        destination = destination.resolve()
         try:
             completed = subprocess.run(
                 repetition_command(cell, destination),
