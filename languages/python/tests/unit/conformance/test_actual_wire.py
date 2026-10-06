@@ -17,6 +17,7 @@ import pytest
 from parallax.conformance import case_format, models, sweep
 from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.core import inheritance, storage_layout
+from parallax.core.base import INFINITY
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -78,6 +79,19 @@ def test_run_read_case_wire_refuses_a_wire_shaped_non_member_carrier() -> None:
     assert external_id is not None
     with pytest.raises(WireEncodingError):
         ActualWireProjection(model).scalar(external_id, "123e4567-e89b-12d3-a456-426614174000")
+
+
+def test_actual_wire_projects_only_the_managed_open_bound_at_an_axis_end() -> None:
+    # Production holds the open bound as the managed value; its Wire spelling is
+    # this projection's output, never an input it repairs.
+    model = models.load_models()["position"]
+    (entity,) = model.entities
+    valid_end = entity.attribute("validEnd")
+    assert valid_end is not None
+    projection = ActualWireProjection(model)
+    assert projection.scalar(valid_end, INFINITY) == "infinity"
+    with pytest.raises(WireEncodingError):
+        projection.scalar(valid_end, "infinity")
 
 
 def test_read_row_projects_reused_tph_columns_from_each_row_variant() -> None:

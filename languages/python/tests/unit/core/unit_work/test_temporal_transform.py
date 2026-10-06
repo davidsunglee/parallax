@@ -12,7 +12,6 @@ from parallax.core.unit_work.temporal import (
     TemporalSegment,
     covers,
     instant_order,
-    is_open_bound,
 )
 
 _JAN, _FEB, _MAR, _JUN, _SEP, _NOV, _DEC = (
@@ -38,7 +37,7 @@ def test_an_earlier_window_written_later_still_wins_over_the_overlap() -> None:
     assert [(segment.start, segment.assigned) for segment in transform.segments] == [
         (_MAR, {"amount": 150})
     ]
-    assert is_open_bound(transform.end)
+    assert transform.end is INFINITY
 
 
 def test_a_baseline_equal_restatement_is_still_an_assignment() -> None:
@@ -136,7 +135,7 @@ def test_an_unbounded_replacement_fills_after_the_last_coverage_ends() -> None:
     replaced = EMPTY_TRANSFORM.then(valid_from=_MAR, until=None, assigned=_REPLACED, replaces=True)
     (tail,) = replaced.gaps(((_JAN, _JUN),))
     assert (tail.start, tail.assigned) == (_JUN, _REPLACED)
-    assert is_open_bound(tail.end)
+    assert tail.end is INFINITY
     assert replaced.gaps(((_JAN, INFINITY),)) == ()
 
 

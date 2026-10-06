@@ -80,7 +80,7 @@ def test_an_allocated_temporal_key_is_answered_and_the_row_revised_in_place() ->
     insert, _find, revision = (
         call for call in port.calls if isinstance(call, ReadCall | WriteCall)
     )
-    assert insert == ReadCall(_INSERT, (0, 1, 100, FIXED, "infinity"))
+    assert insert == ReadCall(_INSERT, (0, 1, 100, FIXED, INFINITY_INSTANT))
     assert isinstance(revision, WriteCall)
     assert revision.sql == (
         "update ledger set amount = %s where id = %s and out_z = %s and in_z = %s"

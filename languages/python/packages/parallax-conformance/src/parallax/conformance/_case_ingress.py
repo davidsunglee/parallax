@@ -1,18 +1,29 @@
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import cast, overload
 
 from parallax.conformance._case_literal import normalize_case_bound, normalize_case_literal
-from parallax.core import inheritance, predicate
-from parallax.core.base import NeutralType
+from parallax.core import inheritance, predicate, temporal_read
+from parallax.core.base import (
+    INFINITY,
+    INFINITY_LITERAL,
+    NeutralType,
+    Timestamp,
+    coerce_neutral_input,
+    matches_neutral_type,
+)
+from parallax.core.document_codec._authoring import MAPPING_SOURCE_ACCESS, prepare_authoring
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
+    Leaf,
     Multiplicity,
     OccurrenceMetadata,
+    TemporalDimension,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     entity_by_name,
@@ -21,6 +32,7 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import AsOf, AsOfRange, ObjectQueryNode, TemporalSelection
 from parallax.core.unit_work import instructions
+from parallax.core.unit_work.columns import freeze_retained_value
 from parallax.core.unit_work.instructions import (
     KeyedWrite,
     PredicateSelection,
@@ -31,6 +43,7 @@ from parallax.core.unit_work.instructions import (
     WriteAssignment,
     WriteInstruction,
 )
+from parallax.core.wire import WireDecodingError, WireValue, decode_wire
 
 __all__ = ["decode_case_row", "normalize_case_query", "prepare_case_write"]
 
@@ -66,20 +79,78 @@ def prepare_case_write(
 def decode_case_row(
     row: Mapping[str, object], model: AcceptedMetamodel, entity: EntityMetadata
 ) -> Mapping[str, object]:
-    """Normalize one case-format row of ``entity`` state and decode it, judging
+    """One case-format row of ``entity`` state as managed members, judging
     nothing.
 
     For state a case states rather than a write it authors — seeded fixtures,
-    and the members an edit assigns its copy. Write admission measures a write
-    against its target, so such state is decoded by
-    :func:`~parallax.core.unit_work.instructions.decode_wire_row` instead.
+    and the members an edit assigns its copy. A stored row holds the open bound
+    in its axis ends, so a declared Transaction-Time or Valid-Time end spelled
+    ``infinity`` is the managed :data:`~parallax.core.base.INFINITY`; every other
+    Timestamp leaf stays finite-only. A ``WireDecodingError`` surfaces as the
+    :class:`~parallax.core.unit_work.instructions.InstructionRejectedError` Wire
+    preparation raises for it.
     """
-    members = _entity_members(model, entity)
-    normalized = {
-        name: _normalize_member(members[name], value) if name in members else value
-        for name, value in row.items()
-    }
-    return instructions.decode_wire_row(normalized, model, entity)
+    position = inheritance.view(model).entity(entity.identity)
+    if position is None:  # pragma: no cover - every accepted Entity has a view
+        raise ValueError(f"{entity.identity.canonical}: no inheritance position")
+    return prepare_authoring(
+        position.member_selection.shape,
+        row,
+        source_access=MAPPING_SOURCE_ACCESS,
+        normalize_leaf=_CaseRowLeaves(_temporal_ends(model, entity)).normalize,
+        path=entity.identity.canonical,
+        fill_missing_many=False,
+        allow_root_markers=True,
+    ).value
+
+
+def _temporal_ends(model: AcceptedMetamodel, entity: EntityMetadata) -> tuple[Leaf, ...]:
+    """The canonical definitions of ``entity``'s declared axis ends.
+
+    Each end is resolved on the Entity that declares it, so a leaf of the
+    family-effective member shape is an axis end exactly when it IS one of these
+    definitions: inheritance selections reuse the declaration-owned objects
+    (`m-inheritance`), while a nested leaf merely named or typed like one is a
+    different object.
+    """
+    temporal = temporal_read.view(model)
+    ends: list[Leaf] = []
+    for dimension in TemporalDimension:
+        axis = temporal.axis(entity.identity, dimension)
+        if axis is None:
+            continue
+        identity = axis.end_attribute
+        declaring = model.entity(identity.entity)
+        attribute = None if declaring is None else declaring.attribute(identity.name)
+        if attribute is None:  # pragma: no cover - an accepted axis names a declared end
+            raise ValueError(f"{identity.entity.canonical}: no declared axis end {identity.name}")
+        ends.append(attribute.definition)
+    return tuple(ends)
+
+
+@dataclass(frozen=True, slots=True)
+class _CaseRowLeaves:
+    ends: tuple[Leaf, ...]
+
+    def normalize(self, leaf: Leaf, value: object, path: str) -> tuple[object, bool]:
+        if (value is INFINITY or value == INFINITY_LITERAL) and any(
+            leaf is end for end in self.ends
+        ):
+            return INFINITY, True
+        neutral_type = leaf.type
+        if isinstance(neutral_type, Timestamp) and isinstance(value, dt.datetime):
+            managed = coerce_neutral_input(value, neutral_type)
+            if matches_neutral_type(managed, neutral_type):
+                return managed, True
+        try:
+            decoded = decode_wire(
+                neutral_type, cast("WireValue", normalize_case_literal(neutral_type, value))
+            )
+        except WireDecodingError as error:
+            raise instructions.InstructionRejectedError(
+                f"neutral-literal-{error.reason}", f"{path}: {error}"
+            ) from error
+        return freeze_retained_value(decoded), True
 
 
 def normalize_case_query(query: ObjectQueryNode, model: AcceptedMetamodel) -> ObjectQueryNode:

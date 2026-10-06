@@ -17,13 +17,14 @@ import decimal
 
 import pytest
 
-from parallax.conformance import models
+from parallax.conformance import _case_ingress, models
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.temporal_state import (
     AmbiguousObservationError,
     MilestoneEdgeError,
     TemporalShadow,
 )
+from parallax.core.base import INFINITY
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.unit_work import (
     PlanningRequest,
@@ -57,19 +58,19 @@ _HEAD = {
     "id": 1,
     "acctNum": "A",
     "value": 100.00,
-    "validStart": "2024-01-01T00:00:00+00:00",
-    "validEnd": "2024-06-01T00:00:00+00:00",
-    "txStart": "2024-04-01T00:00:00+00:00",
-    "txEnd": "infinity",
+    "validStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "validEnd": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+    "txStart": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+    "txEnd": INFINITY,
 }
 _TAIL = {
     "id": 1,
     "acctNum": "A",
     "value": 200.00,
-    "validStart": "2024-06-01T00:00:00+00:00",
-    "validEnd": "infinity",
-    "txStart": "2024-04-01T00:00:00+00:00",
-    "txEnd": "infinity",
+    "validStart": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+    "validEnd": INFINITY,
+    "txStart": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+    "txEnd": INFINITY,
 }
 
 
@@ -88,19 +89,19 @@ def test_resolve_raises_when_more_than_one_current_milestone_is_tracked_for_a_pk
                 "id": 1,
                 "acctNum": "A",
                 "value": 100.00,
-                "validStart": "2024-01-01T00:00:00+00:00",
-                "validEnd": "2024-06-01T00:00:00+00:00",
-                "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "infinity",
+                "validStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "validEnd": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+                "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "txEnd": INFINITY,
             },
             {
                 "id": 1,
                 "acctNum": "A",
                 "value": 200.00,
-                "validStart": "2024-06-01T00:00:00+00:00",
-                "validEnd": "infinity",
-                "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "infinity",
+                "validStart": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+                "validEnd": INFINITY,
+                "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "txEnd": INFINITY,
             },
         ],
     )
@@ -127,21 +128,24 @@ def test_seed_fixtures_skips_a_row_not_current_on_transaction_time() -> None:
                 "id": 1,
                 "acctNum": "A",
                 "value": 100.00,
-                "validStart": "2024-01-01T00:00:00+00:00",
-                "validEnd": "infinity",
-                "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "2024-06-01T00:00:00+00:00",
+                "validStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "validEnd": INFINITY,
+                "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "txEnd": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
             }
         ],
     )
     assert shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1}) is None
 
 
-@pytest.mark.parametrize("valid_start", ["infinity", 20240101])
+@pytest.mark.parametrize(
+    "valid_start", [INFINITY, "infinity", "2024-01-01T00:00:00+00:00", 20240101]
+)
 def test_an_axis_start_that_is_not_a_finite_instant_is_refused(valid_start: object) -> None:
     # A milestone's edge is its from-instant per axis. The open bound belongs to
-    # an axis END, and a bare number is no coordinate at all — either would key a
-    # slot no read can ever match, so both are refused where the slot is keyed.
+    # an axis END, and neither a bare number nor an unmanaged instant spelling is
+    # a managed coordinate — each would key a slot no read can ever match, so all
+    # are refused where the slot is keyed.
     with pytest.raises(MilestoneEdgeError, match="finite instant"):
         TemporalShadow().seed_fixtures(
             POSITION, POSITION_ENTITY, [{**_HEAD, "validStart": valid_start}]
@@ -269,9 +273,9 @@ def test_track_opened_tracks_the_milestones_the_plan_actually_opens() -> None:
         "acctNum": "A",
         "value": decimal.Decimal("100.00"),
         "validStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        "validEnd": "infinity",
+        "validEnd": INFINITY,
         "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        "txEnd": "infinity",
+        "txEnd": INFINITY,
     }
 
 
@@ -382,6 +386,61 @@ def test_coverage_answers_the_tracked_rectangles_of_one_object_inside_the_window
         ),
     )
     assert [row.members["value"] for row in covered] == [decimal.Decimal("2.00")]
+
+
+def test_coverage_reaches_a_tracked_opening_whose_end_is_the_open_bound() -> None:
+    shadow = TemporalShadow()
+    shadow.track_opened(
+        POSITION,
+        _rectangles(
+            (1, "2024-01-01T00:00:00Z", "2024-03-01T00:00:00Z", "1.00"),
+            (1, "2024-03-01T00:00:00Z", None, "2.00"),
+        ),
+    )
+    covered = shadow.coverage(POSITION, _acquisition(dt.datetime(2024, 4, 1, tzinfo=dt.UTC), None))
+    assert [(row.members["value"], row.members["validEnd"]) for row in covered] == [
+        (decimal.Decimal("2.00"), INFINITY)
+    ]
+
+
+def test_coverage_reaches_a_fixture_row_decoded_at_case_ingress() -> None:
+    # A fixture states its open ends as the published literal; case ingress
+    # decodes the declared axis ends to the managed bound before seeding, so
+    # the seeded milestone is current and covers every window it reaches.
+    fixture = {
+        "id": 1,
+        "acctNum": "A",
+        "value": "100.00",
+        "validStart": "2024-01-01T00:00:00.000000Z",
+        "validEnd": "infinity",
+        "txStart": "2024-01-01T00:00:00.000000Z",
+        "txEnd": "infinity",
+    }
+    shadow = TemporalShadow()
+    shadow.seed_fixtures(
+        POSITION,
+        POSITION_ENTITY,
+        [_case_ingress.decode_case_row(fixture, POSITION, POSITION_ENTITY)],
+    )
+    covered = shadow.coverage(
+        POSITION,
+        _acquisition(
+            dt.datetime(2024, 9, 1, tzinfo=dt.UTC), dt.datetime(2024, 10, 1, tzinfo=dt.UTC)
+        ),
+    )
+    assert [(row.members["validEnd"], row.members["txEnd"]) for row in covered] == [
+        (INFINITY, INFINITY)
+    ]
+
+
+def test_coverage_reaches_a_database_observation_kept_unchanged() -> None:
+    # A grouped read's observation carries the port's managed open bound, and a
+    # write that leaves the milestone unchanged keeps tracking that observation.
+    observed = TemporalObservation(predecessor=PredecessorRow(members=_TAIL))
+    shadow = TemporalShadow()
+    shadow.keep_unchanged(POSITION, (), [(POSITION_ENTITY, observed)])
+    covered = shadow.coverage(POSITION, _acquisition(dt.datetime(2024, 7, 1, tzinfo=dt.UTC), None))
+    assert covered == (observed.predecessor,)
 
 
 def test_retiring_a_state_with_no_milestone_leaves_the_tracker_alone() -> None:

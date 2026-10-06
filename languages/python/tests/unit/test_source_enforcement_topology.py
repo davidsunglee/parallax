@@ -400,6 +400,14 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"ObjectQuery", "object_query_node"}
     ),
     ("parallax.conformance.models", "parallax.core.entity._model"): frozenset({"model_of"}),
+    # Case ingress decodes stored state through the codec's one authored-document
+    # traversal (`m-document-codec`), which Unit Work and Entity editing already
+    # share. Its leaf normalizer receives the canonical Leaf, so a declared axis
+    # end is recognized by definition identity rather than by its diagnostic path.
+    (
+        "parallax.conformance._case_ingress",
+        "parallax.core.document_codec._authoring",
+    ): frozenset({"MAPPING_SOURCE_ACCESS", "prepare_authoring"}),
     (
         "parallax.conformance.evolution_wire",
         "parallax.descriptor._type_spelling",

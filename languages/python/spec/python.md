@@ -615,7 +615,14 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   compiler reach is enumerated separately in the carrier-neutral block above,
   and the case loader's `wire._json.authored_number` reach is the production YAML
   token-preservation seam. Compatibility inputs use canonical Wire literals, so
-  case ingress needs no private token-inspection reach. Each remaining reach stays
+  case ingress needs no private token-inspection reach. Case ingress does reach
+  `parallax.core.document_codec._authoring` for exactly `prepare_authoring` and
+  `MAPPING_SOURCE_ACCESS`: a stored-state row a case states is decoded through the
+  codec's one authored-document traversal, the one Unit Work and Entity editing
+  share, rather than through a second decoder, and the canonical Leaf that
+  traversal hands its normalizer is what identifies a declared axis end. The
+  traversal stays out of `parallax.core.document_codec`'s package interface, since
+  no developer-facing surface needs it. Each remaining reach stays
   keyed by its exact importing module and imported names in the source inventory.
   Widening
   `parallax.core.entity`'s shipped surface to serve a development-only consumer

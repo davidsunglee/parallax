@@ -13,7 +13,7 @@ import pytest
 from parallax.conformance import case_format
 from parallax.core import inheritance
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING, NeutralType, coerce_neutral_input, matches_neutral_type
+from parallax.core.base import STRING, coerce_neutral_input, matches_neutral_type
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.document_codec._authoring import (
     MAPPING_SOURCE_ACCESS,
@@ -56,6 +56,7 @@ from parallax.core.metamodel import (
     EntityMetadata,
     ExactEntityReference,
     IssueCode,
+    Leaf,
     MetamodelIssue,
     PersistenceMode,
     RelationshipIdentity,
@@ -313,9 +314,9 @@ def _member(name: str) -> AttributeMetadata | ValueObjectMetadata:
 def _assignment(name: str, value: object) -> None:
     member = _member(name)
 
-    def normalize(neutral_type: NeutralType, leaf: object, _path: str) -> tuple[object, bool]:
-        managed = coerce_neutral_input(leaf, neutral_type)
-        return managed, matches_neutral_type(managed, neutral_type)
+    def normalize(leaf: Leaf, value: object, _path: str) -> tuple[object, bool]:
+        managed = coerce_neutral_input(value, leaf.type)
+        return managed, matches_neutral_type(managed, leaf.type)
 
     failure = validate_member_authoring(
         member.definition,

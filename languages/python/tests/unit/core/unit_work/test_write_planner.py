@@ -1536,10 +1536,10 @@ def _bitemporal_observation() -> WriteObservation:
                 "id": 5,
                 "acctNum": "P5",
                 "value": Decimal("1.0"),
-                "validStart": "2024-01-01T00:00:00+00:00",
-                "validEnd": "infinity",
-                "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "infinity",
+                "validStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "validEnd": INFINITY,
+                "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "txEnd": INFINITY,
             }
         )
     )
@@ -1554,8 +1554,8 @@ _BALANCE_PREDECESSOR: dict[str, object] = {
     "id": 1,
     "acctNum": "A",
     "value": Decimal("1.00"),
-    "txStart": "2024-01-01T00:00:00+00:00",
-    "txEnd": "infinity",
+    "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "txEnd": INFINITY,
 }
 
 
@@ -1769,7 +1769,7 @@ def _temporal_family_writes() -> list[OrderedWrite]:
         ({"id": 2, "amount": Decimal("3.00")},),
         valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
     )
-    transaction_time = {"txStart": _OPENED, "txEnd": "infinity"}
+    transaction_time = {"txStart": _OPENED, "txEnd": INFINITY}
     observed = {
         corpus_object_key("SpotQuote", ("id", 1)): {
             "id": 1,
@@ -1782,7 +1782,7 @@ def _temporal_family_writes() -> list[OrderedWrite]:
             "amount": Decimal("1.00"),
             "grade": "A",
             "validStart": _OPENED,
-            "validEnd": "infinity",
+            "validEnd": INFINITY,
             **transaction_time,
         },
     }
@@ -1897,7 +1897,7 @@ def test_a_close_gates_on_the_axis_its_topology_names(monkeypatch: pytest.Monkey
     assert isinstance(close, PlannedClose)
     assert isinstance(close.concurrency, TemporalGate)
     assert close.concurrency.start_attribute.name == "validStart"
-    assert close.concurrency.observed_start == "2024-01-01T00:00:00+00:00"
+    assert close.concurrency.observed_start == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
 # --------------------------------------------------------------------------- #

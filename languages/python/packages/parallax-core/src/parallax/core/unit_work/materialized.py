@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
 from parallax.core import inheritance, temporal_read
-from parallax.core.base import INFINITY_LITERAL
+from parallax.core.base import INFINITY
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TemporalShape, milestone_edge
 from parallax.core.unit_work.claims import SettledEvidence, WriteIntent, keyed_intent
@@ -695,7 +695,7 @@ class PendingOpening:
         valid_from = bounds.valid_from
         assert valid_from is not None  # a Bitemporal opening states its start
         until = bounds.until
-        return self.transform.pieces(valid_from, INFINITY_LITERAL if until is None else until)
+        return self.transform.pieces(valid_from, INFINITY if until is None else until)
 
 
 @dataclass(frozen=True, slots=True)

@@ -12,7 +12,7 @@ from typing import Final, Literal, Protocol
 from weakref import WeakValueDictionary
 
 from parallax.core import inheritance
-from parallax.core.base import INFINITY_LITERAL
+from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work.claims import (
@@ -497,10 +497,10 @@ class _TargetWriteState:
                 continue
             end = endpoint.ends[0]
             if not isinstance(end, Finite):
-                return INFINITY_LITERAL
+                return INFINITY
             if latest is None or precedes(latest, end.instant):
                 latest = end.instant
-        return INFINITY_LITERAL if latest is None else latest
+        return INFINITY if latest is None else latest
 
     def advanced(self, state: VersionedStateKey) -> None:
         record = self._records.get(state.object)
@@ -1094,7 +1094,7 @@ class UnitOfWork:
             and _destroys(
                 self._pending.transforms(key, after_opening=True),
                 bounds.valid_from,
-                INFINITY_LITERAL if bounds.until is None else bounds.until,
+                INFINITY if bounds.until is None else bounds.until,
             )
         )
 

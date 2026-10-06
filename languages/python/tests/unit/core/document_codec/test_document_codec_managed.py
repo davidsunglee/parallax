@@ -81,9 +81,9 @@ _SHAPE = MemberShape(
 )
 
 
-def _normalize(neutral_type: NeutralType, value: object, _path: str) -> tuple[object, bool]:
-    managed = coerce_neutral_input(value, neutral_type)
-    return retain_document_value(managed), matches_neutral_type(managed, neutral_type)
+def _normalize(leaf: Leaf, value: object, _path: str) -> tuple[object, bool]:
+    managed = coerce_neutral_input(value, leaf.type)
+    return retain_document_value(managed), matches_neutral_type(managed, leaf.type)
 
 
 class _Borrowed:
@@ -209,6 +209,52 @@ def test_member_validation_covers_null_marker_valid_and_invalid_leaves() -> None
     )
     assert failure is not None
     assert failure.reason == "type-mismatch"
+
+
+def test_both_traversal_modes_hand_the_normalizer_the_shapes_own_leaves() -> None:
+    # A normalizer can recognize a leaf by the definition the shape holds, which
+    # a structurally equal leaf elsewhere in the document is not.
+    twin = MemberShape(members=(Leaf("label", STRING, True),))
+    shape = MemberShape(
+        members=(
+            Leaf("label", STRING, True),
+            Occurrence("twin", Multiplicity.ONE, True, twin),
+        )
+    )
+    seen: list[tuple[Leaf, str]] = []
+
+    def recording(leaf: Leaf, value: object, path: str) -> tuple[object, bool]:
+        seen.append((leaf, path))
+        return _normalize(leaf, value, path)
+
+    source = {"label": "a", "twin": {"label": "b"}}
+    prepare_authoring(
+        shape, source, source_access=MAPPING_SOURCE_ACCESS, normalize_leaf=recording, path="Doc"
+    )
+    validate_member_authoring(
+        Occurrence("document", Multiplicity.ONE, True, shape),
+        source,
+        source_access=MAPPING_SOURCE_ACCESS,
+        normalize_leaf=recording,
+        path="Doc",
+    )
+    validate_member_authoring(
+        shape.members[0],
+        "c",
+        source_access=MAPPING_SOURCE_ACCESS,
+        normalize_leaf=recording,
+        path="Doc.label",
+    )
+
+    top, nested = shape.members[0], twin.members[0]
+    assert top == nested
+    assert [(leaf is top, leaf is nested, path) for leaf, path in seen] == [
+        (True, False, "Doc.label"),
+        (False, True, "Doc.twin.label"),
+        (True, False, "Doc.label"),
+        (False, True, "Doc.twin.label"),
+        (True, False, "Doc.label"),
+    ]
 
 
 def test_preparation_rejects_a_root_without_named_member_access() -> None:

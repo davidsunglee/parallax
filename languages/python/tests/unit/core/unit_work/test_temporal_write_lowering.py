@@ -266,7 +266,7 @@ def test_audit_only_insert_opens_a_current_milestone() -> None:
     assert statements == [
         (
             "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
-            (1, "A", 100.00, _instant("2024-01-01T00:00:00+00:00"), "infinity"),
+            (1, "A", 100.00, _instant("2024-01-01T00:00:00+00:00"), OPEN_BOUND),
         )
     ]
 
@@ -288,7 +288,7 @@ def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
         ),
         (
             "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
-            (1, "A", 150.00, _instant("2024-06-01T00:00:00+00:00"), "infinity"),
+            (1, "A", 150.00, _instant("2024-06-01T00:00:00+00:00"), OPEN_BOUND),
         ),
     ]
 
@@ -319,7 +319,7 @@ def test_audit_only_update_carries_every_new_attribute() -> None:
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert statements[1] == (
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
-        (1, "B", 250.00, _instant("2024-06-01T00:00:00+00:00"), "infinity"),
+        (1, "B", 250.00, _instant("2024-06-01T00:00:00+00:00"), OPEN_BOUND),
     )
 
 
@@ -339,7 +339,7 @@ def test_audit_only_update_merges_a_sparse_row_onto_the_observed_payload() -> No
     )
     assert statements[1] == (
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
-        (1, "A", 150.00, _instant("2024-06-01T00:00:00+00:00"), "infinity"),
+        (1, "A", 150.00, _instant("2024-06-01T00:00:00+00:00"), OPEN_BOUND),
     )
 
 
@@ -372,7 +372,7 @@ def test_audit_only_update_merges_the_sparse_row_at_the_finalization_seam() -> N
         "acctNum": "A",
         "value": Decimal("150.00"),
         "txStart": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
-        "txEnd": "infinity",
+        "txEnd": OPEN_BOUND,
     }
     assert isinstance(opened, PlannedInsert)
     assert opened.entries[0].origin == ChangedFrom(predecessor=observation.predecessor)
@@ -528,7 +528,7 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
                 _instant("2024-01-01T00:00:00+00:00"),
                 _instant("2024-03-01T00:00:00+00:00"),
                 _instant("2024-02-15T00:00:00+00:00"),
-                "infinity",
+                OPEN_BOUND,
             ),
         ),
         (
@@ -541,7 +541,7 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
                 _instant("2024-03-01T00:00:00+00:00"),
                 _instant("2024-09-01T00:00:00+00:00"),
                 _instant("2024-02-15T00:00:00+00:00"),
-                "infinity",
+                OPEN_BOUND,
             ),
         ),
         (
@@ -554,7 +554,7 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
                 _instant("2024-09-01T00:00:00+00:00"),
                 OPEN_BOUND,
                 _instant("2024-02-15T00:00:00+00:00"),
-                "infinity",
+                OPEN_BOUND,
             ),
         ),
     ]
@@ -605,7 +605,7 @@ def test_bitemporal_insert_until_opens_one_bounded_rectangle() -> None:
                 _instant("2024-03-01T00:00:00+00:00"),
                 _instant("2024-09-01T00:00:00+00:00"),
                 _instant("2024-01-01T00:00:00+00:00"),
-                "infinity",
+                OPEN_BOUND,
             ),
         )
     ]
@@ -641,7 +641,7 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
                 _instant("2024-01-01T00:00:00+00:00"),
                 _instant("2024-06-01T00:00:00+00:00"),
                 _instant("2024-07-01T00:00:00+00:00"),
-                "infinity",
+                OPEN_BOUND,
             ),
         ),
         (
@@ -654,7 +654,7 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
                 _instant("2024-06-01T00:00:00+00:00"),
                 OPEN_BOUND,
                 _instant("2024-07-01T00:00:00+00:00"),
-                "infinity",
+                OPEN_BOUND,
             ),
         ),
     ]
@@ -687,7 +687,7 @@ def test_bitemporal_plain_terminate_chains_head_only() -> None:
                 _instant("2024-01-01T00:00:00+00:00"),
                 _instant("2024-06-01T00:00:00+00:00"),
                 _instant("2024-07-01T00:00:00+00:00"),
-                "infinity",
+                OPEN_BOUND,
             ),
         ),
     ]
@@ -711,9 +711,9 @@ def test_bitemporal_plain_insert_opens_one_fully_current_rectangle() -> None:
                 "A",
                 100.00,
                 _instant("2024-01-01T00:00:00+00:00"),
-                "infinity",
+                OPEN_BOUND,
                 _instant("2024-01-01T00:00:00+00:00"),
-                "infinity",
+                OPEN_BOUND,
             ),
         )
     ]
@@ -866,7 +866,7 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
         dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
         dt.datetime(2024, 8, 1, tzinfo=dt.UTC),
         dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
-        "infinity",
+        INFINITY_INSTANT,
     )
     assert tail.binds == (
         1,
@@ -875,7 +875,7 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
         dt.datetime(2024, 8, 1, tzinfo=dt.UTC),
         INFINITY_INSTANT,
         dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
-        "infinity",
+        INFINITY_INSTANT,
     )
 
 
@@ -916,7 +916,7 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
     assert _lower(insert, QUOTE, "2024-01-01T00:00:00+00:00") == [
         (
             "insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
-            (1, 50.00, "ACME", _instant("2024-01-01T00:00:00+00:00"), "infinity"),
+            (1, 50.00, "ACME", _instant("2024-01-01T00:00:00+00:00"), OPEN_BOUND),
         )
     ]
 
@@ -1037,7 +1037,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     _close, chain = _lower(update, QUOTE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert chain == (
         "insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
-        (1, 60.00, "ACME", _instant("2024-06-01T00:00:00+00:00"), "infinity"),
+        (1, 60.00, "ACME", _instant("2024-06-01T00:00:00+00:00"), OPEN_BOUND),
     )
 
 
@@ -1665,7 +1665,7 @@ def _position_row(value: float, start: str, end: str | None) -> tuple[object, ..
         _instant(start),
         OPEN_BOUND if end is None else _instant(end),
         _instant(_T),
-        "infinity",
+        OPEN_BOUND,
     )
 
 

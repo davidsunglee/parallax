@@ -10,7 +10,6 @@ from parallax.core.base import (
     INFINITY,
     INFINITY_LITERAL,
     JSON,
-    TIMESTAMP,
     ManagedValue,
     NeutralType,
     detach_json_container,
@@ -576,7 +575,7 @@ class StatementBuilder:
         if slot is None or value is None:
             return None
         neutral_type, form = slot
-        if value is INFINITY or (neutral_type == TIMESTAMP and value == INFINITY_LITERAL):
+        if value is INFINITY:
             return None
         valid = (
             matches_neutral_type(value, neutral_type)

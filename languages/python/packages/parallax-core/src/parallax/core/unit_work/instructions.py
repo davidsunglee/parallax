@@ -29,6 +29,7 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
+    Leaf,
     PrimaryKey,
     ValueObjectMetadata,
     VoDocumentViolation,
@@ -70,7 +71,6 @@ __all__ = [
     "WriteInstruction",
     "WriteInstructionError",
     "coerce_typed_row",
-    "decode_wire_row",
     "derive_keyed_write",
     "derive_opening",
     "deserialize",
@@ -561,8 +561,7 @@ def _bound(node: Mapping[str, object], key: str, shape: str) -> dt.datetime | No
     value = node[key]
     if not isinstance(value, str) or not value:
         raise WriteInstructionError(f"{shape}: `{key}` must be a non-empty instant string")
-    decoded, _valid = _decode_wire_leaf(TIMESTAMP, value, f"{shape} `{key}`")
-    return cast("dt.datetime", decoded)
+    return cast("dt.datetime", _decoded_wire(TIMESTAMP, value, f"{shape} `{key}`"))
 
 
 def _check_valid_time_bounds(
@@ -1530,37 +1529,17 @@ def _judge_prepared_assignment(
         raise WriteInstructionError(f"{target.identity.canonical}.{error}") from error
 
 
-def decode_wire_row(
-    row: Mapping[str, object], model: AcceptedMetamodel, entity: EntityMetadata
-) -> Mapping[str, object]:
-    """``row``'s members in the managed carriers :func:`prepare_wire_write`
-    produces, judged by nothing.
-
-    For the state a write is addressed AGAINST, read back to be weighed against
-    what that write's caller authored. The weighing needs one carrier per value,
-    which is the decode alone. Every rule preparation applies is a rule about
-    what a caller states in the call being prepared, and this side states nothing
-    in it: what admits it was settled at the door that published it. Applying
-    those rules here would refuse a write for the state that write revises. No
-    name, value, assignment, or temporal rule is applied here, and this is never
-    a door for caller input.
-    """
-    return _transform_row(
-        _member_selection(model, entity),
-        entity,
-        row,
-        converter=_decode_wire_leaf,
-        source_access=MAPPING_SOURCE_ACCESS,
-        fill_missing_many=False,
-    ).row
-
-
 def coerce_typed_row(
     row: Mapping[str, object], model: AcceptedMetamodel, entity: EntityMetadata
 ) -> Mapping[str, object]:
     """``row``'s members in the managed carriers :func:`prepare_typed_write`
-    produces, judged by nothing — the Typed peer of :func:`decode_wire_row`, for
-    that operation's reason.
+    produces, judged by nothing.
+
+    For the state a write is addressed AGAINST, read back to be weighed against
+    what that write's caller authored. Every rule preparation applies is a rule
+    about what a caller states in the call being prepared, and this side states
+    nothing in it, so no name, value, assignment, or temporal rule is applied
+    here, and this is never a door for caller input.
 
     Coercion rather than decoding, because a runtime argument already carries a
     native value: what this side owes the weighing is the width projection and
@@ -1582,7 +1561,7 @@ def coerce_typed_row(
     ).row
 
 
-type _LeafConverter = Callable[[NeutralType, object, str], tuple[object, bool]]
+type _LeafConverter = Callable[[Leaf, object, str], tuple[object, bool]]
 type _DeclaredMember = AttributeMetadata | ValueObjectMetadata
 
 
@@ -1644,14 +1623,19 @@ def _member_failure(
     return None if position is None else failures.get(position)
 
 
-def _coerce_typed_leaf(neutral_type: NeutralType, value: object, path: str) -> tuple[object, bool]:
+def _coerce_typed_leaf(leaf: Leaf, value: object, path: str) -> tuple[object, bool]:
+    neutral_type = leaf.type
     managed = coerce_neutral_input(value, neutral_type)
     return freeze_retained_value(managed), matches_neutral_type(managed, neutral_type)
 
 
-def _decode_wire_leaf(neutral_type: NeutralType, value: object, path: str) -> tuple[object, bool]:
+def _decode_wire_leaf(leaf: Leaf, value: object, path: str) -> tuple[object, bool]:
+    return _decoded_wire(leaf.type, value, path), True
+
+
+def _decoded_wire(neutral_type: NeutralType, value: object, path: str) -> object:
     try:
-        return freeze_retained_value(decode_wire(neutral_type, cast("WireValue", value))), True
+        return freeze_retained_value(decode_wire(neutral_type, cast("WireValue", value)))
     except WireDecodingError as error:
         raise InstructionRejectedError(
             f"neutral-literal-{error.reason}",

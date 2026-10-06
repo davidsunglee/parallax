@@ -42,7 +42,6 @@ from parallax.core.unit_work import (
     WriteInstructionError,
     instructions,
 )
-from parallax.core.unit_work.temporal import is_open_bound
 from parallax.snapshot import InvalidData, handle
 from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
@@ -405,9 +404,9 @@ def test_bitemporal_insert_constructs_cleanly_and_stamps_the_valid_from() -> Non
     )
     assert binds[2:6] == (
         dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        "infinity",
+        INFINITY_INSTANT,
         FIXED,
-        "infinity",
+        INFINITY_INSTANT,
     )
 
 
@@ -430,7 +429,7 @@ def test_a_bounded_bitemporal_insert_opens_a_single_bounded_rectangle() -> None:
         dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         FIXED,
-        "infinity",
+        INFINITY_INSTANT,
     )
 
 
@@ -853,7 +852,7 @@ def test_an_update_beyond_its_observed_rectangle_reads_the_coverage_it_reaches(
     assert [call.binds[2:5] for call in writes[2:]] == [
         (Decimal("100.00"), jan, mar),
         (Decimal("150.00"), mar, jun),
-        (Decimal("150.00"), jun, "infinity"),
+        (Decimal("150.00"), jun, INFINITY_INSTANT),
     ]
 
 
@@ -908,7 +907,7 @@ def test_a_source_keeps_its_pin_through_projection_and_streaming(delivery: str) 
     head, tail = [call.binds for call in port.calls if isinstance(call, WriteCall)][1:]
     assert head[2:5] == (Decimal("100.00"), dt.datetime(2024, 1, 1, tzinfo=dt.UTC), mar)
     assert tail[2:4] == (Decimal("150.00"), mar)
-    assert is_open_bound(tail[4])
+    assert tail[4] is INFINITY_INSTANT
 
 
 def test_a_source_with_no_pin_and_no_standing_insertion_names_no_start() -> None:

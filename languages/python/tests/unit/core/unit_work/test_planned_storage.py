@@ -522,7 +522,7 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
                 "acctNum": "A",
                 "value": 1.00 * row_id,
                 "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "infinity",
+                "txEnd": INFINITY,
             },
         )
         for row_id in (1, 2)
@@ -626,7 +626,7 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
                 "acctNum": "A",
                 "value": 1.00 * row_id,
                 "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "infinity",
+                "txEnd": INFINITY,
             },
         )
         for row_id in (1, 2)
@@ -729,7 +729,7 @@ def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step
                 "acctNum": "A",
                 "value": 1.00 * row_id,
                 "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "infinity",
+                "txEnd": INFINITY,
             },
         )
         for row_id in (1, 2, 3)
@@ -783,7 +783,7 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
                 "acctNum": "A",
                 "value": 1.00 * row_id,
                 "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "infinity",
+                "txEnd": INFINITY,
             },
         )
         for row_id in (1, 2, 3)
@@ -922,7 +922,7 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
                 "acctNum": "A",
                 "value": 1.00,
                 "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "infinity",
+                "txEnd": INFINITY,
             },
         )
     ]
@@ -960,7 +960,7 @@ def test_mutating_a_materialized_groups_assignments_leaves_steps_unaffected() ->
             "acctNum": "A",
             "value": 1.00,
             "txStart": "2024-01-01T00:00:00+00:00",
-            "txEnd": "infinity",
+            "txEnd": INFINITY,
         }
     ]
     group = temporal_group(_value_update("Balance", None), _BALANCE, rows)
@@ -1003,9 +1003,9 @@ def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predec
             "id": 1,
             "name": "Central Branch",
             "validStart": "2024-01-01T00:00:00+00:00",
-            "validEnd": "infinity",
+            "validEnd": INFINITY,
             "txStart": "2024-01-01T00:00:00+00:00",
-            "txEnd": "infinity",
+            "txEnd": INFINITY,
             "address": {
                 "street": "10 Old Road",
                 "city": "Helsinki",

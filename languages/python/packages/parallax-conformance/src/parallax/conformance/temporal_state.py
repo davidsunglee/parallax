@@ -5,7 +5,7 @@ import datetime as dt
 from collections.abc import Generator, Iterable, Mapping, Sequence
 
 from parallax.core import inheritance, temporal_read
-from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
+from parallax.core.base import INFINITY, normalize_instant
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityMetadata,
@@ -211,9 +211,11 @@ class TemporalShadow:
         (`given.fixtures: true`, or a scenario case's own default
         lifecycle load). A non-temporal entity's rows are a no-op.
 
-        A fixture row is already the whole persisted milestone, Attribute-named,
-        so it IS the Predecessor Row a later close addresses, gates on, and
-        carries state forward from.
+        Each row holds managed members, its open axis ends
+        :data:`~parallax.core.base.INFINITY`, as case ingress decodes a fixture.
+        It is already the whole persisted milestone, Attribute-named, so it IS the
+        Predecessor Row a later close addresses, gates on, and carries state
+        forward from.
         """
         shape = temporal_read.view(model).shape(entity.identity)
         if shape is None or isinstance(shape, temporal_read.NonTemporal):
@@ -223,7 +225,7 @@ class TemporalShadow:
         pk_names = _primary_key_names(model, entity)
         start_names = _axis_start_names(model, entity)
         for row in rows:
-            if row.get(tx_end) != "infinity":
+            if row.get(tx_end) is not INFINITY:
                 continue  # not current on Transaction Time
             key = self._key(entity_name, pk_names, start_names, row)
             self._track(key, TemporalObservation(predecessor=PredecessorRow(members=row)))
@@ -407,7 +409,7 @@ class TemporalShadow:
                 continue
             members = observation.predecessor.members
             end = members[valid_end]
-            if not _is_open(end) and _coordinate(end) <= window_start:
+            if end is not INFINITY and _coordinate(end) <= window_start:
                 continue
             if window_end is not None and _coordinate(members[valid_start]) >= window_end:
                 continue
@@ -482,27 +484,16 @@ _NOT_AN_INSTANT = "an as-of axis start is a finite instant, and {value!r} is not
 
 
 def _end_coordinate(value: object) -> dt.datetime | None:
-    if value is TemporalBound.INFINITY or _is_open(value):
-        return None
-    return _coordinate(value)
-
-
-def _is_open(value: object) -> bool:
-    return value == "infinity" or str(value) == "infinity" or value == INFINITY_LITERAL
+    return None if value is INFINITY else _coordinate(value)
 
 
 def _coordinate(value: object) -> dt.datetime:
-    """One axis-start value as the shared comparable an edge is keyed by.
+    """One managed axis-start value as the shared comparable an edge is keyed by.
 
-    An axis START is always a finite instant — the open-bound sentinel bounds an
-    axis END alone — and it is normalized to UTC, so two spellings of one instant
-    name one edge rather than two.
+    An axis START is always a finite instant — the open bound belongs to an axis
+    END alone — and it is normalized to UTC, so two offsets of one instant name
+    one edge rather than two.
     """
-    if isinstance(value, str):
-        try:
-            value = dt.datetime.fromisoformat(value)
-        except ValueError as exc:
-            raise MilestoneEdgeError(_NOT_AN_INSTANT.format(value=value)) from exc
     if not isinstance(value, dt.datetime):
         raise MilestoneEdgeError(_NOT_AN_INSTANT.format(value=value))
     return normalize_instant(value)

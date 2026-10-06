@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
+from parallax.core.base import INFINITY, normalize_instant
 from parallax.core.metamodel import AsOfAxisMetadata, AttributeIdentity, ValueObjectIdentity
 from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
 from parallax.core.unit_work.observe import PredecessorRow
@@ -125,7 +125,7 @@ def _resolve_bound(
             assert until is not None  # every bounded mutation authors one
             return _Literal(until)
         case OpenEnd():
-            return _Literal(INFINITY_LITERAL)
+            return _Literal(INFINITY)
         case PredecessorStart() | PredecessorEnd():
             return bound
 
@@ -155,7 +155,7 @@ def bind_successor(
             successor.window.end, valid_time, predecessor
         )
     attributes[shape.transaction_time.start_attribute] = transaction_instant
-    attributes[shape.transaction_time.end_attribute] = INFINITY_LITERAL
+    attributes[shape.transaction_time.end_attribute] = INFINITY
     return InsertEntry(
         row=adopt_planned_row(attributes, value_objects),
         origin=_origin(successor.state, predecessor),
@@ -224,16 +224,12 @@ def literal_successor(state: SuccessorState, start: object, end: object) -> Reso
 
 def is_open_bound(bound: object) -> bool:
     """Whether one Valid-Time end is the open upper bound."""
-    return bound == INFINITY_LITERAL or bound is TemporalBound.INFINITY
+    return bound is INFINITY
 
 
 def precedes(earlier: object, later: object) -> bool:
-    """Whether Valid-Time bound ``earlier`` lies strictly before ``later``, the
-    open upper bound after every instant.
-
-    A bound may arrive as a managed instant or in its canonical ISO spelling,
-    as a row a case or a fixture states it does; both name one instant.
-    """
+    """Whether managed Valid-Time bound ``earlier`` lies strictly before
+    ``later``, the open upper bound after every instant."""
     if is_open_bound(later):
         return not is_open_bound(earlier)
     if is_open_bound(earlier):
@@ -251,8 +247,6 @@ _EARLIEST: Final = dt.datetime.min.replace(tzinfo=dt.UTC)
 
 
 def _instant(bound: object) -> dt.datetime:
-    if isinstance(bound, str):
-        return normalize_instant(dt.datetime.fromisoformat(bound))
     assert isinstance(bound, dt.datetime)  # a finite Valid-Time bound is an instant
     return normalize_instant(bound)
 
@@ -337,7 +331,7 @@ class TemporalTransform:
                 (_overlaid(None, None, previous, assigned, replaces=replaces),)
             )
         start: object = valid_from
-        end: object = INFINITY_LITERAL if until is None else until
+        end: object = INFINITY if until is None else until
         composed: list[TemporalSegment] = []
         cursor = start
         for segment in self.segments:
