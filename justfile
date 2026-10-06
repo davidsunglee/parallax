@@ -376,12 +376,13 @@ python-test-pydantic-floor:
 # than a locked dependency, at exactly the locked psycopg release it must match.
 # `PSYCOPG_IMPL` makes psycopg refuse to start rather than quietly fall back to
 # the binary build. What it selects is the
-# compiled loaders' differential tests and their selection, which are what differ
-# between the two builds. CI owns it in a job of its own.
+# compiled loaders' differential tests and their selection, and the open-bound
+# dumper's provider tests, since the build's own transformer is what calls it:
+# those are what differ between the two builds. CI owns it in a job of its own.
 [metadata("runtime:medium")]
-[doc("Focused: the compiled loaders under psycopg's C build rather than its binary build (Docker; system libpq).")]
+[doc("Focused: the compiled loaders and the open-bound dumper under psycopg's C build rather than its binary build (Docker; system libpq).")]
 python-test-psycopg-c:
-    cd {{python}} && PSYCOPG_IMPL=c uv run --with "psycopg-c==$(uv run python -c 'import psycopg; print(psycopg.__version__)')" pytest tests/unit/postgres/test_postgres_compiled_loaders.py tests/provider_contract/test_postgres_compiled_loaders.py
+    cd {{python}} && PSYCOPG_IMPL=c uv run --with "psycopg-c==$(uv run python -c 'import psycopg; print(psycopg.__version__)')" pytest tests/unit/postgres/test_postgres_compiled_loaders.py tests/provider_contract/test_postgres_compiled_loaders.py tests/provider_contract/test_postgres_open_bound_bind.py
 
 # Like the focused selectors above it this belongs to no aggregate, and for a
 # different reason: a `report` passes no judgement, so no number it prints can

@@ -47,10 +47,12 @@ Columns transaction:
   one tagged row, then four refused reinsertions again.
 
 The provider-free ports cross every statement's binds, a read's as much as a
-write's, through the production PostgreSQL bind adaptation and psycopg's own
-dump; a read answers composed rows and a write reports one affected row. They
-neither execute SQL nor commit anything: these readings never measure
-PostgreSQL execution, network, or commit latency.
+write's, through the production PostgreSQL bind adaptation and psycopg's dump
+under the adapter map the PostgreSQL port configures on every connection it
+initializes, so a revision's own registered adapters are the ones measured; a
+read answers composed rows and a write reports one affected row. They neither
+execute SQL nor commit anything: these readings never measure PostgreSQL
+execution, network, or commit latency.
 
 Every run reports an :class:`Outcome` counted from the port over the whole run,
 and :func:`expected_outcome` states what a complete run of each cell reports, so
@@ -72,7 +74,14 @@ from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter_ns
+from types import SimpleNamespace
 from typing import Any, Final, Literal, cast
+
+import psycopg
+from psycopg import postgres
+from psycopg.abc import Buffer
+from psycopg.adapt import AdaptersMap, PyFormat, Transformer
+from psycopg.rows import TupleRow
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import LATEST, DomainModel, Entity
@@ -85,6 +94,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.postgres._connection import adapt_binds, initialize_connection
 from parallax.snapshot import ServingModel, prepare_model
 from parallax.snapshot.handle import (
     Database,
@@ -107,6 +117,7 @@ __all__ = [
     "LAYOUTS",
     "MODES",
     "NOT_APPLICABLE",
+    "PORT_ADAPTERS",
     "SIZES",
     "AlgorithmCell",
     "Cell",
@@ -122,6 +133,7 @@ __all__ = [
     "driver",
     "expected_outcome",
     "measure",
+    "serialize",
     "support_digest",
 ]
 
@@ -165,9 +177,10 @@ ascending nor descending."""
 
 EXECUTION_SEAM: Final = (
     "provider-free in-process ports: every statement's binds, read or write, cross the "
-    "production PostgreSQL bind adaptation and psycopg's own dump; reads answer composed "
-    "rows and writes report one affected row; no SQL executes and nothing commits, so no "
-    "PostgreSQL execution, network, or commit latency is measured"
+    "production PostgreSQL bind adaptation and psycopg's dump under the adapter map the "
+    "PostgreSQL port configures on each connection; reads answer composed rows and writes "
+    "report one affected row; no SQL executes and nothing commits, so no PostgreSQL "
+    "execution, network, or commit latency is measured"
 )
 _EDITION: Final = "time-interval-runtime"
 _DAY: Final = dt.timedelta(days=1)
@@ -427,6 +440,35 @@ class Driver:
     counts: Callable[[], Outcome]
 
 
+class _SessionInfo:
+    """The two connection parameters the port's initialization checks."""
+
+    encoding = "utf-8"
+
+    def parameter_status(self, name: str) -> str | None:
+        return "ISO, MDY" if name == "DateStyle" else None
+
+
+def _port_adapters() -> AdaptersMap:
+    """A connection's own adapter map over psycopg's defaults, configured by the
+    port's own connection initialization."""
+    adapters = AdaptersMap(postgres.adapters)
+    session = SimpleNamespace(adapters=adapters, info=_SessionInfo())
+    initialize_connection(cast("psycopg.Connection[TupleRow]", session))
+    return adapters
+
+
+PORT_ADAPTERS: Final = _port_adapters()
+"""The adapter map every runtime port dumps its binds under."""
+
+
+def serialize(binds: Sequence[object]) -> Sequence[Buffer | None]:
+    """The driver bytes ``binds`` become: production bind adaptation, then the
+    dump of the one transformer each statement's cursor creates."""
+    adapted = adapt_binds(binds)
+    return Transformer(PORT_ADAPTERS).dump_sequence(adapted, [PyFormat.AUTO] * len(adapted))
+
+
 class _Counter:
     __slots__ = ("reads", "roots", "statements")
 
@@ -457,13 +499,15 @@ class _CountingPort(lowering_support.AcceptingPort):
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
-        lowering_support.serialize(binds)
+        serialize(binds)
         self.counter.reads += 1
         return super().execute(sql, binds, document_reads)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        del sql
+        serialize(binds)
         self.counter.statements += 1
-        return super().execute_write(sql, binds)
+        return 1
 
 
 class _CompletingAcquisitionPort(acquisition_support.AcquisitionPort):
@@ -483,13 +527,13 @@ class _CompletingAcquisitionPort(acquisition_support.AcquisitionPort):
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
-        lowering_support.serialize(binds)
+        serialize(binds)
         self.counter.reads += 1
         return super().execute(sql, binds, document_reads)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         del sql
-        lowering_support.serialize(binds)
+        serialize(binds)
         self.counter.statements += 1
         return 1
 
@@ -520,7 +564,7 @@ class _PagedReadPort(ConnectsAsItself):
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
-        lowering_support.serialize(binds)
+        serialize(binds)
         self.counter.reads += 1
         limited = " limit " in sql
         size = cast("int", binds[-1]) if limited else self._roots
@@ -571,7 +615,7 @@ class _ScriptedPort(ConnectsAsItself):
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
-        lowering_support.serialize(binds)
+        serialize(binds)
         self.counter.reads += 1
         return projected_rows(
             sql, (copy.deepcopy(dict(row)) for row in self.answer), document_reads
@@ -579,7 +623,7 @@ class _ScriptedPort(ConnectsAsItself):
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         del sql
-        lowering_support.serialize(binds)
+        serialize(binds)
         self.counter.statements += 1
         return 1
 

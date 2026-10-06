@@ -7,11 +7,12 @@ from typing import Any, cast
 
 import psycopg
 from psycopg.abc import AdaptContext, Buffer
+from psycopg.adapt import Dumper
 from psycopg.rows import RowMaker, TupleRow, tuple_row
 from psycopg.sql import SQL, Literal
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 
-from parallax.core.base import FrozenMap, frozen_map_json_backing
+from parallax.core.base import FrozenMap, TemporalBound, frozen_map_json_backing
 from parallax.core.db_error import DatabaseError, classify_error
 from parallax.core.db_port import (
     BeginFailed,
@@ -76,6 +77,19 @@ class _DocumentJsonbBinaryLoader(JsonbBinaryLoader):
             return super().load(data)
         value = data[1:]
         return self._decode(value if isinstance(value, bytes) else bytes(value))
+
+
+class _NativeInfinityDumper(Dumper):
+    """Binds the m-core open upper bound as PostgreSQL's native ``infinity``.
+
+    It dumps text under OID 0, exactly as the bound's string spelling binds, so
+    the server infers the parameter's type from the statement around it on
+    every route, as it does for any unannotated bind.
+    """
+
+    def dump(self, obj: object) -> Buffer:
+        del obj
+        return b"infinity"
 
 
 class IncompatibleSessionError(Exception):
@@ -286,22 +300,25 @@ def initialize_connection(connection: psycopg.Connection[TupleRow]) -> None:
 
     Called once per connection, before anything may use it, and for every way
     one comes into existence. It installs the loaders the read path depends on
-    and then checks the two effective session settings those loaders cannot
-    work without that a connection reports — the client encoding and the date
-    style — reading both off the established connection's own parameters
-    rather than by running SQL, so the check costs no round trip on any
-    creation path.
+    and the open upper bound's dumper, on the connection's own adapter map so
+    that psycopg's process-wide defaults stay untouched, and then checks the
+    two effective session settings those loaders cannot work without that a
+    connection reports — the client encoding and the date style — reading both
+    off the established connection's own parameters rather than by running SQL,
+    so the check costs no round trip on any creation path.
 
     A refusal here is a refusal of the CONNECTION, not of a statement: nothing
     modeled has run, and what would run next would decode wrongly.
     """
     # A `real` decodes to the exact binary32 value it spells, and native
     # `timestamptz` infinity normalizes at the port boundary (m-db-port) to the
-    # neutral m-core sentinel rather than raising psycopg's out-of-range error.
+    # neutral m-core sentinel rather than raising psycopg's out-of-range error;
+    # that sentinel binds back as native infinity.
     connection.adapters.register_loader("float4", _TEXT_LOADERS.float4)
     connection.adapters.register_loader("timestamptz", _TEXT_LOADERS.timestamptz)
     connection.adapters.register_loader("jsonb", _DocumentJsonbLoader)
     connection.adapters.register_loader("jsonb", _DocumentJsonbBinaryLoader)
+    connection.adapters.register_dumper(TemporalBound, _NativeInfinityDumper)
     _require_supported_session(connection)
 
 

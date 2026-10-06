@@ -21,14 +21,16 @@ from typing import Any, cast
 import psycopg
 import pytest
 from psycopg import errors, postgres
-from psycopg.adapt import PyFormat, Transformer
+from psycopg.abc import Dumper, Loader
+from psycopg.adapt import AdaptersMap, PyFormat, Transformer
+from psycopg.pq import Format
 from psycopg.rows import TupleRow
 from psycopg.sql import Composable
 from psycopg.types.json import Jsonb, JsonbLoader
 
 import parallax.postgres
 import parallax.postgres._connection as connection_module
-from parallax.core.base import SQL_NULL, FrozenMap, PresentDocument
+from parallax.core.base import INFINITY, SQL_NULL, FrozenMap, PresentDocument, TemporalBound
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
@@ -261,14 +263,21 @@ class _FakePipeline:
         return False
 
 
-class _FakeAdapters:
-    """A ``connection.adapters`` stand-in recording the loaders the adapter registers."""
+class _RecordingAdapters(AdaptersMap):
+    """A connection's own adapter map over psycopg's defaults, as a real
+    connection's is, recording every adapter registered on it."""
 
     def __init__(self) -> None:
-        self.registered: list[tuple[str, object]] = []
+        super().__init__(postgres.adapters)
+        self.registered: list[tuple[object, object]] = []
 
-    def register_loader(self, name: str, loader: object) -> None:
-        self.registered.append((name, loader))
+    def register_loader(self, oid: int | str, loader: type[Loader]) -> None:
+        super().register_loader(oid, loader)
+        self.registered.append((oid, loader))
+
+    def register_dumper(self, cls: type | str | None, dumper: type[Dumper]) -> None:
+        super().register_dumper(cls, dumper)
+        self.registered.append((cls, dumper))
 
 
 class _FakeInfo:
@@ -313,7 +322,7 @@ class _FakeConnection:
         self.begin_error = begin_error
         self.commit_error = commit_error
         self.rollback_error = rollback_error
-        self.adapters = _FakeAdapters()
+        self.adapters = _RecordingAdapters()
         self.rollbacks = 0
         self.closed = False
         self.executed: list[object] = []
@@ -360,10 +369,11 @@ def _sent(connection: _FakeConnection) -> list[str]:
     ]
 
 
-def test_adapter_registers_boundary_value_loaders() -> None:
+def test_adapter_registers_boundary_value_adapters() -> None:
     # A `real` decodes exactly and native `timestamptz` infinity normalizes to
     # the m-core sentinel through the compiled loaders psycopg's implementation
-    # runs, and documents decode through the adapter's own JSON loaders.
+    # runs, documents decode through the adapter's own JSON loaders, and the
+    # sentinel binds through the adapter's own dumper.
     connection = _FakeConnection()
     _adapter(connection)
     loaders = compiled_loaders(psycopg.pq.__impl__)
@@ -372,7 +382,39 @@ def test_adapter_registers_boundary_value_loaders() -> None:
         ("timestamptz", loaders.timestamptz),
         ("jsonb", connection_module._DocumentJsonbLoader),  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
         ("jsonb", connection_module._DocumentJsonbBinaryLoader),  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
+        (TemporalBound, connection_module._NativeInfinityDumper),  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
     ]
+
+
+def _dumped(adapters: AdaptersMap, bind: object) -> tuple[bytes | None, int, Format]:
+    """What a statement sends for ``bind`` under ``adapters``: its bytes, its
+    parameter type OID, and its format."""
+    transformer = Transformer(adapters)
+    (dumped,) = transformer.dump_sequence(adapt_binds([bind]), [PyFormat.AUTO])
+    assert transformer.types is not None
+    assert transformer.formats is not None
+    ((oid,), (format_,)) = (transformer.types, transformer.formats)
+    return (None if dumped is None else bytes(dumped), oid, format_)
+
+
+def test_the_open_bound_binds_exactly_as_its_string_spelling_does() -> None:
+    # Untyped text, so the server infers the parameter's type from the
+    # statement around it, as it does for the spelling.
+    connection = _FakeConnection()
+    _adapter(connection)
+
+    assert _dumped(connection.adapters, INFINITY) == (b"infinity", 0, Format.TEXT)
+    assert _dumped(connection.adapters, "infinity") == _dumped(connection.adapters, INFINITY)
+
+
+def test_the_open_bound_dumper_is_registered_on_the_connection_alone() -> None:
+    connection = _FakeConnection()
+    _adapter(connection)
+    dumper = connection_module._NativeInfinityDumper  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
+
+    assert connection.adapters.get_dumper(TemporalBound, PyFormat.AUTO) is dumper
+    assert postgres.adapters.get_dumper(TemporalBound, PyFormat.AUTO) is not dumper
+    assert AdaptersMap(postgres.adapters).get_dumper(TemporalBound, PyFormat.AUTO) is not dumper
 
 
 @pytest.mark.parametrize(

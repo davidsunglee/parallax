@@ -16,11 +16,19 @@ import subprocess
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
+import psycopg
 import pytest
+from psycopg import postgres
+from psycopg.abc import Dumper, Loader
+from psycopg.adapt import AdaptersMap, PyFormat, Transformer
+from psycopg.rows import TupleRow
 
 import time_interval_runtime as tool
+from parallax.core.base import INFINITY
+from parallax.postgres._connection import initialize_connection
 from tests.unit import _time_interval_runtime_support as support
 
 _SOURCE_KEYED = "flow/source-keyed/typed/columns/preparation-inclusive"
@@ -172,21 +180,60 @@ def test_a_removal_window_reads_its_invalidating_flush_between_its_two_windows()
 def test_every_statement_a_run_counts_serializes_its_binds_once(
     cell: support.Cell, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    lowering = vars(support)["lowering_support"]
-    serialize = lowering.serialize
+    serialize = support.serialize
     serialized: list[int] = []
 
     def counted(binds: Sequence[object]) -> object:
         serialized.append(len(binds))
         return serialize(binds)
 
-    monkeypatch.setattr(lowering, "serialize", counted)
+    monkeypatch.setattr(support, "serialize", counted)
     with support.driver(cell) as driver:
         serialized.clear()
         outcome = driver.run(support.Stopwatch())
     assert len(serialized) == outcome.reads + outcome.statements
     if isinstance(cell, support.FlowCell) and cell.flow.startswith("read-"):
         assert all(serialized)
+
+
+class _RecordingAdapters(AdaptersMap):
+    def __init__(self) -> None:
+        super().__init__(postgres.adapters)
+        self.loaders: list[tuple[int | str, type[Loader]]] = []
+        self.dumpers: list[tuple[type | str | None, type[Dumper]]] = []
+
+    def register_loader(self, oid: int | str, loader: type[Loader]) -> None:
+        super().register_loader(oid, loader)
+        self.loaders.append((oid, loader))
+
+    def register_dumper(self, cls: type | str | None, dumper: type[Dumper]) -> None:
+        super().register_dumper(cls, dumper)
+        self.dumpers.append((cls, dumper))
+
+
+def _iso_date_style(name: str) -> str | None:
+    return "ISO, MDY" if name == "DateStyle" else None
+
+
+def test_the_ports_dump_under_the_adapters_the_port_configures_on_a_connection() -> None:
+    adapters = _RecordingAdapters()
+    session = SimpleNamespace(
+        adapters=adapters,
+        info=SimpleNamespace(encoding="utf-8", parameter_status=_iso_date_style),
+    )
+    initialize_connection(cast("psycopg.Connection[TupleRow]", session))
+
+    assert support.PORT_ADAPTERS is not postgres.adapters
+    assert adapters.loaders
+    for oid, loader in adapters.loaders:
+        number = postgres.types[oid].oid if isinstance(oid, str) else oid
+        assert support.PORT_ADAPTERS.get_loader(number, loader.format) is loader
+    for cls, dumper in adapters.dumpers:
+        assert isinstance(cls, type)
+        assert support.PORT_ADAPTERS.get_dumper(cls, PyFormat.from_pq(dumper.format)) is dumper
+    binds = [INFINITY, "infinity", 1]
+    expected = Transformer(adapters).dump_sequence(binds, [PyFormat.AUTO] * len(binds))
+    assert support.serialize(binds) == expected
 
 
 @pytest.fixture
