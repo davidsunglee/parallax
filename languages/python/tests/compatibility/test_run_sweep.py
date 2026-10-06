@@ -440,6 +440,7 @@ _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = froz
         "m-temporal-write-028",
         "m-temporal-write-029",
         "m-temporal-write-036",
+        "m-temporal-write-052",
         "m-unit-work-042",
         "m-value-object-047",
         "m-value-object-066",

@@ -662,7 +662,7 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
 @pytest.mark.parametrize(
     ("slice_tag", "expected"),
     [
-        ("slice-snapshot-1", 682),
+        ("slice-snapshot-1", 683),
         ("slice-managed-1", 533),
     ],
 )
