@@ -333,7 +333,7 @@ class TemporalBound(enum.Enum):
 
 
 # The native-infinity sentinel for a temporal interval's open upper bound.
-INFINITY: Final[TemporalBound] = TemporalBound.INFINITY
+INFINITY: Final = TemporalBound.INFINITY
 
 
 class InstantError(ValueError):

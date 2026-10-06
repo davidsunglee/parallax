@@ -9,16 +9,23 @@ over both a trusted positional row and a caller-supplied mapping.
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import ItemsView, Mapping
 from typing import cast
 
 import pytest
 
+from parallax.core import Entity, temporal_read
+from parallax.core.base import INFINITY
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity
+from parallax.core.temporal_read import Bitemporal, milestone_edge, valid_time_coverage
 from parallax.core.unit_work import EntityStateRow, PredecessorRow
+from tests.unit import _predicate_acquisition_support as acquisition
 from tests.unit._document_layout_support import PERSON, columns_model, document_model
+from tests.unit._positional_row_support import positional_row
 
 _DOCUMENT_LAYOUT: EntityLayout = LayoutCatalog(document_model()).entity(PERSON)
 _COLUMNS_LAYOUT: EntityLayout = LayoutCatalog(columns_model()).entity(PERSON)
@@ -340,3 +347,84 @@ def test_direct_predecessor_construction_owns_its_members_and_document() -> None
     assert from_view.member("address") == {"city": "Oslo"}
     with pytest.raises(ValueError, match="complete state"):
         PredecessorRow({})
+
+
+# --------------------------------------------------------------------------- #
+# Axis ends and Valid-Time coverage, read from the row the predecessor holds.  #
+# --------------------------------------------------------------------------- #
+_BITEMPORAL_MODEL = model_of(acquisition.MODEL)
+_VALID_FROM = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+_VALID_UNTIL = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
+_OPENED = dt.datetime(2026, 2, 1, tzinfo=dt.UTC)
+_BITEMPORAL_LAYOUTS = pytest.mark.parametrize(
+    "entity",
+    [acquisition.AcquisitionColumns, acquisition.AcquisitionDocument],
+    ids=["columns", "document"],
+)
+_VALID_ENDS = pytest.mark.parametrize("valid_end", [_VALID_UNTIL, INFINITY], ids=["finite", "open"])
+_TEMPORAL_MEMBERS = ("id", "validStart", "validEnd", "txStart", "txEnd")
+
+
+def _valid_time(entity: type[Entity]) -> Bitemporal:
+    shape = temporal_read.view(_BITEMPORAL_MODEL).shape(entity.identity)
+    assert isinstance(shape, Bitemporal)
+    return shape
+
+
+def _milestone(entity: type[Entity], valid_end: object, *, adopted: bool) -> PredecessorRow:
+    """One stored milestone of ``entity``, adopted positionally or held by name."""
+    cells: dict[str, object] = {
+        "id": 1,
+        "title": "Ada",
+        "validStart": _VALID_FROM,
+        "validEnd": valid_end,
+        "txStart": _OPENED,
+        "txEnd": INFINITY,
+        "address": {"city": "Oslo", "geo": {"country": "NO"}},
+        "tags": [{"label": "founder"}],
+    }
+    if not adopted:
+        return PredecessorRow({name: cells[name] for name in _TEMPORAL_MEMBERS})
+    selection = LayoutCatalog(_BITEMPORAL_MODEL).entity(entity.identity).member_selection
+    row = positional_row(selection.shape, cells, absent=ABSENT)
+    return PredecessorRow.over_row(selection, row, None, ABSENT)
+
+
+@_BITEMPORAL_LAYOUTS
+@_VALID_ENDS
+@pytest.mark.parametrize("adopted", [True, False], ids=["adopted", "by-name"])
+def test_a_predecessor_rows_coverage_references_its_own_valid_time_cells(
+    entity: type[Entity], valid_end: object, adopted: bool
+) -> None:
+    predecessor = _milestone(entity, valid_end, adopted=adopted)
+    axis = _valid_time(entity).valid_time
+
+    coverage = valid_time_coverage(_valid_time(entity), predecessor, None)
+
+    assert predecessor.axis_end(None, axis.end_attribute) is valid_end
+    assert coverage is not None
+    assert coverage.start is _VALID_FROM
+    assert coverage.end is valid_end
+
+
+def test_a_predecessor_row_without_an_axis_end_member_answers_none_for_it() -> None:
+    absent = AttributeIdentity(PERSON, "validEnd")
+
+    assert _adopted().axis_end(None, absent) is None
+    assert PredecessorRow({"id": 7}).axis_end(None, absent) is None
+
+
+@_BITEMPORAL_LAYOUTS
+@pytest.mark.parametrize("adopted", [True, False], ids=["adopted", "by-name"])
+def test_a_predecessor_rows_edge_reads_no_axis_end(
+    monkeypatch: pytest.MonkeyPatch, entity: type[Entity], adopted: bool
+) -> None:
+    def refuse(*_arguments: object) -> object:
+        raise AssertionError("an edge read an axis end")
+
+    predecessor = _milestone(entity, INFINITY, adopted=adopted)
+    monkeypatch.setattr(PredecessorRow, "axis_end", refuse)
+
+    edge = milestone_edge(_valid_time(entity), predecessor, None)
+
+    assert (edge.valid_time, edge.tx_time) == (_VALID_FROM, _OPENED)

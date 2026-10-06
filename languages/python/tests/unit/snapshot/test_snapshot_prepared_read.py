@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+import gc
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -54,7 +55,14 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.temporal_read import Pin
+from parallax.core.temporal_read import (
+    Bitemporal,
+    Pin,
+    TemporalReadError,
+    TimeInterval,
+    valid_time_coverage,
+)
+from parallax.core.temporal_read import view as temporal_view
 from parallax.descriptor._records import (
     Attribute,
     DocumentLayout,
@@ -68,11 +76,18 @@ from parallax.descriptor._records import (
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.descriptor._records import ValueObject as DescriptorValueObject
 from parallax.snapshot.materialize import PageBuilder, RootView, _convert
-from parallax.snapshot.materialize._page import ABSENT, StoredDataIssueInput, page_rows
+from parallax.snapshot.materialize._page import (
+    ABSENT,
+    Page,
+    StoredDataIssueInput,
+    page_rows,
+    release_page_rows,
+)
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._publication import publication_issue
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.sql import compile_read
+from tests.unit import _predicate_acquisition_support as acquisition
 from tests.unit._corpus_model_support import formed, target
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import columns_model
@@ -888,6 +903,105 @@ def test_rows_share_a_logical_node_only_where_key_and_axis_starts_agree() -> Non
     )
     rows = page_rows(builder.finish(refs, Pin()))
     assert list(rows.logical_ids) == [0, 0, 1, 2]
+
+
+# --------------------------------------------------------------------------- #
+# Valid-Time coverage: read on demand from the Page or the judged state.        #
+# --------------------------------------------------------------------------- #
+_ACQUISITION: Final = model_of(acquisition.MODEL)
+_VALID_UNTIL: Final = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+_ACQUISITION_LAYOUTS: Final = pytest.mark.parametrize(
+    "entity", ["AcquisitionColumns", "AcquisitionDocument"], ids=["columns", "document"]
+)
+
+
+def _milestone(entity: str, **bounds: object) -> dict[str, object]:
+    """One stored milestone of an acquisition Entity, current on Transaction
+    Time and open on Valid Time unless ``bounds`` say otherwise."""
+    members: dict[str, object] = {
+        "title": "Ada",
+        "address": {"city": "Oslo", "geo": {"country": "NO"}},
+        "tags": [{"label": "founder"}],
+    }
+    stored = {"from_z": _VALID_FROM, "thru_z": INFINITY, "in_z": _OPENED, "out_z": INFINITY}
+    stored |= bounds
+    if entity == "AcquisitionDocument":
+        return {"id": 1, **stored, "payload": PresentDocument(cast("DocumentValue", members))}
+    return {
+        "id": 1,
+        "title": "Ada",
+        "address": PresentDocument(cast("DocumentValue", members["address"])),
+        "tags": PresentDocument(cast("DocumentValue", members["tags"])),
+        **stored,
+    }
+
+
+def _milestone_page(entity: str, row: Mapping[str, object]) -> tuple[Page, int, Bitemporal]:
+    builder = PageBuilder(ViewSchema.of())
+    index, *_ = bound_read(_ACQUISITION, entity).convert_row(row, builder, source=ROOT_LEVEL)
+    shape = temporal_view(_ACQUISITION).shape(target(_ACQUISITION, entity).identity)
+    assert isinstance(shape, Bitemporal)
+    return builder.finish((index,), Pin()), index, shape
+
+
+@_ACQUISITION_LAYOUTS
+@pytest.mark.parametrize("valid_end", [_VALID_UNTIL, INFINITY], ids=["finite", "open"])
+def test_a_milestone_covers_its_stored_valid_time_cells_on_the_page_and_its_state(
+    entity: str, valid_end: object
+) -> None:
+    page, index, shape = _milestone_page(entity, _milestone(entity, thru_z=valid_end))
+
+    on_page = valid_time_coverage(shape, page_rows(page), index)
+    root = RootView(page)
+    on_state = valid_time_coverage(shape, root, 0)
+
+    assert root.issues(0) == ()
+    for coverage in (on_page, on_state):
+        assert coverage is not None
+        assert coverage.start is _VALID_FROM
+        assert coverage.end is valid_end
+
+
+@_ACQUISITION_LAYOUTS
+@pytest.mark.parametrize(
+    "stored",
+    [pytest.param("not-an-instant", id="malformed"), pytest.param(None, id="null")],
+)
+def test_a_rejected_valid_time_end_has_no_coverage_on_either_carrier(
+    entity: str, stored: object
+) -> None:
+    page, index, shape = _milestone_page(entity, _milestone(entity, thru_z=stored))
+    rows = page_rows(page)
+
+    with pytest.raises(TemporalReadError, match=r"\.validEnd: .*interval endpoint"):
+        valid_time_coverage(shape, rows, index)
+    with pytest.raises(TemporalReadError, match=r"\.validEnd: .*interval endpoint"):
+        valid_time_coverage(shape, RootView(page), 0)
+
+
+@_ACQUISITION_LAYOUTS
+def test_a_null_valid_time_start_has_no_coverage_on_the_page(entity: str) -> None:
+    page, index, shape = _milestone_page(entity, _milestone(entity, from_z=None))
+
+    with pytest.raises(TemporalReadError, match=r"\.validStart: .*interval endpoint"):
+        valid_time_coverage(shape, page_rows(page), index)
+
+
+@_ACQUISITION_LAYOUTS
+def test_coverage_outlives_its_page_rows_without_holding_or_caching_them(entity: str) -> None:
+    page, index, shape = _milestone_page(entity, _milestone(entity, thru_z=_VALID_UNTIL))
+    rows = page_rows(page)
+
+    coverage = valid_time_coverage(shape, rows, index)
+    again = valid_time_coverage(shape, rows, index)
+    release_page_rows(page)
+
+    assert coverage == again
+    assert coverage is not again
+    held = [referent for referent in gc.get_referents(coverage) if referent is not TimeInterval]
+    assert sorted(map(id, held)) == sorted((id(_VALID_FROM), id(_VALID_UNTIL)))
+    assert list(rows.member_rows) == []
+    assert coverage == TimeInterval(_VALID_FROM, _VALID_UNTIL)
 
 
 # --------------------------------------------------------------------------- #

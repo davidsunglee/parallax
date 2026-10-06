@@ -293,6 +293,11 @@ class RootView:
         Attribute's position in its member row."""
         return self._states[node].member_row[self._layouts[node].index_of[attribute]]
 
+    def axis_end(self, node: int, attribute: AttributeIdentity, /) -> object:
+        """``node``'s stored value at one As-Of Axis end, read at that
+        Attribute's position in its member row."""
+        return self._states[node].member_row[self._layouts[node].index_of[attribute]]
+
     def issues(self, node: int) -> tuple[StoredDataIssueInput, ...]:
         """The findings from ``node``'s one Page-owned payload judgment."""
         return self._states[node].findings

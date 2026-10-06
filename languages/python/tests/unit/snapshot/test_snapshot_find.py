@@ -58,7 +58,7 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.temporal_read import Pin, TemporalReadError
+from parallax.core.temporal_read import Pin, TemporalReadError, valid_time_coverage
 from parallax.descriptor._records import Attribute as DescriptorAttribute
 from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
@@ -828,6 +828,80 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
         edge is not None and edge.valid_time == dt.datetime(2024, 1, 1, tzinfo=_UTC)
         for edge in page_edges(result.page, result.milestones)
     )
+
+
+_RATE_FROM = dt.datetime(2024, 1, 1, tzinfo=_UTC)
+_RATE_UNTIL = dt.datetime(2024, 6, 1, tzinfo=_UTC)
+
+
+def _deposit_rate_history() -> HistoryFindResult:
+    """Two Transaction-Time milestones of one `DepositRate`, the first bounded
+    on Valid Time and the second open."""
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1,
+                    "amount": Decimal("2.25"),
+                    "grade": "B",
+                    "from_z": _RATE_FROM,
+                    "thru_z": _RATE_UNTIL,
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
+                    "out_z": dt.datetime(2024, 2, 1, tzinfo=_UTC),
+                },
+                {
+                    "id": 1,
+                    "amount": Decimal("2.50"),
+                    "grade": "A",
+                    "from_z": _RATE_FROM,
+                    "thru_z": INFINITY,
+                    "in_z": dt.datetime(2024, 2, 1, tzinfo=_UTC),
+                    "out_z": INFINITY,
+                },
+            ]
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "DepositRate",
+            "predicate": {"eq": {"attr": "DepositRate.id", "value": 1}},
+            "temporal": {"transaction-time": {"history": {}}, "valid-time": {"asOf": "latest"}},
+        }
+    )
+    return _find_history(query, RATE, port)
+
+
+def test_an_inherited_milestones_coverage_reads_the_roots_valid_time_cells_on_the_page() -> None:
+    result = _deposit_rate_history()
+    rows = _rows(result.page)
+    shape = result.milestones
+    assert shape is not None
+
+    bounded, opened = (
+        valid_time_coverage(shape, rows, _valid_root(rows, index)) for index in range(2)
+    )
+
+    assert bounded is not None
+    assert opened is not None
+    assert bounded.start is _RATE_FROM
+    assert bounded.end is _RATE_UNTIL
+    assert opened.end is INFINITY
+
+
+def test_a_pages_milestone_edges_read_no_axis_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(*_arguments: object) -> object:
+        raise AssertionError("an edge read an axis end")
+
+    result = _deposit_rate_history()
+    monkeypatch.setattr(PageRows, "axis_end", refuse)
+
+    assert [
+        (edge.tx_time, edge.valid_time) if edge is not None else None
+        for edge in page_edges(result.page, result.milestones)
+    ] == [
+        (dt.datetime(2024, 1, 1, tzinfo=_UTC), _RATE_FROM),
+        (dt.datetime(2024, 2, 1, tzinfo=_UTC), _RATE_FROM),
+    ]
 
 
 def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
