@@ -1,6 +1,6 @@
 # Composed temporal x inheritance x optimistic-lock CONFLICT: the tag guard
 # rides the identity predicates, the observed-in_z gate binds LAST (m-inheritance
-# x m-txtime-write x m-opt-lock). It carries the composed stale-gate conflict the
+# x m-temporal-write x m-opt-lock). It carries the composed stale-gate conflict the
 # conflict form pinned — a table-per-hierarchy subtype's close-only shape addressed
 # by the key, the subtype's tag guard and the open out_z, gated last on an in_z no
 # longer current — now produced by a public `terminate` racing a concurrent unit
@@ -8,7 +8,7 @@
 # units' fates and the state the race leaves: the winner's tag-stamped close and
 # chained successor stand, and the loser's close changes no row.
 model: models/reading.yaml
-tags: [m-inheritance, m-txtime-write, m-opt-lock, m-unit-work, m-sql, table-per-hierarchy, tag, temporal, audit-only, optimistic-lock-conflict, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-temporal-write, m-opt-lock, m-unit-work, m-sql, table-per-hierarchy, tag, temporal, audit-only, optimistic-lock-conflict, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

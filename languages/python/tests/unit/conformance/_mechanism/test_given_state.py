@@ -218,7 +218,7 @@ def test_given_corrupt_refuses_a_temporal_entity_before_reading_anything() -> No
     # refused rather than resolved to whichever milestone a select happened to
     # answer with, and refused before any statement is issued.
     port = _CorruptionPort({})
-    case = _load_case("m-bitemp-write-001")
+    case = _load_case("m-temporal-write-017")
     document = dict(case.document)
     document["given"] = {
         "corrupt": [
@@ -328,7 +328,7 @@ def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None
     )
     port = FakeWritePort()
     shadow = TemporalShadow()
-    meta = load_case_metamodel(_load_case("m-txtime-write-002"))
+    meta = load_case_metamodel(_load_case("m-temporal-write-002"))
     model = meta
     apply_given_apply(case, port, shadow)
     assert port.writes == []
@@ -344,7 +344,7 @@ def test_fixture_seeding_tracks_current_milestones_with_managed_axis_ends() -> N
     # The `position` fixtures spell the open bound as the published literal; the
     # shadow holds the managed bound, so the milestone current on both axes covers
     # an open window, and the superseded correction is not tracked at all.
-    case = _load_case("m-bitemp-write-004")
+    case = _load_case("m-temporal-write-020")
     model = load_case_metamodel(case)
     entity = case_entity(model, "parallax.compatibility.Position")
     shadow = TemporalShadow()

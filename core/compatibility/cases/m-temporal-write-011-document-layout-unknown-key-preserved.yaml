@@ -1,0 +1,82 @@
+# A key no model member declares survives a milestone chain (m-storage-layout x
+# m-document-codec "Patching, unknown keys, and occurrence assignments"), on Postgres
+# AND MariaDB.
+model: models/document-layout.yaml
+tags: [m-temporal-write, m-storage-layout, m-document-codec, m-sql, write-sequence, update, audit-only, temporal, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.apply)"
+given:
+  apply:
+    - sql: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+      binds:
+        - 7
+        - "2026-01-01T00:00:00.000000Z"
+        - infinity
+        - title: Coastal Run
+          crew: 6
+          charterCode: NB-118
+          manifest:
+            cargo: grain
+            sealNumber: S-4021
+          legs: []
+when:
+  writeSequence:
+    - mutation: update
+      entity: parallax.compatibility.Voyage
+      statements: 2
+      note: assign one known scalar — the successor's document is the closed row's own, patched
+      rows:
+        - id: 7
+          title: Coastal Return
+          crew: 6
+          manifest:
+            cargo: grain
+      at: "2026-06-01T00:00:00.000000Z"
+then:
+  statements:
+    - sql:
+        postgres: update voyage set out_z = ? where id = ? and out_z = ?
+        mariadb: update voyage set out_z = ? where id = ? and out_z = ?
+      binds: ["2026-06-01T00:00:00.000000Z", 7, infinity]
+    - sql:
+        postgres: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        mariadb: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+      binds:
+        - 7
+        - "2026-06-01T00:00:00.000000Z"
+        - infinity
+        - title: Coastal Return
+          crew: 6
+          charterCode: NB-118
+          manifest:
+            cargo: grain
+            sealNumber: S-4021
+          legs: []
+  tableState:
+    voyage:
+      - id: 7
+        in_z: "2026-01-01T00:00:00.000000Z"
+        out_z: "2026-06-01T00:00:00.000000Z"
+        payload:
+          title: Coastal Run
+          crew: 6
+          charterCode: NB-118
+          manifest:
+            cargo: grain
+            sealNumber: S-4021
+          legs: []
+      - id: 7
+        in_z: "2026-06-01T00:00:00.000000Z"
+        out_z: infinity
+        payload:
+          title: Coastal Return
+          crew: 6
+          charterCode: NB-118
+          manifest:
+            cargo: grain
+            sealNumber: S-4021
+          legs: []
+  roundTrips: 3

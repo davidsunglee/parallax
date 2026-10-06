@@ -67,7 +67,6 @@ from parallax.core.unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
     ConcurrencyStrategy,
-    TemporalStrategy,
 )
 from parallax.core.unit_work.write_settlement import WritePlanningResult
 from parallax.core.write_plan import WritePlan
@@ -189,12 +188,9 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         *,
         batching: BatchingStrategy,
         concurrency: ConcurrencyStrategy,
-        temporal: TemporalStrategy,
         audit: AuditStrategy,
     ) -> WritePlanner:
-        planner = WritePlanner(
-            model, batching=batching, concurrency=concurrency, temporal=temporal, audit=audit
-        )
+        planner = WritePlanner(model, batching=batching, concurrency=concurrency, audit=audit)
         seen.built.append(_Built(planner=planner, audit=audit))
         return planner
 

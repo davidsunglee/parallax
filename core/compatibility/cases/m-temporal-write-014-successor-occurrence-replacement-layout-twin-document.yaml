@@ -1,0 +1,65 @@
+# Relational Document Layout half of the temporal successor proof: the same close
+# chains a successor in which the ASSIGNED occurrence is replaced whole, at depth.
+# Only the physical shape differs — the successor binds one Structured Column
+# carrying the whole document rather than one bind per member.
+model: models/write-transparency-layout-twin-document.yaml
+tags: [m-temporal-write, m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-sql, write-sequence, update, temporal, audit-only, json, nested, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  writeSequence:
+    - mutation: update
+      entity: parallax.compatibility.WriteTwinLog
+      statements: 2
+      note: restate the unchanged members and assign `spec` naming one leaf — the successor drops the nested `origin` the closed milestone held
+      rows:
+        - id: 5
+          label: voyager
+          spec:
+            title: Coal Run
+          marks:
+            - { code: X }
+      at: "2026-06-01T00:00:00.000000Z"
+then:
+  statements:
+    - sql:
+        postgres: update write_twin_log set out_z = ? where id = ? and out_z = ?
+        mariadb: update write_twin_log set out_z = ? where id = ? and out_z = ?
+      binds: ["2026-06-01T00:00:00.000000Z", 5, infinity]
+    - sql:
+        postgres: insert into write_twin_log(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        mariadb: insert into write_twin_log(id, in_z, out_z, payload) values (?, ?, ?, ?)
+      binds:
+        - 5
+        - "2026-06-01T00:00:00.000000Z"
+        - infinity
+        - label: voyager
+          spec:
+            title: Coal Run
+          marks:
+            - { code: X }
+  tableState:
+    write_twin_log:
+      - id: 5
+        in_z: "2026-01-01T00:00:00.000000Z"
+        out_z: "2026-06-01T00:00:00.000000Z"
+        payload:
+          label: voyager
+          spec:
+            title: Ore Run
+            origin: { country: "NO" }
+          marks:
+            - { code: X }
+      - id: 5
+        in_z: "2026-06-01T00:00:00.000000Z"
+        out_z: infinity
+        payload:
+          label: voyager
+          spec:
+            title: Coal Run
+          marks:
+            - { code: X }
+  roundTrips: 3

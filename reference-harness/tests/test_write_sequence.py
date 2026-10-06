@@ -178,7 +178,7 @@ def _temporal_target_case(prefix: str) -> Case:
 
 
 @pytest.mark.parametrize(
-    "prefix", ["m-txtime-write-016", "m-bitemp-write-026", "m-bitemp-write-027"]
+    "prefix", ["m-temporal-write-016", "m-temporal-write-042", "m-temporal-write-043"]
 )
 @pytest.mark.parametrize("token", ["1999-12-31T00:00:00.000000Z", None], ids=["stale", "missing"])
 def test_a_temporal_target_steps_stated_start_must_be_the_one_its_history_leaves(
@@ -197,14 +197,14 @@ def test_a_temporal_target_steps_stated_start_must_be_the_one_its_history_leaves
 
 
 def _guard_case(mutate: Callable[[dict[str, Any]], None]) -> Case:
-    case = _temporal_target_case("m-txtime-write-015")
+    case = _temporal_target_case("m-temporal-write-015")
     raw = copy.deepcopy(case.raw)
     mutate(raw)
     return Case(path=case.path, raw=raw, model=case.model)
 
 
 def test_a_one_statement_transaction_time_update_is_the_guard_its_history_proves() -> None:
-    _assert_write_input_columns(_temporal_target_case("m-txtime-write-015"), "postgres")
+    _assert_write_input_columns(_temporal_target_case("m-temporal-write-015"), "postgres")
 
 
 def _changed_value(raw: dict[str, Any]) -> None:
@@ -300,7 +300,7 @@ class _CountingExecutor:
 def test_a_guard_golden_matching_no_row_is_refused_where_it_executes() -> None:
     executor = _CountingExecutor([1, 0])
     with pytest.raises(CaseFailure, match=r"then\.statements\[1\] matched 0 row"):
-        _assert_write_sequence(_temporal_target_case("m-txtime-write-015"), cast(Any, executor))
+        _assert_write_sequence(_temporal_target_case("m-temporal-write-015"), cast(Any, executor))
 
 
 def test_a_target_step_owes_a_read_only_where_it_is_acquired() -> None:
@@ -487,11 +487,11 @@ def test_table_observation_refuses_a_table_the_model_does_not_map() -> None:
 
 
 def test_multi_attribute_audit_update_chains_all_new_values() -> None:
-    # m-txtime-write-004: a multi-attribute correction (acct + value). The close touches
+    # m-temporal-write-004: a multi-attribute correction (acct + value). The close touches
     # ONLY out_z — under the case's default preference it also gates on the observed
     # in_z — while the chained INSERT carries the entity's FULL physical row with EVERY
     # new value (Family B — a milestone always writes the whole row).
-    case = _write_case_by_id("m-txtime-write-004")
+    case = _write_case_by_id("m-temporal-write-004")
     close, chain = case.golden_statements("postgres")[1], case.golden_statements("postgres")[2]
     assert close == "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     assert chain.startswith("insert into balance(bal_id, acct_num, val, in_z, out_z)")
@@ -508,7 +508,7 @@ def test_plural_temporal_step_is_rejected() -> None:
     # authoring location, and the temporal ① ↔ ② cross-check reads the step's first
     # row, so a second row would be graded against nothing at all rather than
     # against a golden statement it has no counterpart for.
-    case = copy.deepcopy(_write_case_by_id("m-txtime-write-005"))
+    case = copy.deepcopy(_write_case_by_id("m-temporal-write-005"))
     step = case.write_sequence[0]
     step["rows"].append({"id": 2, "acctNum": "B", "value": "999.00"})
     with pytest.raises(CaseFailure, match="carries 2 rows"):
@@ -520,7 +520,7 @@ def test_plural_temporal_step_is_rejected() -> None:
     [
         ("m-batch-write-001", "Wallet", "update", "unversioned row"),
         ("m-opt-lock-002", "Account", "insert", "insert row"),
-        ("m-txtime-write-001", "Balance", "update", "temporal row"),
+        ("m-temporal-write-001", "Balance", "update", "temporal row"),
     ],
 )
 def test_an_unentitled_write_row_observation_is_refused(
@@ -1064,7 +1064,7 @@ def test_document_null_mutation_renders_from_the_neutral_null() -> None:
 
 
 def test_a_carried_document_admits_a_key_the_write_input_names_nowhere() -> None:
-    case = _write_case_by_id("m-txtime-write-010")
+    case = _write_case_by_id("m-temporal-write-010")
     _assert_carried_document(
         case,
         {"title": "Southern Run", "manifest": {"cargo": "timber"}},
@@ -1081,7 +1081,7 @@ def test_a_carried_array_grades_element_by_element_and_admits_an_unknown_key() -
     # A `many` occurrence's array is ordered and equal-length, so position pairs the
     # two sides; each element is a document and admits a key ① names nowhere just as
     # the document around it does.
-    case = _write_case_by_id("m-txtime-write-010")
+    case = _write_case_by_id("m-temporal-write-010")
     _assert_carried_document(
         case,
         {"stops": [{"port": "Bergen"}, {"port": "Tromso"}]},
@@ -1091,7 +1091,7 @@ def test_a_carried_array_grades_element_by_element_and_admits_an_unknown_key() -
 
 
 def test_a_carried_array_of_a_different_length_is_refused() -> None:
-    case = _write_case_by_id("m-txtime-write-010")
+    case = _write_case_by_id("m-temporal-write-010")
     with pytest.raises(CaseFailure, match="array carries"):
         _assert_carried_document(
             case,
@@ -1102,7 +1102,7 @@ def test_a_carried_array_of_a_different_length_is_refused() -> None:
 
 
 def test_a_carried_array_element_whose_named_value_differs_is_refused() -> None:
-    case = _write_case_by_id("m-txtime-write-010")
+    case = _write_case_by_id("m-temporal-write-010")
     with pytest.raises(CaseFailure, match="stops\\[0\\].port"):
         _assert_carried_document(
             case,

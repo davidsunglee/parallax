@@ -125,7 +125,7 @@ def _resolving_reads(case: Case, step: Any) -> int:
 
 def _coverage_reads(case: Case, step: _GroupedWrite) -> int:
     """One read per Bitemporal object a settled step writes beyond the rectangle
-    its named find observed (`m-bitemp-write` *Observed writes span their
+    its named find observed (`m-temporal-write` *Observed writes span their
     requested extent*; `m-sql` *Requested ranges*).
 
     An object's requested extent is the union of its entries' ``[validFrom,

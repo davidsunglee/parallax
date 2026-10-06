@@ -1,7 +1,7 @@
 # PK generation `sequence` composed with a TEMPORAL (audit-only) insert (m-pk-gen +
-# m-txtime-write) — net-new: no existing case puts pk generation on a temporal entity.
+# m-temporal-write) — net-new: no existing case puts pk generation on a temporal entity.
 model: models/pk-audit.yaml
-tags: [m-pk-gen, m-txtime-write, m-sql, sequence, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-pk-gen, m-temporal-write, m-sql, sequence, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 compileEligibility:
   mode: run-only

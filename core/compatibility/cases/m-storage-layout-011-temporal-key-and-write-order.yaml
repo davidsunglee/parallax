@@ -1,8 +1,8 @@
 # The physical key is the model key then each temporal END, even though every domain
 # slot precedes the temporal slots in the complete Column sequence (m-storage-layout x
-# m-txtime-write).
+# m-temporal-write).
 model: models/storage-layout.yaml
-tags: [m-storage-layout, m-inheritance, m-txtime-write, m-value-object, m-sql, table-per-hierarchy, tag, temporal, audit-only, document, write-sequence, update, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-inheritance, m-temporal-write, m-value-object, m-sql, table-per-hierarchy, tag, temporal, audit-only, document, write-sequence, update, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   uow:

@@ -57,7 +57,6 @@ from parallax.core.unit_work.strategy import (
     BatchingStrategy,
     Concurrency,
     ConcurrencyStrategy,
-    TemporalStrategy,
 )
 from parallax.core.unit_work.write_settlement import (
     OrderedWrite,
@@ -150,7 +149,6 @@ class WritePlanner:
         *,
         batching: BatchingStrategy,
         concurrency: ConcurrencyStrategy,
-        temporal: TemporalStrategy,
         audit: AuditStrategy,
     ) -> None:
         self._model = model
@@ -165,7 +163,6 @@ class WritePlanner:
             self._families,
             self._temporal_facet,
             concurrency=concurrency,
-            temporal=temporal,
             audit=audit,
         )
 

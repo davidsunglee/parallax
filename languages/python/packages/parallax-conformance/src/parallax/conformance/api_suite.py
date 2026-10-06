@@ -357,7 +357,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "remaining temporal-read cases are graded end-to-end by the run lanes. The gated "
         "Transaction-Time close after a find (`m-temporal-read-009`) is a single-group "
         "scenario graded by the run lane alone (query-result-dependent): its developer "
-        "spelling is the exercised `tx.terminate` close (`m-txtime-write-003`), and what it "
+        "spelling is the exercised `tx.terminate` close (`m-temporal-write-003`), and what it "
         "adds is the framework-emitted `and in_z = ?` gate no caller spells. The "
         "stale-`in_z` race (`-010`) and the root opt-in retrying a conflicted "
         "Transaction-Time-Only write (`-011`) have their own case-scoped entries below"
@@ -409,37 +409,34 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "conflict-opt-in pair (`-010`/`-011`), and the interleaved two-session race "
         "(`-012`, over the `peer` seam) each have their own case-scoped entry below"
     ),
-    "m-txtime-write": (
+    "m-temporal-write": (
         "the milestone-chaining write forms (insert / close-and-chain update / "
-        "terminate, plus the TPH/TPCS and value-object compositions) are graded "
-        "end-to-end by the compile/run conformance lanes. Idiomatic stories exist for "
-        "the insert / terminate / close-and-chain-update family "
-        "(`m-txtime-write-001`..`-005`, each over a per-story scripted clock, which is "
-        "what lets one story chain milestones across several Transaction-Time "
-        "instants). The optimistic-gated chaining update (`-006`, a single-session success "
-        "whose observed `in_z` is FRESH, so what it adds over the exercised chaining-update "
-        "stories is the framework-emitted `and in_z = ?` predicate on the closing UPDATE "
-        "rather than a developer spelling) and the materializing predicate-write "
-        "scenarios (`-007`/`-009`) have no idiomatic story, and are graded end-to-end by "
-        "the run lane alone (query-result-dependent: `-006` settles against its own "
-        "group's find, `-007`/`-009` against their own materializing read)"
-    ),
-    "m-bitemp-write": (
-        "the rectangle-split write forms (insert / updateUntil / terminateUntil / plain "
+        "terminate, plus the TPH/TPCS and value-object compositions) and the "
+        "rectangle-split write forms (insert / updateUntil / terminateUntil / plain "
         "update / plain terminate, the optimistic observed-in_z gate, and the "
         "TPH/TPCS compositions) are graded end-to-end by the compile/run conformance "
-        "lanes. Idiomatic stories exist for the flagship insert / updateUntil "
-        "rectangle split (`-001`), `insertUntil` (`-003`), the plain-update two-way "
-        "degenerate (`-006`), and the plain insert (`-009`). The remaining cases have no "
-        "idiomatic story, and what each is missing differs. `-002`/`-007` spell the "
+        "lanes. Idiomatic stories exist for the Transaction-Time-Only insert / terminate "
+        "/ close-and-chain-update family (`m-temporal-write-001`..`-005`, each over a "
+        "per-story scripted clock, which is what lets one story chain milestones across "
+        "several Transaction-Time instants), and for the flagship Bitemporal insert / "
+        "updateUntil rectangle split (`-017`), `insertUntil` (`-019`), the plain-update "
+        "two-way degenerate (`-022`), and the plain insert (`-025`). The remaining cases "
+        "have no idiomatic story, and what each is missing differs. The optimistic-gated "
+        "chaining update (`-006`, a single-session success whose observed `in_z` is "
+        "FRESH, so what it adds over the exercised chaining-update stories is the "
+        "framework-emitted `and in_z = ?` predicate on the closing UPDATE rather than a "
+        "developer spelling) and the materializing predicate-write scenarios "
+        "(`-007`/`-009`) are graded end-to-end by the run lane alone "
+        "(query-result-dependent: `-006` settles against its own group's find, "
+        "`-007`/`-009` against their own materializing read). `-018`/`-023` spell the "
         "TERMINATE half of the bounded/plain verb pair whose UPDATE half is exercised "
-        "(`-001`/`-006`), so what distinguishes them is which segments the rectangle "
-        "split leaves re-inserted. `-004`/`-008` add no second writer at all — their "
+        "(`-017`/`-022`), so what distinguishes them is which segments the rectangle "
+        "split leaves re-inserted. `-020`/`-024` add no second writer at all — their "
         "observed `in_z` is fresh and the gate matches — and what they grade beyond an "
         "exercised sibling is the framework-emitted `and in_z = ?` predicate no caller "
-        "spells (`-004` closing exactly the rectangle its own group's find observed, "
-        "query-result-dependent); `-005`, the stale-observation twin, has its own "
-        "case-scoped entry below. `-010`..`-013` are predicate-selected writes whose "
+        "spells (`-020` closing exactly the rectangle its own group's find observed, "
+        "query-result-dependent); `-021`, the stale-observation twin, has its own "
+        "case-scoped entry below. `-026`..`-029` are predicate-selected writes whose "
         "`_where` verb the developer surface does carry, and what they pin is the per-resolved-row "
         "close-and-re-insert lowering. Every one of those distinctions is an emitted-SQL "
         "or concurrency-staging contract, graded end-to-end by the compile/run "
@@ -650,7 +647,7 @@ _INHERITANCE_AUDIT_TERMINATE_REASON: Final[str] = (
     "an audit-only (Transaction-Time-Only) milestone close over a table-per-hierarchy or "
     "table-per-concrete-subtype family: graded end-to-end by the compile/run conformance "
     "lanes; no idiomatic story covers it because its developer spelling is the exercised "
-    "`tx.terminate` close (`m-txtime-write-003`), typed at a concrete subtype, and what "
+    "`tx.terminate` close (`m-temporal-write-003`), typed at a concrete subtype, and what "
     "the family composition adds is table routing plus the shared-table tag guard — an "
     "emitted-SQL contract, not a spelling (the SAME posture the non-temporal "
     "inheritance-family write forms carry, `_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`)"
@@ -660,9 +657,9 @@ _INHERITANCE_BITEMPORAL_TERMINATE_REASON: Final[str] = (
     "table-per-concrete-subtype family: graded end-to-end by the compile/run conformance "
     "lanes; no idiomatic story covers it because NO story spells a bitemporal "
     "termination at all — the exercised bitemporal stories are the insert and UPDATE "
-    "halves (`m-bitemp-write-001`/`-003`/`-006`/`-009`), and the plain-entity TERMINATE "
-    "halves these compose (`m-bitemp-write-007` plain, `-002` bounded) are themselves "
-    "storyless for the `m-bitemp-write` bucket's own reason above. What the family "
+    "halves (`m-temporal-write-017`/`-019`/`-022`/`-025`), and the plain-entity TERMINATE "
+    "halves these compose (`m-temporal-write-023` plain, `-018` bounded) are themselves "
+    "storyless for the `m-temporal-write` bucket's own reason above. What the family "
     "composition adds over those is table routing plus the shared-table tag guard"
 )
 # The composed TPH/audit/optimistic-lock case is an interleaved race, not a
@@ -670,7 +667,7 @@ _INHERITANCE_BITEMPORAL_TERMINATE_REASON: Final[str] = (
 # a spelling an exercised story already shows.
 _INHERITANCE_COMPOSED_CONFLICT_REASON: Final[str] = (
     "a table-per-hierarchy audit-only close GATED on a STALE observed Transaction-Time "
-    "start (m-inheritance x m-txtime-write x m-opt-lock composed): graded end-to-end by "
+    "start (m-inheritance x m-temporal-write x m-opt-lock composed): graded end-to-end by "
     "the run sweep's interleaved-group runner; no idiomatic story covers it because the "
     "staleness it grades is produced by a concurrent unit of work committing first over a "
     "session of its own, which one single-session callback cannot stage (the SAME posture "
@@ -760,7 +757,7 @@ _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
 )
 # The interleaved two-session optimistic-lock races (`m-opt-lock-012` over a
 # versioned row, `m-temporal-read-010` over a Transaction-Time-Only milestone,
-# `m-bitemp-write-005` over a bitemporal rectangle; `m-case-format` unit-of-work
+# `m-temporal-write-021` over a bitemporal rectangle; `m-case-format` unit-of-work
 # grouping) hold two concurrent
 # `db.transact` units of work, each over a dedicated session of its own,
 # sequenced in authored order — `parallax.conformance.engine.run_interleaved_scenario_case`.
@@ -1193,7 +1190,7 @@ _BITEMP_PIN_CONTRAST_REASON: Final[str] = (
     "at every keyed verb (`TransactionTimePinReadOnlyError`, "
     "test_transaction_writes.py); no idiomatic story exists beyond that refusal — the "
     "writable half's full rectangle-split lowering already has its own idiomatic story "
-    "(`m-bitemp-write-006`)"
+    "(`m-temporal-write-022`)"
 )
 
 _PER_VIEW_PIN_REASON: Final[str] = (
@@ -1213,7 +1210,7 @@ _VO_SCENARIO_COMBO_REASON: Final[str] = (
     "predicate-write resolving read (row-form, widened to project the VO document "
     "because the Temporal Observation it records is a complete Predecessor Row — the "
     "widening this case pins), and a txtime-write terminate under an "
-    "optimistic-lock gate: the materializing predicate-write machinery (m-txtime-write / "
+    "optimistic-lock gate: the materializing predicate-write machinery (m-temporal-write / "
     "m-opt-lock / m-batch-write's readless/materialize split) is run-lane covered "
     "(query-result-dependent, `compileEligibility: run-only`); no idiomatic story was "
     "authored for this multi-capability combination scenario"
@@ -1481,19 +1478,19 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
             "m-unit-work-048",
             "m-unit-work-049",
             "m-unit-work-050",
-            "m-bitemp-write-028",
-            "m-bitemp-write-029",
-            "m-bitemp-write-030",
-            "m-bitemp-write-031",
-            "m-bitemp-write-032",
-            "m-bitemp-write-033",
+            "m-temporal-write-044",
+            "m-temporal-write-045",
+            "m-temporal-write-046",
+            "m-temporal-write-047",
+            "m-temporal-write-048",
+            "m-temporal-write-049",
             "m-opt-lock-030",
             "m-opt-lock-031",
         ),
         _BUFFERED_SEQUENCE_REASON,
     ),
     **dict.fromkeys(
-        ("m-read-lock-021", "m-read-lock-022", "m-bitemp-write-034", "m-bitemp-write-035"),
+        ("m-read-lock-021", "m-read-lock-022", "m-temporal-write-050", "m-temporal-write-051"),
         _UNCHANGED_MILESTONE_REASON,
     ),
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
@@ -1507,7 +1504,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-opt-lock-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-012": _OPT_LOCK_INTERLEAVED_RACE_REASON,
     "m-temporal-read-010": _OPT_LOCK_INTERLEAVED_RACE_REASON,
-    "m-bitemp-write-005": _OPT_LOCK_INTERLEAVED_RACE_REASON,
+    "m-temporal-write-021": _OPT_LOCK_INTERLEAVED_RACE_REASON,
     "m-read-lock-001": _READ_LOCK_HARNESS_GOLDEN_REASON,
     "m-read-lock-006": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-007": _READ_LOCK_TWO_SESSION_REASON,
@@ -1798,11 +1795,11 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
         "of `m-storage-layout` is, and models/document-layout.yaml carries no class "
         "mirror (`tests/_support/mirrored_models.py`'s own UNMIRRORED reason)"
     ),
-    # -- m-bitemp-write: the finite-pin mutation contrast pair ---------------- #
-    "m-bitemp-write-015": _BITEMP_PIN_CONTRAST_REASON,
-    "m-bitemp-write-016": _BITEMP_PIN_CONTRAST_REASON,
-    # -- m-bitemp-write: the per-view half of that contrast ------------------- #
-    "m-bitemp-write-023": _PER_VIEW_PIN_REASON,
+    # -- m-temporal-write: the finite-pin mutation contrast pair -------------- #
+    "m-temporal-write-031": _BITEMP_PIN_CONTRAST_REASON,
+    "m-temporal-write-032": _BITEMP_PIN_CONTRAST_REASON,
+    # -- m-temporal-write: the per-view half of that contrast ----------------- #
+    "m-temporal-write-039": _PER_VIEW_PIN_REASON,
 }
 
 

@@ -31,9 +31,9 @@
 #
 # The documents the successors bind are authored here rather than derived, exactly
 # as a golden bind is: a workload is a timing fixture, not a grading one, and the
-# behavior these statements have is pinned by `m-txtime-write-010` and
-# `m-bitemp-write-019`.
-tags: [m-perf-bench, m-storage-layout, m-txtime-write, m-bitemp-write, document-layout]
+# behavior these statements have is pinned by `m-temporal-write-010` and
+# `m-temporal-write-035`.
+tags: [m-perf-bench, m-storage-layout, m-temporal-write, document-layout]
 model: models/document-layout.yaml
 dataset:
   generate:

@@ -6,10 +6,15 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Iterator
 
+import pytest
+
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import (
+    CARRIED_HEAD,
+    CARRIED_TAIL,
     NO_TRANSFORM,
+    WITHIN,
     CoverageGap,
     CoverageSegment,
     CoverageTransform,
@@ -314,3 +319,58 @@ def test_the_gap_sweep_reads_each_coverage_interval_once_and_stops_with_the_last
     )
     assert coverage.passes == 1
     assert coverage.handed == [_iv(_JAN, _MAR), _iv(_JUN, _AUG)]
+
+
+def _positional(transform: CoverageTransform, coverage: TimeInterval) -> list[Successor]:
+    """What one-segment scalar access answers for ``coverage``, as successors."""
+    positions = transform.successor_positions(coverage.start, coverage.end)
+    assert positions is not None
+    successors: list[Successor] = []
+    for position in (CARRIED_HEAD, WITHIN, CARRIED_TAIL):
+        if positions & position:
+            start, end = transform.successor_extent(position, coverage.start, coverage.end)
+            assert isinstance(start, dt.datetime)
+            assert end is INFINITY or isinstance(end, dt.datetime)
+            assigned = transform.segments[0].assigned if position == WITHIN else None
+            successors.append(Successor(TimeInterval(start, end), assigned))
+    return successors
+
+
+@pytest.mark.parametrize("window", [_iv(_MAR, _SEP), _iv(_MAR, INFINITY)], ids=["bounded", "open"])
+@pytest.mark.parametrize("assigned", [{"amount": 150}, None], ids=["assigns", "destroys"])
+@pytest.mark.parametrize(
+    "coverage",
+    [
+        _iv(_JAN, INFINITY),
+        _iv(_MAR, INFINITY),
+        _iv(_MAY, INFINITY),
+        _iv(_JAN, _JUN),
+        _iv(_JAN, _SEP),
+        _iv(_JAN, _OCT),
+        _iv(_APR, _JUN),
+    ],
+)
+def test_one_segment_scalar_access_answers_what_successors_of_answers(
+    window: TimeInterval, assigned: dict[str, object] | None, coverage: TimeInterval
+) -> None:
+    # A group sizes each selected row from its two Valid-Time cells alone, and
+    # what it decides must be exactly the successors the interval traversal
+    # derives for the same coverage, a predecessor starting inside or past the
+    # window included.
+    transform = NO_TRANSFORM.followed_by(window, assigned, replaces=False)
+    assert _positional(transform, coverage) == list(transform.successors_of(coverage))
+
+
+def test_one_segment_scalar_access_reaches_nothing_beyond_the_window() -> None:
+    transform = NO_TRANSFORM.followed_by(_iv(_MAR, _JUN), {"amount": 150}, replaces=False)
+    assert transform.successor_positions(_JUN, INFINITY) is None
+    assert transform.successor_positions(_JAN, _MAR) is None
+    assert not transform.reaches(_iv(_JUN, INFINITY))
+
+
+def test_a_transaction_time_only_segment_keeps_its_one_successor_where_it_assigns() -> None:
+    assigning = NO_TRANSFORM.followed_by(None, {"amount": 150}, replaces=False)
+    destroying = NO_TRANSFORM.followed_by(None, None, replaces=False)
+    assert assigning.successor_positions(None, None) == WITHIN
+    assert assigning.successor_extent(WITHIN, None, None) == (None, None)
+    assert destroying.successor_positions(None, None) == 0

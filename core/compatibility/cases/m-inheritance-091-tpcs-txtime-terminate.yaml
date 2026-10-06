@@ -1,8 +1,8 @@
 # Table-per-concrete-subtype Transaction-Time-Only concrete-subtype TERMINATE: the milestone close
-# targets the subtype's OWN table with NO tag guard (m-inheritance x m-txtime-write x
+# targets the subtype's OWN table with NO tag guard (m-inheritance x m-temporal-write x
 # m-sql).
 model: models/quote.yaml
-tags: [m-inheritance, m-txtime-write, m-sql, table-per-concrete-subtype, temporal, audit-only, write-sequence, terminate, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-temporal-write, m-sql, table-per-concrete-subtype, temporal, audit-only, write-sequence, terminate, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   uow:

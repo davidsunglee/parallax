@@ -432,7 +432,7 @@ def close_address_binds(case: Case, entity: Entity, pk: Any, valid_end: Any) -> 
     Transaction-Time-current milestone is closable; the Valid-Time end is the observed
     rectangle's OWN end, which may be finite — a key plus the open Transaction-Time
     bound alone would select every disjoint current rectangle of that key
-    (`m-bitemp-write`). An optimistic gate is appended AFTER the address, never woven
+    (`m-temporal-write`). An optimistic gate is appended AFTER the address, never woven
     into it.
     """
     discriminator = tag(entity)
@@ -460,7 +460,7 @@ def is_existing_row_statement(statement: str) -> bool:
     A table-per-hierarchy existing-row statement carries the tag guard; an INSERT
     derives the tag COLUMN instead. This classifies by the leading verb so it covers
     the milestone TEMPORAL closes / inactivations (an ``update <table> set out_z = ?
-    …``, m-txtime-write / m-bitemp-write) alongside the plain non-temporal
+    …``, m-temporal-write) alongside the plain non-temporal
     ``update`` / ``delete`` — both are existing-row writes that MUST carry the guard,
     while the chained milestone INSERTs are not.
     """
@@ -823,7 +823,7 @@ def has_version_gate(statement: str, version_col: str, dialect: str) -> bool:
 def has_temporal_gate(statement: str, in_z: str, dialect: str) -> bool:
     """True when a milestone close's SQL carries the OPTIMISTIC gate predicate.
 
-    Address and gate are separate facts (`m-bitemp-write` "Address and gate are
+    Address and gate are separate facts (`m-temporal-write` "Address and gate are
     separate"): every close renders the same address in either mode, and an optimistic
     one APPENDS the observed Transaction-Time start (``and <in_z> = ?``) last. The gate
     signature is therefore that predicate as the predicate's LAST conjunct, so the
@@ -930,7 +930,7 @@ def assert_inheritance_write_routing(
 
     A no-op on a non-inheritance entity. For a TABLE-PER-HIERARCHY concrete subtype
     every EXISTING-ROW statement in the step — a plain ``update`` / ``delete`` OR a
-    milestone TEMPORAL close / inactivation (m-txtime-write / m-bitemp-write) — MUST
+    milestone TEMPORAL close / inactivation (m-temporal-write) — MUST
     carry the tag GUARD among the identity predicates, canonically right after the
     primary key (m-inheritance, m-sql); a chained milestone INSERT derives the tag
     COLUMN instead, cross-checked where that statement's own column list is graded.

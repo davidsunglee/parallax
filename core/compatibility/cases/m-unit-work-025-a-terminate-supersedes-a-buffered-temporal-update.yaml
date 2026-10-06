@@ -2,7 +2,7 @@
 # followed by a terminate of ONE observed milestone, over the same region, is one
 # terminate — the close alone, with no chained successor.
 model: models/balance.yaml
-tags: [m-unit-work, m-txtime-write, m-opt-lock, m-sql, coalescing, temporal, audit-only, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-temporal-write, m-opt-lock, m-sql, coalescing, temporal, audit-only, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

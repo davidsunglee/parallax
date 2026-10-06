@@ -329,7 +329,7 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
 # harness.
 _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
     {
-        "m-bitemp-write-005",
+        "m-temporal-write-021",
         "m-inheritance-105",
         "m-opt-lock-012",
         "m-temporal-read-010",
@@ -345,7 +345,7 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 # `engine.run_interleaved_scenario_case` over its own dedicated executions:
 # `m-opt-lock-012`'s optimistic-lock race; the races of two temporal closes, each
 # group at its own instant — `m-temporal-read-010` over a Transaction-Time-Only
-# milestone, `m-bitemp-write-005` over a Valid-Time-pinned bitemporal rectangle, and
+# milestone, `m-temporal-write-021` over a Valid-Time-pinned bitemporal rectangle, and
 # `m-inheritance-105` over a table-per-hierarchy subtype's tag-guarded milestone;
 # and the two Repeatable Read proofs
 # `m-unit-work-032` (a plain object find) and `m-unit-work-034` (a streamed
@@ -369,7 +369,7 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 # `stepGraphs` channel.
 _INTERLEAVED_RUNNER_CASES: Final[frozenset[str]] = frozenset(
     {
-        "m-bitemp-write-005",
+        "m-temporal-write-021",
         "m-inheritance-105",
         "m-opt-lock-012",
         "m-temporal-read-010",
@@ -416,7 +416,7 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
 # its resolving read must decode a Document Path out of the Structured Column
 # before the per-row no-op comparison, and only running it proves the comparison
 # saw the member's value rather than an absent column.
-# `m-bitemp-write-020` is the member-free member of it: no member its resolve asks
+# `m-temporal-write-036` is the member-free member of it: no member its resolve asks
 # for lives inside the Structured Column, so only the emitted select list proves
 # the observation projected it anyway, and only the emitted insert binds prove the
 # rectangles it chains were built from the document that read retained. It is
@@ -433,13 +433,13 @@ _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = froz
         "m-opt-lock-014",
         "m-opt-lock-015",
         "m-opt-lock-019",
-        "m-txtime-write-007",
-        "m-txtime-write-009",
-        "m-bitemp-write-010",
-        "m-bitemp-write-011",
-        "m-bitemp-write-012",
-        "m-bitemp-write-013",
-        "m-bitemp-write-020",
+        "m-temporal-write-007",
+        "m-temporal-write-009",
+        "m-temporal-write-026",
+        "m-temporal-write-027",
+        "m-temporal-write-028",
+        "m-temporal-write-029",
+        "m-temporal-write-036",
         "m-unit-work-042",
         "m-value-object-047",
         "m-value-object-066",
@@ -1110,7 +1110,7 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     differs per case. For `m-opt-lock-012` a broken abort that left the doomed
     group's buffered insert durable would still emit well-formed DML and report
     the conflict, and its trailing verify find would observe account
-    9. For the temporal races (`m-temporal-read-010`, `m-bitemp-write-005`,
+    9. For the temporal races (`m-temporal-read-010`, `m-temporal-write-021`,
     `m-inheritance-105`) the losing close's emission is well-formed whether or
     not the race happened, so its fate and the table it leaves — the winner's
     successor current, the loser's close changing nothing — are what show the

@@ -1,5 +1,5 @@
 model: models/buffered-sequence-layout-twin-columns.yaml
-tags: [m-unit-work, m-bitemp-write, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, refusal, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-temporal-write, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, refusal, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario
 grading: state
 compileEligibility:

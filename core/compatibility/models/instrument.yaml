@@ -1,6 +1,6 @@
 # Instrument: a TABLE-PER-HIERARCHY inheritance family whose BITEMPORAL axes are
 # declared on the abstract root and inherited by every concrete subtype
-# (m-inheritance x m-bitemp-write x m-temporal-read — Phase 8 temporal composition).
+# (m-inheritance x m-temporal-write x m-temporal-read — Phase 8 temporal composition).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. It is a NEW,
 # small temporal family (the existing payment/animal/document/vehicle families stay
@@ -22,7 +22,7 @@
 # the raw tag column so familyVariant materializes; the bitemporal terminate /
 # terminateUntil writes (m-inheritance-094 / -096) inactivate the Transaction-Time-current
 # rectangle with the tag GUARD among the identity predicates and chain head / tail
-# milestones setting the tag from tagValue — the standalone m-bitemp-write shapes,
+# milestones setting the tag from tagValue — the standalone m-temporal-write shapes,
 # routed to the shared table.
 #
 # Row data lives in the sibling fixtures/instrument.yaml (the temporal abstract read).

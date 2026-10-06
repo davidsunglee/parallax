@@ -447,7 +447,7 @@ def test_grade_mutate_step_rejects_an_on_index_naming_no_view() -> None:
 def test_grade_mutate_step_publishes_no_copy_when_the_pin_rule_refuses() -> None:
     # A refused mutation derives nothing, so its slot stays empty and a later
     # step naming it is told so rather than handed a copy the verb never made.
-    case = _case("m-bitemp-write-016")
+    case = _case("m-temporal-write-032")
     model = model_facts.load_case_metamodel(case)
     identity = model_facts.case_entity(model, "parallax.compatibility.Position").identity
     source = _scenario_result(
@@ -646,7 +646,7 @@ _POSITION_R1_ROW: dict[str, object] = {
 
 def test_run_scenario_case_grades_a_transaction_time_pin_read_only_mutate() -> None:
     port = FakeDbPort([dict(_POSITION_R1_ROW)])
-    run = _run(_case("m-bitemp-write-016"), port)
+    run = _run(_case("m-temporal-write-032"), port)
     assert run.round_trips == 1
     assert [e.case_pointer for e in run.emissions] == ["/scenario/0/objectQuery"]
     assert run.errors == [{"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}]
@@ -658,7 +658,7 @@ def test_run_scenario_case_accepts_a_finite_valid_time_pin_mutate() -> None:
     # mutate applies in-memory and no error observation is reported.
     row = dict(_POSITION_R1_ROW, val=decimal.Decimal("100.00"))
     port = FakeDbPort([row])
-    run = _run(_case("m-bitemp-write-015"), port)
+    run = _run(_case("m-temporal-write-031"), port)
     assert run.round_trips == 1
     assert run.errors == []
 

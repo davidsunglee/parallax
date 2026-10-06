@@ -13,10 +13,8 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
 | Behavioral module | Enforcement scope |
 |---|---|
 | `m-api-conformance` | `api-proof` |
-| `m-txtime-write` | `txtime-write` |
 | `m-auto-retry` | `auto-retry` |
 | `m-batch-write` | `batch-write` |
-| `m-bitemp-write` | `bitemp-write` |
 | `m-case-format` | `case-format` |
 | `m-conformance-adapter` | `conformance` |
 | `m-core` | `core` |

@@ -90,7 +90,7 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     if envelope.get("status") == "run-only":
         # Declared `compileEligibility: run-only` covers query-result-dependent
         # reads, pk-gen sequence reservations, and materializing predicate writes:
-        # m-txtime-write-007/009, m-bitemp-write-010..-013, m-opt-lock-014/015,
+        # m-temporal-write-007/009, m-temporal-write-026..-029, m-opt-lock-014/015,
         # m-value-object-047/066): `run` (never `compile`) is the ONLY lane that ever
         # grades these — the m-conformance-adapter envelope already answers
         # `run-only` without attempting any lowering at all, so this is classified
@@ -344,7 +344,7 @@ def test_displayed_skip_text_stays_honest_for_a_representative_set() -> None:
     # A materializing predicate-write scenario (query-result-dependent,
     # run-only) is classified BEFORE the shape fallback — never the stale
     # generic scheduling promise.
-    materializing_text = _skip_text("m-txtime-write-007")
+    materializing_text = _skip_text("m-temporal-write-007")
     assert materializing_text.startswith("declared compile-run-only"), materializing_text
     assert "graded by run instead" in materializing_text, materializing_text
     assert "land with a later write increment" not in materializing_text, materializing_text

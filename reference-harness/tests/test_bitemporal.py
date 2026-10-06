@@ -45,7 +45,7 @@ def _position_model():
     return load_model(COMPATIBILITY_ROOT, "models/position.yaml")
 
 
-_PHASE8_MODULES = ("m-temporal-read", "m-bitemp-write")
+_PHASE8_MODULES = ("m-temporal-read", "m-temporal-write")
 
 
 def _phase8_cases():
@@ -152,9 +152,9 @@ def test_temporal_write_input_holds_for_authored_cases() -> None:
     cases = _temporal_write_input_cases()
     # The in-slice audit trio all carry ① (rows + at).
     assert {_case_id(case.path.stem) for case in cases} >= {
-        "m-txtime-write-001",
-        "m-txtime-write-002",
-        "m-txtime-write-003",
+        "m-temporal-write-001",
+        "m-temporal-write-002",
+        "m-temporal-write-003",
     }
     for case in cases:
         # Must not raise: each audit-only ① derives in_z = at / out_z = infinity and
@@ -165,7 +165,9 @@ def test_temporal_write_input_holds_for_authored_cases() -> None:
 def test_temporal_write_input_at_corruption_is_rejected() -> None:
     case = copy.deepcopy(
         next(
-            c for c in _temporal_write_input_cases() if c.path.stem.startswith("m-txtime-write-001")
+            c
+            for c in _temporal_write_input_cases()
+            if c.path.stem.startswith("m-temporal-write-001")
         )
     )
     step = next(s for s in case.write_sequence if s.get("rows"))
@@ -179,7 +181,7 @@ def test_temporal_write_input_at_corruption_is_rejected() -> None:
 
 def _until_write_cases():
     """Full-bitemporal `*Until` rectangle-split write-sequence cases
-    (`m-bitemp-write-001`-`m-bitemp-write-003`)."""
+    (`m-temporal-write-017`-`m-temporal-write-019`)."""
     return [
         case
         for case in _phase8_cases()
@@ -195,9 +197,9 @@ def test_until_write_input_holds_for_authored_cases() -> None:
     cases = _until_write_cases()
     # The `*Until` trio all carry the valid-time window ① (rows + at + until).
     assert {_case_id(case.path.stem) for case in cases} >= {
-        "m-bitemp-write-001",
-        "m-bitemp-write-002",
-        "m-bitemp-write-003",
+        "m-temporal-write-017",
+        "m-temporal-write-018",
+        "m-temporal-write-019",
     }
     for case in cases:
         # Must not raise: the close binds [at, pk, observedThruZ, infinity], every
@@ -209,7 +211,7 @@ def test_until_write_input_holds_for_authored_cases() -> None:
 
 def test_until_write_input_window_corruption_is_rejected() -> None:
     case = copy.deepcopy(
-        next(c for c in _until_write_cases() if c.path.stem.startswith("m-bitemp-write-001"))
+        next(c for c in _until_write_cases() if c.path.stem.startswith("m-temporal-write-017"))
     )
     step = next(s for s in case.write_sequence if s.get("until"))
     # Corrupt the Valid-Time window end: the derived middle / tail windows no longer
@@ -222,8 +224,8 @@ def test_until_write_input_window_corruption_is_rejected() -> None:
 
 def _plain_split_write_cases():
     """Plain (UNBOUNDED) bitemporal rectangle-split write-sequence cases: an
-    everyday `update` / `terminate` on the two-axis Position (`m-bitemp-write-006` /
-    `m-bitemp-write-007`), the degenerate rectangle split with no `until`."""
+    everyday `update` / `terminate` on the two-axis Position (`m-temporal-write-022` /
+    `m-temporal-write-023`), the degenerate rectangle split with no `until`."""
     return [
         case
         for case in _phase8_cases()
@@ -236,8 +238,8 @@ def test_plain_split_write_input_holds_for_authored_cases() -> None:
     cases = _plain_split_write_cases()
     # The plain unbounded update/terminate pair carry ① (rows + at, NO until).
     assert {_case_id(case.path.stem) for case in cases} >= {
-        "m-bitemp-write-006",
-        "m-bitemp-write-007",
+        "m-temporal-write-022",
+        "m-temporal-write-023",
     }
     for case in cases:
         # Must not raise: routed through the rectangle-split cross-check (not the
@@ -253,7 +255,7 @@ def test_plain_two_way_split_and_plain_terminate_statement_shapes() -> None:
     # split (no middle, no old-tail): the `update` step is 3 statements, 4 with the
     # opening insert.
     split = next(
-        c for c in _plain_split_write_cases() if c.path.stem.startswith("m-bitemp-write-006")
+        c for c in _plain_split_write_cases() if c.path.stem.startswith("m-temporal-write-022")
     )
     update_step = next(s for s in split.write_sequence if s["mutation"] == "update")
     assert update_step["statements"] == 3
@@ -263,7 +265,7 @@ def test_plain_two_way_split_and_plain_terminate_statement_shapes() -> None:
     # The plain terminate is inactivate + head (old) only — no tail: the `terminate`
     # step is 2 statements, 3 with the opening insert.
     terminate = next(
-        c for c in _plain_split_write_cases() if c.path.stem.startswith("m-bitemp-write-007")
+        c for c in _plain_split_write_cases() if c.path.stem.startswith("m-temporal-write-023")
     )
     terminate_step = next(s for s in terminate.write_sequence if s["mutation"] == "terminate")
     assert terminate_step["statements"] == 2
@@ -277,7 +279,9 @@ def test_ungated_close_with_a_trailing_bind_but_no_gate_predicate_is_rejected() 
     # observed rectangle's in_z exactly — is a shape mismatch (4 placeholders, 5 binds),
     # which a branch keyed on bind length would tolerate as "gated". It MUST raise.
     case = copy.deepcopy(
-        next(c for c in _plain_split_write_cases() if c.path.stem.startswith("m-bitemp-write-007"))
+        next(
+            c for c in _plain_split_write_cases() if c.path.stem.startswith("m-temporal-write-023")
+        )
     )
     # Sanity: as authored the plain split cross-checks cleanly.
     _assert_write_input_columns(case, "postgres")
@@ -293,11 +297,11 @@ def test_ungated_close_with_a_trailing_bind_but_no_gate_predicate_is_rejected() 
 
 
 def _gated_split_case():
-    return next(c for c in _until_write_cases() if c.path.stem.startswith("m-bitemp-write-008"))
+    return next(c for c in _until_write_cases() if c.path.stem.startswith("m-temporal-write-024"))
 
 
 def test_gated_rectangle_split_close_reconstructs_the_observed_rectangle() -> None:
-    # The optimistic gated split (`m-bitemp-write-008`) ADDRESSES the observed rectangle
+    # The optimistic gated split (`m-temporal-write-024`) ADDRESSES the observed rectangle
     # by its own Valid-Time end then the invariant Transaction-Time infinity, and GATES
     # on its in_z last. Neither the address's thru_z nor the gate's in_z is in the
     # closing step's ① row: both are DERIVED from the OPENING insert step, whose
@@ -393,7 +397,7 @@ def test_has_temporal_gate_requires_the_gate_predicate_to_be_TRAILING() -> None:
 
 
 def test_close_weaving_the_gate_into_the_address_is_rejected() -> None:
-    # The corpus-level consequence of the anchored detector: `m-bitemp-write-008`'s
+    # The corpus-level consequence of the anchored detector: `m-temporal-write-024`'s
     # gated close, re-spelled with its `and in_z = ?` moved ahead of the address's own
     # upper bounds. Placeholders and binds still both number five, so only the
     # gate-is-trailing rule separates it from the authored shape — it MUST raise.

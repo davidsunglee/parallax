@@ -367,8 +367,8 @@ compatibility case is.
 
 ### SIO-018 — A temporal successor carries forward a declared member the write does not name
 
-- **Module tag**: `m-txtime-write`
-- **Supplements**: `m-txtime-write-013` / `m-txtime-write-014` (the temporal twin
+- **Module tag**: `m-temporal-write`
+- **Supplements**: `m-temporal-write-013` / `m-temporal-write-014` (the temporal twin
   pair, which restates the unchanged members explicitly)
 - **Why the corpus cannot state it**: a temporal write-sequence entry states the
   **whole successor row** — a temporal step's row is classified as an opening row
@@ -384,7 +384,7 @@ compatibility case is.
 
 ### SIO-019 — A temporal keyed close settles against a milestone the implementation's own read published
 
-- **Module tag**: `m-txtime-write`
+- **Module tag**: `m-temporal-write`
 - **Supplements**: `m-unit-work-015` (a close settling against the milestone its
   own find observed, graded through a scenario)
 - **Why the corpus cannot state it**: a scenario's temporal keyed write cannot be

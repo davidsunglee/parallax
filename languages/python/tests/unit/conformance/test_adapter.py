@@ -59,7 +59,7 @@ _RUN_ONLY_CASE = case_format.default_cases_dir() / "m-opt-lock-005-conflict.yaml
 # canned row and a write path that always raises — it still surfaces a loud
 # `run-failed` error, exercising this lane's own error-reporting contract.
 _ENGINE_GAP_CASE = (
-    case_format.default_cases_dir() / "m-txtime-write-007-predicate-terminate-materialize.yaml"
+    case_format.default_cases_dir() / "m-temporal-write-007-predicate-terminate-materialize.yaml"
 )
 
 
@@ -847,7 +847,7 @@ def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
 
 
 def test_run_case_error_on_an_engine_gap() -> None:
-    # `_ENGINE_GAP_CASE` (m-txtime-write-007) is a materializing predicate-write
+    # `_ENGINE_GAP_CASE` (m-temporal-write-007) is a materializing predicate-write
     # scenario: its `_FakePort` returns a canned
     # row shaped for a DIFFERENT model and raises `NotImplementedError` on any
     # write, so materialization's own internal resolve/write sequence fails —
@@ -867,7 +867,7 @@ def test_run_case_error_on_an_engine_gap() -> None:
 # lane-honestly classified out to the API Conformance Suite.                   #
 # --------------------------------------------------------------------------- #
 _PIN_READ_ONLY_CASE = (
-    case_format.default_cases_dir() / "m-bitemp-write-016-transaction-time-pin-read-only.yaml"
+    case_format.default_cases_dir() / "m-temporal-write-032-transaction-time-pin-read-only.yaml"
 )
 _ACCESS_WITNESS_CASE = (
     case_format.default_cases_dir() / "m-snapshot-read-009-closed-world-unloaded-access.yaml"

@@ -1,7 +1,7 @@
 # Table-per-concrete-subtype BITEMPORAL terminateUntil: the inactivation targets the
-# subtype's OWN table with NO tag guard (m-inheritance x m-bitemp-write x m-sql).
+# subtype's OWN table with NO tag guard (m-inheritance x m-temporal-write x m-sql).
 model: models/rate.yaml
-tags: [m-inheritance, m-bitemp-write, m-sql, table-per-concrete-subtype, temporal, bitemporal, write-sequence, terminate-until, rectangle-split, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-temporal-write, m-sql, table-per-concrete-subtype, temporal, bitemporal, write-sequence, terminate-until, rectangle-split, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   uow:

@@ -7,7 +7,7 @@ from typing import Final, cast
 
 from parallax.core.base import ManagedValue
 from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import AttributeIdentity
+from parallax.core.metamodel import AttributeIdentity, EntityMetadata
 from parallax.core.temporal_read import (
     Bitemporal,
     TimeInterval,
@@ -32,7 +32,16 @@ from parallax.core.unit_work.effects import (
     WritePreconditionError,
     enforce_affected_rows,
 )
-from parallax.core.unit_work.materialized import ChainedTemporalWrite, ComposedTemporalWrite
+from parallax.core.unit_work.instructions import ExpectedTxStart
+from parallax.core.unit_work.materialized import (
+    ChainedTemporalWrite,
+    ComposedTemporalWrite,
+    InsertionKeyedWrite,
+    ObservedKeyedWrite,
+    TargetKeyedWrite,
+    TemporalKeyedWrite,
+    singleton_transform,
+)
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import ActorIdentity, AuditStrategy
 from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, TemporalStateKey
@@ -91,12 +100,18 @@ class _Original:
     valid_time_coverage: TimeInterval | None
 
 
-def range_claims(composed: ComposedTemporalWrite) -> Completion | None:
-    """The distinct retained observations a composed range's unit spends, each
-    once."""
+def range_claims(item: ComposedTemporalWrite | TemporalKeyedWrite) -> Completion | None:
+    """The distinct retained observations a range's unit spends, each once."""
     distinct: list[RetainedObservation] = []
-    for contribution in composed.contributions:
-        claim = contribution.claim
+    if isinstance(item, ComposedTemporalWrite):
+        claims: Iterable[RetainedObservation | None] = (
+            contribution.claim for contribution in item.contributions
+        )
+    elif isinstance(item, ObservedKeyedWrite):
+        claims = (item.claim, *item.twins)
+    else:
+        claims = ()
+    for claim in claims:
         if claim is not None and all(claim is not held for held in distinct):
             distinct.append(claim)
     if not distinct:
@@ -160,9 +175,12 @@ def _anchor(composed: ComposedTemporalWrite) -> object:
     write states as its window's start."""
     for contribution in composed.contributions:
         if contribution.observation is None and contribution.condition is None:
-            window = contribution.valid_time_window
-            return _EXISTENCE if window is None else window.start
+            return _anchored_at(contribution.valid_time_window)
     return _UNANCHORED
+
+
+def _anchored_at(window: TimeInterval | None) -> object:
+    return _EXISTENCE if window is None else window.start
 
 
 @dataclass(frozen=True, slots=True)
@@ -644,7 +662,7 @@ class DeferredTemporalRange:
 
 
 def settle_range(
-    composed: ComposedTemporalWrite,
+    item: ComposedTemporalWrite | TemporalKeyedWrite,
     *,
     view: InheritanceEntityView,
     shape: TransactionTimeOnly | Bitemporal,
@@ -654,9 +672,13 @@ def settle_range(
     decorate: Decoration,
     guards: bool = False,
 ) -> BoundRange | DeferredTemporalRange:
-    """One temporal object's composed writes as a range over its current
+    """One temporal object's pending writes as a range over its current
     coverage: bound now where planning knows that coverage, or else the
     deferred description of what binding needs once it is read.
+
+    A lone write reaches here as the carrier it was buffered in, and its
+    transform is built once, here, from that carrier; a composition brings the
+    transform its buffering composed.
 
     Every distinct observed predecessor is an original: each is validated by
     its own guarded effect before any successor opens, and the transform is
@@ -679,24 +701,23 @@ def settle_range(
     ``instant`` is the attempt's already-resolved Transaction Instant, which a
     deferred range retains as a value.
     """
-    entity = composed.target
-    facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=instant)
     key_attribute = view.primary_key.identity
-    key_value = composed.key[key_attribute.name]
+    entity, key_value, transform = _range_of(item, key_attribute)
+    facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=instant)
     object_key = ObjectKey(entity.identity, ((key_attribute.name, key_value),))
-    originals, validations = _known_originals(composed, facts, object_key)
-    chained = composed if isinstance(composed, ChainedTemporalWrite) else None
-    window = composed.transform.valid_time_window
+    originals, validations, anchor, conditions = _known(item, facts, object_key)
+    chained = item if isinstance(item, ChainedTemporalWrite) else None
+    window = transform.valid_time_window
     meaning = _RangeMeaning(
         facts=facts,
-        transform=composed.transform,
+        transform=transform,
         valid_time_window=window,
         gated=gated,
         key_attribute=key_attribute,
         key_value=key_value,
         object_key=object_key,
-        anchor=_anchor(composed),
-        conditions=_conditions(composed),
+        anchor=anchor,
+        conditions=conditions,
         derives=chained is not None and chained.leads,
         guards=guards,
     )
@@ -705,13 +726,7 @@ def settle_range(
             meaning=meaning,
             originals=originals,
             validations=validations,
-            acquisition=RangeAcquisition(
-                entity=entity,
-                key_attribute=key_attribute,
-                key_value=cast("ManagedValue", key_value),
-                valid_time_window=window,
-                locking=not gated,
-            ),
+            acquisition=_acquisition(meaning, window),
             continued=True,
         )
     requested = window
@@ -727,15 +742,61 @@ def settle_range(
             meaning=meaning,
             originals=originals,
             validations=validations,
-            acquisition=RangeAcquisition(
-                entity=entity,
-                key_attribute=key_attribute,
-                key_value=cast("ManagedValue", key_value),
-                valid_time_window=requested,
-                locking=not gated,
-            ),
+            acquisition=_acquisition(meaning, requested),
         )
     return _binding(meaning, ownership, decorate).bind(originals, validations)
+
+
+def _range_of(
+    item: ComposedTemporalWrite | TemporalKeyedWrite, key_attribute: AttributeIdentity
+) -> tuple[EntityMetadata, object, CoverageTransform]:
+    """The object ``item`` writes, its key value, and its transform."""
+    if isinstance(item, ComposedTemporalWrite):
+        return item.target, item.key[key_attribute.name], item.transform
+    instruction = item.instruction
+    return (
+        instruction.target,
+        instruction.rows[0][key_attribute.name],
+        singleton_transform(item, key_attribute.name),
+    )
+
+
+def _known(
+    item: ComposedTemporalWrite | TemporalKeyedWrite, facts: TemporalFacts, object_key: ObjectKey
+) -> tuple[tuple[_Original, ...], tuple[_Original, ...], object, tuple[_StartingCondition, ...]]:
+    """What planning knows of ``item``'s range: the originals it binds and
+    validates, its insertion anchor, and its callers' starting conditions."""
+    if isinstance(item, ComposedTemporalWrite):
+        originals, validations = _known_originals(item, facts, object_key)
+        return originals, validations, _anchor(item), _conditions(item)
+    window = item.instruction.valid_time_window
+    if isinstance(item, InsertionKeyedWrite):
+        return (), (), _anchored_at(window), ()
+    if isinstance(item, TargetKeyedWrite):
+        expectation = item.expectation
+        conditions = (
+            (_StartingCondition(window, expectation.instant),)
+            if isinstance(expectation, ExpectedTxStart)
+            else ()
+        )
+        return (), (), _UNANCHORED, conditions
+    observation = item.observation
+    assert isinstance(observation, TemporalObservation)  # settlement refuses any other
+    claim = item.claim
+    original = _original(
+        facts, object_key, observation.predecessor, None if claim is None else claim.key
+    )
+    return (original,), (), _UNANCHORED, ()
+
+
+def _acquisition(meaning: _RangeMeaning, window: TimeInterval | None) -> RangeAcquisition:
+    return RangeAcquisition(
+        entity=meaning.facts.entity,
+        key_attribute=meaning.key_attribute,
+        key_value=cast("ManagedValue", meaning.key_value),
+        valid_time_window=window,
+        locking=not meaning.gated,
+    )
 
 
 def bind_deferred(

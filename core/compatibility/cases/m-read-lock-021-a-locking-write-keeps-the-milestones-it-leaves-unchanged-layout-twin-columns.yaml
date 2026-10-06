@@ -1,5 +1,5 @@
 model: models/unchanged-milestone-layout-twin-columns.yaml
-tags: [m-read-lock, m-unit-work, m-bitemp-write, m-txtime-write, m-storage-layout, scenario, update, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+tags: [m-read-lock, m-unit-work, m-temporal-write, m-storage-layout, scenario, update, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario
 grading: state
 compileEligibility:

@@ -801,7 +801,7 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
     # binding LAST (`m-temporal-write`, `m-opt-lock.md:87-99`) — every
     # resolved row's own close carries THAT row's own observed `in_z`, in
     # resolved-row order. Each is the gated close the corpus's
-    # `m-txtime-write-006` update emits ahead of its chained insert, here with
+    # `m-temporal-write-006` update emits ahead of its chained insert, here with
     # nothing chained (`m-value-object-047`'s own re-gated step 2).
     port = ScriptedAdapter(Transact(Read(rows=_two_terminate_rows()), Write(times=2)))
 
@@ -883,7 +883,7 @@ def test_delete_where_over_a_temporal_target_is_refused_at_the_verb(
 
 
 def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
-    # `txtime_write.plan` chains the instruction's OWN authored FULL row —
+    # Temporal expansion chains the instruction's OWN authored FULL row —
     # never a separate observed payload — so materialization must merge the
     # resolved row's own unassigned scalar payload (acct_num) forward itself.
     port = ScriptedAdapter(
@@ -1274,7 +1274,7 @@ def test_materializing_bitemporal_update_where_carries_the_unassigned_value_obje
 
 
 def test_materializing_bounded_update_where_bitemporal_carries_the_value_object_per_chain() -> None:
-    # The full rectangle split (`m-bitemp-write-010..013`'s own witnessed
+    # The full rectangle split (`m-temporal-write-026..029`'s own witnessed
     # shape, VO-free `Position`): every one of head/middle/tail carries the
     # resolved row's own `address` forward, whole, since the caller reassigns
     # only `value` — the document is never decomposed at any chain slot.
@@ -1308,8 +1308,8 @@ def test_materializing_bounded_update_where_bitemporal_carries_the_value_object_
 def test_materializing_plain_terminate_where_bitemporal_carries_the_document() -> None:
     # `m-case-format.md:727`: a bitemporal terminate's head rectangle chains
     # the resolved row's old
-    # payload forward (`bitemp_write.plan`'s terminate branch reads
-    # `observed.payload`), so the resolving read must project the document
+    # payload forward (a terminate's carried head reads the predecessor's
+    # own state), so the resolving read must project the document
     # too, even though `terminate` carries no assignments — a bitemporal
     # target's rectangle split ALWAYS chains, unlike an AUDIT-ONLY terminate
     # (close-only, no chained row,
@@ -1339,7 +1339,7 @@ def test_materializing_bounded_terminate_where_bitemporal_carries_the_document_p
     # `terminateUntil` opens head AND tail (no middle — the window becomes a
     # hole in Valid Time, bounded `terminate_where`'s own docstring), and
     # BOTH chain the resolved row's OLD payload forward
-    # (`bitemp_write.plan`), so the document rides both, whole.
+    # (`m-temporal-write` *Temporal expansion*), so the document rides both, whole.
     address: dict[str, DocumentValue] = {"city": "Tampere"}
     port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=3)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
@@ -1364,7 +1364,7 @@ def test_materializing_bounded_terminate_where_bitemporal_carries_the_document_p
 
 
 def test_materializing_terminate_where_audit_only_observes_the_whole_document() -> None:
-    # An AUDIT-ONLY terminate is close-only (`txtime_write.plan` — no chained
+    # An AUDIT-ONLY terminate is close-only (temporal expansion opens no chained
     # row, the predicate-write lane's `assignment_bearing` set excludes it), so it
     # carries no payload forward and writes no document. Its resolving read
     # still projects one, because a Temporal Observation retains a COMPLETE

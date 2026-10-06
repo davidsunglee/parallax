@@ -25,10 +25,9 @@ identity map (`m-identity-map`), and the process-wide identity + query caches
 order, which settle buffered writes into `m-write-plan`'s Planned Write algebra;
 the authoritative affected-row enforcer; and the Write Effect Error family that
 enforcer raises (ADR 0041, ADR 0048). Sibling policy modules
-(`m-batch-write`, `m-opt-lock`, `m-read-lock`, `m-txtime-write`,
-`m-bitemp-write`) keep their own policies and reach planning and write
-admission only through strategy ports this module declares, which the
-composition root injects once per accepted model.
+(`m-batch-write`, `m-opt-lock`, `m-read-lock`) keep their own policies and
+reach planning and write admission only through strategy ports this module
+declares, which the composition root injects once per accepted model.
 
 ## The unit of work
 
@@ -1405,7 +1404,7 @@ operation steps, each with a declared round-trip count — and plain write cases
 | read-your-own-writes scenario | a buffered write is flushed before a dependent find observes it |
 | rollback scenario | an aborted write is discarded; a post-abort find observes the original rows |
 | fk-ordering / flush cases | buffered writes flush ordered by foreign-key dependency |
-| insert-then-update coalescing (`m-unit-work-008`, `m-txtime-write-008`, `m-bitemp-write-014`) | a same-transaction insert-then-update flushes as one write with the final value — no intermediate milestone (non-temporal / Transaction-Time-Only / Bitemporal) |
+| insert-then-update coalescing (`m-unit-work-008`, `m-temporal-write-008`, `m-temporal-write-030`) | a same-transaction insert-then-update flushes as one write with the final value — no intermediate milestone (non-temporal / Transaction-Time-Only / Bitemporal) |
 | insert-then-delete cancellation (`m-unit-work-010`) | a same-transaction insert-then-delete cancels — the flush emits no DML for that object |
 | dirty-read refusal (`m-unit-work-031`) | at Read Committed, a reading unit of work observes the committed row while a concurrent one holds an uncommitted write to it |
 | nonrepeatable-read refusal (`m-unit-work-032`, `-033`, `-034`) | at Repeatable Read, a unit of work's second read answers what its first did across a peer's committed write — for a plain find, a deep fetch's own included level, and a streamed delivery's pages |

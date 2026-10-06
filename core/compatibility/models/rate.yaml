@@ -1,6 +1,6 @@
 # Rate: a TABLE-PER-CONCRETE-SUBTYPE inheritance family whose BITEMPORAL axes are
 # declared on the abstract root and inherited by every concrete subtype
-# (m-inheritance x m-bitemp-write x m-temporal-read — Phase 8 temporal composition).
+# (m-inheritance x m-temporal-write x m-temporal-read — Phase 8 temporal composition).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. It is the TPCS
 # counterpart of the table-per-hierarchy `instrument` family: a NEW, small temporal
@@ -24,7 +24,7 @@
 # refers to the inherited axis through the concrete position (`DepositRate.
 # transaction-time`) — proving the axes are usable there too, not just at the abstract
 # root; the bitemporal terminate / terminateUntil writes (m-inheritance-095 / -097)
-# route to the concrete subtype's OWN table — the standalone m-bitemp-write shapes, no
+# route to the concrete subtype's OWN table — the standalone m-temporal-write shapes, no
 # tag guard.
 #
 # Row data lives in the sibling fixtures/rate.yaml: DepositRate carries TWO Transaction-Time

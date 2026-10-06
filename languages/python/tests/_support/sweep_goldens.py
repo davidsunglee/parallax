@@ -183,7 +183,7 @@ _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 )
 _LAYOUT_TWIN_WRITES: Final[frozenset[str]] = frozenset(
     {f"m-storage-layout-{n:03d}" for n in range(29, 35)}
-    | {"m-txtime-write-013", "m-txtime-write-014"}
+    | {"m-temporal-write-013", "m-temporal-write-014"}
 )
 _FLOAT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
@@ -207,19 +207,19 @@ _WRITE_SEQUENCES: Final[frozenset[str]] = (
 _SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-010"})
 _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
-        "m-txtime-write-001",
-        "m-txtime-write-002",
-        "m-txtime-write-003",
-        "m-txtime-write-004",
-        "m-txtime-write-005",
-        "m-txtime-write-015",
-        "m-bitemp-write-001",
-        "m-bitemp-write-002",
-        "m-bitemp-write-003",
-        "m-bitemp-write-006",
-        "m-bitemp-write-007",
-        "m-bitemp-write-008",
-        "m-bitemp-write-009",
+        "m-temporal-write-001",
+        "m-temporal-write-002",
+        "m-temporal-write-003",
+        "m-temporal-write-004",
+        "m-temporal-write-005",
+        "m-temporal-write-015",
+        "m-temporal-write-017",
+        "m-temporal-write-018",
+        "m-temporal-write-019",
+        "m-temporal-write-022",
+        "m-temporal-write-023",
+        "m-temporal-write-024",
+        "m-temporal-write-025",
         "m-inheritance-090",
         "m-inheritance-091",
         "m-inheritance-094",
@@ -228,20 +228,20 @@ _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-inheritance-097",
         "m-value-object-032",
         "m-value-object-033",
-        "m-txtime-write-010",
-        "m-bitemp-write-019",
-        "m-txtime-write-016",
-        "m-bitemp-write-026",
-        "m-bitemp-write-027",
+        "m-temporal-write-010",
+        "m-temporal-write-035",
+        "m-temporal-write-016",
+        "m-temporal-write-042",
+        "m-temporal-write-043",
     }
 )
 _TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
-    {"m-txtime-write-008", "m-bitemp-write-014", "m-bitemp-write-024", "m-bitemp-write-025"}
+    {"m-temporal-write-008", "m-temporal-write-030", "m-temporal-write-040", "m-temporal-write-041"}
 )
 _PIN_CONTRAST_SCENARIOS: Final[frozenset[str]] = frozenset(
-    {"m-bitemp-write-015", "m-bitemp-write-016"}
+    {"m-temporal-write-031", "m-temporal-write-032"}
 )
-_PER_VIEW_PIN_SCENARIOS: Final[frozenset[str]] = frozenset({"m-bitemp-write-023"})
+_PER_VIEW_PIN_SCENARIOS: Final[frozenset[str]] = frozenset({"m-temporal-write-039"})
 _EXECUTION_LIFECYCLE_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-execution-lifecycle-002", "m-execution-lifecycle-003"}
 )

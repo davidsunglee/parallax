@@ -1,0 +1,72 @@
+model: models/position.yaml
+tags: [m-temporal-write, m-unit-work, m-temporal-read, bitemporal, same-transaction-coalescing, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.Position
+          rows:
+            - { id: 9, acctNum: D, value: "100.00" }
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          at: "2024-01-01T00:00:00.000000Z"
+        - mutation: updateUntil
+          entity: parallax.compatibility.Position
+          rows:
+            - { id: 9, value: "150.00" }
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          until: "2024-06-01T00:00:00.000000Z"
+          at: "2024-01-01T00:00:00.000000Z"
+      roundTrips: 2
+      note: the buffered INSERT of position 9 and the bounded UPDATE of it compose over the opening's own coverage — the flush inserts [Jan, Jun) at 150 and [Jun, infinity) at 100, closing nothing
+      statements:
+        - sql:
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [9, D, "150.00", "2024-01-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-01-01T00:00:00.000000Z", infinity]
+        - sql:
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [9, D, "100.00", "2024-06-01T00:00:00.000000Z", infinity, "2024-01-01T00:00:00.000000Z", infinity]
+    - objectQuery:
+        target: parallax.compatibility.Position
+        predicate:
+          eq:
+            attr: parallax.compatibility.Position.id
+            value: 9
+        temporal:
+          transaction-time:
+            asOf: latest
+          valid-time:
+            asOf: "2024-03-01T00:00:00.000000Z"
+      roundTrips: 1
+      note: inside the edit's window, position 9 carries the edit's value over the bounded head it split off
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [9, "2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", infinity]
+      referenceSql: select pos_id, acct_num, val, from_z, thru_z, in_z, out_z from position where pos_id = 9 and from_z <= '2024-03-01T00:00:00Z'::timestamptz and thru_z > '2024-03-01T00:00:00Z'::timestamptz and out_z = 'infinity'::timestamptz
+      expectRows:
+        - { pos_id: 9, acct_num: D, val: "150.00", from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+    - objectQuery:
+        target: parallax.compatibility.Position
+        predicate:
+          eq:
+            attr: parallax.compatibility.Position.id
+            value: 9
+        temporal:
+          transaction-time:
+            asOf: latest
+          valid-time:
+            asOf: latest
+      roundTrips: 1
+      note: past the edit's bound, the open-ended rectangle still carries the opening's own value
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.out_z = ?
+          binds: [9, infinity, infinity]
+      referenceSql: select pos_id, acct_num, val, from_z, thru_z, in_z, out_z from position where pos_id = 9 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
+      expectRows:
+        - { pos_id: 9, acct_num: D, val: "100.00", from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+then:
+  roundTrips: 4

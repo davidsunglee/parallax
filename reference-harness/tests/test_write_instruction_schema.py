@@ -57,7 +57,7 @@ def test_keyed_plain_temporal_carries_valid_from_only() -> None:
 
 def test_keyed_until_requires_both_valid_time_bounds() -> None:
     # Every bounded `*Until` operation is over `[validFrom, until)`
-    # (m-bitemp-write), so BOTH bounds are required — dropping either rejects it.
+    # (m-temporal-write), so BOTH bounds are required — dropping either rejects it.
     doc = {
         "mutation": "updateUntil",
         "entity": "Position",
@@ -184,7 +184,7 @@ def test_predicate_delete_rejects_assignments() -> None:
 
 def test_predicate_until_requires_both_valid_time_bounds() -> None:
     # A bounded `*Until` predicate write is over `[validFrom, until)`
-    # (m-bitemp-write); both bounds are required.
+    # (m-temporal-write); both bounds are required.
     doc = {
         "mutation": "terminateUntil",
         "target": {"entity": "Position", "predicate": {"eq": {"attr": "Position.id", "value": 1}}},
