@@ -16,6 +16,7 @@ narrower unit boundary.
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import get_args
 
 import pytest
@@ -47,7 +48,9 @@ _TX_START = AttributeIdentity(
 
 def _temporal() -> TemporalObservation:
     return TemporalObservation(
-        predecessor=PredecessorRow(members={"id": 1, "txStart": "2024-01-01T00:00:00+00:00"})
+        predecessor=PredecessorRow(
+            members={"id": 1, "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC)}
+        )
     )
 
 

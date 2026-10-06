@@ -210,7 +210,7 @@ class TimeInterval:
         return _before(self.start, other.end) and _before(other.start, self.end)
 
     def disjoint(self, other: TimeInterval) -> bool:
-        """Whether the two share no instant; adjacent intervals do not."""
+        """Whether the two share no instant, so adjacent intervals are disjoint."""
         return not self.overlaps(other)
 
     def contains(self, value: _dt.datetime | TimeInterval) -> bool:
