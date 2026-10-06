@@ -139,7 +139,7 @@ def target_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
 
 ## Bitemporal update-until splits head/middle/tail
 
-Corpus case: `m-bitemp-write-001`
+Corpus case: `m-temporal-write-017`
 
 ```python
 def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
@@ -166,7 +166,7 @@ def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
 
 ## A bitemporal target patch states its window and its caller's milestone
 
-Corpus case: `m-bitemp-write-026`
+Corpus case: `m-temporal-write-042`
 
 ```python
 def bitemporal_target_patch_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:

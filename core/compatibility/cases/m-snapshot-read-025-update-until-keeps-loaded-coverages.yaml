@@ -1,7 +1,7 @@
 # The original pin still selects a row after splitting, but a different one.
 # Re-resolving the relationship would silently substitute that successor.
 model: models/policy.yaml
-tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, m-bitemp-write, m-unit-work, closed-world, relationship, temporal, bitemporal, update-until, rectangle-split, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, m-temporal-write, m-unit-work, closed-world, relationship, temporal, bitemporal, update-until, rectangle-split, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

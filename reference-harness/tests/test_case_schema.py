@@ -69,7 +69,7 @@ def _read_case() -> dict[str, Any]:
 def _write_sequence_case() -> dict[str, Any]:
     return {
         "model": "models/balance.yaml",
-        "tags": ["m-txtime-write"],
+        "tags": ["m-temporal-write"],
         "shape": "writeSequence",
         "when": {
             "writeSequence": [

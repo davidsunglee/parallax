@@ -11,7 +11,7 @@
 # carries (it states no golden SQL), so it rests with each binding's own
 # unit-of-work tests.
 model: models/balance.yaml
-tags: [m-temporal-read, m-opt-lock, m-auto-retry, m-txtime-write, m-api-conformance, temporal, audit-only, conflict, success, database-options, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-opt-lock, m-auto-retry, m-temporal-write, m-api-conformance, temporal, audit-only, conflict, success, database-options, slice-snapshot-1, slice-managed-1]
 lane: api-conformance
 shape: boundary
 compileEligibility:

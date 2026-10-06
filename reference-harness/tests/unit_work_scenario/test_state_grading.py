@@ -31,10 +31,10 @@ _REFUSALS = (
     "m-unit-work-047-a-refused-submission-leaves-earlier-work-pending-layout-twin-columns.yaml"
 )
 _BARRIER = (
-    "m-bitemp-write-030-a-barrier-keeps-each-operation-on-its-own-side-layout-twin-columns.yaml"
+    "m-temporal-write-046-a-barrier-keeps-each-operation-on-its-own-side-layout-twin-columns.yaml"
 )
 _ROLLBACK = (
-    "m-bitemp-write-032-a-read-between-writes-completes-the-earlier-layout-twin-columns.yaml"
+    "m-temporal-write-048-a-read-between-writes-completes-the-earlier-layout-twin-columns.yaml"
 )
 
 _T0 = "2023-12-01T00:00:00.000000Z"

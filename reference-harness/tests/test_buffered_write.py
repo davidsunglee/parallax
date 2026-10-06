@@ -458,7 +458,10 @@ def _corrupt_witness(tmp_path: Path, mutate: Any) -> list[str]:
     core = tmp_path / "core"
     shutil.copytree(_CORE, core)
     case_path = (
-        core / "compatibility" / "cases" / "m-txtime-write-008-same-tx-insert-update-coalesce.yaml"
+        core
+        / "compatibility"
+        / "cases"
+        / "m-temporal-write-008-same-tx-insert-update-coalesce.yaml"
     )
     case = yaml.safe_load(case_path.read_text(encoding="utf-8"))
     mutate(case)
@@ -473,7 +476,8 @@ def test_whole_tree_validation_rejects_a_non_member_buffered_row_key(tmp_path: P
 
     errors = _corrupt_witness(tmp_path, mutate)
     assert any(
-        "m-txtime-write-008" in error and "not" in error and "Balance" in error for error in errors
+        "m-temporal-write-008" in error and "not" in error and "Balance" in error
+        for error in errors
     )
 
 
@@ -521,7 +525,7 @@ def test_whole_tree_validation_rejects_a_plural_temporal_buffer_entry(tmp_path: 
 
     errors = _corrupt_witness(tmp_path, mutate)
     assert any(
-        "m-txtime-write-008" in error and "exactly one" in error and "Balance" in error
+        "m-temporal-write-008" in error and "exactly one" in error and "Balance" in error
         for error in errors
     )
 

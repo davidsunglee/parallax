@@ -132,8 +132,6 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-process-cache` | Process-wide identity & query cache | deferred | cases |
 | `m-temporal-read` | As-of temporal reads (all flavors) | active | cases |
 | `m-temporal-write` | Temporal writes: coverage transforms and predecessor expansion | active | cases |
-| `m-txtime-write` | Transaction-Time-Only temporal writes | active | cases |
-| `m-bitemp-write` | Bitemporal rectangle-split writes | active | cases |
 | `m-validtime-only` | Valid-Time-Only temporal formation (deferred) | deferred | cases |
 | `m-opt-lock` | Optimistic locking | active | cases |
 | `m-model-evolution` | Model-altitude description of the difference between two accepted Metamodels | active | cases |
@@ -276,9 +274,6 @@ m-temporal-read --> m-object-query
 m-temporal-read --> m-metamodel
 m-temporal-read --> m-model-formation
 m-temporal-read --> m-inheritance
-m-txtime-write --> m-temporal-read
-m-txtime-write --> m-unit-work
-m-bitemp-write --> m-txtime-write
 m-validtime-only --> m-temporal-read
 m-validtime-only --> m-unit-work
 m-opt-lock --> m-unit-work

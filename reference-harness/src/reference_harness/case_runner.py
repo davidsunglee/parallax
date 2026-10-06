@@ -911,7 +911,7 @@ def _authored_many_path(occurrence: dict[str, Any], authored: object) -> tuple[s
     return None
 
 
-# --- write sequences (m-txtime-write) ---------------------------------------------------
+# --- write sequences (m-temporal-write) ---------------------------------------------------
 
 
 def _assert_write_step_count(case: Case, dialect: str) -> None:
@@ -949,7 +949,7 @@ _UNTIL_MUTATIONS = ("insertUntil", "updateUntil", "terminateUntil")
 
 # The plain (UNBOUNDED) bitemporal rectangle-split mutations: an everyday retroactive
 # correction/termination from an instant onward with no upper Valid-Time bound
-# (`m-bitemp-write-006` / `m-bitemp-write-007`). Like the `*Until` trio they close
+# (`m-temporal-write-022` / `m-temporal-write-023`). Like the `*Until` trio they close
 # the original on the Transaction-Time dimension and chain head / (new-)tail milestones, but
 # the residual window runs to the open bound (thru_z), so ① carries no `until`.
 _PLAIN_SPLIT_MUTATIONS = ("update", "terminate")
@@ -1229,7 +1229,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         # Whether ① describes a row being OPENED whole or a sparse revision. The
         # mutation decides it for a non-temporal step; a TEMPORAL step's every
         # chained milestone writes the entity's full physical row whatever verb
-        # opened it (`m-txtime-write` / `m-bitemp-write`), so its ① is an opening
+        # opened it (`m-temporal-write`), so its ① is an opening
         # row even under `update` / `terminate`.
         classified = [
             classify_write_row(
@@ -1259,7 +1259,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         step_binds = [case.statement_binds(stmt_index + offset, dialect) for offset in range(count)]
         # A full-bitemporal step is a RECTANGLE SPLIT: the windowed `*Until` trio, or
         # a plain (unbounded) `update` / `terminate` on a two-axis entity (the everyday
-        # retroactive correction / termination, `m-bitemp-write-006` / `-007`). Both close
+        # retroactive correction / termination, `m-temporal-write-022` / `-023`). Both close
         # the original on the Transaction-Time dimension and chain head / (new-)tail milestones, so
         # both route through the rectangle-split cross-check — never the audit-only
         # close-and-open, which would mis-count the chained inserts.
@@ -1886,11 +1886,11 @@ def _assert_until_input(
     the mutation instant. Three forms share this cross-check:
 
       * a WINDOWED ``*Until`` write bounds the change to ``[validFrom, until)``
-        (`m-bitemp-write-001` / `-002` / `-008`); ① carries both ``at`` and ``until``;
+        (`m-temporal-write-017` / `-018` / `-024`); ① carries both ``at`` and ``until``;
       * a PLAIN (unbounded) ``update`` / ``terminate`` corrects/ends the value from
-        ``validFrom`` ONWARD (`m-bitemp-write-006` / `-007`); ① carries ``at`` but
+        ``validFrom`` ONWARD (`m-temporal-write-022` / `-023`); ① carries ``at`` but
         no ``until`` — the residual window runs to the open bound (``thru_z``);
-      * an OPENING ``insertUntil`` (`m-bitemp-write-003`) has no prior rectangle to
+      * an OPENING ``insertUntil`` (`m-temporal-write-019`) has no prior rectangle to
         close, so it is the single bounded INSERT the other two chain around.
 
     Like the audit-only close it is Family B (full physical row, metamodel-sourced
@@ -1900,7 +1900,7 @@ def _assert_until_input(
       * the inactivating close (the ``update … set out_z = ? where …`` statement) binds
         ``[at, …address…]`` (:func:`write_plan.close_address_binds`) — the observed rectangle's
         own Valid-Time end then the invariant Transaction-Time infinity, IDENTICAL in
-        both concurrency modes. A GATED close (`m-bitemp-write-008`, optimistic)
+        both concurrency modes. A GATED close (`m-temporal-write-024`, optimistic)
         appends the observed rectangle's ``in_z`` LAST. Neither coordinate is present
         in the closing step's own ① row, so both are reconstructed from the case's own
         earlier steps (:func:`_observed_rectangle`); the gate rides the golden directly
@@ -2381,7 +2381,7 @@ def _conflict_set_binds(
 def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
     """Apply the ordered DML golden SQL, then assert the resulting table state.
 
-    This is the observable form of the milestone-chaining write contract (m-txtime-write):
+    This is the observable form of the milestone-chaining write contract (m-temporal-write):
     rather than introspecting the implementation, we APPLY the documented golden
     DML in order and assert the rows it leaves behind — including the current-row
     state where the open bound ``to`` equals native ``infinity``.

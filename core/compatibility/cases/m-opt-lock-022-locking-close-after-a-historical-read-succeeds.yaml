@@ -2,7 +2,7 @@
 # UNGATED (m-opt-lock "Effective Concurrency Strategy determines the gate uniformly" + m-read-lock
 # "Automatic read-lock correctness", composed inside one `uow` group).
 model: models/balance.yaml
-tags: [m-opt-lock, m-unit-work, m-txtime-write, m-read-lock, m-temporal-read, temporal, audit-only, as-of, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-opt-lock, m-unit-work, m-temporal-write, m-read-lock, m-temporal-read, temporal, audit-only, as-of, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

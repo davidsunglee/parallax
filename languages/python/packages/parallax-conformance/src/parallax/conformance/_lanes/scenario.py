@@ -631,8 +631,8 @@ def _build_temporal_instruction(
 
     ``unit_inserted`` is the SAME choreography unit's own running set of
     (entity, pk) pairs a PRIOR entry in this SAME buffer already inserted
-    (`m-unit-work` same-transaction coalescing, `m-txtime-write-008` /
-    `m-bitemp-write-014`): a later entry targeting one of them is a
+    (`m-unit-work` same-transaction coalescing, `m-temporal-write-008` /
+    `m-temporal-write-030`): a later entry targeting one of them is a
     same-buffer coalescing candidate whose OWN close/chain arithmetic never
     runs (the planner folds it into the pending insert before finalization
     ever sees it) — its observation is forced to `None`, and ``evidence`` is never

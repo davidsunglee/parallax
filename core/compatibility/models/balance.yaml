@@ -9,7 +9,7 @@
 # place — they close the current row (set out_z = the transaction instant) and,
 # for an update, chain a new current row [in_z = txInstant, out_z = infinity).
 # The Transaction-Time dimension has no Valid-Time residual split (that is the
-# bitemporal rectangle-split, m-bitemp-write), so audit-only chaining is the
+# bitemporal rectangle-split, m-temporal-write), so audit-only chaining is the
 # simplest observable form of the contract.
 #
 # The interval columns are `timestamp` (m-core: instants are UTC `timestamptz`); the

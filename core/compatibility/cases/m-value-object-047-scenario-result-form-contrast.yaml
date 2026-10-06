@@ -1,12 +1,12 @@
 # Scenario-step PROJECTION WIDENING over a value-object-bearing temporal entity
-# (m-value-object + m-txtime-write + m-unit-work + m-sql "Read result form"): the
+# (m-value-object + m-temporal-write + m-unit-work + m-sql "Read result form"): the
 # internal materialized-predicate-write resolving read is ROW-FORM — it constructs
 # no instance — yet it projects the owner's `address` Document slot, because the
 # per-row observation it records is a COMPLETE Predecessor Row (m-unit-work "A
 # Predecessor Row is the complete, immutable persisted state a Temporal Observation
 # retains"). Postgres AND MariaDB.
 model: models/supplier.yaml
-tags: [m-value-object, m-txtime-write, m-opt-lock, m-sql, m-unit-work, temporal, audit-only, json, nested, materialize, predicate-write, scenario, slice-snapshot-1]
+tags: [m-value-object, m-temporal-write, m-opt-lock, m-sql, m-unit-work, temporal, audit-only, json, nested, materialize, predicate-write, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

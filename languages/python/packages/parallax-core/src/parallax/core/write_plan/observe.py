@@ -26,6 +26,7 @@ __all__ = [
     "TemporalObservation",
     "VersionObservation",
     "WriteObservation",
+    "carries_cell",
     "occurrence_value",
 ]
 
@@ -406,24 +407,37 @@ class PredecessorRow:
             name = _member_name(member)
             members = self.members
             return name in members and members[name] is value
-        position = selection.index[member]
-        cell = self._row[position]
-        if value is cell:
-            return True
-        declared = selection.shape.members[position]
-        if isinstance(declared, Leaf) or cell is None or cell is self._absent:
-            return False
-        if declared.multiplicity is not Multiplicity.MANY:
-            return isinstance(value, _EntityDocumentRow) and value.views(cell)
-        items = cast("tuple[object, ...]", cell)
-        return (
-            isinstance(value, tuple)
-            and len(cast("tuple[object, ...]", value)) == len(items)
-            and all(
-                isinstance(view, _EntityDocumentRow) and view.views(item)
-                for view, item in zip(cast("tuple[object, ...]", value), items, strict=True)
-            )
+        return carries_cell(selection, self._row, self._absent, member, value)
+
+
+def carries_cell(
+    selection: EntityMemberSelection,
+    row: tuple[object, ...],
+    absent: object | None,
+    member: AttributeIdentity | ValueObjectIdentity,
+    value: object,
+) -> bool:
+    """Whether ``value`` is ``row``'s own cell for ``member``, or a view over
+    it, as :meth:`PredecessorRow.carries` judges one positional row without
+    adopting it."""
+    position = selection.index[member]
+    cell = row[position]
+    if value is cell:
+        return True
+    declared = selection.shape.members[position]
+    if isinstance(declared, Leaf) or cell is None or cell is absent:
+        return False
+    if declared.multiplicity is not Multiplicity.MANY:
+        return isinstance(value, _EntityDocumentRow) and value.views(cell)
+    items = cast("tuple[object, ...]", cell)
+    return (
+        isinstance(value, tuple)
+        and len(cast("tuple[object, ...]", value)) == len(items)
+        and all(
+            isinstance(view, _EntityDocumentRow) and view.views(item)
+            for view, item in zip(cast("tuple[object, ...]", value), items, strict=True)
         )
+    )
 
 
 def _member_name(member: AttributeIdentity | ValueObjectIdentity) -> str:

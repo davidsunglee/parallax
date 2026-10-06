@@ -56,9 +56,9 @@ __all__ = [
     "buffered_instruction",
     "buffered_write",
     "chained",
-    "composed_alone",
     "composed_temporal_write",
     "group_state_keys",
+    "singleton_transform",
     "target_write",
     "temporal_contribution",
 ]
@@ -504,7 +504,7 @@ def _composed(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalWrite:
         target=item.instruction.target,
         key={key_name: row[key_name]},
         contributions=(temporal_contribution(item),),
-        transform=_contributed(NO_TRANSFORM, item.instruction, key_name, replaces=_replaces(item)),
+        transform=singleton_transform(item, key_name),
     )
 
 
@@ -512,9 +512,10 @@ def _replaces(item: TemporalKeyedWrite) -> bool:
     return isinstance(item, TargetKeyedWrite) and item.replaces
 
 
-def composed_alone(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalWrite:
-    """``item`` as the composition of itself alone."""
-    return _composed(item, key_name)
+def singleton_transform(item: TemporalKeyedWrite, key_name: str) -> CoverageTransform:
+    """What ``item`` alone does to its object's existing coverage, built from
+    the carrier itself rather than from a composition of one write."""
+    return _contributed(NO_TRANSFORM, item.instruction, key_name, replaces=_replaces(item))
 
 
 def _contributed(

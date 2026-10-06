@@ -1,7 +1,7 @@
 # Termination leaves a row on disk with a changed end coordinate. Re-resolving
 # retained keys would expose that rewritten milestone, unlike physical deletion.
 model: models/invoice.yaml
-tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, m-txtime-write, m-unit-work, closed-world, relationship, temporal, audit-only, terminate, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, m-temporal-write, m-unit-work, closed-world, relationship, temporal, audit-only, terminate, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

@@ -1,8 +1,8 @@
 # valueObject on a UNITEMPORAL (Transaction-Time) owner: the document RIDES milestone
 # chaining exactly like a scalar column (m-value-object "Inherited temporality",
-# m-txtime-write), on Postgres AND MariaDB.
+# m-temporal-write), on Postgres AND MariaDB.
 model: models/supplier.yaml
-tags: [m-value-object, m-txtime-write, m-sql, write-sequence, update, temporal, audit-only, json, nested, to-many, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-temporal-write, m-sql, write-sequence, update, temporal, audit-only, json, nested, to-many, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

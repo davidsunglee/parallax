@@ -7,7 +7,7 @@
 # additionally grades both units' fates and the state the race leaves: the
 # winner's close and chained successor stand, and the loser's close changes no row.
 model: models/balance.yaml
-tags: [m-temporal-read, m-opt-lock, m-txtime-write, m-unit-work, m-sql, temporal, audit-only, optimistic-lock-conflict, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-opt-lock, m-temporal-write, m-unit-work, m-sql, temporal, audit-only, optimistic-lock-conflict, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

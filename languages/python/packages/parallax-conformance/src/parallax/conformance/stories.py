@@ -557,43 +557,43 @@ def customer_update_nulls_the_address_document_out(db: ScopedDatabase) -> None:
     db.transact(null_out)
 
 
-def _txtime_write_001_clock() -> Clock:
+def _temporal_write_001_clock() -> Clock:
     return ScriptedClock([dt.datetime(2024, 1, 1, tzinfo=dt.UTC)])
 
 
-def _txtime_write_002_clock() -> Clock:
+def _temporal_write_002_clock() -> Clock:
     return ScriptedClock(
         [dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 6, 1, tzinfo=dt.UTC)]
     )
 
 
-def _txtime_write_003_clock() -> Clock:
+def _temporal_write_003_clock() -> Clock:
     return ScriptedClock(
         [dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 8, 1, tzinfo=dt.UTC)]
     )
 
 
-def _txtime_write_005_clock() -> Clock:
+def _temporal_write_005_clock() -> Clock:
     return ScriptedClock([dt.datetime(2024, 9, 1, tzinfo=dt.UTC)])
 
 
-def _bitemp_write_003_clock() -> Clock:
+def _temporal_write_019_clock() -> Clock:
     return ScriptedClock([dt.datetime(2024, 1, 1, tzinfo=dt.UTC)])
 
 
-def _bitemp_write_001_clock() -> Clock:
+def _temporal_write_017_clock() -> Clock:
     return ScriptedClock(
         [dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 2, 15, tzinfo=dt.UTC)]
     )
 
 
-def _bitemp_write_006_clock() -> Clock:
+def _temporal_write_022_clock() -> Clock:
     return ScriptedClock(
         [dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 7, 1, tzinfo=dt.UTC)]
     )
 
 
-def _bitemp_write_009_clock() -> Clock:
+def _temporal_write_025_clock() -> Clock:
     return ScriptedClock([dt.datetime(2024, 1, 1, tzinfo=dt.UTC)])
 
 
@@ -685,52 +685,52 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         aborted_delete_leaves_the_row_standing,
     ),
     WriteStory(
-        "m-txtime-write-001",
+        "m-temporal-write-001",
         "Transaction-Time-Only insert opens a current milestone",
         "commit",
         "balance",
         transaction_time_only_insert_opens_a_current_milestone,
-        clock=_txtime_write_001_clock,
+        clock=_temporal_write_001_clock,
     ),
     WriteStory(
-        "m-txtime-write-002",
+        "m-temporal-write-002",
         "Transaction-Time-Only chain update via a sparse edited copy",
         "commit",
         "balance",
         transaction_time_only_chain_update_via_a_sparse_copy,
-        clock=_txtime_write_002_clock,
+        clock=_temporal_write_002_clock,
     ),
     WriteStory(
-        "m-txtime-write-003",
+        "m-temporal-write-003",
         "Transaction-Time-Only terminate closes the current milestone",
         "commit",
         "balance",
         transaction_time_only_terminate_closes_the_current_milestone,
-        clock=_txtime_write_003_clock,
+        clock=_temporal_write_003_clock,
     ),
     WriteStory(
-        "m-txtime-write-004",
+        "m-temporal-write-004",
         "Transaction-Time-Only chain update carries every new attribute",
         "commit",
         "balance",
         transaction_time_only_chain_update_carries_every_new_attribute,
-        clock=_txtime_write_002_clock,
+        clock=_temporal_write_002_clock,
     ),
     WriteStory(
-        "m-txtime-write-005",
+        "m-temporal-write-005",
         "Transaction-Time-Only chain update starting from existing history",
         "commit",
         "balance",
         transaction_time_only_chain_update_from_existing_history,
-        clock=_txtime_write_005_clock,
+        clock=_temporal_write_005_clock,
     ),
     WriteStory(
-        "m-txtime-write-016",
+        "m-temporal-write-016",
         "A Transaction-Time-Only target replacement gates on its caller's milestone",
         "commit",
         "balance",
         transaction_time_only_target_replacement_gates_on_the_callers_milestone,
-        clock=_txtime_write_002_clock,
+        clock=_temporal_write_002_clock,
     ),
     WriteStory(
         "m-opt-lock-002",
@@ -761,52 +761,52 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         wallet_predicate_delete_is_readless,
     ),
     WriteStory(
-        "m-bitemp-write-001",
+        "m-temporal-write-017",
         "Bitemporal update-until splits head/middle/tail",
         "commit",
         "position",
         bitemporal_update_until_splits_head_middle_tail,
-        clock=_bitemp_write_001_clock,
+        clock=_temporal_write_017_clock,
     ),
     WriteStory(
-        "m-bitemp-write-026",
+        "m-temporal-write-042",
         "A bitemporal target patch states its window and its caller's milestone",
         "commit",
         "position",
         bitemporal_target_patch_gates_on_the_callers_milestone,
-        clock=_bitemp_write_001_clock,
+        clock=_temporal_write_017_clock,
     ),
     WriteStory(
-        "m-bitemp-write-027",
+        "m-temporal-write-043",
         "A Locking bitemporal target replacement reads its start under the shared lock",
         "commit",
         "position",
         bitemporal_target_replacement_acquires_its_start_under_locking,
-        clock=_txtime_write_002_clock,
+        clock=_temporal_write_002_clock,
     ),
     WriteStory(
-        "m-bitemp-write-003",
+        "m-temporal-write-019",
         "Bitemporal insert-until opens one bounded rectangle",
         "commit",
         "position",
         bitemporal_insert_until_opens_one_bounded_rectangle,
-        clock=_bitemp_write_003_clock,
+        clock=_temporal_write_019_clock,
     ),
     WriteStory(
-        "m-bitemp-write-006",
+        "m-temporal-write-022",
         "Bitemporal plain update splits head and new tail",
         "commit",
         "position",
         bitemporal_plain_update_splits_head_and_new_tail,
-        clock=_bitemp_write_006_clock,
+        clock=_temporal_write_022_clock,
     ),
     WriteStory(
-        "m-bitemp-write-009",
+        "m-temporal-write-025",
         "Bitemporal plain insert opens a fully-current rectangle",
         "commit",
         "position",
         bitemporal_plain_insert_opens_a_fully_current_rectangle,
-        clock=_bitemp_write_009_clock,
+        clock=_temporal_write_025_clock,
     ),
     WriteStory(
         "m-unit-work-015",

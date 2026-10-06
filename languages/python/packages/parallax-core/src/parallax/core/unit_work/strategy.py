@@ -9,50 +9,25 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    TemporalDimension,
 )
-from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
 from parallax.core.unit_work.claims import SettledEvidence
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.instructions import KeyedMutation
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.write_plan.keys import ObjectKey
 from parallax.core.write_plan.observe import WriteObservation
-from parallax.core.write_plan.steps import CloseCause, PlannedWrite
+from parallax.core.write_plan.steps import PlannedWrite
 
 __all__ = [
-    "AUTHORED_FROM",
-    "AUTHORED_STATE",
-    "AUTHORED_UNTIL",
-    "CARRIED_STATE",
-    "CHANGED_STATE",
     "NO_AUDIT",
-    "OPEN_END",
-    "PREDECESSOR_END",
-    "PREDECESSOR_START",
     "ActorIdentity",
     "AuditStrategy",
-    "AuthoredFrom",
-    "AuthoredState",
-    "AuthoredUntil",
     "BatchingStrategy",
-    "CarriedState",
-    "ChangedState",
     "Concurrency",
     "ConcurrencyStrategy",
     "DatabaseLoginActor",
     "EvidencePolicyLookup",
-    "MilestoneClosure",
-    "MilestoneSuccessor",
-    "MilestoneTopology",
-    "OpenEnd",
-    "PredecessorEnd",
-    "PredecessorStart",
     "SubjectActor",
-    "SuccessorState",
-    "SuccessorWindow",
-    "TemporalStrategy",
-    "ValidTimeBound",
     "VersionArithmetic",
     "WriteEvidencePolicy",
     "concurrency_preference",
@@ -118,149 +93,6 @@ class DatabaseLoginActor:
 
 
 type ActorIdentity = SubjectActor | DatabaseLoginActor
-
-
-@dataclass(frozen=True, slots=True)
-class AuthoredFrom:
-    """The mutation's own Valid-Time start."""
-
-
-AUTHORED_FROM: Final[AuthoredFrom] = AuthoredFrom()
-
-
-@dataclass(frozen=True, slots=True)
-class AuthoredUntil:
-    """The mutation's own Valid-Time exclusive end, on a bounded verb."""
-
-
-AUTHORED_UNTIL: Final[AuthoredUntil] = AuthoredUntil()
-
-
-@dataclass(frozen=True, slots=True)
-class PredecessorStart:
-    """The observed predecessor rectangle's Valid-Time start."""
-
-
-PREDECESSOR_START: Final[PredecessorStart] = PredecessorStart()
-
-
-@dataclass(frozen=True, slots=True)
-class PredecessorEnd:
-    """The observed predecessor rectangle's Valid-Time exclusive end."""
-
-
-PREDECESSOR_END: Final[PredecessorEnd] = PredecessorEnd()
-
-
-@dataclass(frozen=True, slots=True)
-class OpenEnd:
-    """The open Valid-Time bound: the rectangle runs on without end."""
-
-
-OPEN_END: Final[OpenEnd] = OpenEnd()
-
-type ValidTimeBound = AuthoredFrom | AuthoredUntil | PredecessorStart | PredecessorEnd | OpenEnd
-"""Where one Valid-Time bound of a successor comes from.
-
-Naming the *source* rather than a value is what keeps the description scoped to
-the whole mutation: every resolved row of a predicate-selected mutation shares
-one topology while each supplies its own predecessor bounds.
-"""
-
-
-@dataclass(frozen=True, slots=True)
-class SuccessorWindow:
-    """Where one successor's half-open Valid-Time bounds come from — a
-    topology, not an interval: each names its source, never a value."""
-
-    start: ValidTimeBound
-    end: ValidTimeBound
-
-
-@dataclass(frozen=True, slots=True)
-class CarriedState:
-    """The successor represents its predecessor's state, unchanged."""
-
-
-CARRIED_STATE: Final[CarriedState] = CarriedState()
-
-
-@dataclass(frozen=True, slots=True)
-class ChangedState:
-    """The successor represents its predecessor's state with the authored change
-    set overlaid."""
-
-
-CHANGED_STATE: Final[ChangedState] = ChangedState()
-
-
-@dataclass(frozen=True, slots=True)
-class AuthoredState:
-    """The successor represents the authored row alone, having no predecessor."""
-
-
-AUTHORED_STATE: Final[AuthoredState] = AuthoredState()
-
-type SuccessorState = CarriedState | ChangedState | AuthoredState
-"""Which represented state one successor opens with.
-
-It is what an Insert Origin is derived from: carried and changed state name the
-observed predecessor they came from, while authored state begins a lineage.
-"""
-
-
-@dataclass(frozen=True, slots=True)
-class MilestoneSuccessor:
-    """One current milestone an authored temporal mutation opens.
-
-    ``valid_window`` is absent on a Transaction-Time-Only target, which has no
-    second axis to bound.
-    """
-
-    state: SuccessorState
-    valid_window: SuccessorWindow | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class MilestoneClosure:
-    """The current milestone an authored temporal mutation stops being current.
-
-    ``gate_basis`` names the As-Of Axis whose observed start an optimistic close
-    binds; whether it is bound at all is the concurrency decision, made while
-    the close is settled.
-    """
-
-    cause: CloseCause
-    gate_basis: TemporalDimension
-
-
-@dataclass(frozen=True, slots=True)
-class MilestoneTopology:
-    """One authored temporal mutation's neutral topology.
-
-    ``closure`` is absent for a mutation that opens history rather than
-    revising it. Successors are in the facet's canonical order — head, middle,
-    tail where each exists — which is the order they are expanded in.
-    """
-
-    closure: MilestoneClosure | None
-    successors: tuple[MilestoneSuccessor, ...]
-
-
-@runtime_checkable
-class TemporalStrategy(Protocol):
-    """How one temporal facet describes an authored mutation's topology.
-
-    ``shape`` is the target family's compiled Temporal Shape: selecting the
-    Transaction-Time-Only facet versus the Bitemporal one is itself part of "how
-    a temporal facet describes a mutation" (the two facet modules are optional
-    policy this scope cannot import), so the injected adapter dispatches on the
-    shape's variant rather than the caller doing so.
-    """
-
-    def topology(
-        self, shape: TransactionTimeOnly | Bitemporal, mutation: str
-    ) -> MilestoneTopology: ...
 
 
 @runtime_checkable

@@ -20,9 +20,8 @@ from typing import Any, cast
 import pytest
 
 # The module itself, not a name from it: the call-count regression below
-# monkeypatches `resolve_successors` where `_settle_temporal_group` looks it
-# up, which is this module's own namespace rather than `unit_work.temporal`'s.
-import parallax.core.unit_work.write_settlement as write_settlement
+# monkeypatches `resolved_assignments` where group settlement looks it up.
+import parallax.core.temporal_write.expansion as expansion
 from parallax.conformance import models
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Entity, inheritance, opt_lock, temporal_read
@@ -36,9 +35,9 @@ from parallax.core.metamodel import AttributeMetadata, FacetKey, Metamodel
 from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import TimeInterval
+from parallax.core.temporal_write.expansion import PredecessorExpansion
 from parallax.core.unit_work import (
     MaterializedWriteGroup,
-    MilestoneTopology,
     PlanningRequest,
     PredicateSelection,
     PredicateWrite,
@@ -63,7 +62,6 @@ from parallax.core.unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
     ConcurrencyStrategy,
-    TemporalStrategy,
 )
 from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.unit_work.write_settlement import (
@@ -291,10 +289,9 @@ _PRODUCER_CLASSES = (
     SystemClock,
     WritePlanner,
     WriteSettlement,
-    MilestoneTopology,
+    PredecessorExpansion,
     BatchingStrategy,
     ConcurrencyStrategy,
-    TemporalStrategy,
     AuditStrategy,
     type(_BALANCE),
 )
@@ -535,34 +532,34 @@ def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step
 def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_step_access(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # `resolve_successors` decides which successors exist, each one's
-    # represented-state kind, and which Valid-Time bound expression applies —
-    # the semantic content of temporal expansion (`m-unit-work` stage 7) —
-    # from the group's own topology alone, before any row is in hand. It must
-    # run once, while `finalize()` settles the segment, and never again on a
-    # later `steps[i]` access, however many times or in what order that
-    # access repeats: a Write Plan is frozen, and re-running a planning
-    # decision at consumption is the same defect as re-capturing the instant
-    # there.
-    calls: list[object] = []
-    original = write_settlement.resolve_successors  # pyright: ignore[reportPrivateImportUsage]
+    # The group's assignments resolve, and every row's disposition settles,
+    # once while `finalize()` settles the segment — the semantic content of
+    # temporal expansion (`m-unit-work` stage 7) — and never again on a later
+    # `steps[i]` access, however many times or in what order that access
+    # repeats: a Write Plan is frozen, and re-running a planning decision at
+    # consumption is the same defect as re-capturing the instant there.
+    calls: list[str] = []
+    resolve = expansion.resolved_assignments  # pyright: ignore[reportPrivateImportUsage]
+    settle = PredecessorExpansion.settle_group
 
-    def counting_resolve(*args: object, **kwargs: object) -> object:
-        calls.append(None)
-        return original(*args, **kwargs)  # type: ignore[arg-type]
+    def counting_resolve(*args: Any, **kwargs: Any) -> Any:
+        calls.append("resolve")
+        return resolve(*args, **kwargs)
 
-    monkeypatch.setattr(write_settlement, "resolve_successors", counting_resolve)
+    def counting_settle(*args: Any, **kwargs: Any) -> Any:
+        calls.append("settle")
+        return settle(*args, **kwargs)
+
+    monkeypatch.setattr(expansion, "resolved_assignments", counting_resolve)
+    monkeypatch.setattr(PredecessorExpansion, "settle_group", counting_settle)
     rows = [
-        (
-            row_id,
-            {
-                "id": row_id,
-                "acctNum": "A",
-                "value": 1.00 * row_id,
-                "txStart": _OPENED,
-                "txEnd": INFINITY,
-            },
-        )
+        {
+            "id": row_id,
+            "acctNum": "A",
+            "value": Decimal("1.00"),
+            "txStart": _OPENED,
+            "txEnd": INFINITY,
+        }
         for row_id in (1, 2, 3)
     ]
     plan = (
@@ -572,17 +569,17 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
                 actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
-                buffered_writes=[_temporal_group("Balance", "id", rows)],
+                buffered_writes=[temporal_group(_value_update("Balance", None), _BALANCE, rows)],
             )
         )
         .plan
     )
-    assert len(calls) == 1
+    assert calls == ["settle", "resolve"]
     _ = plan.steps[0]
     _ = plan.steps[0]
     _ = list(plan.steps)
-    # No step access — first, repeated, or iterated — re-resolves the topology.
-    assert len(calls) == 1
+    # No step access — first, repeated, or iterated — settles the group again.
+    assert calls == ["settle", "resolve"]
 
 
 def _refuse_producers(monkeypatch: pytest.MonkeyPatch, model: Metamodel) -> None:
@@ -715,19 +712,26 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
         )
         .plan
     )
-    for plan in (versioned_plan, temporal_plan):
-        for segment in plan.steps.segments:
-            for field in dataclasses.fields(cast("Any", segment)):
-                value = getattr(segment, field.name)
-                if isinstance(value, Mapping):
-                    assert isinstance(value, MappingProxyType), (
-                        f"{type(segment).__name__}.{field.name} is a plain mutable mapping"
-                    )
+    held = [
+        held
+        for plan in (versioned_plan, temporal_plan)
+        for segment in plan.steps.segments
+        for held in (segment, getattr(segment, "backing", None))
+        if held is not None
+    ]
+    assert len(held) == 3  # the versioned segment, and the temporal one with its backing
+    for holder in held:
+        for field in dataclasses.fields(cast("Any", holder)):
+            value = getattr(holder, field.name)
+            if isinstance(value, Mapping):
+                assert isinstance(value, MappingProxyType), (
+                    f"{type(holder).__name__}.{field.name} is a plain mutable mapping"
+                )
 
 
 def test_mutating_a_materialized_groups_assignments_leaves_steps_unaffected() -> None:
-    # `_MaterializedTemporalSegment` retains the group's resolved authored maps
-    # across every resolved row, so a caller reaching them through
+    # A temporal group's settled backing retains the group's resolved authored
+    # maps across every resolved row, so a caller reaching them through
     # `plan.steps.segments` must not be able to change what a subsequently
     # retrieved step carries — a Write Plan is immutable and its views are
     # stable.
@@ -755,10 +759,10 @@ def test_mutating_a_materialized_groups_assignments_leaves_steps_unaffected() ->
     )
     before = plan.steps[1]
     assert isinstance(before, PlannedInsert)
-    segment = cast("Any", plan.steps.segments[0])
-    (value_identity,) = segment.authored_attributes
+    backing = cast("Any", plan.steps.segments[0]).backing
+    (value_identity,) = backing.assigned_attributes
     with pytest.raises(TypeError):
-        cast("dict[object, object]", segment.authored_attributes)[value_identity] = object()
+        cast("dict[object, object]", backing.assigned_attributes)[value_identity] = object()
     after = plan.steps[1]
     assert after == before
     (entry,) = cast("PlannedInsert", after).entries

@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Final, Literal, cast
 
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.temporal_read import TimeInterval
@@ -11,12 +11,24 @@ from parallax.core.temporal_read import TimeInterval
 type _Cursor = dt.datetime | Literal[TemporalBound.INFINITY]
 
 __all__ = [
+    "CARRIED_HEAD",
+    "CARRIED_TAIL",
     "NO_TRANSFORM",
+    "WITHIN",
     "CoverageGap",
     "CoverageSegment",
     "CoverageTransform",
     "Successor",
 ]
+
+CARRIED_HEAD: Final = 1
+"""The carried successor before a one-segment transform's window."""
+
+WITHIN: Final = 2
+"""The assigned successor inside a one-segment transform's window."""
+
+CARRIED_TAIL: Final = 4
+"""The carried successor after a one-segment transform's window."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +181,46 @@ class CoverageTransform:
             successors.append(Successor(coverage.clipped(start=cursor), None))
         return tuple(successors)
 
+    def successor_positions(self, start: object, end: object) -> int | None:
+        """Which successors a predecessor covering ``[start, end)`` keeps under a
+        transform of one segment — ``start`` and ``end`` are ``None`` without
+        Valid Time — as a union of :data:`CARRIED_HEAD`, :data:`WITHIN`, and
+        :data:`CARRIED_TAIL`, in that order by start, or ``None`` where the
+        transform does not reach it.
+
+        The answer equals what :meth:`successors_of` decides for the same
+        coverage, read from the two bounds alone, so a caller sizing many
+        predecessors allocates nothing per predecessor to learn it.
+        """
+        (segment,) = self.segments
+        within = 0 if segment.assigned is None else WITHIN
+        window = segment.valid_time_window
+        if window is None:
+            return within
+        first, last = window.start, window.end
+        start, end = cast("dt.datetime", start), cast("_Cursor", end)
+        if not (_before(start, last) and _before(first, end)):
+            return None
+        head = CARRIED_HEAD if start < first else 0
+        tail = CARRIED_TAIL if last is not INFINITY and _before(last, end) else 0
+        return head | within | tail
+
+    def successor_extent(self, position: int, start: object, end: object) -> tuple[object, object]:
+        """The Valid-Time bounds of the successor at ``position``
+        (:meth:`successor_positions`) of a predecessor covering ``[start,
+        end)``; ``(None, None)`` without Valid Time."""
+        window = self.segments[0].valid_time_window
+        if window is None:
+            return None, None
+        if position == CARRIED_HEAD:
+            return start, window.start
+        if position == CARRIED_TAIL:
+            return window.end, end
+        first, last = window.start, window.end
+        later = cast("dt.datetime", start) > first
+        earlier = last is INFINITY or (end is not INFINITY and cast("dt.datetime", end) <= last)
+        return (start if later else first), (end if earlier else last)
+
     def reaches(self, coverage: TimeInterval | None) -> bool:
         """Whether some segment overlaps a predecessor covering ``coverage``."""
         if coverage is None:
@@ -221,6 +273,10 @@ class CoverageTransform:
 
 
 NO_TRANSFORM: Final[CoverageTransform] = CoverageTransform()
+
+
+def _before(instant: dt.datetime, end: _Cursor) -> bool:
+    return end is INFINITY or instant < end
 
 
 def _rest(

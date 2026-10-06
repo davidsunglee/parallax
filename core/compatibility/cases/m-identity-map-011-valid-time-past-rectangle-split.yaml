@@ -1,9 +1,9 @@
 # A finite Valid-Time-axis pinned view is WRITABLE (m-identity-map): mutating a view
 # pinned at a finite Valid-Time-axis instant is the retroactive correction that lowers
-# to the m-bitemp-write RECTANGLE SPLIT. (Contrast a finite Transaction-Time-axis pin,
+# to the m-temporal-write RECTANGLE SPLIT. (Contrast a finite Transaction-Time-axis pin,
 # which is read-only — m-identity-map-010.)
 model: models/position.yaml
-tags: [m-identity-map, m-edit, m-bitemp-write, m-temporal-read, identity, bitemporal, temporal, rectangle-split, scenario, slice-managed-1]
+tags: [m-identity-map, m-edit, m-temporal-write, m-temporal-read, identity, bitemporal, temporal, rectangle-split, scenario, slice-managed-1]
 shape: scenario
 when:
   uow:
@@ -44,7 +44,7 @@ when:
     - action: flush
       "on": 1
       roundTrips: 4
-      note: the correction lowers to the m-bitemp-write rectangle split — inactivate the original, then chain head / middle / tail
+      note: the correction lowers to the m-temporal-write rectangle split — inactivate the original, then chain head / middle / tail
       statements:
         - sql:
             postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?

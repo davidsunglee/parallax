@@ -70,11 +70,11 @@ than merely inadvisable: mutating one raises the neutral
 `transaction-time-pin-read-only` error and emits no DML (`m-identity-map`).
 
 The append is what the suite grades, so the cases grading it discharge the
-invariant. `m-txtime-write-002` and `-005` assert the resulting milestone rows —
+invariant. `m-temporal-write-002` and `-005` assert the resulting milestone rows —
 `-005` chains onto persisted history and carries the superseded prior through
-`then.tableState` unchanged; `m-txtime-write-003` asserts that a `terminate`
+`then.tableState` unchanged; `m-temporal-write-003` asserts that a `terminate`
 leaves no current row while deleting nothing; `m-identity-map-010` and
-`m-bitemp-write-016` assert the refusal at the mutation surface.
+`m-temporal-write-032` assert the refusal at the mutation surface.
 
 A current row the **same attempt** opened is not yet part of that past: no
 committed state records it, and closing it at the attempt's one instant would
@@ -658,7 +658,7 @@ unit** — the row's close `UPDATE` immediately followed by its chain `INSERT` �
 **never regrouped by statement kind** (all closes, then all inserts). This is the
 multi-statement-per-row generalization of `m-sql`'s "one keyed per-object write per
 resolved row": a `terminate` row contributes a lone close, an `update` row a
-close-then-chain pair. `m-txtime-write-007` (terminate) and `m-txtime-write-009`
+close-then-chain pair. `m-temporal-write-007` (terminate) and `m-temporal-write-009`
 (update) are the corpus witnesses.
 
 ## Composition with inheritance
@@ -730,5 +730,5 @@ no inactivation. The DML statement count must equal the sum of the steps' declar
 statement counts and the case's `then.roundTrips` (a plain `insert` step is 1
 statement; a plain `terminate` step is 2 statements — inactivate + `head`; a plain
 `update` step is 3 — inactivate + `head` + new `tail`). The standalone witnesses are
-`m-bitemp-write-009-plain-insert`, `m-bitemp-write-006-plain-update-split`, and
-`m-bitemp-write-007-plain-terminate`.
+`m-temporal-write-025-plain-insert`, `m-temporal-write-022-plain-update-split`, and
+`m-temporal-write-023-plain-terminate`.

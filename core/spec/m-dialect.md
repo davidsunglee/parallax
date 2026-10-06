@@ -682,7 +682,7 @@ placement-free spelling `m-deep-fetch-012` already witnesses).
   character, is per-dialect; that **rule** is owned here, but the concrete
   reserved-word list is **not enumerated here**. `position` is a reserved function
   name on MariaDB (an unquoted `position` table emits an unparseable `POSITION(`
-  call) but not on Postgres, so the `m-bitemp-write` cases quote `` `position` `` on
+  call) but not on Postgres, so the Bitemporal `m-temporal-write` cases quote `` `position` `` on
   MariaDB while leaving `position` bare on Postgres. The compatibility case
   `m-descriptor-001` witnesses the shared-reserved `order` on both dialects (a
   column literally named `order`); the `m-sql` normalizer preserves quoted

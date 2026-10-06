@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
@@ -28,11 +29,27 @@ from parallax.core.unit_work import (
     WritePreconditionError,
     buffered_write,
 )
-from parallax.core.unit_work.instructions import PreparedTargetWrite, prepare_wire_write
-from parallax.core.unit_work.materialized import BufferItem, target_write
+from parallax.core.unit_work.instructions import (
+    PreparedKeyedWrite,
+    PreparedTargetWrite,
+    prepare_wire_write,
+)
+from parallax.core.unit_work.materialized import (
+    BufferItem,
+    ComposedTemporalWrite,
+    ObservedKeyedWrite,
+    TemporalContribution,
+    target_write,
+)
 from parallax.core.unit_work.strategy import ActorIdentity
 from parallax.core.unit_work.write_planner import compose_writes
-from parallax.core.write_plan import ObjectKey, PredecessorRow, TemporalObservation
+from parallax.core.write_plan import (
+    ObjectKey,
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+    WritePlanningError,
+)
 from parallax.core.write_plan.keys import TemporalStateKey
 from parallax.core.write_plan.plan import (
     NO_OWNERSHIP,
@@ -353,3 +370,79 @@ def test_an_overlapped_observation_is_retired_by_whoever_owns_its_row(
         if retired is PlannedClose
         else (OwnedEndpoint(_SPAN, (1,), (Finite(instant=_JUN), OPEN_END)),)
     )
+
+
+# --------------------------------------------------------------------------- #
+# A lone keyed write enters range settlement as the carrier it was buffered   #
+# in: no composition of one write is built for it.                             #
+# --------------------------------------------------------------------------- #
+class _Compositions:
+    """Counts the compositions and contributions built from now on."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.built = 0
+        for composing in (ComposedTemporalWrite, TemporalContribution):
+            original = composing.__init__
+
+            def counting(
+                composed: object, *args: object, _original: Any = original, **kwargs: object
+            ) -> None:
+                self.built += 1
+                _original(composed, *args, **kwargs)
+
+            monkeypatch.setattr(composing, "__init__", counting)
+
+
+def test_a_lone_observed_write_inside_its_predecessor_binds_at_once_from_its_own_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    head = _retained(_HEAD)
+    built = _Compositions(monkeypatch)
+    (buffered,) = compose_writes(_SPANS, [_update(head, _MAR, _APR)])
+    assert isinstance(buffered, ObservedKeyedWrite)
+    plan = _plan(buffered)
+    assert built.built == 0
+    (unit,) = plan.units
+    assert unit.deferred is None
+    assert unit.claim is head
+    assert [type(step) for step in plan.steps] == [
+        PlannedClose,
+        PlannedInsert,
+        PlannedInsert,
+        PlannedInsert,
+    ]
+    assert _windows(tuple(plan.steps)) == [
+        (_JAN, _MAR, 100),
+        (_MAR, _APR, 300),
+        (_APR, _JUN, 100),
+    ]
+    assert tuple(unit.changed) == (head.key,)
+
+
+def test_a_lone_write_reaching_past_what_it_observed_reads_only_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    head = _retained(_HEAD)
+    built = _Compositions(monkeypatch)
+    unit, acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
+    assert built.built == 0
+    assert acquisition.valid_time_window == temporal_read.TimeInterval(_JUN, _SEP)
+    assert unit.claim is head
+
+
+@pytest.mark.parametrize("observation", [None, VersionObservation(observed_version=1)])
+def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_instant(
+    observation: VersionObservation | None,
+) -> None:
+    prepared = prepare_wire_write(
+        KeyedWrite("updateUntil", "SequenceSpan", ({"id": 1, "amount": 300},), _MAR, _APR),
+        _SPANS,
+    )
+    assert isinstance(prepared, PreparedKeyedWrite)
+    item: BufferItem = (
+        prepared if observation is None else ObservedKeyedWrite(prepared, observation)
+    )
+    clock = CountingClock([_PLANNED_AT])
+    with pytest.raises(WritePlanningError, match="closes the current milestone"):
+        _plan(item, instant=TransactionInstant(clock))
+    assert clock.calls == 0

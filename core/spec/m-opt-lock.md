@@ -470,8 +470,8 @@ their own naive `referenceSql` oracle.
 | `m-opt-lock-003`, `-004` | `Account` update, optimistic / locking | materialize then per-object update; optimistic reads/gates are lock-free, locking reads carry `for share of t0` and writes omit the gate |
 | `m-opt-lock-014` | `Account` update, locking | mixed equal/changed rows gives `1 + 1`, proving per-row no-op elimination and no spurious version bump |
 | `m-opt-lock-015` | `Account` delete, optimistic | every matched row is deleted through a version-gated per-row write; the final find proves only the unmatched account remains |
-| `m-txtime-write-007` | Transaction-Time `Balance` terminate, locking | every current matched milestone is closed; no equality-elimination applies |
-| `m-bitemp-write-010`–`-013` | `Position` plain / bounded correction or termination | the materialized observed rectangle is closed and the required head/middle/tail chain is emitted |
+| `m-temporal-write-007` | Transaction-Time `Balance` terminate, locking | every current matched milestone is closed; no equality-elimination applies |
+| `m-temporal-write-026`–`-029` | `Position` plain / bounded correction or termination | the materialized observed rectangle is closed and the required head/middle/tail chain is emitted |
 
 Each scenario's write step lists its ordered per-object golden statements
 (`roundTrips: N`); the declared total is the honest `1 + N` materialize cost plus

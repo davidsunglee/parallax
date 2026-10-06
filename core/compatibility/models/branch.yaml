@@ -17,7 +17,7 @@
 # owner's dimensions and its backing column rides the milestoned rectangle exactly
 # like the scalar `name` column.
 #
-# The signature bitemporal write is the RECTANGLE SPLIT (m-bitemp-write): an
+# The signature bitemporal write is the RECTANGLE SPLIT (m-temporal-write): an
 # `updateUntil` over a bounded Valid-Time window inactivates the original (closes its
 # Transaction-Time dimension at the transaction instant) and chains up to THREE new rows at
 # fresh Transaction Time — head (old address before the window), middle (NEW address

@@ -1,8 +1,8 @@
 # valueObject on a FULL BITEMPORAL owner: the document RIDES the rectangle split
 # exactly like a scalar column (m-value-object "Inherited temporality",
-# m-bitemp-write), on Postgres AND MariaDB.
+# m-temporal-write), on Postgres AND MariaDB.
 model: models/branch.yaml
-tags: [m-value-object, m-bitemp-write, m-sql, write-sequence, update-until, rectangle-split, temporal, bitemporal, json, nested, to-many, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-temporal-write, m-sql, write-sequence, update-until, rectangle-split, temporal, bitemporal, json, nested, to-many, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

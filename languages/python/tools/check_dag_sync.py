@@ -122,8 +122,6 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-opt-lock": "parallax.core.opt_lock",
     "m-temporal-read": "parallax.core.temporal_read",
     "m-temporal-write": "parallax.core.temporal_write",
-    "m-txtime-write": "parallax.core.txtime_write",
-    "m-bitemp-write": "parallax.core.bitemp_write",
     "m-batch-write": "parallax.core.batch_write",
     "m-navigate": "parallax.core.navigate",
     "m-deep-fetch": "parallax.core.deep_fetch",
@@ -166,8 +164,6 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
         "parallax.core.sql_gen",
         "parallax.core.write_plan",
         "parallax.core.opt_lock",
-        "parallax.core.txtime_write",
-        "parallax.core.bitemp_write",
     }
 )
 
@@ -362,8 +358,6 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.execution_lifecycle",
             "parallax.core.opt_lock",
             "parallax.core.batch_write",
-            "parallax.core.txtime_write",
-            "parallax.core.bitemp_write",
         }
     ),
     "parallax.snapshot.handle._materialization": frozenset(

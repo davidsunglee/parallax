@@ -187,7 +187,7 @@ def _voyage_row(row_id: int, payload: dict[str, object], *, in_z: str) -> Mappin
     }
 
 
-# The milestone `m-txtime-write-010`'s own insert entry leaves current, as its
+# The milestone `m-temporal-write-010`'s own insert entry leaves current, as its
 # update entry's resolving read publishes it: one Structured Column carrying
 # every member, which is what a document-mapped chain carries forward.
 _VOYAGE_MILESTONE: Final[MappingRow] = _voyage_row(
@@ -1221,7 +1221,7 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
     # about one key. The write settles against whichever find it names — which a
     # store keyed by identity alone could not answer, because the second read would
     # have erased the first.
-    meta = model_facts.load_case_metamodel(_case("m-txtime-write-001"))
+    meta = model_facts.load_case_metamodel(_case("m-temporal-write-001"))
     current = _balance_node("2024-04-01T00:00:00+00:00", "100.00")
     historical = _balance_node("2024-01-01T00:00:00+00:00", "90.00")
 
@@ -1395,14 +1395,14 @@ def test_a_range_beyond_its_observation_binds_the_coverage_the_tracker_reads() -
 
 
 def test_a_tracked_milestone_of_a_document_target_is_refused_after_out_of_band_statements() -> None:
-    # m-txtime-write-011 seeds a Structured Column key no member declares with
+    # m-temporal-write-011 seeds a Structured Column key no member declares with
     # out-of-band SQL and then updates that milestone by key. The tracker never
     # saw the seeded document and the framework issues no resolving read for a
     # keyed write, so the successor would be patched from declared members alone
     # and lose the key. The engine names the shape instead of chaining it.
     port = FakeWritePort()
     with pytest.raises(EngineError, match="out-of-band statements may have overtaken"):
-        scenario.run_write_sequence_case(_load_case("m-txtime-write-011"), port)
+        scenario.run_write_sequence_case(_load_case("m-temporal-write-011"), port)
 
 
 def test_a_tracked_milestone_under_columns_survives_out_of_band_statements() -> None:
@@ -1410,7 +1410,7 @@ def test_a_tracked_milestone_under_columns_survives_out_of_band_statements() -> 
     # members cannot even account for the row's SLOTS. Under `Columns` the tracker
     # holds every column, so out-of-band state leaves the observation STALE — the
     # very thing a conflict case authors on purpose — never unrepresentable.
-    meta = model_facts.load_case_metamodel(_load_case("m-txtime-write-002"))
+    meta = model_facts.load_case_metamodel(_load_case("m-temporal-write-002"))
     model = meta
     shadow = TemporalShadow()
     shadow.note_out_of_band_write()
@@ -1423,13 +1423,13 @@ def test_a_tracked_milestone_under_columns_survives_out_of_band_statements() -> 
 
 
 def test_a_tracked_milestone_of_a_document_target_chains_when_the_case_authored_it() -> None:
-    # m-txtime-write-010 is the same document-mapped chain with no out-of-band
+    # m-temporal-write-010 is the same document-mapped chain with no out-of-band
     # statement: every key in the stored document came from the case's own insert,
     # so the tracked milestone IS the whole stored row and the successor chains.
     # This is what keeps the refusal above narrow enough to leave the corpus alone.
     port = FakeWritePort(find_rows=[_VOYAGE_MILESTONE])
     emissions, _table_state, round_trips = scenario.run_write_sequence_case(
-        _load_case("m-txtime-write-010"), port
+        _load_case("m-temporal-write-010"), port
     )
     # Three DML statements plus the update entry's own resolving read.
     assert round_trips == 4
@@ -1448,7 +1448,7 @@ def test_a_document_milestone_opened_after_out_of_band_statements_still_chains()
     # state `m-case-format` requires a keyed write to consume — the milestone the
     # case's own earlier entries left current — which is why the refusal is keyed
     # to the addressed milestone rather than to the case.
-    case = _load_case("m-txtime-write-010")
+    case = _load_case("m-temporal-write-010")
     with_apply = dataclasses.replace(
         case,
         document={
@@ -1549,13 +1549,13 @@ def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() ->
 
 
 def test_run_write_sequence_case_settles_a_temporal_write_against_its_resolving_read() -> None:
-    # m-txtime-write-002: the update entry is its own choreography unit, so the
+    # m-temporal-write-002: the update entry is its own choreography unit, so the
     # milestone it closes comes from the read that unit issues for it — the value
     # `tx.wire.update` is addressed and licensed by — and the round trips count
     # that read beside the three DML statements.
     port = FakeWritePort(find_rows=[_balance_row(1, "100.00", in_z="2024-01-01T00:00:00+00:00")])
     emissions, table_state, round_trips = scenario.run_write_sequence_case(
-        _load_case("m-txtime-write-002"), port
+        _load_case("m-temporal-write-002"), port
     )
     assert round_trips == 4
     assert [e.case_pointer for e in emissions] == [
@@ -1570,7 +1570,7 @@ def test_run_write_sequence_case_settles_a_temporal_write_against_its_resolving_
 def test_a_units_resolving_read_names_no_statement_in_the_lifecycle_observation() -> None:
     """The one call inside a write unit that the emissions do not hold.
 
-    m-txtime-write-002 costs four round trips for three golden statements: the
+    m-temporal-write-002 costs four round trips for three golden statements: the
     update entry reads the milestone it closes before writing it. A case counts
     that read and authors no golden for it, so the delivered stream carries a
     Database Call the emission order has no entry for — and the remaining calls
@@ -1580,7 +1580,7 @@ def test_a_units_resolving_read_names_no_statement_in_the_lifecycle_observation(
     port = FakeWritePort(find_rows=[_balance_row(1, "100.00", in_z="2024-01-01T00:00:00+00:00")])
     run = LifecycleRun()
     emissions, _table_state, round_trips = scenario.run_write_sequence_case(
-        _load_case("m-txtime-write-002"), port, run
+        _load_case("m-temporal-write-002"), port, run
     )
     observed = execution_lifecycle_observation(
         run.roots, [emission.sql for emission in emissions], run.resolving_read_calls
@@ -1601,7 +1601,7 @@ def test_a_units_resolving_read_names_no_statement_in_the_lifecycle_observation(
 
 
 def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window() -> None:
-    # m-bitemp-write-001: the updateUntil entry's canonical instruction carries
+    # m-temporal-write-017: the updateUntil entry's canonical instruction carries
     # BOTH `validFrom` and `until` (its bounded rectangle-split window), which
     # the run lane buffers with that window unchanged.
     port = FakeWritePort(
@@ -1612,7 +1612,7 @@ def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window(
         ]
     )
     _emissions, table_state, round_trips = scenario.run_write_sequence_case(
-        _load_case("m-bitemp-write-001"), port
+        _load_case("m-temporal-write-017"), port
     )
     assert round_trips == 6
     assert len(port.writes) == 5 and port.commits == 2
@@ -3208,7 +3208,7 @@ def test_a_unit_reads_each_entity_it_writes_once_however_many_entries_address_it
 def test_a_temporal_terminate_entry_reaches_its_own_wire_verb() -> None:
     port = FakeWritePort(find_rows=[_balance_row(1, "100.00", in_z="2024-01-01T00:00:00+00:00")])
     _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
-        _load_case("m-txtime-write-003"), port
+        _load_case("m-temporal-write-003"), port
     )
     assert round_trips == 3  # insert, then the terminate entry's own read + its close
     assert port.writes[-1][0].startswith("update balance set out_z")
@@ -3223,7 +3223,7 @@ def test_a_bounded_bitemporal_terminate_entry_reaches_its_own_wire_verb() -> Non
         ]
     )
     _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
-        _load_case("m-bitemp-write-002"), port
+        _load_case("m-temporal-write-018"), port
     )
     assert round_trips == 5  # four statements plus the terminateUntil entry's own read
     assert port.writes[1][0].startswith("update position set out_z")
@@ -3232,10 +3232,10 @@ def test_a_bounded_bitemporal_terminate_entry_reaches_its_own_wire_verb() -> Non
 @pytest.mark.parametrize(
     "case_id",
     [
-        "m-bitemp-write-010",
-        "m-bitemp-write-011",
-        "m-bitemp-write-012",
-        "m-bitemp-write-013",
+        "m-temporal-write-026",
+        "m-temporal-write-027",
+        "m-temporal-write-028",
+        "m-temporal-write-029",
     ],
 )
 def test_every_materializing_predicate_mutation_reaches_its_own_wire_verb(case_id: str) -> None:
@@ -3887,7 +3887,7 @@ def test_a_bounded_temporal_target_step_reads_its_coverage_then_writes_its_windo
         ]
     )
     _emissions, _table_state, round_trips = scenario.run_write_sequence_case(
-        _load_case("m-bitemp-write-026"), port
+        _load_case("m-temporal-write-042"), port
     )
     assert round_trips == 6
     (coverage,) = (binds for sql, binds in port.reads if "t0.thru_z > " in sql)

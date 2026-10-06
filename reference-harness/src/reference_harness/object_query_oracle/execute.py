@@ -408,7 +408,7 @@ def project_like(row: dict[str, Any], template_rows: Sequence[dict[str, Any]]) -
 # --- Temporal Selection -----------------------------------------------------
 
 # Canonical as-of dimension order: Valid Time precedes Transaction Time in both the
-# golden SQL clause order and the bind order (m-bitemp-write bitemporal table;
+# golden SQL clause order and the bind order (m-temporal-write bitemporal table;
 # case m-temporal-read-015).
 _CANONICAL_AXIS_ORDER: tuple[str, ...] = ("valid-time", "transaction-time")
 

@@ -175,9 +175,9 @@ def _materialize_predicate_write(
     # 0042), so a close-only shape — an AUDIT-ONLY `terminate`, which chains
     # nothing — records the same complete predecessor a chain-bearing one
     # does. This subsumes the carry-forward need: a BITEMPORAL rectangle
-    # split (`bitemp_write.plan`) carries the old payload into its head and
-    # tail on EVERY close-bearing mutation, and an AUDIT-ONLY `update`
-    # (`txtime_write.plan`) carries it into its chained row. It is also why
+    # split carries the old payload into its head and tail on EVERY
+    # close-bearing mutation, and an AUDIT-ONLY `update` carries it into its
+    # chained row (`m-temporal-write` *Temporal expansion*). It is also why
     # EVERY declared document is projected rather than only the assigned
     # ones — a carried row must keep whichever documents the assignments do
     # NOT themselves reassign. Every target's carried state is the resolved

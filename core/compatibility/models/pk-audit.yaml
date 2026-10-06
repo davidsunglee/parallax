@@ -1,5 +1,5 @@
 # PK generation composed with a TEMPORAL (audit-only) entity (m-pk-gen +
-# m-txtime-write) — net-new: no existing model puts a pkGeneration on a temporal
+# m-temporal-write) — net-new: no existing model puts a pkGeneration on a temporal
 # entity.
 #
 # `AuditSeq` is the simulated-sequence registry (Reladomo SimulatedSequence): one

@@ -560,11 +560,11 @@ def _position_row_dt() -> MappingRow:
 # siblings of `update_where` / `terminate_where`, sharing the SAME `_buffer`   #
 # seam and the SAME prepared-write window judgment, so a keyed and a          #
 # predicate-selected write over the identical bitemporal correction lower to  #
-# the identical rectangle split (`m-bitemp-write-001/002/006/007`'s own       #
+# the identical rectangle split (`m-temporal-write-017/018/022/023`'s own       #
 # witnessed shape, replayed here through the KEYED verb instead of `_where`). #
 # --------------------------------------------------------------------------- #
 def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
-    # m-bitemp-write-006 "plain-update-split", replayed through the KEYED verb:
+    # m-temporal-write-022 "plain-update-split", replayed through the KEYED verb:
     # close + head (old) + new tail.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=3)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -583,7 +583,7 @@ def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
 
 
 def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
-    # m-bitemp-write-007 "plain-terminate", replayed through the KEYED verb:
+    # m-temporal-write-023 "plain-terminate", replayed through the KEYED verb:
     # close + head only (no tail).
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -602,7 +602,7 @@ def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
 
 
 def test_a_bounded_keyed_update_lowers_the_rectangle_split() -> None:
-    # m-bitemp-write-001 "update-until-rectangle-split", replayed through the
+    # m-temporal-write-017 "update-until-rectangle-split", replayed through the
     # KEYED verb: close + head + middle + tail.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=4)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -938,7 +938,7 @@ def test_a_source_with_no_pin_and_no_standing_insertion_names_no_start() -> None
 
 
 def test_a_bounded_keyed_terminate_lowers_head_and_tail_only() -> None:
-    # m-bitemp-write-002 "terminate-until", replayed through the KEYED verb:
+    # m-temporal-write-018 "terminate-until", replayed through the KEYED verb:
     # close + head + tail (no middle).
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=3)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -1147,7 +1147,7 @@ def test_a_standalone_temporal_source_is_refused_under_an_explicit_locking_prefe
 
 def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
     # Read-your-own-writes exemption: this transaction's OWN buffered insert
-    # IS the provenance a subsequent keyed write builds on (`m-txtime-write-008`'s
+    # IS the provenance a subsequent keyed write builds on (`m-temporal-write-008`'s
     # same-transaction coalescing shape) — the value is exempt from the
     # provenance refusal, no observation lookup applies, and the planner folds
     # the pair into the single INSERT carrying the updated value.
@@ -1274,7 +1274,7 @@ def test_a_latest_transaction_time_pinned_source_stays_writable() -> None:
 
 
 def test_a_finite_valid_time_pinned_source_stays_writable() -> None:
-    # The writable half of the finite-pin contrast (m-bitemp-write-015): a
+    # The writable half of the finite-pin contrast (m-temporal-write-031): a
     # finite Valid-Time pin is the retroactive correction, never read-only.
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
 

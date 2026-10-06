@@ -856,22 +856,17 @@ def test_handle_scope_still_grants_navigate() -> None:
     assert "parallax.core.navigate" in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
 
 
-def test_the_read_composition_row_forbids_every_write_policy_the_parent_grants() -> None:
+def test_the_read_composition_row_forbids_the_write_policy_the_parent_grants() -> None:
     # The exclusion the read scope exists for: a read ladder composes over the
     # executor and reaches no write policy, which only a row narrower than the
-    # parent's can state — the parent is granted all three outright.
+    # parent's can state — the parent is granted it outright.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     scope = "parallax.snapshot.handle._read_scope"
-    writes = (
-        "parallax.core.batch_write",
-        "parallax.core.txtime_write",
-        "parallax.core.bitemp_write",
-    )
-    for policy in writes:
-        assert policy in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"], policy
-        assert policy not in forbidden["parallax.snapshot.handle"], policy
-        assert policy in forbidden[scope], policy
+    policy = "parallax.core.batch_write"
+    assert policy in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
+    assert policy not in forbidden["parallax.snapshot.handle"]
+    assert policy in forbidden[scope]
 
 
 def test_the_keyed_write_ingress_row_forbids_the_read_half_the_parent_grants() -> None:

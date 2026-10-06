@@ -1,5 +1,5 @@
 model: models/position.yaml
-tags: [m-unit-work, m-bitemp-write, m-temporal-read, m-opt-lock, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-temporal-write, m-temporal-read, m-opt-lock, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

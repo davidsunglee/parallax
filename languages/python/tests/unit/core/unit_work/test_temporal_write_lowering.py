@@ -5,8 +5,8 @@ Planned Insert successors it expands into, and the DML each of those steps lower
 to — for audit-only close-and-chain (`m-temporal-write`) and the full-bitemporal
 rectangle split (`m-temporal-write`).
 
-The statements stay byte-exact against the corpus goldens (``m-txtime-write-001
-..006``, ``m-bitemp-write-001..003/006..009``, ``m-inheritance-090/091/094..097
+The statements stay byte-exact against the corpus goldens (``m-temporal-write-001
+..006``, ``m-temporal-write-017..019/022..025``, ``m-inheritance-090/091/094..097
 /105``, ``m-value-object-032/033``). Alongside them the settled steps pin what
 lowering can no longer see: the mode-independent Milestone Target (the key plus
 one exclusive upper bound per As-Of Axis) against the observed-``in_z`` gate the
@@ -38,11 +38,9 @@ from parallax.core import (
     DomainModel,
     TxTemporal,
     attr,
-    bitemp_write,
     opt_lock,
     storage_layout,
     temporal_read,
-    txtime_write,
 )
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.db_port import JsonDocument, MappingRow
@@ -262,7 +260,7 @@ def _lower(
 # Audit-only (m-temporal-write): insert / close-and-chain update / terminate.     #
 # --------------------------------------------------------------------------- #
 def test_audit_only_insert_opens_a_current_milestone() -> None:
-    # m-txtime-write-001.
+    # m-temporal-write-001.
     insert = KeyedWrite(
         "insert", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},)
     )
@@ -276,14 +274,17 @@ def test_audit_only_insert_opens_a_current_milestone() -> None:
 
 
 def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
-    # m-txtime-write-002: an ungated (locking-mode) close, then a chain carrying
+    # m-temporal-write-002: an ungated (locking-mode) close, then a chain carrying
     # the instruction's OWN authored FULL row. The row names every member the
     # predecessor could have carried forward, so merging is an identity and the
     # chain is exactly the authored row.
     update = KeyedWrite(
         "update", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("150.00")},)
     )
-    observation = _observed(tx_start="2024-01-01T00:00:00+00:00")
+    observation = _observed(
+        tx_start="2024-01-01T00:00:00+00:00",
+        payload={"id": 1, "acctNum": "A", "value": Decimal("100.00")},
+    )
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert statements == [
         (
@@ -298,7 +299,7 @@ def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
 
 
 def test_audit_only_terminate_closes_only() -> None:
-    # m-txtime-write-003: terminate = close, chain nothing.
+    # m-temporal-write-003: terminate = close, chain nothing.
     terminate = KeyedWrite("terminate", "Balance", ({"id": 1},))
     statements = _lower(
         terminate,
@@ -315,11 +316,14 @@ def test_audit_only_terminate_closes_only() -> None:
 
 
 def test_audit_only_update_carries_every_new_attribute() -> None:
-    # m-txtime-write-004: the chained row carries ALL corrected attributes.
+    # m-temporal-write-004: the chained row carries ALL corrected attributes.
     update = KeyedWrite(
         "update", "Balance", ({"id": 1, "acctNum": "B", "value": Decimal("250.00")},)
     )
-    observation = _observed(tx_start="2024-01-01T00:00:00+00:00")
+    observation = _observed(
+        tx_start="2024-01-01T00:00:00+00:00",
+        payload={"id": 1, "acctNum": "A", "value": Decimal("100.00")},
+    )
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert statements[1] == (
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
@@ -439,7 +443,7 @@ def test_a_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
 
 
 def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -> None:
-    # m-txtime-write-005: a locking-mode close never binds `in_z`, even when one
+    # m-temporal-write-005: a locking-mode close never binds `in_z`, even when one
     # was observed.
     update = KeyedWrite(
         "update", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("175.00")},)
@@ -455,7 +459,7 @@ def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -
 
 
 def test_audit_only_close_gates_on_observed_in_z_under_optimistic() -> None:
-    # m-txtime-write-006: the gated close binds the observed in_z LAST.
+    # m-temporal-write-006: the gated close binds the observed in_z LAST.
     close_only = KeyedWrite("terminate", "Balance", ({"id": 1},))
     observation = _observed(tx_start="2024-06-01T00:00:00+00:00")
     steps = _lower_steps(
@@ -500,7 +504,7 @@ _R1_PAYLOAD = {"id": 1, "acctNum": "A", "value": Decimal("100.00")}
 
 
 def test_bitemporal_update_until_splits_head_middle_tail() -> None:
-    # m-bitemp-write-001.
+    # m-temporal-write-017.
     update_until = KeyedWrite(
         "updateUntil",
         "Position",
@@ -565,7 +569,7 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
 
 
 def test_bitemporal_terminate_until_chains_head_and_tail_no_middle() -> None:
-    # m-bitemp-write-002.
+    # m-temporal-write-018.
     terminate_until = KeyedWrite(
         "terminateUntil",
         "Position",
@@ -589,7 +593,7 @@ def test_bitemporal_terminate_until_chains_head_and_tail_no_middle() -> None:
 
 
 def test_bitemporal_insert_until_opens_one_bounded_rectangle() -> None:
-    # m-bitemp-write-003: no close, a single INSERT.
+    # m-temporal-write-019: no close, a single INSERT.
     insert_until = KeyedWrite(
         "insertUntil",
         "Position",
@@ -616,7 +620,7 @@ def test_bitemporal_insert_until_opens_one_bounded_rectangle() -> None:
 
 
 def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
-    # m-bitemp-write-006: the two-way degenerate — no middle, no old tail.
+    # m-temporal-write-022: the two-way degenerate — no middle, no old tail.
     update = KeyedWrite(
         "update",
         "Position",
@@ -665,7 +669,7 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
 
 
 def test_bitemporal_plain_terminate_chains_head_only() -> None:
-    # m-bitemp-write-007.
+    # m-temporal-write-023.
     terminate = KeyedWrite(
         "terminate", "Position", ({"id": 1},), valid_from=_instant("2024-06-01T00:00:00+00:00")
     )
@@ -698,7 +702,7 @@ def test_bitemporal_plain_terminate_chains_head_only() -> None:
 
 
 def test_bitemporal_plain_insert_opens_one_fully_current_rectangle() -> None:
-    # m-bitemp-write-009.
+    # m-temporal-write-025.
     insert = KeyedWrite(
         "insert",
         "Position",
@@ -1537,27 +1541,6 @@ def test_bitemporal_close_target_is_mode_independent() -> None:
     assert isinstance(gate, TemporalGate)
     assert gate.start_attribute.name == "txStart"
     assert gate.observed_start == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-
-
-@pytest.mark.parametrize(
-    ("strategy", "facet"),
-    [
-        (txtime_write.MILESTONE_CHAIN, "Transaction-Time-Only"),
-        (bitemp_write.RECTANGLE_SPLIT, "Bitemporal"),
-    ],
-    ids=["txtime", "bitemporal"],
-)
-def test_a_facet_refuses_a_verb_it_owns_no_topology_for(
-    strategy: txtime_write.TransactionTimeChaining | bitemp_write.RectangleSplit, facet: str
-) -> None:
-    # A facet answers the topology of the milestone verbs it owns; anything else
-    # is a caller wiring defect this pure seam refuses rather than describing as
-    # the nearest verb it does recognize. Each facet's OWN `topology(mutation)`
-    # is single-param — the entity-aware dispatch between the two facets is the
-    # composition root's `TemporalStrategy` adapter, one layer up, not a fact
-    # either facet itself carries.
-    with pytest.raises(txtime_write.TemporalPlanningError, match=facet):
-        strategy.topology("delete")
 
 
 # --------------------------------------------------------------------------- #

@@ -4,7 +4,7 @@
 # shape, gated on the observed in_z, affecting the one current milestone — now produced by
 # a public `terminate`, which chains no successor on a Transaction-Time-Only target.
 model: models/balance.yaml
-tags: [m-temporal-read, m-opt-lock, m-txtime-write, m-unit-work, m-sql, temporal, audit-only, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-opt-lock, m-temporal-write, m-unit-work, m-sql, temporal, audit-only, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only
