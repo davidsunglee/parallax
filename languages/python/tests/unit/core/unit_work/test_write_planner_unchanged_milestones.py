@@ -54,6 +54,7 @@ from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model
+from tests.unit.core.unit_work._acquired_rows_support import acquired
 from tests.unit.core.unit_work._ownership_support import OpenedRows
 
 _SPANS = model("buffered-sequence-layout-twin-columns")
@@ -146,10 +147,23 @@ def _plan(
     )
 
 
-def _bound(plan: WritePlan, rows: Sequence[PredecessorRow]) -> tuple[ExecutionUnit, BoundRange]:
+def _bound(
+    meta: Metamodel,
+    plan: WritePlan,
+    rows: Sequence[PredecessorRow],
+    *,
+    ownership: Ownership = NO_OWNERSHIP,
+) -> tuple[ExecutionUnit, BoundRange]:
     (unit,) = plan.units
-    assert unit.deferred is not None
-    return unit, unit.deferred.bind(rows)
+    deferred = unit.deferred
+    assert deferred is not None
+    return unit, build_write_planner(meta).bind_deferred(
+        deferred,
+        acquired(meta, deferred.acquisition, rows),
+        ownership=ownership,
+        actor_identity=TEST_ACTOR_IDENTITY,
+        transaction_instant=instant_at("2024-11-01T00:00:00+00:00"),
+    )
 
 
 def _kinds(steps: Iterable[PlannedWrite]) -> list[str]:
@@ -182,7 +196,7 @@ def test_an_update_restating_its_milestone_is_one_guard_on_the_observed_start() 
     assert guard.affected_rows == ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT)
     (unit,) = plan.units
     # The claim is spent, and the state it observed is named changed by nobody.
-    assert (unit.claim, tuple(unit.changed), unit.changed_exactly) == (_RESTATED, (), True)
+    assert (unit.claim, tuple(unit.changed)) == (_RESTATED, ())
 
 
 def test_without_a_count_that_proves_it_an_unchanged_milestone_is_closed_and_chained() -> None:
@@ -193,7 +207,8 @@ def test_without_a_count_that_proves_it_an_unchanged_milestone_is_closed_and_cha
     )
     assert _kinds(plan.steps) == ["PlannedClose", "PlannedInsert"]
     (unit,) = plan.units
-    assert not unit.changed_exactly
+    # Closing it changes the observed state, which the unit names itself.
+    assert (unit.claim, tuple(unit.changed)) == (_RESTATED, (_RESTATED.key,))
 
 
 def test_under_locking_the_held_lock_proves_an_unchanged_milestone_without_a_statement() -> None:
@@ -205,7 +220,7 @@ def test_under_locking_the_held_lock_proves_an_unchanged_milestone_without_a_sta
     )
     assert len(plan.steps) == 0
     (unit,) = plan.units
-    assert (unit.claim, tuple(unit.changed), unit.changed_exactly) == (_RESTATED, (), True)
+    assert (unit.claim, tuple(unit.changed)) == (_RESTATED, ())
 
 
 def test_a_milestone_the_attempt_opened_needs_no_statement_to_stay_unchanged() -> None:
@@ -311,6 +326,7 @@ _FROM_MARCH = _retained(_SPANS, _SPAN, _FIRST)
 
 def test_a_range_keeps_each_unchanged_original_and_transforms_only_the_changed_one() -> None:
     unit, bound = _bound(
+        _SPANS,
         _plan(
             _SPANS,
             _observed(
@@ -345,11 +361,13 @@ def test_a_range_keeps_each_unchanged_original_and_transforms_only_the_changed_o
     middle = TemporalStateKey(
         ObjectKey(_SPAN, (("id", 1),)), temporal_read.milestone_edge(shape, _MIDDLE, None)
     )
-    assert (bound.changed, unit.changed_exactly) == ((middle,), True)
+    # The deferred unit's effects are the bound range's, never its plan entry's.
+    assert (tuple(bound.changed), tuple(unit.changed)) == ((middle,), ())
 
 
 def test_a_range_assigning_every_original_a_new_value_transforms_them_all() -> None:
     _, bound = _bound(
+        _SPANS,
         _plan(
             _SPANS,
             _observed(
@@ -370,6 +388,7 @@ def test_a_range_assigning_every_original_a_new_value_transforms_them_all() -> N
 
 def test_a_range_under_locking_states_nothing_for_its_unchanged_originals() -> None:
     _, bound = _bound(
+        _SPANS,
         _plan(
             _SPANS,
             _observed(
@@ -497,6 +516,7 @@ def test_an_owned_original_a_range_leaves_unchanged_is_neither_split_nor_revised
     later = _span(_JUN, INFINITY, 100, "b")
     owned = OpenedRows(frozenset({OwnedEndpoint(_SPAN, (1,), (Finite(instant=_JUN), OPEN_END))}))
     _, bound = _bound(
+        _SPANS,
         _plan(
             _SPANS,
             _observed(
@@ -510,6 +530,7 @@ def test_an_owned_original_a_range_leaves_unchanged_is_neither_split_nor_revised
             ownership=owned,
         ),
         [owned_row, later],
+        ownership=owned,
     )
     # The row the attempt opened needs nothing; the one before it, a guard.
     assert _kinds(bound.steps) == ["PlannedTemporalGuard"]

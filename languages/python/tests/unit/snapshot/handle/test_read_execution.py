@@ -149,7 +149,14 @@ class _Flushes:
         self.plans: list[WritePlan] = []
         self.triggers: list[WriteBatchTrigger] = []
 
-    def __call__(self, plan: WritePlan, *, trigger: WriteBatchTrigger, completed: object) -> None:
+    def __call__(
+        self,
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        bind_deferred: object,
+        completed: object,
+    ) -> None:
         self.plans.append(plan)
         self.triggers.append(trigger)
 

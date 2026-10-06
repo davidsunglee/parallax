@@ -14,7 +14,7 @@ import dataclasses
 import datetime as dt
 from collections.abc import Mapping, Sequence, Sized
 from decimal import Decimal
-from types import MappingProxyType
+from types import FunctionType, MappingProxyType, MethodType
 from typing import Any, cast
 
 import pytest
@@ -35,6 +35,7 @@ from parallax.core.entity._construction_input import ABSENT
 from parallax.core.metamodel import AttributeMetadata, FacetKey, Metamodel
 from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.sql_gen._write import compile_write_step
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     MaterializedWriteGroup,
     MilestoneTopology,
@@ -51,15 +52,20 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
+    PreparedTargetWrite,
+    TargetWrite,
     prepare_typed_write,
+    prepare_wire_write,
 )
-from parallax.core.unit_work.materialized import GroupStates
+from parallax.core.unit_work.materialized import GroupStates, target_write
+from parallax.core.unit_work.ranges import Decoration, DeferredTemporalRange
 from parallax.core.unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
     ConcurrencyStrategy,
     TemporalStrategy,
 )
+from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.unit_work.write_settlement import (
     WriteSettlement,  # producer-reach regression only
 )
@@ -94,6 +100,7 @@ from tests.unit._temporal_group_support import temporal_group
 from tests.unit._transact_support import BALANCE as BALANCE_MODEL
 from tests.unit._transact_support import WHERE_POSITION_META, WherePosition, db_for
 from tests.unit.core import _milestone_rows_support as milestone_rows
+from tests.unit.core.unit_work._ownership_support import OpenedRows
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
@@ -310,8 +317,12 @@ def _is_producer(value: object) -> bool:
     )
 
 
-def _reachable_from_segments(plan: WritePlan) -> list[object]:
-    return [value for segment in plan.steps.segments for value in reachable_objects(segment)]
+def _reachable_from_plan(plan: WritePlan) -> list[object]:
+    """Everything a plan's segments and execution units reach, every deferred
+    range's description included."""
+    return [
+        value for held in (*plan.steps.segments, *plan.units) for value in reachable_objects(held)
+    ]
 
 
 def test_every_facet_an_accepted_model_carries_counts_as_a_producer() -> None:
@@ -360,12 +371,61 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
         )
         .plan
     )
-    walked = _reachable_from_segments(plan)
+    walked = _reachable_from_plan(plan)
     assert not [value for value in walked if _is_producer(value)]
     # The resolved instant and the key columns' slices sit nested inside the
     # segment, so reaching them shows the walk descended.
     assert any(isinstance(value, dt.datetime) for value in walked)
     assert any(isinstance(value, ColumnSlice) for value in walked)
+
+
+def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_ownership() -> None:
+    # A deferred range is bound at execution, under the ownership the attempt
+    # holds then and the audit the unit of work supplies; its plan entry keeps
+    # the finalized meaning and the resolved instant, and nothing that could
+    # decide again — no clock, strategy, planner, live ownership, actor, or a
+    # bound method or closure reaching one.
+    clock = CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
+    ownership = OpenedRows(frozenset())
+    prepared = prepare_wire_write(
+        TargetWrite(
+            "updateUntil",
+            "Position",
+            {"id": 1, "value": "9.00"},
+            if_tx_start=_OPENED,
+            valid_from=_JAN,
+            until=_MAR,
+        ),
+        _POSITION,
+    )
+    assert isinstance(prepared, PreparedTargetWrite)
+    plan = (
+        build_write_planner(_POSITION)
+        .finalize(
+            PlanningRequest(
+                actor_identity=TEST_ACTOR_IDENTITY,
+                transaction_instant=TransactionInstant(clock),
+                concurrency="optimistic",
+                buffered_writes=compose_writes(
+                    _POSITION, [target_write(prepared, inheritance.view(_POSITION))]
+                ),
+                ownership=ownership,
+            )
+        )
+        .plan
+    )
+    (unit,) = plan.units
+    assert isinstance(unit.deferred, DeferredTemporalRange)
+    walked = _reachable_from_plan(plan)
+    assert not [value for value in walked if _is_producer(value)]
+    assert not [value for value in walked if isinstance(value, OpenedRows | Decoration)]
+    assert all(value is not TEST_ACTOR_IDENTITY for value in walked)
+    assert not [value for value in walked if isinstance(value, MethodType | FunctionType)]
+    # The walk descended into the description: its resolved instant and the
+    # requested window are both reached.
+    assert dt.datetime(2024, 6, 1, tzinfo=dt.UTC) in walked
+    assert any(isinstance(value, TimeInterval) for value in walked)
+    assert clock.calls == 1
 
 
 def _account_plan(group: MaterializedWriteGroup) -> WritePlan:
@@ -394,7 +454,7 @@ def test_a_versioned_segment_settles_produced_values_and_reaches_no_producer() -
     # A Write Plan may retain the version arithmetic the Concurrency Strategy
     # produced for this mutation, and never the strategy that produced it.
     plan = _account_plan(_version_group("Account", "id", [(1, 1), (2, 1)], assigned=9.00))
-    walked = _reachable_from_segments(plan)
+    walked = _reachable_from_plan(plan)
     assert not [value for value in walked if _is_producer(value)]
     assert any(isinstance(value, VersionArithmetic) for value in walked)
     assert any(isinstance(value, ColumnSlice) for value in walked)

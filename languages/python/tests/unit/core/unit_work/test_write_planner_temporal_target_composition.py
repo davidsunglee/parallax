@@ -81,6 +81,7 @@ from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import corpus_records, formed
+from tests.unit.core.unit_work._acquired_rows_support import acquired
 from tests.unit.core.unit_work._ownership_support import OpenedRows
 
 _POSITION = formed(corpus_records()["position"])
@@ -301,9 +302,20 @@ def _deferred_unit(*writes: BufferItem, concurrency: str = "optimistic") -> Exec
     return unit
 
 
-def _bound(unit: ExecutionUnit, rows: Sequence[PredecessorRow]) -> BoundRange:
-    assert unit.deferred is not None
-    return unit.deferred.bind(rows)
+def _bound(
+    unit: ExecutionUnit, rows: Sequence[PredecessorRow], *, ownership: Ownership = NO_OWNERSHIP
+) -> BoundRange:
+    """``unit``'s deferred range bound, as the unit of work binds it at
+    execution, to a coverage read finding ``rows`` under ``ownership``."""
+    deferred = unit.deferred
+    assert deferred is not None
+    return build_write_planner(_POSITION).bind_deferred(
+        deferred,
+        acquired(_POSITION, deferred.acquisition, rows),
+        ownership=ownership,
+        actor_identity=TEST_ACTOR_IDENTITY,
+        transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
+    )
 
 
 def _windows(bound: BoundRange) -> list[tuple[object, object, object]]:
@@ -719,7 +731,6 @@ def test_a_replacement_fills_only_its_own_window_beside_a_disjoint_destruction()
 # --------------------------------------------------------------------------- #
 def _chained_unit(
     *writes: BufferItem,
-    ownership: Ownership = NO_OWNERSHIP,
     leads: bool = False,
     follows: bool = True,
     concurrency: str = "optimistic",
@@ -734,7 +745,6 @@ def _chained_unit(
                 transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
                 concurrency=concurrency,  # type: ignore[arg-type]
                 buffered_writes=(chained(composed, "id", leads=leads, follows=follows),),
-                ownership=ownership,
             )
         )
         .plan
@@ -773,10 +783,10 @@ def _opened(start: dt.datetime, value: str = "100.00", **cells: object) -> Prede
 
 
 def test_a_following_range_reads_its_whole_window_and_discharges_a_proven_start() -> None:
-    unit = _chained_unit(_target(valid_from=_JUN, until=_AUG, value="175.00"), ownership=_proven())
+    unit = _chained_unit(_target(valid_from=_JUN, until=_AUG, value="175.00"))
     assert unit.deferred is not None
     assert unit.deferred.acquisition.valid_time_window == TimeInterval(_JUN, _AUG)
-    bound = _bound(unit, [_opened(_APR)])
+    bound = _bound(unit, [_opened(_APR)], ownership=_proven())
     # The start now stands at the row the earlier unit derived from the
     # original the caller stated; that row is the attempt's own, so it is
     # revised in place rather than closed, and nothing gates on the caller.
@@ -801,18 +811,17 @@ def test_a_following_range_reads_its_whole_window_and_discharges_a_proven_start(
 def test_a_following_start_no_intact_proof_carries_is_the_callers_precondition(
     ownership: OpenedRows, coverage: list[PredecessorRow]
 ) -> None:
-    unit = _chained_unit(_target(valid_from=_JUN, until=_AUG, value="175.00"), ownership=ownership)
+    unit = _chained_unit(_target(valid_from=_JUN, until=_AUG, value="175.00"))
     with pytest.raises(WritePreconditionError) as refused:
-        _bound(unit, coverage)
+        _bound(unit, coverage, ownership=ownership)
     assert refused.value.expected == _T0
 
 
 def test_a_following_observed_write_binds_to_the_values_the_earlier_unit_left() -> None:
     unit = _chained_unit(
         _observed("updateUntil", _WHOLE, valid_from=_JUN, until=_AUG, acctNum="O"),
-        ownership=_proven(),
     )
-    bound = _bound(unit, [_opened(_APR, "150.00")])
+    bound = _bound(unit, [_opened(_APR, "150.00")], ownership=_proven())
     opened = [
         {identity.name: value for identity, value in step.entries[0].row.attributes.items()}
         for step in bound.steps
@@ -834,19 +843,21 @@ def test_a_following_observed_original_neither_standing_nor_proven_fails_as_its_
 ) -> None:
     unit = _chained_unit(
         _observed("updateUntil", _WHOLE, valid_from=_JUN, until=_AUG, acctNum="O"),
-        ownership=OpenedRows(frozenset()),
         concurrency=concurrency,
     )
     with pytest.raises(error):
-        _bound(unit, [_rectangle(_APR, INFINITY, "100.00", tx_start=_T1)])
+        _bound(
+            unit,
+            [_rectangle(_APR, INFINITY, "100.00", tx_start=_T1)],
+            ownership=OpenedRows(frozenset()),
+        )
 
 
 def test_a_following_observed_original_still_standing_binds_as_any_original() -> None:
     unit = _chained_unit(
         _observed("updateUntil", _WHOLE, valid_from=_JUN, until=_AUG, acctNum="O"),
-        ownership=OpenedRows(frozenset()),
     )
-    bound = _bound(unit, [_WHOLE.evidence.predecessor])  # type: ignore[union-attr]
+    bound = _bound(unit, [_WHOLE.evidence.predecessor], ownership=OpenedRows(frozenset()))  # type: ignore[union-attr]
     (close,) = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert close.concurrency.observed_start == _T0  # type: ignore[union-attr]
 
@@ -855,10 +866,13 @@ def test_a_following_callers_precondition_outranks_a_lost_observation() -> None:
     unit = _chained_unit(
         _observed("updateUntil", _WHOLE, valid_from=_FEB, until=_APR, acctNum="O"),
         _target(valid_from=_JUN, until=_AUG, value="175.00"),
-        ownership=OpenedRows(frozenset()),
     )
     with pytest.raises(WritePreconditionError):
-        _bound(unit, [_rectangle(_JAN, INFINITY, "100.00", tx_start=_T1)])
+        _bound(
+            unit,
+            [_rectangle(_JAN, INFINITY, "100.00", tx_start=_T1)],
+            ownership=OpenedRows(frozenset()),
+        )
 
 
 def test_a_leading_range_records_what_it_derived_from_each_original() -> None:
@@ -879,9 +893,8 @@ def test_a_following_start_untouched_at_its_stated_start_is_judged_as_usual() ->
     later = _rectangle(_JUN, INFINITY, "200.00", tx_start=_T1)
     unit = _chained_unit(
         _target(valid_from=_JUL, until=_AUG, tx_start=_T1, value="175.00"),
-        ownership=OpenedRows(frozenset()),
     )
-    bound = _bound(unit, [later])
+    bound = _bound(unit, [later], ownership=OpenedRows(frozenset()))
     (close,) = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert close.affected_rows.on_shortfall == FAILED_PRECONDITION
 
@@ -913,10 +926,9 @@ def test_a_following_start_whose_proof_names_another_state_is_the_callers_precon
 ) -> None:
     unit = _chained_unit(
         _target(valid_from=_JUN, until=_AUG, tx_start=tx_start, value="175.00"),
-        ownership=ownership,
     )
     with pytest.raises(WritePreconditionError):
-        _bound(unit, [_opened(_APR)])
+        _bound(unit, [_opened(_APR)], ownership=ownership)
 
 
 def test_a_following_range_fails_where_another_row_derived_from_its_original_is_gone() -> None:
@@ -927,11 +939,15 @@ def test_a_following_range_fails_where_another_row_derived_from_its_original_is_
         proofs={_WHOLE.key: Derivation(_WHOLE.key, TimeInterval(_JAN, INFINITY), None, rows)},
         descents={endpoint: Descent(coverage, _WHOLE.key) for endpoint, coverage in rows},
     )
-    unit = _chained_unit(_target(valid_from=_JUN, until=_AUG, value="175.00"), ownership=ownership)
+    unit = _chained_unit(_target(valid_from=_JUN, until=_AUG, value="175.00"))
     # The start stands, but [July, infinity), derived from the same original
     # inside the window, does not.
     with pytest.raises(WritePreconditionError):
-        _bound(unit, [PredecessorRow(members={**_opened(_APR).members, "validEnd": _JUL})])
+        _bound(
+            unit,
+            [PredecessorRow(members={**_opened(_APR).members, "validEnd": _JUL})],
+            ownership=ownership,
+        )
 
 
 def test_a_leading_range_records_an_overlapped_observation_it_only_validated() -> None:

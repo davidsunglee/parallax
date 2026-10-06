@@ -1338,6 +1338,62 @@ def test_a_range_beyond_its_observation_needs_tracked_coverage_to_bind() -> None
         )
 
 
+def test_a_range_beyond_its_observation_binds_the_coverage_the_tracker_reads() -> None:
+    meta = models.load_models()["position"]
+    entity = model_facts.case_entity(meta, "parallax.compatibility.Position")
+
+    def milestone(start: dt.datetime, end: object, value: str) -> TemporalObservation:
+        return TemporalObservation(
+            predecessor=PredecessorRow(
+                members={
+                    "id": 1,
+                    "acctNum": "A",
+                    "value": decimal.Decimal(value),
+                    "validStart": start,
+                    "validEnd": end,
+                    "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                    "txEnd": INFINITY,
+                }
+            )
+        )
+
+    jun = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    head = milestone(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), jun, "100.00")
+    tail = milestone(jun, INFINITY, "200.00")
+    shadow = TemporalShadow()
+    shadow.keep_unchanged(meta, (), [(entity, head), (entity, tail)])
+    instruction = instructions.prepare_wire_write(
+        KeyedWrite(
+            "update",
+            "parallax.compatibility.Position",
+            ({"id": 1, "value": "150.00"},),
+            dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        ),
+        meta,
+    )
+
+    executed, statements = scenario._plan_and_lower(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
+        meta,
+        POSTGRES,
+        "optimistic",
+        scenario.INERT_CLOCK_INSTANT,
+        [scenario._buffered(instruction, head, meta)],  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
+        coverage=shadow,
+    )
+
+    (unit,) = executed.plan.units
+    assert unit.deferred is not None and len(executed.plan.steps) == 0
+    assert [type(step).__name__ for step in executed.steps] == [
+        "PlannedClose",
+        "PlannedClose",
+        "PlannedInsert",
+        "PlannedInsert",
+        "PlannedInsert",
+    ]
+    assert len(statements) == len(executed.steps)
+    assert len(executed.changed) == 2
+
+
 def test_a_tracked_milestone_of_a_document_target_is_refused_after_out_of_band_statements() -> None:
     # m-txtime-write-011 seeds a Structured Column key no member declares with
     # out-of-band SQL and then updates that milestone by key. The tracker never

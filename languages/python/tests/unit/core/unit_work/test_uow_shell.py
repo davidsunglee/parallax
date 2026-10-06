@@ -65,6 +65,7 @@ from parallax.core.unit_work.materialized import InsertionKeyedWrite, ObservedKe
 from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.unit_work.uow import (
     NO_INSERTION_AUTHORITY,
+    DeferredBinder,
     EscapedTransactionError,
     FlushExecutor,
     UnitReport,
@@ -102,6 +103,7 @@ from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._temporal_group_support import temporal_group
 from tests.unit._transact_support import PERSON, WherePosition
+from tests.unit.core.unit_work._acquired_rows_support import acquired
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
@@ -125,13 +127,14 @@ class _Recorder:
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         self.plans.append(plan)
         self.triggers.append(trigger)
         for unit in plan.units:
             deferred = unit.deferred
-            bound = None if deferred is None else deferred.bind(None)
+            bound = None if deferred is None else bind_deferred(deferred, None)
             if bound is not None:
                 self.bound.append(bound)
             completed(unit, bound)
@@ -141,6 +144,7 @@ def _noop(
     plan: WritePlan,
     *,
     trigger: WriteBatchTrigger,
+    bind_deferred: DeferredBinder,
     completed: Callable[[ExecutionUnit, BoundRange | None], None],
 ) -> None:
     return None
@@ -282,10 +286,11 @@ def test_read_force_flushes_pending_writes_first() -> None:
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         order.append("flush")
-        recorder(plan, trigger=trigger, completed=completed)
+        recorder(plan, trigger=trigger, bind_deferred=bind_deferred, completed=completed)
 
     def body(tx: UnitOfWork) -> str:
         tx.buffer(_account_insert(9))
@@ -693,6 +698,7 @@ def test_each_batch_is_a_scope_around_its_own_planning_and_execution() -> None:
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         order.append(f"executed:{trigger}")
@@ -1203,6 +1209,7 @@ def test_each_unit_spends_its_evidence_before_the_next_unit_executes() -> None:
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         for unit in plan.units:
@@ -1223,6 +1230,7 @@ def test_a_unit_reported_out_of_order_dooms_the_attempt() -> None:
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         completed(plan.units[1], None)
@@ -1242,9 +1250,10 @@ def test_a_bound_range_reported_for_a_planned_unit_dooms_the_attempt() -> None:
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
-        completed(plan.units[0], BoundRange((), (), (), NO_OPENINGS))
+        completed(plan.units[0], BoundRange(steps=()))
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_account_write("update", 1, 7))
@@ -1260,6 +1269,7 @@ def test_a_unit_reported_with_keys_it_never_allocated_dooms_the_attempt() -> Non
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
         completed: UnitReport,
     ) -> None:
         completed(plan.units[0], None, allocated=(8,))
@@ -1282,6 +1292,7 @@ def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         raise failure
@@ -1455,6 +1466,172 @@ def test_a_guarded_unit_spends_its_source_and_leaves_an_unchanged_state_fresh(
     )
 
 
+def test_a_unit_names_its_sources_state_and_a_failed_unit_publishes_nothing() -> None:
+    failure = RuntimeError("the second unit failed")
+    named: list[tuple[ObservedStateKey, ...]] = []
+
+    def executor(
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
+    ) -> None:
+        named.extend(tuple(unit.changed) for unit in plan.units)
+        completed(plan.units[0], None)
+        raise failure
+
+    claims: list[RetainedObservation] = []
+
+    def body(uow: UnitOfWork) -> None:
+        for account_id, version in ((1, 7), (2, 3)):
+            claim = uow.retain(
+                RetainedObservation(
+                    _account_state(account_id, version),
+                    VersionObservation(observed_version=version),
+                    None,
+                )
+            )
+            claims.append(claim)
+            row = {"id": account_id, "balance": Decimal("1.00")}
+            uow.buffer(
+                buffered_write(
+                    _prepared_keyed(KeyedWrite("update", "Account", (row,)), _ACCOUNT), claim
+                )
+            )
+        with pytest.raises(RuntimeError, match="the second unit failed"):
+            uow.read(lambda: None)
+
+    with pytest.raises(RollbackOnlyError):
+        _run(body, executor=executor)
+    first, second = claims
+    # Each unit names the state it changes itself; nothing infers it from a step.
+    assert named == [(first.key,), (second.key,)]
+    assert (first.consumed, first.invalidated) == (True, True)
+    assert (second.consumed, second.invalidated) == (False, False)
+
+
+def test_a_unit_with_no_step_spends_its_source_and_changes_nothing() -> None:
+    members = {
+        "id": 1,
+        "acctNum": "A",
+        "value": Decimal("100.00"),
+        "txStart": _JAN,
+        "txEnd": INFINITY,
+    }
+    observation = TemporalObservation(predecessor=PredecessorRow(members))
+    key = corpus_object_key("Balance", ("id", 1))
+    state = observed_state_key(key, observation, _balance_shape())
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        claim = uow.retain(RetainedObservation(state, observation, uow.participation))
+        uow.buffer(
+            buffered_write(
+                _prepared_keyed(
+                    KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("100.00")},)),
+                    _BALANCE,
+                ),
+                claim,
+            )
+        )
+        uow.read(lambda: None)
+        assert claim.consumed and not claim.invalidated
+
+    _run(
+        body,
+        meta=_BALANCE,
+        executor=recorder,
+        settings=TransactionSettings(concurrency="locking"),
+    )
+    ((unit,),) = (plan.units for plan in recorder.plans)
+    assert (unit.end, tuple(unit.changed)) == (0, ())
+
+
+def _position_write(
+    mutation: KeyedMutation,
+    claim: RetainedObservation,
+    *,
+    valid_from: dt.datetime,
+    until: dt.datetime | None = None,
+    **members: object,
+) -> BufferItem:
+    return buffered_write(
+        _prepared_keyed(
+            KeyedWrite(mutation, "Position", ({"id": 1, **members},), valid_from, until),
+            _POSITION,
+        ),
+        claim,
+    )
+
+
+def test_a_row_a_unit_removes_and_reopens_at_one_address_stays_owned() -> None:
+    # The attempt opens [January, December); a termination reaching past it is
+    # bound at execution, and here its bound range removes that row and reopens
+    # it at the same address.
+    members = {
+        "id": 1,
+        "acctNum": "A",
+        "value": Decimal("1.00"),
+        "txStart": _FIXED,
+        "txEnd": INFINITY,
+        "validStart": _JAN,
+        "validEnd": _DEC,
+    }
+    observation = TemporalObservation(predecessor=PredecessorRow(members))
+    key = corpus_object_key("Position", ("id", 1))
+    shape = temporal_read.view(_POSITION).shape(key.entity)
+    assert shape is not None
+    state = observed_state_key(key, observation, shape)
+    endpoint = OwnedEndpoint(key.entity, (1,), (Finite(instant=_DEC), PLANNED_INFINITY))
+    recorder = _Recorder()
+
+    def executor(
+        plan: WritePlan,
+        *,
+        trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
+        completed: Callable[[ExecutionUnit, BoundRange | None], None],
+    ) -> None:
+        (unit,) = plan.units
+        if unit.deferred is None:
+            recorder(plan, trigger=trigger, bind_deferred=bind_deferred, completed=completed)
+            return
+        completed(
+            unit,
+            BoundRange(steps=(), removed=(endpoint,), opened=Openings(fresh=(endpoint,))),
+        )
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(
+            _prepared_keyed(
+                KeyedWrite(
+                    "insertUntil",
+                    "Position",
+                    ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
+                    valid_from=_JAN,
+                    until=_DEC,
+                ),
+                _POSITION,
+            )
+        )
+        uow.read(lambda: None)
+        claim = uow.retain(RetainedObservation(state, observation, None))
+        uow.buffer(_position_write("terminate", claim, valid_from=_DEC))
+        uow.read(lambda: None)
+        later = uow.retain(RetainedObservation(state, observation, None))
+        uow.buffer(
+            _position_write(
+                "updateUntil", later, valid_from=_JAN, until=_DEC, value=Decimal("2.00")
+            )
+        )
+
+    _run(body, meta=_POSITION, executor=executor)
+    # The removal was retired before the opening registered, so the row the
+    # unit reopened at its own address is still the attempt's to revise.
+    assert _step_kinds(recorder) == ["PlannedInsert", "PlannedTemporalRevision"]
+
+
 class ShellTag(Entity, table="shell_tag", namespace="parallax.compatibility"):
     id: Attr[int] = attr(primary_key=True)
     label: Attr[str] = attr(max_length=16)
@@ -1479,6 +1656,15 @@ def _position_row(start: dt.datetime, tx_start: dt.datetime) -> PredecessorRow:
             "txEnd": INFINITY,
         }
     )
+
+
+def _bind(bind_deferred: DeferredBinder, unit: ExecutionUnit, start: dt.datetime) -> BoundRange:
+    """``unit``'s deferred range bound through the flush's own binder to the one
+    current row its coverage read finds, starting at ``start``."""
+    deferred = unit.deferred
+    assert deferred is not None
+    rows = acquired(_BARRIERED, deferred.acquisition, [_position_row(start, _FIXED)])
+    return bind_deferred(deferred, rows)
 
 
 def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetWrite:
@@ -1510,13 +1696,14 @@ def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_pro
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         if len(plan.units) == 1:
             (unit,) = plan.units
             assert unit.deferred is not None
             # A later flush carries no proof: the original's token is stale.
-            unit.deferred.bind([_position_row(_AUG, _FIXED)])
+            _bind(bind_deferred, unit, _AUG)
             return
         first, barrier, later = plan.units
         assert first.derived and not barrier.derived
@@ -1525,7 +1712,7 @@ def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_pro
         (claim,) = held
         seen.append((claim.consumed, claim.invalidated))
         assert later.deferred is not None
-        bound = later.deferred.bind([_position_row(_APR, _FIXED)])
+        bound = _bind(bind_deferred, later, _APR)
         assert not any(isinstance(step, PlannedClose) for step in bound.steps)
         completed(later, bound)
 
@@ -1578,24 +1765,25 @@ def test_an_objects_proofs_end_when_its_last_following_unit_completes() -> None:
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         first, barrier, middle, again, last = plan.units
         completed(first, None)
         completed(barrier, None)
         assert middle.deferred is not None and last.deferred is not None
-        bound = middle.deferred.bind([_position_row(_APR, _FIXED)])
+        bound = _bind(bind_deferred, middle, _APR)
         assert bound.concludes is None  # a later region still follows it
         completed(middle, bound)
         completed(again, None)
-        bound = last.deferred.bind([_position_row(_AUG, _FIXED)])
+        bound = _bind(bind_deferred, last, _AUG)
         assert bound.concludes == key
         assert not any(isinstance(step, PlannedClose) for step in bound.steps)
         completed(last, bound)
         # Nothing the earlier units proved survives the last consumer, even
         # before the flush ends.
         with pytest.raises(WritePreconditionError):
-            last.deferred.bind([_position_row(_AUG, _FIXED)])
+            _bind(bind_deferred, last, _AUG)
 
     def body(uow: UnitOfWork) -> None:
         claim = uow.retain(RetainedObservation(state, original, uow.participation))

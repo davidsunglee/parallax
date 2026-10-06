@@ -31,6 +31,9 @@ from parallax.core.unit_work import (
     WritePreconditionError,
     WriteRejectedError,
 )
+from parallax.core.unit_work.write_planner import WritePlanner
+from parallax.core.write_plan import PredecessorRows
+from parallax.core.write_plan.plan import BoundRange, DeferredRange
 from parallax.snapshot.handle import ScopedDatabase, Transaction, WriteEvidenceError
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -172,6 +175,46 @@ def test_an_optimistic_bitemporal_target_binds_every_interval_its_window_reaches
         (Decimal("150.00"), _JUN, _SEP),
         (Decimal("200.00"), _SEP, INFINITY_INSTANT),
     ]
+
+
+@pytest.mark.parametrize(
+    ("coverage", "acquired"),
+    [
+        pytest.param(
+            [_rectangle(_JAN, _JUN), _rectangle(_JUN, INFINITY_INSTANT, "200.00", tx_start=_T1)],
+            2,
+            id="rows",
+        ),
+        pytest.param([], None, id="no-row"),
+    ],
+)
+def test_a_deferred_range_is_bound_once_between_its_coverage_read_and_its_first_write(
+    monkeypatch: pytest.MonkeyPatch, coverage: list[MappingRow], acquired: int | None
+) -> None:
+    writes = () if acquired is None else (Write(times=6),)
+    port = ScriptedAdapter(Transact(Read(rows=coverage), *writes))
+    seen: list[tuple[int, int, int | None]] = []
+    bind = WritePlanner.bind_deferred
+
+    def recording(
+        planner: WritePlanner,
+        description: DeferredRange,
+        rows: PredecessorRows | None,
+        /,
+        **supplied: Any,
+    ) -> BoundRange:
+        seen.append((len(_reads(port)), len(_writes(port)), None if rows is None else len(rows)))
+        return bind(planner, description, rows, **supplied)
+
+    monkeypatch.setattr(WritePlanner, "bind_deferred", recording)
+    if acquired is None:
+        with raises_contextualized(WritePreconditionError):
+            _db(port).transact(lambda tx: _patch(tx, value="150.00"))
+    else:
+        _db(port).transact(lambda tx: _patch(tx, value="150.00"))
+    # The coverage read has run and no write has: the evidence arrives as read,
+    # or as no evidence at all where the read found no row.
+    assert seen == [(1, 0, acquired)]
 
 
 @pytest.mark.parametrize(

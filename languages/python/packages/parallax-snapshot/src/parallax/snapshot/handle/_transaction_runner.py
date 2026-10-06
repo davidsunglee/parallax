@@ -42,7 +42,7 @@ from parallax.core.unit_work import (
     returns_rows,
     run_unit_of_work,
 )
-from parallax.core.unit_work.uow import UnitReport
+from parallax.core.unit_work.uow import DeferredBinder, UnitReport
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import ExecutionUnit
 from parallax.core.write_plan.steps import PlannedInsert
@@ -653,6 +653,7 @@ class _FlushEdge:
         plan: WritePlan,
         *,
         trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
         completed: UnitReport,
     ) -> None:
         """Lower each planned step, execute every statement in order, hand each
@@ -669,9 +670,10 @@ class _FlushEdge:
         work proceeds.
 
         A unit with a deferred range reaches its turn with no planned step: its
-        coverage is read first (:func:`acquire_coverage`), core binds the range
-        to it, and the bound steps execute and are enforced exactly as planned
-        ones are before the unit is reported with what it bound.
+        coverage is read first (:func:`acquire_coverage`), the unit of work
+        binds the range to it (``bind_deferred``), and the bound steps execute
+        and are enforced exactly as planned ones are before the unit is
+        reported with what it bound.
 
         This performs NO classification of its own: the adopted Write Planner
         already spent the concurrency mode while settling each step, and this
@@ -700,7 +702,7 @@ class _FlushEdge:
         allocated: tuple[object, ...] = ()
         for step, statement in stream_lowered(plan, meta, dialect):
             while unit is not None and unit.end == executed:
-                self._complete(unit, completed, allocated)
+                self._complete(unit, bind_deferred, completed, allocated)
                 allocated = ()
                 unit = next(units, None)
             if unit is not None and unit.opened.allocated and returns_rows(step):
@@ -709,19 +711,23 @@ class _FlushEdge:
                 self._run(step, statement)
             executed += 1
         while unit is not None and unit.end == executed:
-            self._complete(unit, completed, allocated)
+            self._complete(unit, bind_deferred, completed, allocated)
             allocated = ()
             unit = next(units, None)
 
     def _complete(
-        self, unit: ExecutionUnit, completed: UnitReport, allocated: tuple[object, ...]
+        self,
+        unit: ExecutionUnit,
+        bind_deferred: DeferredBinder,
+        completed: UnitReport,
+        allocated: tuple[object, ...],
     ) -> None:
         deferred = unit.deferred
         if deferred is None:
             completed(unit, None, allocated=allocated)
             return
         rows = acquire_coverage(self._model, self._conn, self._batch, deferred.acquisition)
-        bound = deferred.bind(rows)
+        bound = bind_deferred(deferred, rows)
         meta = self._model.model.meta
         dialect = self._conn.dialect
         for step in bound.steps:

@@ -128,6 +128,7 @@ from parallax.core.write_plan import (
     WritePlan,
     WritePlanningError,
 )
+from parallax.core.write_plan.plan import NO_OWNERSHIP
 from parallax.core.write_plan.steps import KeyTarget, PlannedWrite
 from parallax.snapshot import DatabaseOptions, handle
 from parallax.snapshot.handle import (
@@ -1273,19 +1274,17 @@ def _plan_and_lower(
     execution's own coverage read returns — so its statements stand where the
     execution runs them; a lane tracking no case state has none to bind to.
     """
-    plan = (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=_PLANNING_ACTOR,
-                transaction_instant=_pinned_instant(tx_instant),
-                concurrency=concurrency,
-                buffered_writes=compose_writes(model, buffered_writes),
-                counts_unchanged_rows=dialect.counts_unchanged_rows,
-            )
+    planner = build_write_planner(model)
+    instant = _pinned_instant(tx_instant)
+    plan = planner.finalize(
+        PlanningRequest(
+            actor_identity=_PLANNING_ACTOR,
+            transaction_instant=instant,
+            concurrency=concurrency,
+            buffered_writes=compose_writes(model, buffered_writes),
+            counts_unchanged_rows=dialect.counts_unchanged_rows,
         )
-        .plan
-    )
+    ).plan
     executed = ExecutedPlan(plan)
     statements: list[LoweredStatement] = []
     units = iter(plan.units)
@@ -1302,7 +1301,13 @@ def _plan_and_lower(
                         "a range write reached coverage no observation of its unit holds, and "
                         "this lane tracks no case state to bind it to"
                     )
-                bound = deferred.bind(coverage.coverage(model, deferred.acquisition))
+                bound = planner.bind_deferred(
+                    deferred,
+                    coverage.coverage(model, deferred.acquisition),
+                    ownership=NO_OWNERSHIP,
+                    actor_identity=_PLANNING_ACTOR,
+                    transaction_instant=instant,
+                )
                 executed.steps.extend(bound.steps)
                 executed.changed.extend(bound.changed)
                 statements.extend(compile_write_step(step, model, dialect) for step in bound.steps)

@@ -557,7 +557,9 @@ def test_materializing_an_inherited_milestone_page_reads_axes_from_the_family_sh
         assert pin_of(conforming) == Pin(tx_time=_OPENED, valid_time=_VALID_FROM)
 
 
-def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger, completed: object) -> None:
+def _no_flush(
+    _plan: WritePlan, *, trigger: WriteBatchTrigger, bind_deferred: object, completed: object
+) -> None:
     return None
 
 

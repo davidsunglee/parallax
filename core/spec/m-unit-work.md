@@ -666,29 +666,33 @@ semantics already decided.
   temporal object's observed writes whose requested Valid-Time range reaches
   current coverage no planning input observed (`m-bitemp-write` *Observed writes
   span their requested extent*) finalize to their meaning — the composed
-  assignments over that range, the source conditions, and which rows the
-  attempt owns — together with the one coverage read that range needs. Such a
-  unit carries no planned step. When the executor reaches it, it reads the
-  object's current rows over the range not already covered, inside the write
-  batch and under `m-read-lock`'s shared lock when the effective strategy is
-  Locking, and binds those rows with the observed ones into the unit's physical
-  steps before running them. Binding is pure over the finalized meaning and the
-  rows read: it consults no clock, strategy, or model, so the plan's meaning is
-  fixed when planning returns and only its physical enumeration waits for the
-  rows. A range whose observed rows already cover it settles at planning like
-  any other write. A caller-addressed temporal write is such a range whatever it
-  composes with, unless observed rows of its composition cover its window; its
-  meaning also carries the caller's starting condition, which binding judges
-  against the rows read before any step exists, and a replacement's extent,
-  whose uncovered parts binding opens. A composition an ordering barrier kept
-  after earlier writes of its object reads its whole window when its turn comes
-  and binds to those rows alone: each observed condition holds where its
-  rectangle still stands or an earlier unit of the flush proved it, each
-  caller's start where it stands at the stated start or at a row derived from a
-  proven original that held it at that start (*Execution units complete before
-  later work runs*); any other caller's start is a failed precondition, and any
-  other observed condition fails as that write's own shortfall would, the
-  caller's first.
+  assignments over that range, the source conditions, and the resolved instant —
+  together with the one coverage read that range needs. Such a unit carries no
+  planned step, and its meaning is data: it retains no binder, Attempt
+  Ownership, clock, strategy, or Actor Identity. When the executor reaches it,
+  it reads the object's current rows over the range not already covered, inside
+  the write batch and under `m-read-lock`'s shared lock when the effective
+  strategy is Locking, and the unit of work binds those rows — or the absence of
+  any — with the observed ones into the unit's physical steps before they run.
+  Temporal meaning, concurrency, and gates are fixed when planning returns, and
+  binding never recaptures the instant or consults the model: only the physical
+  enumeration waits, for the rows read and for the Attempt Ownership and
+  continuity every earlier unit of the flush published. Provenance decoration
+  then decorates each bound step once, as stage 8 does an eagerly settled one,
+  changing no topology or gate. A range whose observed rows already cover it
+  settles at planning like any other write. A caller-addressed temporal write is
+  such a range whatever it composes with, unless observed rows of its
+  composition cover its window; its meaning also carries the caller's starting
+  condition, which binding judges against the rows read before any step exists,
+  and a replacement's extent, whose uncovered parts binding opens. A composition
+  an ordering barrier kept after earlier writes of its object reads its whole
+  window when its turn comes and binds to those rows alone: each observed
+  condition holds where its rectangle still stands or an earlier unit of the
+  flush proved it, each caller's start where it stands at the stated start or at
+  a row derived from a proven original that held it at that start (*Execution
+  units complete before later work runs*); any other caller's start is a failed
+  precondition, and any other observed condition fails as that write's own
+  shortfall would, the caller's first.
 - Planned Steps is a **logical** sequence. An implementation MAY pack homogeneous
   runs and expose stable immutable views during iteration rather than allocating
   one container per step; every exposed view is immutable and stable, and equal

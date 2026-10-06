@@ -9,17 +9,23 @@ order, and an attempt that opened nothing owns, proved, and derived nothing.
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.write_plan import PlannedInsert, WritePlan
 from parallax.core.write_plan.keys import ObjectKey, VersionedStateKey
 from parallax.core.write_plan.plan import (
+    NO_OPENINGS,
     NO_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
+    BoundRange,
     ExecutionUnit,
     OwnedEndpoint,
     PlannedSteps,
+    RangeAcquisition,
+    UnitEffects,
     eager_segment,
 )
 from parallax.core.write_plan.steps import NEW_LINEAGE, InsertEntry, PlannedRow
@@ -97,3 +103,57 @@ def test_a_plans_units_follow_its_steps_in_order_and_end_with_them() -> None:
         WritePlan(steps=steps, units=(ExecutionUnit(end=2), ExecutionUnit(end=1)))
     with pytest.raises(ValueError, match="end where its 2 step"):
         WritePlan(steps=steps, units=(ExecutionUnit(end=1),))
+
+
+_EFFECTS = ("changed", "removed", "opened", "derived", "concludes")
+
+
+@pytest.mark.parametrize("result", [ExecutionUnit, BoundRange])
+def test_every_result_extends_the_one_flat_effects_vocabulary(result: type[UnitEffects]) -> None:
+    assert issubclass(result, UnitEffects)
+    names = [field.name for field in dataclasses.fields(result)]
+    assert names[: len(_EFFECTS)] == list(_EFFECTS)
+    assert all(field.kw_only for field in dataclasses.fields(result))
+    with pytest.raises(TypeError):
+        result(0)  # type: ignore[call-arg]
+
+
+def test_effects_are_held_in_slots_on_the_unit_and_bound_range_themselves() -> None:
+    for value in (ExecutionUnit(end=0), BoundRange(steps=())):
+        assert not hasattr(value, "__dict__")
+
+
+def test_a_unit_publishes_nothing_it_does_not_name() -> None:
+    unit = ExecutionUnit(end=0)
+    assert [getattr(unit, name) for name in _EFFECTS] == [(), (), NO_OPENINGS, (), None]
+    assert not any(
+        isinstance(getattr(unit, field.name), UnitEffects) for field in dataclasses.fields(unit)
+    )
+    assert (unit.claim, unit.deferred) == (None, None)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _Deferred:
+    acquisition: RangeAcquisition
+
+
+def test_a_deferred_unit_spans_no_step_between_the_units_around_it() -> None:
+    steps = PlannedSteps((eager_segment((_insert(1), _insert(2))),))
+    deferred = _Deferred(
+        RangeAcquisition(
+            entity=entity_of(corpus_model("account"), "Account"),
+            key_attribute=_ID,
+            key_value=1,
+            valid_time_window=None,
+            locking=False,
+        )
+    )
+    units = (
+        ExecutionUnit(end=1),
+        ExecutionUnit(end=1, deferred=deferred),
+        ExecutionUnit(end=1, deferred=deferred),
+        ExecutionUnit(end=2),
+    )
+    assert WritePlan(steps=steps, units=units).units == units
+    leading = (ExecutionUnit(end=0, deferred=deferred), ExecutionUnit(end=2))
+    assert WritePlan(steps=steps, units=leading).units == leading
