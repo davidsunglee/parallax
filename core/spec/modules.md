@@ -124,6 +124,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-batch-write` | Set-based / batched writes | active | cases |
 | `m-cascade-delete` | Cascade delete | active | cases |
 | `m-unit-work` | Transactions & unit of work | active | cases |
+| `m-write-plan` | Planned Write algebra, Write Observations, and predecessor evidence | active | cases |
 | `m-read-lock` | In-transaction shared read lock | active | cases |
 | `m-auto-retry` | Bounded retry on transient conflict | active | cases |
 | `m-execution-lifecycle` | Transient execution observability | active | cases |
@@ -197,7 +198,7 @@ m-sql --> m-storage-layout
 m-sql --> m-relationship
 m-sql --> m-document-codec
 m-sql --> m-wire
-m-sql --> m-unit-work
+m-sql --> m-write-plan
 m-sql --> m-deep-fetch
 m-sql-agg --> m-agg
 m-sql-agg --> m-sql
@@ -213,6 +214,13 @@ m-unit-work --> m-temporal-read
 m-unit-work --> m-edit
 m-unit-work --> m-document-codec
 m-unit-work --> m-relationship
+m-unit-work --> m-write-plan
+m-write-plan --> m-core
+m-write-plan --> m-metamodel
+m-write-plan --> m-predicate
+m-write-plan --> m-inheritance
+m-write-plan --> m-document-codec
+m-write-plan --> m-temporal-read
 m-execution-authority --> m-unit-work
 m-execution-authority --> m-db-port
 m-read-lock --> m-unit-work
@@ -419,16 +427,29 @@ construction it may reference any behavioral module it harnesses.
   driver — so any layer may still hold a port without acquiring a database
   dependency. The direction is one-way: nothing selects a port from a dialect,
   and two ports may report the same one.
-- **`m-unit-work --> m-temporal-read`.** A write-planning module depending on a
-  read module is the surprise, and it is load-bearing: a temporal Observed State
-  Key addresses the object it observed **plus the observed milestone's own
-  coordinate**, and that coordinate is `m-temporal-read`'s Edge. A milestone
-  chain holds more than one row per primary key at a time, so identity alone
-  cannot address the evidence a close needs — the unit of work therefore states
-  its observed-state address in the as-of read model's vocabulary rather than
-  inventing an opaque parallel one. The edge is to the read *model* only: nothing here
-  reaches as-of lowering, and the direction stays one-way, since
-  `m-temporal-read` names no unit-of-work construct.
+- **`m-write-plan --> m-temporal-read`; `m-unit-work --> m-temporal-read`.** A
+  write-planning module depending on a read module is the surprise, and it is
+  load-bearing: a temporal Observed State Key addresses the object it observed
+  **plus the observed milestone's own coordinate**, and that coordinate is
+  `m-temporal-read`'s Edge. A milestone chain holds more than one row per primary
+  key at a time, so identity alone cannot address the evidence a close needs —
+  the write plan therefore states its observed-state address in the as-of read
+  model's vocabulary rather than inventing an opaque parallel one, and the unit
+  of work judges coverage in that same vocabulary. The edges are to the read
+  *model* only: nothing here reaches as-of lowering, and the direction stays
+  one-way, since `m-temporal-read` names no write-plan or unit-of-work construct.
+- **`m-write-plan --> m-core`, `--> m-metamodel`, `--> m-predicate`, `-->
+  m-inheritance`, `--> m-document-codec`.** The Planned Write algebra and the
+  evidence it retains are stated in resolved model terms: managed values and
+  retained documents (`m-core`), member and Entity Identities (`m-metamodel`),
+  the validated predicate a Validated Mutation Selection carries
+  (`m-predicate`), predecessor state aligned to a family-effective member
+  selection (`m-inheritance`), and whether an assigned member already holds its
+  value, which is the codec's effective-change classification
+  (`m-document-codec`). The module names no instruction, buffer, transaction,
+  strategy, or SQL construct, so both `m-unit-work`, which produces the
+  algebra, and `m-sql`, which lowers it, depend on it rather than on each
+  other.
 - **`m-snapshot-read --> m-edit`; `m-unit-work --> m-edit`.** Edited-value
   derivation owns the distinction between state an assignment replaces and state
   carried by complement. Snapshot materialization relies on it when a derived
@@ -458,7 +479,7 @@ construction it may reference any behavioral module it harnesses.
   predicate-selected writes decode resolved scalar leaves once before they become
   buffered prepared-write products. Managed-object mutation remains developer
   input governed by `m-core`.
-- **`m-sql --> m-deep-fetch`, `--> m-unit-work`, `--> m-wire`.** SQL's private
+- **`m-sql --> m-deep-fetch`, `--> m-write-plan`, `--> m-wire`.** SQL's private
   compilers consume resolved flat reads and planned writes. The Wire edge exists
   for canonical document values and carrier contracts, not to authorize SQL to
   decode an authored literal; resolution and conversion have already happened.

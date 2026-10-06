@@ -3,7 +3,7 @@
 `m-sql` is the contract that turns validated read and planned-write products
 into per-dialect SQL, and the rules that make "equivalent SQL per database"
 **testable**. `m-sql` depends on `m-object-query` and `m-deep-fetch` (resolved
-flat reads), `m-predicate` (elaborated selections), `m-unit-work` (planned
+flat reads), `m-predicate` (elaborated selections), `m-write-plan` (planned
 writes), `m-document-codec` and `m-wire` (canonical document values), and
 `m-dialect` (the dialect that decides concrete SQL).
 It reads canonical model identities from `m-metamodel`, family and
@@ -31,7 +31,7 @@ authored member name, or raw serialized literal. A `ValidatedEntityQuery` carrie
 exact target/member identities, an elaborated predicate of managed values,
 resolved temporal terms and ordering, and compact result metadata sufficient for
 row decoding and deep-fetch key gathering. A `PlannedWrite` carries the closed
-`m-unit-work` variant, exact member identities, managed values or generated-value
+`m-write-plan` variant, exact member identities, managed values or generated-value
 expressions, target, concurrency decision, and affected-row policy.
 
 `CompiledRead` carries one metadata-bearing `LoweredStatement` plus the compact
@@ -267,7 +267,7 @@ For each physical branch, SQL selects from the layout values as follows:
    materialized-predicate-write resolving read that widens its own projection
    (*Result form*, below) — needs it whenever the branch's Table carries one at
    all, because the stored document is itself part of what such a read observes:
-   a Predecessor Row retains the raw document (`m-unit-work`), and an owner
+   a Predecessor Row retains the raw document (`m-write-plan`), and an owner
    declaring no document-resident member still holds whatever keys a newer
    application version wrote. Outside that lane a row-form read projects it only
    for a requested document-resident member, so a row-form read of direct members
@@ -348,7 +348,7 @@ whether `Document` slots are selected:
   resolving read is the one row-form read whose consumer can widen the default: it
   additionally projects the Document slots the write it serves needs, which for a
   temporal target is every declared one, because the observation it records is a
-  complete Predecessor Row (`m-unit-work`). Widening the projection does not make it
+  complete Predecessor Row (`m-write-plan`). Widening the projection does not make it
   instance-form — it still constructs no instance.
 
 Row-form is **not a developer surface**: the idiomatic find API always materializes,
@@ -419,7 +419,7 @@ first to rewrite it.
 An `INSERT` binds the Structured Column exactly once, as one complete encoded
 document, in its layout position — the same shape a conventional Value Object
 column already has. A temporal successor is an insert, and the document it binds
-is built from the retained raw predecessor document (`m-unit-work`), never
+is built from the retained raw predecessor document (`m-write-plan`), never
 re-encoded from decoded members.
 
 Assignments to a document-resident member never appear in a primary-key,

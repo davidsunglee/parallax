@@ -15,19 +15,23 @@ from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     KeyedMutation,
     KeyedWrite,
-    ObjectKey,
-    PlannedClose,
-    PlannedInsert,
     PlanningRequest,
-    PredecessorRow,
     RetainedObservation,
     TargetWrite,
-    TemporalObservation,
     buffered_write,
 )
 from parallax.core.unit_work.instructions import prepare_wire_write
 from parallax.core.unit_work.materialized import BufferItem, target_write
-from parallax.core.unit_work.plan import (
+from parallax.core.unit_work.write_planner import compose_writes
+from parallax.core.write_plan import (
+    ObjectKey,
+    PlannedClose,
+    PlannedInsert,
+    PredecessorRow,
+    TemporalObservation,
+)
+from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.plan import (
     NO_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
@@ -37,8 +41,8 @@ from parallax.core.unit_work.plan import (
     Ownership,
     WritePlan,
 )
-from parallax.core.unit_work.planned import INFINITY as OPEN_END
-from parallax.core.unit_work.planned import (
+from parallax.core.write_plan.steps import INFINITY as OPEN_END
+from parallax.core.write_plan.steps import (
     OPTIMISTIC_CONFLICT,
     ExactCount,
     Finite,
@@ -46,8 +50,6 @@ from parallax.core.unit_work.planned import (
     PlannedWrite,
     TemporalGate,
 )
-from parallax.core.unit_work.planner import TemporalStateKey
-from parallax.core.unit_work.write_planner import compose_writes
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY

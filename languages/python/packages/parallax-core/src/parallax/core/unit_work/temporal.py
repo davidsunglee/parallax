@@ -8,16 +8,6 @@ from typing import Final, Literal
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.metamodel import AsOfAxisMetadata, AttributeIdentity, ValueObjectIdentity
 from parallax.core.temporal_read import Bitemporal, TimeInterval, TransactionTimeOnly
-from parallax.core.unit_work.observe import PredecessorRow
-from parallax.core.unit_work.planned import (
-    NEW_LINEAGE,
-    CarriedFrom,
-    ChangedFrom,
-    InsertEntry,
-    InsertOrigin,
-    PlannedValue,
-    adopt_planned_row,
-)
 from parallax.core.unit_work.strategy import (
     AuthoredFrom,
     AuthoredState,
@@ -30,6 +20,16 @@ from parallax.core.unit_work.strategy import (
     PredecessorStart,
     SuccessorState,
     ValidTimeBound,
+)
+from parallax.core.write_plan.observe import PredecessorRow
+from parallax.core.write_plan.steps import (
+    NEW_LINEAGE,
+    CarriedFrom,
+    ChangedFrom,
+    InsertEntry,
+    InsertOrigin,
+    PlannedValue,
+    adopt_planned_row,
 )
 
 type _Cursor = dt.datetime | Literal[TemporalBound.INFINITY]
@@ -73,7 +73,7 @@ class ResolvedWindow:
 class ResolvedSuccessor:
     """One Milestone Successor with every group-wide fact already decided.
 
-    ``state`` fixes the Insert Origin kind (`m-unit-work` "Insert Origin and
+    ``state`` fixes the Insert Origin kind (`m-write-plan` "Insert Origin and
     Close Cause"): a resolved successor's ONLY remaining unknowns are one
     row's own predecessor and authored values, which :func:`bind_successor`
     substitutes.

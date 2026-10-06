@@ -34,7 +34,6 @@ from parallax.core.unit_work import (
     UnitOfWork,
     UnitOfWorkError,
     WriteBatchTrigger,
-    WritePlan,
     WritePlanner,
     active_unit_of_work,
     allocated_keys,
@@ -43,10 +42,11 @@ from parallax.core.unit_work import (
     returns_rows,
     run_unit_of_work,
 )
-from parallax.core.unit_work.plan import ExecutionUnit
-from parallax.core.unit_work.planned import PlannedInsert
-from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.core.unit_work.uow import UnitReport
+from parallax.core.write_plan import WritePlan
+from parallax.core.write_plan.plan import ExecutionUnit
+from parallax.core.write_plan.steps import PlannedInsert
+from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried

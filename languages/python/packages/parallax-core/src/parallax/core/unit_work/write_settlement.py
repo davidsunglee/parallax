@@ -41,7 +41,6 @@ from parallax.core.temporal_read import (
     valid_time_coverage,
 )
 from parallax.core.unit_work.clock import TransactionInstant
-from parallax.core.unit_work.columns import ColumnSlice
 from parallax.core.unit_work.effects import (
     CardinalityCorruptionError,
     MissingTargetError,
@@ -50,7 +49,6 @@ from parallax.core.unit_work.effects import (
 )
 from parallax.core.unit_work.instructions import (
     UPDATE_MUTATIONS,
-    PreparedAssignment,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     PreparedWrite,
@@ -63,86 +61,9 @@ from parallax.core.unit_work.materialized import (
     InsertionKeyedWrite,
     MaterializedWriteGroup,
     ObservedKeyedWrite,
-    PredecessorRows,
     TargetKeyedWrite,
     VersionedEvidence,
     composed_alone,
-)
-from parallax.core.unit_work.observe import (
-    PredecessorRow,
-    TemporalObservation,
-    WriteObservation,
-)
-from parallax.core.unit_work.plan import (
-    NO_OPENINGS,
-    NO_OWNERSHIP,
-    OPEN_BITEMPORAL_ENDS,
-    TRANSACTION_TIME_ENDS,
-    AllocatedOpening,
-    BoundRange,
-    Completion,
-    Completions,
-    Derivation,
-    Descent,
-    ExecutionUnit,
-    Openings,
-    OwnedEndpoint,
-    Ownership,
-    PlannedSteps,
-    RangeAcquisition,
-    StepSegment,
-    WritePlan,
-    eager_segment,
-)
-from parallax.core.unit_work.planned import (
-    ANY_COUNT,
-    FAILED_PRECONDITION,
-    INFINITY,
-    MAX_PLUS_ONE,
-    NEW_LINEAGE,
-    RETURNED_MAX_PLUS_ONE,
-    SUPERSEDED,
-    TERMINATED,
-    UNGATED,
-    UNVERSIONED,
-    AffectedRows,
-    CloseCause,
-    ExactCount,
-    Finite,
-    InsertEntry,
-    KeyTarget,
-    MaxPlusOne,
-    MilestoneTarget,
-    NonTemporalConcurrency,
-    PlannedAssignments,
-    PlannedClose,
-    PlannedDelete,
-    PlannedInsert,
-    PlannedRow,
-    PlannedTemporalGuard,
-    PlannedTemporalRemoval,
-    PlannedTemporalRevision,
-    PlannedUpdate,
-    PlannedValue,
-    SelfIncrement,
-    Shortfall,
-    TemporalConcurrency,
-    TemporalGate,
-    TemporalUpperBound,
-    Ungated,
-    Versioned,
-    VersionGate,
-    adopt_planned_assignments,
-    adopt_planned_row,
-    shortfall_classification,
-    shortfall_for,
-)
-from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
-from parallax.core.unit_work.planner import (
-    ObjectKey,
-    ObservedStateKey,
-    TemporalStateKey,
-    VersionedStateKey,
 )
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
@@ -169,10 +90,91 @@ from parallax.core.unit_work.temporal import (
     successor_bounds,
 )
 from parallax.core.unit_work.write_validate import WriteRejectedError
+from parallax.core.write_plan.columns import ColumnSlice
+from parallax.core.write_plan.keys import (
+    ObjectKey,
+    ObservedStateKey,
+    TemporalStateKey,
+    VersionedStateKey,
+)
+from parallax.core.write_plan.materialized import PredecessorRows
+from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation, WriteObservation
+from parallax.core.write_plan.plan import (
+    NO_OPENINGS,
+    NO_OWNERSHIP,
+    OPEN_BITEMPORAL_ENDS,
+    TRANSACTION_TIME_ENDS,
+    AllocatedOpening,
+    BoundRange,
+    Completion,
+    Completions,
+    Derivation,
+    Descent,
+    ExecutionUnit,
+    Openings,
+    OwnedEndpoint,
+    Ownership,
+    PlannedSteps,
+    RangeAcquisition,
+    StepSegment,
+    WritePlan,
+    eager_segment,
+)
+from parallax.core.write_plan.planned_rows import (
+    WritePlanningError,
+    assigned_name,
+    entity_view,
+    key_target,
+    key_tuple,
+    planned_assignments,
+    planned_row,
+    prepared_assignments,
+    resolve_row,
+    resolved_assignments,
+)
+from parallax.core.write_plan.steps import (
+    ANY_COUNT,
+    FAILED_PRECONDITION,
+    INFINITY,
+    NEW_LINEAGE,
+    RETURNED_MAX_PLUS_ONE,
+    SUPERSEDED,
+    TERMINATED,
+    UNGATED,
+    UNVERSIONED,
+    AffectedRows,
+    CloseCause,
+    ExactCount,
+    Finite,
+    InsertEntry,
+    KeyTarget,
+    MaxPlusOne,
+    MilestoneTarget,
+    NonTemporalConcurrency,
+    PlannedAssignments,
+    PlannedClose,
+    PlannedDelete,
+    PlannedInsert,
+    PlannedTemporalGuard,
+    PlannedTemporalRemoval,
+    PlannedTemporalRevision,
+    PlannedUpdate,
+    PlannedValue,
+    Shortfall,
+    TemporalConcurrency,
+    TemporalGate,
+    TemporalUpperBound,
+    Ungated,
+    Versioned,
+    VersionGate,
+    adopt_planned_assignments,
+    shortfall_classification,
+    shortfall_for,
+)
+from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 __all__ = [
     "OrderedWrite",
-    "WritePlanningError",
     "WritePlanningResult",
     "WriteSettlement",
     "reject_readless_document_many",
@@ -200,21 +202,6 @@ unversioned write as the bare instruction they measure every other one by.
 # or `*Until` predicate write names a milestone, so its only legal targets
 # materialize to keyed writes long before finalization.
 _READLESS_VERBS: Final[frozenset[str]] = frozenset({"update", "delete"})
-
-# A scalar cell's recognized DB-computed marker kinds
-# (`write-instruction.schema.json#/$defs/writeComputedMarker`), classified by
-# SHAPE — a one-key mapping naming one of them. A Value Object occurrence never
-# reaches this classification: its member resolves to a ValueObjectIdentity, so
-# a marker-shaped document stays a document (m-value-object "Writing" marker
-# disambiguation).
-_MARKER_KEYS: Final[frozenset[str]] = frozenset({"computed", "increment"})
-
-
-class WritePlanningError(ValueError):
-    """A buffered write cannot be settled into a Planned Write — a caller
-    wiring defect the planner refuses loudly rather than settling wrongly
-    (e.g. a materializing predicate write that reached planning un-decomposed,
-    or a row naming a member outside its Entity's family)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -734,7 +721,7 @@ class WriteSettlement:
             PlannedUpdate(
                 entity=entity.identity,
                 target=target,
-                assignments=_prepared_assignments(entity, instruction.managed_assignments),
+                assignments=prepared_assignments(entity, instruction.managed_assignments),
                 concurrency=UNVERSIONED,
                 affected_rows=ANY_COUNT,
             ),
@@ -756,9 +743,7 @@ class WriteSettlement:
             else (facts.version_attribute, self._concurrency.version_arithmetic().initial)
         )
         entries = tuple(
-            InsertEntry(
-                row=_planned_row(facts.entity, facts.view, row, version), origin=NEW_LINEAGE
-            )
+            InsertEntry(row=planned_row(facts.entity, facts.view, row, version), origin=NEW_LINEAGE)
             for row in instruction.rows
         )
         return PlannedInsert(entity=facts.entity.identity, entries=entries)
@@ -776,7 +761,7 @@ class WriteSettlement:
         """
         return _NonTemporalFacts(
             entity=entity,
-            view=_view(self._families, entity),
+            view=entity_view(self._families, entity),
             version_attribute=self._concurrency.version_attribute(self._model, entity.identity),
         )
 
@@ -863,7 +848,7 @@ class WriteSettlement:
             tx_instant=tx_instant,
         )
         row = instruction.rows[0]
-        authored_attributes, authored_value_objects = _resolve(
+        authored_attributes, authored_value_objects = resolve_row(
             entity, facts.view, row, context="insert"
         )
         predecessor = None if observed is None else observed.predecessor
@@ -953,7 +938,7 @@ class WriteSettlement:
                 "current milestone, and every close requires the Temporal Observation it "
                 "addresses, gates on, and carries state forward from (m-unit-work; m-opt-lock)"
             )
-        view = _view(self._families, entity)
+        view = entity_view(self._families, entity)
         close: _SettledClose | None = None
         if topology.closure is not None:
             close = _SettledClose(
@@ -1080,7 +1065,7 @@ class WriteSettlement:
             ):
                 self._concurrency.reject_authored_version(entity.identity, facts.version_attribute)
             emission = _Revision(
-                _prepared_assignments(entity, group.mutation.managed_assignments),
+                prepared_assignments(entity, group.mutation.managed_assignments),
                 self._version_overlay(facts.version_attribute),
             )
         return _MaterializedNonTemporalSegment(
@@ -1151,7 +1136,7 @@ class WriteSettlement:
             isinstance(resolved.state, AuthoredState) for resolved in facts.resolved_successors
         )
         assignments = group.mutation.managed_assignments
-        authored_attributes, authored_value_objects = _resolved_assignments(
+        authored_attributes, authored_value_objects = resolved_assignments(
             entity, assignments, "insert"
         )
         selection = evidence.selection
@@ -1164,7 +1149,7 @@ class WriteSettlement:
             change=(
                 prepare_effective_change(
                     selection.shape,
-                    {_assigned_name(assignment): assignment.value for assignment in assignments},
+                    {assigned_name(assignment): assignment.value for assignment in assignments},
                     absent=evidence.absent,
                 )
                 if len(assignments) >= 2
@@ -1200,7 +1185,7 @@ class WriteSettlement:
         if isinstance(item, InsertionKeyedWrite | TargetKeyedWrite) and isinstance(
             shape, TransactionTimeOnly | Bitemporal
         ):
-            view = _view(self._families, item.instruction.target)
+            view = entity_view(self._families, item.instruction.target)
             return composed_alone(item, view.primary_key.identity.name)
         if not isinstance(item, ObservedKeyedWrite) or not isinstance(shape, Bitemporal):
             return None
@@ -1213,7 +1198,7 @@ class WriteSettlement:
         assert window is not None and coverage is not None  # a Bitemporal write and its row
         if coverage.contains(window):
             return None
-        view = _view(self._families, instruction.target)
+        view = entity_view(self._families, instruction.target)
         return composed_alone(item, view.primary_key.identity.name)
 
     def _settle_range(
@@ -1250,7 +1235,7 @@ class WriteSettlement:
         transformed. One a later region follows records what it derives.
         """
         entity = composed.target
-        view = _view(self._families, entity)
+        view = entity_view(self._families, entity)
         gated = self._concurrency.gates(concurrency, self._model, entity.identity)
         facts = _TemporalFacts(
             entity=entity,
@@ -1762,7 +1747,7 @@ def _observed_close(
     return _close_step(
         facts,
         close,
-        key_values=_key_tuple(facts.entity, close.key_attributes, row),
+        key_values=key_tuple(facts.entity, close.key_attributes, row),
         observed_valid_end=(
             predecessor.cell(facts.shape.valid_time.end_attribute)
             if isinstance(facts.shape, Bitemporal)
@@ -2113,7 +2098,7 @@ def _non_temporal_step(
     and receives ONE aggregate step, while a group hands one row per call and
     receives one independently gated step per row.
     """
-    target = _key_target(facts.entity, addressed.key_attributes, key_rows)
+    target = key_target(facts.entity, addressed.key_attributes, key_rows)
     concurrency = _non_temporal_concurrency(
         facts.version_attribute, observed_version, addressed.gated
     )
@@ -2177,7 +2162,7 @@ def _addressed_assignments(
     carrying no key members to project out.
     """
     key_names = frozenset(attribute.name for attribute in addressed.key_attributes)
-    return _assignments(
+    return planned_assignments(
         facts.entity,
         facts.view,
         {name: value for name, value in row.items() if name not in key_names},
@@ -2200,100 +2185,6 @@ def _non_temporal_concurrency(
         return UNVERSIONED
     gate = VersionGate(observed_version=observed_version) if gated else UNGATED
     return Versioned(attribute=version_attr, gate=gate)
-
-
-def _planned_row(
-    entity: EntityMetadata,
-    view: InheritanceEntityView,
-    row: Mapping[str, object],
-    version: tuple[AttributeIdentity, int] | None,
-) -> PlannedRow:
-    """One write row as its finalized semantic contents.
-
-    A versioned Entity's row derives the INITIAL version at its own Attribute
-    (`m-opt-lock`), ignoring any value the row carries — the version is
-    framework-owned end to end, and the initial value the caller
-    already resolved is a constant rather than an observation. ``version`` is
-    absent for a temporal successor row, which carries no version column.
-    """
-    attributes, value_objects = _resolve(entity, view, row, context="insert")
-    if version is not None:
-        attribute, initial_value = version
-        attributes[attribute] = initial_value
-    return adopt_planned_row(attributes, value_objects)
-
-
-def _assignments(
-    entity: EntityMetadata,
-    view: InheritanceEntityView,
-    row: Mapping[str, object],
-) -> PlannedAssignments:
-    attributes, value_objects = _resolve(entity, view, row, context="update")
-    return adopt_planned_assignments(attributes, value_objects)
-
-
-def _prepared_assignments(
-    entity: EntityMetadata, assignments: Sequence[PreparedAssignment]
-) -> PlannedAssignments:
-    """Resolved predicate assignments in their final member-identity maps."""
-    attributes, value_objects = _resolved_assignments(entity, assignments, "update")
-    return adopt_planned_assignments(attributes, value_objects)
-
-
-def _resolved_assignments(
-    entity: EntityMetadata, assignments: Sequence[PreparedAssignment], context: str
-) -> tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]:
-    """Prepared assignments keyed by member identity, each Attribute cell's
-    marker classified for ``context``."""
-    attributes: dict[AttributeIdentity, PlannedValue] = {}
-    value_objects: dict[ValueObjectIdentity, object] = {}
-    for assignment in assignments:
-        member = assignment.member
-        if isinstance(member, AttributeMetadata):
-            attributes[member.identity] = _cell(
-                entity, member.identity.name, assignment.value, context
-            )
-        else:
-            value_objects[member.identity] = assignment.value
-    return attributes, value_objects
-
-
-def _assigned_name(assignment: PreparedAssignment) -> str:
-    """The declared member name one prepared assignment writes."""
-    identity = assignment.member.identity
-    return identity.name if isinstance(identity, AttributeIdentity) else identity.path[-1]
-
-
-def _resolve(
-    entity: EntityMetadata,
-    view: InheritanceEntityView,
-    row: Mapping[str, object],
-    *,
-    context: str | None,
-) -> tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]:
-    """``row``'s cells under their resolved member identities, read off the
-    family-effective indexes the Inheritance Facet compiled once.
-
-    A Value Object occurrence is consulted FIRST, so an occurrence sharing a
-    name with an applicable Attribute still claims the cell.
-    """
-    attributes: dict[AttributeIdentity, PlannedValue] = {}
-    value_objects: dict[ValueObjectIdentity, object] = {}
-    for name, value in row.items():
-        occurrence = view.applicable_value_object(name)
-        if occurrence is not None:
-            value_objects[occurrence.identity] = value
-            continue
-        attribute = view.applicable_attribute(name)
-        if attribute is None:
-            raise WritePlanningError(
-                f"{entity.identity.name!r}: write row names {name!r}, which is not a member "
-                "of the Entity's family"
-            )
-        attributes[attribute.identity] = (
-            value if context is None else _cell(entity, name, value, context)
-        )
-    return attributes, value_objects
 
 
 def _close(
@@ -2418,94 +2309,6 @@ def assigned_many_path(occurrence: OccurrenceMetadata, authored: object) -> tupl
         if path is not None:
             return (name, *path)
     return None
-
-
-def _view(families: InheritanceFacet, entity: EntityMetadata) -> InheritanceEntityView:
-    """``entity``'s compiled family-effective view — its applicable member
-    chain, the indexes a write row's names resolve through, and the family key.
-
-    An inheritance participant declares only its own members while its
-    writes name every inherited one, so the applicable chain, not the
-    Entity's own declarations, is what a write-side member lookup reads.
-    """
-    position = families.entity(entity.identity)
-    if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
-    return position
-
-
-def _key_target(
-    entity: EntityMetadata,
-    key_attributes: tuple[AttributeIdentity, ...],
-    rows: Sequence[Mapping[str, object]],
-) -> KeyTarget:
-    """The rows an addressed keyed write selects, one aligned value tuple each."""
-    return KeyTarget(
-        key_attributes=key_attributes,
-        key_values=tuple(_key_tuple(entity, key_attributes, row) for row in rows),
-    )
-
-
-def _key_tuple(
-    entity: EntityMetadata,
-    key_attributes: tuple[AttributeIdentity, ...],
-    row: Mapping[str, object],
-) -> tuple[object, ...]:
-    """One addressed row's aligned primary-key values.
-
-    A row that omits a key member addresses nothing, so it is refused here
-    rather than settled into a target with a missing value.
-    """
-    values: list[object] = []
-    for attribute in key_attributes:
-        if attribute.name not in row:
-            raise WritePlanningError(
-                f"{entity.identity.name!r}: an addressed write row omits the primary-key "
-                f"member {attribute.name!r}, so it selects no row"
-            )
-        values.append(row[attribute.name])
-    return tuple(values)
-
-
-def _cell(entity: EntityMetadata, name: str, value: object, context: str) -> PlannedValue:
-    """``value`` as a planned cell: an ordinary literal, or the closed
-    generated-value expression its DB-computed marker names.
-
-    Each `m-pk-gen` allocation is legal only where the statement that renders
-    it can express it: `max` folds into the row an insert opens, and the
-    registry advance reads the very row an update revises. Reaching the other
-    position names no allocation this target supports, and is refused here
-    rather than settled wrongly.
-    """
-    marker = _marker(value)
-    if marker is None:
-        return value
-    kind, payload = marker
-    if kind == "computed" and context == "insert":
-        if payload != "maxPlusOne":
-            raise WritePlanningError(
-                f"unsupported DB-computed marker on {entity.identity.name!r}.{name}: "
-                f"{payload!r} is not a recognized `computed` strategy (m-pk-gen)"
-            )
-        return MAX_PLUS_ONE
-    if kind == "increment" and context == "update":
-        return SelfIncrement(amount=cast("int", payload))
-    raise WritePlanningError(
-        f"unsupported DB-computed marker on {entity.identity.name!r}.{name}: a {kind!r} "
-        f"marker is not recognized for {context} planning"
-    )
-
-
-def _marker(value: object) -> tuple[str, object] | None:
-    """``value``'s ``(marker key, payload)`` when it is shaped as a DB-computed
-    marker, else ``None``. A differently shaped mapping is an ordinary literal."""
-    if not isinstance(value, Mapping):
-        return None
-    marker = cast("Mapping[str, object]", value)
-    if len(marker) != 1:
-        return None
-    key = next(iter(marker))
-    return (key, marker[key]) if key in _MARKER_KEYS else None
 
 
 def _require_unobserved(entity: EntityMetadata, mutation: str, observation: object | None) -> None:
@@ -3288,7 +3091,7 @@ class _RangeBinding:
         binding however many pieces carry it."""
         maps = resolved.get(id(assigned))
         if maps is None:
-            maps = _resolve(self.facts.entity, self.facts.view, assigned, context="insert")
+            maps = resolve_row(self.facts.entity, self.facts.view, assigned, context="insert")
             resolved[id(assigned)] = maps
         return maps
 

@@ -188,7 +188,7 @@ wrapper, or identifier.
 
 ## The close addresses a Milestone Target
 
-A close addresses `m-unit-work`'s **Milestone Target**: the primary key plus one
+A close addresses `m-write-plan`'s **Milestone Target**: the primary key plus one
 write-required **exclusive upper bound per As-Of Axis**. For Transaction-Time-Only
 data that is the single `out_z = infinity` bound. The target carries no axis
 start, no observation, no gate, and no Effective Concurrency Strategy, and it is

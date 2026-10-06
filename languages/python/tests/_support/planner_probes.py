@@ -13,10 +13,8 @@ from parallax.core.unit_work import (
     BufferItem,
     KeyedWrite,
     MaterializedWriteGroup,
-    ObjectKey,
     PredicateWrite,
     SubjectActor,
-    WriteObservation,
     buffered_write,
     object_key,
 )
@@ -34,6 +32,7 @@ from parallax.core.unit_work.materialized import (
 from parallax.core.unit_work.strategy import ActorIdentity
 from parallax.core.unit_work.write_planner import BufferedWrite, compose_writes
 from parallax.core.unit_work.write_settlement import OrderedWrite
+from parallax.core.write_plan import ObjectKey, WriteObservation
 
 __all__ = ["TEST_ACTOR_IDENTITY", "observed_buffer", "observed_write"]
 

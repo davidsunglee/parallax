@@ -14,7 +14,6 @@ from parallax.core.unit_work import (
     UPDATE_MUTATIONS,
     KeyedMutation,
     KeyedWrite,
-    ObjectKey,
     ReadOrigin,
     TargetMutation,
     UnitOfWork,
@@ -27,6 +26,7 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.unit_work.uow import NO_INSERTION_AUTHORITY, NoInsertionAuthority
+from parallax.core.write_plan import ObjectKey
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried

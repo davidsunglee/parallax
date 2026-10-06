@@ -52,19 +52,21 @@ from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
     MissingTargetError,
-    ObjectKey,
     OptimisticLockConflictError,
-    PredecessorRow,
     RetainedObservation,
     StaleWriteError,
-    TemporalObservation,
-    VersionObservation,
     WriteEffectError,
     WriteRejectedError,
     instructions,
 )
 from parallax.core.unit_work.instructions import PreparedKeyedWrite
-from parallax.core.unit_work.planner import TemporalStateKey, VersionedStateKey
+from parallax.core.write_plan import (
+    ObjectKey,
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+)
+from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
 from parallax.snapshot import DatabaseOptions
 from parallax.snapshot.handle import WriteEvidenceError
 from tests.unit._transact_support import PERSON

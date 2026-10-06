@@ -35,23 +35,25 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     BufferItem,
-    EntityStateRow,
     KeyedWrite,
-    ObservedStateKey,
     ReadOrigin,
     RetainedObservation,
-    TemporalObservation,
     TransactionSettings,
     UnitOfWork,
-    VersionObservation,
     WriteBatchTrigger,
-    WritePlan,
     buffered_write,
-    observed_state_key,
     run_unit_of_work,
 )
 from parallax.core.unit_work.instructions import prepare_typed_write
-from parallax.core.unit_work.planner import TemporalStateKey, VersionedStateKey
+from parallax.core.write_plan import (
+    EntityStateRow,
+    ObservedStateKey,
+    TemporalObservation,
+    VersionObservation,
+    WritePlan,
+    observed_state_key,
+)
+from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
 from parallax.snapshot.handle import build_write_planner
 from parallax.snapshot.handle._materialization import Materializer
 from parallax.snapshot.handle._retention import ObservedRows, deferred_read_sources
@@ -425,7 +427,7 @@ def test_a_retained_predecessor_document_is_the_one_the_read_transferred(
 ) -> None:
     # The dialect transfers the decoded document to the read, so both retention
     # hops keep that document itself, host containers and all, rather than a
-    # frozen copy of it (`m-unit-work` "Predecessor Row").
+    # frozen copy of it (`m-write-plan` "Predecessor Row").
     model = _accepted("document-layout")
     entity = corpus_entity("Voyage")
     document: dict[str, object] = {

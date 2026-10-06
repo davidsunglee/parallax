@@ -25,13 +25,13 @@ from parallax.core.metamodel import (
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.storage_layout import RelationalDocument, TableLayout
 from parallax.core.temporal_read import Pin
-from parallax.core.unit_work import ObjectKey
 from parallax.core.wire import (
     WireDecodingError,
     WireValue,
     decode_canonical_wire,
     encode_wire,
 )
+from parallax.core.write_plan import ObjectKey
 
 __all__ = ["ActualWireProjection"]
 

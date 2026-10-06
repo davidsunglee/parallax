@@ -53,10 +53,10 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     WriteBatchTrigger,
-    WritePlan,
     run_unit_of_work,
 )
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, prepare_typed_write
+from parallax.core.write_plan import WritePlan
 from parallax.snapshot.handle import ExecutionFailure, build_write_planner, prepare_model
 from parallax.snapshot.handle import _read_scope as read_scope_module
 from parallax.snapshot.handle._execution_authority import LoginExecution, capture_database_login

@@ -548,7 +548,7 @@ between them.
 A temporal successor is built by patching the retained raw predecessor document
 at the assigned paths alone rather than by re-encoding decoded members, so keys
 the running application does not declare survive the close-and-insert outside
-every occurrence the mutation assigned (`m-unit-work`). The predecessor is
+every occurrence the mutation assigned (`m-write-plan`). The predecessor is
 retained under `m-core`'s recursive ownership contract once. A successor with no
 document changes reuses that exact owned document; a changed successor shallowly
 constructs one final root and shares untouched owned subtrees.

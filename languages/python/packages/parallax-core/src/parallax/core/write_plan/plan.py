@@ -8,8 +8,8 @@ from typing import Final, Protocol
 from parallax.core.base import ManagedValue
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work.planned import INFINITY, PlannedWrite, TemporalUpperBound
-from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey
+from parallax.core.write_plan.steps import INFINITY, PlannedWrite, TemporalUpperBound
 
 __all__ = [
     "NO_OPENINGS",

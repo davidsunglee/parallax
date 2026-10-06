@@ -1,4 +1,4 @@
-"""Entity State row views and Predecessor Rows (`parallax.core.unit_work.observe`).
+"""Entity State row views and Predecessor Rows (`parallax.core.write_plan.observe`).
 
 The Mapping contract of the positional view over one decoded Entity State, keyed
 by declared member name, and of the nested Value Object views it exposes, driven
@@ -22,7 +22,7 @@ from parallax.core.entity._layout import EntityLayout, LayoutCatalog
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.temporal_read import Bitemporal, milestone_edge, valid_time_coverage
-from parallax.core.unit_work import EntityStateRow, PredecessorRow
+from parallax.core.write_plan import EntityStateRow, PredecessorRow
 from tests.unit import _predicate_acquisition_support as acquisition
 from tests.unit._document_layout_support import PERSON, columns_model, document_model
 from tests.unit._positional_row_support import positional_row
@@ -428,3 +428,10 @@ def test_a_predecessor_rows_edge_reads_no_axis_end(
     edge = milestone_edge(_valid_time(entity), predecessor, None)
 
     assert (edge.valid_time, edge.tx_time) == (_VALID_FROM, _OPENED)
+
+
+def test_a_predecessor_row_carrying_no_member_is_refused() -> None:
+    # A Temporal Observation retains the whole predecessor or none of it: a
+    # partial one would silently drop members temporal expansion carries forward.
+    with pytest.raises(ValueError, match="complete state"):
+        PredecessorRow(members={})

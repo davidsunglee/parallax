@@ -42,12 +42,12 @@ from parallax.core.unit_work import (
     OptimisticLockConflictError,
     PlanningRequest,
     StaleWriteError,
-    VersionObservation,
     WriteEffectError,
     enforce_affected_rows,
     object_key,
 )
-from parallax.core.unit_work.planned import (
+from parallax.core.write_plan import VersionObservation
+from parallax.core.write_plan.steps import (
     MISSING_TARGET,
     STALE_WRITE,
     AffectedRows,

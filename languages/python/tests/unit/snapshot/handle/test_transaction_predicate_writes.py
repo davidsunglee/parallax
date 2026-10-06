@@ -77,21 +77,23 @@ from parallax.core.predicate import ModelRejectedError
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.unit_work import (
     BufferItem,
-    ChunkedColumnBuilder,
-    EntityStateRow,
     MaterializedWriteGroup,
     OptimisticLockConflictError,
-    PredecessorRow,
-    PredecessorRows,
-    PredecessorRowsBuilder,
     PredicateWrite,
     StaleWriteError,
     UnitOfWork,
     WriteRejectedError,
     instructions,
 )
-from parallax.core.unit_work.columns import ColumnSlice
 from parallax.core.unit_work.write_settlement import assigned_many_path
+from parallax.core.write_plan import (
+    ChunkedColumnBuilder,
+    EntityStateRow,
+    PredecessorRow,
+    PredecessorRows,
+    PredecessorRowsBuilder,
+)
+from parallax.core.write_plan.columns import ColumnSlice
 from parallax.snapshot import QueryTargetError, Snapshot, SnapshotDecodingError, connect
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 from parallax.snapshot.handle import _predicate_writes as predicate_writes

@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Final
 
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.unit_work import ObjectKey
+from parallax.core.write_plan import ObjectKey
 
 __all__ = [
     "CORPUS_NAMESPACE",

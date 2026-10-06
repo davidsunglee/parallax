@@ -1,21 +1,18 @@
-"""Compact private column storage for write planning (m-unit-work, Docker-free).
+"""Compact private storage of materialized write planning (m-unit-work, Docker-free).
 
-Covers the compact private storage constructs beneath the finalized Planned
-Write algebra: bounded chunk construction and Column Slice sharing
-(:mod:`parallax.core.unit_work.columns`), a Materialized Write Group's aligned
-evidence — retained Predecessor Rows or key/version columns — Planned Steps'
-segmented backing —
-stable view equality with no object-identity promise, and no mutable
-flyweight reused across iterations — and structural sharing carried all the
-way through temporal expansion and lowering. Bounded wrapper allocation is a
-separate invariant from storage shape and correctness.
+Covers a Materialized Write Group's versioned evidence and the state keys its
+temporal evidence answers, then Planned Steps' segmented backing — stable view
+equality with no object-identity promise, and no mutable flyweight reused across
+iterations — and structural sharing carried all the way through temporal
+expansion and lowering. Bounded wrapper allocation is a separate invariant from
+storage shape and correctness.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-from collections.abc import Iterator, Mapping, Sequence, Sized
+from collections.abc import Mapping, Sequence, Sized
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, cast
@@ -31,26 +28,17 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Entity, inheritance, opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import BUILTIN_MANIFEST
-from parallax.core.base import INFINITY, FrozenMap
+from parallax.core.base import INFINITY
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeIdentity, AttributeMetadata, FacetKey, Metamodel
+from parallax.core.metamodel import AttributeMetadata, FacetKey, Metamodel
 from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
-    ChunkedColumnBuilder,
-    EntityStateRow,
     MaterializedWriteGroup,
     MilestoneTopology,
-    PlannedClose,
-    PlannedInsert,
     PlanningRequest,
-    PredecessorRow,
-    PredecessorRows,
-    PredecessorRowsBuilder,
     PredicateSelection,
     PredicateWrite,
     SystemClock,
@@ -59,23 +47,13 @@ from parallax.core.unit_work import (
     VersionedEvidence,
     VersionedEvidenceBuilder,
     WriteAssignment,
-    WritePlan,
     WritePlanner,
-    whole,
-)
-from parallax.core.unit_work.columns import (
-    _CHUNK_SIZE,  # pyright: ignore[reportPrivateUsage] - bounded-chunking regression only
-    ChunkedColumn,
-    ColumnSlice,
-    freeze_retained_value,
 )
 from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
 )
 from parallax.core.unit_work.materialized import GroupStates
-from parallax.core.unit_work.planned import ChangedFrom, PlannedUpdate, adopt_planned_row
-from parallax.core.unit_work.planner import TemporalStateKey
 from parallax.core.unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
@@ -85,6 +63,20 @@ from parallax.core.unit_work.strategy import (
 from parallax.core.unit_work.write_settlement import (
     WriteSettlement,  # producer-reach regression only
 )
+from parallax.core.write_plan import (
+    ChunkedColumnBuilder,
+    EntityStateRow,
+    PlannedClose,
+    PlannedInsert,
+    PredecessorRows,
+    WritePlan,
+    whole,
+)
+from parallax.core.write_plan.columns import (
+    ColumnSlice,
+)
+from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.steps import ChangedFrom, PlannedUpdate
 from parallax.snapshot.handle import Database, Transaction, build_write_planner
 from tests._support import mirrored_models as mm
 from tests._support.clock_probes import CountingClock, inert_instant
@@ -97,13 +89,11 @@ from tests._support.db_port import (
 )
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.root_ownership import own_root
-from tests.unit import _predicate_acquisition_support as acquisition
-from tests.unit._document_layout_support import PERSON, document_model
 from tests.unit._gc_reachability import reachable_objects
-from tests.unit._positional_row_support import positional_row
 from tests.unit._temporal_group_support import temporal_group
 from tests.unit._transact_support import BALANCE as BALANCE_MODEL
 from tests.unit._transact_support import WHERE_POSITION_META, WherePosition, db_for
+from tests.unit.core import _milestone_rows_support as milestone_rows
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
@@ -111,288 +101,25 @@ _BALANCE = _MODELS["balance"]
 _BRANCH = _MODELS["branch"]
 _POSITION = _MODELS["position"]
 _OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_JAN, _MAR = (dt.datetime(2026, month, 1, tzinfo=dt.UTC) for month in (1, 3))
 
 
 # --------------------------------------------------------------------------- #
-# Chunked Column / Column Slice: bounded construction and structural sharing. #
+# Group evidence: the states a group selected, and its versioned columns.      #
 # --------------------------------------------------------------------------- #
-def test_retained_tuple_freezes_nested_mutable_values_without_copying_immutable_peers() -> None:
-    immutable = ("stable",)
-
-    frozen = freeze_retained_value((immutable, [1, {"nested": [2]}]))
-
-    assert frozen == (immutable, (1, FrozenMap({"nested": (2,)})))
-    assert cast("tuple[object, ...]", frozen)[0] is immutable
-
-
-def test_a_chunked_column_seals_bounded_chunks_as_it_builds() -> None:
-    builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
-    count = _CHUNK_SIZE * 2 + 7
-    for value in range(count):
-        builder.append(value)
-    column = builder.build()
-    assert len(column) == count
-    assert [len(chunk) for chunk in column.chunks] == [_CHUNK_SIZE, _CHUNK_SIZE, 7]
-    assert column[0] == 0
-    assert column[_CHUNK_SIZE] == _CHUNK_SIZE
-    assert column[-1] == count - 1
-    assert list(column) == list(range(count))
-
-
-def test_a_chunked_column_refuses_a_declared_length_disagreeing_with_its_chunks() -> None:
-    builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
-    builder.append(1)
-    column = builder.build()
-    with pytest.raises(ValueError, match="declared length"):
-        ChunkedColumn(chunks=column.chunks, length=2)
-
-
-def test_a_chunked_column_refuses_an_out_of_range_index() -> None:
-    builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
-    builder.append(1)
-    column = builder.build()
-    with pytest.raises(IndexError):
-        column[1]
-    with pytest.raises(IndexError):
-        column[-2]
-
-
-def test_a_column_slice_shares_its_backing_column_without_copying() -> None:
-    builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
-    for value in range(10):
-        builder.append(value)
-    column = builder.build()
-    left = ColumnSlice(column, 0, 5)
-    right = ColumnSlice(column, 5, 10)
-    assert list(left) == [0, 1, 2, 3, 4]
-    assert list(right) == [5, 6, 7, 8, 9]
-    assert left.column is right.column  # ONE backing column, two independent views
-    # Two independently constructed slices over equal ranges of an equal
-    # (not merely identical) column compare equal by structure.
-    other = ColumnSlice(whole(builder.build()).column, 0, 5)
-    assert left == other
-    assert left is not other
-
-
-def test_a_column_slice_refuses_an_invalid_range() -> None:
-    column = whole(ChunkedColumnBuilder[int]().build())
-    with pytest.raises(ValueError, match="Column Slice"):
-        ColumnSlice(column.column, 1, 0)
-
-
-def test_a_column_slice_refuses_an_out_of_range_index() -> None:
-    builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
-    builder.append(1)
-    builder.append(2)
-    sliced = ColumnSlice(builder.build(), 0, 1)
-    with pytest.raises(IndexError):
-        sliced[1]
-    with pytest.raises(IndexError):
-        sliced[-2]
-
-
-# --------------------------------------------------------------------------- #
-# Group evidence: aligned by construction, adopted by reference.              #
-# --------------------------------------------------------------------------- #
-_PERSON = LayoutCatalog(document_model()).entity(PERSON)
-
-
-def _person_row(key: int) -> tuple[object, ...]:
-    return (key, "Ada", ABSENT, None, ("Bergen", ("NO",)), (("founder",), (None,)))
-
-
-def _person_rows(
-    rows: Sequence[tuple[object, ...]], documents: Sequence[object] | None = None
-) -> PredecessorRows:
-    builder = PredecessorRowsBuilder(
-        _PERSON.member_selection,
-        key_position=_PERSON.primary_key[0],
-        absent=ABSENT,
-        documents=documents is not None,
-    )
-    for index, row in enumerate(rows):
-        builder.append(row, None if documents is None else documents[index])
-    sealed = builder.seal()
-    assert sealed is not None
-    return sealed
-
-
-def test_predecessor_rows_retain_each_judged_row_and_raw_document_by_reference() -> None:
-    first, second = _person_row(1), _person_row(2)
-    stored: list[object] = [{"displayName": "Ada", "unknown": {"kept": True}}, {}]
-
-    evidence = _person_rows([first, second], stored)
-    predecessor = PredecessorRow.over_row(
-        evidence.selection, evidence.rows[0], evidence.document(0), evidence.absent
-    )
-
-    assert len(evidence) == 2
-    assert evidence.rows[0] is first
-    assert evidence.rows[1] is second
-    assert [evidence.key(0), evidence.key(1)] == [1, 2]
-    assert evidence.document(0) is stored[0]
-    assert predecessor.document is stored[0]
-    assert predecessor.member("address") == {"city": "Bergen", "geo": {"country": "NO"}}
-    assert predecessor.member("score") is ABSENT
-
-
-def test_predecessor_rows_without_a_structured_column_answer_no_document() -> None:
-    evidence = _person_rows([_person_row(1)])
-
-    assert evidence.documents is None
-    assert evidence.document(0) is None
-
-
-def test_predecessor_rows_seal_bounded_chunks_and_keep_documents_aligned() -> None:
-    count = _CHUNK_SIZE * 2 + 3
-    rows = [_person_row(key) for key in range(count)]
-    documents: list[object] = [{"row": key} for key in range(count)]
-
-    evidence = _person_rows(rows, documents)
-
-    assert [len(chunk) for chunk in evidence.rows.column.chunks] == [
-        _CHUNK_SIZE,
-        _CHUNK_SIZE,
-        3,
-    ]
-    for index in (0, _CHUNK_SIZE - 1, _CHUNK_SIZE, count - 1):
-        assert evidence.rows[index] is rows[index]
-        assert evidence.key(index) == index
-        assert evidence.document(index) is documents[index]
-
-
-def test_predecessor_rows_read_an_axis_start_by_its_selection_position() -> None:
-    evidence = _person_rows([_person_row(5)])
-    key = cast("AttributeMetadata", _PERSON.member_selection.bindings[0]).identity
-
-    assert evidence.axis_start(0, key) == 5
-    assert evidence.axis_start(0, dataclasses.replace(key, name="txStart")) is None
-
-
-_BITEMPORAL_MODEL = model_of(acquisition.MODEL)
-_BITEMPORAL_LAYOUTS = pytest.mark.parametrize(
-    "entity",
-    [acquisition.AcquisitionColumns, acquisition.AcquisitionDocument],
-    ids=["columns", "document"],
-)
-
-
-def _milestones(
-    entity: type[Entity], *spans: tuple[dt.datetime, object]
-) -> tuple[PredecessorRows, temporal_read.Bitemporal]:
-    """One stored milestone of ``entity`` per Valid-Time ``(start, end)`` span,
-    keyed from one, as a resolving read appends them."""
-    layout = LayoutCatalog(_BITEMPORAL_MODEL).entity(entity.identity)
-    selection = layout.member_selection
-    builder = PredecessorRowsBuilder(
-        selection, key_position=layout.primary_key[0], absent=ABSENT, documents=False
-    )
-    for key, (start, end) in enumerate(spans, 1):
-        cells = {
-            "id": key,
-            "title": "Ada",
-            "validStart": start,
-            "validEnd": end,
-            "txStart": acquisition.TX_START,
-            "txEnd": INFINITY,
-        }
-        builder.append(positional_row(selection.shape, cells, absent=ABSENT))
-    evidence = builder.seal()
-    shape = temporal_read.view(_BITEMPORAL_MODEL).shape(entity.identity)
-    assert evidence is not None
-    assert isinstance(shape, temporal_read.Bitemporal)
-    return evidence, shape
-
-
-_JAN, _MAR, _APR, _JUN = (dt.datetime(2026, month, 1, tzinfo=dt.UTC) for month in (1, 3, 4, 6))
-
-
-@_BITEMPORAL_LAYOUTS
-def test_predecessor_rows_cover_each_row_with_its_own_valid_time_cells(
-    entity: type[Entity],
-) -> None:
-    evidence, shape = _milestones(entity, (_JAN, _MAR), (_MAR, INFINITY))
-
-    first = temporal_read.valid_time_coverage(shape, evidence, 0)
-    second = temporal_read.valid_time_coverage(shape, evidence, 1)
-
-    assert evidence.axis_end(1, shape.valid_time.end_attribute) is INFINITY
-    assert (
-        evidence.axis_end(0, dataclasses.replace(shape.valid_time.end_attribute, name="none"))
-        is None
-    )
-    assert first is not None
-    assert second is not None
-    assert (first.start, first.end, second.start, second.end) == (_JAN, _MAR, _MAR, INFINITY)
-    assert first.start is _JAN
-    assert first.end is _MAR
-    assert second.end is INFINITY
-
-
-class _RecordedRows:
-    """A carrier's milestones, answered by delegation, recording each row read."""
-
-    def __init__(self, rows: PredecessorRows) -> None:
-        self._rows = rows
-        self.read: list[int] = []
-
-    def axis_start(self, at: int, attribute: AttributeIdentity, /) -> object:
-        self.read.append(at)
-        return self._rows.axis_start(at, attribute)
-
-    def axis_end(self, at: int, attribute: AttributeIdentity, /) -> object:
-        self.read.append(at)
-        return self._rows.axis_end(at, attribute)
-
-
-@_BITEMPORAL_LAYOUTS
-def test_group_coverage_is_read_lazily_and_only_until_a_gap_is_found(
-    entity: type[Entity],
-) -> None:
-    evidence, shape = _milestones(entity, (_JAN, _MAR), (_APR, _JUN), (_JUN, INFINITY))
-    recorded = _RecordedRows(evidence)
-    window = temporal_read.TimeInterval(_JAN, INFINITY)
-
-    def coverage() -> Iterator[temporal_read.TimeInterval]:
-        for index in range(len(evidence)):
-            interval = temporal_read.valid_time_coverage(shape, recorded, index)
-            assert interval is not None
-            yield interval
-
-    uncovered = window.first_uncovered(coverage())
-
-    assert uncovered == _MAR
-    assert recorded.read == [0, 0, 1, 1]
-
-
-@_BITEMPORAL_LAYOUTS
+@pytest.mark.parametrize("entity", milestone_rows.LAYOUT_ENTITIES, ids=milestone_rows.LAYOUT_IDS)
 def test_a_groups_state_keys_read_no_axis_end(
     monkeypatch: pytest.MonkeyPatch, entity: type[Entity]
 ) -> None:
     def refuse(*_arguments: object) -> object:
         raise AssertionError("a state key read an axis end")
 
-    evidence, shape = _milestones(entity, (_JAN, _MAR), (_MAR, INFINITY))
+    evidence, shape = milestone_rows.milestones(entity, (_JAN, _MAR), (_MAR, INFINITY))
     monkeypatch.setattr(PredecessorRows, "axis_end", refuse)
 
     keys = list(GroupStates(entity.identity, "id", evidence, shape))
 
     assert [cast("TemporalStateKey", key).milestone.valid_time for key in keys] == [_JAN, _MAR]
-
-
-def test_predecessor_rows_refuse_misaligned_or_empty_evidence() -> None:
-    evidence = _person_rows([_person_row(1)], [{}])
-    two: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    two.append({})
-    two.append({})
-    empty = whole(ChunkedColumnBuilder[tuple[object, ...]]().build())
-
-    with pytest.raises(ValueError, match="one raw document with each row"):
-        dataclasses.replace(evidence, documents=whole(two.build()))
-    with pytest.raises(ValueError, match="at least one row"):
-        dataclasses.replace(evidence, rows=empty, documents=None)
-    with pytest.raises(ValueError, match="key position"):
-        dataclasses.replace(evidence, key_position=len(_PERSON.member_selection.bindings))
 
 
 def test_versioned_evidence_aligns_one_version_with_each_key() -> None:
@@ -414,19 +141,8 @@ def test_versioned_evidence_aligns_one_version_with_each_key() -> None:
         )
 
 
-def test_an_evidence_builder_that_appended_nothing_seals_to_nothing() -> None:
-    temporal = PredecessorRowsBuilder(
-        _PERSON.member_selection, key_position=0, absent=ABSENT, documents=True
-    )
-    versioned = VersionedEvidenceBuilder(key_position=0, version_position=1)
-
-    assert temporal.seal() is None
-    assert versioned.seal() is None
-
-
-def test_trusted_carrier_adoption_rejects_invalid_storage() -> None:
-    with pytest.raises(TypeError, match="final dict or mapping proxy"):
-        adopt_planned_row(cast("Any", FrozenMap({})), {})
+def test_a_versioned_evidence_builder_that_appended_nothing_seals_to_nothing() -> None:
+    assert VersionedEvidenceBuilder(key_position=0, version_position=1).seal() is None
 
 
 def _prepared(instruction: PredicateWrite, model: object) -> PreparedPredicateWrite:

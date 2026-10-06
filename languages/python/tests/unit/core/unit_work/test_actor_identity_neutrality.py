@@ -16,20 +16,22 @@ from parallax.core.unit_work import (
     Concurrency,
     DatabaseLoginActor,
     KeyedWrite,
-    ObjectKey,
     PlanningRequest,
-    PredecessorRow,
     PredicateSelection,
     PredicateWrite,
     SubjectActor,
-    TemporalObservation,
     TransactionInstant,
-    VersionObservation,
-    WriteObservation,
-    WritePlan,
     object_key,
 )
 from parallax.core.unit_work.strategy import ActorIdentity
+from parallax.core.write_plan import (
+    ObjectKey,
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+    WriteObservation,
+    WritePlan,
+)
 from parallax.snapshot.handle import build_write_planner, stream_lowered
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.planner_probes import observed_buffer

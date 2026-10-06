@@ -42,12 +42,13 @@ from parallax.core.sql_gen._write import (
     compile_write_step,
 )
 from parallax.core.storage_layout import DocumentResidentSelection
-from parallax.core.unit_work import KeyedWrite, PredecessorRow
+from parallax.core.unit_work import KeyedWrite
 from parallax.core.unit_work.instructions import WriteInstruction
-from parallax.core.unit_work.observe import (
+from parallax.core.write_plan import PredecessorRow
+from parallax.core.write_plan.observe import (
     _EntityDocumentRow as _EntityDocumentRowType,  # pyright: ignore[reportPrivateUsage] - comparison spy only
 )
-from parallax.core.unit_work.planned import (
+from parallax.core.write_plan.steps import (
     NEW_LINEAGE,
     CarriedFrom,
     ChangedFrom,

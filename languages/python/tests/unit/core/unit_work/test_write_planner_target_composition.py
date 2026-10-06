@@ -9,22 +9,16 @@ import pytest
 
 from parallax.core import inheritance
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.unit_work import (
-    KeyedWrite,
-    ObjectKey,
-    RetainedObservation,
-    TargetWrite,
-    VersionObservation,
-    buffered_write,
-)
+from parallax.core.unit_work import KeyedWrite, RetainedObservation, TargetWrite, buffered_write
 from parallax.core.unit_work.instructions import (
     ExpectedVersion,
     PreparedKeyedWrite,
     prepare_wire_write,
 )
 from parallax.core.unit_work.materialized import TargetKeyedWrite, target_write
-from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.core.unit_work.write_planner import PendingWrites
+from parallax.core.write_plan import ObjectKey, VersionObservation
+from parallax.core.write_plan.keys import VersionedStateKey
 from tests.unit._corpus_model_support import corpus_records, formed
 
 _ACCOUNT = formed(corpus_records()["account"])

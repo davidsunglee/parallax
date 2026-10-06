@@ -52,7 +52,7 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core.unit_work.planned import PlannedWrite
+from parallax.core.write_plan.steps import PlannedWrite
 from parallax.snapshot.handle._preflight import preflight
 from tests._support.repo import PY_ROOT
 from tests.unit._source_inventory_support import (

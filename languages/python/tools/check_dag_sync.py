@@ -114,6 +114,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-db-port": "parallax.core.db_port",
     "m-db-error": "parallax.core.db_error",
     "m-unit-work": "parallax.core.unit_work",
+    "m-write-plan": "parallax.core.write_plan",
     "m-read-lock": "parallax.core.read_lock",
     "m-auto-retry": "parallax.core.auto_retry",
     "m-execution-authority": "parallax.snapshot.handle._execution_authority",
@@ -162,7 +163,7 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
         "parallax.core.dialect",
         "parallax.core.db_port",
         "parallax.core.sql_gen",
-        "parallax.core.unit_work",
+        "parallax.core.write_plan",
         "parallax.core.opt_lock",
         "parallax.core.txtime_write",
         "parallax.core.bitemp_write",
@@ -354,6 +355,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.db_port",
             "parallax.core.sql_gen",
             "parallax.core.unit_work",
+            "parallax.core.write_plan",
             "parallax.core.read_lock",
             "parallax.core.auto_retry",
             "parallax.core.execution_lifecycle",
@@ -486,6 +488,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.document_codec",
             "parallax.core.temporal_read",
             "parallax.core.unit_work",
+            "parallax.core.write_plan",
             "parallax.core.execution_lifecycle",
         }
     ),
@@ -519,7 +522,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # Write-observation retention is scoped apart from its own package so the
     # generated contract carries the OUTWARD half of its boundary: what a read
     # retains is a pure function of accepted metadata, the member layout a row is
-    # judged against, and Unit Work's own observation vocabulary, and each family
+    # judged against, and the write plan's observation vocabulary, and each family
     # fact it reads — key, Temporal Shape, optimistic key — is named at its owner
     # rather than through a handle sibling. The half facing INTO the package is
     # beyond any contract sourced here and is graded by its SEALED policy below.
@@ -548,6 +551,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.inheritance",
             "parallax.core.temporal_read",
             "parallax.core.unit_work",
+            "parallax.core.write_plan",
             "parallax.core.opt_lock",
         }
     ),

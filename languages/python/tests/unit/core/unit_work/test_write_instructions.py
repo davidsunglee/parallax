@@ -32,7 +32,7 @@ from parallax.core.metamodel import Table
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import WriteRejectedError
 from parallax.core.unit_work import instructions as wi
-from parallax.core.unit_work.planned import UNVERSIONED
+from parallax.core.write_plan.steps import UNVERSIONED
 from tests._support.repo import REPO_ROOT
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 

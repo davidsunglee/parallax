@@ -433,7 +433,7 @@
     "TableLayout",
     "view"
   ],
-  "parallax.core.unit_work:EntityStateRow": [
+  "parallax.core.write_plan:EntityStateRow": [
     "over_declared_members"
   ],
   "parallax.postgres": [

@@ -67,18 +67,20 @@ from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
-    ObjectKey,
-    PlannedInsert,
     PlanningRequest,
     PredicateSelection,
     PredicateWrite,
-    VersionObservation,
     WriteAssignment,
+)
+from parallax.core.unit_work.instructions import WriteInstruction
+from parallax.core.write_plan import (
+    ObjectKey,
+    PlannedInsert,
+    VersionObservation,
     WriteObservation,
     WritePlanningError,
 )
-from parallax.core.unit_work.instructions import WriteInstruction
-from parallax.core.unit_work.planned import (
+from parallax.core.write_plan.steps import (
     ANY_COUNT,
     MAX_PLUS_ONE,
     MISSING_TARGET,
@@ -100,9 +102,7 @@ from parallax.core.unit_work.planned import (
     Versioned,
     VersionGate,
 )
-from parallax.core.unit_work.planned import (
-    PlannedWrite as PlannedStep,
-)
+from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from parallax.descriptor import _records
 from parallax.snapshot.handle import build_write_planner, stream_lowered
 from tests._support.clock_probes import inert_instant

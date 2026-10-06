@@ -15,12 +15,8 @@ from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import validate
 from parallax.core.base import detach_json_container
 from parallax.core.db_port import DocumentReadOrdinals, JsonDocument, Row
-from parallax.core.unit_work import (
-    BufferItem,
-    MaterializedWriteGroup,
-    PredecessorRows,
-    UnitOfWork,
-)
+from parallax.core.unit_work import BufferItem, MaterializedWriteGroup, UnitOfWork
+from parallax.core.write_plan import PredecessorRows
 from tests.unit import _leaf_type_support as leaf_support
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _write_lowering_support as lowering_support

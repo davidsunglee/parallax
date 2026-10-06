@@ -54,26 +54,29 @@ from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import Edge, TransactionTimeOnly
 from parallax.core.unit_work import (
-    SUPERSEDED,
-    TERMINATED,
     Concurrency,
     KeyedMutation,
     KeyedWrite,
+    TransactionSettings,
+    UnitOfWork,
+    WriteBatchTrigger,
+    run_unit_of_work,
+)
+from parallax.core.write_plan import (
+    SUPERSEDED,
+    TERMINATED,
     ObjectKey,
     PlannedClose,
     PlannedInsert,
     PredecessorRow,
     TemporalObservation,
-    TransactionSettings,
-    UnitOfWork,
-    WriteBatchTrigger,
     WriteObservation,
     WritePlan,
     WritePlanningError,
-    run_unit_of_work,
 )
-from parallax.core.unit_work.plan import OwnedEndpoint
-from parallax.core.unit_work.planned import (
+from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.plan import OwnedEndpoint
+from parallax.core.write_plan.steps import (
     INFINITY,
     NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,
@@ -92,8 +95,7 @@ from parallax.core.unit_work.planned import (
     PlannedTemporalRevision,
     TemporalGate,
 )
-from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
-from parallax.core.unit_work.planner import TemporalStateKey
+from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import Transaction, build_write_planner
 from tests._support.clock_probes import instant_at

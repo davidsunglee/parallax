@@ -14,13 +14,12 @@ from parallax.core.unit_work import (
     OPEN_END,
     PREDECESSOR_END,
     PREDECESSOR_START,
-    SUPERSEDED,
-    TERMINATED,
     MilestoneClosure,
     MilestoneSuccessor,
     MilestoneTopology,
     SuccessorWindow,
 )
+from parallax.core.write_plan import SUPERSEDED, TERMINATED
 
 __all__ = ["RECTANGLE_SPLIT"]
 

@@ -5,7 +5,7 @@ from types import MappingProxyType
 from typing import TypeGuard
 
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.unit_work.planned import (
+from parallax.core.write_plan.steps import (
     AnyCount,
     FailedPrecondition,
     KeyTarget,

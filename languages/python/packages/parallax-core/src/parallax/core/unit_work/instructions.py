@@ -42,10 +42,11 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.predicate import PredicateNode
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work.columns import freeze_retained_value
-from parallax.core.unit_work.planned import UNVERSIONED, Unversioned, ValidatedMutationSelection
 from parallax.core.unit_work.write_validate import WriteRejectedError, validate_write
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
+from parallax.core.write_plan.columns import freeze_retained_value
+from parallax.core.write_plan.planned_rows import PreparedAssignment
+from parallax.core.write_plan.steps import UNVERSIONED, Unversioned, ValidatedMutationSelection
 
 __all__ = [
     "BOUNDED_MUTATIONS",
@@ -60,7 +61,6 @@ __all__ = [
     "PredicateMutation",
     "PredicateSelection",
     "PredicateWrite",
-    "PreparedAssignment",
     "PreparedKeyedWrite",
     "PreparedPredicateWrite",
     "PreparedTargetWrite",
@@ -287,20 +287,6 @@ class TargetWrite:
 
 
 WriteInstruction = KeyedWrite | PredicateWrite | TargetWrite
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedAssignment:
-    """One resolved assignment member and its owned managed value."""
-
-    member: AttributeMetadata | ValueObjectMetadata
-    value: object
-
-    @property
-    def attr(self) -> str:
-        if isinstance(self.member, AttributeMetadata):
-            return f"{self.member.identity.entity.canonical}.{self.member.identity.name}"
-        return f"{self.member.identity.entity.canonical}.{self.member.identity.path[-1]}"
 
 
 @dataclass(frozen=True, slots=True, init=False)

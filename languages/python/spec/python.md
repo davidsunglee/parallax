@@ -321,6 +321,7 @@ tree fails the sync check.
 | `m-unit-work` | `parallax.core.unit_work` |
 | `m-value-object` | `parallax.core.value_object` |
 | `m-wire` | `parallax.core.wire` |
+| `m-write-plan` | `parallax.core.write_plan` |
 
 The second table declares the edges no module tag carries: for a support scope,
 which has no tag and so no edge in `core/spec/modules.md`, everything it may
@@ -366,15 +367,15 @@ come from `core/spec/modules.md`.
 | `parallax.postgres` | `m-core`, `m-wire`, `m-db-port`, `m-db-error`, `m-dialect` |
 | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` |
 | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` |
-| `parallax.snapshot.handle` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` |
+| `parallax.snapshot.handle` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-write-plan`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` |
 | `parallax.snapshot.handle._errors` | (none) |
-| `parallax.snapshot.handle._family`, `parallax.snapshot.handle._keyed_sql`, `parallax.snapshot.handle._write_lowering` | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` |
-| `parallax.snapshot.handle._keyed_writes` | `parallax.core.entity`, `parallax.snapshot._inspection`, `m-metamodel`, `m-document-codec`, `m-temporal-read`, `m-unit-work`, `m-execution-lifecycle` |
+| `parallax.snapshot.handle._family`, `parallax.snapshot.handle._keyed_sql`, `parallax.snapshot.handle._write_lowering` | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-write-plan`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` |
+| `parallax.snapshot.handle._keyed_writes` | `parallax.core.entity`, `parallax.snapshot._inspection`, `m-metamodel`, `m-document-codec`, `m-temporal-read`, `m-unit-work`, `m-write-plan`, `m-execution-lifecycle` |
 | `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-db-port`, `m-sql`, `m-read-lock`, `m-execution-lifecycle` |
 | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` |
 | `parallax.snapshot.handle._publication` | `parallax.core.entity`, `m-unit-work` |
 | `parallax.snapshot.handle._read_scope` | `parallax.core.entity`, `parallax.core.continuation`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-read-lock`, `m-opt-lock`, `m-execution-authority`, `m-execution-lifecycle` |
-| `parallax.snapshot.handle._retention` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-unit-work`, `m-opt-lock` |
+| `parallax.snapshot.handle._retention` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-unit-work`, `m-write-plan`, `m-opt-lock` |
 | `parallax.snapshot.materialize` | `parallax.core.entity`, `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `parallax.snapshot._inspection`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` |
 
 Third-party packages are outside every scope, and a first-party grant says

@@ -25,8 +25,9 @@ from parallax.core.base import INFINITY, SQL_NULL
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import ObjectKey, instructions
+from parallax.core.unit_work import instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite
+from parallax.core.write_plan import ObjectKey
 from parallax.snapshot.handle._wire_writes import (
     WireKeyedInsertSource,
     WireKeyedWriteSource,

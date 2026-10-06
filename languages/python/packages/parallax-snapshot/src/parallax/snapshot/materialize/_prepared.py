@@ -21,8 +21,8 @@ from parallax.core.metamodel import (
     Occurrence,
     ValueObjectMetadata,
 )
-from parallax.core.unit_work.observe import occurrence_value
 from parallax.core.wire import encode_wire
+from parallax.core.write_plan.observe import occurrence_value
 from parallax.snapshot.materialize._convert import (
     AttributeReadContract,
     BoundLevel,

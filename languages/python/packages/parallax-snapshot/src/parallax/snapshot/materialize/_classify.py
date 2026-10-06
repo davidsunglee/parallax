@@ -14,7 +14,7 @@ from parallax.core.temporal_read import (
     TemporalReadError,
     milestone_edge,
 )
-from parallax.core.unit_work import ObjectKey
+from parallax.core.write_plan import ObjectKey
 from parallax.snapshot.materialize._invalid import InvalidData, StoredDataIssue
 from parallax.snapshot.materialize._page import (
     ABSENT,

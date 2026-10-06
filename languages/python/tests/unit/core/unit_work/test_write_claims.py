@@ -29,9 +29,7 @@ from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     SELECTION_INTENT,
     KeyedWrite,
-    ObjectKey,
     RetainedObservation,
-    VersionObservation,
     WriteIntent,
     instructions,
     keyed_intent,
@@ -39,7 +37,8 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.claims import ClaimTable, admits, admits_composed
 from parallax.core.unit_work.instructions import PreparedKeyedWrite
 from parallax.core.unit_work.materialized import ObjectClaimedWrite
-from parallax.core.unit_work.planner import VersionedStateKey
+from parallax.core.write_plan import ObjectKey, VersionObservation
+from parallax.core.write_plan.keys import VersionedStateKey
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized

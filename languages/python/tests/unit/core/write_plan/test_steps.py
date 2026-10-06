@@ -1,4 +1,4 @@
-"""Construction invariants of the finalized Planned Write algebra (m-unit-work).
+"""Construction invariants of the finalized Planned Write algebra (m-write-plan).
 
 A Planned Write is what SQL lowering receives with every semantic question
 already settled, so the shapes that would leave one unsettled must be
@@ -14,12 +14,7 @@ readless predicate carrying a gate, an exact count disagreeing with the number o
 keys addressed, a per-row gate on a multi-key target, a shortfall classified
 against what the settled gate implies — are unconstructible too. A generated
 value is likewise unconstructible at the statement position that could not
-express it. A Temporal Observation's predecessor is complete or absent, never
-partial.
-
-The Write Plan's own contract is here too: an empty Planned Steps is the one
-canonical result for a flush that survives nothing, and Planned Steps is a
-logical sequence whose views compare by value rather than by object identity.
+express it.
 
 The temporal slice adds its own: a Milestone Target belongs to a temporal step —
 a close, or an owned revision or removal — alone, each expects exactly one row,
@@ -31,29 +26,19 @@ Strategy decided.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
+from parallax.core.base import FrozenMap
 from parallax.core.metamodel import AttributeIdentity, ValueObjectIdentity
 from parallax.core.predicate import All, validate_predicate
-from parallax.core.unit_work import (
-    NO_AUDIT,
+from parallax.core.write_plan import (
     SUPERSEDED,
     PlannedClose,
     PlannedInsert,
-    PredecessorRow,
-    WritePlan,
 )
-from parallax.core.unit_work.plan import (
-    NO_OWNERSHIP,
-    OPEN_BITEMPORAL_ENDS,
-    ExecutionUnit,
-    OwnedEndpoint,
-    PlannedSteps,
-    eager_segment,
-)
-from parallax.core.unit_work.planned import (
+from parallax.core.write_plan.steps import (
     ANY_COUNT,
     INFINITY,
     MAX_PLUS_ONE,
@@ -85,12 +70,9 @@ from parallax.core.unit_work.planned import (
     Versioned,
     VersionGate,
     WriteTarget,
+    adopt_planned_row,
     shortfall_for,
 )
-from parallax.core.unit_work.planner import ObjectKey, VersionedStateKey
-from parallax.core.unit_work.strategy import AuditStrategy
-from tests._support.clock_probes import inert_instant
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -373,47 +355,6 @@ def test_a_planned_update_settles_its_target_the_same_way_a_delete_does() -> Non
         )
 
 
-def test_a_predecessor_row_carrying_no_member_is_refused() -> None:
-    # A Temporal Observation retains the whole predecessor or none of it: a
-    # partial one would silently drop members temporal expansion carries forward.
-    with pytest.raises(ValueError, match="complete state"):
-        PredecessorRow(members={})
-
-
-def test_an_empty_write_plan_is_the_canonical_cancelled_result() -> None:
-    plan = WritePlan()
-    assert len(plan.steps) == 0
-    assert list(plan.steps) == []
-    assert plan == WritePlan(steps=PlannedSteps())
-
-
-def test_planned_steps_expose_their_writes_in_execution_order() -> None:
-    first = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 1})),))
-    second = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 2})),))
-    plan = WritePlan(steps=PlannedSteps(segments=(eager_segment((first, second)),)))
-    assert len(plan.steps) == 2
-    assert plan.steps[0] == first
-    assert list(plan.steps) == [first, second]
-
-
-def test_an_eager_segment_refuses_zero_steps() -> None:
-    with pytest.raises(ValueError, match="at least one step"):
-        eager_segment(())
-
-
-def test_planned_steps_indexing_out_of_range_raises() -> None:
-    step = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 1})),))
-    steps = PlannedSteps(segments=(eager_segment((step,)),))
-    with pytest.raises(IndexError):
-        steps[5]
-
-
-def test_planned_steps_compares_unequal_to_a_non_planned_steps_value() -> None:
-    step = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 1})),))
-    steps = PlannedSteps(segments=(eager_segment((step,)),))
-    assert steps != "not a Planned Steps value"
-
-
 # --------------------------------------------------------------------------- #
 # The temporal slice: the milestone slot a close addresses, and its effect.    #
 # --------------------------------------------------------------------------- #
@@ -635,42 +576,6 @@ def test_an_incomplete_milestone_address_is_refused(kwargs: dict[str, object], m
         cast("Callable[..., object]", MilestoneTarget)(**kwargs)
 
 
-def test_the_audit_port_decorates_nothing_by_default() -> None:
-    # Pipeline stage 8 exists as a seam from the start, so provenance decoration
-    # becomes a change of injected adapter rather than a change of interface.
-    # The default hands the step itself back rather than an equal rebuild, which
-    # is what makes the seam cost nothing while nothing is wired behind it.
-    step = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 1})),))
-    decorated = NO_AUDIT.decorate(
-        step, actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=inert_instant()
-    )
-    assert decorated is step
-    assert isinstance(NO_AUDIT, AuditStrategy)
-
-
-def test_an_attempt_that_opened_nothing_owns_nothing_an_insertion_opened() -> None:
-    endpoint = OwnedEndpoint(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
-    assert not NO_OWNERSHIP.owns(endpoint)
-    assert not NO_OWNERSHIP.continues_insertion(endpoint)
-
-
-def test_an_attempt_that_opened_nothing_has_proved_and_derived_nothing() -> None:
-    endpoint = OwnedEndpoint(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
-    state = VersionedStateKey(ObjectKey(_ACCOUNT, (("id", 1),)), 1)
-    assert NO_OWNERSHIP.proven(state) is None
-    assert tuple(NO_OWNERSHIP.descendants(state, None)) == ()
-    assert NO_OWNERSHIP.descent(endpoint) is None
-
-
-def test_a_plan_without_units_forms_one_unit_of_every_step() -> None:
-    steps = PlannedSteps((eager_segment((_close(), _close())),))
-    assert WritePlan(steps=steps).units == (ExecutionUnit(end=2),)
-    assert WritePlan().units == ()
-
-
-def test_a_plans_units_follow_its_steps_in_order_and_end_with_them() -> None:
-    steps = PlannedSteps((eager_segment((_close(), _close())),))
-    with pytest.raises(ValueError, match="follow its steps in order"):
-        WritePlan(steps=steps, units=(ExecutionUnit(end=2), ExecutionUnit(end=1)))
-    with pytest.raises(ValueError, match="end where its 2 step"):
-        WritePlan(steps=steps, units=(ExecutionUnit(end=1),))
+def test_trusted_carrier_adoption_rejects_invalid_storage() -> None:
+    with pytest.raises(TypeError, match="final dict or mapping proxy"):
+        adopt_planned_row(cast("Any", FrozenMap({})), {})

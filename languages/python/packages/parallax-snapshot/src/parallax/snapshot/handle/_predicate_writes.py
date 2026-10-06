@@ -32,18 +32,16 @@ from parallax.core.temporal_read import (
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     MaterializedWriteGroup,
-    ObjectKey,
-    PredecessorRows,
-    PredecessorRowsBuilder,
     PredicateMutation,
     VersionedEvidence,
     VersionedEvidenceBuilder,
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, PreparedTargetWrite
-from parallax.core.unit_work.plan import RangeAcquisition
-from parallax.core.unit_work.planned import KeyTarget
 from parallax.core.unit_work.uow import StoredTarget
 from parallax.core.unit_work.write_settlement import reject_readless_document_many
+from parallax.core.write_plan import ObjectKey, PredecessorRows, PredecessorRowsBuilder
+from parallax.core.write_plan.plan import RangeAcquisition
+from parallax.core.write_plan.steps import KeyTarget
 from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._family import (
     assignment_member,
@@ -168,7 +166,7 @@ def _materialize_predicate_write(
     # class — never gated on temporality alone.
     #
     # OBSERVATION need: a TEMPORAL target's per-row observation retains the
-    # whole predecessor milestone (`m-unit-work` "A Predecessor Row is the
+    # whole predecessor milestone (`m-write-plan` "A Predecessor Row is the
     # complete, immutable persisted state a Temporal Observation retains"),
     # so its resolving read projects EVERY declared document whatever the
     # verb goes on to do with it. Completeness belongs to the OBSERVATION,
@@ -341,7 +339,7 @@ def _acquire_temporal(
     stage: RowPublication, acquisition: _Acquisition, *, documents: bool
 ) -> PredecessorRows | None:
     """A temporal target's evidence: the complete Predecessor Row of every row
-    that is not a no-op (`m-unit-work` "A Predecessor Row is the complete,
+    that is not a no-op (`m-write-plan` "A Predecessor Row is the complete,
     immutable persisted state").
 
     Each judged member row is retained whole, the absent marker included at any

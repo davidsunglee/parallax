@@ -14,21 +14,21 @@ from parallax.core.metamodel import (
     TemporalDimension,
     ValueObjectIdentity,
 )
-from parallax.core.unit_work import (
+from parallax.core.write_plan import (
     ObservedStateKey,
     PlannedInsert,
     PredecessorRow,
     TemporalObservation,
 )
-from parallax.core.unit_work.plan import RangeAcquisition
-from parallax.core.unit_work.planned import (
+from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.plan import RangeAcquisition
+from parallax.core.write_plan.steps import (
     Finite,
     PlannedClose,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedWrite,
 )
-from parallax.core.unit_work.planner import TemporalStateKey
 
 __all__ = [
     "AmbiguousObservationError",
@@ -467,7 +467,7 @@ def predecessor_row(
 
     The row it builds is purely LOGICAL: neither carrier retains the raw
     Structured Column document the observing read returned, so
-    :attr:`~parallax.core.unit_work.PredecessorRow.document` is absent and a
+    :attr:`~parallax.core.write_plan.PredecessorRow.document` is absent and a
     successor is patched from the declared members rather than from what the row
     physically held.
     """

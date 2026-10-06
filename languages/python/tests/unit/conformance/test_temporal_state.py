@@ -29,17 +29,16 @@ from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     PlanningRequest,
-    PredecessorRow,
     SubjectActor,
-    TemporalObservation,
     TransactionInstant,
     buffered_write,
     instructions,
 )
 from parallax.core.unit_work.instructions import KeyedWrite, PreparedWrite
-from parallax.core.unit_work.plan import PlannedSteps, RangeAcquisition
-from parallax.core.unit_work.planner import ObjectKey, VersionedStateKey
 from parallax.core.unit_work.write_planner import compose_writes
+from parallax.core.write_plan import PredecessorRow, TemporalObservation
+from parallax.core.write_plan.keys import ObjectKey, VersionedStateKey
+from parallax.core.write_plan.plan import PlannedSteps, RangeAcquisition
 from parallax.snapshot.handle import build_write_planner
 
 POSITION = models.load_models()["position"]

@@ -14,15 +14,8 @@ from parallax.core.opt_lock._facet import (
     view,
 )
 from parallax.core.opt_lock._rules import ISSUE_CODES, RULE_SET
-from parallax.core.unit_work import (
-    Concurrency,
-    KeyedMutation,
-    ObjectKey,
-    RetainedObservation,
-    SettledEvidence,
-    VersionObservation,
-    WriteObservation,
-)
+from parallax.core.unit_work import Concurrency, KeyedMutation, RetainedObservation, SettledEvidence
+from parallax.core.write_plan import ObjectKey, VersionObservation, WriteObservation
 
 __all__ = [
     "FACET_KEY",

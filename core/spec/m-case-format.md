@@ -1096,8 +1096,9 @@ is the DML it authors plus the **resolving reads** its choreography owes — the
 reads a unit runs to hold the state it writes against. This section states how
 many of those a case document accounts for and where they run, never what
 entitles a verb to write: `m-unit-work` *Write value provenance* owns which
-values a value-taking verb accepts, and *Write Observation* with the evidence
-rules beside it owns what a surviving write against existing state retains,
+values a value-taking verb accepts, and `m-write-plan` *Write Observation*,
+with `m-unit-work` *Observation ownership and lifetime*, owns what a surviving
+write against existing state retains,
 which is what `delete`, `terminate`, and `terminateUntil` answer to — those
 verbs take no position on provenance at all.
 
@@ -1660,7 +1661,7 @@ group's last step, where that is a find with writes pending before it, or
 `commit`, where the group's last step leaves writes pending — and `entity`, `key`,
 and `shortfall` are the object the failure reports and its Shortfall
 (`missingTarget` / `staleWrite` / `optimisticConflict` / `failedPrecondition`,
-`m-unit-work` *Affected Rows Policy*), matching the error's own payload rather
+`m-write-plan` *Affected Rows Policy*), matching the error's own payload rather
 than a statement index. A failed flush ends the unit of work, so the group rolls
 back and nothing it did stands.
 

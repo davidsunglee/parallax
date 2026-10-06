@@ -54,7 +54,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Pin
-from parallax.core.unit_work import ObjectKey
+from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import SnapshotInspectionError, edge_of, is_view_loaded, pin_of, view
 from parallax.snapshot.handle import SnapshotMaterializationError
 from parallax.snapshot.handle._materialization import RowPublication

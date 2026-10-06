@@ -6,7 +6,7 @@ from typing import ClassVar, Final, Self, cast
 
 from parallax.core.metamodel import EntityIdentity, MemberIdentity
 from parallax.core.temporal_read import Edge
-from parallax.core.unit_work import ObjectKey
+from parallax.core.write_plan import ObjectKey
 from parallax.snapshot.materialize._page import StoredDataIssueCode
 
 __all__ = [

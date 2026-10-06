@@ -34,6 +34,7 @@ from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedTargetWrite,
 )
+from parallax.core.unit_work.keys import resolve_object_key
 from parallax.core.unit_work.materialized import (
     BufferItem,
     InsertionKeyedWrite,
@@ -44,24 +45,6 @@ from parallax.core.unit_work.materialized import (
     buffered_instruction,
     group_state_keys,
     target_write,
-)
-from parallax.core.unit_work.plan import (
-    AllocatedOpening,
-    BoundRange,
-    Derivation,
-    Descent,
-    ExecutionUnit,
-    Openings,
-    OwnedEndpoint,
-    WritePlan,
-)
-from parallax.core.unit_work.planned import Finite
-from parallax.core.unit_work.planner import (
-    ObjectKey,
-    ObservedStateKey,
-    TemporalStateKey,
-    VersionedStateKey,
-    resolve_object_key,
 )
 from parallax.core.unit_work.retain import (
     InsertionIdentity,
@@ -75,6 +58,23 @@ from parallax.core.unit_work.write_planner import (
     PlanningRequest,
     WritePlanner,
 )
+from parallax.core.write_plan.keys import (
+    ObjectKey,
+    ObservedStateKey,
+    TemporalStateKey,
+    VersionedStateKey,
+)
+from parallax.core.write_plan.plan import (
+    AllocatedOpening,
+    BoundRange,
+    Derivation,
+    Descent,
+    ExecutionUnit,
+    Openings,
+    OwnedEndpoint,
+    WritePlan,
+)
+from parallax.core.write_plan.steps import Finite
 
 __all__ = [
     "NO_INSERTION_AUTHORITY",

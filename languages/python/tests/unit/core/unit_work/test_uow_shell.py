@@ -28,39 +28,29 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.temporal_read import TemporalReadError, TimeInterval
 from parallax.core.unit_work import (
-    SUPERSEDED,
-    TERMINATED,
     BufferItem,
     BufferOutcome,
     Clock,
     KeyedMutation,
     KeyedWrite,
     MaterializedWriteGroup,
-    ObservedStateKey,
-    PlannedInsert,
     PlanningRequest,
-    PredecessorRow,
     PredicateSelection,
     PredicateWrite,
     RetainedObservation,
     RollbackOnlyError,
     SystemClock,
-    TemporalObservation,
     TransactionInstant,
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
     VersionedEvidenceBuilder,
-    VersionObservation,
     WriteAssignment,
     WriteBatchTrigger,
     WriteEvidenceError,
-    WritePlan,
-    WritePlanningError,
     WritePreconditionError,
     active_unit_of_work,
     buffered_write,
-    observed_state_key,
     run_unit_of_work,
 )
 from parallax.core.unit_work.instructions import (
@@ -72,18 +62,6 @@ from parallax.core.unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core.unit_work.materialized import InsertionKeyedWrite, ObservedKeyedWrite
-from parallax.core.unit_work.plan import (
-    NO_OPENINGS,
-    OPEN_BITEMPORAL_ENDS,
-    BoundRange,
-    Derivation,
-    ExecutionUnit,
-    Openings,
-    OwnedEndpoint,
-)
-from parallax.core.unit_work.planned import INFINITY as PLANNED_INFINITY
-from parallax.core.unit_work.planned import Finite, PlannedClose, PlannedUpdate
-from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.unit_work.uow import (
     NO_INSERTION_AUTHORITY,
@@ -94,6 +72,30 @@ from parallax.core.unit_work.uow import (
     _TargetWriteState,  # pyright: ignore[reportPrivateUsage] - the owner of the removal window and lineage it is tested at
 )
 from parallax.core.unit_work.write_planner import PendingWrites, compose_writes
+from parallax.core.write_plan import (
+    SUPERSEDED,
+    TERMINATED,
+    ObservedStateKey,
+    PlannedInsert,
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+    WritePlan,
+    WritePlanningError,
+    observed_state_key,
+)
+from parallax.core.write_plan.keys import VersionedStateKey
+from parallax.core.write_plan.plan import (
+    NO_OPENINGS,
+    OPEN_BITEMPORAL_ENDS,
+    BoundRange,
+    Derivation,
+    ExecutionUnit,
+    Openings,
+    OwnedEndpoint,
+)
+from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
+from parallax.core.write_plan.steps import Finite, PlannedClose, PlannedUpdate
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
