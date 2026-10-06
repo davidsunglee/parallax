@@ -322,8 +322,7 @@ class RootView:
         defer_states: bool,
     ) -> None:
         """Allocate one node per reached projection, each the only claimant of
-        its logical occurrence, and carry its view values into that node."""
-        root_nodes: dict[int, int] = {}
+        its logical occurrence, and then carry its view values into that node."""
         for projection in reachable:
             state = None if defer_states else self._state(projection)
             index = len(self._winner)
@@ -340,7 +339,6 @@ class RootView:
             )
             winners.append(carried_views)
             self._resolved[projection] = index
-            root_nodes[rows.logical_ids[projection]] = index
         for projection in reachable:
             index = self._resolved[projection]
             values = rows.view_rows[projection]
@@ -354,9 +352,7 @@ class RootView:
             for slot, value in enumerate(values):
                 root_view_slot = to_root_view[slot]
                 if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
-                    carried_views[root_view_slot] = self._allocation(
-                        value, targets[slot], root_nodes
-                    )
+                    carried_views[root_view_slot] = self._allocation(value, targets[slot], None)
 
     # Called once per root row by the constructor's per-root allocation loop, which the
     # Snapshot materialization instruments measure; every split, including sharing the
@@ -371,8 +367,9 @@ class RootView:
     ) -> None:
         """Allocate one node per logical occurrence the reached projections
         claim, won by its canonical claimant, reusing the node another root
-        already allocated for the same judged state, and carry every claimant's
-        view values into that node."""
+        already allocated for the same judged state. Once every claimant
+        resolves to its node, carry every claimant's view values into that
+        node."""
         local_claims: dict[int, int | list[int]] = {}
         for projection in reachable:
             logical = rows.logical_ids[projection]
@@ -384,12 +381,14 @@ class RootView:
                 local_claims[logical] = [claimed, projection]
             else:
                 claimed.append(projection)
-        canonical_by_logical = {
-            logical: claimed if isinstance(claimed, int) else self._canonical(claimed)
-            for logical, claimed in local_claims.items()
-        }
-        root_nodes: dict[int, int] = {}
-        for logical, winner in canonical_by_logical.items():
+        # Every witness comparison precedes any state judgment, so a conflict
+        # raises before this root decodes a state.
+        for logical, claimed in local_claims.items():
+            if not isinstance(claimed, int):
+                local_claims[logical] = self._canonical(claimed)
+        table: dict[int, int] = {}
+        for logical, canonical in local_claims.items():
+            winner = cast("int", canonical)
             state = None if defer_states else self._state(winner)
             index = None if state is None or state_nodes is None else state_nodes.get(id(state))
             if index is None:
@@ -408,10 +407,11 @@ class RootView:
                     else None
                 )
                 winners.append(carried_views)
-            root_nodes[logical] = index
+            table[logical] = index
         for projection in reachable:
-            index = root_nodes[rows.logical_ids[projection]]
-            self._resolved[projection] = index
+            self._resolved[projection] = table[rows.logical_ids[projection]]
+        for projection in reachable:
+            index = self._resolved[projection]
             values = rows.view_rows[projection]
             carried_views = winners[index]
             if carried_views is None:
@@ -423,9 +423,7 @@ class RootView:
             for slot, value in enumerate(values):
                 root_view_slot = to_root_view[slot]
                 if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
-                    carried_views[root_view_slot] = self._allocation(
-                        value, targets[slot], root_nodes
-                    )
+                    carried_views[root_view_slot] = self._allocation(value, targets[slot], table)
 
     def _reachable(self, roots: list[int]) -> tuple[int, ...]:
         """Projection preorder from the roots through every reached logical
@@ -562,26 +560,48 @@ class RootView:
         self,
         value: object,
         targets: frozenset[EntityIdentity] | None,
-        root_nodes: Mapping[int, int],
+        table: Mapping[int, int] | None,
     ) -> object:
-        """Translate one view value against only this root's reachable
-        allocations: projections when ``targets`` is ``None``, otherwise a
-        back-reference's logical claims, the first of which this root reached
-        as one of ``targets`` wins."""
+        """Translate one view value against only this root's allocations:
+        projections when ``targets`` is ``None``, otherwise a back-reference's
+        logical claims, the first of which this root reached as one of
+        ``targets`` wins. ``table`` is the claimed allocator's logical-to-node
+        allocation, and ``None`` from the distinct allocator."""
         if value is None:
             return None
         if targets is None:
-            logical_ids = cast("PageRows", self._rows).logical_ids
+            resolved = self._resolved
             if isinstance(value, tuple):
-                return tuple(
-                    root_nodes[logical_ids[child]] for child in cast("tuple[int, ...]", value)
-                )
-            return root_nodes[logical_ids[cast("int", value)]]
+                return tuple(resolved[child] for child in cast("tuple[int, ...]", value))
+            return resolved[cast("int", value)]
         if not isinstance(value, tuple):
-            return self._admitted(root_nodes.get(cast("int", value)), targets)
+            return self._admitted(self._claimed_node(cast("int", value), table), targets)
         for logical in cast("tuple[int, ...]", value):
-            node = self._admitted(root_nodes.get(logical), targets)
+            node = self._admitted(self._claimed_node(logical, table), targets)
             if node is not None:
+                return node
+        return None
+
+    def _claimed_node(self, logical: int, table: Mapping[int, int] | None) -> int | None:
+        """The node this root allocated for ``logical``, if it reached any
+        claimant of it.
+
+        Without ``table`` this root is the Root View's only root, so its
+        resolved projections are exactly its reach. A released logical's claim
+        and its claimants' logical ids read ``0``, so a claimant only counts
+        while its logical id still names ``logical``.
+        """
+        if table is not None:
+            return table.get(logical)
+        rows = cast("PageRows", self._rows)
+        resolved = self._resolved
+        claim = rows.claims[logical]
+        if isinstance(claim, int):
+            node = resolved.get(claim)
+            return node if node is not None and rows.logical_ids[claim] == logical else None
+        for claimant in claim:
+            node = resolved.get(claimant)
+            if node is not None and rows.logical_ids[claimant] == logical:
                 return node
         return None
 
