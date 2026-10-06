@@ -18,7 +18,6 @@ from parallax.snapshot.materialize._page import (
     EntityState,
     InvalidRootInput,
     LogicalKey,
-    LogicalReference,
     Page,
     PageRows,
     StoredDataIssueInput,
@@ -27,6 +26,7 @@ from parallax.snapshot.materialize._page import (
     judged_state,
     layout_order_key,
     page_rows,
+    push_edges,
     same_witness,
     stored_order_key,
 )
@@ -304,7 +304,9 @@ class RootView:
     def view(self, node: int, slot: int) -> object:
         """``node``'s value at ``slot``: ``ABSENT`` for a view no projection
         loaded, ``None`` for loaded-null, an allocation index for a loaded
-        to-one, and a tuple of them for a loaded to-many.
+        to-one, and a tuple of them for a loaded to-many. A back-reference is a
+        to-one: this root's reached node it names, or ``None`` when it names
+        none this root reached among its targets.
 
         Resolved into allocation indices once, when the row was built, so every
         consumer reading one slot twice is answered the identical value rather
@@ -345,11 +347,16 @@ class RootView:
             carried_views = winners[index]
             if carried_views is None:
                 continue
-            to_root_view = self._view_layouts[index].to_root_view[rows.sources[projection]]
+            view_layout = self._view_layouts[index]
+            level = rows.sources[projection]
+            to_root_view = view_layout.to_root_view[level]
+            targets = view_layout.targets[level]
             for slot, value in enumerate(values):
                 root_view_slot = to_root_view[slot]
                 if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
-                    carried_views[root_view_slot] = self._allocation(value, root_nodes)
+                    carried_views[root_view_slot] = self._allocation(
+                        value, targets[slot], root_nodes
+                    )
 
     # Called once per root row by the constructor's per-root allocation loop, which the
     # Snapshot materialization instruments measure; every split, including sharing the
@@ -409,11 +416,16 @@ class RootView:
             carried_views = winners[index]
             if carried_views is None:
                 continue
-            to_root_view = self._view_layouts[index].to_root_view[rows.sources[projection]]
+            view_layout = self._view_layouts[index]
+            level = rows.sources[projection]
+            to_root_view = view_layout.to_root_view[level]
+            targets = view_layout.targets[level]
             for slot, value in enumerate(values):
                 root_view_slot = to_root_view[slot]
                 if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
-                    carried_views[root_view_slot] = self._allocation(value, root_nodes)
+                    carried_views[root_view_slot] = self._allocation(
+                        value, targets[slot], root_nodes
+                    )
 
     def _reachable(self, roots: list[int]) -> tuple[int, ...]:
         """Projection preorder from the roots through every reached logical
@@ -430,16 +442,7 @@ class RootView:
                 continue
             seen.add(projection)
             order.append(projection)
-            edges = (*rows.view_rows[projection], *rows.overwritten_edges[projection])
-            for value in reversed(edges):
-                if isinstance(value, tuple):
-                    pending.extend(reversed(cast("tuple[int, ...]", value)))
-                elif (
-                    value is not None
-                    and value is not ABSENT
-                    and not isinstance(value, LogicalReference)
-                ):
-                    pending.append(value)  # pyright: ignore[reportArgumentType]
+            push_edges(rows, projection, pending)
         return tuple(order)
 
     def _decode(self, projection: int) -> EntityState:
@@ -555,28 +558,35 @@ class RootView:
             occurrences=cast("tuple[tuple[int, int], tuple[int, int]]", positions),
         )
 
-    def _allocation(self, value: object, root_nodes: Mapping[int, int]) -> object:
-        """Translate one view against only this root's reachable allocations."""
-        if value is None or value is ABSENT:
-            return value
-        if isinstance(value, LogicalReference):
-            admitted = tuple(
-                node
-                for logical in value.logicals
-                if (node := root_nodes.get(logical)) is not None
-                and self._layouts[node].concrete in value.admits
-            )
-            if value.to_many:
-                return admitted
-            # Include-bearing reads pin propagated temporal axes; milestone scans have no includes.
-            assert len(admitted) <= 1
-            return admitted[0] if admitted else None
-        if isinstance(value, tuple):
-            return tuple(
-                root_nodes[cast("PageRows", self._rows).logical_ids[child]]
-                for child in cast("tuple[int, ...]", value)
-            )
-        return root_nodes[cast("PageRows", self._rows).logical_ids[cast("int", value)]]
+    def _allocation(
+        self,
+        value: object,
+        targets: frozenset[EntityIdentity] | None,
+        root_nodes: Mapping[int, int],
+    ) -> object:
+        """Translate one view value against only this root's reachable
+        allocations: projections when ``targets`` is ``None``, otherwise a
+        back-reference's logical claims, the first of which this root reached
+        as one of ``targets`` wins."""
+        if value is None:
+            return None
+        if targets is None:
+            logical_ids = cast("PageRows", self._rows).logical_ids
+            if isinstance(value, tuple):
+                return tuple(
+                    root_nodes[logical_ids[child]] for child in cast("tuple[int, ...]", value)
+                )
+            return root_nodes[logical_ids[cast("int", value)]]
+        if not isinstance(value, tuple):
+            return self._admitted(root_nodes.get(cast("int", value)), targets)
+        for logical in cast("tuple[int, ...]", value):
+            node = self._admitted(root_nodes.get(logical), targets)
+            if node is not None:
+                return node
+        return None
+
+    def _admitted(self, node: int | None, targets: frozenset[EntityIdentity]) -> int | None:
+        return node if node is not None and self._layouts[node].concrete in targets else None
 
 
 def _member_order(

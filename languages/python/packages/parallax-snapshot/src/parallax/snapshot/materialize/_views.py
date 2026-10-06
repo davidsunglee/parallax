@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Final
+from typing import Final, cast
 
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity._layout import EntityLayout
@@ -37,10 +37,16 @@ class ChildSlot:
     their OWN resolved concrete, so two parents of one concrete are admitted or
     excluded together — which is what keeps the admitted slot set a function of
     the ``(source level, concrete)`` pair rather than of an individual row.
+
+    ``targets`` is set exactly on a back-reference slot, as the concretes it may
+    resolve to. Such a slot holds the logical claims its parent's correlation
+    member names rather than projections, and Root View allocation resolves them
+    to this root's reached nodes of those concretes.
     """
 
     view: RelationshipViewKey
     admits: frozenset[EntityIdentity] | None = None
+    targets: frozenset[EntityIdentity] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,11 +91,18 @@ class RootViewLayout:
     against its :class:`SourceViewLayout`, and Root View assembly carries each written
     position across once, where the Root View row is built, rather than at each
     read.
+
+    ``targets`` is indexed like ``to_root_view`` and says what each source slot
+    holds: ``None`` for projections, or a back-reference's target concretes for
+    logical claims. It is kept per source level rather than per view key,
+    because one view key can be a back-reference at one level and a forward hop
+    at another.
     """
 
     slots: tuple[RelationshipViewKey, ...]
     index_of: Mapping[RelationshipViewKey, int]
     to_root_view: tuple[tuple[int, ...], ...]
+    targets: tuple[tuple[frozenset[EntityIdentity] | None, ...], ...]
 
 
 class ViewSchema:
@@ -124,10 +137,11 @@ class ViewSchema:
     ) -> ViewSchema:
         schema = cls(levels)
         held = tuple(layouts)
+        shared: dict[tuple[object, ...], tuple[object, ...]] = {}
         for layout in held:
             for level in range(len(schema._levels)):
                 schema.source(level, layout)
-            schema.root_view(layout)
+            schema._built_root_view(layout, shared)
         schema._interned = MappingProxyType(schema._interned)  # pyright: ignore[reportAttributeAccessIssue]
         schema._source = MappingProxyType(schema._source)  # pyright: ignore[reportAttributeAccessIssue]
         schema._root_views = MappingProxyType(schema._root_views)  # pyright: ignore[reportAttributeAccessIssue]
@@ -179,6 +193,14 @@ class ViewSchema:
             raise ValueError(
                 f"this prepared view schema carries no root layout for {layout.concrete.canonical}"
             )
+        return self._built_root_view(layout, None)
+
+    def _built_root_view(
+        self, layout: EntityLayout, shared: dict[tuple[object, ...], tuple[object, ...]] | None
+    ) -> RootViewLayout:
+        """Lay out ``layout``'s Root View row. A prepared schema passes ``shared``
+        so that equal ``targets`` rows of its every concrete, retained for the
+        plan's lifetime, are one object."""
         sources = tuple(self.source(level, layout) for level in range(len(self._levels)))
         slots = layout.ordered(dict.fromkeys(view for source in sources for view in source.slots))
         index_of = _index_of(slots)
@@ -186,6 +208,20 @@ class ViewSchema:
             slots,
             index_of,
             tuple(tuple(index_of[view] for view in source.slots) for source in sources),
+            # Comprehensions, not generator expressions: nested generators each allocate a
+            # frame at the cold plan's high-water mark, which the plan-compilation gates measure.
+            _shared(
+                tuple(
+                    [
+                        _shared(
+                            tuple([_targets(self._levels[level], view) for view in source.slots]),
+                            shared,
+                        )
+                        for level, source in enumerate(sources)
+                    ]
+                ),
+                shared,
+            ),
         )
         self._root_views[layout.concrete] = built
         return built
@@ -197,6 +233,21 @@ class ViewSchema:
         built = SourceViewLayout(slots, _index_of(slots))
         self._interned[slots] = built
         return built
+
+
+def _shared[T: tuple[object, ...]](
+    value: T, shared: dict[tuple[object, ...], tuple[object, ...]] | None
+) -> T:
+    return value if shared is None else cast("T", shared.setdefault(value, value))
+
+
+def _targets(
+    level: tuple[ChildSlot, ...], view: RelationshipViewKey
+) -> frozenset[EntityIdentity] | None:
+    for slot in level:
+        if slot.targets is not None and slot.view == view:
+            return slot.targets
+    return None
 
 
 def _index_of(slots: Iterable[RelationshipViewKey]) -> Mapping[RelationshipViewKey, int]:

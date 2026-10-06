@@ -28,7 +28,6 @@ __all__ = [
     "EntityState",
     "InvalidRootInput",
     "LogicalKey",
-    "LogicalReference",
     "Page",
     "PageBuilder",
     "PageRows",
@@ -40,6 +39,7 @@ __all__ = [
     "layout_order_key",
     "page_edges",
     "page_rows",
+    "push_edges",
     "release_page_rows",
     "root_last_uses",
     "same_witness",
@@ -122,17 +122,6 @@ class EntityState(NamedTuple):
 
     member_row: tuple[object, ...]
     findings: tuple[StoredDataIssueInput, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class LogicalReference:
-    """An inverse's coordinate-distinct logical claims, restricted to targets
-    admitted by its include position. It names only already-reachable nodes;
-    Root View allocation resolves it without extending reachability."""
-
-    logicals: tuple[int, ...]
-    admits: frozenset[EntityIdentity]
-    to_many: bool = False
 
 
 class PayloadDecoder(Protocol):
@@ -338,7 +327,11 @@ class PageRows:
     ``view_rows`` are positional against ``schema``: projection ``i``'s row is
     laid out by the source layout its own ``sources[i]`` and layout resolve to,
     so a reader translating one into a Root View row asks the schema for the
-    translation rather than carrying a key beside every value.
+    translation rather than carrying a key beside every value. The schema also
+    says what each slot holds: a back-reference slot holds ``None``, a logical
+    claim, or a tuple of coordinate-distinct claims, and every other slot holds
+    projections. A back-reference is never followed for reachability or
+    lifetime.
     ``overwritten_edges`` keeps earlier arms from overlapping positions beside
     the parent projection; they are traversed for root-local continuation merging
     but never replace the last value retained in ``view_rows``.
@@ -501,19 +494,31 @@ def root_last_uses(page: Page) -> tuple[array[int], array[int]]:
             if not isinstance(claim, int):
                 for witness in claim:
                     projection_last[witness] = position
-            for value in (
-                *rows.view_rows[projection],
-                *rows.overwritten_edges[projection],
-            ):
-                if isinstance(value, tuple):
-                    pending.extend(cast("tuple[int, ...]", value))
-                elif (
-                    value is not None
-                    and value is not ABSENT
-                    and not isinstance(value, LogicalReference)
-                ):
-                    pending.append(cast("int", value))
+            push_edges(rows, projection, pending)
     return projection_last, logical_last
+
+
+def push_edges(rows: PageRows, projection: int, pending: list[int]) -> None:
+    """Push the projections ``projection``'s view row and overwritten edges reach,
+    so that they pop in slot order and then in overwrite order. A back-reference
+    slot is never followed: it names claims other projections already reach."""
+    for value in reversed(rows.overwritten_edges[projection]):
+        if isinstance(value, tuple):
+            pending.extend(reversed(cast("tuple[int, ...]", value)))
+        elif value is not None:
+            pending.append(cast("int", value))
+    row = rows.view_rows[projection]
+    if not row:
+        return
+    targets = rows.schema.root_view(rows.layouts[projection]).targets[rows.sources[projection]]
+    for slot in reversed(range(len(row))):
+        if targets[slot] is not None:
+            continue
+        value = row[slot]
+        if isinstance(value, tuple):
+            pending.extend(reversed(cast("tuple[int, ...]", value)))
+        elif value is not None and value is not ABSENT:
+            pending.append(cast("int", value))
 
 
 def page_edges(page: Page, shape: TemporalShape | None) -> Iterator[Edge | None]:
@@ -552,16 +557,17 @@ class PageBuilder:
     accumulating surface. It **accumulates**: an identity-first occurrence is
     appended with :meth:`add_claim`, a level's fan-back is recorded with
     :meth:`write_view`, and :meth:`finish` publishes the lot. It also
-    **answers** three questions about rows it already holds —
-    :meth:`member_value`, :meth:`concrete_of`, and :meth:`reference` —
-    because a read level gathers its keys, filters its parents, and records an
-    inverse's logical claims against exactly those rows, and until finishing nothing else
-    holds them. Nothing beyond that fan-out may reach for the three.
+    **answers** two questions about rows it already holds —
+    :meth:`member_value` and :meth:`concrete_of` — because a read level gathers
+    its keys and filters its parents against exactly those rows, and until
+    finishing nothing else holds them. Nothing beyond that fan-out may reach for
+    the two.
 
     Page-local identity groups claims within one builder and never beyond it,
     so the builder is the unit a caller chooses: eager and milestone-set reads
-    each give their whole flat result one Page. Inverse references retain logical
-    claim IDs, not a page-global projection winner.
+    each give their whole flat result one Page. A back-reference, recorded with
+    :meth:`write_reference`, retains logical claim IDs, not a page-global
+    projection winner.
 
     Relationship views accumulate beside the rows rather than inside them,
     because a parent's views are only known once its child level lands and the
@@ -719,8 +725,7 @@ class PageBuilder:
         """Record one relationship view on an already-added projection.
 
         ``value`` is ``None`` for loaded-null, a projection index for a loaded
-        to-one, a tuple of them — empty included — for a loaded to-many, or a
-        :class:`LogicalReference` for an inverse awaiting root-local resolution.
+        to-one, or a tuple of them — empty included — for a loaded to-many.
         A slot never written stays :data:`ABSENT`, which is unloaded — what a
         path-root guard leaves behind when it excludes a parent from a level.
 
@@ -737,6 +742,51 @@ class PageBuilder:
         """
         self._require_open()
         _require_edge(value, len(self._layouts))
+        slot = self._slot(projection, view)
+        row = cast("list[object]", self._views[projection])
+        existing = row[slot]
+        if existing is not ABSENT:
+            self._overwritten_edges.setdefault(projection, []).append(existing)
+        row[slot] = value
+
+    def write_reference(
+        self,
+        projection: int,
+        view: RelationshipViewKey,
+        family: EntityIdentity,
+        member: MemberIdentity,
+    ) -> None:
+        """Record the logical claims ``projection``'s ``member`` names in
+        ``family`` on a back-reference slot, for the Root View to resolve among
+        its own reached nodes.
+
+        A null or unloaded ``member`` names nothing and records loaded-null.
+        Raises :class:`ValueError` when ``member`` names no claim this Page
+        holds — a back-reference revisits an ancestor already converted — or
+        when ``view``'s slot holds projections rather than claims.
+        """
+        self._require_open()
+        slot = self._slot(projection, view)
+        row = cast("list[object]", self._views[projection])
+        layout = self._layouts[projection]
+        if self._schema.root_view(layout).targets[self._sources[projection]][slot] is None:
+            raise ValueError(
+                f"{view.narrowed_view or view.relationship.name!r} on "
+                f"{layout.concrete.canonical} holds projections, not back-reference claims"
+            )
+        key = self.member_value(projection, member)
+        if key is None or key is ABSENT:
+            row[slot] = None
+            return
+        entry = self._identity.get((family, key))
+        if entry is None:
+            raise ValueError(
+                f"back-reference {view.relationship.name!r}: no already-converted "
+                f"{family.canonical} claim for key {key!r} on this Page"
+            )
+        row[slot] = entry if isinstance(entry, int) else tuple(entry.values())
+
+    def _slot(self, projection: int, view: RelationshipViewKey) -> int:
         slot = self._slots[projection].index_of.get(view)
         if slot is None:
             raise ValueError(
@@ -747,10 +797,7 @@ class PageBuilder:
         row = self._views[projection]
         if isinstance(row, tuple):  # pragma: no cover - a resolved slot implies a nonempty row
             raise ValueError("a view slot cannot belong to an empty source layout")
-        existing = row[slot]
-        if existing is not ABSENT:
-            self._overwritten_edges.setdefault(projection, []).append(existing)
-        row[slot] = value
+        return slot
 
     def finish(self, roots: tuple[int, ...], pin: Pin) -> Page:
         """Publish this builder's arrays as one sealed Page, roots in result order.
@@ -852,23 +899,6 @@ class PageBuilder:
         self._require_open()
         return self._layouts[projection].concrete
 
-    def reference(
-        self,
-        family: EntityIdentity,
-        key: object,
-        admits: frozenset[EntityIdentity],
-        *,
-        to_many: bool = False,
-    ) -> LogicalReference | None:
-        """The coordinate-distinct claims registered under ``(family, key)``,
-        deferred to the Root View's canonical reachable allocation."""
-        self._require_open()
-        coordinates = self._identity.get((family, key))
-        if coordinates is None:
-            return None
-        logicals = (coordinates,) if isinstance(coordinates, int) else tuple(coordinates.values())
-        return LogicalReference(logicals, admits, to_many)
-
     def write_to_one(
         self, projection: int, view: RelationshipViewKey, candidates: Sequence[int]
     ) -> None:
@@ -897,7 +927,7 @@ class PageBuilder:
 
 def _require_edge(value: object, count: int) -> None:
     """Refuse a relationship view value no sealed Page could resolve."""
-    if value is None or isinstance(value, LogicalReference):
+    if value is None:
         return
     if isinstance(value, tuple):
         for element in cast("tuple[object, ...]", value):

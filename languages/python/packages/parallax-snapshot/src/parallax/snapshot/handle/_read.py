@@ -815,9 +815,10 @@ def slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...],
     source position: the root is 0 and fetch step ``i`` is ``i + 1``.
 
     A level contributes one slot to whichever source level its own PARENT rows
-    came from, carrying that level's path-root guard as the concretes it admits.
-    The table is dense over every source level the plan can produce a projection
-    at — a level attaching nothing still owns an empty entry, and a
+    came from, carrying that level's path-root guard as the concretes it admits
+    and, for a back-reference, the target concretes its logical claims may
+    resolve to. The table is dense over every source level the plan can produce
+    a projection at — a level attaching nothing still owns an empty entry, and a
     back-reference level, which converts no row of its own, is simply never
     named as a parent.
 
@@ -836,6 +837,9 @@ def slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...],
             ChildSlot(
                 position.view,
                 None if position.source == parent_position.target else frozenset(position.source),
+                frozenset(position.target)
+                if isinstance(step, deep_fetch.BackReferenceFetchStep)
+                else None,
             )
         )
     return tuple(tuple(slots) for slots in table)
@@ -897,33 +901,14 @@ def attach_back_reference(
     A back-reference issues no SQL: m-case-format's "Back-reference cycles"
     guarantees the ancestor is already converted, so the parent's own correlation
     member names logical claims this builder has already registered. The Root
-    View selects only its own reachable canonical claim and target admission.
-
-    An absent correlation member and a stored null both resolve nothing, and both
-    leave the loaded-empty or loaded-null result behind: a parent that names no
-    ancestor reaches none whichever of the two its row holds.
+    View selects only its own reachable canonical claim among the targets the
+    view schema records for the slot.
     """
     position = tree.position(step.position)
     assert position.view is not None
     owner = correlation_member(meta, step.owner.identity)
-    admitted = frozenset(position.target)
     for parent in parents:
-        key = builder.member_value(parent, owner)
-        if key is None or key is ABSENT:
-            builder.write_view(parent, position.view, () if position.to_many else None)
-            continue
-        referenced = builder.reference(step.family, key, admitted, to_many=position.to_many)
-        if referenced is None:  # pragma: no cover - guards a malformed plan
-            raise ValueError(
-                f"back-reference {position.view.relationship.name!r}: no already-converted "
-                f"{step.family.canonical} node for key {key!r} (m-case-format "
-                "'Back-reference cycles' guarantees the ancestor is already known)"
-            )
-        builder.write_view(
-            parent,
-            position.view,
-            referenced,
-        )
+        builder.write_reference(parent, position.view, step.family, owner)
 
 
 def correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> AttributeIdentity:
