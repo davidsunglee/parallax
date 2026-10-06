@@ -16,7 +16,6 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity import model_of
-from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import validate_object_query
 from parallax.core.object_query.serde import deserialize
 from parallax.core.temporal_read import Pin
@@ -68,9 +67,16 @@ def test_forward_fanback_preserves_same_logical_concrete_witnesses(
     assert conflict.value.occurrences == ((0, 1), (0, 2))
 
 
+_PARENT_KEY = "InverseLink.parentId"
+_BOTH_PARENTS = {"InverseLink.parent": ("InverseAlpha", "InverseBeta")}
+
+
 def test_deferred_inverse_reuses_the_canonical_grouped_claim_and_overwritten_views() -> None:
     fixture = PageFixture(
-        INVERSE_MODEL, "InverseOwner.parents", "InverseParent.links", "InverseLink.parent"
+        INVERSE_MODEL,
+        "InverseOwner.parents",
+        "InverseParent.links",
+        references={"InverseLink.parent": ("InverseAlpha",)},
     )
     owner = fixture.node("InverseOwner", {"id": 10})
     first = fixture.node("InverseAlpha", PARENT_ROWS[0])
@@ -80,53 +86,81 @@ def test_deferred_inverse_reuses_the_canonical_grouped_claim_and_overwritten_vie
     fixture.attach(owner, "InverseOwner.parents", (duplicate,))
     fixture.attach(first, "InverseParent.links", (link,))
     fixture.attach(duplicate, "InverseParent.links", (link,))
-    reference = fixture.builder.reference(
-        EntityIdentity(None, "InverseParent"), 1, frozenset({EntityIdentity(None, "InverseAlpha")})
-    )
-    assert reference is not None
-    fixture.builder.write_view(link, fixture.view_key("InverseLink.parent"), reference)
+    fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
     root = RootView(fixture.page(owner))
     assert [entity.name for entity in root.order] == ["InverseOwner", "InverseAlpha", "InverseLink"]
     slot = root.view_layout(2).index_of[fixture.view_key("InverseLink.parent")]
     assert root.view(2, slot) == 1
 
 
-@pytest.mark.parametrize("to_many", [False, True])
-def test_an_inverse_neither_reaches_an_unrelated_root_nor_extends_its_lifetime(
-    to_many: bool,
-) -> None:
-    fixture = PageFixture(INVERSE_MODEL, "InverseParent.links", "InverseLink.parent")
+def test_an_inverse_neither_reaches_an_unrelated_root_nor_extends_its_lifetime() -> None:
+    fixture = PageFixture(INVERSE_MODEL, "InverseParent.links", references=_BOTH_PARENTS)
     alpha = fixture.node("InverseAlpha", PARENT_ROWS[0])
     beta = fixture.node("InverseBeta", PARENT_ROWS[1])
     link = fixture.node("InverseLink", LINK_ROW)
     fixture.attach(alpha, "InverseParent.links", (link,))
     fixture.attach(beta, "InverseParent.links", (link,))
-    reference = fixture.builder.reference(
-        EntityIdentity(None, "InverseParent"),
-        1,
-        frozenset({EntityIdentity(None, "InverseAlpha"), EntityIdentity(None, "InverseBeta")}),
-        to_many=to_many,
-    )
-    assert reference is not None
-    fixture.builder.write_view(link, fixture.view_key("InverseLink.parent"), reference)
+    fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
     page = fixture.page(alpha, beta)
     rows = page_rows(page)
     last_uses = root_last_uses(page)
     assert tuple(last_uses[0]) == (1, 1, 1)
     first = RootView(page, 0)
     slot = first.view_layout(1).index_of[fixture.view_key("InverseLink.parent")]
-    assert first.view(1, slot) == ((0,) if to_many else 0)
+    assert first.view(1, slot) == 0
     first.release_finished_page_rows(0, last_uses)
     assert rows.view_rows[link]
     second = RootView(page, 1)
     assert second.order[0].name == "InverseBeta"
-    assert second.view(1, slot) == ((0,) if to_many else 0)
+    assert second.view(1, slot) == 0
     second.release_finished_page_rows(1, last_uses)
     assert all(not row for row in rows.member_rows)
     assert not rows.view_rows[beta] and not rows.view_rows[link]
     assert all(rows.judged_states.singleton(logical) is None for logical in range(len(rows.claims)))
     release_page_rows(page)
     assert not rows.view_rows
+
+
+def test_an_inverse_resolves_only_to_a_reached_node_its_targets_admit() -> None:
+    fixture = PageFixture(
+        INVERSE_MODEL, "InverseParent.links", references={"InverseLink.parent": ("InverseBeta",)}
+    )
+    alpha = fixture.node("InverseAlpha", PARENT_ROWS[0])
+    beta = fixture.node("InverseBeta", PARENT_ROWS[1])
+    link = fixture.node("InverseLink", LINK_ROW)
+    fixture.attach(alpha, "InverseParent.links", (link,))
+    fixture.attach(beta, "InverseParent.links", (link,))
+    fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
+    page = fixture.page(alpha, beta)
+    excluded = RootView(page, 0)
+    slot = excluded.view_layout(1).index_of[fixture.view_key("InverseLink.parent")]
+    assert excluded.view(1, slot) is None
+    assert RootView(page, 1).view(1, slot) == 0
+
+
+def test_an_inverse_whose_key_is_null_is_loaded_null() -> None:
+    fixture = PageFixture(INVERSE_MODEL, references=_BOTH_PARENTS)
+    link = fixture.node("InverseLink", {**LINK_ROW, "parent_id": None})
+    fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
+    root = RootView(fixture.page(link))
+    assert (
+        root.view(0, root.view_layout(0).index_of[fixture.view_key("InverseLink.parent")]) is None
+    )
+
+
+def test_an_inverse_naming_no_claim_on_the_page_is_refused() -> None:
+    fixture = PageFixture(INVERSE_MODEL, references=_BOTH_PARENTS)
+    link = fixture.node("InverseLink", LINK_ROW)
+    with pytest.raises(ValueError, match="no already-converted"):
+        fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
+
+
+def test_an_inverse_is_refused_on_a_slot_holding_projections() -> None:
+    fixture = PageFixture(INVERSE_MODEL, "InverseLink.parent")
+    fixture.node("InverseAlpha", PARENT_ROWS[0])
+    link = fixture.node("InverseLink", LINK_ROW)
+    with pytest.raises(ValueError, match="holds projections"):
+        fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
 
 
 def test_to_one_selection_among_distinct_logical_targets_remains_unchanged() -> None:
@@ -150,35 +184,53 @@ class TemporalLink(Entity, table="temporal_link"):
     parent: Rel[TemporalParent | None] = rel(reverse_of="links")
 
 
-def test_inverse_lookup_keeps_coordinate_distinct_claims_until_root_local_resolution() -> None:
+_FIRST_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_SECOND_START = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+_TEMPORAL_PIN = Pin(valid_time=_SECOND_START, tx_time=_FIRST_START)
+
+
+def _coordinate_distinct_parents() -> tuple[PageFixture, tuple[int, ...], int]:
+    """Two claims of one temporal parent key at distinct coordinates, both
+    attaching one link whose inverse names them both."""
     fixture = PageFixture(
-        DomainModel(TemporalParent, TemporalLink), "TemporalParent.links", "TemporalLink.parent"
+        DomainModel(TemporalParent, TemporalLink),
+        "TemporalParent.links",
+        references={"TemporalLink.parent": ("TemporalParent",)},
     )
-    first_start = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    second_start = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
-    roots = tuple(
+    parents = tuple(
         fixture.node(
             "TemporalParent",
             {
                 "id": 1,
                 "from_z": start,
                 "thru_z": dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
-                "in_z": first_start,
+                "in_z": _FIRST_START,
                 "out_z": dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
             },
         )
-        for start in (first_start, second_start)
+        for start in (_FIRST_START, _SECOND_START)
     )
     link = fixture.node("TemporalLink", {"id": 11, "parent_id": 1})
-    for root in roots:
-        fixture.attach(root, "TemporalParent.links", (link,))
-    identity = EntityIdentity(None, "TemporalParent")
-    reference = fixture.builder.reference(identity, 1, frozenset({identity}))
-    assert reference is not None and len(reference.logicals) == 2
-    fixture.builder.write_view(link, fixture.view_key("TemporalLink.parent"), reference)
-    page = fixture.page(*roots, pin=Pin(valid_time=second_start, tx_time=first_start))
+    for parent in parents:
+        fixture.attach(parent, "TemporalParent.links", (link,))
+    fixture.attach_reference(link, "TemporalLink.parent", "TemporalParent", "TemporalLink.parentId")
+    return fixture, parents, link
+
+
+def test_inverse_lookup_keeps_coordinate_distinct_claims_until_root_local_resolution() -> None:
+    fixture, roots, _link = _coordinate_distinct_parents()
+    page = fixture.page(*roots, pin=_TEMPORAL_PIN)
     assert page_rows(page).logical_ids[roots[0]] != page_rows(page).logical_ids[roots[1]]
     for position in (0, 1):
         root = RootView(page, position)
         slot = root.view_layout(1).index_of[fixture.view_key("TemporalLink.parent")]
         assert root.view(1, slot) == 0
+
+
+def test_an_inverse_to_coordinate_distinct_claims_this_root_never_reached_is_null() -> None:
+    fixture, _parents, link = _coordinate_distinct_parents()
+    root = RootView(fixture.page(link, pin=_TEMPORAL_PIN), 0)
+    assert root.order[0].name == "TemporalLink"
+    assert (
+        root.view(0, root.view_layout(0).index_of[fixture.view_key("TemporalLink.parent")]) is None
+    )

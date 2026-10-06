@@ -42,6 +42,7 @@ from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCat
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
+    AttributeIdentity,
     EntityIdentity,
     Metamodel,
     Multiplicity,
@@ -62,7 +63,7 @@ from parallax.snapshot.materialize import (
 )
 from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from parallax.snapshot.materialize._views import ROOT_LEVEL, ChildSlot, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._prepared_read_support import compiled_read
 
@@ -277,6 +278,10 @@ class PageFixture:
     no executor, and no database, at the cost of every projection carrying every
     declared slot rather than only its own level's.
 
+    ``references`` declares back-reference views beside them, each by the target
+    Entities its logical claims may resolve to, which is what the plan's slot
+    table records for an inverse hop.
+
     ``model`` overrides the accepted model conversion and Root View judgment without
     changing the classes construction resolves, which is how a suite exercises a
     model and its classes disagreeing — a member the model calls a Value Object
@@ -293,13 +298,31 @@ class PageFixture:
         self,
         domain: DomainModel,
         *views: str | tuple[str, str],
+        references: Mapping[str, tuple[str, ...]] | None = None,
         model: Metamodel | None = None,
     ) -> None:
         assert class_index(domain) is not None, "the Page suites compose class-backed models"
         self._domain = domain
         self._model = model if model is not None else model_of(domain)
         self._cataloged = CatalogedModel(self._model)
-        self._builder = PageBuilder(ViewSchema.of(*map(self._declared, views)))
+        self._builder = PageBuilder(
+            ViewSchema(
+                (
+                    (
+                        *(ChildSlot(self._declared(view)) for view in views),
+                        *(
+                            ChildSlot(
+                                self.view_key(view),
+                                targets=frozenset(
+                                    identity_of(self._model, target) for target in targets
+                                ),
+                            )
+                            for view, targets in (references or {}).items()
+                        ),
+                    ),
+                )
+            )
+        )
         self._reads: dict[str, tuple[CompiledRead, PreparedRead]] = {}
         self._sealed: tuple[tuple[tuple[int, ...], Pin], Page] | None = None
 
@@ -350,6 +373,17 @@ class PageFixture:
     ) -> None:
         """Write one relationship view onto an already-converted projection."""
         self._builder.write_view(parent, self.view_key(relationship, narrowed=narrowed), value)
+
+    def attach_reference(self, parent: int, relationship: str, family: str, member: str) -> None:
+        """Write one declared back-reference onto an already-converted projection:
+        the claims its ``member``, spelled ``Owner.name``, names in ``family``."""
+        owner, _, name = member.rpartition(".")
+        self._builder.write_reference(
+            parent,
+            self.view_key(relationship),
+            identity_of(self._model, family),
+            AttributeIdentity(identity_of(self._model, owner), name),
+        )
 
     def page(self, *roots: int, pin: Pin = _NO_PIN) -> Page:
         """The sealed Page with roots in the requested order.

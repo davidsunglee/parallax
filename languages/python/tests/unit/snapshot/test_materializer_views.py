@@ -154,6 +154,27 @@ def test_a_guarded_concretes_translation_omits_the_slot_it_never_receives() -> N
     assert schema.root_view(_layout("Cat")).to_root_view == ((0,),)
 
 
+def test_targets_are_indexed_like_the_translation_and_name_only_back_reference_slots() -> None:
+    owners = frozenset({_identity("Person")})
+    schema = ViewSchema(((ChildSlot(_PETS),), (ChildSlot(_ANIMALS, targets=owners),)))
+    root_view = schema.root_view(_layout("Person"))
+    assert tuple(map(len, root_view.targets)) == tuple(map(len, root_view.to_root_view))
+    assert root_view.targets == ((None,), (owners,))
+
+
+def test_one_view_key_is_a_back_reference_at_one_level_and_forward_at_another() -> None:
+    # Both levels land in the one Root View slot, so only the source level can
+    # say which of its values are logical claims.
+    owners = frozenset({_identity("Person")})
+    schema = ViewSchema.prepared(
+        ((ChildSlot(_OWNER),), (ChildSlot(_OWNER, targets=owners),)), (_layout("Dog"),)
+    )
+    root_view = schema.root_view(_layout("Dog"))
+    assert root_view.slots == (_OWNER,)
+    assert root_view.to_root_view == ((0,), (0,))
+    assert root_view.targets == ((None,), (owners,))
+
+
 def test_a_root_view_layout_is_answered_identically_on_a_second_reach() -> None:
     # Every node of one concrete shares the one layout, which is what makes a
     # Root View's per-node layout a reference rather than a derivation.

@@ -48,6 +48,7 @@ from parallax.core.base import (
     NeutralType,
     PresentDocument,
 )
+from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import encode_leaf
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
@@ -55,6 +56,7 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
+    RelationshipIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
@@ -76,7 +78,7 @@ from parallax.snapshot.materialize import MISSING_STORED_VALUE, PageBuilder, Roo
 from parallax.snapshot.materialize._page import ABSENT, LogicalKey, StoredDataIssueInput, page_rows
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._typed import typed_root
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from parallax.snapshot.materialize._views import ROOT_LEVEL, ChildSlot, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, target
@@ -672,23 +674,47 @@ def test_a_key_less_entity_never_forms() -> None:
         formed(DescriptorMetamodel(entities=(entity,)))
 
 
-def test_the_builder_references_the_logical_claim_not_a_projection_winner() -> None:
-    builder = PageBuilder(ViewSchema.of())
-    prepared = bound_read(ORDERS, "Order")
-    first, *_ = prepared.convert_row({"id": 1, "name": "Ada"}, builder, source=ROOT_LEVEL)
-    second, *_ = prepared.convert_row({"id": 1, "name": "Ada"}, builder, source=ROOT_LEVEL)
+def _back_referenced_orders() -> tuple[PageBuilder, RelationshipViewKey, RelationshipViewKey]:
+    order = EntityIdentity(_NAMESPACE, "Order")
+    items = RelationshipViewKey(RelationshipIdentity(order, "items"), None)
+    item_order = RelationshipViewKey(
+        RelationshipIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "order"), None
+    )
+    schema = ViewSchema(((ChildSlot(items), ChildSlot(item_order, targets=frozenset({order}))),))
+    return PageBuilder(schema), items, item_order
+
+
+_ITEM_ORDER_ID = AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "orderId")
+
+
+def test_a_back_reference_names_the_logical_claim_not_a_projection_winner() -> None:
+    builder, items, item_order = _back_referenced_orders()
+    orders = bound_read(ORDERS, "Order")
+    first, *_ = orders.convert_row({"id": 1, "name": "Ada"}, builder, source=ROOT_LEVEL)
+    second, *_ = orders.convert_row({"id": 1, "name": "Ada"}, builder, source=ROOT_LEVEL)
+    item, *_ = bound_read(ORDERS, "OrderItem").convert_row(
+        {"id": 11, "order_id": 1}, builder, source=ROOT_LEVEL
+    )
     assert first != second
-    family = EntityIdentity(_NAMESPACE, "Order")
-    reference = builder.reference(family, 1, frozenset({family}))
-    assert reference is not None
+    for order in (first, second):
+        builder.write_view(order, items, (item,))
+    builder.write_reference(item, item_order, EntityIdentity(_NAMESPACE, "Order"), _ITEM_ORDER_ID)
     page = builder.finish((first, second), Pin())
-    assert reference.logicals == (page_rows(page).logical_ids[first],)
     assert page_rows(page).logical_ids[first] == page_rows(page).logical_ids[second]
+    for position in (0, 1):
+        root = RootView(page, position)
+        assert root.view(1, root.view_layout(1).index_of[item_order]) == 0
 
 
-def test_the_builder_answers_nothing_for_a_key_it_never_registered() -> None:
-    family = EntityIdentity(_NAMESPACE, "Order")
-    assert PageBuilder(ViewSchema.of()).reference(family, 999, frozenset({family})) is None
+def test_a_back_reference_to_a_key_the_builder_never_registered_is_refused() -> None:
+    builder, _items, item_order = _back_referenced_orders()
+    item, *_ = bound_read(ORDERS, "OrderItem").convert_row(
+        {"id": 11, "order_id": 999}, builder, source=ROOT_LEVEL
+    )
+    with pytest.raises(ValueError, match="no already-converted"):
+        builder.write_reference(
+            item, item_order, EntityIdentity(_NAMESPACE, "Order"), _ITEM_ORDER_ID
+        )
 
 
 # --------------------------------------------------------------------------- #

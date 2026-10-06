@@ -1602,7 +1602,8 @@ def test_the_slot_table_places_each_level_under_the_source_that_gathers_it() -> 
     # A level's slot belongs to whichever source its PARENT rows came from, and
     # the table is dense over every source a projection can be converted at — so
     # a back-reference level, which converts no row of its own, is named as a
-    # parent by nothing and owns an empty entry.
+    # parent by nothing and owns an empty entry. Its own slot carries the
+    # concretes its logical claims may resolve to.
     assert _slot_table(
         ORDERS,
         {
@@ -1612,7 +1613,12 @@ def test_the_slot_table_places_each_level_under_the_source_that_gathers_it() -> 
         },
     ) == (
         (ChildSlot(_view_key("Order", "items")),),
-        (ChildSlot(_view_key("OrderItem", "order")),),
+        (
+            ChildSlot(
+                _view_key("OrderItem", "order"),
+                targets=frozenset({EntityIdentity("parallax.compatibility", "Order")}),
+            ),
+        ),
         (),
     )
 
