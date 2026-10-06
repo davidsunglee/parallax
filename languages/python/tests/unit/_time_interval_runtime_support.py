@@ -46,10 +46,11 @@ Columns transaction:
   window is four refused reinsertions, then (outside it) a flush that removes
   one tagged row, then four refused reinsertions again.
 
-The provider-free ports cross every DML statement's binds through the
-production PostgreSQL bind adaptation and psycopg's own dump and report one
-affected row. They neither execute SQL nor commit anything: these readings
-never measure PostgreSQL execution, network, or commit latency.
+The provider-free ports cross every statement's binds, a read's as much as a
+write's, through the production PostgreSQL bind adaptation and psycopg's own
+dump; a read answers composed rows and a write reports one affected row. They
+neither execute SQL nor commit anything: these readings never measure
+PostgreSQL execution, network, or commit latency.
 
 Every run reports an :class:`Outcome` counted from the port over the whole run,
 and :func:`expected_outcome` states what a complete run of each cell reports, so
@@ -163,10 +164,10 @@ five is coprime with every size, so the order visits every row, neither
 ascending nor descending."""
 
 EXECUTION_SEAM: Final = (
-    "provider-free in-process ports: every DML statement's binds cross the production "
-    "PostgreSQL bind adaptation and psycopg's own dump and report one affected row; reads "
-    "answer composed rows; no SQL executes and nothing commits, so no PostgreSQL execution, "
-    "network, or commit latency is measured"
+    "provider-free in-process ports: every statement's binds, read or write, cross the "
+    "production PostgreSQL bind adaptation and psycopg's own dump; reads answer composed "
+    "rows and writes report one affected row; no SQL executes and nothing commits, so no "
+    "PostgreSQL execution, network, or commit latency is measured"
 )
 _EDITION: Final = "time-interval-runtime"
 _DAY: Final = dt.timedelta(days=1)
@@ -329,10 +330,13 @@ _FLOW_STAGES: Final[Mapping[Flow, str]] = {
         "starting-revision check, settlement with gap filling, SQL lowering, bind adaptation "
         "and dump, and transact's return"
     ),
-    "read-eager": "one db.find or db.wire.find delivering all 128 Latest/Latest roots",
+    "read-eager": (
+        "one db.find or db.wire.find delivering all 128 Latest/Latest roots, including its "
+        "statement's bind adaptation and dump"
+    ),
     "read-stream": (
         "one db.stream or db.wire.stream over the same query, consumed to its last root in "
-        "32-root pages"
+        "32-root pages, including every page statement's bind adaptation and dump"
     ),
 }
 _MODE_SETUP: Final[Mapping[Mode, str]] = {
@@ -453,6 +457,7 @@ class _CountingPort(lowering_support.AcceptingPort):
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
+        lowering_support.serialize(binds)
         self.counter.reads += 1
         return super().execute(sql, binds, document_reads)
 
@@ -463,7 +468,8 @@ class _CountingPort(lowering_support.AcceptingPort):
 
 class _CompletingAcquisitionPort(acquisition_support.AcquisitionPort):
     """The predicate-acquisition port, completing the flush its window now
-    includes: every statement's binds are serialized and one row is affected."""
+    includes: every statement's binds are serialized, and each write affects
+    one row."""
 
     __slots__ = ("counter",)
 
@@ -477,6 +483,7 @@ class _CompletingAcquisitionPort(acquisition_support.AcquisitionPort):
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
+        lowering_support.serialize(binds)
         self.counter.reads += 1
         return super().execute(sql, binds, document_reads)
 
@@ -489,8 +496,9 @@ class _CompletingAcquisitionPort(acquisition_support.AcquisitionPort):
 
 class _PagedReadPort(ConnectsAsItself):
     """``roots`` current acquisition milestones answered in key order, one
-    page per limited statement. A page answers one lookahead row beyond its
-    size, which the next page answers again; :meth:`reset` restarts delivery."""
+    page per limited statement whose binds are serialized. A page answers one
+    lookahead row beyond its size, which the next page answers again;
+    :meth:`reset` restarts delivery."""
 
     dialect: Dialect = POSTGRES
     __slots__ = ("_delivered", "_layout", "_roots", "counter")
@@ -512,6 +520,7 @@ class _PagedReadPort(ConnectsAsItself):
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
+        lowering_support.serialize(binds)
         self.counter.reads += 1
         limited = " limit " in sql
         size = cast("int", binds[-1]) if limited else self._roots
@@ -545,9 +554,9 @@ class _PagedReadPort(ConnectsAsItself):
 
 
 class _ScriptedPort(ConnectsAsItself):
-    """A port whose reads answer :attr:`answer`, which the workload sets to the
-    stored state each read observes, and whose writes serialize their binds
-    and affect one row."""
+    """A port serializing every statement's binds, whose reads answer
+    :attr:`answer`, which the workload sets to the stored state each read
+    observes, and whose writes affect one row."""
 
     dialect: Dialect = POSTGRES
     __slots__ = ("answer", "counter")
@@ -562,7 +571,7 @@ class _ScriptedPort(ConnectsAsItself):
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
-        del binds
+        lowering_support.serialize(binds)
         self.counter.reads += 1
         return projected_rows(
             sql, (copy.deepcopy(dict(row)) for row in self.answer), document_reads
