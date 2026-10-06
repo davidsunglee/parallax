@@ -7,6 +7,7 @@ from typing import Literal, cast
 from parallax.core import inheritance, temporal_read
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TemporalShape, TimeInterval, milestone_edge
+from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform, Successor
 from parallax.core.unit_work.claims import SettledEvidence, WriteIntent, keyed_intent
 from parallax.core.unit_work.instructions import (
     INSERT_MUTATIONS,
@@ -23,11 +24,6 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.keys import resolve_object_key
 from parallax.core.unit_work.retain import InsertionIdentity, RetainedObservation
-from parallax.core.unit_work.temporal import (
-    EMPTY_TRANSFORM,
-    BoundPiece,
-    TemporalTransform,
-)
 from parallax.core.write_plan.columns import ChunkedColumnBuilder, ColumnSlice, whole
 from parallax.core.write_plan.keys import (
     ObjectKey,
@@ -407,7 +403,7 @@ class ComposedTemporalWrite:
     target: EntityMetadata
     key: Mapping[str, object]
     contributions: tuple[TemporalContribution, ...]
-    transform: TemporalTransform
+    transform: CoverageTransform
 
     @property
     def assigns(self) -> bool:
@@ -496,7 +492,7 @@ def composed_temporal_write(
         target=held.target,
         key=held.key,
         contributions=contributions,
-        transform=_composed_transform(
+        transform=_contributed(
             held.transform, arriving.instruction, key_name, replaces=_replaces(arriving)
         ),
     )
@@ -508,9 +504,7 @@ def _composed(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalWrite:
         target=item.instruction.target,
         key={key_name: row[key_name]},
         contributions=(temporal_contribution(item),),
-        transform=_composed_transform(
-            EMPTY_TRANSFORM, item.instruction, key_name, replaces=_replaces(item)
-        ),
+        transform=_contributed(NO_TRANSFORM, item.instruction, key_name, replaces=_replaces(item)),
     )
 
 
@@ -523,21 +517,22 @@ def composed_alone(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalW
     return _composed(item, key_name)
 
 
-def _composed_transform(
-    transform: TemporalTransform,
+def _contributed(
+    transform: CoverageTransform,
     instruction: PreparedKeyedWrite,
     key_name: str,
     *,
     replaces: bool = False,
-) -> TemporalTransform:
+) -> CoverageTransform:
+    """``transform`` followed by one prepared keyed write over its prepared
+    window: an update assigns every member its row names but the key, which
+    addresses the object rather than changing it; any other write destroys."""
     assigned = (
         {name: value for name, value in instruction.rows[0].items() if name != key_name}
         if instruction.mutation in UPDATE_MUTATIONS
         else None
     )
-    return transform.then(
-        valid_time_window=instruction.valid_time_window, assigned=assigned, replaces=replaces
-    )
+    return transform.followed_by(instruction.valid_time_window, assigned, replaces=replaces)
 
 
 @dataclass(frozen=True, slots=True)
@@ -553,7 +548,7 @@ class PendingOpening:
     """
 
     insert: PreparedKeyedWrite
-    transform: TemporalTransform
+    transform: CoverageTransform
     intents: tuple[WriteIntent, ...]
 
     def then(self, instruction: PreparedKeyedWrite, key_name: str) -> PendingOpening:
@@ -562,38 +557,38 @@ class PendingOpening:
         assert intent is not None  # an opening's own writes are no inserts
         return PendingOpening(
             insert=self.insert,
-            transform=_composed_transform(self.transform, instruction, key_name),
+            transform=_contributed(self.transform, instruction, key_name),
             intents=(*self.intents, intent),
         )
 
     @property
     def survives(self) -> bool:
         """Whether any of the opened coverage survives its composed writes."""
-        return bool(self._bound_pieces())
+        return bool(self._surviving())
 
-    def pieces(self) -> tuple[PreparedKeyedWrite, ...]:
+    def inserts(self) -> tuple[PreparedKeyedWrite, ...]:
         """The inserts the opening flushes as: one per nonempty interval its
         composed writes leave, carrying the opening's values with each
         interval's assignments overlaid."""
         insert = self.insert
         row = insert.rows[0]
-        pieces: list[PreparedKeyedWrite] = []
-        for piece in self._bound_pieces():
-            coverage = piece.valid_time_coverage
-            assert coverage is not None  # a Bitemporal opening's pieces lie on Valid Time
-            pieces.append(
+        inserts: list[PreparedKeyedWrite] = []
+        for surviving in self._surviving():
+            coverage = surviving.valid_time_coverage
+            assert coverage is not None  # a Bitemporal opening's coverage lies on Valid Time
+            inserts.append(
                 derive_opening(
                     insert,
-                    row if piece.assigned is None else {**row, **piece.assigned},
+                    row if surviving.assigned is None else {**row, **surviving.assigned},
                     valid_time_window=coverage,
                 )
             )
-        return tuple(pieces)
+        return tuple(inserts)
 
-    def _bound_pieces(self) -> tuple[BoundPiece, ...]:
+    def _surviving(self) -> tuple[Successor, ...]:
         window = self.insert.valid_time_window
         assert window is not None  # a Bitemporal opening states its window
-        return self.transform.pieces(window)
+        return self.transform.successors_of(window)
 
 
 @dataclass(frozen=True, slots=True)

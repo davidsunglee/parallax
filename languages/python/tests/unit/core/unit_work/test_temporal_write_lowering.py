@@ -2,8 +2,8 @@
 
 Pins the two halves a temporal mutation crosses — the finalized Planned Close and
 Planned Insert successors it expands into, and the DML each of those steps lowers
-to — for audit-only close-and-chain (`m-txtime-write`) and the full-bitemporal
-rectangle split (`m-bitemp-write`).
+to — for audit-only close-and-chain (`m-temporal-write`) and the full-bitemporal
+rectangle split (`m-temporal-write`).
 
 The statements stay byte-exact against the corpus goldens (``m-txtime-write-001
 ..006``, ``m-bitemp-write-001..003/006..009``, ``m-inheritance-090/091/094..097
@@ -259,7 +259,7 @@ def _lower(
 
 
 # --------------------------------------------------------------------------- #
-# Audit-only (m-txtime-write): insert / close-and-chain update / terminate.     #
+# Audit-only (m-temporal-write): insert / close-and-chain update / terminate.     #
 # --------------------------------------------------------------------------- #
 def test_audit_only_insert_opens_a_current_milestone() -> None:
     # m-txtime-write-001.
@@ -494,7 +494,7 @@ def test_audit_only_insert_is_never_gated() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Full bitemporal (m-bitemp-write): the rectangle split and its degenerates.   #
+# Full bitemporal (m-temporal-write): the rectangle split and its degenerates.   #
 # --------------------------------------------------------------------------- #
 _R1_PAYLOAD = {"id": 1, "acctNum": "A", "value": Decimal("100.00")}
 
@@ -1118,7 +1118,7 @@ def test_milestone_close_selects_operation_identities_not_the_physical_key() -> 
 
 
 # --------------------------------------------------------------------------- #
-# Inheritance composition (m-inheritance x m-txtime-write / m-bitemp-write).    #
+# Inheritance composition (m-inheritance x m-temporal-write).    #
 # --------------------------------------------------------------------------- #
 def test_tph_txtime_terminate_carries_the_tag_guard() -> None:
     # m-inheritance-090: the tag guard rides the identity predicates, before
@@ -1139,7 +1139,7 @@ def test_tph_txtime_terminate_carries_the_tag_guard() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Unchanged milestones (m-unit-work): a guard on the observed address and      #
+# Unchanged milestones (m-temporal-write): a guard on the observed address and      #
 # start, assigning the start to itself, where the dialect's count proves it.   #
 # --------------------------------------------------------------------------- #
 _GUARDED_AT = "2024-01-01T00:00:00+00:00"
@@ -1409,11 +1409,11 @@ def test_bitemporal_update_until_carries_the_value_object_document_on_every_chai
 
 
 # --------------------------------------------------------------------------- #
-# Zero-row close: the two distinct outcomes (m-opt-lock / m-txtime-write).      #
+# Zero-row close: the two distinct outcomes (m-opt-lock / m-temporal-write).      #
 # --------------------------------------------------------------------------- #
 def test_multi_row_temporal_write_is_refused() -> None:
     # A temporal keyed write lowers ONE row at a time: each row opens its own
-    # milestone chain (`m-txtime-write` / `m-bitemp-write`), so there is no
+    # milestone chain (`m-temporal-write`), so there is no
     # shared statement a collapse could render. `m-batch-write`'s eligibility
     # never collapses a temporal entity, so reaching here with two rows is a
     # caller wiring defect — refused, never lowered as if only the first row

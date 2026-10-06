@@ -225,7 +225,7 @@ LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
 
 # A non-temporal writeSequence entry (e.g. a pk-gen sequence registry advance)
 # names no `at` — its Clock value is inert (no temporal write consumes it this
-# unit), so a fixed, deterministic instant stands in (`m-txtime-write` / ADR 0010:
+# unit), so a fixed, deterministic instant stands in (`m-temporal-write` / ADR 0010:
 # "a non-temporal entry's clock value is inert, pick something deterministic").
 INERT_CLOCK_INSTANT: Final[str] = "1970-01-01T00:00:00+00:00"
 
@@ -457,7 +457,7 @@ def _shared_document_column(model: AcceptedMetamodel, entity_name: str) -> str |
 
 def entry_instant(entry: Mapping[str, object]) -> str:
     """The tx_instant an entry's OWN choreography unit (transaction) runs at
-    (m-txtime-write / m-bitemp-write ``at``; ADR 0010: the Clock, never a
+    (m-temporal-write ``at``; ADR 0010: the Clock, never a
     per-operation override). A non-temporal entry names none — its Clock
     value is inert, so :data:`INERT_CLOCK_INSTANT` stands in."""
     at = entry.get("at")
@@ -521,7 +521,7 @@ class TemporalEvidence(Protocol):
 @dataclass(frozen=True, slots=True)
 class CaseStateEvidence:
     """Evidence for a lane that models case state: the milestone ``shadow``
-    tracks for the key (`m-txtime-write` / `m-bitemp-write` "the engine supplies
+    tracks for the key (`m-temporal-write` "the engine supplies
     observed rows from case state" — never an implicit resolving read), or, where
     the entry named a find of its `uow` group with ``on``, the claim that find
     retained (:func:`_settled_against_source`).
@@ -2543,7 +2543,7 @@ def _scenario_uow_spans(
 
 def group_tx_instant(steps: Sequence[Mapping[str, object]], indices: Iterable[int]) -> str:
     """The Clock instant a `uow` group's own choreography unit runs at — its
-    first write entry's own instant (m-txtime-write/m-bitemp-write `at`; ADR
+    first write entry's own instant (m-temporal-write `at`; ADR
     0010), or the inert default when the group carries no write (or every
     write entry names none, i.e. every group this round targets a
     non-temporal entity). ``indices`` are the group's own steps, in authored

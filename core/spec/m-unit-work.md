@@ -6,8 +6,8 @@ make in-transaction reads safe. It is expressed entirely in terms of **operation
 and object state** (`m-predicate`): it depends on `m-predicate`, on `m-wire` for
 serialized write-literal conversion, on the execution port `m-db-port`, on
 `m-temporal-read` for the coverage it judges, on `m-write-plan` for the Planned
-Write algebra it produces and the Write Observations it carries, and on
-`m-edit`, which distinguishes authored assignments from state carried by
+Write algebra it produces and the Write Observations it carries, on
+`m-temporal-write` for the temporal expansion it drives, and on `m-edit`, which distinguishes authored assignments from state carried by
 derivation, but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
 set-based forms) is produced by
@@ -464,7 +464,7 @@ coverage at `validFrom` alone. It is a range over current coverage like an
 observed write's (*deferred range unit*): its flush reads the coverage its
 window reaches, a patch assigns to each existing interval and creates nothing,
 and a replacement also opens its state over every gap of its window
-(`m-bitemp-write` *Caller-addressed writes span their requested extent*). Where
+(`m-temporal-write` *Caller-addressed writes span their requested extent*). Where
 that read shows no current row at `validFrom`, or one at another
 Transaction-Time start, the write is a failed precondition before any of its
 statements executes.
@@ -586,8 +586,9 @@ The Write Planner privately owns this stage order:
 4. dependency-order private units within barrier regions
 5. validate the observation each surviving write carries
 6. resolve the Transaction Instant only if surviving work needs it
-7. expand temporal topology in place, or finalize a requested range whose
-   coverage no planning input holds
+7. temporal expansion: expand each temporal unit's Coverage Transform over the
+   predecessors planning holds (`m-temporal-write`), or finalize a requested
+   range whose coverage no planning input holds
 8. decorate provenance
 9. freeze the Planned Steps
 ```
@@ -664,7 +665,7 @@ semantics already decided.
   second result variant.
 - A **deferred range unit** is the one exception to fully expanded topology. A
   temporal object's observed writes whose requested Valid-Time range reaches
-  current coverage no planning input observed (`m-bitemp-write` *Observed writes
+  current coverage no planning input observed (`m-temporal-write` *Observed writes
   span their requested extent*) finalize to their meaning — the composed
   assignments over that range, the source conditions, and the resolved instant —
   together with the one coverage read that range needs. Such a unit carries no
@@ -725,7 +726,8 @@ register the rows the unit opened
 ```
 
 A deferred range unit's changed states, removals, and openings are those its
-binding produced. A milestone a unit kept unchanged (*Unchanged milestones*) is
+binding produced. A milestone a unit kept unchanged (`m-temporal-write`
+*Unchanged milestones*) is
 no changed state, even where a guard executed for it, and derives nothing a
 later unit relies on: it still stands. A source that carries no observation — an unversioned
 Non-Temporal read's — has no state for a unit to name; its authority is spent
@@ -839,43 +841,9 @@ write's changed successor overlays every member the write assigns and carries
 every other member's persisted state. Only an update expressing **no** member is
 empty; it buffers nothing and claims nothing.
 
-#### Unchanged milestones
-
-A temporal write is applied to each current milestone it reaches, and a
-milestone it leaves exactly as it was is **unchanged**: the write's final
-composed effect keeps every interval of it, assigns no member a value other than
-the one it already holds there — compared by `m-document-codec`'s
-effective-change classification over the assigned members alone, never over a
-source's earlier value or an intermediate edit — and no caller-addressed write's
-window reaches it. A caller-addressed write asked for a revision, so a milestone
-its window reaches is never unchanged, whatever values it assigns. An
-observed or insertion-authored write keeps an unchanged milestone rather than
-closing it and chaining an equal successor, wherever its unchanged state is
-proven without changing it:
-
-- a milestone the attempt opened is invisible to every other transaction, so it
-  needs no proof and no statement;
-- under the effective Locking strategy the shared lock the attempt holds on every
-  row the write reaches (`m-read-lock`) keeps the row as it was read, so it needs
-  no statement either;
-- under Optimistic a milestone that existed before the attempt is proven by a
-  **Planned Temporal Guard**: a write that matches the milestone only at its
-  observed address and Transaction-Time start, changes no value, and holds the
-  row's write lock until the transaction ends. Matching is the proof, so a
-  database whose write count reports only the rows an update changed cannot give
-  it (`m-dialect` *Unchanged-row count*); there the milestone is closed and
-  chained as a changed one is, a choice made before anything executes. A guard
-  that matches no row is the milestone's ordinary conflict, never a reason to
-  fall back.
-
-Either way nothing is closed or opened, the milestone keeps its Transaction-Time
-start and its history gains nothing, and the unit's other milestones transform
-as usual. The unit still completes: it spends every source it composed, and it
-changes no state of the kept milestone, so an observation of that state from
-another source stays eligible and another transaction's revision token for it
-still holds. A guard is not zero work: it is a database write that fires update
-triggers and keeps its lock through any later dependent read until the
-transaction ends.
+A temporal milestone such a write leaves exactly as it was is kept rather than
+closed and chained wherever that is proven (`m-temporal-write` *Unchanged
+milestones*).
 
 A predicate-selected write compares instead. The write-input comparison of a
 Materialized Write Group below, and the no-op elimination it performs before
@@ -960,10 +928,10 @@ pending insert.
   one `INSERT` with the post-update values (never `INSERT` + `UPDATE`); an
   **Transaction-Time-Only** insert-then-update opens a single current milestone with the final
   value — no close-and-chain, in contrast to the cross-transaction chaining of
-  `m-txtime-write`; a **bitemporal** insert-then-update covering the whole opening
-  opens a single fully-current rectangle with the final value — no inactivation /
-  head-tail split, in contrast to the cross-transaction rectangle split of
-  `m-bitemp-write`.
+  `m-temporal-write`; a **bitemporal** insert-then-update covering the whole
+  opening opens a single fully-current rectangle with the final value — no
+  inactivation / head-tail split, in contrast to its cross-transaction rectangle
+  split.
 - **A pending Bitemporal opening takes each edit over its own coverage.** An edit
   of a still-pending opening is a temporal edit, composed with the opening as
   observed writes compose over stored coverage (*Observed-State Coalescing*): an
@@ -984,9 +952,9 @@ it (*Buffered, batched, ordered writes*).
 
 Coalescing is a property of **one** unit of work; across two committed transactions
 the milestone modules chain and split as usual. The rule is centralized here because
-it is a buffering decision, not a per-verb one — the milestone modules
-(`m-txtime-write`, `m-bitemp-write`) describe the durable cross-transaction shapes and
-defer the same-transaction combination to this scope.
+it is a buffering decision, not a per-verb one — `m-temporal-write` describes the
+durable cross-transaction shapes and defers the same-transaction combination to
+this scope.
 
 ### Observed-State Coalescing
 
@@ -1258,25 +1226,11 @@ Address and instant carry no tag: a reinsertion's row opened where a removed row
 stood is tagged with the reinsertion, never with the insertion that row was
 tagged with.
 
-For each temporal mutation's predecessor, the planner derives the mutation's
-**nonempty** successors once and then:
-
-```text
-predecessor existed before the attempt -> close it once; open the successors
-predecessor the attempt opened:
-  exactly one successor keeps its complete physical address
-      -> revise the row in place into that successor; open the others
-  otherwise
-      -> remove the row; open every successor
-```
-
-Ownership is the attempt's record alone. A Transaction-Time start equal to the
-attempt's instant **MUST NOT** be read as ownership — clocks may repeat an
-instant across attempts — and no axis end is moved to make a successor match,
-nor is a successor matched against any predecessor but its own. A milestone
-that existed before the attempt is never revised in place or removed, so its
-history stays immutable. The attempt's single Transaction Instant is preserved:
-a revised or reopened row keeps `T` as its Transaction-Time start.
+Temporal expansion disposes of each predecessor by this record: a row that
+existed before the attempt is closed, and one the attempt opened is revised in
+place or removed (`m-temporal-write` *Ownership disposal*). Ownership is the
+attempt's record alone. A Transaction-Time start equal to the attempt's instant
+**MUST NOT** be read as ownership — clocks may repeat an instant across attempts.
 
 ## Actor Identity
 

@@ -4,7 +4,7 @@
 predicates over half-open intervals. The Temporal Selection clause and its
 canonical encoding belong to `m-object-query`, SQL emission belongs to `m-sql`,
 infinity representation belongs to `m-core`/`m-dialect`, and temporal writes
-belong to `m-txtime-write` and `m-bitemp-write`.
+belong to `m-temporal-write`.
 
 The supported temporal Entity shapes are **Transaction-Time-Only** and
 **Bitemporal**. Valid-Time-Only is not supported. The module's Model Compiler

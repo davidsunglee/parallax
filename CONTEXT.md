@@ -22,10 +22,14 @@ contract owners; this index does not add requirements.
 | Unit of Work | Transactional buffering and settlement boundary | [Unit of work](core/spec/m-unit-work.md) |
 | Observed / Insertion-Authoring Write | A write authorized by genuine read provenance versus one authorized by an admitted insertion's own source | [Unit of work](core/spec/m-unit-work.md) |
 | Target Write | A caller-addressed patch or replacement, conditioned by the revision its caller states rather than by any source | [Unit of work](core/spec/m-unit-work.md) |
-| Unchanged Milestone / Guard | A milestone a write leaves exactly as it was and keeps, versus the write that proves it still stands as observed | [Unit of work](core/spec/m-unit-work.md) |
 | Planned Write | One finalized semantic execution step, distinct from the SQL that lowers it | [Write plan](core/spec/m-write-plan.md) |
 | Object Key / Observed State Key | An object across its states versus one exact state a read observed | [Write plan](core/spec/m-write-plan.md) |
 | Write Observation / Predecessor Row | The evidence a write against existing state retains, and the complete observed row a temporal one carries | [Write plan](core/spec/m-write-plan.md) |
+| Predecessor / Successor | An existing milestone a temporal write acts on, versus a row derived from exactly one predecessor over part of its coverage | [Temporal writes](core/spec/m-temporal-write.md) |
+| Coverage Transform / Coverage Segment | What an object's composed writes do to its existing coverage, and one requested window of it | [Temporal writes](core/spec/m-temporal-write.md) |
+| Coverage Gap | Part of a replacement's extent no existing coverage holds, opened as a new lineage rather than a successor | [Temporal writes](core/spec/m-temporal-write.md) |
+| Predecessor Expansion | The per-milestone rules that settle one predecessor's effect and successors | [Temporal writes](core/spec/m-temporal-write.md) |
+| Unchanged Milestone / Guard | A milestone a write leaves exactly as it was and keeps, versus the write that proves it still stands as observed | [Temporal writes](core/spec/m-temporal-write.md) |
 | Concurrency Preference / Strategy | Requested policy versus the strategy resolved for an entity | [Read locks](core/spec/m-read-lock.md) |
 | Transaction Time / Valid Time | Audit history versus effective-world history | [Temporal reads](core/spec/m-temporal-read.md) |
 | Snapshot | A published value graph with explicit loading state | [Snapshot reads](core/spec/m-snapshot-read.md) |

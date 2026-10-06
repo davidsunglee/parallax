@@ -42,6 +42,7 @@ The implementation selects `slice-managed-1` and the managed-object lifecycle.
 | `m-sql` | `sql` |
 | `m-relationship` | `relationship` |
 | `m-temporal-read` | `temporal-read` |
+| `m-temporal-write` | `temporal-write` |
 | `m-unit-work` | `unit-work` |
 | `m-value-object` | `value-object` |
 | `m-wire` | `wire` |

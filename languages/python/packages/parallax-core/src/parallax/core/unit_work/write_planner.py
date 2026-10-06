@@ -9,6 +9,7 @@ from typing import Final, cast
 from parallax.core import inheritance, relationship, temporal_read
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
+from parallax.core.temporal_write.coverage import NO_TRANSFORM
 from parallax.core.unit_work.claims import (
     ClaimVerdict,
     WriteIntent,
@@ -58,7 +59,6 @@ from parallax.core.unit_work.strategy import (
     ConcurrencyStrategy,
     TemporalStrategy,
 )
-from parallax.core.unit_work.temporal import EMPTY_TRANSFORM
 from parallax.core.unit_work.write_settlement import (
     OrderedWrite,
     WritePlanningResult,
@@ -839,7 +839,7 @@ class PendingWrites:
                 base
                 if isinstance(base, PendingOpening)
                 else PendingOpening(
-                    insert=cast("PreparedKeyedWrite", base), transform=EMPTY_TRANSFORM, intents=()
+                    insert=cast("PreparedKeyedWrite", base), transform=NO_TRANSFORM, intents=()
                 )
             ).then(instruction, _key_name(self._families, target))
             if opening.survives:
@@ -1012,7 +1012,7 @@ class PendingWrites:
             if item is None:
                 continue
             if isinstance(item, PendingOpening):
-                inserts = item.pieces()
+                inserts = item.inserts()
             elif index in after_removal:
                 assert isinstance(item, PreparedKeyedWrite)  # an insert is a bare instruction
                 inserts = (item,)

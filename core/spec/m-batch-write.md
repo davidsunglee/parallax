@@ -9,7 +9,7 @@
 
 It owns only the set-based/readless vocabulary for the second family. Versioning,
 locking, conflict abort, and temporal chaining belong respectively to `m-opt-lock`,
-`m-read-lock`, `m-txtime-write`, and `m-bitemp-write`. The canonical golden SQL is
+`m-read-lock`, and `m-temporal-write`. The canonical golden SQL is
 fixed by `m-sql`.
 
 `m-batch-write` decides only **compatibility**: whether two buffered writes may
@@ -83,7 +83,7 @@ row's gate, while Locking needs the read that took its shared lock — and one p
 neither carry nor acquire one. Predicate update and delete therefore materialize
 to keyed writes (`m-opt-lock`). Transaction-Time temporal predicate
 writes likewise materialize so each observed milestone can close/chain
-(`m-txtime-write` / `m-bitemp-write`). Those are not buffered-batch collapse rules.
+(`m-temporal-write`). Those are not buffered-batch collapse rules.
 
 A materializing predicate write resolves **before** planning and enters it as one
 **Materialized Write Group** (`m-unit-work`) — one authored mutation, one shared
@@ -128,7 +128,7 @@ never an error.** Ordinary SQL set semantics already make `update … where
 predicate-selected write that matches nothing simply wrote nothing, the same way
 a materializing verb's resolving read matching zero rows emits zero keyed writes
 and succeeds (`m-opt-lock`). This is categorically distinct from the shortfall an
-**observation-backed** per-row write raises (`m-opt-lock` / `m-txtime-write`),
+**observation-backed** per-row write raises (`m-opt-lock` / `m-temporal-write`),
 which fires when a row the caller **did** match and observe was concurrently
 changed underneath it. Both effective strategies raise it, and the settled gate
 decides which one it is: a gated shortfall is an Optimistic Conflict, an ungated

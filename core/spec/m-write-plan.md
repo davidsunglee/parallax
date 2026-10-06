@@ -52,11 +52,11 @@ object, driver value, physical column name, property name, or SQL ordering.
 - **Planned Temporal Removal** physically removes one current milestone the
   attempt itself opened. Its expected effect is exactly one row. It removes
   uncommitted state of the attempt's own: a milestone that existed before the
-  attempt is never revised or removed, only closed (`m-unit-work`
-  *Rows the attempt opened*).
+  attempt is never revised or removed, only closed (`m-temporal-write`
+  *Ownership disposal*).
 - **Planned Temporal Guard** proves that one current milestone that existed
   before the attempt still stands as it was observed, for a write that leaves it
-  unchanged (`m-unit-work` *Unchanged milestones*). It addresses the milestone as a close does
+  unchanged (`m-temporal-write` *Unchanged milestones*). It addresses the milestone as a close does
   and always carries the close's Temporal Gate, assigns nothing it represents,
   and its expected effect is exactly one row. It changes no observed state.
 

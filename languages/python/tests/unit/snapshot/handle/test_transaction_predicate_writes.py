@@ -773,7 +773,7 @@ def _two_terminate_rows() -> list[MappingRow]:
 def test_materializing_terminate_where_over_an_audit_only_target() -> None:
     # The explicit `locking` preference: every resolved row gets its own close,
     # in the resolving read's own resolved-row order, and every close stays
-    # UNGATED (`m-txtime-write` "a LOCKING-mode close stays ungated" — the
+    # UNGATED (`m-temporal-write` "a LOCKING-mode close stays ungated" — the
     # observed-`in_z` candidate binds only under the Optimistic strategy, which
     # `~parallax.core.opt_lock.effective_strategy` reaches for a
     # Transaction-Time target under the default preference alone).
@@ -798,7 +798,7 @@ def test_materializing_terminate_where_over_an_audit_only_target() -> None:
 
 def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurrency() -> None:
     # OPTIMISTIC mode: an audit-only close GATES on the observed `in_z`,
-    # binding LAST (`m-txtime-write.md:65`, `m-opt-lock.md:87-99`) — every
+    # binding LAST (`m-temporal-write`, `m-opt-lock.md:87-99`) — every
     # resolved row's own close carries THAT row's own observed `in_z`, in
     # resolved-row order. Each is the gated close the corpus's
     # `m-txtime-write-006` update emits ahead of its chained insert, here with
@@ -1245,7 +1245,7 @@ def test_materializing_bitemporal_update_where_carries_the_unassigned_value_obje
     # assignment-bearing `update_where` must project the document in its
     # resolving read. The resolved row's own `address`
     # rides head AND the new tail WHOLE when the caller does not itself
-    # reassign it (`m-bitemp-write` "head/tail old values come from the
+    # reassign it (`m-temporal-write` "head/tail old values come from the
     # observed prior rectangle"; `m-value-object` "the document rides every
     # chained/split row whole" — never decomposed).
     address: dict[str, DocumentValue] = {"city": "Helsinki"}
@@ -1314,7 +1314,7 @@ def test_materializing_plain_terminate_where_bitemporal_carries_the_document() -
     # target's rectangle split ALWAYS chains, unlike an AUDIT-ONLY terminate
     # (close-only, no chained row,
     # `test_materializing_terminate_where_audit_only_stays_document_free`,
-    # below). `m-bitemp-write` "head/tail old values come from the observed
+    # below). `m-temporal-write` "head/tail old values come from the observed
     # prior rectangle"; `m-value-object` "the document rides every
     # chained/split row whole".
     address: dict[str, DocumentValue] = {"city": "Oslo"}

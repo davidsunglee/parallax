@@ -555,7 +555,7 @@ says that the native affected-row count an `UPDATE` reports through `executeWrit
 (`m-db-port`) includes every row its predicate matched, rows whose values it left
 unchanged among them. Only then can an `UPDATE` that changes nothing prove that
 the row it addresses still stands as observed, which is what an unchanged
-milestone's guard relies on (`m-unit-work` *Unchanged milestones*).
+milestone's guard relies on (`m-temporal-write` *Unchanged milestones*).
 
 Postgres answers **yes**: its command tag counts every row the `UPDATE` wrote,
 including matched rows whose values did not change. A row a `BEFORE UPDATE`

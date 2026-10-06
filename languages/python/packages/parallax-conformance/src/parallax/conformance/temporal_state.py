@@ -49,7 +49,7 @@ __all__ = [
 # keys an observation by, since every coordinate reaching this module is
 # normalized to a UTC instant before it is stored (:func:`_coordinate`).
 # Identity alone will not do — one key may hold several disjoint Valid-Time
-# rectangles current on Transaction Time at once (`m-bitemp-write`), so a
+# rectangles current on Transaction Time at once (`m-temporal-write`), so a
 # pk-keyed slot silently loses every rectangle but the last one written.
 _ObjectKey = tuple[str, tuple[object, ...], temporal_read.Edge]
 
@@ -59,7 +59,7 @@ class AmbiguousObservationError(ValueError):
     silently guessing which one a later step means. Two shapes reach it: several
     current milestones are tracked for one (entity, pk) — several disjoint
     Valid-Time rectangles of one key may be current on Transaction Time
-    (`m-bitemp-write.md`), and a step's row names the object rather than the
+    (`m-temporal-write.md`), and a step's row names the object rather than the
     rectangle, so the remedy is a write naming the find it settles against
     (`m-case-format` "Settling against a grouped find"); or two tracked
     milestones of one key carry the SAME edge, which no edge could tell apart, so
@@ -363,7 +363,7 @@ class TemporalShadow:
         """Track again each ``observed`` milestone — retired as its write
         resolved (:meth:`retire`) — that no step of ``steps`` closes, revises, or
         removes: a write that leaves a milestone as it was keeps it current
-        (`m-txtime-write`, `m-bitemp-write`)."""
+        (`m-temporal-write`)."""
         changed: set[tuple[str, tuple[object, ...], tuple[dt.datetime | None, ...]]] = set()
         for step in steps:
             if isinstance(step, PlannedClose | PlannedTemporalRevision | PlannedTemporalRemoval):

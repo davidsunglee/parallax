@@ -131,6 +131,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-identity-map` | Transaction-scoped identity map (managed-object interning) | active | cases |
 | `m-process-cache` | Process-wide identity & query cache | deferred | cases |
 | `m-temporal-read` | As-of temporal reads (all flavors) | active | cases |
+| `m-temporal-write` | Temporal writes: coverage transforms and predecessor expansion | active | cases |
 | `m-txtime-write` | Transaction-Time-Only temporal writes | active | cases |
 | `m-bitemp-write` | Bitemporal rectangle-split writes | active | cases |
 | `m-validtime-only` | Valid-Time-Only temporal formation (deferred) | deferred | cases |
@@ -215,6 +216,13 @@ m-unit-work --> m-edit
 m-unit-work --> m-document-codec
 m-unit-work --> m-relationship
 m-unit-work --> m-write-plan
+m-unit-work --> m-temporal-write
+m-temporal-write --> m-core
+m-temporal-write --> m-metamodel
+m-temporal-write --> m-inheritance
+m-temporal-write --> m-document-codec
+m-temporal-write --> m-temporal-read
+m-temporal-write --> m-write-plan
 m-write-plan --> m-core
 m-write-plan --> m-metamodel
 m-write-plan --> m-predicate
@@ -450,6 +458,16 @@ construction it may reference any behavioral module it harnesses.
   strategy, or SQL construct, so both `m-unit-work`, which produces the
   algebra, and `m-sql`, which lowers it, depend on it rather than on each
   other.
+- **`m-unit-work --> m-temporal-write --> m-write-plan`.** Temporal geometry and
+  the per-predecessor rules — reach, preservation, close and gate, ownership
+  disposal, successors, and new-lineage openings — have one owner beneath the
+  unit of work, which drives them from its buffering, binding, and completion
+  machinery. `m-temporal-write` states them over the write plan's algebra and
+  evidence, the read model's intervals and axes (`m-temporal-read`), the
+  family-effective member selection (`m-inheritance`), managed values and
+  identities (`m-core`, `m-metamodel`), and the codec's effective-change
+  classification (`m-document-codec`); it names no instruction, buffer,
+  transaction, strategy, or SQL construct.
 - **`m-snapshot-read --> m-edit`; `m-unit-work --> m-edit`.** Edited-value
   derivation owns the distinction between state an assignment replaces and state
   carried by complement. Snapshot materialization relies on it when a derived

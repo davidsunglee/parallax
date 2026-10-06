@@ -59,7 +59,9 @@ fixture names its Entity by the same identity every other shipped document does,
 and a model declaring one local name in two namespaces keys each twin's rows
 without ambiguity. A loader **MAY** additionally accept an unambiguous bare local
 name, matching the permissive input every reference position allows; shipped
-fixtures do not rely on it.
+fixtures do not rely on it. Each row names only members its Entity's family
+declares, and a loader refuses any other member name rather than dropping it:
+a temporal row is the complete state a later write carries forward.
 
 A case's identity is its **filename**, `<module>-NNN-<slug>.yaml`: `<module>` is the
 primary module slug the case chiefly proves (the first module tag in its `tags`),
@@ -152,8 +154,8 @@ A case is one of **eleven shapes**, named by the required top-level `shape`:
   asserting `then.rows` or a deep-fetch `then.graph`; a `when.stream` context
   member makes the same read a **streamed** one (see *Streamed reads*, below).
 - **`writeSequence`** — ordered DML under `when.writeSequence`, asserting the
-  resulting `then.tableState` (the temporal writes `m-txtime-write` /
-  `m-bitemp-write`, the set-based `m-batch-write`,
+  resulting `then.tableState` (the temporal writes `m-temporal-write`, the set-based
+  `m-batch-write`,
   and `m-cascade-delete`).
 - **`scenario`** — a `when.scenario` of ordered read, committed-write, *and*
   lifecycle-**action** steps, golden SQL per step (`m-unit-work` and the
@@ -1052,7 +1054,7 @@ chains its own successors, and a temporal entity never collapses into a set-base
 statement), so a chain per key is authored as a **step per key**. A
 Transaction-Time-Only `update` declaring **one** statement is the guard that keeps
 the current milestone every assigned value of which it already holds
-(`m-unit-work` *Unchanged milestones*): its golden assigns `in_z` to itself on the
+(`m-temporal-write` *Unchanged milestones*): its golden assigns `in_z` to itself on the
 milestone's address and gates on the observed `in_z`, the harness checks that its
 row assigns exactly the values the case's history leaves current, and a later
 step finds that milestone still current. Such a case states the dialects whose
@@ -1134,7 +1136,7 @@ state:
   the locked point read that participation requires (`m-unit-work` *Caller-addressed
   writes*) — and none under Optimistic. A temporal one also owes **one coverage
   read per object** under either strategy, the read of the coverage its window
-  reaches that its flush makes (`m-bitemp-write`, `m-txtime-write`).
+  reaches that its flush makes (`m-temporal-write`).
 
 A **grouped** scenario write step owes none of its own: its group's find steps
 are what publish the values it settles against, and those finds already declare
@@ -1147,7 +1149,7 @@ of inside it, which decides WHERE it happens and not whether it counts.
 
 A Bitemporal entry's resolving read is pinned at the Valid-Time instant the
 entry's `validFrom` states, because a source-backed write starts where its source
-was read (`m-bitemp-write` *Observed writes span their requested extent*); one
+was read (`m-temporal-write` *Observed writes span their requested extent*); one
 read per Entity becomes one per Entity and pin.
 
 A unit whose observed write reaches current coverage its sources did not observe

@@ -36,8 +36,23 @@ from parallax.core.temporal_read import (
     TransactionTimeOnly,
     valid_time_coverage,
 )
+from parallax.core.temporal_write.expansion import (
+    Expansion,
+    TemporalFacts,
+    bitemporal_ends,
+    dispose,
+    entry_ends,
+    kept,
+    opening,
+    openings,
+    planned_close,
+    preserved,
+    revision_assignments,
+    successor_insert,
+)
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.instructions import (
+    INSERT_MUTATIONS,
     UPDATE_MUTATIONS,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
@@ -53,21 +68,6 @@ from parallax.core.unit_work.materialized import (
     TargetKeyedWrite,
     VersionedEvidence,
     composed_alone,
-)
-from parallax.core.unit_work.milestones import (
-    Settled,
-    SettledClose,
-    TemporalFacts,
-    bitemporal_ends,
-    close_step,
-    dispose,
-    entry_ends,
-    kept,
-    openings,
-    predecessor_maps,
-    preserved,
-    revision_assignments,
-    successor_step,
 )
 from parallax.core.unit_work.ranges import (
     Decoration,
@@ -88,8 +88,10 @@ from parallax.core.unit_work.strategy import (
     VersionArithmetic,
 )
 from parallax.core.unit_work.temporal import (
+    ResolvedSuccessor,
+    bound_cell,
+    bound_value,
     resolve_successors,
-    successor_bounds,
 )
 from parallax.core.unit_work.write_validate import WriteRejectedError
 from parallax.core.write_plan.columns import ColumnSlice
@@ -111,6 +113,7 @@ from parallax.core.write_plan.plan import (
     Ownership,
     PlannedSteps,
     StepSegment,
+    UnitEffects,
     WritePlan,
     eager_segment,
 )
@@ -134,6 +137,7 @@ from parallax.core.write_plan.steps import (
     UNGATED,
     UNVERSIONED,
     AffectedRows,
+    CloseCause,
     ExactCount,
     InsertEntry,
     MaxPlusOne,
@@ -147,6 +151,7 @@ from parallax.core.write_plan.steps import (
     PlannedUpdate,
     PlannedValue,
     Shortfall,
+    TemporalGate,
     Versioned,
     VersionGate,
     adopt_planned_assignments,
@@ -197,6 +202,33 @@ class WritePlanningResult:
     """
 
     plan: WritePlan
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Settled(UnitEffects):
+    """One settled write's steps beside the effects their success publishes."""
+
+    steps: tuple[PlannedStep, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SettledClose:
+    """What closing a keyed write's or a group's current milestone takes, as its
+    topology table describes it."""
+
+    cause: CloseCause
+    key_attributes: tuple[AttributeIdentity, ...]
+    gate_start_attribute: AttributeIdentity
+    gated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _TableFacts(TemporalFacts):
+    """A temporal mutation's facts beside the close and successors its topology
+    table describes."""
+
+    close: _SettledClose | None
+    resolved_successors: tuple[ResolvedSuccessor, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,7 +510,7 @@ class WriteSettlement:
         advances: int = 0,
         *,
         guards: bool = False,
-    ) -> tuple[Settled, Completion | None, VersionedStateKey | None]:
+    ) -> tuple[_Settled | Expansion, Completion | None, VersionedStateKey | None]:
         """One ordered keyed write's settled steps and effects, beside the
         claim its unit spends and the state its carrier itself names as
         changed. ``advances`` is how many versions earlier writes of its scope
@@ -549,7 +581,7 @@ class WriteSettlement:
         conditioned: bool = False,
         advances: int = 0,
         guards: bool = False,
-    ) -> Settled:
+    ) -> _Settled | Expansion:
         """One ordered write's steps and effects. ``source`` is the observed
         state the write's claim names, which it changes wherever it changes the
         row it observed. ``own_version`` is the version a write
@@ -560,7 +592,7 @@ class WriteSettlement:
         ``advances`` moves an observed version past the writes of its state a
         barrier kept before this one."""
         if isinstance(instruction, PreparedPredicateWrite):
-            return Settled(steps=self._settle_predicate(instruction))
+            return _Settled(steps=self._settle_predicate(instruction))
         entity = instruction.target
         if shape is None:
             shape = self._temporal_facet.shape(entity.identity)
@@ -580,7 +612,7 @@ class WriteSettlement:
         facts = self._non_temporal_facts(entity)
         changed = _changes(source)
         if instruction.mutation == "insert":
-            return Settled(steps=(self._settle_insert(facts, instruction),), changed=changed)
+            return _Settled(steps=(self._settle_insert(facts, instruction),), changed=changed)
         addressed = self._addressed_facts(facts, concurrency, conditioned=conditioned)
         observed_version = (
             own_version
@@ -589,7 +621,7 @@ class WriteSettlement:
         )
         if advances and observed_version is not None:
             observed_version = self._advanced(observed_version, advances)
-        return Settled(
+        return _Settled(
             steps=(
                 _non_temporal_step(
                     facts,
@@ -754,7 +786,7 @@ class WriteSettlement:
         *,
         guards: bool = False,
         preserves: bool = True,
-    ) -> Settled:
+    ) -> _Settled | Expansion:
         """One temporal mutation as the effects on its predecessor and its
         successors, in that order. ``source`` is the predecessor's observed
         state, as the write's claim names it.
@@ -763,6 +795,9 @@ class WriteSettlement:
         (`m-unit-work`), since each row of a milestone chain opens its own
         successors.
 
+        An insert opens a new lineage over its prepared window
+        (:func:`~parallax.core.temporal_write.expansion.opening`).
+
         A changed successor overlays every member the instruction's row
         assigns: an observed update's row is its literal assignment set.
 
@@ -770,13 +805,16 @@ class WriteSettlement:
         nonempty successor opened. One this attempt opened itself is never
         closed into history: it is revised in place when exactly one successor
         keeps its complete physical address, and removed otherwise
-        (:func:`dispose`).
+        (:func:`~parallax.core.temporal_write.expansion.dispose`).
 
         An update every assigned member of which the predecessor already holds
-        leaves it as it was, and where that is proven (:func:`preserved`) it
-        is kept rather than closed. A caller's write that ``preserves`` nothing
-        is always closed, since its caller asked for the revision.
+        leaves it as it was, and where that is proven
+        (:func:`~parallax.core.temporal_write.expansion.preserved`) it is kept
+        rather than closed. A caller's write that ``preserves`` nothing is
+        always closed, since its caller asked for the revision.
         """
+        if instruction.mutation in INSERT_MUTATIONS:
+            return self._settle_temporal_insert(entity, shape, instruction, tx_instant, source)
         observed = observation if isinstance(observation, TemporalObservation) else None
         facts = self._temporal_facts(
             entity,
@@ -787,17 +825,17 @@ class WriteSettlement:
             concurrency=concurrency,
             tx_instant=tx_instant,
         )
+        close = facts.close
+        # Every milestone verb closes what it observed, which the refusal in
+        # `_temporal_facts` guarantees reached it.
+        assert close is not None and observed is not None
         row = instruction.rows[0]
         authored_attributes, authored_value_objects = resolve_row(
             entity, facts.view, row, context="insert"
         )
-        predecessor = None if observed is None else observed.predecessor
-        close = facts.close
-        allocates = close is None and _returns_allocated_key(facts, authored_attributes)
+        predecessor = observed.predecessor
         if (
             preserves
-            and close is not None
-            and predecessor is not None
             and instruction.mutation in UPDATE_MUTATIONS
             and (guards or not close.gated or ownership.owns_any(entity.identity))
         ):
@@ -809,34 +847,48 @@ class WriteSettlement:
                 )
                 if kept_as_is is not None:
                     return kept_as_is
-        if predecessor is not None:
-            if any(
-                isinstance(resolved.state, CarriedState | ChangedState)
-                for resolved in facts.resolved_successors
-            ):
-                predecessor = predecessor.with_bindable_document()
-            else:
-                # No successor carries this state forward, yet a member the entity
-                # does not declare still refuses it.
-                predecessor_maps(facts, predecessor)
+        if facts.resolved_successors:
+            predecessor = predecessor.with_bindable_document()
         successors = tuple(
-            successor_step(
+            _successor_step(
                 facts, resolved, authored_attributes, authored_value_objects, predecessor
             )
             for resolved in facts.resolved_successors
         )
-        if close is None:
-            return Settled(
-                steps=successors,
-                changed=_changes(source),
-                opened=Openings(
-                    continued=openings(facts, successors),
-                    allocated=_allocated(facts, successors) if allocates else (),
-                ),
-            )
-        assert predecessor is not None  # a closing topology refuses an unobserved mutation
         closing = _observed_close(facts, close, row, predecessor)
         return dispose(facts, closing, successors, predecessor, ownership, source)
+
+    def _settle_temporal_insert(
+        self,
+        entity: EntityMetadata,
+        shape: TransactionTimeOnly | Bitemporal,
+        instruction: PreparedKeyedWrite,
+        tx_instant: TransactionInstant,
+        source: ObservedStateKey | None,
+    ) -> _Settled:
+        """One temporal insert as the new lineage it opens over its prepared
+        window, the row recorded under the key it states or, where the
+        database allocates the key, under the key its insert answers."""
+        view = entity_view(self._families, entity)
+        # Reaching a surviving temporal insert is what makes the attempt
+        # capture its instant; the row's fresh start derives from that value.
+        facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=tx_instant.value())
+        attributes, value_objects = resolve_row(entity, view, instruction.rows[0], context="insert")
+        allocates = _returns_allocated_key(facts, attributes)
+        inserts = (
+            PlannedInsert(
+                entity=entity.identity,
+                entries=(opening(facts, attributes, value_objects, instruction.valid_time_window),),
+            ),
+        )
+        return _Settled(
+            steps=inserts,
+            changed=_changes(source),
+            opened=Openings(
+                continued=openings(facts, inserts),
+                allocated=_allocated(facts, inserts) if allocates else (),
+            ),
+        )
 
     def _temporal_facts(
         self,
@@ -848,20 +900,16 @@ class WriteSettlement:
         observed: bool,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
-    ) -> TemporalFacts:
-        """Everything one temporal mutation settles before a row is in hand.
+    ) -> _TableFacts:
+        """Everything one temporal mutation that closes its current milestone
+        settles before a row is in hand, read off its topology table.
 
         The sole site for each of these decisions, whichever representation the
         mutation arrived as: which topology the Temporal Facet describes it
-        with, what closing takes if that topology closes anything, which
-        successors exist and what each one's bound expression and
-        represented-state kind is, and the one instant the attempt stamps.
-        An eagerly settled instruction and a Materialized Write Group therefore
-        cannot answer any of them differently.
-
-        A topology that closes nothing settles no close: it addresses no
-        existing row and gates against none, so neither the target's primary
-        key nor the Concurrency Strategy's gate decision is a fact about it.
+        with, what closing takes, which successors exist and what each one's
+        bound expression and represented-state kind is, and the one instant the
+        attempt stamps. An eagerly settled instruction and a Materialized Write
+        Group therefore cannot answer any of them differently.
 
         ``shape`` is the family's Temporal Shape the caller already read to
         dispatch here, retained by reference so no later decision re-reads it.
@@ -880,15 +928,15 @@ class WriteSettlement:
                 "addresses, gates on, and carries state forward from (m-unit-work; m-opt-lock)"
             )
         view = entity_view(self._families, entity)
-        close: SettledClose | None = None
+        close: _SettledClose | None = None
         if topology.closure is not None:
-            close = SettledClose(
+            close = _SettledClose(
                 cause=topology.closure.cause,
                 key_attributes=(view.primary_key.identity,),
                 gate_start_attribute=_gate_axis(shape, topology.closure.gate_basis).start_attribute,
                 gated=self._concurrency.gates(concurrency, self._model, entity.identity),
             )
-        return TemporalFacts(
+        return _TableFacts(
             entity=entity,
             view=view,
             shape=shape,
@@ -1054,7 +1102,8 @@ class WriteSettlement:
 
         A selected row this attempt opened itself is revised or removed rather
         than closed, and an empty successor is not opened, exactly as for a
-        keyed write's own predecessor (:func:`dispose`). Only a group with such
+        keyed write's own predecessor
+        (:func:`~parallax.core.temporal_write.expansion.dispose`). Only a group with such
         a row lays its rows out one by one; every other group keeps one uniform
         step count per row.
         """
@@ -1259,8 +1308,8 @@ class _MaterializedTemporalSegment:
     patch.
     """
 
-    facts: TemporalFacts
-    close: SettledClose
+    facts: _TableFacts
+    close: _SettledClose
     evidence: PredecessorRows
     authored_attributes: Mapping[AttributeIdentity, PlannedValue]
     authored_value_objects: Mapping[ValueObjectIdentity, object]
@@ -1407,18 +1456,17 @@ class _MaterializedTemporalSegment:
         start_position = evidence.selection.position(shape.valid_time.start_attribute)
         end_position = self.valid_end_position
         assert start_position is not None and end_position is not None
-        return successor_bounds(
-            self.facts.resolved_successors[position],
-            predecessor_start=row[start_position],
-            predecessor_end=row[end_position],
-        )
+        window = self.facts.resolved_successors[position].window
+        assert window is not None  # only a Bitemporal successor binds a window
+        start, end = row[start_position], row[end_position]
+        return bound_value(window.start, start, end), bound_value(window.end, start, end)
 
     def _closing(self, row_index: int) -> PlannedClose:
         evidence = self.evidence
         row = evidence.rows[row_index]
         gate_position = self.gate_position
         valid_end_position = self.valid_end_position
-        return close_step(
+        return _close_step(
             self.facts,
             self.close,
             key_values=(row[evidence.key_position],),
@@ -1486,7 +1534,7 @@ class _MaterializedTemporalSegment:
     ) -> PlannedInsert:
         resolved = self.facts.resolved_successors[position]
         change = self.change
-        return successor_step(
+        return _successor_step(
             self.facts,
             resolved,
             self.authored_attributes,
@@ -1539,11 +1587,11 @@ type _GroupSegment = _MaterializedNonTemporalSegment | _MaterializedTemporalSegm
 
 def _observed_close(
     facts: TemporalFacts,
-    close: SettledClose,
+    close: _SettledClose,
     row: Mapping[str, object],
     predecessor: PredecessorRow,
 ) -> PlannedClose:
-    return close_step(
+    return _close_step(
         facts,
         close,
         key_values=key_tuple(facts.entity, close.key_attributes, row),
@@ -1554,6 +1602,73 @@ def _observed_close(
         ),
         observed_gate_start=predecessor.cell(close.gate_start_attribute) if close.gated else None,
     )
+
+
+def _close_step(
+    facts: TemporalFacts,
+    close: _SettledClose,
+    *,
+    key_values: tuple[object, ...],
+    observed_valid_end: object | None,
+    observed_gate_start: object | None,
+) -> PlannedClose:
+    """One temporal row's close, from the few observed cells it reads.
+
+    ``observed_gate_start`` is read only for a gated close, and
+    ``observed_valid_end`` only for a Bitemporal one.
+    """
+    return planned_close(
+        facts,
+        key_attributes=close.key_attributes,
+        key_values=key_values,
+        observed_valid_end=observed_valid_end,
+        cause=close.cause,
+        gate=(
+            TemporalGate(
+                start_attribute=close.gate_start_attribute,
+                observed_start=observed_gate_start,
+            )
+            if close.gated
+            else UNGATED
+        ),
+    )
+
+
+def _successor_step(
+    facts: TemporalFacts,
+    resolved: ResolvedSuccessor,
+    authored_attributes: Mapping[AttributeIdentity, PlannedValue],
+    authored_value_objects: Mapping[ValueObjectIdentity, object],
+    predecessor: PredecessorRow,
+    *,
+    effective: Iterable[int] | None = None,
+) -> PlannedInsert:
+    """One resolved topology successor of ``predecessor``, its Valid-Time
+    bounds read from the predecessor's own cells where its topology names
+    them."""
+    window = resolved.window
+    valid_start: object = None
+    valid_end: object = None
+    if window is not None:
+        shape = facts.shape
+        assert isinstance(shape, Bitemporal)  # only a Bitemporal topology windows a successor
+        valid_start = bound_cell(window.start, shape.valid_time, predecessor)
+        valid_end = bound_cell(window.end, shape.valid_time, predecessor)
+    match resolved.state:
+        case CarriedState():
+            return successor_insert(facts, predecessor, valid_start, valid_end)
+        case ChangedState():
+            return successor_insert(
+                facts,
+                predecessor,
+                valid_start,
+                valid_end,
+                authored_attributes,
+                authored_value_objects,
+                effective=effective,
+            )
+        case AuthoredState():  # pragma: no cover - an insert opens through `opening`
+            raise AssertionError("an opening topology settles no successor of a predecessor")
 
 
 def _observed_claim(item: ObservedKeyedWrite) -> Completion | None:
@@ -1701,7 +1816,7 @@ def _non_temporal_concurrency(
 ) -> NonTemporalConcurrency:
     """The settled concurrency decision one addressed non-temporal write
     carries, given the already-decided ``gated`` fact — the version analogue
-    of a close's own gate (:func:`close_step`).
+    of a close's own gate (:func:`_close_step`).
 
     An unversioned target has nothing to gate on. A versioned one binds its
     observation as a gate when gated and records an explicit `Ungated`

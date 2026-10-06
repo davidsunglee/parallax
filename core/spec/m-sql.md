@@ -879,9 +879,9 @@ out_z = ?` / `infinity`), so only the open milestone is closed. The harness
 **applies** this DML in order to an empty table and asserts the resulting
 `then.tableState` — including the `out_z = infinity` current row — so the
 chaining contract is proven against real data, not merely asserted. The full
-milestone-write semantics are `m-txtime-write`.
+milestone-write semantics are `m-temporal-write`.
 
-**Optimistic-mode close (`m-opt-lock` × `m-txtime-write`).** In optimistic mode the
+**Optimistic-mode close (`m-opt-lock` × `m-temporal-write`).** In optimistic mode the
 close `update` gains an `and in_z = ?` gate on the observed `txStart` — the
 version analogue for a temporal entity (`m-opt-lock`, `m-opt-lock -->
 m-temporal-read`):
@@ -893,7 +893,7 @@ m-temporal-read`):
 The locking-mode close keeps the ungated form above (`… where bal_id = ? and
 out_z = ?`). A close **MUST** affect exactly one row; a zero-row close is a
 conflict (optimistic) or a stale/consistency error (locking), never silent
-(`m-txtime-write` / `m-opt-lock`).
+(`m-temporal-write` / `m-opt-lock`).
 
 ### Bitemporal as-of reads (both axes)
 
@@ -938,12 +938,12 @@ original (`out_z` finite) plus the `head` / `middle` / `tail` rectangles current
 on Transaction Time (`out_z = infinity`) — so the rectangle split is proven against real
 data, not merely asserted. The same multi-row physical primary key (domain key
 plus each dimension's end column, `m-descriptor`) makes the chained rectangles
-admissible. The full rectangle-split semantics are `m-bitemp-write`.
+admissible. The full rectangle-split semantics are `m-temporal-write`.
 
 **Plain (unbounded) writes.** Alongside the bounded `*Until` templates, the plain
 (unbounded) `insert` / `update` / `terminate` govern a value from an effective
 Valid-Time instant `V` **through infinity** — the degenerate rectangle splits with no
-`until` (`m-bitemp-write`). Plain `insert` is a **single** fully-current `INSERT`;
+`until` (`m-temporal-write`). Plain `insert` is a **single** fully-current `INSERT`;
 plain `update` is the inactivate `update` plus a `head` **and** a new `tail`; plain
 `terminate` is the inactivate `update` plus a **single `head`** (no tail):
 
@@ -967,7 +967,7 @@ no current-on-Transaction-Time row. The inactivate `update` for both addresses i
 rectangle exactly as the `*Until` inactivate above does, so the optimistic gate below
 applies to it verbatim.
 
-**Optimistic-mode inactivation (`m-opt-lock` × `m-bitemp-write`).** The address above
+**Optimistic-mode inactivation (`m-opt-lock` × `m-temporal-write`).** The address above
 is what the inactivate `update` renders in **both** modes; optimistic mode only
 **appends** the observed-`txStart` gate, and that gate binds last:
 
@@ -1014,7 +1014,7 @@ A `max` insert of a Non-Temporal row answers nothing.
 ### Requested ranges — coverage read and statement order
 
 An observed write whose requested extent reaches current rectangles no read of
-it observed (`m-bitemp-write` *Observed writes span their requested extent*)
+it observed (`m-temporal-write` *Observed writes span their requested extent*)
 reads those rectangles inside its flush, as an ordinary row-form read of the
 object's current coverage from the first instant its observations leave
 uncovered:
@@ -1033,7 +1033,7 @@ revision, or removal is emitted before any successor is inserted — rectangles 
 Valid-Time order, each rectangle's successors in Valid-Time order — so a lost
 condition fails before the range writes anything new.
 
-A rectangle the write leaves unchanged (`m-unit-work` *Unchanged milestones*) is
+A rectangle the write leaves unchanged (`m-temporal-write` *Unchanged milestones*) is
 neither inactivated nor reopened. Under Optimistic, where the dialect's write
 count includes unchanged rows (`m-dialect`), its place in that order is taken by
 a guard on its own address, gated on its observed `in_z`:
@@ -1047,7 +1047,7 @@ A table-per-hierarchy subtype's tag guard follows the key, as in an
 inactivation. Under Locking, and for a rectangle the attempt opened, nothing is
 emitted for an unchanged rectangle.
 
-A caller-addressed temporal write (`m-bitemp-write` *Caller-addressed writes span
+A caller-addressed temporal write (`m-temporal-write` *Caller-addressed writes span
 their requested extent*) observed nothing, so its coverage read starts at its own
 `validFrom`; a Transaction-Time-Only one reads `… where t0.bal_id = ? and t0.out_z
 = ?` with `[pk, infinity]`. Separate operations over disjoint windows pending
@@ -1455,7 +1455,7 @@ tag is **framework-owned metadata**: an **insert** sets it from the subtype's
 `Identity` slot, so
 the value list carries the derived tag exactly as the versioned insert carries the
 derived initial version); an existing-row statement (**update** / **delete**, and the
-temporal closes of `m-txtime-write` / `m-bitemp-write`) carries a **tag guard** —
+temporal closes of `m-temporal-write`) carries a **tag guard** —
 `and <tag.column> = ?` — so it touches only that subtype's rows in the shared table.
 
 | Mutation | Canonical Postgres DML | Binds |
@@ -1512,7 +1512,7 @@ non-versioned form (`m-opt-lock`); no tag guard applies.
 ### Inheritance — temporal composition
 
 A temporal inheritance participant composes the milestone-chaining **writes**
-(`m-txtime-write` / `m-bitemp-write`) and the as-of **reads** (`m-temporal-read`)
+(`m-temporal-write`) and the as-of **reads** (`m-temporal-read`)
 with the strategy's routing and tag guard. The temporal semantics are
 **unchanged** — the close/inactivate keying, the head/middle/tail chaining, and the
 injected as-of predicate are exactly the standalone forms above; only the **table**
@@ -1524,7 +1524,7 @@ are declared on the family's abstract root and inherited by every concrete subty
 
 Under `table-per-hierarchy` the whole family shares one milestone table. Every
 temporal statement that targets **existing** rows — the Transaction-Time-Only **close**
-(`m-txtime-write`) and the bitemporal **inactivation** (`m-bitemp-write`) — carries
+and the bitemporal **inactivation** (`m-temporal-write`) — carries
 the **tag guard** among the identity predicates, immediately **after** the
 primary-key equality and **before** the address's per-axis upper bounds; every
 chained **insert** (the Transaction-Time-Only chain, or the bitemporal `head` / `middle` / `tail`)
@@ -1532,7 +1532,7 @@ sets the tag column from the subtype's `tagValue` in its Entity Layout position,
 exactly as a non-temporal concrete-subtype insert does (above). There is no temporal
 exception to the resolved-Q9 bind order: the tag guard rides with the identity
 predicates; any gate the temporal write already carries (the optimistic
-`txStart` / physical `in_z` gate, `m-txtime-write` / `m-bitemp-write`) still binds
+`txStart` / physical `in_z` gate, `m-temporal-write`) still binds
 **last**.
 
 | Statement | Canonical Postgres DML | Binds |
@@ -1558,7 +1558,7 @@ after the primary key. The corpus witnesses are `m-inheritance-090` (txtime term
 
 Under `table-per-concrete-subtype` each concrete subtype owns its milestone table and
 carries no tag, so a temporal write is the ordinary standalone milestone-chaining
-sequence (`m-txtime-write` / `m-bitemp-write`) targeting **that subtype's own table** —
+sequence (`m-temporal-write`) targeting **that subtype's own table** —
 no tag guard, no shared table. The close / inactivation is `update <concrete> set
 out_z = ? where <pk> = ? and out_z = ?` for a Transaction-Time-Only milestone and
 `… where <pk> = ? and thru_z = ? and out_z = ?` for a bitemporal rectangle; every
