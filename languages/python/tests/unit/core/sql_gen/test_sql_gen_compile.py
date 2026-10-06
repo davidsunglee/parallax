@@ -667,8 +667,7 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         raise AssertionError("render must reuse prepared access and assemble only once")
 
     monkeypatch.setattr(sql_compile, "compile_read", forbidden)
-    monkeypatch.setattr(LoweredStatement, "defer_keys", forbidden)
-    monkeypatch.setattr(LoweredStatement, "replace_bind", forbidden)
+    monkeypatch.setattr(LoweredStatement, "deferred_key_markers", forbidden)
     for keys in ([10], [10, 20, 30], [40, 50]):
         original_keys = tuple(keys)
         gathered = cast("list[ManagedValue]", keys)

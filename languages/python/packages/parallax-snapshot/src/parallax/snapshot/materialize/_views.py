@@ -199,17 +199,25 @@ class ViewSchema:
         self, layout: EntityLayout, shared: dict[tuple[object, ...], tuple[object, ...]] | None
     ) -> RootViewLayout:
         """Lay out ``layout``'s Root View row. A prepared schema passes ``shared``
-        so that equal ``targets`` rows of its every concrete, retained for the
-        plan's lifetime, are one object."""
+        so that equal ``to_root_view`` and ``targets`` rows of its every concrete,
+        retained for the plan's lifetime, are one object."""
         sources = tuple(self.source(level, layout) for level in range(len(self._levels)))
         slots = layout.ordered(dict.fromkeys(view for source in sources for view in source.slots))
         index_of = _index_of(slots)
         built = RootViewLayout(
             slots,
             index_of,
-            tuple(tuple(index_of[view] for view in source.slots) for source in sources),
             # Comprehensions, not generator expressions: nested generators each allocate a
             # frame at the cold plan's high-water mark, which the plan-compilation gates measure.
+            _shared(
+                tuple(
+                    [
+                        _shared(tuple([index_of[view] for view in source.slots]), shared)
+                        for source in sources
+                    ]
+                ),
+                shared,
+            ),
             _shared(
                 tuple(
                     [
