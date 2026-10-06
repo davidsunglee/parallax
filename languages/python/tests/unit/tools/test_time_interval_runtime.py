@@ -725,11 +725,16 @@ def test_an_unreadable_capture_is_refused(tmp_path: Path) -> None:
         ("sampling", "measured", "sampling measured"),
     ],
 )
+@pytest.mark.parametrize("lacked", ["deleted", "null"])
 def test_captures_lacking_the_same_provenance_are_refused_rather_than_compatible(
-    tmp_path: Path, section: str | None, key: str, fact: str
+    tmp_path: Path, section: str | None, key: str, fact: str, lacked: str
 ) -> None:
     document = _document({_SOURCE_KEYED: _samples(100)})
-    del cast("dict[str, object]", document if section is None else document[section])[key]
+    facts = cast("dict[str, object]", document if section is None else document[section])
+    if lacked == "deleted":
+        del facts[key]
+    else:
+        facts[key] = None
     before = _written(tmp_path / "baseline", document)
     after = _written(tmp_path / "candidate", document)
     with pytest.raises(tool.CaptureError, match=f"records no {fact}"):
