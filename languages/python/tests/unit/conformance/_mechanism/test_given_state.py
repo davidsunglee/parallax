@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import datetime as dt
+import decimal
 import functools
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -19,13 +21,18 @@ import pytest
 
 from parallax.conformance import case_format, models
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.conformance._mechanism.given_state import apply_given_apply, apply_given_corrupt
+from parallax.conformance._mechanism.given_state import (
+    apply_given_apply,
+    apply_given_corrupt,
+    seed_shadow_from_fixtures,
+)
 from parallax.conformance._mechanism.model_facts import (
     case_entity,
     load_case_domain_model,
     load_case_metamodel,
 )
 from parallax.conformance.temporal_state import TemporalShadow
+from parallax.core.base import INFINITY
 from parallax.core.db_port import (
     DatabaseConnection,
     JsonDocument,
@@ -34,6 +41,8 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.metamodel import AttributeIdentity
+from parallax.core.unit_work.plan import RangeAcquisition
 from tests._support.db_port import body_outcome
 from tests.unit.conformance._recording_ports import FakeWritePort
 
@@ -327,3 +336,31 @@ def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None
     assert shadow.accounts_for(
         model, case_entity(model, "parallax.compatibility.Balance"), {"id": 1}
     )
+
+
+def test_fixture_seeding_tracks_current_milestones_with_managed_axis_ends() -> None:
+    # The `position` fixtures spell the open bound as the published literal; the
+    # shadow holds the managed bound, so the milestone current on both axes covers
+    # an open window, and the superseded correction is not tracked at all.
+    case = _load_case("m-bitemp-write-004")
+    model = load_case_metamodel(case)
+    entity = case_entity(model, "parallax.compatibility.Position")
+    shadow = TemporalShadow()
+    seed_shadow_from_fixtures(case, model, shadow)
+    covered = shadow.coverage(
+        model,
+        RangeAcquisition(
+            entity=entity,
+            key_attribute=AttributeIdentity(entity.identity, "id"),
+            key_value=1,
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            until=None,
+            locking=False,
+        ),
+    )
+    assert [
+        (row.members["value"], row.members["validEnd"], row.members["txEnd"]) for row in covered
+    ] == [
+        (decimal.Decimal("100.00"), dt.datetime(2024, 6, 1, tzinfo=dt.UTC), INFINITY),
+        (decimal.Decimal("200.00"), INFINITY, INFINITY),
+    ]

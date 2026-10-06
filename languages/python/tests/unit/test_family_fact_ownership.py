@@ -281,10 +281,10 @@ def test_planning_and_lowering_prepared_writes_take_the_version_from_its_owner(
 
 
 _OPENED: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-_TRANSACTION_TIME: Final[Mapping[str, object]] = {"txStart": _OPENED, "txEnd": "infinity"}
+_TRANSACTION_TIME: Final[Mapping[str, object]] = {"txStart": _OPENED, "txEnd": INFINITY_INSTANT}
 _BITEMPORAL: Final[Mapping[str, object]] = {
     "validStart": _OPENED,
-    "validEnd": "infinity",
+    "validEnd": INFINITY_INSTANT,
     **_TRANSACTION_TIME,
 }
 _VALID_FROM: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)

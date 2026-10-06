@@ -358,7 +358,7 @@ def test_a_replacement_fills_the_gaps_of_its_extent_once_and_a_destruction_fills
         (_MAR, _MAR + dt.timedelta(days=30), Decimal("9.00")),
         (_JUN, _DEC, Decimal("9.00")),
         (_MAR + dt.timedelta(days=30), _JUN, Decimal("9.00")),
-        (_DEC, "infinity", Decimal("9.00")),
+        (_DEC, INFINITY, Decimal("9.00")),
     ]
     # The destruction observed [January, June), so the flush reads only the
     # coverage from June on.

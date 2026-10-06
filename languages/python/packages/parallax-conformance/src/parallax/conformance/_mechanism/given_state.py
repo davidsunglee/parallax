@@ -9,7 +9,6 @@ from parallax.conformance._mechanism.envelope import EngineError, driver_binds
 from parallax.conformance._mechanism.model_facts import case_entity, family_declarer
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import inheritance, storage_layout
-from parallax.core.base import INFINITY_LITERAL
 from parallax.core.db_port import DatabaseConnection, JsonDocument
 from parallax.core.metamodel import EntityMetadata, PrimaryKey, ValueObjectIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -254,16 +253,14 @@ def seed_shadow_from_fixtures(
                 cast("list[Mapping[str, object]]", rows),
             )
             continue
-        managed_rows: list[Mapping[str, object]] = []
-        for row in cast("list[Mapping[str, object]]", rows):
-            open_bounds = {name: value for name, value in row.items() if value == INFINITY_LITERAL}
-            decoded = _case_ingress.decode_case_row(
-                {name: value for name, value in row.items() if name not in open_bounds},
-                model,
-                entity,
-            )
-            managed_rows.append({**decoded, **open_bounds})
-        shadow.seed_fixtures(model, entity, managed_rows)
+        shadow.seed_fixtures(
+            model,
+            entity,
+            [
+                _case_ingress.decode_case_row(row, model, entity)
+                for row in cast("list[Mapping[str, object]]", rows)
+            ],
+        )
 
 
 def apply_given_apply(

@@ -514,7 +514,7 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
     assert chain_sql == POSTGRES.to_driver_sql(
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
     )
-    assert chain_binds == (1, "A-1", Decimal("150.00"), FIXED, "infinity")
+    assert chain_binds == (1, "A-1", Decimal("150.00"), FIXED, INFINITY_INSTANT)
 
 
 def _branch_row(*, address: dict[str, object] | None) -> MappingRow:

@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from typing import cast
 
 from parallax.core import inheritance, storage_layout
-from parallax.core.base import INFINITY_LITERAL, JSON, ManagedValue, NeutralType, TemporalBound
+from parallax.core.base import INFINITY, INFINITY_LITERAL, JSON, ManagedValue, NeutralType
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import projection_result_key
 from parallax.core.metamodel import (
@@ -53,9 +53,7 @@ class ActualWireProjection:
         """One Attribute value in canonical Wire form; null is enclosing presence."""
         if value is None:
             return None
-        if self._is_temporal_end(member) and (
-            isinstance(value, TemporalBound) or value == INFINITY_LITERAL
-        ):
+        if value is INFINITY and self._is_temporal_end(member):
             return INFINITY_LITERAL
         return self._typed(member.type, value)
 

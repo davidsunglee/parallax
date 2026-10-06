@@ -70,7 +70,6 @@ from tests.unit._transact_support import (
 _JAN, _MAR, _MAY, _JUN, _AUG, _SEP, _DEC = (
     dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 5, 6, 8, 9, 12)
 )
-_OPEN = "infinity"
 
 
 def _position(value: str = "100.00") -> WherePosition:
@@ -123,8 +122,8 @@ _OPENING_MATRIX: tuple[
     tuple[str, dt.datetime | None, dt.datetime | None, tuple[tuple[str, object, object], ...]],
     ...,
 ] = (
-    ("unbounded-plain", None, None, (("150.00", _JAN, _OPEN),)),
-    ("unbounded-until", None, _JUN, (("150.00", _JAN, _JUN), ("100.00", _JUN, _OPEN))),
+    ("unbounded-plain", None, None, (("150.00", _JAN, INFINITY_INSTANT),)),
+    ("unbounded-until", None, _JUN, (("150.00", _JAN, _JUN), ("100.00", _JUN, INFINITY_INSTANT))),
     ("finite-plain", _SEP, None, (("150.00", _JAN, _SEP),)),
     ("finite-until-inside", _SEP, _JUN, (("150.00", _JAN, _JUN), ("100.00", _JUN, _SEP))),
     ("finite-until-its-end", _SEP, _SEP, (("150.00", _JAN, _SEP),)),
@@ -211,7 +210,7 @@ def test_a_literal_reset_of_a_pending_opening_writes_the_reset_value() -> None:
         tx.update(opened.edit(value=Decimal("100.00")))
 
     _transact(port, fn)
-    assert _opened(port) == [(Decimal("100.00"), _JAN, _OPEN)]
+    assert _opened(port) == [(Decimal("100.00"), _JAN, INFINITY_INSTANT)]
 
 
 def test_a_resubmitted_draft_reasserts_its_whole_touched_set() -> None:
@@ -248,7 +247,7 @@ def test_an_edit_over_coverage_a_pending_destruction_removed_is_refused() -> Non
         assert refused.value.code == "write-evidence-already-claimed"
 
     _transact(port, fn)
-    assert _opened(port) == [(Decimal("100.00"), _MAY, _OPEN)]
+    assert _opened(port) == [(Decimal("100.00"), _MAY, INFINITY_INSTANT)]
 
 
 # --------------------------------------------------------------------------- #
@@ -594,7 +593,7 @@ def test_a_reinsertion_after_a_complete_stored_removal_executes_after_it() -> No
     assert removal.sql == (
         "delete from where_position where id = %s and thru_z = %s and out_z = %s and in_z = %s"
     )
-    assert insert.binds[2:5] == (Decimal("200.00"), _JAN, _OPEN)
+    assert insert.binds[2:5] == (Decimal("200.00"), _JAN, INFINITY_INSTANT)
 
 
 def test_a_reinsertion_at_identical_coordinates_never_revives_the_first() -> None:
@@ -704,8 +703,8 @@ def test_an_opening_a_barrier_kept_back_and_removed_whole_admits_a_reinsertion(
         "insert",
     ]
     assert _opened(port) == [
-        (Decimal("100.00"), _JAN, _OPEN if opening_end is None else opening_end),
-        (Decimal("200.00"), _JAN, _OPEN),
+        (Decimal("100.00"), _JAN, INFINITY_INSTANT if opening_end is None else opening_end),
+        (Decimal("200.00"), _JAN, INFINITY_INSTANT),
     ]
 
 
@@ -882,7 +881,7 @@ def test_a_bounded_removal_reaching_every_end_the_insertion_opened_is_complete()
     _transact(port, fn)
     removal, insert = _writes(port)[2:]
     assert removal.sql.startswith("delete from where_position")
-    assert insert.binds[2:5] == (Decimal("200.00"), _MAR, _OPEN)
+    assert insert.binds[2:5] == (Decimal("200.00"), _MAR, INFINITY_INSTANT)
 
 
 def test_a_removal_composed_of_several_pending_writes_admits_a_reinsertion() -> None:

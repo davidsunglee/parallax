@@ -244,6 +244,126 @@ def test_case_write_adapter_normalizes_nested_value_object_documents() -> None:
     assert "future" not in profile
 
 
+_SHIPMENT = models.accepted_model(
+    {
+        "entity": {
+            "name": "Shipment",
+            "namespace": "parallax.compatibility",
+            "table": "shipment",
+            "temporality": "bitemporal",
+            "attributes": [
+                {"name": "id", "type": "int64", "primaryKey": True},
+                {"name": "amount", "type": "decimal(18,2)", "nullable": True},
+                {"name": "shippedAt", "type": "timestamp", "nullable": True},
+            ],
+            "valueObjects": [
+                {
+                    "name": "window",
+                    "nullable": True,
+                    "attributes": [
+                        {"name": "validEnd", "type": "timestamp", "nullable": True},
+                        {"name": "txEnd", "type": "timestamp", "nullable": True},
+                    ],
+                }
+            ],
+        }
+    }
+)
+_SHIPMENT_ENTITY = model_facts.case_entity(_SHIPMENT, "parallax.compatibility.Shipment")
+_STORED_SHIPMENT: Mapping[str, object] = {
+    "id": 1,
+    "validStart": "2024-01-01T00:00:00.000000Z",
+    "validEnd": "infinity",
+    "txStart": "2024-01-01T00:00:00.000000Z",
+    "txEnd": "infinity",
+}
+
+
+def test_case_row_decoding_takes_declared_axis_ends_to_the_managed_open_bound() -> None:
+    decoded = _case_ingress.decode_case_row(
+        {**_STORED_SHIPMENT, "txEnd": INFINITY}, _SHIPMENT, _SHIPMENT_ENTITY
+    )
+    assert decoded == {
+        "id": 1,
+        "validStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "validEnd": INFINITY,
+        "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "txEnd": INFINITY,
+    }
+    assert decoded["validEnd"] is INFINITY
+
+
+def test_case_row_decoding_recognizes_the_axis_ends_a_concrete_subtype_inherits() -> None:
+    rate = models.load_models()["rate"]
+    decoded = _case_ingress.decode_case_row(
+        {
+            "id": 1,
+            "amount": "2.50",
+            "grade": "A",
+            "validStart": "2024-01-01T00:00:00.000000Z",
+            "validEnd": "infinity",
+            "txStart": "2024-02-01T00:00:00.000000Z",
+            "txEnd": "infinity",
+        },
+        rate,
+        model_facts.case_entity(rate, "parallax.compatibility.DepositRate"),
+    )
+    assert (decoded["validEnd"], decoded["txEnd"]) == (INFINITY, INFINITY)
+    assert decoded["amount"] == Decimal("2.50")
+
+
+@pytest.mark.parametrize(
+    ("row", "path"),
+    [
+        ({"shippedAt": "infinity"}, "parallax.compatibility.Shipment.shippedAt"),
+        ({"window": {"validEnd": "infinity"}}, "parallax.compatibility.Shipment.window.validEnd"),
+        ({"window": {"txEnd": INFINITY}}, "parallax.compatibility.Shipment.window.txEnd"),
+    ],
+    ids=["ordinary-timestamp", "nested-valid-end-lookalike", "nested-tx-end-lookalike"],
+)
+def test_case_row_decoding_keeps_every_other_timestamp_finite(
+    row: Mapping[str, object], path: str
+) -> None:
+    # Only the declared axis-end definitions hold the open bound; a leaf merely
+    # named or typed like one is an ordinary finite Timestamp.
+    with pytest.raises(instructions.InstructionRejectedError) as caught:
+        _case_ingress.decode_case_row({**_STORED_SHIPMENT, **row}, _SHIPMENT, _SHIPMENT_ENTITY)
+    assert caught.value.rule == "neutral-literal-type-mismatch"
+    assert str(caught.value).startswith(f"{path}: ")
+
+
+def test_case_row_decoding_takes_a_native_timestamp_to_utc_without_a_wire_spelling() -> None:
+    stated = dt.datetime(2024, 7, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+    decoded = _case_ingress.decode_case_row(
+        {**_STORED_SHIPMENT, "shippedAt": stated, "window": {"validEnd": stated}},
+        _SHIPMENT,
+        _SHIPMENT_ENTITY,
+    )
+    utc = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    assert decoded["shippedAt"] == utc
+    assert cast("dt.datetime", decoded["shippedAt"]).tzinfo is dt.UTC
+    assert cast("Mapping[str, object]", decoded["window"])["validEnd"] == utc
+
+
+def test_case_row_decoding_refuses_a_native_timestamp_naming_no_instant() -> None:
+    with pytest.raises(instructions.InstructionRejectedError) as caught:
+        _case_ingress.decode_case_row(
+            {**_STORED_SHIPMENT, "shippedAt": dt.datetime(2024, 7, 1)},
+            _SHIPMENT,
+            _SHIPMENT_ENTITY,
+        )
+    assert caught.value.rule == "neutral-literal-type-mismatch"
+
+
+def test_case_row_decoding_keeps_the_codec_canonicalization_of_other_native_values() -> None:
+    # A native non-Timestamp scalar still takes its Wire encoding and decoding,
+    # which canonicalizes what Typed coercion would not, such as Decimal scale.
+    decoded = _case_ingress.decode_case_row(
+        {**_STORED_SHIPMENT, "amount": decimal.Decimal("5.000")}, _SHIPMENT, _SHIPMENT_ENTITY
+    )
+    assert str(decoded["amount"]) == "5.00"
+
+
 def test_case_query_adapter_preserves_canonical_carriers_before_core_validation() -> None:
     model = models.load_models()["position"]
     query = deserialize_query(

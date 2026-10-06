@@ -51,6 +51,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 from parallax.core.temporal_read import Pin
+from parallax.core.unit_work import instructions
 from tests._support.db_port import body_outcome
 from tests.unit._metamodel_support import Declaration, attribute, key, source
 from tests.unit.conformance._recording_ports import FakeDbPort, FakeWritePort, QueueDbPort
@@ -289,6 +290,14 @@ def test_edited_copy_reports_a_value_its_member_cannot_decode() -> None:
     source = _order_view(id=1, name="Ada", qty=5)
     with pytest.raises(EngineError, match="cannot decode"):
         _edited_copy(step, 0, source)
+
+
+def test_edited_copy_names_the_member_whose_value_cannot_decode() -> None:
+    step = {"action": "mutate", "on": 0, "set": {"qty": "five"}}
+    with pytest.raises(EngineError) as caught:
+        _edited_copy(step, 0, _order_view(id=1, name="Ada", qty=5))
+    assert "cannot decode — parallax.compatibility.Order.qty: " in str(caught.value)
+    assert isinstance(caught.value.__cause__, instructions.InstructionRejectedError)
 
 
 def test_edited_copy_carries_the_decoded_value_a_member_would_hold() -> None:

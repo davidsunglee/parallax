@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast, runtime_checkable
 
-from parallax.core.base import NeutralType, adopt_frozen_map, retain_document_value
+from parallax.core.base import adopt_frozen_map, retain_document_value
 from parallax.core.metamodel import (
     Leaf,
     MemberShape,
@@ -24,7 +24,7 @@ __all__ = [
 ]
 
 
-type LeafNormalizer = Callable[[NeutralType, object, str], tuple[object, bool]]
+type LeafNormalizer = Callable[[Leaf, object, str], tuple[object, bool]]
 
 
 class SourceAccess(Protocol):
@@ -165,7 +165,7 @@ def validate_member_authoring(
             return None
         if allow_marker and _is_marker(source):
             return None
-        managed, valid = normalize_leaf(member.type, source, path)
+        managed, valid = normalize_leaf(member, source, path)
         if valid:
             return None
         return VoDocumentViolation("", "type-mismatch", managed, member.type)
@@ -262,7 +262,7 @@ def _author_leaf(
         return None, None
     if allow_marker and _is_marker(source):
         return retain_document_value(source), None
-    managed, valid = normalize_leaf(leaf.type, source, path)
+    managed, valid = normalize_leaf(leaf, source, path)
     if valid:
         return managed, None
     return managed, VoDocumentViolation("", "type-mismatch", managed, leaf.type)

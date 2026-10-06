@@ -475,6 +475,16 @@ def test_managed_infinity_binds_outside_typed_spans_and_observes_its_canonical_l
     )
 
 
+@pytest.mark.parametrize("rows", [(("infinity",),), (("infinity",), ("infinity",))])
+def test_typed_row_binding_rejects_the_literal_open_bound_at_a_timestamp_slot(
+    rows: tuple[tuple[object, ...], ...],
+) -> None:
+    # A row cell holds the managed open bound; its spelling is an observation
+    # this builder supplies, never a cell value it admits.
+    with pytest.raises(SqlGenError, match="does not match MANAGED slot"):
+        _builder().bind_typed_rows(rows, ((TIMESTAMP, "MANAGED"),))
+
+
 def test_typed_row_binding_rejects_inconsistent_widths() -> None:
     with pytest.raises(SqlGenError, match="inconsistent row widths"):
         _builder().bind_typed_rows((("one",), ("two", "extra")), ((STRING, "MANAGED"),))

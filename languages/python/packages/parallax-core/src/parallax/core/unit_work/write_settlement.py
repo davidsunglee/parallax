@@ -8,7 +8,6 @@ from types import MappingProxyType
 from typing import Final, cast
 
 from parallax.core.base import (
-    INFINITY_LITERAL,
     ManagedValue,
     TemporalBound,
     normalize_instant,
@@ -1217,7 +1216,7 @@ class WriteSettlement:
         start = predecessor.cell(shape.valid_time.start_attribute)
         end = predecessor.cell(shape.valid_time.end_attribute)
         assert bounds.valid_from is not None  # a Bitemporal write states its start
-        until = INFINITY_LITERAL if bounds.until is None else bounds.until
+        until = TemporalBound.INFINITY if bounds.until is None else bounds.until
         if not precedes(bounds.valid_from, start) and not precedes(end, until):
             return None
         view = _view(self._families, instruction.target)
@@ -2088,7 +2087,7 @@ def _bitemporal_ends(valid_end: object) -> tuple[TemporalUpperBound, ...]:
 
 def _is_open(bound: object) -> bool:
     """Whether one axis end cell is the open upper bound."""
-    return bound == INFINITY_LITERAL or bound is TemporalBound.INFINITY
+    return bound is TemporalBound.INFINITY
 
 
 def _is_empty(facts: _TemporalFacts, successor: PlannedInsert) -> bool:
@@ -2755,7 +2754,7 @@ def _meets(window: tuple[object | None, object | None], original: _Original) -> 
     start, until = window
     if start is None or original.start is None:
         return True
-    end = INFINITY_LITERAL if until is None else until
+    end = TemporalBound.INFINITY if until is None else until
     return precedes(start, original.end) and precedes(original.start, end)
 
 
@@ -3211,7 +3210,7 @@ class _RangeBinding:
         if start is None or transform.start is None:
             return True
         end = endpoint.ends[0]
-        until = end.instant if isinstance(end, Finite) else INFINITY_LITERAL
+        until = end.instant if isinstance(end, Finite) else TemporalBound.INFINITY
         return precedes(start, transform.end) and precedes(transform.start, until)
 
     def _close(self, original: _Original, cause: CloseCause) -> PlannedClose:

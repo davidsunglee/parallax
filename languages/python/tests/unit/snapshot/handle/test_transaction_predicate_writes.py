@@ -915,7 +915,7 @@ def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
     assert chain_sql == POSTGRES.to_driver_sql(
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
     )
-    assert chain_binds == (1, "A", 175.00, FIXED, "infinity")
+    assert chain_binds == (1, "A", 175.00, FIXED, INFINITY)
 
 
 def test_materializing_update_where_audit_only_carries_the_unassigned_value_object_forward() -> (
@@ -968,7 +968,7 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
         1,
         "Baltic Traders",
         FIXED,
-        "infinity",
+        INFINITY,
         JsonDocument({"city": "Bergen"}),
     )
 
@@ -1056,7 +1056,7 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
     assert chain_binds == (
         1,
         FIXED,
-        "infinity",
+        INFINITY,
         JsonDocument(
             {
                 "title": "Coastal Return",

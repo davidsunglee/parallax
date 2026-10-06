@@ -440,7 +440,7 @@ def test_a_typed_replacement_selects_its_bounded_form_by_until_alone() -> None:
     inserts = [call for call in _writes(port) if call.sql.startswith("insert")]
     assert [call.binds[3:5] for call in inserts] == [
         (_JAN, _MAR),
-        (_MAR, "infinity"),
+        (_MAR, INFINITY_INSTANT),
         (_JAN, _MAR),
         (_MAR, _SEP),
         (_SEP, INFINITY_INSTANT),
