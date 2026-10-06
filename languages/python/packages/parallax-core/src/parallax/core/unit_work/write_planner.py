@@ -27,6 +27,7 @@ from parallax.core.unit_work.instructions import (
     PreparedWrite,
     derive_keyed_write,
 )
+from parallax.core.unit_work.keys import resolve_object_key
 from parallax.core.unit_work.materialized import (
     AfterRemoval,
     BufferItem,
@@ -47,14 +48,6 @@ from parallax.core.unit_work.materialized import (
     composed_temporal_write,
     temporal_contribution,
 )
-from parallax.core.unit_work.observe import TemporalObservation
-from parallax.core.unit_work.plan import NO_OWNERSHIP, Completion, Ownership
-from parallax.core.unit_work.planner import (
-    ObjectKey,
-    ObservedStateKey,
-    VersionedStateKey,
-    resolve_object_key,
-)
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
     ActorIdentity,
@@ -70,6 +63,9 @@ from parallax.core.unit_work.write_settlement import (
     WritePlanningResult,
     WriteSettlement,
 )
+from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, VersionedStateKey
+from parallax.core.write_plan.observe import TemporalObservation
+from parallax.core.write_plan.plan import NO_OWNERSHIP, Completion, Ownership
 
 __all__ = [
     "BufferedWrite",

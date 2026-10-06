@@ -514,7 +514,7 @@ class RowStages:
         """The Structured Column these stages fan out, or absence for none.
 
         The fan-out drops the raw column, so a caller that needs the stored
-        document — a temporal observation, which retains it (`m-unit-work`) —
+        document — a temporal observation, which retains it (`m-write-plan`) —
         reads it off the driver row by this name. Absence is the honest answer
         for every read that projected no Structured Column, `Columns` layout
         included.
@@ -819,7 +819,7 @@ def document_projection(
     materializing predicate-write resolve that widens its projection to every
     declared member. Such a read observes the stored document itself and not only
     the members decoded out of it — a Predecessor Row retains the raw document
-    (`m-unit-work`) — so it projects the Table's Structured Column wherever there
+    (`m-write-plan`) — so it projects the Table's Structured Column wherever there
     is one, fanning out however many members it asked for, zero included. Outside
     that lane a read whose members are all direct — every read under `Columns`
     layout, and a `Document`-layout row-form read of direct members alone —

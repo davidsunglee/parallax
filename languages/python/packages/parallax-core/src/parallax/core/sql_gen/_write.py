@@ -47,8 +47,9 @@ from parallax.core.storage_layout import (
     EntityLayoutView,
     RelationalDocument,
 )
-from parallax.core.unit_work import PredecessorRow
-from parallax.core.unit_work.planned import (
+from parallax.core.wire import WireValue
+from parallax.core.write_plan import PredecessorRow
+from parallax.core.write_plan.steps import (
     NEW_LINEAGE,
     CarriedFrom,
     Finite,
@@ -75,7 +76,6 @@ from parallax.core.unit_work.planned import (
     VersionGate,
     WriteTarget,
 )
-from parallax.core.wire import WireValue
 
 __all__ = ["compile_write_step"]
 
@@ -666,7 +666,7 @@ def _successor_document(
     A row that succeeds a milestone whose observation retained the predecessor's
     raw document is composed from that document, so every key it carries outside
     the members the successor changed survives the close-and-insert — a key a
-    newer application version wrote included (`m-document-codec`, `m-unit-work`).
+    newer application version wrote included (`m-document-codec`, `m-write-plan`).
     Settlement already made that document recursively immutable (`m-db-port`).
     A carried successor binds it itself: its state is its predecessor's,
     unchanged. A changed successor patches it at the members it changed alone: a

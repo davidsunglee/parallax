@@ -36,14 +36,13 @@ from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
 from parallax.core.entity._entity import lifecycle_state
 from parallax.core.entity._model import DomainModel
 from parallax.core.unit_work import (
-    ObjectKey,
     OptimisticLockConflictError,
     ParticipationToken,
     ReadOrigin,
     RetainedObservation,
-    VersionObservation,
 )
-from parallax.core.unit_work.planner import VersionedStateKey
+from parallax.core.write_plan import ObjectKey, VersionObservation
+from parallax.core.write_plan.keys import VersionedStateKey
 from parallax.snapshot import InvalidData, WireEntity, connect, materialize
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import KeyedWriteValueError, Transaction, WriteEvidenceError

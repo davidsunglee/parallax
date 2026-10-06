@@ -12,27 +12,29 @@ from parallax.core import temporal_read
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
-    SUPERSEDED,
-    TERMINATED,
     BufferItem,
     KeyedMutation,
     KeyedWrite,
-    ObjectKey,
-    PlannedClose,
-    PlannedInsert,
     PlanningRequest,
-    PredecessorRow,
     RetainedObservation,
-    TemporalObservation,
-    VersionObservation,
-    WritePlanningError,
     buffered_write,
 )
 from parallax.core.unit_work.instructions import prepare_wire_write
 from parallax.core.unit_work.materialized import ComposedTemporalWrite, ObservedKeyedWrite
-from parallax.core.unit_work.plan import Completions, WritePlan
-from parallax.core.unit_work.planner import TemporalStateKey
 from parallax.core.unit_work.write_planner import compose_writes
+from parallax.core.write_plan import (
+    SUPERSEDED,
+    TERMINATED,
+    ObjectKey,
+    PlannedClose,
+    PlannedInsert,
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+    WritePlanningError,
+)
+from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.plan import Completions, WritePlan
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY

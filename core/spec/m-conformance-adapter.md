@@ -598,7 +598,7 @@ observed it, keyed by its label: `{ outcome, flushFailure? }`, `outcome` being
 `committed` or `rolledBack`, and `flushFailure` — for a group a flush failure ended —
 `{ at, entity, key, shortfall }`: where that flush ran (the step whose read flushed,
 or `commit`), the canonical Entity spelling and primary key the failure reported,
-and its Shortfall (`m-unit-work` *Affected Rows Policy*). It is compared against the
+and its Shortfall (`m-write-plan` *Affected Rows Policy*). It is compared against the
 case's `then.units` (`m-case-format` *Unit fates*), where a group the case states
 no fate for commits. What is reported is what the failure itself carries, never a
 re-read: a failed flush ends the unit of work, so there is nothing left to read.

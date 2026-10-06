@@ -18,7 +18,6 @@ from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     UPDATE_MUTATIONS,
     KeyedMutation,
-    ObjectKey,
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
@@ -29,6 +28,7 @@ from parallax.core.unit_work import (
     instructions,
 )
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPredicateWrite
+from parallax.core.write_plan import ObjectKey
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -140,7 +140,7 @@ def written_object_key(
     record: EntityMetadata, meta: Metamodel, row: Mapping[str, object]
 ) -> ObjectKey:
     """The object a WRITTEN instance addresses — the same
-    :class:`~parallax.core.unit_work.ObjectKey` a source's own Read Origins name
+    :class:`~parallax.core.write_plan.ObjectKey` a source's own Read Origins name
     their objects by (the instance's OWN Entity Identity, never
     family-normalized; its one pair keyed by the family key's canonical
     attribute name) and `unit_work.object_key` computes at flush, so a

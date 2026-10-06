@@ -26,12 +26,9 @@ import pytest
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.predicate import All, validate_predicate
 from parallax.core.unit_work import (
-    SUPERSEDED,
     CardinalityCorruptionError,
     MissingTargetError,
     OptimisticLockConflictError,
-    PlannedClose,
-    PlannedInsert,
     StaleWriteError,
     WriteEffectError,
     WritePreconditionError,
@@ -40,7 +37,8 @@ from parallax.core.unit_work import (
     enforce_affected_rows,
     returns_rows,
 )
-from parallax.core.unit_work.planned import (
+from parallax.core.write_plan import SUPERSEDED, PlannedClose, PlannedInsert
+from parallax.core.write_plan.steps import (
     ANY_COUNT,
     FAILED_PRECONDITION,
     INFINITY,
@@ -72,9 +70,7 @@ from parallax.core.unit_work.planned import (
     Versioned,
     VersionGate,
 )
-from parallax.core.unit_work.planned import (
-    PlannedWrite as PlannedStep,
-)
+from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
 

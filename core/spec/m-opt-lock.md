@@ -152,8 +152,8 @@ the observed version last.
 ### A gate carries only its equality predicate
 
 The gate decision is settled **during planning**, and what survives onto the
-planned write is only what the statement still has to render. `m-unit-work`'s
-[Write Gate](m-unit-work.md#write-gate-and-the-concurrency-decision) owns the
+planned write is only what the statement still has to render. `m-write-plan`'s
+[Write Gate](m-write-plan.md#write-gate-and-the-concurrency-decision) owns the
 `VersionGate`, `TemporalGate`, and `Ungated` shapes and the `Versioned` decision
 that names a versioned target's Attribute.
 
@@ -181,7 +181,7 @@ ungated write is licensed by the **shared read lock** the observing read took �
 that lock on exactly the row it closes, because the two derive from one value:
 the write's address is the milestone its own written value came from, and the
 observation the address comes from is the record of the read that locked that
-milestone (`m-unit-work`, Write Observation). There is no separate license to
+milestone (`m-write-plan` *Write Observation*). There is no separate license to
 check. Under Locking, a write whose value names a milestone the current unit of
 work never observed is already refused because no participating read proves the
 lock is held; under Optimistic, an authentic standalone observation may supply
@@ -389,7 +389,7 @@ against an unchanged cause, since re-reading cannot supply a gate the strategy n
 rendered.
 
 A gate binding a **caller's stated version** is the exception to the retriable
-half: its shortfall is a failed precondition (`m-unit-work` *Affected Rows
+half: its shortfall is a failed precondition (`m-write-plan` *Affected Rows
 Policy*), because re-running the transaction re-states the same version against
 the same stored row. Where a write's gate binds both a caller's stated version and
 an observation of the same state — one composed from both — the shortfall is the

@@ -24,10 +24,8 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.unit_work import (
-    ObjectKey,
-)
 from parallax.core.wire import WireEncodingError
+from parallax.core.write_plan import ObjectKey
 
 
 @functools.cache

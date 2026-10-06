@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from parallax.core.unit_work import (
     WRITE_EVIDENCE_CODES,
-    ObjectKey,
     WriteEvidenceError,
     WriteEvidenceErrorCode,
     WriteInstructionError,
 )
+from parallax.core.write_plan import ObjectKey
 from parallax.snapshot.handle._adoption import ExecutionFailure
 from parallax.snapshot.handle._database import Database, ScopedDatabase, connect, prepare_model
 from parallax.snapshot.handle._errors import (

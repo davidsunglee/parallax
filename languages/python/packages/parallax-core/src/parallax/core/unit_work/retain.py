@@ -4,8 +4,8 @@ from typing import Final, Protocol, cast
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
-from parallax.core.unit_work.observe import WriteObservation
-from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey
+from parallax.core.write_plan.observe import WriteObservation
 
 __all__ = ["InsertionIdentity", "ParticipationToken", "ReadOrigin", "RetainedObservation"]
 

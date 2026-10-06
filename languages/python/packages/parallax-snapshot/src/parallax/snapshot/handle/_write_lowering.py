@@ -6,8 +6,8 @@ from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._write import compile_write_step
-from parallax.core.unit_work import WritePlan
-from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
+from parallax.core.write_plan import WritePlan
+from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 __all__ = ["lowered", "stream_lowered"]
 

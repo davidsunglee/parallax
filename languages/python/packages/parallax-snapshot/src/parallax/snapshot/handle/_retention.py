@@ -16,14 +16,12 @@ from parallax.core.temporal_read import (
     TemporalFacet,
     TransactionTimeOnly,
 )
-from parallax.core.unit_work import (
+from parallax.core.unit_work import ParticipationToken, ReadOrigin, RetainedObservation
+from parallax.core.write_plan import (
     EntityStateRow,
     ObjectKey,
     ObservedStateKey,
-    ParticipationToken,
     PredecessorRow,
-    ReadOrigin,
-    RetainedObservation,
     TemporalObservation,
     VersionObservation,
     WriteObservation,
@@ -318,10 +316,10 @@ def deferred_read_sources(
     only once that state is reachable and valid.
 
     Evidence is addressed by the exact state it is about
-    (:func:`~parallax.core.unit_work.observed_state_key`), so a second read of
+    (:func:`~parallax.core.write_plan.observed_state_key`), so a second read of
     one primary key that resolves to a different version or milestone is
     evidence about the row it saw rather than an overwrite of the first read's.
-    The identity half is the :class:`~parallax.core.unit_work.ObjectKey` a later
+    The identity half is the :class:`~parallax.core.write_plan.ObjectKey` a later
     keyed write computes, over the row's own resolved concrete Entity (never
     family-normalized to the root), which is what ``tx.update(copy)`` resolves
     its instance's class to.

@@ -193,7 +193,7 @@ class CompiledRead:
     absence when it projected none, under `Columns` layout and for a
     `Document`-layout read whose members are all direct; publication drops that
     column from a row's keys, so a caller retaining the stored document
-    (`m-unit-work`'s Predecessor Row) reads it by this name off the driver row.
+    (`m-write-plan`'s Predecessor Row) reads it by this name off the driver row.
     """
 
     statement: LoweredStatement

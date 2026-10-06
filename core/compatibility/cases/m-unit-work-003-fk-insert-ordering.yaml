@@ -1,7 +1,7 @@
 # Foreign-key insert ordering (m-unit-work): a parent row is inserted BEFORE a child that
 # references it.
 model: models/orders.yaml
-tags: [m-unit-work, m-sql, write-sequence, insert, fk-ordering, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-write-plan, m-sql, write-sequence, insert, fk-ordering, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

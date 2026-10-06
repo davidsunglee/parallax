@@ -93,8 +93,6 @@ from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
     MissingTargetError,
-    ObjectKey,
-    ObservedStateKey,
     OptimisticLockConflictError,
     PlanningRequest,
     PredicateWrite,
@@ -102,13 +100,8 @@ from parallax.core.unit_work import (
     SettledEvidence,
     StaleWriteError,
     SubjectActor,
-    TemporalObservation,
     TransactionInstant,
-    VersionObservation,
     WriteEffectError,
-    WriteObservation,
-    WritePlan,
-    WritePlanningError,
     WritePreconditionError,
     buffered_write,
     instructions,
@@ -125,8 +118,17 @@ from parallax.core.unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core.unit_work.materialized import target_write
-from parallax.core.unit_work.planned import KeyTarget, PlannedWrite
 from parallax.core.unit_work.write_planner import compose_writes
+from parallax.core.write_plan import (
+    ObjectKey,
+    ObservedStateKey,
+    TemporalObservation,
+    VersionObservation,
+    WriteObservation,
+    WritePlan,
+    WritePlanningError,
+)
+from parallax.core.write_plan.steps import KeyTarget, PlannedWrite
 from parallax.snapshot import DatabaseOptions, handle
 from parallax.snapshot.handle import (
     ServingModel,
@@ -1376,7 +1378,7 @@ def _lower_predicate_write_step(
     :func:`~parallax.conformance._mechanism.case_document.eligibility` before
     the compile lane ever calls this — reaching this seam with one is therefore
     always a caller wiring defect, surfaced as planning's own defensive
-    :class:`~parallax.core.unit_work.WritePlanningError`.
+    :class:`~parallax.core.write_plan.WritePlanningError`.
     """
     # A readless predicate write declares no Transaction-Time boundary, so the
     # inert instant it carries is never captured (ADR 0010).

@@ -12,12 +12,9 @@ from collections.abc import Mapping, Sequence
 from parallax.core import inheritance
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.metamodel import Metamodel
-from parallax.core.unit_work import (
-    MaterializedWriteGroup,
-    PredecessorRowsBuilder,
-    PredicateWrite,
-)
+from parallax.core.unit_work import MaterializedWriteGroup, PredicateWrite
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
+from parallax.core.write_plan import PredecessorRowsBuilder
 from tests.unit._positional_row_support import positional_row
 
 __all__ = ["temporal_group"]

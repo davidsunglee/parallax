@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work.plan import Derivation, Descent, OwnedEndpoint
-from parallax.core.unit_work.planner import ObservedStateKey
+from parallax.core.write_plan.keys import ObservedStateKey
+from parallax.core.write_plan.plan import Derivation, Descent, OwnedEndpoint
 
 
 @dataclass(frozen=True)

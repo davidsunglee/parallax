@@ -53,7 +53,7 @@ does **not** lock the milestone chain's edge, the Provenance Lineage behind it,
 every row sharing that primary key, or every Valid-Time rectangle current at the
 same Transaction Time. Exactly one physical row per selected milestone is locked.
 
-Two consequences follow, and `m-unit-work`'s Write Observation vocabulary depends
+Two consequences follow, and `m-write-plan`'s Write Observation vocabulary depends
 on both:
 
 - A mutation that can change **several** current rectangles of one key must
@@ -68,7 +68,7 @@ on both:
   section says: the read locked that one row. A write under Locking is licensed
   by that lock because it closes that same milestone — the observation it
   settles against is the one filed under the milestone its own written value
-  came from (`m-unit-work`, Write Observation). A read at a **historical**
+  came from (`m-write-plan` *Write Observation*). A read at a **historical**
   Transaction-Time coordinate locks a historical row and observes the milestone
   it actually selected, which no current-milestone close addresses; a write over
   a view so pinned is refused by the Transaction-Time pin rule

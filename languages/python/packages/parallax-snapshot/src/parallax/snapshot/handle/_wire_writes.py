@@ -11,7 +11,6 @@ from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.unit_work import (
     UPDATE_MUTATIONS,
     KeyedMutation,
-    ObjectKey,
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
@@ -26,6 +25,7 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
 )
 from parallax.core.unit_work.retain import InsertionIdentity
+from parallax.core.write_plan import ObjectKey
 from parallax.snapshot.handle._keyed_writes import (
     KeyedWriteContext,
     PreparedSourceWrite,

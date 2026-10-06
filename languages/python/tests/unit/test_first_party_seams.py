@@ -31,13 +31,12 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.unit_work import (
     MissingTargetError,
-    ObjectKey,
-    ObservedStateKey,
     RetainedObservation,
     WriteEvidenceError,
     WriteRejectedError,
 )
-from parallax.core.unit_work.planner import TemporalStateKey, VersionedStateKey
+from parallax.core.write_plan import ObjectKey, ObservedStateKey
+from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
 from parallax.snapshot.handle import (
     DeferredFeatureError,
     QueryTargetError,

@@ -7,14 +7,15 @@ import pytest
 from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, TxTemporal, attr
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.unit_work import KeyedWrite, PlanningRequest, WritePlan
+from parallax.core.unit_work import KeyedWrite, PlanningRequest
 from parallax.core.unit_work.instructions import PreparedTargetWrite, prepare_typed_write
-from parallax.core.unit_work.plan import (
+from parallax.core.write_plan import WritePlan
+from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
     AllocatedOpening,
 )
-from parallax.core.unit_work.planned import (
+from parallax.core.write_plan.steps import (
     INFINITY,
     RETURNED_MAX_PLUS_ONE,
     Finite,

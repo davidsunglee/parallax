@@ -29,14 +29,16 @@ from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     Concurrency,
     KeyedMutation,
-    ObjectKey,
-    PredecessorRow,
     RetainedObservation,
-    TemporalObservation,
-    VersionObservation,
     WriteEvidencePolicy,
 )
-from parallax.core.unit_work.planner import VersionedStateKey
+from parallax.core.write_plan import (
+    ObjectKey,
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+)
+from parallax.core.write_plan.keys import VersionedStateKey
 
 _VERSION = AttributeIdentity(
     entity=EntityIdentity(namespace="parallax.compatibility", name="Account"), name="version"

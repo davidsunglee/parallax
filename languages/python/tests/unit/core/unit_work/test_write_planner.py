@@ -63,30 +63,19 @@ from parallax.core.unit_work import (
     KeyedWrite,
     MaterializedWriteGroup,
     MilestoneTopology,
-    ObjectKey,
-    PlannedClose,
-    PlannedInsert,
     PlanningRequest,
-    PredecessorRow,
-    PredecessorRows,
-    PredecessorRowsBuilder,
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
     RetainedObservation,
-    TemporalObservation,
     TransactionInstant,
     VersionedEvidenceBuilder,
-    VersionObservation,
     WriteAssignment,
-    WriteObservation,
-    WritePlan,
-    WritePlanningError,
     buffered_write,
     object_key,
 )
 from parallax.core.unit_work import instructions as instructions_module
-from parallax.core.unit_work import planner as planner_module
+from parallax.core.unit_work import keys as keys_module
 from parallax.core.unit_work import write_settlement as write_settlement_module
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
@@ -96,8 +85,24 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core.unit_work.materialized import ObjectClaimedWrite, ObservedKeyedWrite
-from parallax.core.unit_work.plan import OwnedEndpoint
-from parallax.core.unit_work.planned import (
+from parallax.core.unit_work.strategy import ActorIdentity
+from parallax.core.unit_work.write_settlement import OrderedWrite
+from parallax.core.write_plan import (
+    ObjectKey,
+    PlannedClose,
+    PlannedInsert,
+    PredecessorRow,
+    PredecessorRows,
+    PredecessorRowsBuilder,
+    TemporalObservation,
+    VersionObservation,
+    WriteObservation,
+    WritePlan,
+    WritePlanningError,
+)
+from parallax.core.write_plan.keys import VersionedStateKey
+from parallax.core.write_plan.plan import OwnedEndpoint
+from parallax.core.write_plan.steps import (
     ANY_COUNT,
     MAX_PLUS_ONE,
     MISSING_TARGET,
@@ -119,10 +124,7 @@ from parallax.core.unit_work.planned import (
     Versioned,
     VersionGate,
 )
-from parallax.core.unit_work.planned import INFINITY as OPEN_END
-from parallax.core.unit_work.planner import VersionedStateKey
-from parallax.core.unit_work.strategy import ActorIdentity
-from parallax.core.unit_work.write_settlement import OrderedWrite
+from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle import _planning as planning_composition
 from parallax.snapshot.handle import build_write_planner
@@ -1706,7 +1708,7 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
 
     # Key derivation's binding is the one a flush could reach the model's
     # spelling rule through.
-    monkeypatch.setattr(planner_module, "entity_by_name", refuse)
+    monkeypatch.setattr(keys_module, "entity_by_name", refuse)
     plan = (
         build_write_planner(model)
         .finalize(

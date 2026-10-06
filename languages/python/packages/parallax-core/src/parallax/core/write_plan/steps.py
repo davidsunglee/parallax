@@ -12,7 +12,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.predicate._validated import ValidatedPredicate
-from parallax.core.unit_work.observe import PredecessorRow
+from parallax.core.write_plan.observe import PredecessorRow
 
 __all__ = [
     "ANY_COUNT",
@@ -152,7 +152,7 @@ class ChangedFrom:
     members it effectively changes: at every document-resident member it does
     not, the row holds the predecessor's own cell, which is how lowering tells a
     changed member from a carried one without comparing values
-    (:meth:`~parallax.core.unit_work.observe.PredecessorRow.carries`).
+    (:meth:`~parallax.core.write_plan.observe.PredecessorRow.carries`).
     """
 
     predecessor: PredecessorRow

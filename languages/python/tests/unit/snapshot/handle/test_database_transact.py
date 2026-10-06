@@ -58,11 +58,11 @@ from parallax.core.unit_work import (
     UnitOfWorkError,
     WriteBatchTrigger,
     WriteEvidenceError,
-    WritePlan,
     WritePlanner,
     run_unit_of_work,
 )
 from parallax.core.unit_work.uow import EscapedTransactionError
+from parallax.core.write_plan import WritePlan
 from parallax.snapshot import DatabaseOptions, ExecutionFailure, ServingModel, prepare_model
 from parallax.snapshot.handle import (
     Database,

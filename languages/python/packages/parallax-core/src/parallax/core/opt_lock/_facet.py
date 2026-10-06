@@ -10,11 +10,10 @@ from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     Concurrency,
     KeyedMutation,
-    ObjectKey,
     RetainedObservation,
     SettledEvidence,
-    WriteObservation,
 )
+from parallax.core.write_plan import ObjectKey, WriteObservation
 
 __all__ = [
     "FACET_KEY",

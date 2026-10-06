@@ -22,18 +22,13 @@ from parallax.core.unit_work import (
     CardinalityCorruptionError,
     KeyedMutation,
     KeyedWrite,
-    ObjectKey,
     OptimisticLockConflictError,
-    PlannedClose,
-    PlannedInsert,
     PlanningRequest,
-    PredecessorRow,
     PredicateSelection,
     PredicateWrite,
     RetainedObservation,
     StaleWriteError,
     TargetWrite,
-    TemporalObservation,
     WriteAssignment,
     WritePreconditionError,
     buffered_write,
@@ -55,7 +50,17 @@ from parallax.core.unit_work.materialized import (
     chained,
     target_write,
 )
-from parallax.core.unit_work.plan import (
+from parallax.core.unit_work.retain import InsertionIdentity
+from parallax.core.unit_work.write_planner import PendingWrites, compose_writes
+from parallax.core.write_plan import (
+    ObjectKey,
+    PlannedClose,
+    PlannedInsert,
+    PredecessorRow,
+    TemporalObservation,
+)
+from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.plan import (
     NO_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
@@ -65,16 +70,13 @@ from parallax.core.unit_work.plan import (
     OwnedEndpoint,
     Ownership,
 )
-from parallax.core.unit_work.planned import (
+from parallax.core.write_plan.steps import (
     FAILED_PRECONDITION,
     UNGATED,
     Finite,
     PlannedTemporalRevision,
 )
-from parallax.core.unit_work.planned import INFINITY as OPEN_END
-from parallax.core.unit_work.planner import TemporalStateKey
-from parallax.core.unit_work.retain import InsertionIdentity
-from parallax.core.unit_work.write_planner import PendingWrites, compose_writes
+from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY

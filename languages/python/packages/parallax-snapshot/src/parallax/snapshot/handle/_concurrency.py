@@ -5,7 +5,8 @@ from typing import Final
 
 from parallax.core import opt_lock
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.unit_work import Concurrency, VersionArithmetic, WriteObservation
+from parallax.core.unit_work import Concurrency, VersionArithmetic
+from parallax.core.write_plan import WriteObservation
 
 __all__ = ["CONCURRENCY"]
 

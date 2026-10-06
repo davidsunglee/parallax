@@ -290,7 +290,7 @@ rather than left true by omission:
    instance-form read of a value-object-bearing entity always projects it. A
    row-form read projects it only where its consumer needs the document — the
    internal materialized-predicate-write resolving read, whose observation on a
-   temporal target retains the whole predecessor row (`m-unit-work`).
+   temporal target retains the whole predecessor row (`m-write-plan`).
 3. **No reverse getters.** A value object has no identity and holds no reference
    back to its owner; a reverse (value-object → owner) getter MUST NOT exist.
 4. **Not a navigation or deep-fetch target.** An Include Path and a

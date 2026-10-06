@@ -49,7 +49,7 @@ from parallax.core.temporal_read import (
     validated_query_pin,
 )
 from parallax.core.temporal_read import view as temporal_view
-from parallax.core.unit_work import PredecessorRow
+from parallax.core.write_plan import PredecessorRow
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target
 

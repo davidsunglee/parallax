@@ -32,7 +32,6 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import AsOf, AsOfRange, ObjectQueryNode, TemporalSelection
 from parallax.core.unit_work import instructions
-from parallax.core.unit_work.columns import freeze_retained_value
 from parallax.core.unit_work.instructions import (
     KeyedWrite,
     PredicateSelection,
@@ -44,6 +43,7 @@ from parallax.core.unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire
+from parallax.core.write_plan.columns import freeze_retained_value
 
 __all__ = ["decode_case_row", "normalize_case_query", "prepare_case_write"]
 

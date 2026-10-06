@@ -56,7 +56,7 @@ from parallax.core.document_codec._authoring import (
 )
 from parallax.core.document_codec._managed import EffectiveChangeSet
 from parallax.core.metamodel import DocumentMember, Multiplicity
-from parallax.core.unit_work import EntityStateRow
+from parallax.core.write_plan import EntityStateRow
 from tests.unit._positional_row_support import positional_row
 
 _GEO = MemberShape(members=(Leaf("lat", STRING, True),))

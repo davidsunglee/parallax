@@ -6,9 +6,9 @@ from typing import Final, Literal
 
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work.instructions import INSERT_MUTATIONS, PreparedKeyedWrite
-from parallax.core.unit_work.observe import WriteObservation
-from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey
 from parallax.core.unit_work.retain import RetainedObservation
+from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey
+from parallax.core.write_plan.observe import WriteObservation
 
 __all__ = [
     "SELECTION_INTENT",
@@ -70,10 +70,10 @@ type ClaimScope = ObservedStateKey | ObjectKey
 share before either can affect the other.
 
 A versioned or temporal existing-row write claims the exact
-:data:`~parallax.core.unit_work.planner.ObservedStateKey` its source observed,
+:data:`~parallax.core.write_plan.keys.ObservedStateKey` its source observed,
 because two writes of one key that observed two different states are two
 independent intents. An unversioned Non-Temporal existing-row write claims its
-:class:`~parallax.core.unit_work.planner.ObjectKey`, because the shared row lock
+:class:`~parallax.core.write_plan.keys.ObjectKey`, because the shared row lock
 its evidence rule demands is held on the OBJECT and covers every state the row
 can be in — two such writes can never have observed two different states, so the
 state-keyed rule's own reason does not apply and the object is the correct grain.

@@ -2,7 +2,7 @@
 # full-bitemporal write). A value is corrected for a BOUNDED Valid-Time window only,
 # while preserving the audit trail on the Transaction-Time dimension (research §6).
 model: models/position.yaml
-tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-snapshot-1, slice-managed-1]
+tags: [m-bitemp-write, m-write-plan, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

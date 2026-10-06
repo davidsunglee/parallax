@@ -47,8 +47,8 @@ from parallax.core.unit_work import (
     OptimisticLockConflictError,
     ReadOrigin,
     StaleWriteError,
-    TemporalObservation,
 )
+from parallax.core.write_plan import TemporalObservation
 from parallax.snapshot import DeferredFeatureError, QueryTargetError
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._read_result import FindResult

@@ -7,12 +7,11 @@ from parallax.core.metamodel import TemporalDimension
 from parallax.core.unit_work import (
     AUTHORED_STATE,
     CHANGED_STATE,
-    SUPERSEDED,
-    TERMINATED,
     MilestoneClosure,
     MilestoneSuccessor,
     MilestoneTopology,
 )
+from parallax.core.write_plan import SUPERSEDED, TERMINATED
 
 __all__ = [
     "MILESTONE_CHAIN",

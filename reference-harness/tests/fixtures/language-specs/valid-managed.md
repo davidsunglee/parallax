@@ -45,6 +45,7 @@ The implementation selects `slice-managed-1` and the managed-object lifecycle.
 | `m-unit-work` | `unit-work` |
 | `m-value-object` | `value-object` |
 | `m-wire` | `wire` |
+| `m-write-plan` | `write-plan` |
 
 | Enforcement scope | Allowed direct first-party dependencies |
 |---|---|
