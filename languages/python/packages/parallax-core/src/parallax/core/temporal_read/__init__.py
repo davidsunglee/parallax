@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import datetime as _dt
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Protocol, assert_never
+from typing import Literal, Protocol, assert_never
 
-from parallax.core.base import INFINITY_LITERAL, ManagedValue, normalize_instant
+from parallax.core.base import (
+    INFINITY,
+    INFINITY_LITERAL,
+    ManagedValue,
+    TemporalBound,
+    normalize_instant,
+)
 from parallax.core.inheritance import root_metadata
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
@@ -57,6 +63,7 @@ __all__ = [
     "TemporalFacet",
     "TemporalReadError",
     "TemporalShape",
+    "TimeInterval",
     "TransactionTimeOnly",
     "UndeclaredAxisError",
     "inject_resolved_as_of",
@@ -64,6 +71,7 @@ __all__ = [
     "ranked_axes",
     "resolved_pinned_instants",
     "scans_validated_axis",
+    "valid_time_coverage",
     "validated_hop_as_of_terms",
     "validated_query_pin",
     "view",
@@ -172,17 +180,146 @@ class Edge:
 # and the milestone-edge computation every materializer builds on.
 
 
+type _End = _dt.datetime | Literal[TemporalBound.INFINITY]
+
+
+@dataclass(frozen=True, slots=True)
+class TimeInterval:
+    """A nonempty half-open ``[start, end)`` interval on one As-Of Axis.
+
+    The endpoints are managed values held exactly as their owner supplied them:
+    construction checks only that ``start`` precedes ``end`` — raising
+    ``ValueError`` for an empty or reversed interval — and nothing here parses,
+    normalizes, or encodes an endpoint. :data:`~parallax.core.base.INFINITY` is
+    the open end, later than every finite instant. Holders name the axis and the
+    role the interval plays for them.
+    """
+
+    start: _dt.datetime
+    end: _dt.datetime | Literal[TemporalBound.INFINITY]
+
+    def __post_init__(self) -> None:
+        end = self.end
+        if end is not INFINITY and not self.start < end:
+            raise ValueError(
+                f"a TimeInterval requires start < end: [{self.start.isoformat()}, "
+                f"{end.isoformat()})"
+            )
+
+    def overlaps(self, other: TimeInterval) -> bool:
+        """Whether the two share an instant; adjacent intervals do not."""
+        return _before(self.start, other.end) and _before(other.start, self.end)
+
+    def disjoint(self, other: TimeInterval) -> bool:
+        """Whether the two share no instant; adjacent intervals do not."""
+        return not self.overlaps(other)
+
+    def contains(self, value: _dt.datetime | TimeInterval) -> bool:
+        """Whether a finite instant lies in ``[start, end)``, or another interval
+        lies entirely within this one, equal intervals included."""
+        if isinstance(value, TimeInterval):
+            return self.start <= value.start and _ends_by(value.end, self.end)
+        return self.start <= value and _before(value, self.end)
+
+    def meets(self, other: TimeInterval) -> bool:
+        """Whether ``other`` begins exactly where this interval ends."""
+        end = self.end
+        return end is not INFINITY and end == other.start
+
+    def precedes(self, other: TimeInterval) -> bool:
+        """Whether this interval ends strictly before ``other`` begins, so that a
+        gap separates them; adjacency is :meth:`meets`, not precedence."""
+        end = self.end
+        return end is not INFINITY and end < other.start
+
+    def starts_after(self, instant: _dt.datetime) -> bool:
+        """Whether this interval begins strictly after a finite instant."""
+        return self.start > instant
+
+    def ends_after(self, instant: _dt.datetime) -> bool:
+        """Whether this interval ends strictly after a finite instant."""
+        return _before(instant, self.end)
+
+    def intersection(self, other: TimeInterval) -> TimeInterval | None:
+        """The instants both intervals share, or ``None`` where they share none.
+
+        An operand that already is the shared extent is answered itself; only a
+        partial overlap constructs a new interval over the operands' endpoints.
+        """
+        if self.disjoint(other):
+            return None
+        if self.contains(other):
+            return other
+        if other.contains(self):
+            return self
+        start = self.start if other.start < self.start else other.start
+        end = self.end if _ends_by(self.end, other.end) else other.end
+        return TimeInterval(start, end)
+
+    def clipped(
+        self,
+        *,
+        start: _dt.datetime | None = None,
+        end: _dt.datetime | None = None,
+    ) -> TimeInterval | None:
+        """This interval narrowed to the finite limits given, or ``None`` where
+        nothing of it lies between them.
+
+        A limit only narrows: one outside the interval leaves that side as it
+        is, and an unchanged extent is answered by this interval itself.
+        """
+        clipped_start = self.start if start is None or start <= self.start else start
+        clipped_end = self.end if end is None or not _before(end, self.end) else end
+        if clipped_start is self.start and clipped_end is self.end:
+            return self
+        if clipped_end is not INFINITY and not clipped_start < clipped_end:
+            return None
+        return TimeInterval(clipped_start, clipped_end)
+
+    def first_uncovered(self, coverage: Iterable[TimeInterval]) -> _dt.datetime | None:
+        """The earliest instant of this interval that no interval of ``coverage``
+        contains, or ``None`` where they cover all of it.
+
+        ``coverage`` must be ordered by start; adjacent, overlapping, and
+        duplicate intervals are all accepted. It is consumed once, and only
+        until the answer is known.
+        """
+        cursor = self.start
+        end = self.end
+        for interval in coverage:
+            if interval.starts_after(cursor):
+                return cursor
+            covered = interval.end
+            if covered is INFINITY:
+                return None
+            if covered > cursor:
+                if end is not INFINITY and not covered < end:
+                    return None
+                cursor = covered
+        return cursor
+
+
+def _before(instant: _dt.datetime, end: _End) -> bool:
+    return end is INFINITY or instant < end
+
+
+def _ends_by(end: _End, limit: _End) -> bool:
+    return limit is INFINITY or (end is not INFINITY and end <= limit)
+
+
 class MilestoneRows[At](Protocol):
-    """A carrier that already holds milestones' As-Of Axis start values.
+    """A carrier that already holds milestones' As-Of Axis start and end values.
 
     ``at`` addresses one milestone within the carrier, in whatever reference the
-    carrier indexes its own storage by. ``axis_start`` answers the value stored
-    for ``attribute`` there through that storage's own lookup, returning an
-    absent or undecoded value as it is rather than refusing it:
-    :func:`milestone_edge` owns that judgement.
+    carrier indexes its own storage by. ``axis_start`` and ``axis_end`` answer
+    the value stored for ``attribute`` there through that storage's own lookup,
+    returning an absent or undecoded value as it is rather than refusing it:
+    :func:`milestone_edge` and :func:`valid_time_coverage` own that judgement.
     """
 
     def axis_start(self, at: At, attribute: AttributeIdentity, /) -> object: ...
+
+    def axis_end(self, at: At, attribute: AttributeIdentity, /) -> object: ...
 
 
 def milestone_edge[At](shape: TemporalShape, rows: MilestoneRows[At], at: At) -> Edge:
@@ -216,6 +353,39 @@ def _instant(attribute: AttributeIdentity, value: object) -> _dt.datetime:
             "is not a timestamp instant"
         )
     return normalize_instant(value)
+
+
+def valid_time_coverage[At](
+    shape: TemporalShape, rows: MilestoneRows[At], at: At
+) -> TimeInterval | None:
+    """The Valid-Time interval a milestone in ``rows`` at ``at`` covers, over the
+    very endpoint objects its carrier holds, or ``None`` for a family without
+    Valid Time.
+
+    Only the representation is checked: a start that is not a datetime, or an
+    end that is neither a datetime nor :data:`~parallax.core.base.INFINITY`,
+    raises :class:`TemporalReadError` naming its member, and an empty or
+    reversed extent raises ``ValueError``. Endpoints are neither decoded nor
+    normalized.
+    """
+    match shape:
+        case Bitemporal(valid_time=vt):
+            start = rows.axis_start(at, vt.start_attribute)
+            end = rows.axis_end(at, vt.end_attribute)
+            if not isinstance(start, _dt.datetime):
+                raise _not_an_endpoint(vt.start_attribute)
+            if end is not INFINITY and not isinstance(end, _dt.datetime):
+                raise _not_an_endpoint(vt.end_attribute)
+            return TimeInterval(start, end)
+        case TransactionTimeOnly() | NonTemporal():
+            return None
+
+
+def _not_an_endpoint(attribute: AttributeIdentity) -> TemporalReadError:
+    return TemporalReadError(
+        f"{attribute.entity.name}.{attribute.name}: the milestone's Valid-Time "
+        "value is not a managed interval endpoint"
+    )
 
 
 def inject_resolved_as_of(

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-from collections.abc import Mapping, Sequence, Sized
+from collections.abc import Iterator, Mapping, Sequence, Sized
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, cast
@@ -28,7 +28,7 @@ import pytest
 import parallax.core.unit_work.write_settlement as write_settlement
 from parallax.conformance import models
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import inheritance, opt_lock, temporal_read
+from parallax.core import Entity, inheritance, opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import BUILTIN_MANIFEST
 from parallax.core.base import INFINITY, FrozenMap
@@ -36,7 +36,8 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.metamodel import AttributeMetadata, FacetKey, Metamodel
+from parallax.core.entity._model import model_of
+from parallax.core.metamodel import AttributeIdentity, AttributeMetadata, FacetKey, Metamodel
 from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
@@ -72,7 +73,9 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
 )
+from parallax.core.unit_work.materialized import GroupStates
 from parallax.core.unit_work.planned import ChangedFrom, PlannedUpdate, adopt_planned_row
+from parallax.core.unit_work.planner import TemporalStateKey
 from parallax.core.unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
@@ -94,8 +97,10 @@ from tests._support.db_port import (
 )
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.root_ownership import own_root
+from tests.unit import _predicate_acquisition_support as acquisition
 from tests.unit._document_layout_support import PERSON, document_model
 from tests.unit._gc_reachability import reachable_objects
+from tests.unit._positional_row_support import positional_row
 from tests.unit._temporal_group_support import temporal_group
 from tests.unit._transact_support import BALANCE as BALANCE_MODEL
 from tests.unit._transact_support import WHERE_POSITION_META, WherePosition, db_for
@@ -261,6 +266,117 @@ def test_predecessor_rows_read_an_axis_start_by_its_selection_position() -> None
 
     assert evidence.axis_start(0, key) == 5
     assert evidence.axis_start(0, dataclasses.replace(key, name="txStart")) is None
+
+
+_BITEMPORAL_MODEL = model_of(acquisition.MODEL)
+_BITEMPORAL_LAYOUTS = pytest.mark.parametrize(
+    "entity",
+    [acquisition.AcquisitionColumns, acquisition.AcquisitionDocument],
+    ids=["columns", "document"],
+)
+
+
+def _milestones(
+    entity: type[Entity], *spans: tuple[dt.datetime, object]
+) -> tuple[PredecessorRows, temporal_read.Bitemporal]:
+    """One stored milestone of ``entity`` per Valid-Time ``(start, end)`` span,
+    keyed from one, as a resolving read appends them."""
+    layout = LayoutCatalog(_BITEMPORAL_MODEL).entity(entity.identity)
+    selection = layout.member_selection
+    builder = PredecessorRowsBuilder(
+        selection, key_position=layout.primary_key[0], absent=ABSENT, documents=False
+    )
+    for key, (start, end) in enumerate(spans, 1):
+        cells = {
+            "id": key,
+            "title": "Ada",
+            "validStart": start,
+            "validEnd": end,
+            "txStart": acquisition.TX_START,
+            "txEnd": INFINITY,
+        }
+        builder.append(positional_row(selection.shape, cells, absent=ABSENT))
+    evidence = builder.seal()
+    shape = temporal_read.view(_BITEMPORAL_MODEL).shape(entity.identity)
+    assert evidence is not None
+    assert isinstance(shape, temporal_read.Bitemporal)
+    return evidence, shape
+
+
+_JAN, _MAR, _APR, _JUN = (dt.datetime(2026, month, 1, tzinfo=dt.UTC) for month in (1, 3, 4, 6))
+
+
+@_BITEMPORAL_LAYOUTS
+def test_predecessor_rows_cover_each_row_with_its_own_valid_time_cells(
+    entity: type[Entity],
+) -> None:
+    evidence, shape = _milestones(entity, (_JAN, _MAR), (_MAR, INFINITY))
+
+    first = temporal_read.valid_time_coverage(shape, evidence, 0)
+    second = temporal_read.valid_time_coverage(shape, evidence, 1)
+
+    assert evidence.axis_end(1, shape.valid_time.end_attribute) is INFINITY
+    assert (
+        evidence.axis_end(0, dataclasses.replace(shape.valid_time.end_attribute, name="none"))
+        is None
+    )
+    assert first is not None
+    assert second is not None
+    assert (first.start, first.end, second.start, second.end) == (_JAN, _MAR, _MAR, INFINITY)
+    assert first.start is _JAN
+    assert first.end is _MAR
+    assert second.end is INFINITY
+
+
+class _RecordedRows:
+    """A carrier's milestones, answered by delegation, recording each row read."""
+
+    def __init__(self, rows: PredecessorRows) -> None:
+        self._rows = rows
+        self.read: list[int] = []
+
+    def axis_start(self, at: int, attribute: AttributeIdentity, /) -> object:
+        self.read.append(at)
+        return self._rows.axis_start(at, attribute)
+
+    def axis_end(self, at: int, attribute: AttributeIdentity, /) -> object:
+        self.read.append(at)
+        return self._rows.axis_end(at, attribute)
+
+
+@_BITEMPORAL_LAYOUTS
+def test_group_coverage_is_read_lazily_and_only_until_a_gap_is_found(
+    entity: type[Entity],
+) -> None:
+    evidence, shape = _milestones(entity, (_JAN, _MAR), (_APR, _JUN), (_JUN, INFINITY))
+    recorded = _RecordedRows(evidence)
+    window = temporal_read.TimeInterval(_JAN, INFINITY)
+
+    def coverage() -> Iterator[temporal_read.TimeInterval]:
+        for index in range(len(evidence)):
+            interval = temporal_read.valid_time_coverage(shape, recorded, index)
+            assert interval is not None
+            yield interval
+
+    uncovered = window.first_uncovered(coverage())
+
+    assert uncovered == _MAR
+    assert recorded.read == [0, 0, 1, 1]
+
+
+@_BITEMPORAL_LAYOUTS
+def test_a_groups_state_keys_read_no_axis_end(
+    monkeypatch: pytest.MonkeyPatch, entity: type[Entity]
+) -> None:
+    def refuse(*_arguments: object) -> object:
+        raise AssertionError("a state key read an axis end")
+
+    evidence, shape = _milestones(entity, (_JAN, _MAR), (_MAR, INFINITY))
+    monkeypatch.setattr(PredecessorRows, "axis_end", refuse)
+
+    keys = list(GroupStates(entity.identity, "id", evidence, shape))
+
+    assert [cast("TemporalStateKey", key).milestone.valid_time for key in keys] == [_JAN, _MAR]
 
 
 def test_predecessor_rows_refuse_misaligned_or_empty_evidence() -> None:

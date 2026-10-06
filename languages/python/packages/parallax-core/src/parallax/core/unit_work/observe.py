@@ -342,6 +342,16 @@ class PredecessorRow:
         position = selection.index.get(attribute)
         return None if position is None else self._row[position]
 
+    def axis_end(self, at: None, attribute: AttributeIdentity, /) -> object:
+        """The observed value of one As-Of Axis end, read as :meth:`axis_start`
+        reads a start."""
+        del at
+        selection = self._selection
+        if selection is None:
+            return self.members.get(attribute.name)
+        position = selection.index.get(attribute)
+        return None if position is None else self._row[position]
+
     def identity_maps(
         self, selection: EntityMemberSelection
     ) -> tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object]]:

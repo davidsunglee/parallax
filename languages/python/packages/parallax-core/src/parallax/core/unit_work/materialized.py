@@ -141,6 +141,10 @@ class PredecessorRows:
         position = self.selection.index.get(attribute)
         return None if position is None else self.rows[at][position]
 
+    def axis_end(self, at: int, attribute: AttributeIdentity, /) -> object:
+        position = self.selection.index.get(attribute)
+        return None if position is None else self.rows[at][position]
+
 
 type GroupEvidence = VersionedEvidence | PredecessorRows
 """One authored predicate's aligned evidence, one entry per selected row."""

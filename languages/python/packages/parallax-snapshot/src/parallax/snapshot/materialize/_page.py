@@ -370,6 +370,11 @@ class PageRows:
         coordinates = cast("LogicalKey", self.keys[projection]).coordinates
         return coordinates[layout.temporal_starts.index(layout.index_of[attribute])]
 
+    def axis_end(self, projection: int, attribute: AttributeIdentity, /) -> object:
+        """``projection``'s stored value at one As-Of Axis end, read at that
+        Attribute's position in its raw member row."""
+        return self.member_rows[projection][self.layouts[projection].index_of[attribute]]
+
 
 class Page:
     """One materialization's Page: every occurrence, the roots in result order,

@@ -41,7 +41,13 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.temporal_read import Edge
+from parallax.core.temporal_read import (
+    Bitemporal,
+    Edge,
+    TemporalReadError,
+    valid_time_coverage,
+)
+from parallax.core.temporal_read import view as temporal_view
 from parallax.snapshot import (
     MISSING_STORED_VALUE,
     InvalidData,
@@ -355,6 +361,67 @@ def test_an_inherited_record_reads_its_key_at_the_layout_and_its_version_where_t
     assert record.edge == Edge(
         tx_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         valid_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+    )
+
+
+_RATE_FROM = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+
+
+def _deposit_rate_view(valid_end: object) -> tuple[RootView, Bitemporal]:
+    fixture = PageFixture(read_models.RATE_MODEL)
+    root = fixture.node(
+        "DepositRate",
+        {
+            "id": 7,
+            "amount": Decimal("1.00"),
+            "grade": "A",
+            "from_z": _RATE_FROM,
+            "thru_z": valid_end,
+            "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            "out_z": INFINITY,
+        },
+    )
+    model = model_of(read_models.RATE_MODEL)
+    shape = temporal_view(model).shape(fixture.layout_for("DepositRate").concrete)
+    assert isinstance(shape, Bitemporal)
+    return RootView(fixture.page(root)), shape
+
+
+@pytest.mark.parametrize(
+    "valid_end", [dt.datetime(2024, 6, 1, tzinfo=dt.UTC), INFINITY], ids=["finite", "open"]
+)
+def test_an_inherited_roots_coverage_reads_its_judged_valid_time_cells(valid_end: object) -> None:
+    view, shape = _deposit_rate_view(valid_end)
+
+    coverage = valid_time_coverage(shape, view, 0)
+
+    assert shape.valid_time.end_attribute.entity == EntityIdentity(_NAMESPACE, "Rate")
+    assert coverage is not None
+    assert coverage.start is _RATE_FROM
+    assert coverage.end is valid_end
+    assert valid_time_coverage(shape, view, 0) is not coverage
+
+
+def test_an_inherited_roots_rejected_valid_time_end_has_no_coverage() -> None:
+    view, shape = _deposit_rate_view("not-an-instant")
+
+    with pytest.raises(TemporalReadError, match=r"Rate\.validEnd: .*interval endpoint"):
+        valid_time_coverage(shape, view, 0)
+
+
+def test_classification_locates_a_root_without_reading_its_axis_ends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(*_arguments: object) -> object:
+        raise AssertionError("an edge read an axis end")
+
+    view, _shape = _deposit_rate_view("not-an-instant")
+    monkeypatch.setattr(RootView, "axis_end", refuse)
+
+    (verdict,) = classify_roots(view, model_of(read_models.RATE_MODEL), CONCURRENCY).roots
+
+    assert _classified(verdict).edge == Edge(
+        tx_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC), valid_time=_RATE_FROM
     )
 
 
