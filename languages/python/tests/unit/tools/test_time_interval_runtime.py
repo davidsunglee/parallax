@@ -168,6 +168,27 @@ def test_a_removal_window_reads_its_invalidating_flush_between_its_two_windows()
     assert outcome.refused == 8
 
 
+@pytest.mark.parametrize("cell", support.CELLS, ids=lambda cell: cell.id)
+def test_every_statement_a_run_counts_serializes_its_binds_once(
+    cell: support.Cell, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lowering = vars(support)["lowering_support"]
+    serialize = lowering.serialize
+    serialized: list[int] = []
+
+    def counted(binds: Sequence[object]) -> object:
+        serialized.append(len(binds))
+        return serialize(binds)
+
+    monkeypatch.setattr(lowering, "serialize", counted)
+    with support.driver(cell) as driver:
+        serialized.clear()
+        outcome = driver.run(support.Stopwatch())
+    assert len(serialized) == outcome.reads + outcome.statements
+    if isinstance(cell, support.FlowCell) and cell.flow.startswith("read-"):
+        assert all(serialized)
+
+
 @pytest.fixture
 def compilations(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[int]]:
     """Every read-plan compilation, counted as it happens."""
