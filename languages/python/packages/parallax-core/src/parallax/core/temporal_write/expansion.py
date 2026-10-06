@@ -4,7 +4,7 @@ import bisect
 import datetime as dt
 import functools
 from array import array
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
@@ -206,13 +206,13 @@ class PredecessorExpansion:
         proven (:func:`_preserved`). Otherwise the predecessor is closed —
         Superseded where a successor assigns, Terminated otherwise — and its
         nonempty successors opened, or the attempt's own row is revised or
-        removed instead (:func:`_dispose`). A ``starting`` predecessor's gated
+        removed instead (:meth:`_disposed`). A ``starting`` predecessor's gated
         close fails as its caller's precondition. A ``validation`` predecessor
         is retired as Terminated through the same disposal, opening nothing.
         """
         if role == "validation":
             closing = self.closing(predecessor, coverage, TERMINATED)
-            return self._disposed(predecessor, state, coverage, closing, (), ())
+            return self._disposed(predecessor, state, coverage, closing, ())
         transform = self._transform
         if not transform.reaches(coverage):
             return _NOTHING
@@ -221,16 +221,13 @@ class PredecessorExpansion:
             kept_as_is = self._kept_unchanged(predecessor, coverage, successors)
             if kept_as_is is not None:
                 return kept_as_is
-        if successors:
-            predecessor = predecessor.with_bindable_document()
-        inserts = tuple(self._successor(predecessor, successor) for successor in successors)
         cause = (
             SUPERSEDED
             if any(successor.assigned is not None for successor in successors)
             else TERMINATED
         )
         closing = self.closing(predecessor, coverage, cause, starting=role == "starting")
-        return self._disposed(predecessor, state, coverage, closing, successors, inserts)
+        return self._disposed(predecessor, state, coverage, closing, successors)
 
     def closing(
         self,
@@ -401,39 +398,111 @@ class PredecessorExpansion:
         coverage: TimeInterval | None,
         closing: PlannedClose,
         successors: Sequence[Successor],
-        inserts: tuple[PlannedInsert, ...],
     ) -> Expansion:
+        """The predecessor's own effect by ownership and the successors it opens
+        (`m-temporal-write` *Ownership disposal*).
+
+        Disposal is decided from the successors' bounds and the predecessor's
+        cells, by the rules a group's rows settle by, before any step is built:
+        only emitted rows are constructed, and the bindable document is
+        prepared only where some successor is opened.
+        """
+        facts = self._facts
+        ownership = self._ownership
+        own = _target_endpoint(facts, closing.target)
+        owned = ownership.owns(own)
         derived = (
-            (self._derivation(state, coverage, closing, successors, inserts),)
+            (self._derivation(predecessor, state, coverage, own, owned, successors),)
             if self._derives
             else ()
         )
-        return _dispose(self._facts, closing, inserts, predecessor, self._ownership, state, derived)
+        changed = (state,)
+        if not owned:
+            inserts = self._opened(predecessor, successors)
+            return Expansion(
+                steps=(closing, *inserts),
+                changed=changed,
+                opened=Openings(fresh=openings(facts, inserts)),
+                derived=derived,
+            )
+        continues = ownership.continues_insertion(own)
+        kept = _keeping(
+            (_valid_end(successor.valid_time_coverage) for successor in successors),
+            _valid_end(coverage),
+        )
+        if kept is None:
+            inserts = self._opened(predecessor, successors)
+            removal = PlannedTemporalRemoval(
+                entity=closing.entity,
+                target=closing.target,
+                concurrency=closing.concurrency,
+                affected_rows=closing.affected_rows,
+            )
+            return _owned(
+                (removal, *inserts), openings(facts, inserts), continues, changed, derived, own
+            )
+        keeping = successors[kept]
+        inserts = self._opened(predecessor, (*successors[:kept], *successors[kept + 1 :]))
+        extent = keeping.valid_time_coverage
+        assigned = keeping.assigned
+        if not _revises(
+            facts,
+            moved=extent is not None and coverage is not None and extent.start != coverage.start,
+            assigned=None if assigned is None else self.assignments(assigned),
+            carries=predecessor.carries,
+        ):
+            return _owned(inserts, openings(facts, inserts), continues, (), derived)
+        assignments = _revision_assignments(
+            facts, self._successor(predecessor, keeping).entries[0], predecessor
+        )
+        revision = PlannedTemporalRevision(
+            entity=closing.entity,
+            target=closing.target,
+            assignments=assignments,
+            concurrency=closing.concurrency,
+            affected_rows=closing.affected_rows,
+        )
+        return _owned((revision, *inserts), openings(facts, inserts), continues, changed, derived)
+
+    def _opened(
+        self, predecessor: PredecessorRow, successors: Sequence[Successor]
+    ) -> tuple[PlannedInsert, ...]:
+        """The successors opened as rows, sharing one bindable predecessor."""
+        if not successors:
+            return ()
+        bindable = predecessor.with_bindable_document()
+        return tuple(self._successor(bindable, successor) for successor in successors)
 
     def _derivation(
         self,
+        predecessor: PredecessorRow,
         state: ObservedStateKey,
         coverage: TimeInterval | None,
-        closing: PlannedClose,
+        own: OwnedEndpoint,
+        owned: bool,
         successors: Sequence[Successor],
-        inserts: Sequence[PlannedInsert],
     ) -> Derivation:
         """What a later unit needs of one predecessor's expansion: its state and
         coverage, its own address where the attempt owned it, and each
-        nonempty row derived from it with the coverage it opens."""
+        nonempty row derived from it — at the predecessor's own key, since no
+        successor assigns a key — with the coverage it opens."""
         facts = self._facts
-        own = _target_endpoint(facts, closing.target)
-        rows: list[tuple[OwnedEndpoint, TimeInterval | None]] = []
-        for successor, insert in zip(successors, inserts, strict=True):
-            (entry,) = insert.entries
-            endpoint = entry_endpoint(facts, entry)
-            if endpoint is not None:
-                rows.append((endpoint, successor.valid_time_coverage))
+        key = (predecessor.cell(facts.view.primary_key.identity),)
         return Derivation(
             original=state,
             valid_time_coverage=coverage,
-            owned=own if self._ownership.owns(own) else None,
-            rows=tuple(rows),
+            owned=own if owned else None,
+            rows=tuple(
+                (
+                    OwnedEndpoint(
+                        facts.entity.identity,
+                        key,
+                        TRANSACTION_TIME_ENDS if extent is None else bitemporal_ends(extent.end),
+                    ),
+                    extent,
+                )
+                for extent in (successor.valid_time_coverage for successor in successors)
+            ),
         )
 
     def _owns(self, coverage: TimeInterval | None) -> bool:
@@ -499,12 +568,18 @@ _ROW_EFFECT: Final = 0
 
 
 @functools.cache
+def _positions(positions: int) -> tuple[int, ...]:
+    """The successor positions in the union ``positions``, in order by start.
+    Decoded once per distinct union."""
+    return tuple(position for position in _POSITIONS if positions & position)
+
+
+@functools.cache
 def _slots(code: int) -> tuple[int, ...]:
     """The steps a row of disposition ``code`` takes, in order: its own effect
     where it takes one, then each successor position it opens. Decoded once
     per distinct disposition."""
-    opened = _opened(code)
-    successors = tuple(position for position in _POSITIONS if opened & position)
+    successors = _positions(_opened(code))
     return (_ROW_EFFECT, *successors) if _affects(code) else successors
 
 
@@ -671,7 +746,6 @@ class SettledGroup:
         assert predecessor is not None  # a revision reads its predecessor's cells
         piece = self._successor(_kept_position(code), values, predecessor)
         assignments = _revision_assignments(facts, piece.entries[0], predecessor)
-        assert assignments is not None  # settled as a revision that assigns
         return PlannedTemporalRevision(
             entity=closing.entity,
             target=closing.target,
@@ -817,45 +891,27 @@ class _RowDisposal:
         if not ownership.owns(own):
             return positions
         code = positions | (_CONTINUES if ownership.continues_insertion(own) else 0)
-        kept = self._kept(positions, start, end)
-        if kept is None:
-            return code | _REMOVE
-        revises = self._revises(values, kept, start, end)
-        return code | (_REVISE if revises else _KEEP) | kept << _KEPT_SHIFT
-
-    def _kept(self, positions: int, start: object, end: object) -> int | None:
-        """The position whose successor keeps the row's own address — the one
-        ending where the row ends — if one does (:func:`_kept`)."""
-        for position in _POSITIONS:
-            if (
-                positions & position
-                and self.transform.successor_extent(position, start, end)[1] == end
-            ):
-                return position
-        return None
-
-    def _revises(self, values: tuple[object, ...], kept: int, start: object, end: object) -> bool:
-        """Whether revising the row in place into its successor at ``kept``
-        assigns anything, stopping at the first member that does
-        (:func:`_revision_assignments`)."""
-        if self.valid_positions is not None:
-            kept_start, _kept_end = self.transform.successor_extent(kept, start, end)
-            if kept_start != start:
-                return True
-        facts = self.facts
-        selection = facts.view.member_selection
-        change = self.change
-        # Only the changed successor overlays anything; a carried one is the
-        # row's own cells.
-        return kept == WITHIN and any(
-            not carries_cell(selection, values, self.absent, member, value)
-            for member, value in _overlaid(
-                facts,
-                self.attributes,
-                self.value_objects,
-                None if change is None else change.effective_positions(values),
-            )
+        transform = self.transform
+        opened = _positions(positions)
+        kept_at = _keeping(
+            (transform.successor_extent(position, start, end)[1] for position in opened), end
         )
+        if kept_at is None:
+            return code | _REMOVE
+        kept = opened[kept_at]
+        revises = _revises(
+            facts,
+            moved=valid is not None and transform.successor_extent(kept, start, end)[0] != start,
+            # Only the changed successor overlays anything; a carried one is
+            # the row's own cells.
+            assigned=(self.attributes, self.value_objects) if kept == WITHIN else None,
+            carries=functools.partial(
+                carries_cell, facts.view.member_selection, values, self.absent
+            ),
+            change=self.change,
+            values=values,
+        )
+        return code | (_REVISE if revises else _KEEP) | kept << _KEPT_SHIFT
 
 
 def _overlaid(
@@ -1031,67 +1087,6 @@ def _stamp(
     attributes[transaction_time.end_attribute] = INFINITY
 
 
-def _dispose(
-    facts: TemporalFacts,
-    closing: PlannedClose,
-    successors: Sequence[PlannedInsert],
-    predecessor: PredecessorRow,
-    ownership: Ownership,
-    state: ObservedStateKey | None,
-    derived: tuple[Derivation, ...] = (),
-) -> Expansion:
-    """The effects one temporal mutation has on its observed predecessor, whose
-    observed state is ``state``, and the successors it opens.
-
-    Every successor is nonempty. A predecessor that existed before
-    this attempt is closed, which preserves it as history. A predecessor this
-    attempt opened has no history to preserve: when exactly one successor keeps
-    its complete physical address — the logical key and every axis end — the
-    row is revised in place at that address and the other successors are
-    opened; otherwise the row is removed and every successor opened. Address
-    equality is the whole correspondence: no end coordinate is moved to force
-    reuse, and no payload comparison or Transaction-Time start decides it.
-
-    Closing, revising, or removing the predecessor changes ``state``; a kept
-    address the revision would assign nothing leaves it as it was.
-    """
-    changed = () if state is None else (state,)
-    pieces = tuple(successors)
-    own = _target_endpoint(facts, closing.target)
-    if not ownership.owns(own):
-        return Expansion(
-            steps=(closing, *pieces),
-            changed=changed,
-            opened=Openings(fresh=openings(facts, pieces)),
-            derived=derived,
-        )
-    continues = ownership.continues_insertion(own)
-    kept_at = _kept(facts, own, pieces)
-    if kept_at is not None:
-        piece = pieces[kept_at]
-        others = tuple(other for other in pieces if other is not piece)
-        assignments = _revision_assignments(facts, piece.entries[0], predecessor)
-        if assignments is None:
-            return _owned(others, openings(facts, others), continues, (), derived)
-        revision = PlannedTemporalRevision(
-            entity=closing.entity,
-            target=closing.target,
-            assignments=assignments,
-            concurrency=closing.concurrency,
-            affected_rows=closing.affected_rows,
-        )
-        return _owned((revision, *others), openings(facts, others), continues, changed, derived)
-    removal = PlannedTemporalRemoval(
-        entity=closing.entity,
-        target=closing.target,
-        concurrency=closing.concurrency,
-        affected_rows=closing.affected_rows,
-    )
-    return _owned(
-        (removal, *pieces), openings(facts, pieces), continues, changed, derived, removed=own
-    )
-
-
 def _owned(
     steps: tuple[PlannedWrite, ...],
     opened: tuple[OwnedEndpoint, ...],
@@ -1111,26 +1106,65 @@ def _owned(
     )
 
 
-def _kept(facts: TemporalFacts, own: OwnedEndpoint, pieces: Sequence[PlannedInsert]) -> int | None:
-    """The position of the one successor among ``pieces`` that keeps the owned
-    address ``own``, or ``None`` unless exactly one does."""
-    keeping = [
-        position
-        for position, piece in enumerate(pieces)
-        if entry_endpoint(facts, piece.entries[0]) == own
-    ]
-    return keeping[0] if len(keeping) == 1 else None
+def _keeping(ends: Iterable[object], end: object) -> int | None:
+    """Which of a row's successors, by the Valid-Time ``ends`` they reach in
+    order, keeps the row's complete physical address: the one ending where the
+    row ends, ``end`` — ``None`` throughout without Valid Time, where the one
+    successor keeps it. Successors are disjoint and nonempty, so at most one
+    does; ``None`` where none does. No successor assigns the key, and the
+    Transaction-Time end is invariantly open."""
+    for index, successor_end in enumerate(ends):
+        if successor_end == end:
+            return index
+    return None
+
+
+def _valid_end(coverage: TimeInterval | None) -> object:
+    return None if coverage is None else coverage.end
+
+
+def _revises(
+    facts: TemporalFacts,
+    *,
+    moved: bool,
+    assigned: tuple[Mapping[AttributeIdentity, PlannedValue], Mapping[ValueObjectIdentity, object]]
+    | None,
+    carries: Callable[[AttributeIdentity | ValueObjectIdentity, object], bool],
+    change: PreparedEffectiveChange | None = None,
+    values: tuple[object, ...] = (),
+) -> bool:
+    """Whether revising a row the attempt opened in place into the successor
+    keeping its address assigns anything, decided before any payload is built.
+
+    It does where the successor's Valid-Time start ``moved``, or where a member
+    the successor overlays — ``assigned``, a changed successor's resolved
+    assignments, restricted to ``change``'s effective positions over the row's
+    member ``values`` where a comparison was prepared — is not one the row
+    ``carries``. It stops at the first such member;
+    :func:`_revision_assignments` enumerates the payload only for an emitted
+    revision.
+    """
+    if moved:
+        return True
+    # A carried successor ending where its row ends begins later than the row.
+    assert assigned is not None
+    attributes, value_objects = assigned
+    effective = None if change is None else change.effective_positions(values)
+    return any(
+        not carries(member, value)
+        for member, value in _overlaid(facts, attributes, value_objects, effective)
+    )
 
 
 def _revision_assignments(
     facts: TemporalFacts, entry: InsertEntry, predecessor: PredecessorRow
-) -> PlannedAssignments | None:
-    """What revising ``predecessor`` in place into ``entry``'s state assigns.
+) -> PlannedAssignments:
+    """What revising ``predecessor`` in place into ``entry``'s state assigns,
+    once :func:`_revises` decided that it assigns something.
 
     Every member ``entry`` does not carry as the predecessor's own cell, plus a
     moved Valid-Time start. The key, every axis end, and the Transaction-Time
-    start belong to the address the revision preserves. ``None`` when nothing
-    differs.
+    start belong to the address the revision preserves.
     """
     shape = facts.shape
     addressed = _addressed(facts)
@@ -1149,8 +1183,7 @@ def _revision_assignments(
         for identity, value in entry.row.value_objects.items()
         if not predecessor.carries(identity, value)
     }
-    if not attributes and not value_objects:
-        return None
+    assert attributes or value_objects  # payload construction never reverses the decision
     return adopt_planned_assignments(attributes, value_objects)
 
 

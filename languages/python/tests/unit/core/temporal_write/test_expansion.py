@@ -498,6 +498,16 @@ def test_only_an_emitted_successor_prepares_the_bindable_predecessor(
         _SPAN_FACTS,
         _STORED,
     )
+    revised = _expand(
+        _expansion(
+            _SPAN_FACTS,
+            _assigning(TimeInterval(_JAN, INFINITY), {"amount": 300}),
+            ownership=OpenedRows(frozenset({_endpoint(INFINITY)})),
+        ),
+        _SPAN_FACTS,
+        _STORED,
+    )
+    assert _kinds(revised.steps) == [PlannedTemporalRevision]
     assert prepared == []
 
 
