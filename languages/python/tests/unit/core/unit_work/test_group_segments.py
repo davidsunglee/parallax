@@ -1068,6 +1068,31 @@ def test_each_selected_row_is_clipped_to_its_own_coverage() -> None:
     assert list(unit.removed) == []
 
 
+def test_a_selected_row_the_attempt_opened_is_clipped_to_its_own_coverage() -> None:
+    # The same window over rows the attempt opened: the one starting inside it
+    # is revised in place into its carried tail and opens only the changed part
+    # from its own start, and the one starting at the window's end is not reached.
+    plan = _finalized(
+        _POSITION,
+        _position_group("updateUntil", _MAY, _WINDOW_UNTIL),
+        ownership=OpenedRows(
+            frozenset(_endpoint("Position", key, OPEN_END, OPEN_END) for key in (1, 2))
+        ),
+    )
+    assert _windows(plan.steps) == [
+        ("PlannedTemporalRevision", None, None),
+        ("ChangedFrom", _MAY, _WINDOW_UNTIL),
+    ]
+    revision = plan.steps[0]
+    assert isinstance(revision, PlannedTemporalRevision)
+    assert {
+        identity.name: value for identity, value in revision.assignments.attributes.items()
+    } == {"validStart": _WINDOW_UNTIL}
+    (unit,) = plan.units
+    assert [state.object for state in unit.changed] == [corpus_object_key("Position", ("id", 1))]
+    assert list(unit.removed) == []
+
+
 @pytest.mark.parametrize(
     ("group", "uniform"),
     [

@@ -472,6 +472,14 @@ follow, and a replacement's Coverage Gaps come last. A predicate-selected
 mutation is expanded once for the mutation, never once per resolved row, and
 applied to each selected row in resolution order.
 
+Each selected row is a predecessor like any other, transformed over its own
+Valid-Time coverage alone. The rows a predicate selects are not confined to the
+mutation's window, so a Bitemporal row can start inside it or beyond it. One
+starting after `validFrom` has no `head`: its first successor starts where the
+row starts, never earlier, and the row is disposed of by ownership as any
+reached predecessor is. One starting at or after `until` is not reached and is
+left alone, with no statement and no change to its state.
+
 A row opening a **new lineage** — an `insert`'s, each surviving part of a pending
 insert (`m-unit-work` *Same-transaction write coalescing*), and each Coverage
 Gap — carries the authored state over its own coverage, stamped exactly as a
