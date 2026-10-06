@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import bisect
-import datetime as dt
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Final, cast
 
 from parallax.core.base import (
-    ManagedValue,
     TemporalBound,
-    normalize_instant,
     retain_document_value,
 )
 from parallax.core.document_codec import (
@@ -37,16 +34,9 @@ from parallax.core.temporal_read import (
     TemporalShape,
     TimeInterval,
     TransactionTimeOnly,
-    milestone_edge,
     valid_time_coverage,
 )
 from parallax.core.unit_work.clock import TransactionInstant
-from parallax.core.unit_work.effects import (
-    CardinalityCorruptionError,
-    MissingTargetError,
-    WritePreconditionError,
-    enforce_affected_rows,
-)
 from parallax.core.unit_work.instructions import (
     UPDATE_MUTATIONS,
     PreparedKeyedWrite,
@@ -54,7 +44,6 @@ from parallax.core.unit_work.instructions import (
     PreparedWrite,
 )
 from parallax.core.unit_work.materialized import (
-    ChainedTemporalWrite,
     ComposedTemporalWrite,
     FollowingKeyedWrite,
     GroupStates,
@@ -65,11 +54,29 @@ from parallax.core.unit_work.materialized import (
     VersionedEvidence,
     composed_alone,
 )
+from parallax.core.unit_work.milestones import (
+    Settled,
+    SettledClose,
+    TemporalFacts,
+    bitemporal_ends,
+    close_step,
+    dispose,
+    entry_ends,
+    kept,
+    openings,
+    predecessor_maps,
+    preserved,
+    revision_assignments,
+    successor_step,
+)
+from parallax.core.unit_work.ranges import (
+    Decoration,
+    DeferredTemporalRange,
+    range_claims,
+    settle_range,
+)
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
-    AUTHORED_STATE,
-    CARRIED_STATE,
-    CHANGED_STATE,
     ActorIdentity,
     AuditStrategy,
     AuthoredState,
@@ -81,41 +88,28 @@ from parallax.core.unit_work.strategy import (
     VersionArithmetic,
 )
 from parallax.core.unit_work.temporal import (
-    BoundPiece,
-    ResolvedSuccessor,
-    TemporalTransform,
-    bind_successor,
-    literal_successor,
     resolve_successors,
     successor_bounds,
 )
 from parallax.core.unit_work.write_validate import WriteRejectedError
 from parallax.core.write_plan.columns import ColumnSlice
 from parallax.core.write_plan.keys import (
-    ObjectKey,
     ObservedStateKey,
-    TemporalStateKey,
     VersionedStateKey,
 )
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation, WriteObservation
 from parallax.core.write_plan.plan import (
-    NO_OPENINGS,
     NO_OWNERSHIP,
-    OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
     AllocatedOpening,
-    BoundRange,
     Completion,
     Completions,
-    Derivation,
-    Descent,
     ExecutionUnit,
     Openings,
     OwnedEndpoint,
     Ownership,
     PlannedSteps,
-    RangeAcquisition,
     StepSegment,
     WritePlan,
     eager_segment,
@@ -135,41 +129,28 @@ from parallax.core.write_plan.planned_rows import (
 from parallax.core.write_plan.steps import (
     ANY_COUNT,
     FAILED_PRECONDITION,
-    INFINITY,
     NEW_LINEAGE,
     RETURNED_MAX_PLUS_ONE,
-    SUPERSEDED,
-    TERMINATED,
     UNGATED,
     UNVERSIONED,
     AffectedRows,
-    CloseCause,
     ExactCount,
-    Finite,
     InsertEntry,
-    KeyTarget,
     MaxPlusOne,
-    MilestoneTarget,
     NonTemporalConcurrency,
     PlannedAssignments,
     PlannedClose,
     PlannedDelete,
     PlannedInsert,
-    PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedUpdate,
     PlannedValue,
     Shortfall,
-    TemporalConcurrency,
-    TemporalGate,
-    TemporalUpperBound,
-    Ungated,
     Versioned,
     VersionGate,
     adopt_planned_assignments,
     shortfall_classification,
-    shortfall_for,
 )
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
@@ -216,59 +197,6 @@ class WritePlanningResult:
     """
 
     plan: WritePlan
-
-
-@dataclass(frozen=True, slots=True)
-class _SettledClose:
-    """What closing the current milestone takes, settled once per temporal
-    mutation whose topology closes one.
-
-    One value rather than four independently optional fields on the facts: a
-    topology either closes or does not, and each of these is settled exactly
-    when it does — so a cause reaching emission without its gate basis is
-    unconstructable rather than asserted against, and a mutation that opens a
-    milestone without closing one settles no address and asks for no gate
-    decision at all.
-    """
-
-    cause: CloseCause
-    key_attributes: tuple[AttributeIdentity, ...]
-    gate_start_attribute: AttributeIdentity
-    gated: bool
-
-
-@dataclass(frozen=True, slots=True)
-class _Settled:
-    """One settled mutation's steps and the owned rows its success removes and
-    opens. ``unchanged`` says the mutation leaves the state it observed as it
-    was, so its steps prove that state rather than change it."""
-
-    steps: tuple[PlannedStep, ...]
-    opened: Openings = NO_OPENINGS
-    removed: tuple[OwnedEndpoint, ...] = ()
-    unchanged: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class _TemporalFacts:
-    """Every semantic fact one temporal mutation settles before any row of it
-    is bound — decided once per keyed instruction and once per Materialized
-    Write Group, by :meth:`WriteSettlement._temporal_facts` alone.
-
-    Everything here is a value some producer emitted for THIS mutation: the
-    facet's compiled view of the target, the family's Temporal Shape whose axes
-    bound its intervals, the instant the clock resolved, what closing takes if
-    the topology closes anything, and the successors the Temporal Strategy's
-    topology described. No producer is among them, which is what lets a segment
-    hold this by reference and still settle no decision at step access.
-    """
-
-    entity: EntityMetadata
-    view: InheritanceEntityView
-    shape: TransactionTimeOnly | Bitemporal
-    instant: dt.datetime
-    close: _SettledClose | None
-    resolved_successors: tuple[ResolvedSuccessor, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,39 +402,39 @@ class WriteSettlement:
             composed = self._composition(item, shape)
             if composed is not None:
                 assert isinstance(shape, TransactionTimeOnly | Bitemporal)
-                decoration = _Decoration(self._audit, actor_identity, transaction_instant)
-                ranged = self._settle_range(
+                entity = composed.target
+                view = entity_view(self._families, entity)
+                gated = self._concurrency.gates(concurrency, self._model, entity.identity)
+                ranged = settle_range(
                     composed,
-                    shape,
-                    concurrency,
-                    transaction_instant,
-                    ownership,
-                    decoration,
+                    view=view,
+                    shape=shape,
+                    gated=gated,
+                    instant=transaction_instant.value(),
+                    ownership=ownership,
+                    decorate=Decoration(self._audit, actor_identity, transaction_instant),
                     guards=counts_unchanged_rows,
                 )
-                if isinstance(ranged, _DeferredTemporalRange):
-                    units.append(
-                        ExecutionUnit(
-                            end=count, claim=ranged.claims, deferred=ranged, changed_exactly=True
-                        )
-                    )
+                claim = range_claims(composed)
+                if isinstance(ranged, DeferredTemporalRange):
+                    units.append(ExecutionUnit(end=count, claim=claim, deferred=ranged))
                     continue
                 pending.extend(ranged.steps)
                 count += len(ranged.steps)
                 units.append(
                     ExecutionUnit(
                         end=count,
-                        claim=ranged.claims,
+                        claim=claim,
                         changed=ranged.changed,
                         removed=ranged.removed,
                         opened=ranged.opened,
                         derived=ranged.derived,
-                        changed_exactly=True,
+                        concludes=ranged.concludes,
                     )
                 )
                 continue
             assert not isinstance(item, ComposedTemporalWrite | MaterializedWriteGroup)
-            settled, unit_parts = self._settle_keyed(
+            settled, claim, own_state = self._settle_keyed(
                 item,
                 concurrency,
                 transaction_instant,
@@ -524,17 +452,15 @@ class WriteSettlement:
                     )
                 )
             count += len(settled.steps)
-            claim, own_state, twinned = unit_parts
             units.append(
                 ExecutionUnit(
                     end=count,
                     claim=claim,
-                    changed=_own_changes(
-                        own_state, twinned, executed=bool(settled.steps) and not settled.unchanged
+                    changed=(
+                        settled.changed if own_state is None else (*settled.changed, own_state)
                     ),
                     removed=settled.removed,
                     opened=settled.opened,
-                    changed_exactly=settled.unchanged,
                 )
             )
         flush_pending()
@@ -552,21 +478,24 @@ class WriteSettlement:
         advances: int = 0,
         *,
         guards: bool = False,
-    ) -> tuple[
-        _Settled, tuple[Completion | None, VersionedStateKey | None, ObservedStateKey | None]
-    ]:
-        """One ordered keyed write's steps, beside what its unit records: the
-        claim it spends, the state its carrier itself names as changed, and the
-        one state several twinned observations of it share. ``advances`` is how
-        many versions earlier writes of its scope a barrier kept before it
-        advance the row past the state that scope names."""
+    ) -> tuple[Settled, Completion | None, VersionedStateKey | None]:
+        """One ordered keyed write's settled steps and effects, beside the
+        claim its unit spends and the state its carrier itself names as
+        changed. ``advances`` is how many versions earlier writes of its scope
+        a barrier kept before it advance the row past the state that scope
+        names.
+
+        A write spending one retained observation, or several twinned
+        observations of one state, changes that state wherever its steps
+        change the row it observed."""
         own_state: VersionedStateKey | None = None
-        twinned: ObservedStateKey | None = None
         observation: WriteObservation | None = None
         claim: Completion | None = None
+        source: ObservedStateKey | None = None
         if isinstance(item, ObservedKeyedWrite):
             instruction, observation = item.instruction, item.observation
-            claim, twinned = _observed_claim(item)
+            claim = _observed_claim(item)
+            source = None if item.claim is None else item.claim.key
         elif isinstance(item, TargetKeyedWrite | InsertionKeyedWrite):
             instruction = item.instruction
             scope = item.scope
@@ -579,6 +508,8 @@ class WriteSettlement:
                 advances = 0
             if isinstance(item, TargetKeyedWrite):
                 claim = _target_claim(item)
+                if isinstance(claim, RetainedObservation):
+                    source = claim.key
         else:
             instruction = item
         settled = self._settle(
@@ -588,12 +519,13 @@ class WriteSettlement:
             tx_instant,
             ownership,
             shape,
+            source=source,
             own_version=None if own_state is None else own_state.version,
             conditioned=isinstance(item, TargetKeyedWrite),
             advances=advances,
             guards=guards,
         )
-        return settled, (claim, own_state, twinned)
+        return settled, claim, own_state
 
     def _advanced(self, version: int, advances: int) -> int:
         arithmetic = self._concurrency.version_arithmetic()
@@ -612,12 +544,15 @@ class WriteSettlement:
         ownership: Ownership,
         shape: TemporalShape | None,
         *,
+        source: ObservedStateKey | None = None,
         own_version: int | None = None,
         conditioned: bool = False,
         advances: int = 0,
         guards: bool = False,
-    ) -> _Settled:
-        """One ordered write's steps. ``own_version`` is the version a write
+    ) -> Settled:
+        """One ordered write's steps and effects. ``source`` is the observed
+        state the write's claim names, which it changes wherever it changes the
+        row it observed. ``own_version`` is the version a write
         advances from in place of an observed one: the version this attempt's
         own writes left a row it inserted at, or the version a caller's
         condition requires. ``conditioned`` says the gate binds that caller's
@@ -625,7 +560,7 @@ class WriteSettlement:
         ``advances`` moves an observed version past the writes of its state a
         barrier kept before this one."""
         if isinstance(instruction, PreparedPredicateWrite):
-            return _Settled(self._settle_predicate(instruction))
+            return Settled(steps=self._settle_predicate(instruction))
         entity = instruction.target
         if shape is None:
             shape = self._temporal_facet.shape(entity.identity)
@@ -638,12 +573,14 @@ class WriteSettlement:
                 concurrency,
                 tx_instant,
                 ownership,
+                source,
                 guards=guards,
                 preserves=not conditioned,
             )
         facts = self._non_temporal_facts(entity)
+        changed = _changes(source)
         if instruction.mutation == "insert":
-            return _Settled((self._settle_insert(facts, instruction),))
+            return Settled(steps=(self._settle_insert(facts, instruction),), changed=changed)
         addressed = self._addressed_facts(facts, concurrency, conditioned=conditioned)
         observed_version = (
             own_version
@@ -652,8 +589,8 @@ class WriteSettlement:
         )
         if advances and observed_version is not None:
             observed_version = self._advanced(observed_version, advances)
-        return _Settled(
-            (
+        return Settled(
+            steps=(
                 _non_temporal_step(
                     facts,
                     addressed,
@@ -674,7 +611,8 @@ class WriteSettlement:
                         expected=len(instruction.rows), on_shortfall=addressed.shortfall
                     ),
                 ),
-            )
+            ),
+            changed=changed,
         )
 
     def _settle_predicate(self, instruction: PreparedPredicateWrite) -> tuple[PlannedStep, ...]:
@@ -812,12 +750,14 @@ class WriteSettlement:
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
         ownership: Ownership,
+        source: ObservedStateKey | None,
         *,
         guards: bool = False,
         preserves: bool = True,
-    ) -> _Settled:
+    ) -> Settled:
         """One temporal mutation as the effects on its predecessor and its
-        successors, in that order.
+        successors, in that order. ``source`` is the predecessor's observed
+        state, as the write's claim names it.
 
         Preparation admits a temporal keyed instruction with exactly one row
         (`m-unit-work`), since each row of a milestone chain opens its own
@@ -830,10 +770,10 @@ class WriteSettlement:
         nonempty successor opened. One this attempt opened itself is never
         closed into history: it is revised in place when exactly one successor
         keeps its complete physical address, and removed otherwise
-        (:func:`_dispose`).
+        (:func:`dispose`).
 
         An update every assigned member of which the predecessor already holds
-        leaves it as it was, and where that is proven (:func:`_preserved`) it
+        leaves it as it was, and where that is proven (:func:`preserved`) it
         is kept rather than closed. A caller's write that ``preserves`` nothing
         is always closed, since its caller asked for the revision.
         """
@@ -864,11 +804,11 @@ class WriteSettlement:
             key_names = {attribute.name for attribute in close.key_attributes}
             assigned = {name: value for name, value in row.items() if name not in key_names}
             if predecessor.holds(facts.view.member_selection, assigned):
-                preserved = _preserved(
+                kept_as_is = preserved(
                     facts, _observed_close(facts, close, row, predecessor), ownership, guards=guards
                 )
-                if preserved is not None:
-                    return preserved
+                if kept_as_is is not None:
+                    return kept_as_is
         if predecessor is not None:
             if any(
                 isinstance(resolved.state, CarriedState | ChangedState)
@@ -878,24 +818,25 @@ class WriteSettlement:
             else:
                 # No successor carries this state forward, yet a member the entity
                 # does not declare still refuses it.
-                _predecessor_maps(facts, predecessor)
+                predecessor_maps(facts, predecessor)
         successors = tuple(
-            _successor_step(
+            successor_step(
                 facts, resolved, authored_attributes, authored_value_objects, predecessor
             )
             for resolved in facts.resolved_successors
         )
         if close is None:
-            return _Settled(
-                successors,
-                Openings(
-                    continued=_openings(facts, successors),
+            return Settled(
+                steps=successors,
+                changed=_changes(source),
+                opened=Openings(
+                    continued=openings(facts, successors),
                     allocated=_allocated(facts, successors) if allocates else (),
                 ),
             )
         assert predecessor is not None  # a closing topology refuses an unobserved mutation
         closing = _observed_close(facts, close, row, predecessor)
-        return _dispose(facts, closing, successors, predecessor, ownership)
+        return dispose(facts, closing, successors, predecessor, ownership, source)
 
     def _temporal_facts(
         self,
@@ -907,7 +848,7 @@ class WriteSettlement:
         observed: bool,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
-    ) -> _TemporalFacts:
+    ) -> TemporalFacts:
         """Everything one temporal mutation settles before a row is in hand.
 
         The sole site for each of these decisions, whichever representation the
@@ -939,15 +880,15 @@ class WriteSettlement:
                 "addresses, gates on, and carries state forward from (m-unit-work; m-opt-lock)"
             )
         view = entity_view(self._families, entity)
-        close: _SettledClose | None = None
+        close: SettledClose | None = None
         if topology.closure is not None:
-            close = _SettledClose(
+            close = SettledClose(
                 cause=topology.closure.cause,
                 key_attributes=(view.primary_key.identity,),
                 gate_start_attribute=_gate_axis(shape, topology.closure.gate_basis).start_attribute,
                 gated=self._concurrency.gates(concurrency, self._model, entity.identity),
             )
-        return _TemporalFacts(
+        return TemporalFacts(
             entity=entity,
             view=view,
             shape=shape,
@@ -1113,7 +1054,7 @@ class WriteSettlement:
 
         A selected row this attempt opened itself is revised or removed rather
         than closed, and an empty successor is not opened, exactly as for a
-        keyed write's own predecessor (:func:`_dispose`). Only a group with such
+        keyed write's own predecessor (:func:`dispose`). Only a group with such
         a row lays its rows out one by one; every other group keeps one uniform
         step count per row.
         """
@@ -1200,119 +1141,6 @@ class WriteSettlement:
             return None
         view = entity_view(self._families, instruction.target)
         return composed_alone(item, view.primary_key.identity.name)
-
-    def _settle_range(
-        self,
-        composed: ComposedTemporalWrite,
-        shape: TransactionTimeOnly | Bitemporal,
-        concurrency: Concurrency,
-        tx_instant: TransactionInstant,
-        ownership: Ownership,
-        decoration: _Decoration,
-        *,
-        guards: bool = False,
-    ) -> _SettledRange | _DeferredTemporalRange:
-        """One temporal object's composed observed writes as a range over its
-        current coverage.
-
-        Every distinct observed predecessor is an original: each is validated
-        by its own guarded effect before any successor opens, and the transform
-        is bound to the ones that do not overlap a later-authored observation of
-        the same coverage. Where those originals cover the whole requested
-        window the range binds now; otherwise the coverage beyond them is read
-        at execution and the range binds then (:class:`_DeferredTemporalRange`).
-        A write an insertion authorized observed nothing, so a range of such
-        writes alone always reads its coverage, and requires coverage at the
-        insertion's anchor once read. So does a write a caller addressed, whose
-        caller's condition requires the coverage at its start to stand at the
-        Transaction-Time start it states.
-
-        A composition an ordering barrier kept after earlier writes of the same
-        object (:class:`~parallax.core.unit_work.materialized.ChainedTemporalWrite`)
-        always reads its whole window at execution: the units before the barrier
-        changed coverage no planning input knows, and the conditions it was
-        admitted with may already have been proven on the originals those units
-        transformed. One a later region follows records what it derives.
-        """
-        entity = composed.target
-        view = entity_view(self._families, entity)
-        gated = self._concurrency.gates(concurrency, self._model, entity.identity)
-        facts = _TemporalFacts(
-            entity=entity,
-            view=view,
-            shape=shape,
-            instant=tx_instant.value(),
-            close=None,
-            resolved_successors=(),
-        )
-        key_attribute = view.primary_key.identity
-        key_value = composed.key[key_attribute.name]
-        object_key = ObjectKey(entity.identity, ((key_attribute.name, key_value),))
-        originals, validations = _known_originals(composed, facts, object_key)
-        claims = _claims(composed)
-        chained = composed if isinstance(composed, ChainedTemporalWrite) else None
-        window = composed.transform.enclosing_window()
-        binding = _RangeBinding(
-            facts=facts,
-            transform=composed.transform,
-            valid_time_window=window,
-            gated=gated,
-            key_attribute=key_attribute,
-            key_value=key_value,
-            object_key=object_key,
-            ownership=ownership,
-            decoration=decoration,
-            anchor=_anchor(composed),
-            conditions=_conditions(composed),
-            derives=chained is not None and chained.leads,
-            guards=guards,
-        )
-        if chained is not None and chained.follows:
-            return _DeferredTemporalRange(
-                binding=binding,
-                originals=originals,
-                validations=validations,
-                claims=claims,
-                acquisition=RangeAcquisition(
-                    entity=entity,
-                    key_attribute=key_attribute,
-                    key_value=cast("ManagedValue", key_value),
-                    valid_time_window=window,
-                    locking=not gated,
-                ),
-                continued=True,
-            )
-        requested = window
-        if window is not None:
-            uncovered = window.first_uncovered(_valid_time_coverages(originals))
-            reached = uncovered is not None
-            if uncovered is not None:
-                requested = window.clipped(start=uncovered)
-        else:
-            reached = not originals
-        if reached:
-            return _DeferredTemporalRange(
-                binding=binding,
-                originals=originals,
-                validations=validations,
-                claims=claims,
-                acquisition=RangeAcquisition(
-                    entity=entity,
-                    key_attribute=key_attribute,
-                    key_value=cast("ManagedValue", key_value),
-                    valid_time_window=requested,
-                    locking=not gated,
-                ),
-            )
-        bound = binding.bind(originals, validations)
-        return _SettledRange(
-            steps=bound.steps,
-            claims=claims,
-            changed=bound.changed,
-            removed=bound.removed,
-            opened=bound.opened,
-            derived=bound.derived,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1431,8 +1259,8 @@ class _MaterializedTemporalSegment:
     patch.
     """
 
-    facts: _TemporalFacts
-    close: _SettledClose
+    facts: TemporalFacts
+    close: SettledClose
     evidence: PredecessorRows
     authored_attributes: Mapping[AttributeIdentity, PlannedValue]
     authored_value_objects: Mapping[ValueObjectIdentity, object]
@@ -1512,14 +1340,17 @@ class _MaterializedTemporalSegment:
         )
         predecessor = self._predecessor(row_index, keep=False)
         pieces = tuple(self._successor(row_index, position, predecessor) for position in nonempty)
-        kept = _kept(self.facts, own, pieces)
+        kept_at = kept(self.facts, own, pieces)
         return _RowLayout(
             owned=True,
-            kept=None if kept is None else nonempty[kept],
-            revises=kept is not None
-            and _revision_assignments(self.facts, pieces[kept].entries[0], predecessor) is not None,
+            kept=None if kept_at is None else nonempty[kept_at],
+            revises=kept_at is not None
+            and revision_assignments(self.facts, pieces[kept_at].entries[0], predecessor)
+            is not None,
             opened=tuple(
-                position for index, position in enumerate(nonempty) if kept is None or index != kept
+                position
+                for index, position in enumerate(nonempty)
+                if kept_at is None or index != kept_at
             ),
             continues=ownership.continues_insertion(own),
         )
@@ -1549,7 +1380,7 @@ class _MaterializedTemporalSegment:
             (evidence.key(row_index),),
             TRANSACTION_TIME_ENDS
             if valid_end_position is None
-            else _bitemporal_ends(evidence.rows[row_index][valid_end_position]),
+            else bitemporal_ends(evidence.rows[row_index][valid_end_position]),
         )
 
     def opened_endpoint(self, row_index: int, position: int) -> OwnedEndpoint:
@@ -1559,7 +1390,7 @@ class _MaterializedTemporalSegment:
         ends = TRANSACTION_TIME_ENDS
         if isinstance(self.facts.shape, Bitemporal):
             _start, end = self._bounds(row_index, position)
-            ends = _bitemporal_ends(end)
+            ends = bitemporal_ends(end)
         return OwnedEndpoint(self.facts.entity.identity, (self.evidence.key(row_index),), ends)
 
     def _opens_empty(self, row_index: int, position: int) -> bool:
@@ -1587,7 +1418,7 @@ class _MaterializedTemporalSegment:
         row = evidence.rows[row_index]
         gate_position = self.gate_position
         valid_end_position = self.valid_end_position
-        return _close_step(
+        return close_step(
             self.facts,
             self.close,
             key_values=(row[evidence.key_position],),
@@ -1622,7 +1453,7 @@ class _MaterializedTemporalSegment:
             if sub_step == 0:
                 closing = self._closing(row_index)
                 piece = self._successor(row_index, owned.kept, predecessor)
-                assignments = _revision_assignments(self.facts, piece.entries[0], predecessor)
+                assignments = revision_assignments(self.facts, piece.entries[0], predecessor)
                 assert assignments is not None  # laid out as a revision that assigns
                 return PlannedTemporalRevision(
                     entity=closing.entity,
@@ -1655,7 +1486,7 @@ class _MaterializedTemporalSegment:
     ) -> PlannedInsert:
         resolved = self.facts.resolved_successors[position]
         change = self.change
-        return _successor_step(
+        return successor_step(
             self.facts,
             resolved,
             self.authored_attributes,
@@ -1706,45 +1537,13 @@ class _GroupRemovals:
 type _GroupSegment = _MaterializedNonTemporalSegment | _MaterializedTemporalSegment
 
 
-def _close_step(
-    facts: _TemporalFacts,
-    close: _SettledClose,
-    *,
-    key_values: tuple[object, ...],
-    observed_valid_end: object | None,
-    observed_gate_start: object | None,
-) -> PlannedClose:
-    """One temporal row's close, from the few observed cells it reads.
-
-    ``observed_gate_start`` is read only for a gated close, and
-    ``observed_valid_end`` only for a Bitemporal one.
-    """
-    return _close(
-        facts.entity,
-        facts.shape,
-        key_attributes=close.key_attributes,
-        key_values=key_values,
-        observed_valid_end=observed_valid_end,
-        cause=close.cause,
-        gate=(
-            TemporalGate(
-                start_attribute=close.gate_start_attribute,
-                observed_start=observed_gate_start,
-            )
-            if close.gated
-            else UNGATED
-        ),
-        instant=facts.instant,
-    )
-
-
 def _observed_close(
-    facts: _TemporalFacts,
-    close: _SettledClose,
+    facts: TemporalFacts,
+    close: SettledClose,
     row: Mapping[str, object],
     predecessor: PredecessorRow,
 ) -> PlannedClose:
-    return _close_step(
+    return close_step(
         facts,
         close,
         key_values=key_tuple(facts.entity, close.key_attributes, row),
@@ -1757,151 +1556,13 @@ def _observed_close(
     )
 
 
-def _preserved(
-    facts: _TemporalFacts, closing: PlannedClose, ownership: Ownership, *, guards: bool
-) -> _Settled | None:
-    """How a write that leaves ``closing``'s milestone as it was keeps it, or
-    ``None`` where its unchanged state cannot be proven without changing it.
-
-    A row the attempt opened is invisible to every other transaction, and under
-    Locking the shared lock the attempt holds on the row keeps it as it was
-    read, so neither needs a statement. Under Optimistic a milestone that
-    existed before the attempt is proven by a guard on its observed
-    Transaction-Time start, which only a database whose write count includes
-    unchanged rows (``guards``) can report.
-    """
-    concurrency = closing.concurrency
-    if ownership.owns(_target_endpoint(facts, closing.target)) or isinstance(concurrency, Ungated):
-        return _Settled((), unchanged=True)
-    if not guards:
-        return None
-    guard = PlannedTemporalGuard(
-        entity=closing.entity,
-        target=closing.target,
-        concurrency=concurrency,
-        affected_rows=closing.affected_rows,
-    )
-    return _Settled((guard,), unchanged=True)
-
-
-def _successor_step(
-    facts: _TemporalFacts,
-    resolved: ResolvedSuccessor,
-    authored_attributes: Mapping[AttributeIdentity, PlannedValue],
-    authored_value_objects: Mapping[ValueObjectIdentity, object],
-    predecessor: PredecessorRow | None,
-    *,
-    effective: Iterable[int] | None = None,
-) -> PlannedInsert:
-    """One resolved successor of one temporal row, as its own Planned Insert.
-
-    Pure in ``facts``: everything it reads was decided by
-    :meth:`WriteSettlement._temporal_facts`, so this reaches no clock,
-    strategy, model, or facet and can run either eagerly, while an instruction
-    settles, or lazily, when a Materialized Write Group's segment is asked for
-    one step.
-
-    A carried or changed successor starts from its predecessor's own cells, so
-    every member it does not effectively change is the predecessor's cell
-    object — the identity lowering patches by (:class:`ChangedFrom`). A changed
-    successor overlays only the authored members at the ``effective`` selection
-    positions, or every authored member when ``effective`` is absent because
-    the row was selected for its one assignment being effective.
-    """
-    match resolved.state:
-        case AuthoredState():
-            attributes = dict(authored_attributes)
-            value_objects = dict(authored_value_objects)
-        case CarriedState():
-            assert predecessor is not None  # a carried successor observed one
-            attributes, value_objects = _predecessor_maps(facts, predecessor)
-        case ChangedState():
-            assert predecessor is not None  # a changed successor observed one
-            selection = facts.view.member_selection
-            attributes, value_objects = _predecessor_maps(facts, predecessor)
-            if effective is None:
-                attributes.update(authored_attributes)
-                value_objects.update(authored_value_objects)
-            else:
-                bindings = selection.bindings
-                for position in effective:
-                    binding = bindings[position]
-                    if isinstance(binding, AttributeMetadata):
-                        attributes[binding.identity] = authored_attributes[binding.identity]
-                    else:
-                        value_objects[binding.identity] = authored_value_objects[binding.identity]
-    entry = bind_successor(
-        resolved,
-        facts.shape,
-        transaction_instant=facts.instant,
-        attributes=attributes,
-        value_objects=value_objects,
-        predecessor=predecessor,
-    )
-    return PlannedInsert(entity=facts.entity.identity, entries=(entry,))
-
-
-def _dispose(
-    facts: _TemporalFacts,
-    closing: PlannedClose,
-    successors: Sequence[PlannedInsert],
-    predecessor: PredecessorRow,
-    ownership: Ownership,
-) -> _Settled:
-    """The effects one temporal mutation has on its observed predecessor, and
-    the successors it opens.
-
-    Only nonempty successors are opened. A predecessor that existed before
-    this attempt is closed, which preserves it as history. A predecessor this
-    attempt opened has no history to preserve: when exactly one successor keeps
-    its complete physical address — the logical key and every axis end — the
-    row is revised in place at that address and the other successors are
-    opened; otherwise the row is removed and every successor opened. Address
-    equality is the whole correspondence: no end coordinate is moved to force
-    reuse, and no payload comparison or Transaction-Time start decides it.
-    """
-    pieces = tuple(successor for successor in successors if not _is_empty(facts, successor))
-    own = _target_endpoint(facts, closing.target)
-    if not ownership.owns(own):
-        return _Settled((closing, *pieces), Openings(fresh=_openings(facts, pieces)))
-    continues = ownership.continues_insertion(own)
-    kept = _kept(facts, own, pieces)
-    if kept is not None:
-        piece = pieces[kept]
-        others = tuple(other for other in pieces if other is not piece)
-        assignments = _revision_assignments(facts, piece.entries[0], predecessor)
-        steps: tuple[PlannedStep, ...] = others
-        if assignments is not None:
-            steps = (
-                PlannedTemporalRevision(
-                    entity=closing.entity,
-                    target=closing.target,
-                    assignments=assignments,
-                    concurrency=closing.concurrency,
-                    affected_rows=closing.affected_rows,
-                ),
-                *others,
-            )
-        return _owned_successors(steps, _openings(facts, others), continues)
-    removal = PlannedTemporalRemoval(
-        entity=closing.entity,
-        target=closing.target,
-        concurrency=closing.concurrency,
-        affected_rows=closing.affected_rows,
-    )
-    return _owned_successors((removal, *pieces), _openings(facts, pieces), continues, own)
-
-
-def _observed_claim(
-    item: ObservedKeyedWrite,
-) -> tuple[Completion | None, ObservedStateKey | None]:
-    """What an observed keyed write's unit spends, and the state it must name
-    as changed itself because it spends several retained observations of that
-    state together."""
+def _observed_claim(item: ObservedKeyedWrite) -> Completion | None:
+    """What an observed keyed write's unit spends: its claim, together with
+    every twinned observation of the same state."""
     if not item.twins:
-        return item.claim, None
+        return item.claim
     assert item.claim is not None  # twins meet only at their claim's own scope
-    return Completions((item.claim, *item.twins)), item.claim.key
+    return Completions((item.claim, *item.twins))
 
 
 def _target_claim(item: TargetKeyedWrite) -> Completion | None:
@@ -1913,103 +1574,12 @@ def _target_claim(item: TargetKeyedWrite) -> Completion | None:
     return claims[0] if len(claims) == 1 else Completions(claims)
 
 
-def _own_changes(
-    own_state: VersionedStateKey | None, twinned: ObservedStateKey | None, *, executed: bool
-) -> tuple[ObservedStateKey, ...]:
-    """The states a keyed write's unit names as changed itself: the version an
-    insertion's write advances, or — for a write that spends several retained
-    observations of one state together, which a single claim's unit would
-    otherwise have stated for it — that state once a step executed."""
-    if own_state is not None:
-        return (own_state,)
-    return (twinned,) if twinned is not None and executed else ()
-
-
-def _owned_successors(
-    steps: tuple[PlannedStep, ...],
-    openings: tuple[OwnedEndpoint, ...],
-    continues: bool,
-    removed: OwnedEndpoint | None = None,
-) -> _Settled:
-    """An owned predecessor's effects, its successors continuing the insertion
-    that opened it when ``continues``."""
-    return _Settled(
-        steps,
-        Openings(continued=openings) if continues else Openings(fresh=openings),
-        removed=() if removed is None else (removed,),
-    )
-
-
-def _kept(facts: _TemporalFacts, own: OwnedEndpoint, pieces: Sequence[PlannedInsert]) -> int | None:
-    kept = [
-        position
-        for position, piece in enumerate(pieces)
-        if _entry_endpoint(facts, piece.entries[0]) == own
-    ]
-    return kept[0] if len(kept) == 1 else None
-
-
-def _revision_assignments(
-    facts: _TemporalFacts, entry: InsertEntry, predecessor: PredecessorRow
-) -> PlannedAssignments | None:
-    """What revising ``predecessor`` in place into ``entry``'s state assigns.
-
-    Every member ``entry`` does not carry as the predecessor's own cell, plus a
-    moved Valid-Time start. The key, every axis end, and the Transaction-Time
-    start belong to the address the revision preserves. ``None`` when nothing
-    differs.
-    """
-    shape = facts.shape
-    preserved = {
-        facts.view.primary_key.identity,
-        shape.transaction_time.start_attribute,
-        shape.transaction_time.end_attribute,
-    }
-    valid_start: AttributeIdentity | None = None
-    if isinstance(shape, Bitemporal):
-        preserved.add(shape.valid_time.end_attribute)
-        valid_start = shape.valid_time.start_attribute
-    attributes: dict[AttributeIdentity, PlannedValue] = {}
-    for identity, value in entry.row.attributes.items():
-        if identity in preserved:
-            continue
-        if identity == valid_start:
-            if value != predecessor.cell(identity):
-                attributes[identity] = value
-        elif not predecessor.carries(identity, value):
-            attributes[identity] = value
-    value_objects = {
-        identity: value
-        for identity, value in entry.row.value_objects.items()
-        if not predecessor.carries(identity, value)
-    }
-    if not attributes and not value_objects:
-        return None
-    return adopt_planned_assignments(attributes, value_objects)
-
-
-def _openings(facts: _TemporalFacts, inserts: Sequence[PlannedInsert]) -> tuple[OwnedEndpoint, ...]:
-    openings: list[OwnedEndpoint] = []
-    for insert in inserts:
-        for entry in insert.entries:
-            endpoint = _entry_endpoint(facts, entry)
-            if endpoint is not None:
-                openings.append(endpoint)
-    return tuple(openings)
-
-
-def _entry_endpoint(facts: _TemporalFacts, entry: InsertEntry) -> OwnedEndpoint | None:
-    attributes = entry.row.attributes
-    value = attributes.get(facts.view.primary_key.identity)
-    # A key the database allocates is named only once its insert answers it
-    # (:func:`_allocated`).
-    if value is None or isinstance(value, MaxPlusOne):
-        return None
-    return OwnedEndpoint(facts.entity.identity, (value,), _entry_ends(facts, attributes))
+def _changes(source: ObservedStateKey | None) -> tuple[ObservedStateKey, ...]:
+    return () if source is None else (source,)
 
 
 def _returns_allocated_key(
-    facts: _TemporalFacts, attributes: dict[AttributeIdentity, PlannedValue]
+    facts: TemporalFacts, attributes: dict[AttributeIdentity, PlannedValue]
 ) -> bool:
     """Ask the insert that opens a row whose key the database allocates to
     answer that key, so the row is recorded by its complete address."""
@@ -2021,58 +1591,15 @@ def _returns_allocated_key(
 
 
 def _allocated(
-    facts: _TemporalFacts, inserts: Sequence[PlannedInsert]
+    facts: TemporalFacts, inserts: Sequence[PlannedInsert]
 ) -> tuple[AllocatedOpening, ...]:
     key = facts.view.primary_key.identity
     return tuple(
-        AllocatedOpening(facts.entity.identity, _entry_ends(facts, entry.row.attributes))
+        AllocatedOpening(facts.entity.identity, entry_ends(facts, entry.row.attributes))
         for insert in inserts
         for entry in insert.entries
         if entry.row.attributes.get(key) == RETURNED_MAX_PLUS_ONE
     )
-
-
-def _entry_ends(
-    facts: _TemporalFacts, attributes: Mapping[AttributeIdentity, PlannedValue]
-) -> tuple[TemporalUpperBound, ...]:
-    shape = facts.shape
-    if isinstance(shape, Bitemporal):
-        return _bitemporal_ends(attributes[shape.valid_time.end_attribute])
-    return TRANSACTION_TIME_ENDS
-
-
-def _target_endpoint(facts: _TemporalFacts, target: MilestoneTarget) -> OwnedEndpoint:
-    return OwnedEndpoint(facts.entity.identity, target.key_values, target.end_values)
-
-
-def _bitemporal_ends(valid_end: object) -> tuple[TemporalUpperBound, ...]:
-    if valid_end is TemporalBound.INFINITY:
-        return OPEN_BITEMPORAL_ENDS
-    return (Finite(instant=valid_end), INFINITY)
-
-
-def _is_empty(facts: _TemporalFacts, successor: PlannedInsert) -> bool:
-    """Whether ``successor`` covers no Valid Time at all.
-
-    A Transaction-Time-Only successor always covers its whole axis. A
-    Bitemporal one is empty when its finite end equals its start, as a head
-    whose mutation starts exactly where the predecessor does.
-    """
-    shape = facts.shape
-    if not isinstance(shape, Bitemporal):
-        return False
-    row = successor.entries[0].row.attributes
-    end = row[shape.valid_time.end_attribute]
-    return end is not TemporalBound.INFINITY and end == row[shape.valid_time.start_attribute]
-
-
-def _predecessor_maps(
-    facts: _TemporalFacts, predecessor: PredecessorRow
-) -> tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object]]:
-    try:
-        return predecessor.identity_maps(facts.view.member_selection)
-    except ValueError as refusal:
-        raise WritePlanningError(f"{facts.entity.identity.name!r}: {refusal}") from refusal
 
 
 def _non_temporal_step(
@@ -2174,7 +1701,7 @@ def _non_temporal_concurrency(
 ) -> NonTemporalConcurrency:
     """The settled concurrency decision one addressed non-temporal write
     carries, given the already-decided ``gated`` fact — the version analogue
-    of a close's own gate (:func:`_close_step`).
+    of a close's own gate (:func:`close_step`).
 
     An unversioned target has nothing to gate on. A versioned one binds its
     observation as a gate when gated and records an explicit `Ungated`
@@ -2185,74 +1712,6 @@ def _non_temporal_concurrency(
         return UNVERSIONED
     gate = VersionGate(observed_version=observed_version) if gated else UNGATED
     return Versioned(attribute=version_attr, gate=gate)
-
-
-def _close(
-    entity: EntityMetadata,
-    shape: TransactionTimeOnly | Bitemporal,
-    *,
-    key_attributes: tuple[AttributeIdentity, ...],
-    key_values: tuple[object, ...],
-    observed_valid_end: object | None,
-    cause: CloseCause,
-    gate: TemporalConcurrency,
-    instant: dt.datetime,
-) -> PlannedClose:
-    """One settled close of the current milestone ``key_values`` addresses.
-
-    Its assignments carry the Transaction-Time end alone — a close ends a
-    milestone's currency and revises no represented value — and it expects
-    exactly one row in every mode: a close reaching none would otherwise chain
-    a duplicate or an orphaned current row, so the shortfall is an outcome
-    rather than a silent success.
-    """
-    return PlannedClose(
-        entity=entity.identity,
-        target=MilestoneTarget(
-            key_attributes=key_attributes,
-            key_values=key_values,
-            end_attributes=_end_attributes(shape),
-            end_values=_end_values(entity, shape, observed_valid_end),
-        ),
-        assignments=PlannedAssignments(attributes={shape.transaction_time.end_attribute: instant}),
-        cause=cause,
-        concurrency=gate,
-        affected_rows=ExactCount(expected=1, on_shortfall=shortfall_for(gate)),
-    )
-
-
-def _end_attributes(shape: TransactionTimeOnly | Bitemporal) -> tuple[AttributeIdentity, ...]:
-    """One exclusive-end Attribute per As-Of Axis, in canonical order."""
-    match shape:
-        case TransactionTimeOnly(transaction_time=transaction_time):
-            return (transaction_time.end_attribute,)
-        case Bitemporal(valid_time=valid_time, transaction_time=transaction_time):
-            return (valid_time.end_attribute, transaction_time.end_attribute)
-
-
-def _end_values(
-    entity: EntityMetadata,
-    shape: TransactionTimeOnly | Bitemporal,
-    observed_valid_end: object | None,
-) -> tuple[TemporalUpperBound, ...]:
-    """One exclusive upper bound per As-Of Axis, in canonical order.
-
-    Transaction Time is invariantly `Infinity`, which is what keeps an
-    operational close on a row still current. Valid Time is whatever the
-    observed predecessor carries — `Infinity` for a rectangle running to the
-    open bound, and a finite instant for a bounded one a prior split left
-    behind, so binding a constant on both axes would silently miss every
-    bounded sibling.
-    """
-    if isinstance(shape, TransactionTimeOnly):
-        return TRANSACTION_TIME_ENDS
-    if observed_valid_end is None:
-        raise WritePlanningError(
-            f"bitemporal close on {entity.identity.name!r}: no observed Valid-Time end "
-            "supplied — a Bitemporal milestone address needs one exclusive upper bound "
-            "per As-Of Axis (m-bitemp-write 'Address and gate are separate')"
-        )
-    return _bitemporal_ends(observed_valid_end)
 
 
 def _gate_axis(
@@ -2342,798 +1801,3 @@ def _require_unobserved(entity: EntityMetadata, mutation: str, observation: obje
         "'unversioned Non-Temporal writes have no observation'), and settling this write "
         "would discard the evidence rather than gate or advance anything with it"
     )
-
-
-@dataclass(frozen=True, slots=True)
-class _Decoration:
-    """The audit decoration every step one range settles is given, so a range
-    bound at execution decorates its steps as an eagerly settled one does."""
-
-    audit: AuditStrategy
-    actor_identity: ActorIdentity
-    transaction_instant: TransactionInstant
-
-    def __call__(self, step: PlannedStep) -> PlannedStep:
-        return self.audit.decorate(
-            step,
-            actor_identity=self.actor_identity,
-            transaction_instant=self.transaction_instant,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _SettledRange:
-    """A range bound at planning: its decorated steps and the facts its unit
-    publishes."""
-
-    steps: tuple[PlannedStep, ...]
-    claims: Completions | RetainedObservation | None
-    changed: tuple[ObservedStateKey, ...]
-    removed: tuple[OwnedEndpoint, ...]
-    opened: Openings
-    derived: tuple[Derivation, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _Original:
-    """One current row a range transforms: its complete predecessor state, the
-    exact state it is, and the Valid Time it covers — ``None`` on a
-    Transaction-Time-Only target."""
-
-    predecessor: PredecessorRow
-    state: ObservedStateKey
-    valid_time_coverage: TimeInterval | None
-
-
-def _claims(composed: ComposedTemporalWrite) -> Completions | RetainedObservation | None:
-    """The distinct retained observations a composed range spends, each once."""
-    distinct: list[RetainedObservation] = []
-    for contribution in composed.contributions:
-        claim = contribution.claim
-        if claim is not None and all(claim is not held for held in distinct):
-            distinct.append(claim)
-    if not distinct:
-        return None
-    if len(distinct) == 1:
-        return distinct[0]
-    return Completions(tuple(distinct))
-
-
-def _known_originals(
-    composed: ComposedTemporalWrite, facts: _TemporalFacts, object_key: ObjectKey
-) -> tuple[tuple[_Original, ...], tuple[_Original, ...]]:
-    """The originals a composed range's own observations already know, as the
-    ones the transform binds — disjoint, ordered by start — beside the ones it
-    only validates.
-
-    Each distinct observed state is one original, in authored order. Two
-    observations whose coverage overlaps cannot both describe current state, so
-    the later-authored one is bound and the earlier is validated alone: its
-    guarded effect fails unless the database itself holds overlapping current
-    coverage.
-    """
-    distinct: list[_Original] = []
-    for contribution in composed.contributions:
-        observation = contribution.observation
-        if observation is None:  # an insertion authorized it, and it observed nothing
-            continue
-        assert isinstance(observation, TemporalObservation)  # a temporal write observes a milestone
-        claim = contribution.claim
-        original = _original(
-            facts,
-            object_key,
-            observation.predecessor,
-            None if claim is None else claim.key,
-        )
-        if all(original.state != held.state for held in distinct):
-            distinct.append(original)
-    bound: list[_Original] = []
-    validated: list[_Original] = []
-    for original in reversed(distinct):
-        if any(_overlapping(original, held) for held in bound):
-            validated.append(original)
-        else:
-            bound.append(original)
-    _order_by_start(bound)
-    validated.reverse()
-    return tuple(bound), tuple(validated)
-
-
-_UNANCHORED: Final = object()
-"""The anchor of a range no insertion authorized any write of."""
-
-_EXISTENCE: Final = object()
-"""The anchor of a Transaction-Time-Only range an insertion authorized a write
-of: the current row itself, wherever it lies on an axis that has no Valid Time."""
-
-
-def _anchor(composed: ComposedTemporalWrite) -> object:
-    """Where a composed range requires current coverage because an insertion
-    authorized one of its writes: that insertion's own start, which every such
-    write states as its window's start."""
-    for contribution in composed.contributions:
-        if contribution.observation is None and contribution.condition is None:
-            window = contribution.valid_time_window
-            return _EXISTENCE if window is None else window.start
-    return _UNANCHORED
-
-
-@dataclass(frozen=True, slots=True)
-class _StartingCondition:
-    """A caller's condition on a composed range: the coverage at the start of
-    the caller's prepared ``valid_time_window`` — the current row, where it is
-    ``None`` on a Transaction-Time-Only object — stands at Transaction-Time
-    start ``expected``. The window is also what the caller asked to revise
-    whatever it reaches over."""
-
-    valid_time_window: TimeInterval | None
-    expected: dt.datetime
-
-
-def _conditions(composed: ComposedTemporalWrite) -> tuple[_StartingCondition, ...]:
-    """The distinct starting conditions the callers of a composed range's
-    addressed writes state, in authored order: one per exact-window operation,
-    where admission let in only writes that agree on it, and another for each
-    operation over a disjoint window. Admission lets no two addressed windows
-    share a start unless they are equal, so the distinct conditions keep every
-    distinct addressed window."""
-    conditions: list[_StartingCondition] = []
-    for contribution in composed.contributions:
-        condition = contribution.condition
-        if condition is None:
-            continue
-        stated = _StartingCondition(contribution.valid_time_window, condition.instant)
-        if stated not in conditions:
-            conditions.append(stated)
-    return tuple(conditions)
-
-
-def _original(
-    facts: _TemporalFacts,
-    object_key: ObjectKey,
-    predecessor: PredecessorRow,
-    state: ObservedStateKey | None,
-) -> _Original:
-    shape = facts.shape
-    if state is None:
-        state = TemporalStateKey(object_key, milestone_edge(shape, predecessor, None))
-    return _Original(
-        predecessor=predecessor,
-        state=state,
-        valid_time_coverage=valid_time_coverage(shape, predecessor, None),
-    )
-
-
-def _holds_start(window: TimeInterval | None, original: _Original) -> bool:
-    """Whether ``original`` holds ``window``'s start — the current row itself
-    where ``window`` is ``None`` on a Transaction-Time-Only object."""
-    if window is None:
-        return True
-    coverage = original.valid_time_coverage
-    assert coverage is not None  # one object's windows and coverage share its shape
-    return coverage.contains(window.start)
-
-
-def _reaches(window: TimeInterval | None, original: _Original) -> bool:
-    """Whether ``window`` overlaps ``original`` — the whole axis where it is
-    ``None`` on a Transaction-Time-Only object."""
-    if window is None:
-        return True
-    coverage = original.valid_time_coverage
-    assert coverage is not None  # one object's windows and coverage share its shape
-    return coverage.overlaps(window)
-
-
-def _overlapping(first: _Original, second: _Original) -> bool:
-    first_coverage = first.valid_time_coverage
-    second_coverage = second.valid_time_coverage
-    return (
-        first_coverage is None
-        or second_coverage is None
-        or first_coverage.overlaps(second_coverage)
-    )
-
-
-def _valid_time_coverages(originals: Iterable[_Original]) -> Iterator[TimeInterval]:
-    """The Valid Time each of a Bitemporal range's bound ``originals`` covers,
-    in the start order their owner already established."""
-    for original in originals:
-        coverage = original.valid_time_coverage
-        assert coverage is not None  # only a Bitemporal range traverses coverage
-        yield coverage
-
-
-def _order_by_start(originals: list[_Original]) -> None:
-    """Order a range's originals by their Valid-Time starts. Those of a
-    Transaction-Time-Only object have none to order by and stay as they are."""
-    if originals and originals[0].valid_time_coverage is not None:
-        originals.sort(key=_coverage_start)
-
-
-def _coverage_start(original: _Original) -> dt.datetime:
-    coverage = original.valid_time_coverage
-    assert coverage is not None  # only a Bitemporal range orders its originals
-    return coverage.start
-
-
-def _holds(original: _Original, anchor: object) -> bool:
-    """Whether ``original`` holds the insertion ``anchor`` of a Bitemporal
-    range."""
-    coverage = original.valid_time_coverage
-    assert coverage is not None and isinstance(anchor, dt.datetime)  # a Bitemporal anchor
-    return coverage.contains(anchor)
-
-
-def _valid_end(original: _Original) -> object | None:
-    """The Valid-Time end cell ``original`` covers to, which its physical address
-    holds; ``None`` on a Transaction-Time-Only object."""
-    coverage = original.valid_time_coverage
-    return None if coverage is None else coverage.end
-
-
-def _tiles(pieces: Sequence[BoundPiece], coverage: TimeInterval) -> bool:
-    """Whether ``pieces``, in order, cover exactly ``coverage``, each meeting
-    the next."""
-    if not pieces:
-        return False
-    first = pieces[0].valid_time_coverage
-    last = pieces[-1].valid_time_coverage
-    assert first is not None and last is not None  # Bitemporal pieces lie on Valid Time
-    if first.start != coverage.start or last.end != coverage.end:
-        return False
-    previous = first
-    for piece in pieces[1:]:
-        extent = piece.valid_time_coverage
-        assert extent is not None  # Bitemporal pieces lie on Valid Time
-        if not previous.meets(extent):
-            return False
-        previous = extent
-    return True
-
-
-@dataclass(slots=True)
-class _Binding:
-    """What binding one range accumulates: every original's own effect before
-    any opening, and the facts its unit publishes."""
-
-    effects: list[PlannedStep] = field(default_factory=list[PlannedStep])
-    openings: list[PlannedStep] = field(default_factory=list[PlannedStep])
-    changed: list[ObservedStateKey] = field(default_factory=list[ObservedStateKey])
-    removed: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
-    fresh: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
-    continued: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
-    derived: list[Derivation] = field(default_factory=list[Derivation])
-
-    def take(
-        self,
-        original: _Original,
-        transformed: tuple[_Settled, Derivation | None] | None,
-        decorate: _Decoration,
-    ) -> None:
-        if transformed is None:
-            return
-        disposed, derivation = transformed
-        for step in disposed.steps:
-            (self.openings if isinstance(step, PlannedInsert) else self.effects).append(
-                decorate(step)
-            )
-        if not disposed.unchanged and any(
-            not isinstance(step, PlannedInsert) for step in disposed.steps
-        ):
-            self.changed.append(original.state)
-        self.removed.extend(disposed.removed)
-        self.fresh.extend(disposed.opened.fresh)
-        self.continued.extend(disposed.opened.continued)
-        if derivation is not None:
-            self.derived.append(derivation)
-
-    def range(self, concludes: ObjectKey | None) -> BoundRange:
-        return BoundRange(
-            steps=(*self.effects, *self.openings),
-            changed=tuple(self.changed),
-            removed=tuple(self.removed),
-            opened=Openings(tuple(self.fresh), tuple(self.continued)),
-            derived=tuple(self.derived),
-            concludes=concludes,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _RangeBinding:
-    """Everything binding one range needs beside the coverage it binds to.
-
-    ``valid_time_window`` is the final transform's enclosing window, derived
-    once when settlement begins and shared by the coverage check, acquisition,
-    and continuation; ``None`` on a Transaction-Time-Only object. ``derives``
-    says a later unit of the same flush depends on what this one does to its
-    originals, so its bound range records it (:class:`Derivation`).
-    """
-
-    facts: _TemporalFacts
-    transform: TemporalTransform
-    valid_time_window: TimeInterval | None
-    gated: bool
-    key_attribute: AttributeIdentity
-    key_value: object
-    object_key: ObjectKey
-    ownership: Ownership
-    decoration: _Decoration
-    anchor: object = _UNANCHORED
-    conditions: tuple[_StartingCondition, ...] = ()
-    derives: bool = False
-    guards: bool = False
-
-    def bind(
-        self,
-        originals: Sequence[_Original],
-        validations: Sequence[_Original],
-        discharged: frozenset[int] = frozenset(),
-        *,
-        concludes: bool = False,
-    ) -> BoundRange:
-        """The steps the transform takes over ``originals``, after a guarded
-        validation of each of ``validations``, naming the object where the
-        range ``concludes`` it (:attr:`BoundRange.concludes`).
-
-        Every original's own effect — a validation, a close, a same-address
-        revision, or a removal — runs before any successor opens, so a lost
-        source condition fails before the range writes anything new. A
-        predecessor that existed before the attempt is closed and every nonempty
-        piece of it opened; one the attempt opened is revised in place or
-        removed (:func:`_dispose`). An original the transform does not reach is
-        left alone.
-
-        A range one of whose writes an insertion authorized requires current
-        coverage at that insertion's anchor and fails as a missing target
-        without it: the anchor is where the authority starts, never shifted to
-        coverage that survives elsewhere.
-
-        A range a caller addressed requires the coverage at each of its
-        operations' starts to stand at the Transaction-Time start that caller
-        stated, and fails as that caller's precondition otherwise — before
-        anything executes where the coverage shows it, and at that original's
-        gate where only execution can. The originals they start from are
-        affected first, in the order the callers stated them, so a lost start
-        fails ahead of every other original's effect; one guard serves every
-        start one original holds. A condition an earlier unit of the flush
-        already proved (``discharged``, by its position) is judged no further.
-        A replacement's extent then opens its complete state over every gap the
-        originals leave.
-
-        An original the transform leaves exactly as it was — every piece of it
-        kept, every assigned member already its value, and no caller-addressed
-        window over it — is kept rather than transformed where that is proven
-        (:func:`_preserved`): it is not changed, derives nothing, and opens
-        nothing.
-        """
-        facts = self.facts
-        self._require_anchor(originals)
-        starts = self._starts(originals, discharged)
-        bound = _Binding()
-        resolved: dict[
-            int, tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]
-        ] = {}
-        decorate = self.decoration
-        for original in starts:
-            bound.take(original, self._transformed(original, True, resolved), decorate)
-        for original in validations:
-            bound.effects.append(decorate(self._close(original, TERMINATED)))
-            bound.changed.append(original.state)
-            if self.derives:
-                bound.derived.append(
-                    Derivation(original.state, original.valid_time_coverage, None, ())
-                )
-        for original in originals:
-            if all(original is not start for start in starts):
-                bound.take(original, self._transformed(original, False, resolved), decorate)
-        if isinstance(facts.shape, Bitemporal):
-            for piece in self.transform.gaps(_valid_time_coverages(originals)):
-                opened = self._authored(piece, resolved)
-                bound.openings.append(decorate(opened))
-                bound.fresh.extend(_openings(facts, (opened,)))
-        return bound.range(self.object_key if concludes else None)
-
-    def _transformed(
-        self,
-        original: _Original,
-        starting: bool,
-        resolved: dict[
-            int, tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]
-        ],
-    ) -> tuple[_Settled, Derivation | None] | None:
-        """What the transform does to ``original`` — its own effect and the
-        pieces it leaves — and what a later unit needs of that, or ``None``
-        where the transform does not reach it. A ``starting`` original's effect
-        fails as its caller's precondition."""
-        coverage = original.valid_time_coverage
-        if not self.transform.touches(coverage):
-            return None
-        pieces = self.transform.pieces(coverage)
-        if (
-            not starting
-            and (self.guards or not self.gated or self.ownership.owns(self._endpoint(original)))
-            and self._unchanged(original, pieces)
-        ):
-            preserved = _preserved(
-                self.facts, self._close(original, SUPERSEDED), self.ownership, guards=self.guards
-            )
-            if preserved is not None:
-                return preserved, None
-        predecessor = original.predecessor.with_bindable_document()
-        successors = tuple(self._successor(piece, predecessor, resolved) for piece in pieces)
-        cause = SUPERSEDED if any(piece.assigned is not None for piece in pieces) else TERMINATED
-        closing = self._close(original, cause)
-        if self.gated and starting:
-            closing = replace(
-                closing, affected_rows=ExactCount(expected=1, on_shortfall=FAILED_PRECONDITION)
-            )
-        disposed = _dispose(self.facts, closing, successors, predecessor, self.ownership)
-        if not self.derives:
-            return disposed, None
-        return disposed, self._derivation(original, closing, pieces, successors)
-
-    def _unchanged(self, original: _Original, pieces: Sequence[BoundPiece]) -> bool:
-        """Whether ``pieces`` leave ``original`` as it was: they cover all of it,
-        each assigned member already holds its value there, and no
-        caller-addressed window reaches it."""
-        if any(_reaches(condition.valid_time_window, original) for condition in self.conditions):
-            return False
-        coverage = original.valid_time_coverage
-        if coverage is None:
-            if len(pieces) != 1:
-                return False
-        elif not _tiles(pieces, coverage):
-            return False
-        selection = self.facts.view.member_selection
-        predecessor = original.predecessor
-        return all(
-            piece.assigned is None or predecessor.holds(selection, piece.assigned)
-            for piece in pieces
-        )
-
-    def _derivation(
-        self,
-        original: _Original,
-        closing: PlannedClose,
-        pieces: Sequence[BoundPiece],
-        successors: Sequence[PlannedInsert],
-    ) -> Derivation:
-        """What a later unit needs of ``original``'s transformation: its state
-        and coverage, its own address where the attempt owned it, and each
-        nonempty row derived from it with the coverage of the piece it opens."""
-        facts = self.facts
-        own = _target_endpoint(facts, closing.target)
-        rows: list[tuple[OwnedEndpoint, TimeInterval | None]] = []
-        for piece, successor in zip(pieces, successors, strict=True):
-            (entry,) = successor.entries
-            endpoint = _entry_endpoint(facts, entry)
-            if endpoint is not None:
-                rows.append((endpoint, piece.valid_time_coverage))
-        return Derivation(
-            original=original.state,
-            valid_time_coverage=original.valid_time_coverage,
-            owned=own if self.ownership.owns(own) else None,
-            rows=tuple(rows),
-        )
-
-    def _require_anchor(self, originals: Sequence[_Original]) -> None:
-        anchor = self.anchor
-        if anchor is _UNANCHORED:
-            return
-        if any(anchor is _EXISTENCE or _holds(original, anchor) for original in originals):
-            return
-        raise MissingTargetError(self.facts.entity.identity, self._key_target(), 1, 0)
-
-    def _key_target(self) -> KeyTarget:
-        return KeyTarget(key_attributes=(self.key_attribute,), key_values=((self.key_value,),))
-
-    def _starts(
-        self, originals: Sequence[_Original], discharged: frozenset[int]
-    ) -> tuple[_Original, ...]:
-        """The distinct originals the range's caller-addressed operations start
-        from, in the order their conditions were stated, once the coverage shows
-        each stands at its caller's Transaction-Time start; the first that does
-        not fails as that caller's precondition."""
-        starts: list[_Original] = []
-        for position, condition in enumerate(self.conditions):
-            if position in discharged:
-                continue
-            start = next(
-                (
-                    original
-                    for original in originals
-                    if _holds_start(condition.valid_time_window, original)
-                ),
-                None,
-            )
-            if start is None or self._tx_start(start) != normalize_instant(condition.expected):
-                raise self._failed(condition)
-            if all(start is not held for held in starts):
-                starts.append(start)
-        return tuple(starts)
-
-    def _tx_start(self, original: _Original) -> dt.datetime:
-        tx_start = self.facts.shape.transaction_time.start_attribute
-        return normalize_instant(cast("dt.datetime", original.predecessor.cell(tx_start)))
-
-    def _failed(self, condition: _StartingCondition) -> WritePreconditionError:
-        return WritePreconditionError(
-            self.facts.entity.identity,
-            {self.key_attribute.name: self.key_value},
-            condition.expected,
-        )
-
-    def _authored(
-        self,
-        piece: BoundPiece,
-        resolved: dict[
-            int, tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]
-        ],
-    ) -> PlannedInsert:
-        """A gap of a replacement's extent opened with its complete state."""
-        assigned = piece.assigned
-        assert assigned is not None  # a gap fills only with a stated state
-        attributes, value_objects = self._resolved(assigned, resolved)
-        return _successor_step(
-            self.facts,
-            literal_successor(AUTHORED_STATE, piece.valid_time_coverage),
-            {**attributes, self.key_attribute: self.key_value},
-            value_objects,
-            None,
-        )
-
-    def acquired(
-        self,
-        rows: PredecessorRows | Sequence[PredecessorRow] | None,
-        known: Sequence[_Original],
-    ) -> tuple[_Original, ...]:
-        """``known`` together with each acquired row at an address none of them
-        holds, ordered by start.
-
-        A caller-addressed operation's start names one current row, so more than
-        one current row holding that start is Cardinality Corruption — an
-        invariant failure that outranks the caller's precondition. Under Locking
-        every known original is held under the shared lock, so it is current
-        beside the acquired rows and is counted with them; under Optimistic a
-        known original may be stale, so only the acquired rows are current
-        evidence and a stale original is left to its own gate.
-        """
-        if rows is None:
-            return tuple(known)
-        ends = {_valid_end(original) for original in known}
-        acquired = self._read(rows)
-        merged = [*known, *(o for o in acquired if _valid_end(o) not in ends)]
-        self._require_one_start(acquired if self.gated else merged)
-        _order_by_start(merged)
-        return tuple(merged)
-
-    def continued(
-        self,
-        rows: PredecessorRows | Sequence[PredecessorRow] | None,
-        known: Sequence[_Original],
-    ) -> tuple[tuple[_Original, ...], frozenset[int]]:
-        """The rows a range an ordering barrier kept after earlier writes of its
-        object binds to, read over its whole window, beside the positions of
-        the caller conditions the flush has already proved.
-
-        The units before the barrier may have transformed the originals this
-        range's writes were admitted against. An observed original still
-        standing is an ordinary original. One the flush transformed under
-        protection has proven its condition, provided every row derived from it
-        within the window still stands as it was opened; the range then binds to
-        those rows and their current values. Any other observed original has
-        lost its condition, which fails as that write's own shortfall would.
-
-        A caller's start standing at its stated Transaction-Time start is judged
-        as usual. One standing at a row the flush derived from a proven original
-        that held the caller's start at that stated start is proven too. Any
-        other start is the caller's failed precondition, which outranks an
-        observed loss.
-        """
-        read = self._read(rows) if rows is not None else ()
-        self._require_one_start(read)
-        standing = {original.state for original in read}
-        lost = next(
-            (
-                original
-                for original in known
-                if original.state not in standing and not self._intact(original.state, read)
-            ),
-            None,
-        )
-        discharged: set[int] = set()
-        for position, condition in enumerate(self.conditions):
-            start = next(
-                (
-                    original
-                    for original in read
-                    if _holds_start(condition.valid_time_window, original)
-                ),
-                None,
-            )
-            if start is None:
-                raise self._failed(condition)
-            if self._tx_start(start) == normalize_instant(condition.expected):
-                continue
-            if not self._descends(start, condition, read):
-                raise self._failed(condition)
-            discharged.add(position)
-        if lost is not None:
-            enforce_affected_rows(self._close(lost, TERMINATED), 0)
-        ordered = list(read)
-        _order_by_start(ordered)
-        return tuple(ordered), frozenset(discharged)
-
-    def _read(self, rows: PredecessorRows | Sequence[PredecessorRow]) -> list[_Original]:
-        return [
-            _original(self.facts, self.object_key, predecessor, None)
-            for predecessor in _acquired_predecessors(rows)
-        ]
-
-    def _require_one_start(self, current: Sequence[_Original]) -> None:
-        for condition in self.conditions:
-            starting = sum(
-                1 for original in current if _holds_start(condition.valid_time_window, original)
-            )
-            if starting > 1:
-                raise CardinalityCorruptionError(
-                    self.facts.entity.identity, self._key_target(), 1, starting
-                )
-
-    def _endpoint(self, original: _Original) -> OwnedEndpoint:
-        coverage = original.valid_time_coverage
-        ends = TRANSACTION_TIME_ENDS if coverage is None else _bitemporal_ends(coverage.end)
-        return OwnedEndpoint(self.facts.entity.identity, (self.key_value,), ends)
-
-    def _opened_here(self, original: _Original) -> Descent | None:
-        """What a current row the flush derived descends from, provided it
-        stands exactly as it was opened: at an owned address, at this attempt's
-        Transaction-Time start, from the Valid-Time start it was opened with."""
-        endpoint = self._endpoint(original)
-        if not self.ownership.owns(endpoint) or self._tx_start(original) != self.facts.instant:
-            return None
-        descent = self.ownership.descent(endpoint)
-        if descent is None or descent.valid_time_coverage != original.valid_time_coverage:
-            return None
-        return descent
-
-    def _descends(
-        self, start: _Original, condition: _StartingCondition, read: Sequence[_Original]
-    ) -> bool:
-        """Whether ``start`` is a row the flush derived from a proven original
-        that held ``condition``'s start at its stated Transaction-Time start,
-        with everything else derived from that original intact."""
-        descent = self._opened_here(start)
-        if descent is None:
-            return False
-        original = descent.original
-        proof = self.ownership.proven(original)
-        if proof is None or not isinstance(original, TemporalStateKey):
-            return False
-        milestone = original.milestone
-        if normalize_instant(milestone.tx_time) != normalize_instant(condition.expected):
-            return False
-        window = condition.valid_time_window
-        coverage = proof.valid_time_coverage
-        if window is not None and (coverage is None or not coverage.contains(window.start)):
-            return False
-        return self._intact(original, read)
-
-    def _intact(self, original: ObservedStateKey, read: Sequence[_Original]) -> bool:
-        """Whether the flush transformed ``original`` under protection and every
-        row it derived from it that lies inside this range's window still stands
-        as it was opened."""
-        if self.ownership.proven(original) is None:
-            return False
-        present = {self._endpoint(row): row for row in read}
-        for endpoint, _descent in self.ownership.descendants(original, self.valid_time_window):
-            row = present.get(endpoint)
-            if row is None or self._opened_here(row) is None:
-                return False
-        return True
-
-    def _close(self, original: _Original, cause: CloseCause) -> PlannedClose:
-        facts = self.facts
-        shape = facts.shape
-        close = _SettledClose(
-            cause=cause,
-            key_attributes=(self.key_attribute,),
-            gate_start_attribute=shape.transaction_time.start_attribute,
-            gated=self.gated,
-        )
-        return _close_step(
-            facts,
-            close,
-            key_values=(self.key_value,),
-            observed_valid_end=_valid_end(original),
-            observed_gate_start=(
-                original.predecessor.cell(shape.transaction_time.start_attribute)
-                if self.gated
-                else None
-            ),
-        )
-
-    def _successor(
-        self,
-        piece: BoundPiece,
-        predecessor: PredecessorRow,
-        resolved: dict[
-            int, tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]
-        ],
-    ) -> PlannedInsert:
-        facts = self.facts
-        assigned = piece.assigned
-        if assigned is None:
-            return _successor_step(
-                facts,
-                literal_successor(CARRIED_STATE, piece.valid_time_coverage),
-                {},
-                {},
-                predecessor,
-            )
-        attributes, value_objects = self._resolved(assigned, resolved)
-        return _successor_step(
-            facts,
-            literal_successor(CHANGED_STATE, piece.valid_time_coverage),
-            attributes,
-            value_objects,
-            predecessor,
-        )
-
-    def _resolved(
-        self,
-        assigned: Mapping[str, object],
-        resolved: dict[
-            int, tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]
-        ],
-    ) -> tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]:
-        """``assigned`` under its resolved member identities, resolved once per
-        binding however many pieces carry it."""
-        maps = resolved.get(id(assigned))
-        if maps is None:
-            maps = resolve_row(self.facts.entity, self.facts.view, assigned, context="insert")
-            resolved[id(assigned)] = maps
-        return maps
-
-
-@dataclass(frozen=True, slots=True)
-class _DeferredTemporalRange:
-    """A range whose requested window reaches coverage no planning input
-    knew, bound once the executor has read that coverage.
-
-    The rows acquired for :attr:`acquisition` join the observed originals at
-    every address those do not already hold; binding then proceeds exactly as
-    for a range bound at planning. A ``continued`` range follows earlier writes
-    of its object across an ordering barrier, so it binds to the rows it read
-    alone, judging its observed originals and caller conditions against what
-    the earlier units proved (:meth:`_RangeBinding.continued`).
-    """
-
-    binding: _RangeBinding
-    originals: tuple[_Original, ...]
-    validations: tuple[_Original, ...]
-    claims: Completions | RetainedObservation | None
-    acquisition: RangeAcquisition
-    continued: bool = False
-
-    def bind(self, rows: object, /) -> BoundRange:
-        binding = self.binding
-        acquired = cast("PredecessorRows | Sequence[PredecessorRow] | None", rows)
-        if self.continued:
-            originals, discharged = binding.continued(
-                acquired, (*self.originals, *self.validations)
-            )
-            return binding.bind(originals, (), discharged, concludes=not binding.derives)
-        return binding.bind(binding.acquired(acquired, self.originals), self.validations)
-
-
-def _acquired_predecessors(
-    rows: PredecessorRows | Sequence[PredecessorRow],
-) -> Iterator[PredecessorRow]:
-    if not isinstance(rows, PredecessorRows):
-        yield from rows
-        return
-    for index in range(len(rows)):
-        yield PredecessorRow.over_row(
-            rows.selection, rows.rows[index], rows.document(index), rows.absent
-        )

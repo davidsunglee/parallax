@@ -463,7 +463,7 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
     db = account_db(port)
 
     def executor(  # pragma: no cover - never flushed
-        _plan: WritePlan, *, trigger: WriteBatchTrigger, completed: object
+        _plan: WritePlan, *, trigger: WriteBatchTrigger, bind_deferred: object, completed: object
     ) -> None:
         raise AssertionError("no flush expected")
 

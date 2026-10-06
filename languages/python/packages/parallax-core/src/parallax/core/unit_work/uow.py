@@ -64,14 +64,17 @@ from parallax.core.write_plan.keys import (
     TemporalStateKey,
     VersionedStateKey,
 )
+from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.plan import (
     AllocatedOpening,
     BoundRange,
+    DeferredRange,
     Derivation,
     Descent,
     ExecutionUnit,
     Openings,
     OwnedEndpoint,
+    UnitEffects,
     WritePlan,
 )
 from parallax.core.write_plan.steps import Finite
@@ -81,6 +84,7 @@ __all__ = [
     "WRITE_EVIDENCE_CODES",
     "BufferOutcome",
     "Concurrency",
+    "DeferredBinder",
     "NoInsertionAuthority",
     "RollbackOnlyError",
     "StoredTarget",
@@ -128,6 +132,16 @@ class UnitReport(Protocol):
     ) -> None: ...
 
 
+class DeferredBinder(Protocol):
+    """How a :class:`FlushExecutor` binds a deferred range to the coverage its
+    acquisition read — ``None`` where the read found no row — once every
+    earlier unit of the flush has completed."""
+
+    def __call__(
+        self, description: DeferredRange, rows: PredecessorRows | None, /
+    ) -> BoundRange: ...
+
+
 class FlushExecutor(Protocol):
     """The composition-layer sink a Write Plan is handed to for lowering and
     execution. It is neutral because m-unit-work takes no m-sql edge.
@@ -140,10 +154,12 @@ class FlushExecutor(Protocol):
     ``completed`` is called with each of the plan's execution units, in order,
     as soon as every step of that unit has executed and been enforced, and
     before any step of a later unit executes. A unit with a deferred range is
-    reported with the range its acquired coverage bound, once the bound steps
-    have executed; every other unit with ``None``. A unit opening rows whose keys
-    the database allocates is reported with those keys. A normal return reports
-    every unit not yet reported; an exception reports none after it.
+    reached with no step: the executor acquires its coverage, binds it through
+    ``bind_deferred`` once, executes and enforces every bound step, and reports
+    the unit with that bound range; every other unit is reported with ``None``.
+    A unit opening rows whose keys the database allocates is reported with
+    those keys. A normal return reports every unit not yet reported; an
+    exception reports none after it.
     """
 
     def __call__(
@@ -152,6 +168,7 @@ class FlushExecutor(Protocol):
         /,
         *,
         trigger: WriteBatchTrigger,
+        bind_deferred: DeferredBinder,
         completed: UnitReport,
     ) -> None: ...
 
@@ -1493,7 +1510,12 @@ class UnitOfWork:
         self._reporting = units
         self._reported = 0
         try:
-            self.flush_executor(finalized.plan, trigger=trigger, completed=self._report)
+            self.flush_executor(
+                finalized.plan,
+                trigger=trigger,
+                bind_deferred=self._bind_deferred,
+                completed=self._report,
+            )
             for unit in units[self._reported :]:
                 self._report(unit, None)
             for source in sources:
@@ -1504,6 +1526,20 @@ class UnitOfWork:
         finally:
             self._reporting = ()
             self._targets.release_continuity()
+
+    def _bind_deferred(
+        self, description: DeferredRange, rows: PredecessorRows | None, /
+    ) -> BoundRange:
+        """Bind a deferred range of the running flush under this attempt's
+        current ownership and continuity proofs — those every earlier unit
+        published — and its configured provenance decoration."""
+        return self._planner.bind_deferred(
+            description,
+            rows,
+            ownership=self._targets,
+            actor_identity=self._actor_identity,
+            transaction_instant=self._transaction_instant,
+        )
 
     def _report(
         self,
@@ -1530,47 +1566,20 @@ class UnitOfWork:
                 f"database allocates was reported with {len(allocated)} key(s)"
             )
         self._reported = reported + 1
-        if bound is None:
-            self._complete(
-                unit,
-                executed=not unit.changed_exactly
-                and unit.end > (units[reported - 1].end if reported else 0),
-                changed=unit.changed,
-                removed=unit.removed,
-                opened=_with_allocated(unit.opened, allocated) if allocated else unit.opened,
-                derived=unit.derived,
-            )
-            return
-        self._complete(
-            unit,
-            executed=not unit.changed_exactly and bool(bound.steps),
-            changed=bound.changed,
-            removed=bound.removed,
-            opened=bound.opened,
-            derived=bound.derived,
-            concludes=bound.concludes,
-        )
+        self._complete(unit, unit if bound is None else bound, allocated)
 
     def _complete(
-        self,
-        unit: ExecutionUnit,
-        *,
-        executed: bool,
-        changed: Iterable[ObservedStateKey],
-        removed: Iterable[OwnedEndpoint],
-        opened: Openings,
-        derived: tuple[Derivation, ...],
-        concludes: ObjectKey | None = None,
+        self, unit: ExecutionUnit, effects: UnitEffects, allocated: tuple[object, ...]
     ) -> None:
-        """Publish one successful execution unit's effects.
+        """Publish one successful execution unit's ``effects``: its own, or
+        those of the range its deferred coverage bound.
 
         Every source authority the unit's writes settled against is spent;
         live evidence of every state it changed is invalidated and the change
         recorded, so a read that ran before it cannot later build eligible
         evidence of that state; then the owned rows it removed are retired before
-        the rows it opened are registered. A single retained claim's own state
-        counts as changed exactly when the unit ``executed`` a step; a unit
-        that composed several sources states every state it changed itself.
+        the rows it opened, completed by the keys the database ``allocated``,
+        are registered.
 
         What the unit ``derived`` from its originals stays for the writes a
         barrier kept after it: those were admitted with conditions on the same
@@ -1579,20 +1588,23 @@ class UnitOfWork:
         submission is admitted on these proofs. The object's proofs end when
         the unit that ``concludes`` it completes, or with the flush.
         """
-        stamp = self._freshness + 1
         claim = unit.claim
-        changed_any = False
         if claim is not None:
             claim.consume()
-            if executed and isinstance(claim, RetainedObservation):
-                changed_any = True
-                self._invalidate(claim.key, stamp)
-        for key in changed:
+        stamp = self._freshness + 1
+        changed_any = False
+        for key in effects.changed:
             changed_any = True
             self._invalidate(key, stamp)
         if changed_any:
             self._freshness = stamp
-        self._targets.complete(removed, opened, derived, concludes)
+        opened = effects.opened
+        self._targets.complete(
+            effects.removed,
+            _with_allocated(opened, allocated) if allocated else opened,
+            effects.derived,
+            effects.concludes,
+        )
 
     def _invalidate(self, key: ObservedStateKey, stamp: int) -> None:
         held = self._observations.get(key)

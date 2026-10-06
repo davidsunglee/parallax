@@ -45,6 +45,7 @@ from parallax.core.metamodel import AttributeIdentity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan.plan import RangeAcquisition
 from tests._support.db_port import body_outcome
+from tests.unit.conformance._coverage_rows_support import coverage_members
 from tests.unit.conformance._recording_ports import FakeWritePort
 
 
@@ -358,9 +359,7 @@ def test_fixture_seeding_tracks_current_milestones_with_managed_axis_ends() -> N
             locking=False,
         ),
     )
-    assert [
-        (row.members["value"], row.members["validEnd"], row.members["txEnd"]) for row in covered
-    ] == [
+    assert [(row["value"], row["validEnd"], row["txEnd"]) for row in coverage_members(covered)] == [
         (decimal.Decimal("100.00"), dt.datetime(2024, 6, 1, tzinfo=dt.UTC), INFINITY),
         (decimal.Decimal("200.00"), INFINITY, INFINITY),
     ]

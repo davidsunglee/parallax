@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+from collections.abc import Mapping
+from typing import cast
 
 import pytest
 
@@ -40,6 +42,7 @@ from parallax.core.write_plan import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.keys import ObjectKey, VersionedStateKey
 from parallax.core.write_plan.plan import PlannedSteps, RangeAcquisition
 from parallax.snapshot.handle import build_write_planner
+from tests.unit.conformance._coverage_rows_support import coverage_members
 
 POSITION = models.load_models()["position"]
 _POSITION_ENTITY = POSITION.entity(EntityIdentity("parallax.compatibility", "Position"))
@@ -384,7 +387,7 @@ def test_coverage_answers_the_tracked_rectangles_of_one_object_inside_the_window
             dt.datetime(2024, 4, 1, tzinfo=dt.UTC), dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
         ),
     )
-    assert [row.members["value"] for row in covered] == [decimal.Decimal("2.00")]
+    assert [row["value"] for row in coverage_members(covered)] == [decimal.Decimal("2.00")]
 
 
 def test_coverage_reaches_a_tracked_opening_whose_end_is_the_open_bound() -> None:
@@ -397,7 +400,7 @@ def test_coverage_reaches_a_tracked_opening_whose_end_is_the_open_bound() -> Non
         ),
     )
     covered = shadow.coverage(POSITION, _acquisition(dt.datetime(2024, 4, 1, tzinfo=dt.UTC), None))
-    assert [(row.members["value"], row.members["validEnd"]) for row in covered] == [
+    assert [(row["value"], row["validEnd"]) for row in coverage_members(covered)] == [
         (decimal.Decimal("2.00"), INFINITY)
     ]
 
@@ -427,7 +430,7 @@ def test_coverage_reaches_a_fixture_row_decoded_at_case_ingress() -> None:
             dt.datetime(2024, 9, 1, tzinfo=dt.UTC), dt.datetime(2024, 10, 1, tzinfo=dt.UTC)
         ),
     )
-    assert [(row.members["validEnd"], row.members["txEnd"]) for row in covered] == [
+    assert [(row["validEnd"], row["txEnd"]) for row in coverage_members(covered)] == [
         (INFINITY, INFINITY)
     ]
 
@@ -439,7 +442,7 @@ def test_coverage_reaches_a_database_observation_kept_unchanged() -> None:
     shadow = TemporalShadow()
     shadow.keep_unchanged(POSITION, (), [(POSITION_ENTITY, observed)])
     covered = shadow.coverage(POSITION, _acquisition(dt.datetime(2024, 7, 1, tzinfo=dt.UTC), None))
-    assert covered == (observed.predecessor,)
+    assert [dict(row) for row in coverage_members(covered)] == [dict(observed.predecessor.members)]
 
 
 def test_retiring_a_state_with_no_milestone_leaves_the_tracker_alone() -> None:
@@ -450,3 +453,46 @@ def test_retiring_a_state_with_no_milestone_leaves_the_tracker_alone() -> None:
         retired=(VersionedStateKey(ObjectKey(POSITION_ENTITY.identity, (("id", 1),)), 1),),
     )
     assert shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1}) is not None
+
+
+def test_coverage_answers_a_tracked_milestones_value_objects_positionally() -> None:
+    model = models.load_models()["document-layout"]
+    entity = model.entity(EntityIdentity("parallax.compatibility", "Voyage"))
+    assert entity is not None
+    members: dict[str, object] = {
+        "id": 7,
+        "title": "Northbound",
+        "crew": 12,
+        "manifest": {"cargo": "grain"},
+        "legs": [{"port": "Oslo"}, {"port": "Bergen"}],
+        "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "txEnd": INFINITY,
+    }
+    shadow = TemporalShadow()
+    shadow.keep_unchanged(
+        model, (), [(entity, TemporalObservation(predecessor=PredecessorRow(members)))]
+    )
+    covered = shadow.coverage(
+        model,
+        RangeAcquisition(
+            entity=entity,
+            key_attribute=AttributeIdentity(entity.identity, "id"),
+            key_value=7,
+            valid_time_window=None,
+            locking=False,
+        ),
+    )
+    (row,) = coverage_members(covered)
+    assert dict(cast("Mapping[str, object]", row["manifest"])) == {"cargo": "grain"}
+    legs = cast("tuple[Mapping[str, object], ...]", row["legs"])
+    assert [dict(leg) for leg in legs] == [{"port": "Oslo"}, {"port": "Bergen"}]
+    assert (row["title"], row["txEnd"]) == ("Northbound", INFINITY)
+
+
+def test_coverage_of_an_object_it_tracks_no_milestone_of_is_no_evidence() -> None:
+    assert (
+        TemporalShadow().coverage(
+            POSITION, _acquisition(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), None)
+        )
+        is None
+    )

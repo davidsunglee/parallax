@@ -2234,6 +2234,35 @@ def test_a_temporal_groups_marker_no_opened_row_expresses_is_refused_while_plann
         _plan([group], _BALANCE)
 
 
+def test_a_bitemporal_close_refuses_a_row_that_holds_no_valid_time_end() -> None:
+    group = temporal_group(
+        PredicateWrite(
+            "terminate",
+            PredicateSelection(
+                "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
+            ),
+            valid_from=_WINDOW_FROM,
+        ),
+        _POSITION,
+        [
+            {
+                "id": 1,
+                "acctNum": "A",
+                "value": Decimal("1.00"),
+                "validStart": _OPENED_AT,
+                "validEnd": None,
+                "txStart": _OPENED_AT,
+                "txEnd": INFINITY,
+            }
+        ],
+    )
+    plan = _plan([group], _POSITION)
+    # A close addresses one exclusive upper bound per As-Of Axis, and this row
+    # supplies none on Valid Time.
+    with pytest.raises(WritePlanningError, match="no observed Valid-Time end"):
+        _ = plan.steps[0]
+
+
 # --------------------------------------------------------------------------- #
 # Effective change is established by the producer: a surviving row of a       #
 # multi-assignment group carries the members it restores.                     #

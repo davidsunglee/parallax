@@ -3,13 +3,18 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 from collections.abc import Generator, Iterable, Mapping, Sequence
+from typing import Final, cast
 
 from parallax.core import inheritance, temporal_read
 from parallax.core.base import INFINITY, normalize_instant
 from parallax.core.metamodel import (
     AttributeIdentity,
+    DocumentMember,
     EntityMetadata,
+    Leaf,
+    MemberShape,
     Metamodel,
+    Multiplicity,
     PrimaryKey,
     TemporalDimension,
     ValueObjectIdentity,
@@ -18,6 +23,8 @@ from parallax.core.write_plan import (
     ObservedStateKey,
     PlannedInsert,
     PredecessorRow,
+    PredecessorRows,
+    PredecessorRowsBuilder,
     TemporalObservation,
 )
 from parallax.core.write_plan.keys import TemporalStateKey
@@ -385,33 +392,34 @@ class TemporalShadow:
             )
             self._track(key, observation)
 
-    def coverage(
-        self, model: Metamodel, acquisition: RangeAcquisition
-    ) -> tuple[PredecessorRow, ...]:
+    def coverage(self, model: Metamodel, acquisition: RangeAcquisition) -> PredecessorRows | None:
         """The tracked current milestones of ``acquisition``'s object that
         overlap its Valid-Time window, or all of them where it has none — what
         the execution's own coverage read returns from the rows this tracker
-        accounts for."""
+        accounts for, as the same evidence: ``None`` where it holds none."""
         entity = acquisition.entity
         identity = (entity.identity.name, (acquisition.key_value,))
         window = acquisition.valid_time_window
-        if window is None:
-            return tuple(
-                observation.predecessor
-                for key, observation in self._current.items()
-                if key[:2] == identity
-            )
         shape = temporal_read.view(model).shape(entity.identity)
         assert shape is not None  # the facet covers every accepted Entity
-        covered: list[PredecessorRow] = []
-        for key, observation in self._current.items():
-            if key[:2] != identity:
+        position = inheritance.view(model).entity(entity.identity)
+        assert position is not None  # every accepted Entity has a view
+        selection = position.member_selection
+        key = selection.shape.position(position.primary_key.identity.name)
+        assert key is not None  # a family's key is one of its members
+        evidence = PredecessorRowsBuilder(
+            selection, key_position=key, absent=_ABSENT, documents=False
+        )
+        for slot, observation in self._current.items():
+            if slot[:2] != identity:
                 continue
             predecessor = observation.predecessor
-            coverage = temporal_read.valid_time_coverage(shape, predecessor, None)
-            if coverage is not None and coverage.overlaps(window):
-                covered.append(predecessor)
-        return tuple(covered)
+            if window is not None:
+                coverage = temporal_read.valid_time_coverage(shape, predecessor, None)
+                if coverage is None or not coverage.overlaps(window):
+                    continue
+            evidence.append(_positional(selection.shape, predecessor.members))
+        return evidence.seal()
 
     def _track(self, key: _ObjectKey, observation: TemporalObservation) -> None:
         """Store one milestone in its own slot, refusing a slot already taken.
@@ -475,6 +483,32 @@ def predecessor_row(
     for identity, value in value_objects.items():
         members[identity.path[-1]] = value
     return PredecessorRow(members=members)
+
+
+_ABSENT: Final = object()
+"""The member a tracked milestone does not hold, in the positional evidence
+:meth:`TemporalShadow.coverage` answers."""
+
+
+def _positional(shape: MemberShape, members: Mapping[str, object]) -> tuple[object, ...]:
+    """``members`` positional over ``shape``, as a read's judged member row is:
+    a member it does not name is :data:`_ABSENT`, and each Value Object
+    occurrence is positional over its own shape."""
+    return tuple(
+        _positional_cell(member, members[member.name]) if member.name in members else _ABSENT
+        for member in shape.members
+    )
+
+
+def _positional_cell(member: DocumentMember, value: object) -> object:
+    if isinstance(member, Leaf) or value is None:
+        return value
+    if member.multiplicity is Multiplicity.MANY:
+        return tuple(
+            _positional(member.shape, cast("Mapping[str, object]", element))
+            for element in cast("Sequence[object]", value)
+        )
+    return _positional(member.shape, cast("Mapping[str, object]", value))
 
 
 _NOT_AN_INSTANT = "an as-of axis start is a finite instant, and {value!r} is not one"

@@ -48,6 +48,7 @@ from parallax.core.unit_work.materialized import (
     composed_temporal_write,
     temporal_contribution,
 )
+from parallax.core.unit_work.ranges import Decoration, DeferredTemporalRange, bind_deferred
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
     ActorIdentity,
@@ -64,8 +65,15 @@ from parallax.core.unit_work.write_settlement import (
     WriteSettlement,
 )
 from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, VersionedStateKey
+from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import TemporalObservation
-from parallax.core.write_plan.plan import NO_OWNERSHIP, Completion, Ownership
+from parallax.core.write_plan.plan import (
+    NO_OWNERSHIP,
+    BoundRange,
+    Completion,
+    DeferredRange,
+    Ownership,
+)
 
 __all__ = [
     "BufferedWrite",
@@ -112,10 +120,11 @@ class WritePlanner:
     """The model-scoped, stateless Write Planner (`m-unit-work`).
 
     Constructed once per accepted Metamodel with its strategy adapters already
-    wired; :meth:`finalize` is its entire caller-visible surface. A caller with
-    no evidence to spend reads ``finalize(request).plan``. No caller sequences
-    coalescing, batching, ordering, temporal expansion, observation validation,
-    instant acquisition, or provenance decoration by hand.
+    wired; :meth:`finalize` plans a flush, and :meth:`bind_deferred` binds a
+    deferred range of a plan it finalized once that range's coverage is read. A
+    caller with no evidence to spend reads ``finalize(request).plan``. No caller
+    sequences coalescing, batching, ordering, temporal expansion, observation
+    validation, instant acquisition, or provenance decoration by hand.
 
     The settlement module it constructs here is its own, built over the same
     model and compiled facets and living exactly as long: a prepared Model
@@ -125,6 +134,7 @@ class WritePlanner:
     """
 
     __slots__ = (
+        "_audit",
         "_batching",
         "_concurrency",
         "_families",
@@ -149,6 +159,7 @@ class WritePlanner:
         self._relationships = relationship.view(model)
         self._batching = batching
         self._concurrency = concurrency
+        self._audit = audit
         self._settlement = WriteSettlement(
             model,
             self._families,
@@ -197,6 +208,37 @@ class WritePlanner:
             transaction_instant=request.transaction_instant,
             ownership=request.ownership,
             counts_unchanged_rows=request.counts_unchanged_rows,
+        )
+
+    def bind_deferred(
+        self,
+        description: DeferredRange,
+        rows: PredecessorRows | None,
+        /,
+        *,
+        ownership: Ownership,
+        actor_identity: ActorIdentity,
+        transaction_instant: TransactionInstant,
+    ) -> BoundRange:
+        """Bind a deferred range this planner finalized to the coverage its
+        acquisition read, ``None`` where the read found no row.
+
+        Its temporal meaning, concurrency, and gates were fixed when the plan
+        was made; binding reads ``ownership`` as the running flush's earlier
+        units left it and never recaptures the instant. The configured
+        provenance decoration decorates each bound step once with
+        ``actor_identity`` and ``transaction_instant``, changing no topology
+        and classifying no gate.
+        """
+        if not isinstance(description, DeferredTemporalRange):
+            raise TypeError(
+                f"a deferred range this planner did not finalize cannot be bound: {description!r}"
+            )
+        return bind_deferred(
+            description,
+            rows,
+            ownership=ownership,
+            decorate=Decoration(self._audit, actor_identity, transaction_instant),
         )
 
     def inserted_version(self, entity: EntityIdentity, advanced_from: int | None) -> int | None:

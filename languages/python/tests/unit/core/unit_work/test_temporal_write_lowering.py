@@ -119,7 +119,9 @@ from tests.unit._transact_support import (
 from tests.unit.core.unit_work._ownership_support import OpenedRows
 
 
-def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger, completed: object) -> None:
+def _no_flush(
+    _plan: WritePlan, *, trigger: WriteBatchTrigger, bind_deferred: object, completed: object
+) -> None:
     """A flush sink for a test that never flushes."""
     return None
 

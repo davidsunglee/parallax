@@ -78,7 +78,9 @@ _RATE_TX_START = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 _INFINITY = INFINITY
 
 
-def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger, completed: object) -> None:
+def _no_flush(
+    _plan: WritePlan, *, trigger: WriteBatchTrigger, bind_deferred: object, completed: object
+) -> None:
     """A flush sink for a test that never flushes."""
     return None
 

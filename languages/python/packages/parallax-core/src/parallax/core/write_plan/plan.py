@@ -30,6 +30,7 @@ __all__ = [
     "PlannedSteps",
     "RangeAcquisition",
     "StepSegment",
+    "UnitEffects",
     "WritePlan",
     "eager_segment",
 ]
@@ -299,71 +300,64 @@ class Openings:
 NO_OPENINGS: Final[Openings] = Openings()
 
 
-@dataclass(frozen=True, slots=True)
-class BoundRange:
-    """What a deferred range became once its acquired coverage was bound: the
-    physical steps it executes, in order, and the facts its success publishes.
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UnitEffects:
+    """What one execution unit's success publishes, complete.
 
-    ``concludes`` names the object of a range that follows ordering barriers
-    and leads none: no later unit of the flush consumes what earlier units
-    proved about that object."""
+    ``changed`` names every observed state the unit changes, its own source's
+    included; executing a step changes nothing by itself, so a guard proving a
+    milestone unchanged names none. ``removed`` and ``opened`` are the owned
+    rows it retires and registers. ``derived`` records the originals the unit
+    transformed and the rows it left of each, for a later unit of the same
+    flush whose conditions those originals carry; a unit no later one depends
+    on records none. ``concludes`` names the object of a range that follows
+    ordering barriers and leads none: no later unit of the flush consumes what
+    earlier units proved about that object.
+    """
 
-    steps: tuple[PlannedWrite, ...]
-    changed: tuple[ObservedStateKey, ...]
-    removed: tuple[OwnedEndpoint, ...]
-    opened: Openings
+    changed: Iterable[ObservedStateKey] = ()
+    removed: Iterable[OwnedEndpoint] = ()
+    opened: Openings = NO_OPENINGS
     derived: tuple[Derivation, ...] = ()
     concludes: ObjectKey | None = None
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BoundRange(UnitEffects):
+    """What a range became once bound to its coverage: the physical steps it
+    executes, in order, beside the effects their success publishes."""
+
+    steps: tuple[PlannedWrite, ...]
+
+
 class DeferredRange(Protocol):
     """A finalized range whose physical steps depend on coverage no planning
-    input knew: the executor performs ``acquisition`` and hands back the rows it
-    read, and :meth:`bind` answers the steps to execute."""
+    input knew: the executor performs ``acquisition``, and the unit of work
+    binds the rows it read."""
 
     @property
     def acquisition(self) -> RangeAcquisition: ...
 
-    def bind(self, rows: object, /) -> BoundRange: ...
 
-
-@dataclass(frozen=True, slots=True)
-class ExecutionUnit:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ExecutionUnit(UnitEffects):
     """One execution unit of a Write Plan and what its success publishes.
 
     A unit spans the plan's steps up to the exclusive offset ``end``, after the
-    previous unit's. Its facts are applied only once every one of its steps has
-    succeeded, and before any later unit executes: the source authority
-    ``claim`` it spends, the observed states it changed — a single retained
-    claim's own state among them whenever the unit has a step, unless
-    ``changed_exactly`` — and the owned
-    rows it removed and opened. Removals are retired before openings are
+    previous unit's. Its effects are applied only once every one of its steps
+    has succeeded, and before any later unit executes, after it spends the
+    source authority ``claim``. Removals are retired before openings are
     registered, so a row removed and reopened at one address remains owned, and
     an insertion whose last row the unit removed still stands when a row the
     unit opened continues it.
 
     A unit with a ``deferred`` range has no planned step of its own: its steps
-    and the facts beyond its claim come from binding the coverage the executor
-    acquires for it.
-
-    ``derived`` records the originals the unit transformed and the rows it left
-    of each, for a later unit of the same flush whose conditions those
-    originals carry; a unit no later one depends on records none.
-
-    ``changed_exactly`` says ``changed`` already names every state the unit
-    changes, its claim's own among them, so a step alone counts nothing as
-    changed: a guard that proves a milestone unchanged executes and changes
-    nothing.
+    and effects come from binding the coverage the executor acquires for it.
     """
 
     end: int
     claim: Completion | None = None
-    changed: Iterable[ObservedStateKey] = ()
-    removed: Iterable[OwnedEndpoint] = ()
-    opened: Openings = NO_OPENINGS
     deferred: DeferredRange | None = None
-    derived: tuple[Derivation, ...] = ()
-    changed_exactly: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,7 +370,7 @@ class WritePlan:
 
     ``units`` partitions ``steps`` into execution units, in order and ending
     where the steps end; a plan given none forms one unit of every step, which
-    publishes nothing beyond its steps' own effects.
+    publishes nothing.
     """
 
     steps: PlannedSteps = PlannedSteps()
