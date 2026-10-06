@@ -299,14 +299,17 @@ class TemporalGroupSegment:
 
     def step(self, index: int) -> PlannedStep:
         backing = self.backing
-        row, place = backing.locate(index)
-        use = backing.predecessor_use(row, place)
-        step = backing.step(self.evidence, row, place, self._predecessor(row, use))
+        evidence = self.evidence
+        row, slot, use = backing.locate(index)
+        values = evidence.rows[row]
+        step = backing.step(row, slot, values, self._predecessor(row, values, use))
         if use is PredecessorUse.BINDABLE_LAST:
             object.__setattr__(self, "_bindable", None)
         return step
 
-    def _predecessor(self, row: int, use: PredecessorUse) -> PredecessorRow | None:
+    def _predecessor(
+        self, row: int, values: tuple[object, ...], use: PredecessorUse
+    ) -> PredecessorRow | None:
         if use is PredecessorUse.NONE:
             return None
         bindable = self._bindable
@@ -314,13 +317,11 @@ class TemporalGroupSegment:
             return bindable[1]
         evidence = self.evidence
         if use is PredecessorUse.MEMBERS:
-            return PredecessorRow.over_row(
-                evidence.selection, evidence.rows[row], None, evidence.absent
-            )
+            return PredecessorRow.over_row(evidence.selection, values, None, evidence.absent)
         document = evidence.document(row)
         predecessor = PredecessorRow.over_row(
             evidence.selection,
-            evidence.rows[row],
+            values,
             None if document is None else retain_document_value(document),
             evidence.absent,
         )
