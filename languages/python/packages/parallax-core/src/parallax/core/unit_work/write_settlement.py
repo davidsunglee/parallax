@@ -81,7 +81,6 @@ from parallax.core.write_plan.observe import TemporalObservation, WriteObservati
 from parallax.core.write_plan.plan import (
     NO_OWNERSHIP,
     AllocatedOpening,
-    BoundRange,
     Completion,
     Completions,
     ExecutionUnit,
@@ -261,6 +260,7 @@ class WriteSettlement:
         pending: list[PlannedStep] = []
         units: list[ExecutionUnit] = []
         count = 0
+        decorate: Decoration | None = None
 
         def flush_pending() -> None:
             if pending:
@@ -280,41 +280,24 @@ class WriteSettlement:
                     count += len(segment)
                 units.append(segment.unit(count))
                 continue
-            shape = (
-                self._temporal_facet.shape(item.target.identity)
-                if isinstance(item, ComposedTemporalWrite)
-                else self._temporal_facet.shape(item.instruction.target.identity)
-                if isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite)
-                else None
-            )
+            shape = self._carrier_shape(item)
             if isinstance(shape, TransactionTimeOnly | Bitemporal):
                 assert not isinstance(item, PreparedWrite)  # only a carrier reads its shape here
-                ranged = self._range(
+                if decorate is None:
+                    decorate = Decoration(self._audit, actor_identity, transaction_instant)
+                steps, unit = self._range(
                     item,
                     shape,
                     concurrency,
                     transaction_instant,
                     ownership,
-                    Decoration(self._audit, actor_identity, transaction_instant),
+                    decorate,
+                    start=count,
                     guards=counts_unchanged_rows,
                 )
-                claim = range_claims(item)
-                if isinstance(ranged, DeferredTemporalRange):
-                    units.append(ExecutionUnit(end=count, claim=claim, deferred=ranged))
-                    continue
-                pending.extend(ranged.steps)
-                count += len(ranged.steps)
-                units.append(
-                    ExecutionUnit(
-                        end=count,
-                        claim=claim,
-                        changed=ranged.changed,
-                        removed=ranged.removed,
-                        opened=ranged.opened,
-                        derived=ranged.derived,
-                        concludes=ranged.concludes,
-                    )
-                )
+                pending.extend(steps)
+                count = unit.end
+                units.append(unit)
                 continue
             assert not isinstance(item, ComposedTemporalWrite | MaterializedWriteGroup)
             settled, claim, own_state = self._settle_keyed(
@@ -344,6 +327,15 @@ class WriteSettlement:
         return WritePlanningResult(
             WritePlan(steps=PlannedSteps(tuple(segments)), units=tuple(units))
         )
+
+    def _carrier_shape(self, item: OrderedWrite) -> TemporalShape | None:
+        """The Temporal Shape of a buffered carrier's target, read once at
+        dispatch; ``None`` for a bare instruction, whose settlement reads it."""
+        if isinstance(item, ComposedTemporalWrite):
+            return self._temporal_facet.shape(item.target.identity)
+        if isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite):
+            return self._temporal_facet.shape(item.instruction.target.identity)
+        return None
 
     def _settle_keyed(
         self,
@@ -489,9 +481,12 @@ class WriteSettlement:
         ownership: Ownership,
         decorate: Decoration,
         *,
+        start: int,
         guards: bool,
-    ) -> BoundRange | DeferredTemporalRange:
-        """``item`` settled as a range over its temporal object's coverage.
+    ) -> tuple[tuple[PlannedStep, ...], ExecutionUnit]:
+        """``item`` settled as a range over its temporal object's coverage: the
+        steps it binds now and the unit they form from ``start``, or no step
+        and the unit carrying the deferred range execution binds.
 
         A lone observed write enters as the carrier it was buffered in, so one
         that lies inside the predecessor it observed binds that predecessor at
@@ -505,7 +500,7 @@ class WriteSettlement:
             item.observation, TemporalObservation
         ):
             raise _unobserved_close(entity, item.instruction.mutation)
-        return settle_range(
+        ranged = settle_range(
             item,
             view=entity_view(self._families, entity),
             shape=shape,
@@ -516,6 +511,19 @@ class WriteSettlement:
             ownership=ownership,
             decorate=decorate,
             guards=guards,
+        )
+        claim = range_claims(item)
+        if isinstance(ranged, DeferredTemporalRange):
+            return (), ExecutionUnit(end=start, claim=claim, deferred=ranged)
+        steps = ranged.steps
+        return steps, ExecutionUnit(
+            end=start + len(steps),
+            claim=claim,
+            changed=ranged.changed,
+            removed=ranged.removed,
+            opened=ranged.opened,
+            derived=ranged.derived,
+            concludes=ranged.concludes,
         )
 
     def _settle_predicate(self, instruction: PreparedPredicateWrite) -> tuple[PlannedStep, ...]:

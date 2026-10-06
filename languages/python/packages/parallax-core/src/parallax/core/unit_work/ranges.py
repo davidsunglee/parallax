@@ -15,7 +15,7 @@ from parallax.core.temporal_read import (
     milestone_edge,
     valid_time_coverage,
 )
-from parallax.core.temporal_write.coverage import CoverageTransform
+from parallax.core.temporal_write.coverage import CoverageGap, CoverageTransform
 from parallax.core.temporal_write.expansion import (
     Expansion,
     ExpansionRole,
@@ -102,15 +102,15 @@ class _Original:
 
 def range_claims(item: ComposedTemporalWrite | TemporalKeyedWrite) -> Completion | None:
     """The distinct retained observations a range's unit spends, each once."""
-    distinct: list[RetainedObservation] = []
-    if isinstance(item, ComposedTemporalWrite):
-        claims: Iterable[RetainedObservation | None] = (
-            contribution.claim for contribution in item.contributions
-        )
-    elif isinstance(item, ObservedKeyedWrite):
-        claims = (item.claim, *item.twins)
+    if isinstance(item, ObservedKeyedWrite):
+        if not item.twins:
+            return item.claim
+        claims: Iterable[RetainedObservation | None] = (item.claim, *item.twins)
+    elif isinstance(item, ComposedTemporalWrite):
+        claims = (contribution.claim for contribution in item.contributions)
     else:
-        claims = ()
+        return None
+    distinct: list[RetainedObservation] = []
     for claim in claims:
         if claim is not None and all(claim is not held for held in distinct):
             distinct.append(claim)
@@ -122,7 +122,10 @@ def range_claims(item: ComposedTemporalWrite | TemporalKeyedWrite) -> Completion
 
 
 def _known_originals(
-    composed: ComposedTemporalWrite, facts: TemporalFacts, object_key: ObjectKey
+    composed: ComposedTemporalWrite,
+    facts: TemporalFacts,
+    key_attribute: AttributeIdentity,
+    key_value: object,
 ) -> tuple[tuple[_Original, ...], tuple[_Original, ...]]:
     """The originals a composed range's own observations already know, as the
     ones the transform binds — disjoint, ordered by start — beside the ones it
@@ -143,7 +146,8 @@ def _known_originals(
         claim = contribution.claim
         original = _original(
             facts,
-            object_key,
+            key_attribute,
+            key_value,
             observation.predecessor,
             None if claim is None else claim.key,
         )
@@ -213,15 +217,26 @@ def _conditions(composed: ComposedTemporalWrite) -> tuple[_StartingCondition, ..
     return tuple(conditions)
 
 
+def _object_key(
+    facts: TemporalFacts, key_attribute: AttributeIdentity, key_value: object
+) -> ObjectKey:
+    return ObjectKey(facts.entity.identity, ((key_attribute.name, key_value),))
+
+
 def _original(
     facts: TemporalFacts,
-    object_key: ObjectKey,
+    key_attribute: AttributeIdentity,
+    key_value: object,
     predecessor: PredecessorRow,
     state: ObservedStateKey | None,
 ) -> _Original:
+    """One current row as an original: its observed state is the claim's where
+    one names it, and otherwise the state its milestone edge keys."""
     shape = facts.shape
     if state is None:
-        state = TemporalStateKey(object_key, milestone_edge(shape, predecessor, None))
+        state = TemporalStateKey(
+            _object_key(facts, key_attribute, key_value), milestone_edge(shape, predecessor, None)
+        )
     return _Original(
         predecessor=predecessor,
         state=state,
@@ -289,36 +304,50 @@ def _valid_end(original: _Original) -> object | None:
 @dataclass(slots=True)
 class _Binding:
     """What binding one range accumulates: every original's own effect before
-    any opening, and the facts its unit publishes."""
+    any opening, and the facts its unit publishes. Effects one original alone
+    contributes are kept as it gave them."""
 
     effects: list[PlannedStep] = field(default_factory=list[PlannedStep])
     openings: list[PlannedStep] = field(default_factory=list[PlannedStep])
-    changed: list[ObservedStateKey] = field(default_factory=list[ObservedStateKey])
-    removed: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
-    fresh: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
-    continued: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
-    derived: list[Derivation] = field(default_factory=list[Derivation])
+    changed: tuple[ObservedStateKey, ...] = ()
+    removed: tuple[OwnedEndpoint, ...] = ()
+    fresh: tuple[OwnedEndpoint, ...] = ()
+    continued: tuple[OwnedEndpoint, ...] = ()
+    derived: tuple[Derivation, ...] = ()
 
     def take(self, expansion: Expansion, decorate: Decoration) -> None:
         for step in expansion.steps:
             (self.openings if isinstance(step, PlannedInsert) else self.effects).append(
                 decorate(step)
             )
-        self.changed.extend(expansion.changed)
-        self.removed.extend(expansion.removed)
-        self.fresh.extend(expansion.opened.fresh)
-        self.continued.extend(expansion.opened.continued)
-        self.derived.extend(expansion.derived)
+        self.changed += tuple(expansion.changed)
+        self.removed += tuple(expansion.removed)
+        opened = expansion.opened
+        self.fresh += tuple(opened.fresh)
+        self.continued += tuple(opened.continued)
+        self.derived += expansion.derived
 
     def range(self, concludes: ObjectKey | None) -> BoundRange:
         return BoundRange(
             steps=(*self.effects, *self.openings),
-            changed=tuple(self.changed),
-            removed=tuple(self.removed),
-            opened=Openings(tuple(self.fresh), tuple(self.continued)),
-            derived=tuple(self.derived),
+            changed=self.changed,
+            removed=self.removed,
+            opened=Openings(self.fresh, self.continued),
+            derived=self.derived,
             concludes=concludes,
         )
+
+
+def _bound(expansion: Expansion, decorate: Decoration, concludes: ObjectKey | None) -> BoundRange:
+    """A range of one original, its expansion's steps decorated once."""
+    return BoundRange(
+        steps=tuple(map(decorate, expansion.steps)),
+        changed=expansion.changed,
+        removed=expansion.removed,
+        opened=expansion.opened,
+        derived=expansion.derived,
+        concludes=concludes,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,11 +369,14 @@ class _RangeMeaning:
     gated: bool
     key_attribute: AttributeIdentity
     key_value: object
-    object_key: ObjectKey
     anchor: object = _UNANCHORED
     conditions: tuple[_StartingCondition, ...] = ()
     derives: bool = False
     guards: bool = False
+
+    @property
+    def object_key(self) -> ObjectKey:
+        return _object_key(self.facts, self.key_attribute, self.key_value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,8 +429,19 @@ class _RangeBinding:
         meaning = self.meaning
         self._require_anchor(originals)
         starts = self._starts(originals, discharged)
-        bound = _Binding()
+        transform = meaning.transform
+        gaps = (
+            transform.gaps(_valid_time_coverages(originals))
+            if transform.replaces and isinstance(meaning.facts.shape, Bitemporal)
+            else ()
+        )
+        concluded = meaning.object_key if concludes else None
         decorate = self.decorate
+        if not starts and not validations and not gaps and len(originals) == 1:
+            # One original's expansion already orders its own effect first.
+            (original,) = originals
+            return _bound(self._expanded(original, "coverage"), decorate, concluded)
+        bound = _Binding()
         for original in starts:
             bound.take(self._expanded(original, "starting"), decorate)
         for original in validations:
@@ -406,21 +449,28 @@ class _RangeBinding:
         for original in originals:
             if all(original is not start for start in starts):
                 bound.take(self._expanded(original, "coverage"), decorate)
+        for gap in gaps:
+            self._open(bound, gap)
+        return bound.range(concluded)
+
+    def _open(self, bound: _Binding, gap: CoverageGap) -> None:
+        """Open a replacement's new lineage over ``gap``, after every original's
+        own effect."""
+        meaning = self.meaning
         facts = meaning.facts
-        if isinstance(facts.shape, Bitemporal):
-            key = {meaning.key_attribute: meaning.key_value}
-            for gap in meaning.transform.gaps(_valid_time_coverages(originals)):
-                attributes, value_objects = self.expansion.assignments(gap.assigned)
-                entry = opening(
-                    facts, {**attributes, **key}, dict(value_objects), gap.valid_time_window
-                )
-                bound.openings.append(
-                    decorate(PlannedInsert(entity=facts.entity.identity, entries=(entry,)))
-                )
-                endpoint = entry_endpoint(facts, entry)
-                if endpoint is not None:
-                    bound.fresh.append(endpoint)
-        return bound.range(meaning.object_key if concludes else None)
+        attributes, value_objects = self.expansion.assignments(gap.assigned)
+        entry = opening(
+            facts,
+            {**attributes, meaning.key_attribute: meaning.key_value},
+            dict(value_objects),
+            gap.valid_time_window,
+        )
+        bound.openings.append(
+            self.decorate(PlannedInsert(entity=facts.entity.identity, entries=(entry,)))
+        )
+        endpoint = entry_endpoint(facts, entry)
+        if endpoint is not None:
+            bound.fresh += (endpoint,)
 
     def _expanded(self, original: _Original, role: ExpansionRole) -> Expansion:
         return self.expansion.expand(
@@ -450,8 +500,11 @@ class _RangeBinding:
         from, in the order their conditions were stated, once the coverage shows
         each stands at its caller's Transaction-Time start; the first that does
         not fails as that caller's precondition."""
+        conditions = self.meaning.conditions
+        if not conditions:
+            return ()
         starts: list[_Original] = []
-        for position, condition in enumerate(self.meaning.conditions):
+        for position, condition in enumerate(conditions):
             if position in discharged:
                 continue
             start = next(
@@ -565,8 +618,9 @@ class _RangeBinding:
         return tuple(ordered), frozenset(discharged)
 
     def _read(self, rows: PredecessorRows) -> list[_Original]:
+        meaning = self.meaning
         return [
-            _original(self.meaning.facts, self.meaning.object_key, predecessor, None)
+            _original(meaning.facts, meaning.key_attribute, meaning.key_value, predecessor, None)
             for predecessor in _acquired_predecessors(rows)
         ]
 
@@ -704,8 +758,7 @@ def settle_range(
     key_attribute = view.primary_key.identity
     entity, key_value, transform = _range_of(item, key_attribute)
     facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=instant)
-    object_key = ObjectKey(entity.identity, ((key_attribute.name, key_value),))
-    originals, validations, anchor, conditions = _known(item, facts, object_key)
+    originals, validations, anchor, conditions = _known(item, facts, key_attribute, key_value)
     chained = item if isinstance(item, ChainedTemporalWrite) else None
     window = transform.valid_time_window
     meaning = _RangeMeaning(
@@ -715,7 +768,6 @@ def settle_range(
         gated=gated,
         key_attribute=key_attribute,
         key_value=key_value,
-        object_key=object_key,
         anchor=anchor,
         conditions=conditions,
         derives=chained is not None and chained.leads,
@@ -762,12 +814,15 @@ def _range_of(
 
 
 def _known(
-    item: ComposedTemporalWrite | TemporalKeyedWrite, facts: TemporalFacts, object_key: ObjectKey
+    item: ComposedTemporalWrite | TemporalKeyedWrite,
+    facts: TemporalFacts,
+    key_attribute: AttributeIdentity,
+    key_value: object,
 ) -> tuple[tuple[_Original, ...], tuple[_Original, ...], object, tuple[_StartingCondition, ...]]:
     """What planning knows of ``item``'s range: the originals it binds and
     validates, its insertion anchor, and its callers' starting conditions."""
     if isinstance(item, ComposedTemporalWrite):
-        originals, validations = _known_originals(item, facts, object_key)
+        originals, validations = _known_originals(item, facts, key_attribute, key_value)
         return originals, validations, _anchor(item), _conditions(item)
     window = item.instruction.valid_time_window
     if isinstance(item, InsertionKeyedWrite):
@@ -784,7 +839,11 @@ def _known(
     assert isinstance(observation, TemporalObservation)  # settlement refuses any other
     claim = item.claim
     original = _original(
-        facts, object_key, observation.predecessor, None if claim is None else claim.key
+        facts,
+        key_attribute,
+        key_value,
+        observation.predecessor,
+        None if claim is None else claim.key,
     )
     return (original,), (), _UNANCHORED, ()
 
