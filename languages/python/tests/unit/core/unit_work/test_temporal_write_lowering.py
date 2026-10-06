@@ -32,15 +32,27 @@ from typing import Final, cast
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import bitemp_write, opt_lock, storage_layout, txtime_write
+from parallax.core import (
+    MAX,
+    Attr,
+    DomainModel,
+    TxTemporal,
+    attr,
+    bitemp_write,
+    opt_lock,
+    storage_layout,
+    temporal_read,
+    txtime_write,
+)
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, EntityMetadata
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._write import compile_write_step
-from parallax.core.temporal_read import Edge
+from parallax.core.temporal_read import Edge, TransactionTimeOnly
 from parallax.core.unit_work import (
     SUPERSEDED,
     TERMINATED,
@@ -63,14 +75,18 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.plan import OwnedEndpoint
 from parallax.core.unit_work.planned import (
     INFINITY,
+    NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,
+    RETURNED_MAX_PLUS_ONE,
     STALE_WRITE,
     UNGATED,
     CarriedFrom,
     ChangedFrom,
     ExactCount,
     Finite,
+    InsertEntry,
     NewLineage,
+    PlannedRow,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
@@ -903,6 +919,46 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
             (1, 50.00, "ACME", _instant("2024-01-01T00:00:00+00:00"), "infinity"),
         )
     ]
+
+
+class AllocatedLedger(TxTemporal, table="ledger", namespace="lowering.allocated"):
+    id: Attr[int] = attr(primary_key=MAX)
+    amount: Attr[int]
+
+
+def test_a_generated_key_milestone_insert_binds_managed_infinity_outside_typed_spans() -> None:
+    # The `max` form renders one row through scalar binding rather than the
+    # repeated row binder, so the open end crosses that path as a framework bind.
+    model = model_of(DomainModel(AllocatedLedger))
+    entity = model.entity(AllocatedLedger.identity)
+    shape = temporal_read.view(model).shape(AllocatedLedger.identity)
+    assert entity is not None
+    assert isinstance(shape, TransactionTimeOnly)
+    opened = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    members = {member.identity.name: member.identity for member in entity.declared_attributes}
+    row = PlannedRow(
+        attributes={
+            members["id"]: RETURNED_MAX_PLUS_ONE,
+            members["amount"]: 100,
+            shape.transaction_time.start_attribute: opened,
+            shape.transaction_time.end_attribute: OPEN_BOUND,
+        }
+    )
+    step = PlannedInsert(
+        entity=entity.identity, entries=(InsertEntry(row=row, origin=NEW_LINEAGE),)
+    )
+
+    statement = compile_write_step(step, model, POSTGRES)
+
+    assert statement.sql == (
+        "insert into ledger(id, amount, in_z, out_z) "
+        "select coalesce(max(t0.id), ?) + ?, ?, ?, ? from ledger t0 returning id"
+    )
+    assert statement.binds == (0, 1, 100, opened, OPEN_BOUND)
+    assert statement.binds[-1] is OPEN_BOUND
+    assert statement.wire_binds() == (0, 1, 100, "2024-01-01T00:00:00.000000Z", "infinity")
+    typed = {index for span in statement.typed_bind_spans for index in span.indexes()}
+    assert typed == {2, 3}
 
 
 # One materialized SpotQuote row, physical-column keyed and complete

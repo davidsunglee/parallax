@@ -34,7 +34,7 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.core import continuation, deep_fetch, temporal_read
-from parallax.core.base import INFINITY_LITERAL
+from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -793,7 +793,7 @@ def test_a_milestone_page_seeks_past_the_edge_the_database_evaluated() -> None:
         "or (t0.pos_id = ? and t0.from_z = ? and (t0.in_z > ? or t0.in_z is null)))"
     )
     assert _seek_binds(statement) == (
-        INFINITY_LITERAL,
+        INFINITY,
         1,
         1,
         1,
@@ -818,7 +818,7 @@ def _milestones() -> list[_Row]:
             _identity(POSITION, _POSITION_ID): key,
             _identity(POSITION, _POSITION_VALID_START): valid_start,
             _identity(POSITION, _POSITION_TX_START): tx_start,
-            _identity(POSITION, _POSITION_VALID_END): INFINITY_LITERAL,
+            _identity(POSITION, _POSITION_VALID_END): INFINITY,
         }
         for key in (1, 2)
         for valid_start, tx_start in starts

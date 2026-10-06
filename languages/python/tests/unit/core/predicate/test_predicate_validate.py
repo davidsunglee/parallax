@@ -22,6 +22,7 @@ import pytest
 
 from parallax.conformance import _case_ingress, case_format
 from parallax.core import inheritance
+from parallax.core.base import INFINITY
 from parallax.core.metamodel import RelationshipIdentity
 from parallax.core.object_query import (
     AsOf,
@@ -66,8 +67,10 @@ from parallax.core.predicate import (
 )
 from parallax.core.predicate import validate as predicate_validation
 from parallax.core.predicate._validated import (
+    ValidatedOperands,
     ValidatedPredicate,
     conjunction,
+    framework_comparison,
     managed_comparison,
 )
 from parallax.descriptor._records import (
@@ -888,6 +891,22 @@ def test_generated_predicate_products_reject_missing_or_mistyped_semantics() -> 
         predicate_validation._check_managed_bound_ordering(  # pyright: ignore[reportPrivateUsage]
             "Order.price", None
         )
+
+
+def test_a_framework_comparison_authors_managed_infinity_by_its_canonical_literal() -> None:
+    root = _root(formed(_POSITION), "Position")
+    end = root.attribute("txEnd")
+    assert end is not None
+    attr = f"{root.identity.canonical}.txEnd"
+
+    current = framework_comparison(op="eq", attr=attr, member=end, value=INFINITY)
+    other = framework_comparison(op="eq", attr=attr, member=end, value=7)
+
+    assert current.authored == Comparison(op="eq", attr=attr, value="infinity")
+    assert current.operands == ValidatedOperands((INFINITY,), None, "framework")
+    assert current.member is end
+    assert other.authored == Comparison(op="eq", attr=attr, value="7")
+    assert other.operands == ValidatedOperands((7,), None, "framework")
 
 
 def test_string_predicate_rejects_a_non_string_member() -> None:

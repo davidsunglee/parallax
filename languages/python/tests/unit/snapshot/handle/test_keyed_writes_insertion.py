@@ -411,7 +411,7 @@ def test_an_insertion_source_edits_its_stored_bitemporal_coverage_after_a_helper
     assert coverage.sql.endswith(
         "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s" + lock
     )
-    assert coverage.binds == (1, _JAN, _JUN, "infinity")
+    assert coverage.binds == (1, _JAN, _JUN, INFINITY_INSTANT)
     revision, head = _writes(port)[1:]
     gate = " and in_z = %s" if concurrency == "optimistic" else ""
     assert revision.sql == (

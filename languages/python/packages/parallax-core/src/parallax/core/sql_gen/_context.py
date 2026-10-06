@@ -7,12 +7,12 @@ from itertools import islice
 from typing import Literal, Protocol, cast
 
 from parallax.core.base import (
+    INFINITY,
     INFINITY_LITERAL,
     JSON,
     TIMESTAMP,
     ManagedValue,
     NeutralType,
-    TemporalBound,
     detach_json_container,
     matches_neutral_type,
 )
@@ -358,10 +358,14 @@ class StatementBuilder:
         *,
         wire_value: WireValue | _NoWireBindOverride = _NO_WIRE_BIND_OVERRIDE,
     ) -> None:
+        """Bind outside every typed span; managed infinity is observed as its
+        canonical literal unless ``wire_value`` supplies another observation."""
         index = len(self._binds)
         self._append(value)
         if not isinstance(wire_value, _NoWireBindOverride):
             self._wire_overrides[index] = wire_value
+        elif value is INFINITY:
+            self._wire_overrides[index] = INFINITY_LITERAL
 
     def bind_framework_all(self, values: Sequence[object]) -> None:
         for value in values:
@@ -386,7 +390,7 @@ class StatementBuilder:
         for row in rows:
             for value in row:
                 self._append(value)
-                if isinstance(value, TemporalBound):
+                if value is INFINITY:
                     self._wire_overrides[len(self._binds) - 1] = INFINITY_LITERAL
         signatures = tuple(
             tuple(
@@ -496,8 +500,8 @@ class StatementBuilder:
         if typed_slot is not None:
             neutral_type, form = typed_slot
             self._bind_typed(value, neutral_type, form)
-        elif isinstance(value, TemporalBound):
-            self.bind_framework(value, wire_value=INFINITY_LITERAL)
+        elif value is INFINITY:
+            self.bind_framework(value)
         elif isinstance(value, JsonDocument):
             self.bind_document(value)
         else:
@@ -507,9 +511,7 @@ class StatementBuilder:
         if slot is None or value is None:
             return None
         neutral_type, form = slot
-        if isinstance(value, TemporalBound) or (
-            neutral_type == TIMESTAMP and value == INFINITY_LITERAL
-        ):
+        if value is INFINITY or (neutral_type == TIMESTAMP and value == INFINITY_LITERAL):
             return None
         valid = (
             matches_neutral_type(value, neutral_type)

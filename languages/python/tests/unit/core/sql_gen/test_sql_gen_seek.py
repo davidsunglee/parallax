@@ -221,7 +221,8 @@ def test_an_open_temporal_bound_carrier_reports_the_canonical_infinity_literal()
     # sentinel rather than as an instant. It is a member of no declared value
     # space, so it crosses as a framework bind whose reported form is the
     # canonical `infinity` literal — the same treatment a written temporal row
-    # already takes — instead of being re-encoded as a `timestamp`.
+    # already takes — instead of being re-encoded as a `timestamp`. The Latest
+    # terms ahead of the seek bind the same managed sentinel.
     plan = _planned(POSITIONS, "Position", OrderKey(attr=_POSITION_VALID_END))
     node = plan.after(ContinuationCoordinate((INFINITY, 1)), limit=2)
     statement = _lowered(POSITIONS, node)
@@ -235,8 +236,10 @@ def test_an_open_temporal_bound_carrier_reports_the_canonical_infinity_literal()
     assert ") union all (select " in statement.sql
     assert "where t0.thru_z = ? and t0.out_z = ? and t0.thru_z is null" in statement.sql
     assert statement.sql.endswith("order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?")
-    assert statement.binds[2:5] == (INFINITY, INFINITY, INFINITY)
-    assert statement.wire_binds()[2:5] == (INFINITY_LITERAL,) * 3
+    assert statement.binds[:5] == (INFINITY,) * 5
+    assert statement.wire_binds()[:5] == (INFINITY_LITERAL,) * 5
+    typed = {index for span in statement.typed_bind_spans for index in span.indexes()}
+    assert typed.isdisjoint(range(5))
 
 
 def test_a_capture_alias_an_authored_column_already_spells_is_allocated_past() -> None:
@@ -385,15 +388,23 @@ def test_a_postgres_locking_history_joins_every_temporal_identity_column() -> No
         "u.parallax_seek_1 asc limit ? for share of t0"
     ) in statement.sql
     assert statement.binds == (
-        INFINITY_LITERAL,
-        INFINITY_LITERAL,
+        INFINITY,
+        INFINITY,
         INFINITY,
         INFINITY,
         INFINITY,
         1,
         2,
-        INFINITY_LITERAL,
-        INFINITY_LITERAL,
+        INFINITY,
+        INFINITY,
+        2,
+        2,
+    )
+    assert statement.wire_binds() == (
+        *(INFINITY_LITERAL,) * 5,
+        1,
+        2,
+        *(INFINITY_LITERAL,) * 2,
         2,
         2,
     )

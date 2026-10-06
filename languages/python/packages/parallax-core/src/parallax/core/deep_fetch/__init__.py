@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, NamedTuple
 
 from parallax.core import inheritance, navigate, relationship
-from parallax.core.base import INFINITY_LITERAL, ManagedValue
+from parallax.core.base import INFINITY, ManagedValue
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -316,9 +316,7 @@ def plan_coverage_read(
         start_ref = f"{root.identity.canonical}.{start.identity.name}"
         end_ref = f"{root.identity.canonical}.{end.identity.name}"
         if axis.dimension is TemporalDimension.TRANSACTION_TIME:
-            terms.append(
-                _framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY_LITERAL)
-            )
+            terms.append(_framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY))
             continue
         assert valid_from is not None  # a Valid-Time axis bounds every range over it
         terms.append(
@@ -366,9 +364,7 @@ def plan_target_read(
         start_ref = f"{root.identity.canonical}.{start.identity.name}"
         end_ref = f"{root.identity.canonical}.{end.identity.name}"
         if axis.dimension is TemporalDimension.TRANSACTION_TIME:
-            terms.append(
-                _framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY_LITERAL)
-            )
+            terms.append(_framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY))
             continue
         assert valid_from is not None  # a Bitemporal target states its start
         terms.append(

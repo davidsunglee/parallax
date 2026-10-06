@@ -18,6 +18,7 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core import predicate as oa
+from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.navigate import canonicalize_validated
@@ -142,7 +143,7 @@ def test_non_temporal_root_reaching_a_temporal_target_defaults_every_axis_to_lat
     op = oa.Exists(rel="Tenant.leases")
     where, binds = _where(op, LEASE, "Tenant")
     assert where == "exists (select 1 from lease t1 where t1.tenant_id = t0.id and t1.out_z = ?)"
-    assert binds == ("infinity",)
+    assert binds == (INFINITY,)
 
 
 def test_temporal_root_reaching_a_non_temporal_target_carries_no_as_of_term() -> None:
@@ -170,7 +171,7 @@ def test_bare_hop_over_a_temporal_target_gets_the_latest_default_both_axes() -> 
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id and t1.amount >= ? "
         "and t1.thru_z = ? and t1.out_z = ?) and t0.thru_z = ? and t0.out_z = ?"
     )
-    assert binds == (decimal.Decimal("600.00"), "infinity", "infinity", "infinity", "infinity")
+    assert binds == (decimal.Decimal("600.00"), INFINITY, INFINITY, INFINITY, INFINITY)
 
 
 def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:
@@ -185,7 +186,7 @@ def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id "
         "and t1.thru_z = ? and t1.out_z = ?) and t0.thru_z = ? and t0.out_z = ?"
     )
-    assert binds == ("infinity", "infinity", "infinity", "infinity")
+    assert binds == (INFINITY, INFINITY, INFINITY, INFINITY)
 
 
 # --------------------------------------------------------------------------- #
@@ -232,10 +233,10 @@ def test_root_pin_on_one_axis_only_still_defaults_the_other_to_latest() -> None:
     assert binds == (
         _B_MANAGED,
         _B_MANAGED,
-        "infinity",
+        INFINITY,
         _B_MANAGED,
         _B_MANAGED,
-        "infinity",
+        INFINITY,
     )
 
 
@@ -345,4 +346,4 @@ def test_polymorphic_temporal_relationship_target_resolves_axes_via_the_family_r
     assert where == (
         "exists (select 1 from lion t1 where t1.zoo_id = t0.id and t1.thru_z = ? and t1.out_z = ?)"
     )
-    assert binds == ("infinity", "infinity")
+    assert binds == (INFINITY, INFINITY)

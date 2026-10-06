@@ -7,7 +7,6 @@ from typing import Literal, Protocol, assert_never
 
 from parallax.core.base import (
     INFINITY,
-    INFINITY_LITERAL,
     ManagedValue,
     TemporalBound,
     normalize_instant,
@@ -407,7 +406,7 @@ def inject_resolved_as_of(
                 continue
             case ValidatedLatestSelection():
                 terms.append(
-                    _framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY_LITERAL)
+                    _framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY)
                 )
             case ValidatedAsOfSelection(coordinate=coordinate):
                 terms.extend(
@@ -504,7 +503,7 @@ def validated_hop_as_of_terms(
                     op="eq",
                     attr=f"{declarer.identity.canonical}.{end.identity.name}",
                     member=end,
-                    value=INFINITY_LITERAL,
+                    value=INFINITY,
                 )
             )
             continue

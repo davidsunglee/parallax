@@ -71,7 +71,6 @@ from parallax.core.storage_layout import (
     StorageLayoutFacet,
     TableLayout,
 )
-from parallax.core.wire import WireValue
 
 _COMPARATORS: dict[str, str] = {
     "eq": "=",
@@ -560,7 +559,7 @@ def _bind_member_literal(
     value = operands.values[index]
     if not subject.document_resident:
         if operands.form == "framework":
-            scope.ctx.bind_framework(value, wire_value=cast("WireValue", value))
+            scope.ctx.bind_framework(value)
         else:
             if operands.neutral_type is None:
                 raise SqlGenError("a managed Predicate operand has no declared neutral type")

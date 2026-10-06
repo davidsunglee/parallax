@@ -161,7 +161,7 @@ def test_an_optimistic_bitemporal_target_binds_every_interval_its_window_reaches
     assert coverage.sql.endswith(
         "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s"
     )
-    assert coverage.binds == (1, _MAR, _SEP, "infinity")
+    assert coverage.binds == (1, _MAR, _SEP, INFINITY_INSTANT)
     start, later_close, *opened = _writes(port)
     # The start's gate binds the caller's milestone, a later row's its own.
     assert (start.binds[2], start.binds[-1]) == (_JUN, _T0)
@@ -236,7 +236,7 @@ def test_a_locking_bitemporal_target_reads_its_start_at_the_call_and_writes_unga
             "where t0.id = %s and t0.from_z <= %s and t0.thru_z > %s and t0.out_z = %s "
             "for share of t0"
         )
-        assert acquired.binds == (1, _MAR, _MAR, "infinity")
+        assert acquired.binds == (1, _MAR, _MAR, INFINITY_INSTANT)
 
     _db(port).transact(fn, concurrency="locking")
     _acquired, coverage = _reads(port)
@@ -862,7 +862,7 @@ def test_disjoint_targets_of_one_rectangle_close_it_once_and_open_each_piece(
 
     _barriered(port).transact(fn, concurrency=concurrency)
     coverage = _reads(port)[-1]
-    assert coverage.binds == (1, _FEB, _AUG, "infinity")
+    assert coverage.binds == (1, _FEB, _AUG, INFINITY_INSTANT)
     close, *opened = _writes(port)
     if concurrency == "optimistic":
         assert close.binds[-1] == _T0
@@ -920,7 +920,7 @@ def test_a_barrier_keeps_each_disjoint_operation_on_its_own_side(
         "insert",
     ]
     later_read = _reads(port)[-1]
-    assert later_read.binds == (1, _JUN, _AUG, "infinity")
+    assert later_read.binds == (1, _JUN, _AUG, INFINITY_INSTANT)
     # The later operation's start now stands at a row the first unit derived
     # from the original the caller stated, which proves the caller's start:
     # its own row is revised in place, gated on nothing the caller stated.
