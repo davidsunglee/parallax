@@ -27,6 +27,7 @@ from typing import Any, ClassVar, cast
 import psycopg
 import psycopg_pool
 import pytest
+from psycopg.adapt import AdaptersMap
 from psycopg.pq import TransactionStatus
 from psycopg.rows import tuple_row
 
@@ -575,11 +576,12 @@ def test_a_successful_initialization_clears_the_refusal_on_record() -> None:
 
 
 class _Initializable:
-    """A connection whose initialization succeeds: the two settings and the loaders."""
+    """A connection whose initialization succeeds: the two settings and its own
+    adapter map over psycopg's defaults."""
 
     def __init__(self) -> None:
         self.info = _Info()
-        self.adapters = _Adapters()
+        self.adapters = AdaptersMap(psycopg.adapters)
 
 
 class _Info:
@@ -587,15 +589,6 @@ class _Info:
 
     def parameter_status(self, name: str) -> str | None:
         return "ISO, MDY" if name == "DateStyle" else None
-
-
-class _Adapters:
-    def __init__(self) -> None:
-        self.registered: list[str] = []
-
-    def register_loader(self, name: str, loader: object) -> None:
-        del loader
-        self.registered.append(name)
 
 
 def test_the_remaining_budget_is_what_the_native_checkout_is_given() -> None:
