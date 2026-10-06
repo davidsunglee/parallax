@@ -9,13 +9,15 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable, Sequence
 from decimal import Decimal
+from typing import Literal
 
 import pytest
 
 from parallax.core import inheritance, temporal_read
 from parallax.core import predicate as predicate_algebra
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.metamodel import EntityIdentity
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     KeyedMutation,
@@ -312,11 +314,35 @@ def _windows(bound: BoundRange) -> list[tuple[object, object, object]]:
     return windows
 
 
+def test_a_range_its_observations_leave_uncovered_reads_only_the_uncovered_suffix() -> None:
+    observed = _observed(
+        "updateUntil",
+        _retained(_rectangle(_JAN, _JUN, "100.00")),
+        valid_from=_MAR,
+        until=_SEP,
+        acctNum="O",
+    )
+    unit = _deferred_unit(observed)
+    assert unit.deferred is not None
+    window = unit.deferred.acquisition.valid_time_window
+    assert window == TimeInterval(_JUN, _SEP)
+    prepared = observed.instruction.valid_time_window
+    assert prepared is not None and window is not None
+    assert window.end is prepared.end
+
+
+def test_a_lone_target_range_reads_through_the_very_window_its_caller_prepared() -> None:
+    target = _target(value="150.00")
+    unit = _deferred_unit(target)
+    assert unit.deferred is not None
+    assert unit.deferred.acquisition.valid_time_window is target.instruction.valid_time_window
+
+
 def test_a_target_range_reads_its_window_and_gates_its_start_on_the_callers_revision() -> None:
     unit = _deferred_unit(_target(value="150.00"))
     assert unit.deferred is not None
     acquisition = unit.deferred.acquisition
-    assert (acquisition.valid_from, acquisition.until, acquisition.locking) == (_MAR, _SEP, False)
+    assert (acquisition.valid_time_window, acquisition.locking) == (TimeInterval(_MAR, _SEP), False)
     bound = _bound(unit, [_START.evidence.predecessor, _LATER.evidence.predecessor])  # type: ignore[union-attr]
     first, second = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert first.affected_rows.on_shortfall == FAILED_PRECONDITION
@@ -453,20 +479,20 @@ def test_writes_over_disjoint_windows_of_one_original_stay_separate_operations(
     assert isinstance(composed, ComposedTemporalWrite)
     # Each operation keeps its own window and its own condition: a caller's
     # stated start, or the rectangle its source observed.
-    assert [(c.bounds.valid_from, c.bounds.until) for c in composed.contributions] == [
-        first_window,
-        second_window,
+    assert [c.valid_time_window for c in composed.contributions] == [
+        TimeInterval(*first_window),
+        TimeInterval(*second_window),
     ]
     assert [c.condition is not None for c in composed.contributions] == [
         kind in "PR" for kind in (first_kind, second_kind)
     ]
     destroyed = {
-        (segment.start, segment.end)
+        segment.valid_time_window
         for segment in composed.transform.segments
         if segment.assigned is None
     }
     assert destroyed == {
-        window
+        TimeInterval(*window)
         for kind, window in ((first_kind, first_window), (second_kind, second_window))
         if kind == "D"
     }
@@ -621,7 +647,7 @@ def test_disjoint_targets_over_one_original_transform_it_once_under_one_guard() 
         _target(valid_from=_JUN, until=_AUG, value="175.00"),
     )
     assert unit.deferred is not None
-    assert (unit.deferred.acquisition.valid_from, unit.deferred.acquisition.until) == (_FEB, _AUG)
+    assert unit.deferred.acquisition.valid_time_window == TimeInterval(_FEB, _AUG)
     bound = _bound(unit, [_WHOLE.evidence.predecessor])  # type: ignore[union-attr]
     (close,) = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert close.affected_rows.on_shortfall == FAILED_PRECONDITION
@@ -724,12 +750,18 @@ def _endpoint(end: object) -> OwnedEndpoint:
 _LEFT = ((_JAN, _FEB), (_FEB, _APR), (_APR, INFINITY))
 
 
+def _lineage(
+    left: tuple[tuple[dt.datetime, dt.datetime | Literal[TemporalBound.INFINITY]], ...],
+) -> tuple[tuple[OwnedEndpoint, TimeInterval], ...]:
+    return tuple((_endpoint(end), TimeInterval(start, end)) for start, end in left)
+
+
 def _proven(original: RetainedObservation = _WHOLE) -> OpenedRows:
-    rows = tuple((_endpoint(end), start) for start, end in _LEFT)
+    rows = _lineage(_LEFT)
     return OpenedRows(
-        endpoints=frozenset(endpoint for endpoint, _start in rows),
-        proofs={original.key: Derivation(original.key, INFINITY, None, rows)},
-        descents={endpoint: Descent(start, original.key) for endpoint, start in rows},
+        endpoints=frozenset(endpoint for endpoint, _coverage in rows),
+        proofs={original.key: Derivation(original.key, TimeInterval(_JAN, INFINITY), None, rows)},
+        descents={endpoint: Descent(coverage, original.key) for endpoint, coverage in rows},
     )
 
 
@@ -741,7 +773,7 @@ def _opened(start: dt.datetime, value: str = "100.00", **cells: object) -> Prede
 def test_a_following_range_reads_its_whole_window_and_discharges_a_proven_start() -> None:
     unit = _chained_unit(_target(valid_from=_JUN, until=_AUG, value="175.00"), ownership=_proven())
     assert unit.deferred is not None
-    assert (unit.deferred.acquisition.valid_from, unit.deferred.acquisition.until) == (_JUN, _AUG)
+    assert unit.deferred.acquisition.valid_time_window == TimeInterval(_JUN, _AUG)
     bound = _bound(unit, [_opened(_APR)])
     # The start now stands at the row the earlier unit derived from the
     # original the caller stated; that row is the attempt's own, so it is
@@ -835,7 +867,8 @@ def test_a_leading_range_records_what_it_derived_from_each_original() -> None:
     (derivation,) = bound.derived
     assert derivation.original == _WHOLE.key
     assert derivation.owned is None
-    assert derivation.rows == tuple((_endpoint(end), start) for start, end in _LEFT)
+    assert derivation.rows == _lineage(_LEFT)
+    assert derivation.valid_time_coverage == TimeInterval(_JAN, INFINITY)
     plain = _deferred_unit(_target(valid_from=_FEB, until=_APR, value="150.00"))
     assert _bound(plain, [_WHOLE.evidence.predecessor]).derived == ()  # type: ignore[union-attr]
 
@@ -857,11 +890,11 @@ def _unproven_descent() -> OpenedRows:
 
 
 def _short_proof() -> OpenedRows:
-    rows = tuple((_endpoint(end), start) for start, end in _LEFT)
+    rows = _lineage(_LEFT)
     return OpenedRows(
-        endpoints=frozenset(endpoint for endpoint, _start in rows),
-        proofs={_WHOLE.key: Derivation(_WHOLE.key, _MAY, None, rows)},
-        descents={endpoint: Descent(start, _WHOLE.key) for endpoint, start in rows},
+        endpoints=frozenset(endpoint for endpoint, _coverage in rows),
+        proofs={_WHOLE.key: Derivation(_WHOLE.key, TimeInterval(_JAN, _MAY), None, rows)},
+        descents={endpoint: Descent(coverage, _WHOLE.key) for endpoint, coverage in rows},
     )
 
 
@@ -886,11 +919,11 @@ def test_a_following_start_whose_proof_names_another_state_is_the_callers_precon
 
 def test_a_following_range_fails_where_another_row_derived_from_its_original_is_gone() -> None:
     left = ((_JAN, _FEB), (_FEB, _APR), (_APR, _JUL), (_JUL, INFINITY))
-    rows = tuple((_endpoint(end), start) for start, end in left)
+    rows = _lineage(left)
     ownership = OpenedRows(
-        endpoints=frozenset(endpoint for endpoint, _start in rows),
-        proofs={_WHOLE.key: Derivation(_WHOLE.key, INFINITY, None, rows)},
-        descents={endpoint: Descent(start, _WHOLE.key) for endpoint, start in rows},
+        endpoints=frozenset(endpoint for endpoint, _coverage in rows),
+        proofs={_WHOLE.key: Derivation(_WHOLE.key, TimeInterval(_JAN, INFINITY), None, rows)},
+        descents={endpoint: Descent(coverage, _WHOLE.key) for endpoint, coverage in rows},
     )
     unit = _chained_unit(_target(valid_from=_JUN, until=_AUG, value="175.00"), ownership=ownership)
     # The start stands, but [July, infinity), derived from the same original

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from parallax.core.metamodel import EntityIdentity
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work.plan import Derivation, Descent, OwnedEndpoint
 from parallax.core.unit_work.planner import ObservedStateKey
 
@@ -36,14 +38,16 @@ class OpenedRows:
         return self.proofs.get(original)
 
     def descendants(
-        self, original: ObservedStateKey, start: object | None, until: object | None, /
-    ) -> tuple[tuple[OwnedEndpoint, Descent], ...]:
-        del start, until
-        return tuple(
-            (endpoint, descent)
-            for endpoint, descent in self.descents.items()
-            if descent.original == original
-        )
+        self, original: ObservedStateKey, valid_time_window: TimeInterval | None, /
+    ) -> Iterator[tuple[OwnedEndpoint, Descent]]:
+        for endpoint, descent in self.descents.items():
+            coverage = descent.valid_time_coverage
+            if descent.original == original and (
+                valid_time_window is None
+                or coverage is None
+                or coverage.overlaps(valid_time_window)
+            ):
+                yield endpoint, descent
 
     def descent(self, endpoint: OwnedEndpoint, /) -> Descent | None:
         return self.descents.get(endpoint)

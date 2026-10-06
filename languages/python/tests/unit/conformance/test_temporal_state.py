@@ -26,6 +26,7 @@ from parallax.conformance.temporal_state import (
 )
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     PlanningRequest,
     PredecessorRow,
@@ -362,8 +363,7 @@ def _acquisition(valid_from: dt.datetime, until: dt.datetime | None) -> RangeAcq
         entity=POSITION_ENTITY,
         key_attribute=key,
         key_value=1,
-        valid_from=valid_from,
-        until=until,
+        valid_time_window=TimeInterval(valid_from, INFINITY if until is None else until),
         locking=False,
     )
 

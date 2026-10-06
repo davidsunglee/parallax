@@ -8,7 +8,7 @@ from typing import Final, Literal, Protocol
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.temporal_read import Bitemporal, Pin
+from parallax.core.temporal_read import Bitemporal, Pin, TimeInterval
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     UPDATE_MUTATIONS,
@@ -23,10 +23,10 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
-    PreparedTemporalBounds,
     WriteInstructionError,
 )
 from parallax.core.unit_work.retain import InsertionIdentity
+from parallax.core.unit_work.uow import NO_INSERTION_AUTHORITY, NoInsertionAuthority
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -584,15 +584,16 @@ def keyed_write(
     resolved = source.resolve(meta, mutation)
     authoring = resolved.authoring
     anchor = (
-        None
+        NO_INSERTION_AUTHORITY
         if authoring is None or resolved.hint is not None
         else ctx.uow.insertion_authority(authoring)
     )
+    authorized = anchor is not NO_INSERTION_AUTHORITY
     validate_provenance(
         resolved.entity.identity,
         resolved.provenance,
         mutation,
-        inserted=anchor is not None,
+        inserted=authorized,
         representation=resolved.representation,
     )
     validate_source_pin(resolved.entity.identity, resolved.pin)
@@ -600,7 +601,7 @@ def keyed_write(
     prepared = source.prepare(resolved, valid_from=valid_from, until=until)
     if mutation in UPDATE_MUTATIONS and not prepared.assigned:
         return
-    if anchor is not None:
+    if authorized:
         ctx.uow.buffer(buffered_write(prepared.instruction, None, authority=authoring))
         return
     evidence = ctx.uow.resolve_write_evidence(
@@ -613,13 +614,13 @@ def source_start(
     ctx: KeyedWriteContext,
     resolved: ResolvedKeyedWriteSource,
     mutation: KeyedMutation,
-    anchor: PreparedTemporalBounds | None,
+    anchor: TimeInterval | NoInsertionAuthority | None,
 ) -> dt.datetime | None:
     """The Valid-Time start a source-backed write of a Bitemporal target
     begins at, or ``None`` for a target with no Valid Time.
 
-    A source an insertion's standing authority licenses starts at the
-    ``anchor`` that insertion was admitted with, however its coverage has been
+    A source an insertion's standing authority licenses starts at the start of
+    the ``anchor`` window that insertion was admitted with, however its coverage has been
     edited since. A source a read published starts at that read's finite
     Valid-Time pin, whatever its stored rectangle's own start: the read's
     coordinate is where the caller looked. Valid-Time ``LATEST`` selects the
@@ -632,8 +633,8 @@ def source_start(
     entity = resolved.entity
     if not isinstance(temporal_shape(ctx.model.meta, entity), Bitemporal):
         return None
-    if anchor is not None and anchor.valid_from is not None:
-        return anchor.valid_from
+    if isinstance(anchor, TimeInterval):
+        return anchor.start
     pin = resolved.pin
     valid_time = None if pin is None else pin.valid_time
     if isinstance(valid_time, dt.datetime):

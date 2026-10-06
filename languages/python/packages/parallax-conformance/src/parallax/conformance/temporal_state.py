@@ -394,26 +394,23 @@ class TemporalShadow:
         accounts for."""
         entity = acquisition.entity
         identity = (entity.identity.name, (acquisition.key_value,))
-        if acquisition.valid_from is None:
+        window = acquisition.valid_time_window
+        if window is None:
             return tuple(
                 observation.predecessor
                 for key, observation in self._current.items()
                 if key[:2] == identity
             )
-        valid_start, valid_end = _axis_names(model, entity, TemporalDimension.VALID_TIME)
-        window_start = _coordinate(acquisition.valid_from)
-        window_end = None if acquisition.until is None else _coordinate(acquisition.until)
+        shape = temporal_read.view(model).shape(entity.identity)
+        assert shape is not None  # the facet covers every accepted Entity
         covered: list[PredecessorRow] = []
         for key, observation in self._current.items():
             if key[:2] != identity:
                 continue
-            members = observation.predecessor.members
-            end = members[valid_end]
-            if end is not INFINITY and _coordinate(end) <= window_start:
-                continue
-            if window_end is not None and _coordinate(members[valid_start]) >= window_end:
-                continue
-            covered.append(observation.predecessor)
+            predecessor = observation.predecessor
+            coverage = temporal_read.valid_time_coverage(shape, predecessor, None)
+            if coverage is not None and coverage.overlaps(window):
+                covered.append(predecessor)
         return tuple(covered)
 
     def _track(self, key: _ObjectKey, observation: TemporalObservation) -> None:

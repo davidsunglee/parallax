@@ -7,6 +7,7 @@ from typing import Final, Protocol
 
 from parallax.core.base import ManagedValue
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work.planned import INFINITY, PlannedWrite, TemporalUpperBound
 from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey
 
@@ -146,26 +147,27 @@ class Derivation:
     effect that succeeded, or the shared lock the unit held — and the current
     rows it left in that original's place.
 
-    ``original`` is the exact state the unit found, ``end`` its Valid-Time end
-    (``None`` on a Transaction-Time-Only object), and ``owned`` its own address
-    where the attempt had opened it. ``rows`` holds each nonempty row the unit
-    derived from it, by address and Valid-Time start, a row revised in place
-    among them.
+    ``original`` is the exact state the unit found, ``valid_time_coverage`` the
+    Valid Time it covered (``None`` on a Transaction-Time-Only object), and
+    ``owned`` its own address where the attempt had opened it. ``rows`` holds
+    each nonempty row the unit derived from it, by address and the Valid Time
+    it covers, a row revised in place among them.
     """
 
     original: ObservedStateKey
-    end: object | None
+    valid_time_coverage: TimeInterval | None
     owned: OwnedEndpoint | None
-    rows: tuple[tuple[OwnedEndpoint, object | None], ...]
+    rows: tuple[tuple[OwnedEndpoint, TimeInterval | None], ...]
 
 
 @dataclass(frozen=True, slots=True)
 class Descent:
     """What one current row the attempt opened derives from within the running
-    flush: its Valid-Time ``start`` as opened, and the protected original that
-    stood before the flush began, through however many of its units."""
+    flush: the Valid Time it covers as opened (``None`` on a
+    Transaction-Time-Only object), and the protected original that stood before
+    the flush began, through however many of its units."""
 
-    start: object | None
+    valid_time_coverage: TimeInterval | None
     original: ObservedStateKey
 
 
@@ -194,12 +196,12 @@ class Ownership(Protocol):
         ...
 
     def descendants(
-        self, original: ObservedStateKey, start: object | None, until: object | None, /
-    ) -> tuple[tuple[OwnedEndpoint, Descent], ...]:
+        self, original: ObservedStateKey, valid_time_window: TimeInterval | None, /
+    ) -> Iterable[tuple[OwnedEndpoint, Descent]]:
         """The current rows the running flush derived from ``original``, which
-        it proved (:meth:`proven`), that may overlap Valid Time
-        ``[start, until)`` — every one of them where ``start`` is ``None`` — in
-        Valid-Time order; ``until`` is ``None`` through the open bound."""
+        it proved (:meth:`proven`), whose Valid Time overlaps
+        ``valid_time_window`` — every one of them where it is ``None`` — in
+        Valid-Time order. The traversal is consumed before ownership changes."""
         ...
 
     def descent(self, endpoint: OwnedEndpoint, /) -> Descent | None:
@@ -227,9 +229,9 @@ class _NoOwnership:
         return None
 
     def descendants(
-        self, original: ObservedStateKey, start: object | None, until: object | None, /
-    ) -> tuple[tuple[OwnedEndpoint, Descent], ...]:
-        del original, start, until
+        self, original: ObservedStateKey, valid_time_window: TimeInterval | None, /
+    ) -> Iterable[tuple[OwnedEndpoint, Descent]]:
+        del original, valid_time_window
         return ()
 
     def descent(self, endpoint: OwnedEndpoint, /) -> Descent | None:
@@ -261,16 +263,15 @@ class Completions:
 @dataclass(frozen=True, slots=True)
 class RangeAcquisition:
     """The current coverage a deferred range must read before it binds: one
-    object's current rows overlapping ``[valid_from, until)`` — through the open
-    bound when ``until`` is ``None`` — read under the shared row lock when
-    ``locking``. A Transaction-Time-Only object has no Valid Time, so its
-    bounds are both ``None`` and its one current row is the coverage."""
+    object's current rows overlapping ``valid_time_window``, read under the
+    shared row lock when ``locking``. A Transaction-Time-Only object has no
+    Valid Time, so its window is ``None`` and its one current row is the
+    coverage."""
 
     entity: EntityMetadata
     key_attribute: AttributeIdentity
     key_value: ManagedValue
-    valid_from: ManagedValue | None
-    until: ManagedValue | None
+    valid_time_window: TimeInterval | None
     locking: bool
 
 

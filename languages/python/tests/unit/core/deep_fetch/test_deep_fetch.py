@@ -50,6 +50,7 @@ from parallax.core.predicate import (
 )
 from parallax.core.predicate._validated import DeferredKeySet
 from parallax.core.sql_gen._compile import compile_read, compile_template
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
 from tests.unit._corpus_model_support import model as accepted_model
@@ -1117,7 +1118,7 @@ def test_an_acquisition_read_selects_current_transaction_time_by_managed_infinit
     jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     query = (
         deep_fetch.plan_coverage_read(
-            rate, model=RATE, key="id", key_value=1, valid_from=jan, until=None
+            rate, model=RATE, key="id", key_value=1, valid_time_window=TimeInterval(jan, INFINITY)
         )
         if read == "coverage"
         else deep_fetch.plan_target_read(rate, model=RATE, key="id", key_value=1, valid_from=jan)
@@ -1138,6 +1139,31 @@ def test_an_acquisition_read_selects_current_transaction_time_by_managed_infinit
     assert statement.wire_binds()[-1] == "infinity"
     typed = {index for span in statement.typed_bind_spans for index in span.indexes()}
     assert len(statement.binds) - 1 not in typed
+
+
+def test_a_coverage_read_bounds_valid_time_by_the_endpoints_of_the_window_it_is_handed() -> None:
+    rate = entity_of(RATE, "Rate")
+    jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    jun = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+
+    def valid_time_terms(window: TimeInterval) -> dict[str, tuple[object, ...]]:
+        query = deep_fetch.plan_coverage_read(
+            rate, model=RATE, key="id", key_value=1, valid_time_window=window
+        )
+        terms: dict[str, tuple[object, ...]] = {}
+        for term in query.validated_predicate.children:
+            authored = term.authored
+            if not isinstance(authored, Comparison) or term.operands is None:
+                continue
+            if authored.attr.endswith((".validStart", ".validEnd")):
+                terms[f"{authored.attr.rpartition('.')[2]} {authored.op}"] = term.operands.values
+        return terms
+
+    bounded = valid_time_terms(TimeInterval(jan, jun))
+    assert bounded == {"validEnd greaterThan": (jan,), "validStart lessThan": (jun,)}
+    assert bounded["validEnd greaterThan"][0] is jan
+    assert bounded["validStart lessThan"][0] is jun
+    assert valid_time_terms(TimeInterval(jan, INFINITY)) == {"validEnd greaterThan": (jan,)}
 
 
 def test_concrete_target_root_query_injects_a_pinned_axis() -> None:

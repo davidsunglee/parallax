@@ -28,11 +28,12 @@ from parallax.conformance.vo_models import (
     ContactPoint,
 )
 from parallax.core import LATEST, Attr, DomainModel, attr
-from parallax.core.base import DocumentValue, PresentDocument
+from parallax.core.base import INFINITY, DocumentValue, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import EntityRowCodec
 from parallax.core.metamodel import Metamodel
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import ObjectKey, WriteInstructionError
 from parallax.snapshot import InvalidData
 from parallax.snapshot.handle._typed_writes import (
@@ -289,7 +290,7 @@ def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
 
     prepared = source.prepare(resolved, valid_from=stated, until=None)
 
-    assert prepared.bounds.valid_from == _TX_START
+    assert prepared.valid_time_window == TimeInterval(_TX_START, INFINITY)
     with pytest.raises(WriteInstructionError, match="a bitemporal 'insert' requires valid_from"):
         source.prepare(resolved, valid_from=None, until=None)
 

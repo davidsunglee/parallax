@@ -50,9 +50,9 @@ __all__ = [
     "PredecessorStart",
     "SubjectActor",
     "SuccessorState",
+    "SuccessorWindow",
     "TemporalStrategy",
     "ValidTimeBound",
-    "ValidTimeWindow",
     "VersionArithmetic",
     "WriteEvidencePolicy",
     "concurrency_preference",
@@ -169,8 +169,9 @@ one topology while each supplies its own predecessor bounds.
 
 
 @dataclass(frozen=True, slots=True)
-class ValidTimeWindow:
-    """The half-open Valid-Time interval one successor covers."""
+class SuccessorWindow:
+    """Where one successor's half-open Valid-Time bounds come from — a
+    topology, not an interval: each names its source, never a value."""
 
     start: ValidTimeBound
     end: ValidTimeBound
@@ -217,7 +218,7 @@ class MilestoneSuccessor:
     """
 
     state: SuccessorState
-    valid_window: ValidTimeWindow | None = None
+    valid_window: SuccessorWindow | None = None
 
 
 @dataclass(frozen=True, slots=True)

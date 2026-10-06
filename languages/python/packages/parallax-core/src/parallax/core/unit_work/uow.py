@@ -3,18 +3,18 @@ from __future__ import annotations
 import bisect
 import datetime as dt
 import threading
-from collections.abc import Callable, Hashable, Iterable
+from collections.abc import Callable, Hashable, Iterable, Iterator
 from dataclasses import dataclass
 from enum import Enum
 from itertools import islice
 from types import TracebackType
-from typing import Final, Literal, Protocol
+from typing import Final, Literal, Protocol, final
 from weakref import WeakValueDictionary
 
 from parallax.core import inheritance
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.temporal_read import Edge
+from parallax.core.temporal_read import Edge, TimeInterval
 from parallax.core.unit_work.claims import (
     SELECTION_INTENT,
     ClaimScope,
@@ -33,7 +33,6 @@ from parallax.core.unit_work.instructions import (
     KeyedMutation,
     PreparedKeyedWrite,
     PreparedTargetWrite,
-    PreparedTemporalBounds,
 )
 from parallax.core.unit_work.materialized import (
     BufferItem,
@@ -71,7 +70,6 @@ from parallax.core.unit_work.retain import (
     RetainedObservation,
 )
 from parallax.core.unit_work.strategy import ActorIdentity, Concurrency, EvidencePolicyLookup
-from parallax.core.unit_work.temporal import TemporalTransform, covers, instant_order, precedes
 from parallax.core.unit_work.write_planner import (
     PendingWrites,
     PlanningRequest,
@@ -79,9 +77,11 @@ from parallax.core.unit_work.write_planner import (
 )
 
 __all__ = [
+    "NO_INSERTION_AUTHORITY",
     "WRITE_EVIDENCE_CODES",
     "BufferOutcome",
     "Concurrency",
+    "NoInsertionAuthority",
     "RollbackOnlyError",
     "StoredTarget",
     "TargetAcquisition",
@@ -322,8 +322,9 @@ class _TargetRecord:
     """What one attempt holds about one object it inserted.
 
     ``opener`` labels the interface that admitted the latest insertion, kept
-    for its caller's diagnostics, and ``bounds`` are the bounds it was admitted
-    with — the anchor every write it authorizes starts at. ``identity`` is the
+    for its caller's diagnostics, and ``valid_time_window`` is the window it was
+    admitted with, ``None`` for an object without Valid Time — its start is the
+    anchor every write it authorizes starts at. ``identity`` is the
     authority that insertion grants while it stands, and ``None`` once its
     complete removal retired it. ``pending_insert`` lasts until the next flush.
 
@@ -334,46 +335,85 @@ class _TargetRecord:
     ``floor`` is the earliest anchor of any admission whose coverage may still
     be stored — once a flush executes an insertion, its own anchor, since what
     an earlier admission opened was removed before it — and ``advanced_from``
-    the version the last completed update of a versioned row advanced from. A
-    record lasts until the attempt ends, whatever became of the insertion: it
-    is also the fact that this attempt admitted one.
+    the version the last completed update of a versioned row advanced from.
+    ``removal`` keeps the stored removal window once it is asked for
+    (:meth:`_TargetWriteState.removal_window`), until what it derives from
+    changes. A record lasts until the attempt ends, whatever became of the
+    insertion: it is also the fact that this attempt admitted one.
     """
 
     __slots__ = (
         "advanced_from",
         "bitemporal",
-        "bounds",
         "floor",
         "identity",
         "live",
         "opener",
         "pending_insert",
+        "removal",
         "row",
+        "valid_time_window",
     )
 
     def __init__(
         self,
         opener: Hashable | None,
-        bounds: PreparedTemporalBounds,
+        valid_time_window: TimeInterval | None,
         identity: InsertionIdentity,
         *,
         bitemporal: bool,
     ) -> None:
         self.opener = opener
-        self.bounds = bounds
+        self.valid_time_window = valid_time_window
         self.identity: InsertionIdentity | None = identity
         self.pending_insert = True
         self.bitemporal = bitemporal
         self.row = False
         self.live = 0
-        self.floor = bounds.valid_from
+        self.floor = _window_start(valid_time_window)
         self.advanced_from: int | None = None
+        self.removal: TimeInterval | _Uncomputed = _UNCOMPUTED
+
+    def set_floor(self, floor: dt.datetime | None) -> None:
+        """Retain ``floor`` as the earliest stored anchor, dropping a removal
+        window derived from the previous one."""
+        if floor != self.floor:
+            self.floor = floor
+            self.removal = _UNCOMPUTED
 
     @property
     def stored(self) -> bool:
         """Whether anything an admitted insertion of the object opened may
         still be stored."""
         return self.live > 0 if self.bitemporal else self.row
+
+
+@final
+class _Uncomputed:
+    """The removal window a record has not derived since what it derives from
+    last changed — distinct from every window, and from a missing Valid-Time
+    axis."""
+
+    __slots__ = ()
+
+
+_UNCOMPUTED: Final = _Uncomputed()
+
+
+@final
+class NoInsertionAuthority:
+    """The answer :meth:`UnitOfWork.insertion_authority` gives where no admitted
+    insertion's authority stands: distinct from the ``None`` window of a
+    standing insertion without Valid Time."""
+
+    __slots__ = ()
+
+
+NO_INSERTION_AUTHORITY: Final = NoInsertionAuthority()
+
+
+def _window_start(window: TimeInterval | None) -> dt.datetime | None:
+    return None if window is None else window.start
 
 
 type _Address = tuple[EntityIdentity, tuple[object, ...]]
@@ -425,15 +465,18 @@ class _TargetWriteState:
         return None if proofs is None else proofs.get(original)
 
     def descendants(
-        self, original: ObservedStateKey, start: object | None, until: object | None, /
-    ) -> tuple[tuple[OwnedEndpoint, Descent], ...]:
+        self, original: ObservedStateKey, valid_time_window: TimeInterval | None, /
+    ) -> Iterator[tuple[OwnedEndpoint, Descent]]:
         continuity = self._continuity
         assert continuity is not None  # a proven original's rows are kept
         descents = continuity.descents
-        return tuple(
-            (endpoint, descents[endpoint])
-            for endpoint in continuity.lineage[original].overlapping(start, until)
-        )
+        for endpoint in continuity.lineage[original].reaching(valid_time_window):
+            descent = descents[endpoint]
+            coverage = descent.valid_time_coverage
+            if valid_time_window is None or (
+                coverage is not None and coverage.overlaps(valid_time_window)
+            ):
+                yield endpoint, descent
 
     def descent(self, endpoint: OwnedEndpoint, /) -> Descent | None:
         continuity = self._continuity
@@ -451,22 +494,22 @@ class _TargetWriteState:
         self,
         target: ObjectKey,
         opener: Hashable | None,
-        bounds: PreparedTemporalBounds,
+        valid_time_window: TimeInterval | None,
         *,
         bitemporal: bool,
     ) -> InsertionIdentity:
         identity = InsertionIdentity(target)
         record = self._records.get(target)
         if record is None:
-            record = _TargetRecord(opener, bounds, identity, bitemporal=bitemporal)
+            record = _TargetRecord(opener, valid_time_window, identity, bitemporal=bitemporal)
             self._records[target] = record
             if bitemporal:
                 self._addresses[_address(target)] = record
             return identity
         if not record.stored:
-            record.floor = bounds.valid_from
+            record.set_floor(_window_start(valid_time_window))
         record.opener = opener
-        record.bounds = bounds
+        record.valid_time_window = valid_time_window
         record.identity = identity
         record.pending_insert = True
         record.advanced_from = None
@@ -488,18 +531,38 @@ class _TargetWriteState:
         record.identity = None
         record.pending_insert = False
 
-    def max_end(self, record: _TargetRecord) -> object:
+    def removal_window(self, record: _TargetRecord) -> TimeInterval:
+        """The Valid Time a removal of everything a Bitemporal ``record``'s
+        admissions left stored must destroy: from its retained floor to the
+        latest end among the owned rows they opened, the open bound included.
+
+        It encloses that coverage rather than tracing it, and is derived when
+        first asked, then kept on the record until a row it derives from is
+        tagged or retired or the floor moves.
+        """
+        removal = record.removal
+        if isinstance(removal, TimeInterval):
+            return removal
+        floor = record.floor
+        assert floor is not None  # a Bitemporal opening states its start
+        removal = record.removal = TimeInterval(floor, self._latest_end(record))
+        return removal
+
+    def _latest_end(self, record: _TargetRecord) -> dt.datetime | Literal[TemporalBound.INFINITY]:
         """The latest Valid-Time end among the owned rows ``record``'s
-        admissions opened, the open bound included."""
-        latest: object | None = None
-        for endpoint, _tag in self._tags.items():
+        admissions opened, each physical end read as its managed endpoint; the
+        open bound where one runs on, or where none is tagged."""
+        latest: dt.datetime | None = None
+        for endpoint in self._tags:
             if self._addresses.get((endpoint.entity, endpoint.key)) is not record:
                 continue
             end = endpoint.ends[0]
             if not isinstance(end, Finite):
                 return INFINITY
-            if latest is None or precedes(latest, end.instant):
-                latest = end.instant
+            instant = end.instant
+            assert isinstance(instant, dt.datetime)  # a finite Valid-Time end is an instant
+            if latest is None or instant > latest:
+                latest = instant
         return INFINITY if latest is None else latest
 
     def advanced(self, state: VersionedStateKey) -> None:
@@ -520,7 +583,7 @@ class _TargetWriteState:
             if record.pending_insert:
                 record.pending_insert = False
                 record.row = True
-                record.floor = record.bounds.valid_from
+                record.set_floor(_window_start(record.valid_time_window))
 
     def complete(
         self,
@@ -575,6 +638,7 @@ class _TargetWriteState:
                 continue
             record = self._addresses[(endpoint.entity, endpoint.key)]
             record.live -= 1
+            record.removal = _UNCOMPUTED
             if not record.live:
                 drained.append((record, tag))
         return drained
@@ -592,6 +656,7 @@ class _TargetWriteState:
         if record is not None and record.identity is not None:
             self._tags[endpoint] = record.identity
             record.live += 1
+            record.removal = _UNCOMPUTED
 
     def clear(self) -> None:
         self._records.clear()
@@ -652,16 +717,16 @@ class _Continuity:
                 rows = self.lineage[original] = _Lineage()
             # A row revised in place is re-derived at its own address, so what
             # it descended from is forgotten before any row is added again.
-            for endpoint, _start in derivation.rows:
+            for endpoint, _coverage in derivation.rows:
                 self.forget(endpoint)
-            for endpoint, start in derivation.rows:
-                self.descents[endpoint] = Descent(start, original)
-                rows.add(endpoint, start)
+            for endpoint, coverage in derivation.rows:
+                self.descents[endpoint] = Descent(coverage, original)
+                rows.add(endpoint, coverage)
 
     def forget(self, endpoint: OwnedEndpoint) -> None:
         descent = self.descents.pop(endpoint, None)
         if descent is not None:
-            self.lineage[descent.original].discard(endpoint, descent.start)
+            self.lineage[descent.original].discard(endpoint, descent.valid_time_coverage)
 
     def release(self, target: ObjectKey) -> None:
         """Drop everything proven about ``target``: its last consumer is done."""
@@ -676,7 +741,9 @@ class _Lineage:
 
     They are pieces of one original's coverage and so never overlap, which is
     what lets a range find the ones its window may reach by their starts alone
-    rather than by visiting every row the original's units left.
+    rather than by visiting every row the original's units left. An original
+    without Valid Time has one current row at a time, keyed at the earliest
+    instant.
     """
 
     __slots__ = ("_keys", "_rows")
@@ -685,14 +752,14 @@ class _Lineage:
         self._keys: list[dt.datetime] = []
         self._rows: list[OwnedEndpoint] = []
 
-    def add(self, endpoint: OwnedEndpoint, start: object | None) -> None:
-        key = instant_order(start)
+    def add(self, endpoint: OwnedEndpoint, coverage: TimeInterval | None) -> None:
+        key = _lineage_key(coverage)
         position = bisect.bisect_right(self._keys, key)
         self._keys.insert(position, key)
         self._rows.insert(position, endpoint)
 
-    def discard(self, endpoint: OwnedEndpoint, start: object | None) -> None:
-        position = bisect.bisect_left(self._keys, instant_order(start))
+    def discard(self, endpoint: OwnedEndpoint, coverage: TimeInterval | None) -> None:
+        position = bisect.bisect_left(self._keys, _lineage_key(coverage))
         assert self._rows[position] == endpoint  # no two current pieces share a start
         del self._keys[position]
         del self._rows[position]
@@ -701,39 +768,31 @@ class _Lineage:
     def rows(self) -> list[OwnedEndpoint]:
         return self._rows
 
-    def overlapping(self, start: object | None, until: object | None) -> list[OwnedEndpoint]:
-        """The rows that may overlap ``[start, until)``: those starting before
-        ``until``, from the last one starting at or before ``start``."""
-        if start is None:
-            return list(self._rows)
+    def reaching(self, window: TimeInterval | None) -> Iterator[OwnedEndpoint]:
+        """The rows that may overlap ``window``, every one where it is
+        ``None``: those starting before its end, from the last one starting at
+        or before its start."""
+        rows = self._rows
+        if window is None:
+            yield from rows
+            return
         keys = self._keys
-        first = max(bisect.bisect_right(keys, instant_order(start)) - 1, 0)
-        last = len(keys) if until is None else bisect.bisect_left(keys, instant_order(until))
-        return self._rows[first:last]
+        first = max(bisect.bisect_right(keys, window.start) - 1, 0)
+        end = window.end
+        last = len(keys) if end is INFINITY else bisect.bisect_left(keys, end)
+        for position in range(first, last):
+            yield rows[position]
+
+
+_AXISLESS: Final = dt.datetime.min.replace(tzinfo=dt.UTC)
+
+
+def _lineage_key(coverage: TimeInterval | None) -> dt.datetime:
+    return _AXISLESS if coverage is None else coverage.start
 
 
 def _address(target: ObjectKey) -> _Address:
     return (target.entity, tuple(value for _name, value in target.primary_key))
-
-
-def _destroys(transforms: Iterable[TemporalTransform], start: object, end: object) -> bool:
-    """Whether ``transforms`` together destroy all coverage in [start, end)."""
-    destroyed = tuple(
-        sorted(
-            (
-                (segment.start, segment.end)
-                for transform in transforms
-                for segment in transform.segments
-                if segment.assigned is None
-            ),
-            key=_start_order,
-        )
-    )
-    return bool(destroyed) and covers(destroyed, start, end) is None
-
-
-def _start_order(interval: tuple[object, object]) -> dt.datetime:
-    return instant_order(interval[0])
 
 
 class UnitOfWork:
@@ -918,7 +977,7 @@ class UnitOfWork:
             targets.open_insert(
                 key,
                 opener,
-                instruction.bounds,
+                instruction.valid_time_window,
                 bitemporal=self._pending.is_bitemporal_target(instruction),
             )
             return BufferOutcome.BUFFERED
@@ -1024,10 +1083,10 @@ class UnitOfWork:
         Otherwise a live read of the state this attempt holds does, else
         ``acquire`` reads it.
         """
-        bounds = item.instruction.bounds
-        if self._pending.states_window(key, bounds):
+        window = item.instruction.valid_time_window
+        if self._pending.states_window(key, window):
             return
-        valid_from = bounds.valid_from
+        valid_from = _window_start(window)
         if self._participates(
             TemporalStateKey(key, Edge(tx_time=expectation.instant, valid_time=valid_from))
         ):
@@ -1086,16 +1145,13 @@ class UnitOfWork:
         """
         if not record.pending_insert:
             return record.stored and self._removes_stored(key, record)
-        bounds = record.bounds
-        assert not record.bitemporal or bounds.valid_from is not None  # it states its start
+        if not record.bitemporal or self._pending.folds_into_opening(key):
+            return False
+        window = record.valid_time_window
+        assert window is not None  # a Bitemporal opening states its window
         return (
-            record.bitemporal
-            and not self._pending.folds_into_opening(key)
-            and _destroys(
-                self._pending.transforms(key, after_opening=True),
-                bounds.valid_from,
-                INFINITY if bounds.until is None else bounds.until,
-            )
+            window.first_uncovered(self._pending.destroyed_coverage(key, after_opening=True))
+            is None
         )
 
     def _removes_stored(self, key: ObjectKey, record: _TargetRecord) -> bool:
@@ -1110,9 +1166,8 @@ class UnitOfWork:
         """
         if not record.bitemporal:
             return self._pending.removes(key)
-        floor = record.floor
-        assert floor is not None  # a Bitemporal opening states its start
-        return _destroys(self._pending.transforms(key), floor, self._targets.max_end(record))
+        window = self._targets.removal_window(record)
+        return window.first_uncovered(self._pending.destroyed_coverage(key)) is None
 
     def insertion_identity(self, target: ObjectKey) -> InsertionIdentity | None:
         """The authority the standing admitted insertion of ``target`` grants,
@@ -1122,15 +1177,19 @@ class UnitOfWork:
         record = self._targets.record(target)
         return None if record is None else record.identity
 
-    def insertion_authority(self, identity: InsertionIdentity) -> PreparedTemporalBounds | None:
-        """The bounds the insertion ``identity`` names was admitted with — where
-        a write it authorizes starts — while its authority stands in this unit
-        of work, or ``None`` once it does not: never issued here, retired by the
-        complete removal of what it opened, or superseded by a later insertion
-        of the same object."""
+    def insertion_authority(
+        self, identity: InsertionIdentity
+    ) -> TimeInterval | NoInsertionAuthority | None:
+        """The Valid-Time window the insertion ``identity`` names was admitted
+        with — whose start is where a write it authorizes starts — while its
+        authority stands in this unit of work, ``None`` for a standing insertion
+        of an object without Valid Time, or :data:`NO_INSERTION_AUTHORITY` once
+        it does not stand: never issued here, retired by the complete removal of
+        what it opened, or superseded by a later insertion of the same
+        object."""
         self._ensure_open()
         record = self._targets.authority(identity)
-        return None if record is None else record.bounds
+        return NO_INSERTION_AUTHORITY if record is None else record.valid_time_window
 
     def opened_by(self, target: ObjectKey) -> Hashable | None:
         """The label of the admitted insertion of ``target`` that a further

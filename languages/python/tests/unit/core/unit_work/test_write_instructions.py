@@ -26,9 +26,10 @@ from parallax.conformance import models
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import JSON, InstantError
+from parallax.core.base import INFINITY, JSON, InstantError
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel import Table
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import WriteRejectedError
 from parallax.core.unit_work import instructions as wi
 from parallax.core.unit_work.planned import UNVERSIONED
@@ -980,7 +981,9 @@ def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
     )
     prepared = wi.prepare_typed_write(instruction, _POSITION)
     assert isinstance(prepared, wi.PreparedKeyedWrite)
-    assert prepared.bounds.valid_from == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert prepared.valid_time_window == TimeInterval(
+        dt.datetime(2024, 1, 1, tzinfo=dt.UTC), INFINITY
+    )
     assert isinstance(instruction.valid_from, dt.datetime)
 
     serialized = wi.serialize(instruction)
@@ -989,7 +992,7 @@ def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
         wi.deserialize({**serialized, "rows": [{"id": 1, "value": "5.00"}]}),
         _POSITION,
     )
-    assert wire_prepared.bounds == prepared.bounds
+    assert wire_prepared.valid_time_window == prepared.valid_time_window
 
 
 @pytest.mark.parametrize("prepare", [wi.prepare_typed_write, wi.prepare_wire_write])
@@ -1959,15 +1962,15 @@ def test_a_prepared_write_has_no_field_constructor() -> None:
     assert isinstance(prepared, wi.PreparedKeyedWrite)
     with pytest.raises(TypeError):
         cast("Any", wi.PreparedKeyedWrite)(
-            prepared.mutation, prepared.target, prepared.rows, prepared.bounds
+            prepared.mutation, prepared.target, prepared.rows, prepared.valid_time_window
         )
     with pytest.raises(TypeError):
-        cast("Any", wi.PreparedPredicateWrite)("delete", None, (), prepared.bounds)
+        cast("Any", wi.PreparedPredicateWrite)("delete", None, (), prepared.valid_time_window)
     derived = wi.derive_keyed_write(prepared, ({"id": 2},))
-    assert (derived.mutation, derived.target, derived.bounds) == (
+    assert (derived.mutation, derived.target, derived.valid_time_window) == (
         prepared.mutation,
         prepared.target,
-        prepared.bounds,
+        prepared.valid_time_window,
     )
     assert derived.rows == ({"id": 2},)
 
@@ -2080,7 +2083,81 @@ def test_both_producers_normalize_an_aware_bound_to_utc(prepare: Any) -> None:
         wi.KeyedWrite("terminateUntil", "Position", ({"id": 1},), valid_from=stated, until=_I2),
         _POSITION,
     )
-    assert prepared.bounds == wi.PreparedTemporalBounds(_I1, _I2)
+    assert prepared.valid_time_window == TimeInterval(_I1, _I2)
+
+
+@_PRODUCERS
+@pytest.mark.parametrize(
+    ("instruction", "model"),
+    [
+        pytest.param(wi.KeyedWrite("update", "Account", ({"id": 1},)), _ACCOUNT, id="non-temporal"),
+        pytest.param(
+            wi.KeyedWrite("terminate", "Balance", ({"id": 1},)), _BALANCE, id="transaction-time"
+        ),
+        pytest.param(
+            wi.PredicateWrite(
+                "terminate", wi.PredicateSelection("Balance", predicate_algebra.All()), ()
+            ),
+            _BALANCE,
+            id="transaction-time-predicate",
+        ),
+    ],
+)
+def test_a_write_without_valid_time_prepares_no_window(
+    prepare: Any, instruction: wi.WriteInstruction, model: AcceptedMetamodel
+) -> None:
+    assert prepare(instruction, model).valid_time_window is None
+
+
+@_PRODUCERS
+def test_an_omitted_until_prepares_a_window_through_the_managed_open_end(prepare: Any) -> None:
+    prepared = prepare(
+        wi.KeyedWrite("terminate", "Position", ({"id": 1},), valid_from=_I1), _POSITION
+    )
+    assert prepared.valid_time_window == TimeInterval(_I1, INFINITY)
+    assert prepared.valid_time_window.end is INFINITY
+
+
+def test_derived_writes_share_the_prepared_window_rather_than_judge_it_again() -> None:
+    prepared = wi.prepare_typed_write(
+        wi.KeyedWrite(
+            "updateUntil", "Position", ({"id": 1, "value": 5},), valid_from=_I1, until=_I2
+        ),
+        _POSITION,
+    )
+    assert isinstance(prepared, wi.PreparedKeyedWrite)
+    window = prepared.valid_time_window
+    assert window is not None
+    assert wi.derive_keyed_write(prepared, ({"id": 2, "value": 5},)).valid_time_window is window
+    piece = TimeInterval(_I1, INFINITY)
+    opened = wi.derive_opening(prepared, {"id": 1, "value": 5}, valid_time_window=piece)
+    assert (opened.mutation, opened.valid_time_window) == ("insert", piece)
+    assert opened.valid_time_window is piece
+    bounded = wi.derive_opening(prepared, {"id": 1, "value": 5}, valid_time_window=window)
+    assert bounded.mutation == "insertUntil"
+
+
+@pytest.mark.parametrize(
+    ("until", "mutation"), [pytest.param(None, "update"), pytest.param(_I2, "updateUntil")]
+)
+def test_a_target_executes_as_the_keyed_update_its_shared_window_names(
+    until: dt.datetime | None, mutation: wi.TargetMutation
+) -> None:
+    prepared = wi.prepare_typed_write(
+        _target(
+            mutation,
+            "Position",
+            {"id": 1, "value": 5},
+            if_tx_start=_I1,
+            valid_from=_I1,
+            until=until,
+        ),
+        _POSITION,
+    )
+    assert isinstance(prepared, wi.PreparedTargetWrite)
+    keyed = wi.target_instruction(prepared)
+    assert keyed.mutation == mutation
+    assert keyed.valid_time_window is prepared.valid_time_window
 
 
 @_PRODUCERS

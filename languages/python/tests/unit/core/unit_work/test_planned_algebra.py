@@ -658,7 +658,7 @@ def test_an_attempt_that_opened_nothing_has_proved_and_derived_nothing() -> None
     endpoint = OwnedEndpoint(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
     state = VersionedStateKey(ObjectKey(_ACCOUNT, (("id", 1),)), 1)
     assert NO_OWNERSHIP.proven(state) is None
-    assert NO_OWNERSHIP.descendants(state, None, None) == ()
+    assert tuple(NO_OWNERSHIP.descendants(state, None)) == ()
     assert NO_OWNERSHIP.descent(endpoint) is None
 
 

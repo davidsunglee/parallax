@@ -21,9 +21,10 @@ from typing import Final, cast
 import pytest
 
 from parallax.core import DomainModel
-from parallax.core.base import SQL_NULL
+from parallax.core.base import INFINITY, SQL_NULL
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import Metamodel
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import ObjectKey, instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite
 from parallax.snapshot.handle._wire_writes import (
@@ -279,7 +280,7 @@ def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
 
     prepared = source.prepare(resolved, valid_from=stated, until=None)
 
-    assert prepared.bounds.valid_from == _TX_START
+    assert prepared.valid_time_window == TimeInterval(_TX_START, INFINITY)
     with pytest.raises(
         instructions.WriteInstructionError, match="a bitemporal 'insert' requires valid_from"
     ):

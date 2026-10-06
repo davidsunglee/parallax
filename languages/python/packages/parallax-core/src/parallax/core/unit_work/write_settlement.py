@@ -35,8 +35,10 @@ from parallax.core.temporal_read import (
     Bitemporal,
     TemporalFacet,
     TemporalShape,
+    TimeInterval,
     TransactionTimeOnly,
     milestone_edge,
+    valid_time_coverage,
 )
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.columns import ColumnSlice
@@ -51,7 +53,6 @@ from parallax.core.unit_work.instructions import (
     PreparedAssignment,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
-    PreparedTemporalBounds,
     PreparedWrite,
 )
 from parallax.core.unit_work.materialized import (
@@ -163,11 +164,7 @@ from parallax.core.unit_work.temporal import (
     ResolvedSuccessor,
     TemporalTransform,
     bind_successor,
-    covers,
-    instant_order,
-    is_open_bound,
     literal_successor,
-    precedes,
     resolve_successors,
     successor_bounds,
 )
@@ -860,7 +857,7 @@ class WriteSettlement:
             entity,
             shape,
             instruction.mutation,
-            instruction.bounds,
+            instruction.valid_time_window,
             observed=observed is not None,
             concurrency=concurrency,
             tx_instant=tx_instant,
@@ -920,7 +917,7 @@ class WriteSettlement:
         entity: EntityMetadata,
         shape: TransactionTimeOnly | Bitemporal,
         mutation: str,
-        bounds: PreparedTemporalBounds,
+        valid_time_window: TimeInterval | None,
         *,
         observed: bool,
         concurrency: Concurrency,
@@ -975,7 +972,7 @@ class WriteSettlement:
             instant=tx_instant.value(),
             close=close,
             resolved_successors=resolve_successors(
-                topology.successors, valid_from=bounds.valid_from, until=bounds.until
+                topology.successors, valid_time_window=valid_time_window
             ),
         )
 
@@ -1141,7 +1138,7 @@ class WriteSettlement:
             entity,
             shape,
             group.mutation.mutation,
-            group.mutation.bounds,
+            group.mutation.valid_time_window,
             observed=True,
             concurrency=concurrency,
             tx_instant=tx_instant,
@@ -1211,13 +1208,10 @@ class WriteSettlement:
         observation = item.observation
         if not isinstance(observation, TemporalObservation):
             return None
-        predecessor = observation.predecessor
-        bounds = instruction.bounds
-        start = predecessor.cell(shape.valid_time.start_attribute)
-        end = predecessor.cell(shape.valid_time.end_attribute)
-        assert bounds.valid_from is not None  # a Bitemporal write states its start
-        until = TemporalBound.INFINITY if bounds.until is None else bounds.until
-        if not precedes(bounds.valid_from, start) and not precedes(end, until):
+        window = instruction.valid_time_window
+        coverage = valid_time_coverage(shape, observation.predecessor, None)
+        assert window is not None and coverage is not None  # a Bitemporal write and its row
+        if coverage.contains(window):
             return None
         view = _view(self._families, instruction.target)
         return composed_alone(item, view.primary_key.identity.name)
@@ -1272,9 +1266,11 @@ class WriteSettlement:
         originals, validations = _known_originals(composed, facts, object_key)
         claims = _claims(composed)
         chained = composed if isinstance(composed, ChainedTemporalWrite) else None
+        window = composed.transform.enclosing_window()
         binding = _RangeBinding(
             facts=facts,
             transform=composed.transform,
+            valid_time_window=window,
             gated=gated,
             key_attribute=key_attribute,
             key_value=key_value,
@@ -1284,10 +1280,8 @@ class WriteSettlement:
             anchor=_anchor(composed),
             conditions=_conditions(composed),
             derives=chained is not None and chained.leads,
-            addressed=_addressed(composed),
             guards=guards,
         )
-        transform = composed.transform
         if chained is not None and chained.follows:
             return _DeferredTemporalRange(
                 binding=binding,
@@ -1298,25 +1292,17 @@ class WriteSettlement:
                     entity=entity,
                     key_attribute=key_attribute,
                     key_value=cast("ManagedValue", key_value),
-                    valid_from=cast("ManagedValue | None", transform.start),
-                    until=(
-                        None
-                        if transform.end is None or is_open_bound(transform.end)
-                        else cast("ManagedValue", transform.end)
-                    ),
+                    valid_time_window=window,
                     locking=not gated,
                 ),
                 continued=True,
             )
-        uncovered: object | None = None
-        if isinstance(shape, Bitemporal):
-            assert transform.start is not None and transform.end is not None
-            uncovered = covers(
-                tuple((original.start, original.end) for original in originals),
-                transform.start,
-                transform.end,
-            )
+        requested = window
+        if window is not None:
+            uncovered = window.first_uncovered(_valid_time_coverages(originals))
             reached = uncovered is not None
+            if uncovered is not None:
+                requested = window.clipped(start=uncovered)
         else:
             reached = not originals
         if reached:
@@ -1329,12 +1315,7 @@ class WriteSettlement:
                     entity=entity,
                     key_attribute=key_attribute,
                     key_value=cast("ManagedValue", key_value),
-                    valid_from=cast("ManagedValue | None", uncovered),
-                    until=(
-                        None
-                        if transform.end is None or is_open_bound(transform.end)
-                        else cast("ManagedValue", transform.end)
-                    ),
+                    valid_time_window=requested,
                     locking=not gated,
                 ),
             )
@@ -1600,7 +1581,7 @@ class _MaterializedTemporalSegment:
         if not isinstance(self.facts.shape, Bitemporal):
             return False
         start, end = self._bounds(row_index, position)
-        return not _is_open(end) and end == start
+        return end is not TemporalBound.INFINITY and end == start
 
     def _bounds(self, row_index: int, position: int) -> tuple[object, object]:
         shape = self.facts.shape
@@ -2080,14 +2061,9 @@ def _target_endpoint(facts: _TemporalFacts, target: MilestoneTarget) -> OwnedEnd
 
 
 def _bitemporal_ends(valid_end: object) -> tuple[TemporalUpperBound, ...]:
-    if _is_open(valid_end):
+    if valid_end is TemporalBound.INFINITY:
         return OPEN_BITEMPORAL_ENDS
     return (Finite(instant=valid_end), INFINITY)
-
-
-def _is_open(bound: object) -> bool:
-    """Whether one axis end cell is the open upper bound."""
-    return bound is TemporalBound.INFINITY
 
 
 def _is_empty(facts: _TemporalFacts, successor: PlannedInsert) -> bool:
@@ -2102,7 +2078,7 @@ def _is_empty(facts: _TemporalFacts, successor: PlannedInsert) -> bool:
         return False
     row = successor.entries[0].row.attributes
     end = row[shape.valid_time.end_attribute]
-    return not _is_open(end) and end == row[shape.valid_time.start_attribute]
+    return end is not TemporalBound.INFINITY and end == row[shape.valid_time.start_attribute]
 
 
 def _predecessor_maps(
@@ -2598,13 +2574,12 @@ class _SettledRange:
 @dataclass(frozen=True, slots=True)
 class _Original:
     """One current row a range transforms: its complete predecessor state, the
-    exact state it is, and its Valid-Time bounds — both ``None`` on a
+    exact state it is, and the Valid Time it covers — ``None`` on a
     Transaction-Time-Only target."""
 
     predecessor: PredecessorRow
     state: ObservedStateKey
-    start: object | None
-    end: object | None
+    valid_time_coverage: TimeInterval | None
 
 
 def _claims(composed: ComposedTemporalWrite) -> Completions | RetainedObservation | None:
@@ -2656,7 +2631,7 @@ def _known_originals(
             validated.append(original)
         else:
             bound.append(original)
-    bound.sort(key=_original_order)
+    _order_by_start(bound)
     validated.reverse()
     return tuple(bound), tuple(validated)
 
@@ -2675,18 +2650,20 @@ def _anchor(composed: ComposedTemporalWrite) -> object:
     write states as its window's start."""
     for contribution in composed.contributions:
         if contribution.observation is None and contribution.condition is None:
-            start = contribution.bounds.valid_from
-            return _EXISTENCE if start is None else start
+            window = contribution.valid_time_window
+            return _EXISTENCE if window is None else window.start
     return _UNANCHORED
 
 
 @dataclass(frozen=True, slots=True)
 class _StartingCondition:
-    """A caller's condition on a composed range: the coverage at ``at`` — the
-    current row, where ``at`` is ``None`` on a Transaction-Time-Only object —
-    stands at Transaction-Time start ``expected``."""
+    """A caller's condition on a composed range: the coverage at the start of
+    the caller's prepared ``valid_time_window`` — the current row, where it is
+    ``None`` on a Transaction-Time-Only object — stands at Transaction-Time
+    start ``expected``. The window is also what the caller asked to revise
+    whatever it reaches over."""
 
-    at: object | None
+    valid_time_window: TimeInterval | None
     expected: dt.datetime
 
 
@@ -2694,13 +2671,15 @@ def _conditions(composed: ComposedTemporalWrite) -> tuple[_StartingCondition, ..
     """The distinct starting conditions the callers of a composed range's
     addressed writes state, in authored order: one per exact-window operation,
     where admission let in only writes that agree on it, and another for each
-    operation over a disjoint window."""
+    operation over a disjoint window. Admission lets no two addressed windows
+    share a start unless they are equal, so the distinct conditions keep every
+    distinct addressed window."""
     conditions: list[_StartingCondition] = []
     for contribution in composed.contributions:
         condition = contribution.condition
         if condition is None:
             continue
-        stated = _StartingCondition(contribution.bounds.valid_from, condition.instant)
+        stated = _StartingCondition(contribution.valid_time_window, condition.instant)
         if stated not in conditions:
             conditions.append(stated)
     return tuple(conditions)
@@ -2715,55 +2694,98 @@ def _original(
     shape = facts.shape
     if state is None:
         state = TemporalStateKey(object_key, milestone_edge(shape, predecessor, None))
-    if isinstance(shape, Bitemporal):
-        return _Original(
-            predecessor=predecessor,
-            state=state,
-            start=predecessor.cell(shape.valid_time.start_attribute),
-            end=predecessor.cell(shape.valid_time.end_attribute),
-        )
-    return _Original(predecessor=predecessor, state=state, start=None, end=None)
-
-
-def _contains(at: object | None, original: _Original) -> bool:
-    """Whether ``original`` holds ``at`` — the current row itself where ``at`` is
-    ``None`` on a Transaction-Time-Only object."""
-    return at is None or (not precedes(at, original.start) and precedes(at, original.end))
-
-
-def _overlapping(first: _Original, second: _Original) -> bool:
-    if first.start is None or second.start is None:
-        return True
-    return precedes(first.start, second.end) and precedes(second.start, first.end)
-
-
-def _addressed(composed: ComposedTemporalWrite) -> tuple[tuple[object | None, object | None], ...]:
-    """The windows of a composed range's caller-addressed writes, whose callers
-    asked for a revision of whatever they reach."""
-    return tuple(
-        (contribution.bounds.valid_from, contribution.bounds.until)
-        for contribution in composed.contributions
-        if contribution.condition is not None
+    return _Original(
+        predecessor=predecessor,
+        state=state,
+        valid_time_coverage=valid_time_coverage(shape, predecessor, None),
     )
 
 
-def _meets(window: tuple[object | None, object | None], original: _Original) -> bool:
-    """Whether the Valid-Time ``window`` — through the open bound where it has
-    no end, the whole axis on a Transaction-Time-Only object — overlaps
-    ``original``."""
-    start, until = window
-    if start is None or original.start is None:
+def _holds_start(window: TimeInterval | None, original: _Original) -> bool:
+    """Whether ``original`` holds ``window``'s start — the current row itself
+    where ``window`` is ``None`` on a Transaction-Time-Only object."""
+    if window is None:
         return True
-    end = TemporalBound.INFINITY if until is None else until
-    return precedes(start, original.end) and precedes(original.start, end)
+    coverage = original.valid_time_coverage
+    assert coverage is not None  # one object's windows and coverage share its shape
+    return coverage.contains(window.start)
 
 
-def _same_bound(first: object, second: object) -> bool:
-    return not precedes(first, second) and not precedes(second, first)
+def _reaches(window: TimeInterval | None, original: _Original) -> bool:
+    """Whether ``window`` overlaps ``original`` — the whole axis where it is
+    ``None`` on a Transaction-Time-Only object."""
+    if window is None:
+        return True
+    coverage = original.valid_time_coverage
+    assert coverage is not None  # one object's windows and coverage share its shape
+    return coverage.overlaps(window)
 
 
-def _original_order(original: _Original) -> dt.datetime:
-    return instant_order(original.start)
+def _overlapping(first: _Original, second: _Original) -> bool:
+    first_coverage = first.valid_time_coverage
+    second_coverage = second.valid_time_coverage
+    return (
+        first_coverage is None
+        or second_coverage is None
+        or first_coverage.overlaps(second_coverage)
+    )
+
+
+def _valid_time_coverages(originals: Iterable[_Original]) -> Iterator[TimeInterval]:
+    """The Valid Time each of a Bitemporal range's bound ``originals`` covers,
+    in the start order their owner already established."""
+    for original in originals:
+        coverage = original.valid_time_coverage
+        assert coverage is not None  # only a Bitemporal range traverses coverage
+        yield coverage
+
+
+def _order_by_start(originals: list[_Original]) -> None:
+    """Order a range's originals by their Valid-Time starts. Those of a
+    Transaction-Time-Only object have none to order by and stay as they are."""
+    if originals and originals[0].valid_time_coverage is not None:
+        originals.sort(key=_coverage_start)
+
+
+def _coverage_start(original: _Original) -> dt.datetime:
+    coverage = original.valid_time_coverage
+    assert coverage is not None  # only a Bitemporal range orders its originals
+    return coverage.start
+
+
+def _holds(original: _Original, anchor: object) -> bool:
+    """Whether ``original`` holds the insertion ``anchor`` of a Bitemporal
+    range."""
+    coverage = original.valid_time_coverage
+    assert coverage is not None and isinstance(anchor, dt.datetime)  # a Bitemporal anchor
+    return coverage.contains(anchor)
+
+
+def _valid_end(original: _Original) -> object | None:
+    """The Valid-Time end cell ``original`` covers to, which its physical address
+    holds; ``None`` on a Transaction-Time-Only object."""
+    coverage = original.valid_time_coverage
+    return None if coverage is None else coverage.end
+
+
+def _tiles(pieces: Sequence[BoundPiece], coverage: TimeInterval) -> bool:
+    """Whether ``pieces``, in order, cover exactly ``coverage``, each meeting
+    the next."""
+    if not pieces:
+        return False
+    first = pieces[0].valid_time_coverage
+    last = pieces[-1].valid_time_coverage
+    assert first is not None and last is not None  # Bitemporal pieces lie on Valid Time
+    if first.start != coverage.start or last.end != coverage.end:
+        return False
+    previous = first
+    for piece in pieces[1:]:
+        extent = piece.valid_time_coverage
+        assert extent is not None  # Bitemporal pieces lie on Valid Time
+        if not previous.meets(extent):
+            return False
+        previous = extent
+    return True
 
 
 @dataclass(slots=True)
@@ -2817,12 +2839,16 @@ class _Binding:
 class _RangeBinding:
     """Everything binding one range needs beside the coverage it binds to.
 
-    ``derives`` says a later unit of the same flush depends on what this one
-    does to its originals, so its bound range records it (:class:`Derivation`).
+    ``valid_time_window`` is the final transform's enclosing window, derived
+    once when settlement begins and shared by the coverage check, acquisition,
+    and continuation; ``None`` on a Transaction-Time-Only object. ``derives``
+    says a later unit of the same flush depends on what this one does to its
+    originals, so its bound range records it (:class:`Derivation`).
     """
 
     facts: _TemporalFacts
     transform: TemporalTransform
+    valid_time_window: TimeInterval | None
     gated: bool
     key_attribute: AttributeIdentity
     key_value: object
@@ -2832,7 +2858,6 @@ class _RangeBinding:
     anchor: object = _UNANCHORED
     conditions: tuple[_StartingCondition, ...] = ()
     derives: bool = False
-    addressed: tuple[tuple[object | None, object | None], ...] = ()
     guards: bool = False
 
     def bind(
@@ -2892,13 +2917,14 @@ class _RangeBinding:
             bound.effects.append(decorate(self._close(original, TERMINATED)))
             bound.changed.append(original.state)
             if self.derives:
-                bound.derived.append(Derivation(original.state, original.end, None, ()))
+                bound.derived.append(
+                    Derivation(original.state, original.valid_time_coverage, None, ())
+                )
         for original in originals:
             if all(original is not start for start in starts):
                 bound.take(original, self._transformed(original, False, resolved), decorate)
         if isinstance(facts.shape, Bitemporal):
-            coverage = tuple((original.start, original.end) for original in originals)
-            for piece in self.transform.gaps(coverage):
+            for piece in self.transform.gaps(_valid_time_coverages(originals)):
                 opened = self._authored(piece, resolved)
                 bound.openings.append(decorate(opened))
                 bound.fresh.extend(_openings(facts, (opened,)))
@@ -2916,9 +2942,10 @@ class _RangeBinding:
         pieces it leaves — and what a later unit needs of that, or ``None``
         where the transform does not reach it. A ``starting`` original's effect
         fails as its caller's precondition."""
-        if not self.transform.touches(original.start, original.end):
+        coverage = original.valid_time_coverage
+        if not self.transform.touches(coverage):
             return None
-        pieces = self.transform.pieces(original.start, original.end)
+        pieces = self.transform.pieces(coverage)
         if (
             not starting
             and (self.guards or not self.gated or self.ownership.owns(self._endpoint(original)))
@@ -2940,25 +2967,20 @@ class _RangeBinding:
         disposed = _dispose(self.facts, closing, successors, predecessor, self.ownership)
         if not self.derives:
             return disposed, None
-        return disposed, self._derivation(original, closing, successors)
+        return disposed, self._derivation(original, closing, pieces, successors)
 
     def _unchanged(self, original: _Original, pieces: Sequence[BoundPiece]) -> bool:
         """Whether ``pieces`` leave ``original`` as it was: they cover all of it,
         each assigned member already holds its value there, and no
         caller-addressed window reaches it."""
-        if any(_meets(window, original) for window in self.addressed):
+        if any(_reaches(condition.valid_time_window, original) for condition in self.conditions):
             return False
-        if original.start is None:
+        coverage = original.valid_time_coverage
+        if coverage is None:
             if len(pieces) != 1:
                 return False
-        else:
-            cursor: object = original.start
-            for piece in pieces:
-                if not _same_bound(piece.start, cursor):
-                    return False
-                cursor = piece.end
-            if not _same_bound(cursor, original.end):
-                return False
+        elif not _tiles(pieces, coverage):
+            return False
         selection = self.facts.view.member_selection
         predecessor = original.predecessor
         return all(
@@ -2967,26 +2989,26 @@ class _RangeBinding:
         )
 
     def _derivation(
-        self, original: _Original, closing: PlannedClose, successors: Sequence[PlannedInsert]
+        self,
+        original: _Original,
+        closing: PlannedClose,
+        pieces: Sequence[BoundPiece],
+        successors: Sequence[PlannedInsert],
     ) -> Derivation:
         """What a later unit needs of ``original``'s transformation: its state
-        and end, its own address where the attempt owned it, and each nonempty
-        row derived from it."""
+        and coverage, its own address where the attempt owned it, and each
+        nonempty row derived from it with the coverage of the piece it opens."""
         facts = self.facts
         own = _target_endpoint(facts, closing.target)
-        rows: list[tuple[OwnedEndpoint, object | None]] = []
-        valid_start = (
-            facts.shape.valid_time.start_attribute if isinstance(facts.shape, Bitemporal) else None
-        )
-        for successor in successors:
+        rows: list[tuple[OwnedEndpoint, TimeInterval | None]] = []
+        for piece, successor in zip(pieces, successors, strict=True):
             (entry,) = successor.entries
             endpoint = _entry_endpoint(facts, entry)
             if endpoint is not None:
-                start = None if valid_start is None else entry.row.attributes[valid_start]
-                rows.append((endpoint, start))
+                rows.append((endpoint, piece.valid_time_coverage))
         return Derivation(
             original=original.state,
-            end=original.end,
+            valid_time_coverage=original.valid_time_coverage,
             owned=own if self.ownership.owns(own) else None,
             rows=tuple(rows),
         )
@@ -2995,11 +3017,7 @@ class _RangeBinding:
         anchor = self.anchor
         if anchor is _UNANCHORED:
             return
-        if any(
-            anchor is _EXISTENCE
-            or (not precedes(anchor, original.start) and precedes(anchor, original.end))
-            for original in originals
-        ):
+        if any(anchor is _EXISTENCE or _holds(original, anchor) for original in originals):
             return
         raise MissingTargetError(self.facts.entity.identity, self._key_target(), 1, 0)
 
@@ -3018,7 +3036,12 @@ class _RangeBinding:
             if position in discharged:
                 continue
             start = next(
-                (original for original in originals if _contains(condition.at, original)), None
+                (
+                    original
+                    for original in originals
+                    if _holds_start(condition.valid_time_window, original)
+                ),
+                None,
             )
             if start is None or self._tx_start(start) != normalize_instant(condition.expected):
                 raise self._failed(condition)
@@ -3050,7 +3073,7 @@ class _RangeBinding:
         attributes, value_objects = self._resolved(assigned, resolved)
         return _successor_step(
             self.facts,
-            literal_successor(AUTHORED_STATE, piece.start, piece.end),
+            literal_successor(AUTHORED_STATE, piece.valid_time_coverage),
             {**attributes, self.key_attribute: self.key_value},
             value_objects,
             None,
@@ -3074,11 +3097,11 @@ class _RangeBinding:
         """
         if rows is None:
             return tuple(known)
-        ends = {_bitemporal_ends(original.end) for original in known}
+        ends = {_valid_end(original) for original in known}
         acquired = self._read(rows)
-        merged = [*known, *(o for o in acquired if _bitemporal_ends(o.end) not in ends)]
+        merged = [*known, *(o for o in acquired if _valid_end(o) not in ends)]
         self._require_one_start(acquired if self.gated else merged)
-        merged.sort(key=_original_order)
+        _order_by_start(merged)
         return tuple(merged)
 
     def continued(
@@ -3117,7 +3140,14 @@ class _RangeBinding:
         )
         discharged: set[int] = set()
         for position, condition in enumerate(self.conditions):
-            start = next((original for original in read if _contains(condition.at, original)), None)
+            start = next(
+                (
+                    original
+                    for original in read
+                    if _holds_start(condition.valid_time_window, original)
+                ),
+                None,
+            )
             if start is None:
                 raise self._failed(condition)
             if self._tx_start(start) == normalize_instant(condition.expected):
@@ -3127,7 +3157,9 @@ class _RangeBinding:
             discharged.add(position)
         if lost is not None:
             enforce_affected_rows(self._close(lost, TERMINATED), 0)
-        return tuple(sorted(read, key=_original_order)), frozenset(discharged)
+        ordered = list(read)
+        _order_by_start(ordered)
+        return tuple(ordered), frozenset(discharged)
 
     def _read(self, rows: PredecessorRows | Sequence[PredecessorRow]) -> list[_Original]:
         return [
@@ -3137,18 +3169,17 @@ class _RangeBinding:
 
     def _require_one_start(self, current: Sequence[_Original]) -> None:
         for condition in self.conditions:
-            starting = sum(1 for original in current if _contains(condition.at, original))
+            starting = sum(
+                1 for original in current if _holds_start(condition.valid_time_window, original)
+            )
             if starting > 1:
                 raise CardinalityCorruptionError(
                     self.facts.entity.identity, self._key_target(), 1, starting
                 )
 
     def _endpoint(self, original: _Original) -> OwnedEndpoint:
-        ends = (
-            _bitemporal_ends(original.end)
-            if isinstance(self.facts.shape, Bitemporal)
-            else TRANSACTION_TIME_ENDS
-        )
+        coverage = original.valid_time_coverage
+        ends = TRANSACTION_TIME_ENDS if coverage is None else _bitemporal_ends(coverage.end)
         return OwnedEndpoint(self.facts.entity.identity, (self.key_value,), ends)
 
     def _opened_here(self, original: _Original) -> Descent | None:
@@ -3159,7 +3190,7 @@ class _RangeBinding:
         if not self.ownership.owns(endpoint) or self._tx_start(original) != self.facts.instant:
             return None
         descent = self.ownership.descent(endpoint)
-        if descent is None or descent.start != original.start:
+        if descent is None or descent.valid_time_coverage != original.valid_time_coverage:
             return None
         return descent
 
@@ -3179,12 +3210,9 @@ class _RangeBinding:
         milestone = original.milestone
         if normalize_instant(milestone.tx_time) != normalize_instant(condition.expected):
             return False
-        origin_start = milestone.valid_time_or_none
-        if condition.at is not None and (
-            origin_start is None
-            or precedes(condition.at, origin_start)
-            or not precedes(condition.at, proof.end)
-        ):
+        window = condition.valid_time_window
+        coverage = proof.valid_time_coverage
+        if window is not None and (coverage is None or not coverage.contains(window.start)):
             return False
         return self._intact(original, read)
 
@@ -3195,23 +3223,11 @@ class _RangeBinding:
         if self.ownership.proven(original) is None:
             return False
         present = {self._endpoint(row): row for row in read}
-        transform = self.transform
-        until = None if transform.end is None or is_open_bound(transform.end) else transform.end
-        for endpoint, descent in self.ownership.descendants(original, transform.start, until):
-            if not self._within(descent.start, endpoint):
-                continue
+        for endpoint, _descent in self.ownership.descendants(original, self.valid_time_window):
             row = present.get(endpoint)
             if row is None or self._opened_here(row) is None:
                 return False
         return True
-
-    def _within(self, start: object | None, endpoint: OwnedEndpoint) -> bool:
-        transform = self.transform
-        if start is None or transform.start is None:
-            return True
-        end = endpoint.ends[0]
-        until = end.instant if isinstance(end, Finite) else TemporalBound.INFINITY
-        return precedes(start, transform.end) and precedes(transform.start, until)
 
     def _close(self, original: _Original, cause: CloseCause) -> PlannedClose:
         facts = self.facts
@@ -3226,7 +3242,7 @@ class _RangeBinding:
             facts,
             close,
             key_values=(self.key_value,),
-            observed_valid_end=original.end,
+            observed_valid_end=_valid_end(original),
             observed_gate_start=(
                 original.predecessor.cell(shape.transaction_time.start_attribute)
                 if self.gated
@@ -3247,7 +3263,7 @@ class _RangeBinding:
         if assigned is None:
             return _successor_step(
                 facts,
-                literal_successor(CARRIED_STATE, piece.start, piece.end),
+                literal_successor(CARRIED_STATE, piece.valid_time_coverage),
                 {},
                 {},
                 predecessor,
@@ -3255,7 +3271,7 @@ class _RangeBinding:
         attributes, value_objects = self._resolved(assigned, resolved)
         return _successor_step(
             facts,
-            literal_successor(CHANGED_STATE, piece.start, piece.end),
+            literal_successor(CHANGED_STATE, piece.valid_time_coverage),
             attributes,
             value_objects,
             predecessor,

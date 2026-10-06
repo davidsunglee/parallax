@@ -57,6 +57,7 @@ from parallax.core import (
     storage_layout,
 )
 from parallax.core.base import (
+    INFINITY,
     normalize_instant,
 )
 from parallax.core.db_port import (
@@ -84,7 +85,7 @@ from parallax.core.predicate import (
 )
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._write import compile_write_step
-from parallax.core.temporal_read import TemporalReadError
+from parallax.core.temporal_read import TemporalReadError, TimeInterval
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     BufferItem,
@@ -660,8 +661,9 @@ def _build_temporal_instruction(
     observation: TemporalObservation | None = None
     source_node: handle.WireEntity | None = None
     if not is_insert and not is_coalescing_candidate:
+        window = prepared.valid_time_window
         observation, source_node = evidence.settle(
-            entity_metadata, pk_key, row, prepared.bounds.valid_from
+            entity_metadata, pk_key, row, None if window is None else window.start
         )
     if is_insert and pk_key is not None:
         unit_inserted.add(pk_key)
@@ -1406,8 +1408,7 @@ def _buffer_wire_predicate_write(
         for assignment in prepared.managed_assignments
     }
     changes = ActualWireProjection(model).entity_values(prepared.selection.target, managed_changes)
-    valid_from = prepared.bounds.valid_from
-    until = prepared.bounds.until
+    valid_from, until = _authored_bounds(prepared.valid_time_window)
     match prepared.mutation:
         case "update":
             tx.wire.update_where(target, changes, valid_from=valid_from)
@@ -2121,7 +2122,8 @@ def _unit_source_reads(
         if key is None or key in opened:
             continue
         canonical = instruction.target.identity.canonical
-        needed.setdefault((canonical, instruction.bounds.valid_from), {})[key] = None
+        window = instruction.valid_time_window
+        needed.setdefault((canonical, None if window is None else window.start), {})[key] = None
     return [
         _unit_source_query(model, entity, tuple(keys), valid_at)
         for (entity, valid_at), keys in needed.items()
@@ -2897,8 +2899,7 @@ def _buffer_wire_write(
     entity_name = instruction.target.identity.canonical
     entity_metadata = instruction.target
     row = dict(instruction.rows[0])
-    valid_from = instruction.bounds.valid_from
-    until = instruction.bounds.until
+    valid_from, until = _authored_bounds(instruction.valid_time_window)
     if instruction.mutation in INSERT_MUTATIONS:
         payload = _wire_insert_payload(model, entity_metadata, row)
         opened = (
@@ -2945,15 +2946,15 @@ def _buffer_wire_target(
     entity_name = instruction.target.identity.canonical
     document = ActualWireProjection(model).entity_values(instruction.target, dict(instruction.row))
     expectation = instruction.expectation
-    bounds = instruction.bounds
+    valid_from, until = _authored_bounds(instruction.valid_time_window)
     version = expectation.version if isinstance(expectation, ExpectedVersion) else None
     tx_start = expectation.instant if isinstance(expectation, ExpectedTxStart) else None
     verb = tx.wire.replace if instruction.replaces else tx.wire.update
-    if bounds.until is None:
+    if until is None:
         verb(
             entity_name,
             document,
-            valid_from=bounds.valid_from,
+            valid_from=valid_from,
             if_version=version,
             if_tx_start=tx_start,
         )
@@ -2961,8 +2962,8 @@ def _buffer_wire_target(
         verb(
             entity_name,
             document,
-            valid_from=bounds.valid_from,
-            until=bounds.until,
+            valid_from=valid_from,
+            until=until,
             if_tx_start=tx_start,
         )
 
@@ -2980,6 +2981,18 @@ def _wire_insert_payload(
     is dropped here rather than smuggled through a door built to close it.
     """
     return ActualWireProjection(model).entity_values(entity, row, omit_framework=True)
+
+
+def _authored_bounds(
+    window: TimeInterval | None,
+) -> tuple[dt.datetime | None, dt.datetime | None]:
+    """The scalar bounds a public write verb authors a prepared ``window`` with:
+    no ``valid_from`` without Valid Time, and no ``until`` for a window running
+    to the open bound, which public authoring states by omission."""
+    if window is None:
+        return None, None
+    end = window.end
+    return window.start, None if end is INFINITY else end
 
 
 def _required(instant: dt.datetime | None) -> dt.datetime:

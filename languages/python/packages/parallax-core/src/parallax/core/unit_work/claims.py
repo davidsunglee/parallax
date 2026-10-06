@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work.instructions import INSERT_MUTATIONS, PreparedKeyedWrite
 from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey
@@ -42,31 +43,25 @@ _ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil
 @dataclass(frozen=True, slots=True)
 class WriteIntent:
     """One buffered write's claim at one scope: what it does, over which
-    temporal region.
+    Valid-Time window.
 
-    The region is the authored Valid-Time window exactly as the instruction
-    carries it — absent on both ends for a non-temporal or Transaction-Time-Only
-    write. It is part of the claim rather than payload beside it because two
-    intents over DIFFERENT regions are incompatible by construction: composing
-    them would require interval semantics this framework deliberately does not
-    invent, so the second is refused and the caller flushes the first through a
+    The window is the one the prepared instruction carries, shared rather than
+    copied — ``None`` for a non-temporal or Transaction-Time-Only write. It is
+    part of the claim rather than payload beside it because two intents over
+    DIFFERENT windows are incompatible by construction: composing them would
+    require interval semantics this framework deliberately does not invent, so
+    the second is refused and the caller flushes the first through a
     participating read.
     """
 
     kind: WriteIntentKind
-    valid_from: object | None = None
-    until: object | None = None
-
-    @property
-    def region(self) -> tuple[object | None, object | None]:
-        """The temporal region this intent claims — its two Valid-Time bounds."""
-        return (self.valid_from, self.until)
+    valid_time_window: TimeInterval | None = None
 
 
 SELECTION_INTENT: Final = WriteIntent(kind="selection")
 """The claim a Materialized Write Group takes on every state its predicate
 resolved. It is one intent value rather than one per row because a group carries
-no region of its own to compare: it is indivisible, and every keyed intent
+no window of its own to compare: it is indivisible, and every keyed intent
 against a state it selected is incompatible with it."""
 
 
@@ -178,11 +173,7 @@ def keyed_intent(instruction: PreparedKeyedWrite) -> WriteIntent | None:
     kind: WriteIntentKind = (
         "assignment" if instruction.mutation in _ASSIGNMENT_MUTATIONS else "destructive"
     )
-    return WriteIntent(
-        kind=kind,
-        valid_from=instruction.bounds.valid_from,
-        until=instruction.bounds.until,
-    )
+    return WriteIntent(kind=kind, valid_time_window=instruction.valid_time_window)
 
 
 def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:
@@ -200,10 +191,10 @@ def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:
     * a Materialized Write Group's selection claim admits nothing beside it, in
       either direction — the group is compact and indivisible, so merging a keyed
       assignment into it would mean indexing and mutating it;
-    * different temporal regions never compose, because interval composition is
-      semantics this framework does not invent;
+    * different Valid-Time windows never compose, because interval composition
+      is semantics this framework does not invent;
     * an assignment after a destruction is a resurrection, which no write means;
-    * two destructions of one scope and region are one destruction; and
+    * two destructions of one scope and window are one destruction; and
     * everything else combines — assignments merge, and a destruction supersedes
       the assignments buffered before it.
     """
@@ -211,7 +202,7 @@ def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:
         return "admit"
     if "selection" in (held.kind, arriving.kind):
         return "incompatible"
-    if held.region != arriving.region:
+    if held.valid_time_window != arriving.valid_time_window:
         return "incompatible"
     if held.kind == "destructive":
         return "deduplicate" if arriving.kind == "destructive" else "incompatible"
@@ -241,21 +232,17 @@ def admits_composed(
         if arriving.kind == "assignment":
             if intent.kind == "destructive" and (same_scope or overlapping):
                 return "incompatible"
-        elif (same_scope or overlapping) and intent.region != arriving.region:
+        elif (same_scope or overlapping) and intent.valid_time_window != arriving.valid_time_window:
             return "incompatible"
     return "compose"
 
 
 def _overlaps(first: WriteIntent, second: WriteIntent) -> bool:
-    """Whether two intents' requested windows share any instant; a window with
-    no start spans the whole axis."""
-    if first.valid_from is None or second.valid_from is None:
-        return True
-    return _before(first.valid_from, second.until) and _before(second.valid_from, first.until)
-
-
-def _before(instant: object, end: object | None) -> bool:
-    return end is None or instant < end  # type: ignore[operator]  # managed instants
+    """Whether two intents' requested windows share any instant; an intent
+    without Valid Time spans the whole axis."""
+    first_window = first.valid_time_window
+    second_window = second.valid_time_window
+    return first_window is None or second_window is None or first_window.overlaps(second_window)
 
 
 class ClaimTable:

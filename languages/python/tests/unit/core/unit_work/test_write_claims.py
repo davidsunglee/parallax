@@ -20,10 +20,12 @@ import pytest
 from parallax.conformance.read_models import Person
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import opt_lock
+from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.opt_lock._facet import UNVERSIONED
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     SELECTION_INTENT,
     KeyedWrite,
@@ -164,7 +166,7 @@ def test_every_other_keyed_mutation_intends_an_assignment_or_a_destruction(
     intent = keyed_intent(prepared)
     assert intent is not None
     assert intent.kind == kind
-    assert intent.region == (prepared.bounds.valid_from, prepared.bounds.until)
+    assert intent.valid_time_window is prepared.valid_time_window
 
 
 @pytest.mark.parametrize(
@@ -180,8 +182,18 @@ def test_every_other_keyed_mutation_intends_an_assignment_or_a_destruction(
         (SELECTION_INTENT, _ASSIGNMENT, "incompatible"),
         (_ASSIGNMENT, SELECTION_INTENT, "incompatible"),
         (
-            WriteIntent(kind="assignment", valid_from="2024-01-01"),
-            WriteIntent(kind="assignment", valid_from="2024-06-01"),
+            WriteIntent(kind="assignment", valid_time_window=TimeInterval(_VALID_FROM, INFINITY)),
+            WriteIntent(kind="assignment", valid_time_window=TimeInterval(_OTHER_FROM, INFINITY)),
+            "incompatible",
+        ),
+        (
+            WriteIntent(kind="assignment", valid_time_window=TimeInterval(_VALID_FROM, _UNTIL)),
+            WriteIntent(kind="assignment", valid_time_window=TimeInterval(_VALID_FROM, _UNTIL)),
+            "coalesce",
+        ),
+        (
+            WriteIntent(kind="destructive", valid_time_window=TimeInterval(_VALID_FROM, _UNTIL)),
+            WriteIntent(kind="destructive", valid_time_window=TimeInterval(_VALID_FROM, INFINITY)),
             "incompatible",
         ),
     ],
@@ -457,7 +469,10 @@ _S2 = "second observed state"
 
 
 def _window(kind: str, start: dt.datetime, until: dt.datetime | None) -> WriteIntent:
-    return WriteIntent(kind=cast("Any", kind), valid_from=start, until=until)
+    return WriteIntent(
+        kind=cast("Any", kind),
+        valid_time_window=TimeInterval(start, INFINITY if until is None else until),
+    )
 
 
 @pytest.mark.parametrize(

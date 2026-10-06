@@ -1387,7 +1387,7 @@ def test_settlement_refuses_a_group_that_reaches_it_assigning_the_version() -> N
         prepared.mutation,
         prepared.selection,
         (dataclasses.replace(balance, member=entity.attribute("version")),),
-        prepared.bounds,
+        prepared.valid_time_window,
     )
     forged = dataclasses.replace(group, mutation=assigning_the_version)
     with pytest.raises(opt_lock.CallerAuthoredVersionError):

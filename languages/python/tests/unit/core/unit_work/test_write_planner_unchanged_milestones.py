@@ -434,6 +434,33 @@ def test_an_original_part_of_which_the_composition_destroys_is_changed() -> None
     ]
 
 
+def test_an_original_whose_start_the_composition_destroys_is_changed() -> None:
+    first = _span(_JAN, _JUN, 100, "a")
+    second = _span(_JUN, INFINITY, 100, "b")
+    plan = _plan(
+        _SPANS,
+        _observed(
+            _SPANS,
+            "SequenceSpan",
+            "updateUntil",
+            _retained(_SPANS, _SPAN, first),
+            valid_from=_MAR,
+            until=_JUN,
+            amount=100,
+        ),
+        _observed(
+            _SPANS,
+            "SequenceSpan",
+            "terminateUntil",
+            _retained(_SPANS, _SPAN, second),
+            valid_from=_JUN,
+            until=_OCT,
+        ),
+    )
+    # What survives of the second original no longer begins where it did.
+    assert _kinds(plan.steps) == ["PlannedTemporalGuard", "PlannedClose", "PlannedInsert"]
+
+
 def test_a_window_a_caller_addressed_is_revised_however_equal_its_values() -> None:
     whole = _retained(_SPANS, _SPAN, _span(_JAN, INFINITY, 100, "a"))
     target = target_write(
