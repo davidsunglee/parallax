@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import bisect
 import datetime as dt
+import functools
 from array import array
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -328,6 +329,7 @@ class PredecessorExpansion:
             facts=facts,
             transform=transform,
             key_attributes=self._key_attributes,
+            key_position=evidence.key_position,
             cause=SUPERSEDED if transform.assigns else TERMINATED,
             gate_position=(
                 selection.position(shape.transaction_time.start_attribute) if self._gated else None
@@ -492,17 +494,22 @@ def _affects(code: int) -> bool:
     return not code & _UNREACHED and code & _DISPOSAL != _KEEP
 
 
+_ROW_EFFECT: Final = 0
+"""The slot of a row's own close, removal, or revision among its steps."""
+
+
+@functools.cache
+def _slots(code: int) -> tuple[int, ...]:
+    """The steps a row of disposition ``code`` takes, in order: its own effect
+    where it takes one, then each successor position it opens. Decoded once
+    per distinct disposition."""
+    opened = _opened(code)
+    successors = tuple(position for position in _POSITIONS if opened & position)
+    return (_ROW_EFFECT, *successors) if _affects(code) else successors
+
+
 def _row_steps(code: int) -> int:
-    return _affects(code) + _opened(code).bit_count()
-
-
-def _nth_position(positions: int, nth: int) -> int:
-    for position in _POSITIONS:
-        if positions & position:
-            if not nth:
-                return position
-            nth -= 1
-    raise IndexError(nth)  # pragma: no cover - a located step lies within its row
+    return len(_slots(code))
 
 
 @dataclass(frozen=True, slots=True)
@@ -523,6 +530,7 @@ class SettledGroup:
     facts: TemporalFacts
     transform: CoverageTransform
     key_attributes: tuple[AttributeIdentity, ...]
+    key_position: int
     cause: CloseCause
     gate_position: int | None
     valid_positions: tuple[int, int] | None
@@ -537,40 +545,42 @@ class SettledGroup:
     def __len__(self) -> int:
         return self.length
 
-    def locate(self, index: int) -> tuple[int, int]:
-        """The row the group's ``index``-th step belongs to, and that step's
-        place among the row's own."""
+    def locate(self, index: int) -> tuple[int, int, PredecessorUse]:
+        """The row the group's ``index``-th step belongs to, the step's slot
+        among the row's own — its own effect or a successor position — and
+        what it needs of the row's predecessor."""
         offsets = self.offsets
         if offsets is None:
-            return divmod(index, _row_steps(self.uniform))
-        row = bisect.bisect_right(offsets, index) - 1
-        return row, index - offsets[row]
-
-    def predecessor_use(self, row: int, place: int) -> PredecessorUse:
-        """What the step at ``place`` of ``row`` needs of the row's
-        predecessor (:meth:`locate`)."""
-        code = self._code(row)
-        if _affects(code) and place == 0:
-            if code & _DISPOSAL == _REVISE:
-                return PredecessorUse.MEMBERS
-            return PredecessorUse.NONE
-        if place == _row_steps(code) - 1:
-            return PredecessorUse.BINDABLE_LAST
-        return PredecessorUse.BINDABLE
+            code = self.uniform
+            slots = _slots(code)
+            row, place = divmod(index, len(slots))
+        else:
+            row = bisect.bisect_right(offsets, index) - 1
+            place = index - offsets[row]
+            code = self._code(row)
+            slots = _slots(code)
+        slot = slots[place]
+        if slot == _ROW_EFFECT:
+            use = PredecessorUse.MEMBERS if code & _DISPOSAL == _REVISE else PredecessorUse.NONE
+        elif place == len(slots) - 1:
+            use = PredecessorUse.BINDABLE_LAST
+        else:
+            use = PredecessorUse.BINDABLE
+        return row, slot, use
 
     def step(
-        self, evidence: PredecessorRows, row: int, place: int, predecessor: PredecessorRow | None
+        self,
+        row: int,
+        slot: int,
+        values: tuple[object, ...],
+        predecessor: PredecessorRow | None,
     ) -> PlannedWrite:
-        """The step at ``place`` of ``row``, built from ``evidence`` and the
-        ``predecessor`` its use (:meth:`predecessor_use`) asks for."""
-        code = self._code(row)
-        values = evidence.rows[row]
-        if _affects(code):
-            if place == 0:
-                return self._effect(code, evidence.key(row), values, predecessor)
-            place -= 1
+        """The step at ``slot`` of ``row`` (:meth:`locate`), built from the
+        row's member ``values`` and the ``predecessor`` its use asks for."""
+        if slot == _ROW_EFFECT:
+            return self._effect(self._code(row), values, predecessor)
         assert predecessor is not None  # every successor reads its predecessor
-        return self._successor(_nth_position(_opened(code), place), values, predecessor)
+        return self._successor(slot, values, predecessor)
 
     def effects(self, evidence: PredecessorRows) -> UnitEffects:
         """What every row's success publishes, as views over ``evidence`` and
@@ -588,33 +598,40 @@ class SettledGroup:
         facts = self.facts
         entity = facts.entity.identity
         key_name = self.key_attributes[0].name
-        for row in range(len(evidence)):
-            if _affects(self._code(row)):
+        key_position = evidence.key_position
+        dispositions = self.dispositions
+        if dispositions is None and not _affects(self.uniform):
+            return
+        for row, values in enumerate(evidence.rows):
+            if dispositions is None or _affects(dispositions[row]):
                 yield TemporalStateKey(
-                    ObjectKey(entity, ((key_name, evidence.key(row)),)),
+                    ObjectKey(entity, ((key_name, values[key_position]),)),
                     milestone_edge(facts.shape, evidence, row),
                 )
 
     def removals(self, evidence: PredecessorRows) -> Iterator[OwnedEndpoint]:
-        if self.dispositions is None and self.uniform & _DISPOSAL != _REMOVE:
+        dispositions = self.dispositions
+        if dispositions is None and self.uniform & _DISPOSAL != _REMOVE:
             return
-        for row in range(len(evidence)):
-            if self._code(row) & _DISPOSAL == _REMOVE:
-                values = evidence.rows[row]
-                yield self._endpoint(evidence.key(row), self._valid_end(values))
+        key_position = evidence.key_position
+        for row, values in enumerate(evidence.rows):
+            code = self.uniform if dispositions is None else dispositions[row]
+            if code & _DISPOSAL == _REMOVE:
+                yield self._endpoint(values[key_position], self._valid_end(values))
 
     def openings(self, evidence: PredecessorRows, *, continued: bool) -> Iterator[OwnedEndpoint]:
-        if self.dispositions is None and bool(self.uniform & _CONTINUES) is not continued:
+        dispositions = self.dispositions
+        if dispositions is None and bool(self.uniform & _CONTINUES) is not continued:
             return
-        for row in range(len(evidence)):
-            code = self._code(row)
+        key_position = evidence.key_position
+        for row, values in enumerate(evidence.rows):
+            code = self.uniform if dispositions is None else dispositions[row]
             if bool(code & _CONTINUES) is not continued:
                 continue
-            values = evidence.rows[row]
-            key = evidence.key(row)
-            for position in _POSITIONS:
-                if _opened(code) & position:
-                    _start, end = self._extent(position, values)
+            key = values[key_position]
+            for slot in _slots(code):
+                if slot != _ROW_EFFECT:
+                    _start, end = self._extent(slot, values)
                     yield self._endpoint(key, end)
 
     def _code(self, row: int) -> int:
@@ -622,18 +639,14 @@ class SettledGroup:
         return self.uniform if dispositions is None else dispositions[row]
 
     def _effect(
-        self,
-        code: int,
-        key: object,
-        values: tuple[object, ...],
-        predecessor: PredecessorRow | None,
+        self, code: int, values: tuple[object, ...], predecessor: PredecessorRow | None
     ) -> PlannedWrite:
         facts = self.facts
         gate_position = self.gate_position
         closing = _planned_close(
             facts,
             key_attributes=self.key_attributes,
-            key_values=(key,),
+            key_values=(values[self.key_position],),
             observed_valid_end=self._valid_end(values),
             cause=self.cause,
             gate=(
