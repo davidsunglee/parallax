@@ -186,7 +186,7 @@ class PredecessorExpansion:
         self._addressed = addressed
         self._derives = derives
         self._ownership = ownership
-        self._resolved: dict[int, _ResolvedState] = {}
+        self._resolved: tuple[tuple[Mapping[str, object], _ResolvedState], ...] = ()
 
     def expand(
         self,
@@ -260,11 +260,12 @@ class PredecessorExpansion:
         """``assigned`` under its resolved member identities, resolved once per
         expansion. The answer is shared, so a caller opening a row from it
         copies what it stamps."""
-        maps = self._resolved.get(id(assigned))
-        if maps is None:
-            facts = self._facts
-            maps = resolve_row(facts.entity, facts.view, assigned, context="insert")
-            self._resolved[id(assigned)] = maps
+        for mapping, maps in self._resolved:
+            if mapping is assigned:
+                return maps
+        facts = self._facts
+        maps = resolve_row(facts.entity, facts.view, assigned, context="insert")
+        self._resolved += ((assigned, maps),)
         return maps
 
     def settle_group(
@@ -349,15 +350,12 @@ class PredecessorExpansion:
     ) -> Expansion | None:
         """How an unchanged coverage predecessor is kept, or ``None`` where it
         changes or its unchanged state cannot be proven."""
-        if not (
-            self._guards or not self._gated or self._ownership.owns(self._endpoint(coverage))
-        ) or not self._unchanged(predecessor, coverage, successors):
+        if not (self._guards or not self._gated or self._owns(coverage)) or not self._unchanged(
+            predecessor, coverage, successors
+        ):
             return None
         return _preserved(
-            self._facts,
-            self.closing(predecessor, coverage, SUPERSEDED),
-            self._ownership,
-            guards=self._guards,
+            self._facts, self.closing(predecessor, coverage, SUPERSEDED), self._ownership
         )
 
     def _unchanged(
@@ -434,6 +432,13 @@ class PredecessorExpansion:
             valid_time_coverage=coverage,
             owned=own if self._ownership.owns(own) else None,
             rows=tuple(rows),
+        )
+
+    def _owns(self, coverage: TimeInterval | None) -> bool:
+        """Whether the attempt opened the predecessor at its own address."""
+        ownership = self._ownership
+        return ownership.owns_any(self._facts.entity.identity) and ownership.owns(
+            self._endpoint(coverage)
         )
 
     def _endpoint(self, coverage: TimeInterval | None) -> OwnedEndpoint:
@@ -912,25 +917,21 @@ def _complete(successors: Sequence[Successor], coverage: TimeInterval) -> bool:
     return True
 
 
-def _preserved(
-    facts: TemporalFacts, closing: PlannedClose, ownership: Ownership, *, guards: bool
-) -> Expansion | None:
-    """How a write that leaves ``closing``'s milestone as it was keeps it, or
-    ``None`` where its unchanged state cannot be proven without changing it.
-    A kept milestone is no change, even where a guard proves it.
+def _preserved(facts: TemporalFacts, closing: PlannedClose, ownership: Ownership) -> Expansion:
+    """How a milestone a write leaves as it was is kept, once its unchanged
+    state is provable without changing it. A kept milestone is no change, even
+    where a guard proves it.
 
     A row the attempt opened is invisible to every other transaction, and under
     Locking the shared lock the attempt holds on the row keeps it as it was
     read, so neither needs a statement. Under Optimistic a milestone that
     existed before the attempt is proven by a guard on its observed
     Transaction-Time start, which only a database whose write count includes
-    unchanged rows (``guards``) can report.
+    unchanged rows can report; the caller keeps it only where one can.
     """
     concurrency = closing.concurrency
     if ownership.owns(_target_endpoint(facts, closing.target)) or isinstance(concurrency, Ungated):
         return _NOTHING
-    if not guards:
-        return None
     guard = PlannedTemporalGuard(
         entity=closing.entity,
         target=closing.target,

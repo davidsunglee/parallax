@@ -149,6 +149,11 @@ class CoverageTransform:
         return TimeInterval(first.start, last.end)
 
     @property
+    def replaces(self) -> bool:
+        """Whether some segment is a replacement's extent, whose gaps it fills."""
+        return any(segment.replaces for segment in self.segments)
+
+    @property
     def assigns(self) -> bool:
         """Whether some segment assigns rather than destroys."""
         return any(segment.assigned is not None for segment in self.segments)
