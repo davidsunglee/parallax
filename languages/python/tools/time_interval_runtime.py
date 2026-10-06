@@ -566,7 +566,7 @@ def _missing_provenance(fields: Mapping[str, Any]) -> list[str]:
     }
     missing = [name for name, value in stated.items() if not isinstance(value, str) or not value]
     recorded = fields["sampling"]
-    missing.extend(f"sampling {key}" for key in sampling() if key not in recorded)
+    missing.extend(f"sampling {key}" for key in sampling() if recorded.get(key) is None)
     return missing
 
 
