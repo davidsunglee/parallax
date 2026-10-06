@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence, Set
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from parallax.core.base import INFINITY_LITERAL, TemporalBound
+from parallax.core.base import INFINITY
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import AttributeMetadata
 from parallax.core.object_query._validated import (
@@ -360,8 +360,8 @@ def _compared(
     coordinate stopped being the database's own answer.
     """
     resolved = subject(lowered.member)
-    if isinstance(carrier, TemporalBound):
-        ctx.bind_framework(carrier, wire_value=INFINITY_LITERAL)
+    if carrier is INFINITY:
+        ctx.bind_framework(carrier)
     elif resolved.text_compared:
         ctx.bind_comparison_text(carrier, resolved.type)
     else:

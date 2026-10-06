@@ -846,7 +846,7 @@ def test_an_update_beyond_its_observed_rectangle_reads_the_coverage_it_reaches(
     assert coverage.sql.endswith(
         "from where_position t0 where t0.id = %s and t0.thru_z > %s and t0.out_z = %s" + lock
     )
-    assert coverage.binds == (1, jun, "infinity")
+    assert coverage.binds == (1, jun, INFINITY_INSTANT)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
     assert [call.sql.split(" ", 1)[0] for call in writes] == ["update"] * 2 + ["insert"] * 3
     assert [call.binds[2] for call in writes[:2]] == [jun, "infinity"]
@@ -875,7 +875,7 @@ def test_a_bounded_update_reads_coverage_only_up_to_its_bound() -> None:
     assert coverage.sql.endswith(
         "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s"
     )
-    assert coverage.binds == (1, jun, sep, "infinity")
+    assert coverage.binds == (1, jun, sep, INFINITY_INSTANT)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
     assert [call.binds[2:4] for call in writes[2:]] == [
         (Decimal("100.00"), jan),

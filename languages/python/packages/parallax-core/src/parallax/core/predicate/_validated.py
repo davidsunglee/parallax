@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Literal, cast
 
-from parallax.core.base import ManagedValue, NeutralType, matches_neutral_type
+from parallax.core.base import (
+    INFINITY,
+    INFINITY_LITERAL,
+    ManagedValue,
+    NeutralType,
+    matches_neutral_type,
+)
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
@@ -106,8 +112,9 @@ def framework_comparison(
     *, op: ComparisonOp, attr: str, member: AttributeMetadata, value: object
 ) -> ValidatedPredicate:
     """Build a comparison over a framework sentinel that is not a typed literal."""
+    authored = INFINITY_LITERAL if value is INFINITY else str(value)
     return ValidatedPredicate(
-        Comparison(op=op, attr=attr, value=str(value)),
+        Comparison(op=op, attr=attr, value=authored),
         operands=framework_operands(value),
         member=member,
     )

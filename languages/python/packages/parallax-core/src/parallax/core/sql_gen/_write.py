@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from parallax.core import inheritance, storage_layout
-from parallax.core.base import INFINITY_LITERAL, FrozenMap, NeutralType
+from parallax.core.base import INFINITY, INFINITY_LITERAL, FrozenMap, NeutralType
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import (
     Dialect,
@@ -105,7 +105,9 @@ def _ctx(meta: Metamodel, dialect: Dialect) -> StatementBuilder:
 
 
 def _bind(ctx: StatementBuilder, value: object, neutral_type: NeutralType | None = None) -> None:
-    if neutral_type is not None and value is not None:
+    if value is INFINITY:
+        ctx.bind_framework(value)
+    elif neutral_type is not None and value is not None:
         ctx.bind_managed(value, neutral_type)
     elif isinstance(value, JsonDocument):
         ctx.bind_document(value)

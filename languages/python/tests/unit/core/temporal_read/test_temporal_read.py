@@ -259,7 +259,7 @@ def test_temporal_query_validation_reports_an_invalid_wire_coordinate() -> None:
 # --------------------------------------------------------------------------- #
 def test_explicit_latest_injects_the_current_row_predicate() -> None:
     explicit = _where(BALANCE, {"transaction-time": oq.AsOf("latest")})
-    assert explicit == ("t0.out_z = ?", ("infinity",))
+    assert explicit == ("t0.out_z = ?", (INFINITY,))
 
 
 def test_result_narrowing_survives_temporal_selection_lowering() -> None:
@@ -335,7 +335,7 @@ def test_as_of_composes_after_a_user_predicate() -> None:
         oa.Comparison(op="eq", attr="Balance.acctNum", value="A"),
     )
     assert where == "t0.acct_num = ? and t0.out_z = ?"
-    assert binds == ("A", "infinity")
+    assert binds == ("A", INFINITY)
 
 
 # --------------------------------------------------------------------------- #
@@ -355,13 +355,34 @@ def _bitemporal(
 def test_bitemporal_both_latest() -> None:
     where, binds = _where(POSITION, _bitemporal("latest", "latest"))
     assert where == "t0.thru_z = ? and t0.out_z = ?"
-    assert binds == ("infinity", "infinity")
+    assert binds == (INFINITY, INFINITY)
+
+
+def test_latest_terms_bind_managed_infinity_and_publish_its_canonical_literal() -> None:
+    model = _ACCEPTED["Position"]
+    query = _validated(POSITION, _bitemporal("latest", "latest"))
+    injected = inject_resolved_as_of(query.predicate, query.temporal, POSITION)
+    hop_terms = validated_hop_as_of_terms(POSITION, model, {})
+
+    for term in (*injected.children, *hop_terms):
+        assert cast("oa.Comparison", term.authored).value == "infinity"
+        assert term.operands is not None
+        assert term.operands.form == "framework"
+        assert term.operands.values == (INFINITY,)
+
+    root = deep_fetch.plan(
+        query, model, projection=deep_fetch.ReadProjectionRequest("all", True)
+    ).root
+    statement = compile_read(root, model, POSTGRES).statement
+    assert statement.binds == (INFINITY, INFINITY)
+    assert statement.wire_binds() == ("infinity", "infinity")
+    assert statement.typed_bind_spans == ()
 
 
 def test_bitemporal_valid_time_past_tx_time_latest() -> None:
     where, binds = _where(POSITION, _bitemporal(_B, "latest"))
     assert where == "t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?"
-    assert binds == (_instant(_B), _instant(_B), "infinity")
+    assert binds == (_instant(_B), _instant(_B), INFINITY)
 
 
 def test_bitemporal_both_past_reads_valid_time_first() -> None:

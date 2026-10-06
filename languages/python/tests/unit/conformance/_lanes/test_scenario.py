@@ -3837,6 +3837,6 @@ def test_a_bounded_temporal_target_step_reads_its_coverage_then_writes_its_windo
         1,
         dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
-        "infinity",
+        INFINITY,
     ]
     assert [sql.split(" ", 1)[0] for sql, _ in port.writes] == ["insert", "update", *["insert"] * 3]

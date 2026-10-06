@@ -21,8 +21,14 @@ from decimal import Decimal
 import pytest
 
 from parallax.core import predicate as oa
+from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
+from parallax.core.object_query import AsOf, object_query, validate_object_query
 from parallax.core.sql_gen._compile import CompiledPredicate
+from parallax.core.sql_gen._compile import (
+    compile_write_predicate as compile_validated_write_predicate,
+)
+from parallax.core.temporal_read import inject_resolved_as_of
 from tests._support.sql import compile_read, compile_write_predicate
 from tests.unit._corpus_model_support import model, target
 
@@ -30,6 +36,7 @@ ORDERS = model("orders")
 ACCOUNT = model("account")
 CUSTOMER = model("customer")
 PAYMENT = model("payment")
+POSITION = model("position")
 
 
 # --------------------------------------------------------------------------- #
@@ -72,6 +79,28 @@ def test_all_renders_the_empty_fragment_and_none_renders_unsatisfiable() -> None
     assert compile_write_predicate(
         oa.NoneOp(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account")
     ) == CompiledPredicate("1 = 0", ())
+
+
+def test_a_current_row_term_binds_managed_infinity_and_publishes_its_literal() -> None:
+    position = target(POSITION, "Position")
+    query = validate_object_query(
+        position,
+        object_query(
+            position.identity,
+            oa.All(),
+            temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
+        ),
+        POSITION,
+    )
+    current = inject_resolved_as_of(query.predicate, query.temporal, position)
+
+    predicate = compile_validated_write_predicate(current, POSITION, POSTGRES, position)
+
+    assert predicate.sql == "thru_z = ? and out_z = ?"
+    assert predicate.binds == (INFINITY, INFINITY)
+    assert predicate.lowered is not None
+    assert predicate.lowered.wire_binds() == ("infinity", "infinity")
+    assert predicate.lowered.typed_bind_spans == ()
 
 
 # --------------------------------------------------------------------------- #

@@ -13,13 +13,14 @@ here is over the returned `ObjectQueryPlan` / `FetchStep` shape alone.
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 from typing import cast
 
 import pytest
 
 from parallax.conformance import models
 from parallax.core import deep_fetch, inheritance, relationship
-from parallax.core.base import ManagedValue
+from parallax.core.base import INFINITY, ManagedValue
 from parallax.core.deep_fetch._include_tree import EMPTY_RENDER, IncludePosition
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
@@ -48,7 +49,7 @@ from parallax.core.predicate import (
     PredicateNode,
 )
 from parallax.core.predicate._validated import DeferredKeySet
-from parallax.core.sql_gen._compile import compile_template
+from parallax.core.sql_gen._compile import compile_read, compile_template
 from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
 from tests.unit._corpus_model_support import model as accepted_model
@@ -1106,6 +1107,37 @@ def test_concrete_target_root_query_injects_explicit_latest_on_every_axis() -> N
             Comparison(op="eq", attr="parallax.compatibility.Rate.txEnd", value="infinity"),
         )
     )
+
+
+@pytest.mark.parametrize("read", ["coverage", "target"])
+def test_an_acquisition_read_selects_current_transaction_time_by_managed_infinity(
+    read: str,
+) -> None:
+    rate = entity_of(RATE, "Rate")
+    jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    query = (
+        deep_fetch.plan_coverage_read(
+            rate, model=RATE, key="id", key_value=1, valid_from=jan, until=None
+        )
+        if read == "coverage"
+        else deep_fetch.plan_target_read(rate, model=RATE, key="id", key_value=1, valid_from=jan)
+    )
+
+    (current,) = (
+        term
+        for term in query.validated_predicate.children
+        if term.operands is not None and term.operands.form == "framework"
+    )
+    assert current.authored == Comparison(
+        op="eq", attr="parallax.compatibility.Rate.txEnd", value="infinity"
+    )
+    assert current.operands is not None
+    assert current.operands.values == (INFINITY,)
+    statement = compile_read(query, RATE, POSTGRES).statement
+    assert statement.binds[-1] is INFINITY
+    assert statement.wire_binds()[-1] == "infinity"
+    typed = {index for span in statement.typed_bind_spans for index in span.indexes()}
+    assert len(statement.binds) - 1 not in typed
 
 
 def test_concrete_target_root_query_injects_a_pinned_axis() -> None:

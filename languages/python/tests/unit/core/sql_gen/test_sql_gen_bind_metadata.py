@@ -9,7 +9,7 @@ import pytest
 
 from parallax.core import inheritance, storage_layout
 from parallax.core import predicate as predicate_algebra
-from parallax.core.base import DATE, FLOAT32, INFINITY, INT64, STRING, ManagedValue
+from parallax.core.base import DATE, FLOAT32, INFINITY, INT64, STRING, TIMESTAMP, ManagedValue
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
 from parallax.core.predicate._validated import DeferredKeySet, ValidatedPredicate
@@ -485,6 +485,37 @@ def test_typed_row_binding_handles_empty_single_and_changing_patterns() -> None:
     lowered = changing.finish("values (?, ?), (?, ?)")
     assert lowered.wire_binds() == ("one", "infinity", None, "infinity")
     assert lowered.typed_bind_spans == (_TypedBindSpan(0, 1, STRING, "MANAGED"),)
+
+
+def test_managed_infinity_binds_outside_typed_spans_and_observes_its_canonical_literal() -> None:
+    builder = _builder()
+    builder.bind_framework(INFINITY)
+    builder.bind_framework(INFINITY, wire_value="explicit")
+    builder.bind_framework("infinity")
+    builder.bind_framework(7)
+    builder.bind_typed_rows(((INFINITY,),), ((TIMESTAMP, "MANAGED"),))
+    builder.bind_typed_rows(((INFINITY,), (INFINITY,)), ((TIMESTAMP, "MANAGED"),))
+
+    lowered = builder.finish("select ?, ?, ?, ?, ?, ?, ?")
+
+    assert lowered.binds == (INFINITY, INFINITY, "infinity", 7, INFINITY, INFINITY, INFINITY)
+    assert lowered.typed_bind_spans == ()
+    assert lowered.wire_bind_overrides == (
+        _WireBindOverride(0, "infinity"),
+        _WireBindOverride(1, "explicit"),
+        _WireBindOverride(4, "infinity"),
+        _WireBindOverride(5, "infinity"),
+        _WireBindOverride(6, "infinity"),
+    )
+    assert lowered.wire_binds() == (
+        "infinity",
+        "explicit",
+        "infinity",
+        7,
+        "infinity",
+        "infinity",
+        "infinity",
+    )
 
 
 def test_typed_row_binding_rejects_inconsistent_widths() -> None:
