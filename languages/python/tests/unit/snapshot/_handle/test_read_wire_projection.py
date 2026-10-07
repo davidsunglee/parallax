@@ -57,8 +57,8 @@ from parallax.snapshot import (
     view,
 )
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.materialize import _wire as wire_materialize
-from parallax.snapshot.materialize._wire import read_origin_of
+from parallax.snapshot._publication import _wire as wire_materialize
+from parallax.snapshot._publication._wire import read_origin_of
 from tests._support.db_port import Read, ScriptedAdapter
 
 

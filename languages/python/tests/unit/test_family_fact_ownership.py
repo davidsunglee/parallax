@@ -87,9 +87,9 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot import Database, ScopedDatabase, Transaction, edge_of, pin_of
-from parallax.snapshot.handle._read import typed_publication, wire_publication
-from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots
-from parallax.snapshot.materialize._root import RootView
+from parallax.snapshot._handle._read import typed_publication, wire_publication
+from parallax.snapshot._publication._classify import ClassifiedRoot, classify_roots
+from parallax.snapshot._publication._root import RootView
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.db_port import (
     Read,

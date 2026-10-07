@@ -40,9 +40,9 @@ from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.wire import encode_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import SnapshotInspectionError, snapshot_state_of
-from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots
-from parallax.snapshot.materialize._root import RootView
-from parallax.snapshot.materialize._wire_memo import IndexMemo, WireMemo
+from parallax.snapshot._publication._classify import ClassifiedRoot, classify_roots
+from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._wire_memo import IndexMemo, WireMemo
 
 __all__ = [
     "FAMILY_VARIANT_KEY",

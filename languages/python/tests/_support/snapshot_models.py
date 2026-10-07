@@ -3,8 +3,8 @@ narrowed-view unit tests.
 
 Shaped after ``models/orders.yaml`` (relationships, deep-fetch paths) and
 ``models/animal.yaml`` (table-per-hierarchy inheritance, a polymorphic owner,
-narrowed views) closely enough to drive ``parallax.snapshot.handle._wrap``
-against corpus-shaped rows, and composed into the two Domain Models those tests
+narrowed views) closely enough to drive Snapshot's value publication against
+corpus-shaped rows, and composed into the two Domain Models those tests
 connect with.
 
 Both families are declared here rather than borrowed from

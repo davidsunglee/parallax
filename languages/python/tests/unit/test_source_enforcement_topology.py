@@ -215,20 +215,20 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot._inspection", "_entity"): frozenset(
         {"DetachedLifecycleState", "attach_lifecycle_state"}
     ),
-    ("parallax.snapshot.handle._read", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.snapshot.handle._typed_writes", "_declaration"): frozenset({"declaration_of"}),
-    ("parallax.snapshot.materialize._root", "_layout"): frozenset({"EntityLayout"}),
-    ("parallax.snapshot.materialize._wire", "_layout"): frozenset(
+    ("parallax.snapshot._handle._read", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.snapshot._handle._typed_writes", "_declaration"): frozenset({"declaration_of"}),
+    ("parallax.snapshot._publication._root", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.snapshot._publication._wire", "_layout"): frozenset(
         {"CatalogedModel", "EntityLayout"}
     ),
-    ("parallax.snapshot.materialize._wire", "_declaration"): frozenset({"wire_names_of"}),
-    ("parallax.snapshot.materialize._wire", "_entity"): frozenset(
+    ("parallax.snapshot._publication._wire", "_declaration"): frozenset({"wire_names_of"}),
+    ("parallax.snapshot._publication._wire", "_entity"): frozenset(
         {"CHANGE_RECORD_SLOT", "ChangeRecord"}
     ),
-    ("parallax.snapshot.materialize._wire", "_graph_construction"): frozenset(
+    ("parallax.snapshot._publication._wire", "_graph_construction"): frozenset(
         {"require_correspondence"}
     ),
-    ("parallax.snapshot.materialize._wire", "_instance_state"): frozenset(
+    ("parallax.snapshot._publication._wire", "_instance_state"): frozenset(
         {
             "ABSENT_DECLARED_VALUE",
             "declared_values",
@@ -279,7 +279,7 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
                     "parallax.core.execution._new": (
                         "from parallax.core.entity._declaration import declaration_of\n"
                     ),
-                    "parallax.snapshot.handle._resembling": (
+                    "parallax.snapshot._handle._resembling": (
                         "from parallax.core.entity import model_of, row_codec_of\n"
                         "import parallax.core.entity\n"
                         "from parallax.snapshot._inspection import declaration_of\n"
@@ -328,7 +328,7 @@ def test_the_sql_gen_reach_inventory_names_a_new_reach_and_passes_the_public_doo
                     "import parallax.core.sql_gen._seek\n"
                 ),
                 "parallax.core.execution._new": "from parallax.core.sql_gen import _compile\n",
-                "parallax.snapshot.handle._resembling": (
+                "parallax.snapshot._handle._resembling": (
                     "from parallax.core.sql_gen import LoweredStatement\n"
                     "import parallax.core.sql_gen\n"
                     "from parallax.core.sql_generation._compile import compile_read\n"
@@ -379,7 +379,7 @@ ACCEPTED_PRIVATE_LIFECYCLE_REACHES: frozenset[tuple[str, str]] = frozenset(
             for module in ("_delivery", "_fetch", "_page_reader", "_row_lane", "_stream")
         ),
         *(
-            (f"parallax.snapshot.handle.{module}", "parallax.core.execution_lifecycle._activity")
+            (f"parallax.snapshot._handle.{module}", "parallax.core.execution_lifecycle._activity")
             for module in ("_typed_writes", "_wire_writes")
         ),
     }
@@ -487,9 +487,9 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ),
     (
         "parallax.conformance.another_source",
-        "parallax.snapshot.materialize._publication",
+        "parallax.snapshot._publication._root_publication",
     ): frozenset({"publish_roots", "require_publishable"}),
-    ("parallax.conformance.another_source", "parallax.snapshot.materialize._root"): frozenset(
+    ("parallax.conformance.another_source", "parallax.snapshot._publication._root"): frozenset(
         {"RootView"}
     ),
     ("parallax.conformance.another_source", "parallax.core.execution._preflight"): frozenset(
@@ -499,7 +499,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.conformance._mechanism.model_facts",
         "parallax.core.execution._preflight",
     ): frozenset({"preflight"}),
-    ("parallax.conformance._lanes.scenario", "parallax.snapshot.materialize._wire"): frozenset(
+    ("parallax.conformance._lanes.scenario", "parallax.snapshot._publication._wire"): frozenset(
         {"authoring_of", "read_origin_of"}
     ),
     # The conformance-only runtime names the scenario and snapshot lanes drive the
@@ -518,7 +518,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance._lanes.snapshot", "parallax.core.execution._keyed_writes"): frozenset(
         {"validate_source_pin"}
     ),
-    ("parallax.conformance._lanes.snapshot", "parallax.snapshot.materialize._wire"): frozenset(
+    ("parallax.conformance._lanes.snapshot", "parallax.snapshot._publication._wire"): frozenset(
         {"FAMILY_VARIANT_KEY"}
     ),
     ("parallax.conformance.another_source", "parallax.core.execution._publication"): frozenset(
@@ -690,7 +690,7 @@ def test_the_construction_guard_names_every_construction_and_passes_a_mention() 
     # carries the spellings that are not a construction of it: an annotation, a
     # factory whose name merely contains it, a longer class name ending in it, and
     # a longer attribute tail.
-    holding = "parallax.snapshot.handle._holding"
+    holding = "parallax.snapshot._handle._holding"
     assert _write_planner_constructions(
         synthetic_sources(
             {
@@ -704,7 +704,7 @@ def test_the_construction_guard_names_every_construction_and_passes_a_mention() 
                     "import other_library\n"
                     "third = other_library.WritePlanner(model)\n"
                 ),
-                "parallax.snapshot.handle._resembling": (
+                "parallax.snapshot._handle._resembling": (
                     "def take(planner: WritePlanner) -> None: ...\n"
                     "build_write_planner(model)\n"
                     "RecordingWritePlanner(model)\n"
@@ -717,11 +717,11 @@ def test_the_construction_guard_names_every_construction_and_passes_a_mention() 
 
 def test_the_descendant_registry_names_a_shipped_subclass_and_passes_a_test_one() -> None:
     root = type("Planner", (), {"__module__": "parallax.core.unit_work.probe"})
-    shipped = type("WrappingPlanner", (root,), {"__module__": "parallax.snapshot.handle.probe"})
+    shipped = type("WrappingPlanner", (root,), {"__module__": "parallax.snapshot._handle.probe"})
     rootless = type("SentinelPlanner", (root,), {"__module__": __name__})
     assert _shipped_descendant_names(root) == [
         "parallax.core.unit_work.probe.Planner",
-        "parallax.snapshot.handle.probe.WrappingPlanner",
+        "parallax.snapshot._handle.probe.WrappingPlanner",
     ]
-    assert _shipped_descendant_names(shipped) == ["parallax.snapshot.handle.probe.WrappingPlanner"]
+    assert _shipped_descendant_names(shipped) == ["parallax.snapshot._handle.probe.WrappingPlanner"]
     assert _shipped_descendant_names(rootless) == []

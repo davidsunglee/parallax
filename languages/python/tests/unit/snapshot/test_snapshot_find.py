@@ -96,9 +96,9 @@ from parallax.snapshot import (
     SnapshotMaterializationError,
     TooManyResultsFound,
 )
-from parallax.snapshot.handle import _database, _read
-from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots
-from parallax.snapshot.materialize._root import RootView
+from parallax.snapshot._handle import _database, _read
+from parallax.snapshot._publication._classify import ClassifiedRoot, classify_roots
+from parallax.snapshot._publication._root import RootView
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

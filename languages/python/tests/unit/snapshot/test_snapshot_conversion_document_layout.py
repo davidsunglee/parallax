@@ -3,7 +3,7 @@
 The production read path's own document-layout witness. Every corpus case over
 `models/document-layout.yaml` grades a rejected model, a write sequence, a row-form
 oracle, or a graph the compatibility engine assembles itself, so none of them reaches
-`parallax.snapshot.materialize`; a *materializing* read of a document row answering
+`parallax.snapshot._publication`; a *materializing* read of a document row answering
 the same members a `Columns` row answers is graded here instead.
 
 What runs here is the driver's own sequence, database aside: the layout's own
@@ -49,7 +49,7 @@ from parallax.core.read_delivery._page import (
 from parallax.core.read_delivery._row_converter import bind
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize._root import RootView
+from parallax.snapshot._publication._root import RootView
 from tests._support.sql import compile_read
 from tests.unit._document_layout_support import columns_model, document_model, entity
 from tests.unit.snapshot._snapshot_page_support import documents_of, rendered_members

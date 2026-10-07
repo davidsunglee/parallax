@@ -63,7 +63,7 @@ from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import instructions
 from parallax.snapshot import Database, Snapshot, WireEntity
-from parallax.snapshot.materialize._wire import FAMILY_VARIANT_KEY
+from parallax.snapshot._publication._wire import FAMILY_VARIANT_KEY
 
 __all__ = ["compile_scenario", "run_scenario"]
 

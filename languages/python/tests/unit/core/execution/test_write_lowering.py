@@ -1,9 +1,9 @@
-"""Write-DML lowering unit tests (the composition seam, m-sql write DML).
+"""Write-DML lowering unit tests (execution's lowering seam, m-sql write DML).
 
-``parallax.snapshot.handle.stream_lowered`` is the single write-lowering seam both
-the developer transaction path and the conformance engine reuse. These tests pin
-its byte-exact non-temporal keyed emissions against the corpus goldens
-(``m-unit-work-001/003/005``, ``m-opt-lock-002/005/006/013``,
+``parallax.core.execution._write_lowering.stream_lowered`` is the single
+write-lowering seam both the developer transaction path and the conformance
+engine reuse. These tests pin its byte-exact non-temporal keyed emissions against
+the corpus goldens (``m-unit-work-001/003/005``, ``m-opt-lock-002/005/006/013``,
 ``m-inheritance-007/008/009/010/084/104``, ``m-pk-gen-001``), compose it with the
 Write Planner for the coalescing / mixed-flush / cancellation cases
 (``-008/-009/-010``), pin the ``m-opt-lock`` version gate/advance/shortfall
@@ -13,10 +13,11 @@ inheritance tag derivation/guard/opt-lock composition, and the pk-gen
 ``max``/``increment`` marker lowering. The temporal keyed forms—close-and-chain,
 the rectangle split, the per-axis close address, the observed-``in_z`` gate, and
 the settled ``StaleWrite`` versus ``OptimisticConflict`` shortfall tag—are pinned
-in ``test_temporal_write_lowering.py``. The predicate-selected and multi-row batch
-forms use the same lowering seam. Planning refuses a materializing predicate write
-that reaches it, a mixed-shape multi-row instruction, a milestone verb on a
-non-temporal entity, and an unsupported DB-computed marker with a loud
+in ``tests/unit/core/unit_work/test_temporal_write_lowering.py``. The
+predicate-selected and multi-row batch forms use the same lowering seam. Planning
+refuses a materializing predicate write that reaches it, a mixed-shape multi-row
+instruction, a milestone verb on a non-temporal entity, and an unsupported
+DB-computed marker with a loud
 ``WritePlanningError``; lowering separately refuses a target with no effective
 table with ``SqlGenError`` — each a forward-error posture, never a wrong
 emission, mirroring the read compiler's own.
@@ -763,10 +764,9 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # The buffer-time seams (`_typed_writes.typed_predicate_write` /
     # `UnitOfWork.buffer_predicate`) guard the developer `_where` verbs and the
     # engine's buffering translation — but they are NOT on every road here.
-    # `stream_lowered` is EXPORTED (`parallax.snapshot.handle.__all__`,
-    # `tests/api/public_api.json`), and the conformance engine's readless
-    # predicate-write step (`scenario._lower_predicate_write_step`) reaches it
-    # straight from a deserialized instruction. The lowering-side guard must
+    # The conformance engine's readless predicate-write step
+    # (`scenario._lower_predicate_write_step`) reaches `stream_lowered` straight
+    # from a deserialized instruction. The lowering-side guard must
     # reject the `narrow` case before it can introduce an alias that unaliased
     # DML never declares (`m-sql` rule 1).
     write = PredicateWrite("delete", PredicateSelection("CardPayment", predicate))
@@ -823,10 +823,9 @@ def test_multi_row_insert_collapses_to_one_statement_many_value_tuples() -> None
 
 
 def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row() -> None:
-    # the multi-entry insert's versioned-entity behavior mirrors the single row's
-    # single-row one (`parallax.snapshot.handle`'s keyed-SQL builders): every
-    # collapsed row derives the SAME `opt_lock.INITIAL_VERSION` at the version
-    # column's own Table Layout slot position, ignoring any row-carried value — a
+    # the multi-entry insert's versioned-entity behavior mirrors the single-row
+    # insert's: every collapsed row derives the SAME `opt_lock.INITIAL_VERSION` at
+    # the version column's own Table Layout slot position, ignoring any row-carried value — a
     # batched insert is exactly as safe as a single-row one because the initial
     # version is a constant, never observed. No corpus witness collapses a
     # multi-row insert on a versioned entity (Wallet/Customer,

@@ -188,7 +188,7 @@ def test_forbidden_respects_the_dag() -> None:
     assert "parallax.descriptor" in forbidden["parallax.core.entity"]
     assert "parallax.core.entity" not in forbidden["parallax.descriptor._hub"]
     # The cross-package rule falls out of the complement.
-    assert "parallax.postgres" in forbidden["parallax.snapshot.materialize"]
+    assert "parallax.postgres" in forbidden["parallax.snapshot._publication"]
 
 
 def test_production_scopes_never_import_conformance() -> None:
@@ -557,7 +557,7 @@ def test_the_spec_and_the_tool_agree_on_first_party_grants() -> None:
 
 def test_parse_first_party_support_table_reads_the_committed_rows() -> None:
     declared = _spec_first_party_grants()
-    assert "parallax.core.read_delivery._page" in declared["parallax.snapshot.materialize"]
+    assert "parallax.core.read_delivery._page" in declared["parallax.snapshot._publication"]
     # The Postgres row grants first-party scopes alone: the driver it imports is
     # declared by the restricted-external table, not by this column.
     assert declared["parallax.postgres"] == frozenset(
@@ -1116,9 +1116,9 @@ def test_runtime_child_rows_are_narrower_than_their_parent_rows() -> None:
     )
     assert "parallax.core.batch_write" in forbidden["parallax.core.execution._read_policy"]
     assert "parallax.core.read_delivery" in forbidden["parallax.core.execution._keyed_sql"]
-    assert "parallax.core.sql_gen" in forbidden["parallax.snapshot.materialize"]
-    assert "parallax.core.execution_lifecycle" in forbidden["parallax.snapshot.materialize"]
-    assert "parallax.core.execution" in forbidden["parallax.snapshot.materialize"]
+    assert "parallax.core.sql_gen" in forbidden["parallax.snapshot._publication"]
+    assert "parallax.core.execution_lifecycle" in forbidden["parallax.snapshot._publication"]
+    assert "parallax.core.execution" in forbidden["parallax.snapshot._publication"]
 
 
 def test_scope_descendants_inverts_the_child_chain() -> None:
@@ -1136,7 +1136,7 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
         }
     )
     assert dag.scope_descendants("parallax.snapshot") == frozenset(
-        {"parallax.snapshot._inspection", "parallax.snapshot.materialize"}
+        {"parallax.snapshot._inspection", "parallax.snapshot._publication"}
     )
     assert dag.scope_descendants("parallax.core.base") == frozenset()
 
@@ -1594,15 +1594,15 @@ def test_a_read_planning_import_in_value_publication_fails_lint_imports(
     # it — SQL generation — is what the row reports.
     reported = broken_by(
         linted_copy,
-        "parallax.snapshot.materialize._root",
+        "parallax.snapshot._publication._root",
         "import parallax.core.read_delivery._read_plan  # deliberate planning violation",
     )
 
     assert (
-        "parallax.snapshot.materialize may import only its permitted dependencies BROKEN"
+        "parallax.snapshot._publication may import only its permitted dependencies BROKEN"
         in reported
     )
-    assert "parallax.snapshot.materialize._root -> parallax.core.read_delivery._read_plan" in (
+    assert "parallax.snapshot._publication._root -> parallax.core.read_delivery._read_plan" in (
         reported
     )
 

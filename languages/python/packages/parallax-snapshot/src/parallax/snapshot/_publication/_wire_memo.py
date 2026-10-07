@@ -6,7 +6,7 @@ from weakref import ReferenceType, ref
 from parallax.core.deep_fetch import RenderToken
 
 if TYPE_CHECKING:
-    from parallax.snapshot.materialize._wire import WireEntity
+    from parallax.snapshot._publication._wire import WireEntity
 
 Node = TypeVar("Node", contravariant=True)
 

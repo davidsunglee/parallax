@@ -110,10 +110,10 @@ def test_every_import_spelling_needs_its_sibling(tmp_path: Path, source: str) ->
 def test_an_import_in_a_stub_file_needs_its_sibling(tmp_path: Path) -> None:
     snapshot = {
         "parallax/snapshot/__init__.py": "",
-        "parallax/snapshot/handle.pyi": "from parallax.core.model import VALUE\n",
+        "parallax/snapshot/_handle.pyi": "from parallax.core.model import VALUE\n",
     }
     assert _findings(tmp_path, _siblings(snapshot, dependencies=())) == [
-        "parallax-snapshot: imports parallax-core (src/parallax/snapshot/handle.pyi:1) "
+        "parallax-snapshot: imports parallax-core (src/parallax/snapshot/_handle.pyi:1) "
         "but [project].dependencies does not declare it"
     ]
 
@@ -123,10 +123,10 @@ def test_imports_resolve_to_the_member_owning_each_namespace_scope(tmp_path: Pat
     # imports, and each `parallax.<scope>` reaches exactly the member owning it
     # although every member ships beneath the same `parallax` namespace.
     snapshot = {
-        "parallax/snapshot/__init__.py": "from . import handle\nfrom .handle import read\n",
-        "parallax/snapshot/handle/__init__.py": "from .. import handle as again\n",
-        "parallax/snapshot/handle/read.py": (
-            "import parallax.snapshot.handle\nfrom ...postgres import adapter\n"
+        "parallax/snapshot/__init__.py": "from . import _handle\nfrom ._handle import read\n",
+        "parallax/snapshot/_handle/__init__.py": "from .. import _handle as again\n",
+        "parallax/snapshot/_handle/read.py": (
+            "import parallax.snapshot._handle\nfrom ...postgres import adapter\n"
         ),
     }
     findings = _findings(tmp_path, _siblings(snapshot, dependencies=("parallax-postgres",)))
@@ -134,7 +134,7 @@ def test_imports_resolve_to_the_member_owning_each_namespace_scope(tmp_path: Pat
     missing = _findings(tmp_path / "missing", _siblings(snapshot, dependencies=()))
     assert missing == [
         "parallax-snapshot: imports parallax-postgres "
-        "(src/parallax/snapshot/handle/read.py:2) but [project].dependencies does not declare it"
+        "(src/parallax/snapshot/_handle/read.py:2) but [project].dependencies does not declare it"
     ]
 
 

@@ -1,4 +1,4 @@
-"""Participating-read unit tests for `parallax.snapshot.handle` (Docker-free fake ports).
+"""Participating-read unit tests for `parallax.snapshot._handle` (Docker-free fake ports).
 
 `Transaction.find` and `ScopedDatabase.find`: force-flush before a read
 (read-your-own-writes), the lock suffix each materialized level's own Effective
@@ -58,7 +58,7 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan import TemporalObservation
 from parallax.snapshot import Database, ScopedDatabase, Transaction, WireEntity
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.materialize._wire import read_origin_of
+from parallax.snapshot._publication._wire import read_origin_of
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -90,8 +90,8 @@ from tests.unit._transact_support import (
     new_account,
     read_account,
 )
-from tests.unit.snapshot.handle import _mixed_strategy_model as mx
-from tests.unit.snapshot.handle import observation_models as om
+from tests.unit.snapshot._handle import _mixed_strategy_model as mx
+from tests.unit.snapshot._handle import observation_models as om
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,7 +373,7 @@ def test_db_find_pins_an_explicit_as_of_statement() -> None:
 
 def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge() -> None:
     # `DepositRate` declares NO `as_of` of its own (`Rate`, the family root,
-    # does) — `_temporal_entity` (`parallax.snapshot.handle`) must resolve
+    # does) — the read must resolve
     # through the root to compute both the statement pin and the row's own
     # milestone edge.
     from parallax.core import LATEST

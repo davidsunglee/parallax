@@ -42,7 +42,7 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan import ObjectKey, ObservedStateKey
 from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
 from parallax.snapshot import ScopedDatabase, Transaction, WireEntity
-from parallax.snapshot.handle._typed_writes import instance_read_origin
+from parallax.snapshot._handle._typed_writes import instance_read_origin
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

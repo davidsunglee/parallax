@@ -1,6 +1,6 @@
 """``parallax.core.opt_lock`` unit tests (m-opt-lock).
 
-Direct, isolated pins for the pure policy scope ``parallax.snapshot.handle``'s
+Direct, isolated pins for the pure policy scope ``parallax.core.execution``'s
 write-lowering seam consumes: the observed-version requirement
 (:func:`require_observed`), the runtime-computed advance
 (:func:`advance`), the per-Entity strategy derivation

@@ -139,7 +139,7 @@ invalid rows refuse, are skipped, or become explicit per-row write results.
 *Medium — shipped behavior proven at one interface instead of two.* **Owned by
 the compatibility corpus, not this target**, and kept here because Python work
 surfaced it and nothing else tracks it. Relates to `core/compatibility/models`,
-`tests/unit/snapshot/handle/_mixed_strategy_model.py`.
+`tests/unit/snapshot/_handle/_mixed_strategy_model.py`.
 
 **What.** An Effective Concurrency Strategy is a property of the target Entity,
 so one `optimistic` preference over one connected model resolves per Entity: a
@@ -485,7 +485,7 @@ forbidden, rather than rediscovering all three.
 and delete rows are graded nowhere at all.* Relates to
 `core/spec/m-case-format.md` *Streamed reads*, `core/spec/m-read-delivery.md`
 *Stability under concurrent writing*,
-`tests/unit/snapshot/handle/test_transaction_streams.py`,
+`tests/unit/snapshot/_handle/test_transaction_streams.py`,
 `tests/unit/core/continuation/test_continuation.py`,
 `tests/api/test_snapshot_delivery_contract.py`.
 
@@ -554,7 +554,7 @@ by the settled decision that `when.stream` names no representation, and by no
 corpus model being class-backed — neither of which has a streaming rationale, and
 closing them means reopening a cross-language contract the corpus took the other
 way on purpose. It stays graded at
-`tests/unit/snapshot/handle/test_transaction_streams.py`.
+`tests/unit/snapshot/_handle/test_transaction_streams.py`.
 
 ### D-88 — The read oracle refuses a Continuation Order naming a member a wrapped `union all` resolves per branch
 

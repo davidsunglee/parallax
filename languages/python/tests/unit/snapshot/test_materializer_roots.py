@@ -20,8 +20,8 @@ from parallax.core.read_delivery._page import (
     root_last_uses,
 )
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize._publication import publish_roots
-from parallax.snapshot.materialize._root import RootView
+from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._root_publication import publish_roots
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import bound_read
 from tests.unit.snapshot._encoded_identity_read import encoded_identity_page

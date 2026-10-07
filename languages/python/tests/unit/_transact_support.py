@@ -1,4 +1,4 @@
-"""Shared fixtures for the `parallax.snapshot.handle` transaction suites.
+"""Shared fixtures for the `parallax.snapshot._handle` transaction suites.
 
 The two `Database` builders over a port, the mirrored model handles, and the
 SQL/row goldens that more than one suite drives. Shared by
@@ -9,7 +9,7 @@ apart by observable behavior. The ports themselves come from
 Exported names carry no leading underscore: importing an underscored name across
 modules is a `reportPrivateUsage` error under pyright strict, so privacy is
 carried by this MODULE's underscore — the same convention the private
-`parallax.snapshot.handle` modules follow. Never imported by production code.
+`parallax.snapshot._handle` modules follow. Never imported by production code.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import RetainedObservation
 from parallax.snapshot import ScopedDatabase, Snapshot, WireEntity, connect
-from parallax.snapshot.materialize._wire import read_origin_of
+from parallax.snapshot._publication._wire import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.root_ownership import own_root
 

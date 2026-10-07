@@ -18,13 +18,13 @@ from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttrib
 from parallax.core.temporal_read import Edge, NonTemporal, TemporalFacet, milestone_edge
 from parallax.core.unit_work import ReadOrigin
 from parallax.snapshot._inspection import SnapshotNodeState
-from parallax.snapshot.materialize._classify import (
+from parallax.snapshot._publication._classify import (
     ClassifiedRoot,
     ConformingRoot,
     RootClassifications,
     classify_roots,
 )
-from parallax.snapshot.materialize._root import RootView
+from parallax.snapshot._publication._root import RootView
 
 __all__ = ["typed_root"]
 

@@ -1,3 +1,22 @@
+from parallax.snapshot._handle._database import Database, ScopedDatabase, connect
+from parallax.snapshot._handle._errors import (
+    SnapshotConnectionError,
+    SnapshotMaterializationError,
+)
+from parallax.snapshot._handle._read import (
+    CheckedSnapshot,
+    NoResultFound,
+    Snapshot,
+    TooManyResultsFound,
+)
+from parallax.snapshot._handle._stream import SnapshotStream
+from parallax.snapshot._handle._transaction import Transaction
+from parallax.snapshot._handle._wire import (
+    WireDatabaseView,
+    WireQuery,
+    WireTransactionView,
+)
+from parallax.snapshot._handle._wire_writes import WireChanges, WirePredicateTarget
 from parallax.snapshot._inspection import (
     SnapshotInspectionError,
     edge_of,
@@ -5,27 +24,8 @@ from parallax.snapshot._inspection import (
     pin_of,
     view,
 )
-from parallax.snapshot.handle._database import Database, ScopedDatabase, connect
-from parallax.snapshot.handle._errors import (
-    SnapshotConnectionError,
-    SnapshotMaterializationError,
-)
-from parallax.snapshot.handle._read import (
-    CheckedSnapshot,
-    NoResultFound,
-    Snapshot,
-    TooManyResultsFound,
-)
-from parallax.snapshot.handle._stream import SnapshotStream
-from parallax.snapshot.handle._transaction import Transaction
-from parallax.snapshot.handle._wire import (
-    WireDatabaseView,
-    WireQuery,
-    WireTransactionView,
-)
-from parallax.snapshot.handle._wire_writes import WireChanges, WirePredicateTarget
-from parallax.snapshot.materialize._root import SnapshotConsistencyError
-from parallax.snapshot.materialize._wire import WireEntity, WireValue
+from parallax.snapshot._publication._root import SnapshotConsistencyError
+from parallax.snapshot._publication._wire import WireEntity, WireValue
 
 __all__ = [
     "CheckedSnapshot",

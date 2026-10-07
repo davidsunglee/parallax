@@ -25,7 +25,7 @@ set, so membership is asserted as "production xor development" instead of
 ``tests/api/public_api.json`` is deliberately not asserted per
 distribution: it is keyed by public *module* surface, not by distribution. It
 carries the sub-scopes ``parallax.core.metamodel`` and
-``parallax.snapshot.handle`` and omits ``parallax.conformance`` entirely, whose
+``parallax.core.execution`` and omits ``parallax.conformance`` entirely, whose
 ``__all__`` is empty. The strongest true statement about it is that every key
 sits under some distribution's root package, which is what is checked here.
 """

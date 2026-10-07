@@ -66,7 +66,7 @@ from parallax.core.read_delivery import _read_plan as read_plan_module
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.snapshot import ScopedDatabase, SnapshotMaterializationError, connect
-from parallax.snapshot.handle import _read as read_module
+from parallax.snapshot._handle import _read as read_module
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

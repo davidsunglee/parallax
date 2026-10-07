@@ -68,13 +68,13 @@ from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, PageBuilder, V
 from parallax.core.read_delivery._row_converter import bind
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import Database, ScopedDatabase, SnapshotConnectionError, WireEntity, connect
-from parallax.snapshot.handle._read import wire_publication
-from parallax.snapshot.handle._wire import WireDatabaseView, wire_query_node
-from parallax.snapshot.materialize import (
+from parallax.snapshot._handle._read import wire_publication
+from parallax.snapshot._handle._wire import WireDatabaseView, wire_query_node
+from parallax.snapshot._publication import (
     _wire as wire_materialize,
 )
-from parallax.snapshot.materialize._root import RootView
-from parallax.snapshot.materialize._wire import (
+from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._wire import (
     _SharedWireEncoder,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
     _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test
     read_origin_of,

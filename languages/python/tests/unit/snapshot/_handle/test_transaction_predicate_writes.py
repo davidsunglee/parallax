@@ -1,4 +1,4 @@
-"""Predicate-selected (`*_where`) write unit tests for `parallax.snapshot.handle`.
+"""Predicate-selected (`*_where`) write unit tests for `parallax.snapshot._handle`.
 
 The set-based verb family covers the
 mutation-compatibility guard, Assignment composition, inheritance rejection,
@@ -107,7 +107,7 @@ from parallax.snapshot import (
     Transaction,
     connect,
 )
-from parallax.snapshot.materialize._root import RootView
+from parallax.snapshot._publication._root import RootView
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized

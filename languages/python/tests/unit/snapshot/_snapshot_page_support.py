@@ -64,7 +64,7 @@ from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.core.wire import WireValue, decode_canonical_wire
-from parallax.snapshot.handle._read import typed_publication
+from parallax.snapshot._handle._read import typed_publication
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._prepared_read_support import compiled_read
 

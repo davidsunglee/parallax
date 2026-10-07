@@ -2329,9 +2329,9 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "parallax.snapshot.materialize may import only its permitted dependencies"
+name = "parallax.snapshot._publication may import only its permitted dependencies"
 type = "forbidden"
-source_modules = ["parallax.snapshot.materialize"]
+source_modules = ["parallax.snapshot._publication"]
 forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",

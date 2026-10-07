@@ -281,10 +281,7 @@ def test_resolving_a_profile_without_building_its_provisioner_is_not_a_seam() ->
 
 def test_a_local_name_that_merely_looks_like_a_seam_is_not_one() -> None:
     assert _seams("class _RaisingProvisioner:\n    pass\n\n\n_RaisingProvisioner()\n") == []
-    assert (
-        _seams("from parallax.snapshot.handle import Database\nDatabase.connect(port, meta)\n")
-        == []
-    )
+    assert _seams("from parallax.snapshot import Database\nDatabase.connect(port, meta)\n") == []
 
 
 def test_naming_a_seam_without_calling_it_is_not_a_violation() -> None:

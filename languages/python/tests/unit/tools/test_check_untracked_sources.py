@@ -33,7 +33,7 @@ def checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 # --------------------------------------------------------------------------
 def test_production_classifier_matches_package_src_only() -> None:
     assert untracked.is_production_source(
-        "packages/parallax-snapshot/src/parallax/snapshot/handle/_read.py"
+        "packages/parallax-snapshot/src/parallax/snapshot/_handle/_read.py"
     )
     assert untracked.is_production_source("packages/parallax-core/src/parallax/core/base/x.py")
     # Not under a `src` root, not Python, or not a package at all.

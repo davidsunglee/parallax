@@ -80,12 +80,12 @@ from parallax.snapshot import (
     pin_of,
     view,
 )
-from parallax.snapshot.materialize._publication import publication_issue, require_publishable
-from parallax.snapshot.materialize._root import (
+from parallax.snapshot._publication._root import (
     RootView,
     _member_order,  # pyright: ignore[reportPrivateUsage]
 )
-from parallax.snapshot.materialize._wire import EntityReader
+from parallax.snapshot._publication._root_publication import publication_issue, require_publishable
+from parallax.snapshot._publication._wire import EntityReader
 from tests._support import snapshot_models as sm
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit.snapshot._encoded_identity_read import (

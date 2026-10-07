@@ -12,6 +12,15 @@ from parallax.core.execution._options import OMITTED, Omitted
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.read_delivery import RowsResult
+from parallax.snapshot._handle._read import Snapshot, typed_publication_for
+from parallax.snapshot._handle._stream import SnapshotStream
+from parallax.snapshot._handle._typed_writes import (
+    TypedKeyedInsertSource,
+    TypedKeyedWriteSource,
+    typed_predicate_write,
+    typed_target_write,
+)
+from parallax.snapshot._handle._wire import WireTransactionView
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -19,15 +28,6 @@ from parallax.core.read_delivery import RowsResult
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
 from parallax.snapshot._inspection import bind_insertion
-from parallax.snapshot.handle._read import Snapshot, typed_publication_for
-from parallax.snapshot.handle._stream import SnapshotStream
-from parallax.snapshot.handle._typed_writes import (
-    TypedKeyedInsertSource,
-    TypedKeyedWriteSource,
-    typed_predicate_write,
-    typed_target_write,
-)
-from parallax.snapshot.handle._wire import WireTransactionView
 
 __all__ = ["Transaction", "transaction_for"]
 
@@ -370,7 +370,7 @@ class Transaction:
         the query's exact target. Readless (one statement) for an unversioned,
         non-temporal target; a versioned or temporal target MATERIALIZES
         (`m-opt-lock`, ADR 0014) — see
-        :func:`~parallax.snapshot.handle._typed_writes.typed_predicate_write`,
+        :func:`~parallax.snapshot._handle._typed_writes.typed_predicate_write`,
         the Typed predicate ingress every ``_where`` verb here delegates to.
 
         A Bitemporal target requires ``valid_from``; ``until`` bounds the

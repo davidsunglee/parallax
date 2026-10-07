@@ -23,6 +23,7 @@ from typing import Any, ClassVar, Final, cast
 import pytest
 from pydantic import BaseModel
 
+import parallax.snapshot
 from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
 from parallax.core import Attr, Entity, attr
@@ -46,9 +47,10 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import ObjectKey, VersionObservation
 from parallax.core.write_plan.keys import VersionedStateKey
-from parallax.snapshot import Transaction, WireEntity, connect, materialize
+from parallax.snapshot import Transaction, WireEntity, connect
+from parallax.snapshot import _publication as publication
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.materialize._wire import read_origin_of
+from parallax.snapshot._publication._wire import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -146,8 +148,9 @@ def test_spending_an_origin_spends_its_observation_or_itself() -> None:
 def test_no_exported_name_reaches_a_read_origin() -> None:
     # A Read Origin holds its read's raw evidence by reference, so only the
     # Snapshot's private reader reaches it.
-    assert "read_origin_of" not in materialize.__all__
-    assert not hasattr(materialize, "read_origin_of")
+    for package in (parallax.snapshot, publication):
+        assert "read_origin_of" not in package.__all__
+        assert not hasattr(package, "read_origin_of")
 
 
 def test_deferred_read_evidence_must_name_the_origins_entity() -> None:

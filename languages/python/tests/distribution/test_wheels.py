@@ -67,7 +67,7 @@ def test_core_wheel_contains_spine_scopes(wheelhouse: Wheelhouse) -> None:
 
 
 def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:
-    # Same idiom, same reasoning as the handle package below: the shipped set is
+    # Same idiom, same reasoning as the Snapshot packages below: the shipped set is
     # asserted whole, so a module the split never meant to ship fails here as
     # loudly as a missing one. The ABSENT `sql_gen/compile.py` is the half an
     # exact set would not otherwise reach — the old single-file compiler sits
@@ -119,46 +119,55 @@ def test_evolution_wheel_ships_both_of_its_scopes(wheelhouse: Wheelhouse) -> Non
     assert "parallax/evolution/schema_delta.py" not in names
 
 
-def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
+def test_snapshot_wheel_ships_only_its_private_packages(wheelhouse: Wheelhouse) -> None:
     # The checks above see `parallax/snapshot` only at the top-package prefix, so
-    # they cannot tell a handle.py from a handle/ directory. This is the complete
-    # package — the private modules plus the re-exporting interface — and
-    # the set is compared whole so it stays that claim: a module shipped here
-    # that nobody named fails as loudly as a missing one. The absent old path is
-    # the half no set over the directory reaches: `handle.py` sits beside the
-    # package, and a wheel carrying it is a stale build or a half-applied split.
-    assert _modules_directly_in(wheelhouse, "parallax-snapshot", "parallax/snapshot/handle/") == {
-        "parallax/snapshot/handle/__init__.py",
-        "parallax/snapshot/handle/_database.py",
-        "parallax/snapshot/handle/_errors.py",
-        "parallax/snapshot/handle/_read.py",
-        "parallax/snapshot/handle/_stream.py",
-        "parallax/snapshot/handle/_transaction.py",
-        "parallax/snapshot/handle/_typed_writes.py",
-        "parallax/snapshot/handle/_wire.py",
-        "parallax/snapshot/handle/_wire_writes.py",
+    # they cannot tell a private package from a retired one beside it. Each
+    # shipped set is compared whole, so a module nobody named fails as loudly as
+    # a missing one: the package interface and node inspection at the top, the
+    # facades and write doors in `_handle/`, and Root View, classification, and
+    # value publication in `_publication/`, with no Page or conversion module
+    # beside their read-delivery home.
+    assert _modules_directly_in(wheelhouse, "parallax-snapshot", "parallax/snapshot/") == {
+        "parallax/snapshot/__init__.py",
+        "parallax/snapshot/_inspection.py",
     }
-    assert "parallax/snapshot/handle.py" not in _names(wheelhouse, "parallax-snapshot")
+    assert _modules_directly_in(wheelhouse, "parallax-snapshot", "parallax/snapshot/_handle/") == {
+        "parallax/snapshot/_handle/__init__.py",
+        "parallax/snapshot/_handle/_database.py",
+        "parallax/snapshot/_handle/_errors.py",
+        "parallax/snapshot/_handle/_read.py",
+        "parallax/snapshot/_handle/_stream.py",
+        "parallax/snapshot/_handle/_transaction.py",
+        "parallax/snapshot/_handle/_typed_writes.py",
+        "parallax/snapshot/_handle/_wire.py",
+        "parallax/snapshot/_handle/_wire_writes.py",
+    }
+    assert _modules_directly_in(
+        wheelhouse, "parallax-snapshot", "parallax/snapshot/_publication/"
+    ) == {
+        "parallax/snapshot/_publication/__init__.py",
+        "parallax/snapshot/_publication/_classify.py",
+        "parallax/snapshot/_publication/_root.py",
+        "parallax/snapshot/_publication/_root_publication.py",
+        "parallax/snapshot/_publication/_typed.py",
+        "parallax/snapshot/_publication/_wire.py",
+        "parallax/snapshot/_publication/_wire_memo.py",
+    }
 
 
-def test_snapshot_wheel_ships_the_materialize_package(wheelhouse: Wheelhouse) -> None:
-    # Same idiom, same reasoning: the ABSENT paths are the load-bearing half —
-    # every required path below would still pass against a tree that kept the
-    # old single-file assembler beside the split, or the Page and its
-    # conversion beside their read-delivery home, and a wheel carrying both
-    # would mean two live copies of the conversion seam.
-    names = _names(wheelhouse, "parallax-snapshot")
-    assert "parallax/snapshot/materialize/__init__.py" in names
-    assert "parallax/snapshot/materialize/_classify.py" in names
-    assert "parallax/snapshot/materialize/_root.py" in names
-    assert "parallax/snapshot/materialize/_typed.py" in names
-    assert "parallax/snapshot/materialize/_convert.py" not in names
-    assert "parallax/snapshot/materialize/_page.py" not in names
-    assert "parallax/snapshot/materialize.py" not in names
+def test_snapshot_wheel_ships_nothing_at_the_retired_package_paths(wheelhouse: Wheelhouse) -> None:
+    # The exact sets above grade the directories they name; a stale build or a
+    # half-applied move would still carry a file at a retired path, as a package
+    # directory, a single module, or a stub, and no set over another directory
+    # reaches it.
+    retired = ("parallax/snapshot/handle", "parallax/snapshot/materialize")
+    assert [
+        name for name in _names(wheelhouse, "parallax-snapshot") if name.startswith(retired)
+    ] == []
 
 
 def test_descriptor_wheel_ships_the_privatized_frontend(wheelhouse: Wheelhouse) -> None:
-    # Same idiom, same reasoning as the two package checks above: the shipped set
+    # Same idiom, same reasoning as the Snapshot package checks above: the shipped set
     # is asserted whole, so an unexpected module fails as loudly as a missing one.
     # A wheel still carrying `records.py` beside `_records.py` is what a stale
     # build or a half-applied move looks like, and it would re-expose the record

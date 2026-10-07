@@ -1,4 +1,4 @@
-"""Keyed write-verb unit tests for `parallax.snapshot.handle` (Docker-free fake ports).
+"""Keyed write-verb unit tests for `parallax.snapshot._handle` (Docker-free fake ports).
 
 The instance-taking verbs and their neutral `_buffer` seam: the
 buffer -> flush -> lower -> execute wiring proof, sparse-update no-op
@@ -51,7 +51,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import Database, ScopedDatabase, Transaction
-from parallax.snapshot.handle._wire import WireTransactionView
+from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -88,7 +88,7 @@ from tests.unit._where_position_model import (
     WHERE_POSITION_META,
     WherePosition,
 )
-from tests.unit.snapshot.handle import _mixed_strategy_model as mx
+from tests.unit.snapshot._handle import _mixed_strategy_model as mx
 
 
 # --------------------------------------------------------------------------- #
@@ -500,7 +500,7 @@ def test_a_keyed_update_changing_one_member_writes_its_whole_literal_set(
 # --------------------------------------------------------------------------- #
 def test_the_engine_and_the_typed_verbs_share_the_prepared_write_producer() -> None:
     from parallax.conformance._lanes import scenario
-    from parallax.snapshot.handle import _typed_writes as typed_writes_module
+    from parallax.snapshot._handle import _typed_writes as typed_writes_module
 
     assert scenario.instructions.prepare_wire_write is instructions.prepare_wire_write  # pyright: ignore[reportPrivateImportUsage] - the identity proof reads the module's own import binding
     assert (
@@ -541,7 +541,7 @@ def _position_row_dt() -> MappingRow:
     """The KEYED-verb tests' own row fixture: real ``datetime`` values (never
     the bare ISO strings :func:`_position_row` uses) — a KEYED verb's own
     first read runs through the ordinary developer-facing ``tx.find`` (wrap
-    into a real node, milestone-edge computation, `parallax.snapshot.handle`),
+    into a real node and milestone-edge computation),
     unlike a ``_where`` verb's internal resolving read, which never wraps."""
     return {
         "id": 1,

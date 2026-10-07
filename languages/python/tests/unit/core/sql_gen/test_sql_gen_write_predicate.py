@@ -2,7 +2,7 @@
 
 `compile_write_predicate` renders a BARE, UNALIASED where-clause fragment —
 `balance < ?`, never the resolving read's `t0.balance < ?` — for the readless
-`update`/`delete` templates in `parallax.snapshot.handle`.
+`update`/`delete` templates.
 
 Its production caller (`sql_gen._write`'s Predicate Target arm) is
 exercised indirectly
