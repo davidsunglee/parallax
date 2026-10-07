@@ -894,7 +894,7 @@ class _RowDisposal:
         transform = self.transform
         opened = _positions(positions)
         kept_at = _keeping(
-            (transform.successor_extent(position, start, end)[1] for position in opened), end
+            [transform.successor_extent(position, start, end)[1] for position in opened], end
         )
         if kept_at is None:
             return code | _REMOVE
