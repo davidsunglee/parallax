@@ -49,7 +49,7 @@ the spec calls out:
 |---|---|---|
 | **query mix** (point + range reads) | the point and range reads `m-predicate` / `m-sql` compile to, paired with the query-cache hit a caching target serves without one (`m-process-cache`) | `read-mix.yaml` |
 | **deep-fetch shapes** (to-one, to-many, multi-hop) | `m-deep-fetch`'s N+1-eliminated fetch — `1 + levels` statements regardless of fan-out | `deep-fetch.yaml` |
-| **streamed delivery** (one result at several page sizes) | `m-snapshot-read` streamed delivery — that same `1 + levels` shape once per page, and the page-size / round-trip trade | `stream.yaml` |
+| **streamed delivery** (one result at several page sizes) | `m-read-delivery` streamed delivery — that same `1 + levels` shape once per page, and the page-size / round-trip trade | `stream.yaml` |
 | **milestone workloads** (insert / update / terminate chains) | `m-temporal-write` milestone chaining — the close-and-chain write pair | `milestone-write.yaml` |
 | **aggregation** (group-by / having) | the `m-agg` aggregate statement | folded into `read-mix.yaml` |
 
@@ -89,7 +89,7 @@ other. The adapter's
 `expectRoundTrips`, and the two agreeing says the arithmetic this module states
 and the statements the fixture authors are consistent with each other. It says
 nothing about a target's delivery: the round-trip discipline of a real paged read
-is settled by `m-snapshot-read`'s streamed-delivery cases against golden
+is settled by the streamed-delivery cases (`m-read-delivery`) against golden
 statements. The family is a set of workloads over ONE result at several page sizes
 rather than one workload, because what it makes comparable is the trade: the same
 rows for fewer round trips and a larger per-page working set.

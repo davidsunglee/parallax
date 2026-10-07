@@ -102,12 +102,7 @@ from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import KeyedMutation, TargetMutation
 from parallax.core.unit_work.instructions import coerce_typed_row
 from parallax.postgres._connection import adapt_binds
-from parallax.snapshot.handle import (
-    Database,
-    ScopedDatabase,
-    Transaction,
-    WireEntity,
-)
+from parallax.snapshot import Database, ScopedDatabase, Transaction, WireEntity
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit import _leaf_type_support as leaf_support
 from tests.unit import _predicate_acquisition_support as acquisition_support

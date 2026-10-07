@@ -10,7 +10,7 @@ from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.story_models import Account
 from parallax.core.entity import Entity
 from parallax.core.execution import KeyedWriteValueError
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Transaction
 
 __all__ = [
     "TARGET_ID",

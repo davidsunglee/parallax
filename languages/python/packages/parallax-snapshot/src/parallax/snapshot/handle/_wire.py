@@ -21,7 +21,7 @@ from parallax.snapshot.handle._wire_writes import (
     wire_predicate_write,
     wire_target_write,
 )
-from parallax.snapshot.materialize import WireEntity
+from parallax.snapshot.materialize._wire import WireEntity
 
 __all__ = [
     "WireDatabaseView",
@@ -73,7 +73,7 @@ class WireDatabaseView:
     def find(self, query: WireQuery) -> Snapshot[WireEntity]:
         """Execute ``query`` exactly once and return its Wire Snapshot.
 
-        Each root is a frozen :class:`~parallax.snapshot.materialize.WireEntity`
+        Each root is a frozen :class:`~parallax.snapshot.WireEntity`
         keyed by declared member name, unwound finitely along the requested
         Include Paths, or the
         :class:`~parallax.core.read_delivery.InvalidData` record a root whose
@@ -94,7 +94,7 @@ class WireDatabaseView:
 
         Delivery is the verb and representation stays the namespace: every root
         this publishes arrives as the frozen
-        :class:`~parallax.snapshot.materialize.WireEntity` node ``find``
+        :class:`~parallax.snapshot.WireEntity` node ``find``
         publishes for that root, one at a time instead of all of them, with no
         format argument anywhere. WHICH roots arrive is the separate claim: over
         storage the model describes they are ``find``'s roots exactly, and

@@ -40,9 +40,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import RetainedObservation
-from parallax.snapshot import connect
-from parallax.snapshot.handle import ScopedDatabase, Snapshot
-from parallax.snapshot.materialize import WireEntity
+from parallax.snapshot import ScopedDatabase, Snapshot, WireEntity, connect
 from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.root_ownership import own_root

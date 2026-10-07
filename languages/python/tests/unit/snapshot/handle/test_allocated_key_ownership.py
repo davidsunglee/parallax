@@ -17,8 +17,7 @@ from parallax.core import MAX, Attr, Bitemporal, Document, DomainModel, TxTempor
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import KeyedWrite
 from parallax.core.unit_work.instructions import prepare_typed_write
-from parallax.snapshot import connect
-from parallax.snapshot.handle import ScopedDatabase, Transaction
+from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "allocated.key"

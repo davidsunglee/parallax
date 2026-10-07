@@ -39,7 +39,7 @@ from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.unit_work import KeyedWrite, WriteRejectedError, instructions
-from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, Transaction
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_document, compare_binds
 from tests._support.db_port import (

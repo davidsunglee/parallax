@@ -300,6 +300,14 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "    valid_time=LATEST, tx_time=datetime(2024, 1, 15, tzinfo=UTC)\n"
         ")",
     ),
+    # -- m-read-delivery (whole-result delivery), account.yaml --------------- #
+    ReadStory(
+        "m-read-delivery-001",
+        "A whole-result read delivers every selected row",
+        "account",
+        lambda: Account.where(Account.all),
+        "query = Account.where(Account.all)",
+    ),
     # -- m-read-lock (runtime object-find lock/omit pair), account.yaml ------ #
     # The `api-conformance`-lane runtime half of
     # the read-lock matrix — `tx.find` inside a `db.transact` of the declared

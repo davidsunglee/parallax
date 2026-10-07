@@ -42,12 +42,16 @@ from parallax.core.execution._options import (
     Omitted,
 )
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot import connect, edge_of, is_view_loaded, pin_of, view
-from parallax.snapshot.handle import (
+from parallax.snapshot import (
     Database,
     ScopedDatabase,
     Snapshot,
     Transaction,
+    connect,
+    edge_of,
+    is_view_loaded,
+    pin_of,
+    view,
 )
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import (

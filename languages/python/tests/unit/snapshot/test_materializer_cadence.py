@@ -34,8 +34,8 @@ from parallax.core.read_delivery._row_lane import (
 )
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import RootView
 from parallax.snapshot.materialize._publication import publish_roots
+from parallax.snapshot.materialize._root import RootView
 from tests.unit._prepared_read_support import bound_read
 from tests.unit.snapshot._snapshot_page_support import RecordingObserver
 

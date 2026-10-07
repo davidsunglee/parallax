@@ -1,0 +1,31 @@
+model: models/account.yaml
+tags: [m-read-delivery, m-execution-lifecycle, standalone, slice-snapshot-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Account
+    predicate:
+      all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0
+  referenceSql: select id, owner, balance, version from account
+  rows:
+    - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+    - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+    - { id: 3, owner: Grace, balance: "10.00", version: 1 }
+  roundTrips: 1
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: read
+        events:
+          - { sequence: 1, activity: 1, parent: null, readStarted: { target: parallax.compatibility.Account, interface: rows, edition: account } }
+          - { sequence: 2, activity: 2, parent: 1, acquisitionStarted: {} }
+          - { sequence: 3, activity: 2, parent: 1, acquisitionFinished: { outcome: acquired } }
+          - { sequence: 4, activity: 3, parent: 1, databaseCallStarted: { target: parallax.compatibility.Account, kind: read, statement: 0 } }
+          - { sequence: 5, activity: 3, parent: 1, databaseCallFinished: { outcome: readCompleted, returnedRows: 3 } }
+          - { sequence: 6, activity: 4, parent: 1, releaseStarted: {} }
+          - { sequence: 7, activity: 4, parent: 1, releaseFinished: { cleanup: returned } }
+          - { sequence: 8, activity: 1, parent: null, readFinished: { outcome: completed } }

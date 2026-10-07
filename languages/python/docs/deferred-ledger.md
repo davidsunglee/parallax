@@ -114,8 +114,9 @@ or leaves the skip map, no case changes lane, and no grade moves.
 ### D-72 — Predicate-write staging still refuses an issue-bearing read instead of classifying it
 
 *Medium — an invalid stored row is classified by read surfaces but refused by a
-write-only staging lane.* Relates to `parallax.snapshot.materialize` staging and
-`core/spec/m-snapshot-read.md`.
+write-only staging lane.* Relates to write acquisition in
+`parallax.core.execution` over `parallax.core.read_delivery`'s judged member rows,
+and `core/spec/m-read-delivery.md`.
 
 **What.** Ordinary eager, streamed, values, and milestone-set reads classify
 invalid stored state at the individual Root View. A milestone root whose edge
@@ -231,7 +232,7 @@ than the case grading a stream missing them.
 
 **Why it is deferred rather than fixed.** Closing it is a design choice with real
 costs on every branch, and no case needs it today. Routing the work through
-`parallax.snapshot.handle` means giving a DB-computed write marker a public
+the Snapshot write facades means giving a DB-computed write marker a public
 ingress — developer surface over the framework's own bookkeeping. Adding an
 instrumented seam for the adapter alone puts a test-shaped door in production.
 Restricting the oracle instead is free but states the limit nowhere the corpus
@@ -482,7 +483,7 @@ forbidden, rather than rediscovering all three.
 
 *Medium — one portable contract still has no cross-language case, and its insert
 and delete rows are graded nowhere at all.* Relates to
-`core/spec/m-case-format.md` *Streamed reads*, `core/spec/m-snapshot-read.md`
+`core/spec/m-case-format.md` *Streamed reads*, `core/spec/m-read-delivery.md`
 *Stability under concurrent writing*,
 `tests/unit/snapshot/handle/test_transaction_streams.py`,
 `tests/unit/core/continuation/test_continuation.py`,
@@ -491,7 +492,7 @@ and delete rows are graded nowhere at all.* Relates to
 **What.** A scenario step now admits `when.stream`, so a streamed READ step
 exists — but nothing places any other step BETWEEN two pages of one delivery:
 `given.apply` runs once, before the lane's first golden statement. So
-`m-snapshot-read` *Stability under concurrent writing* cannot be authored as a
+`m-read-delivery` *Stability under concurrent writing* cannot be authored as a
 portable case. Python now grades both authored-Sort-Key movement rows against
 real PostgreSQL in `tests/api/test_snapshot_delivery_contract.py`: a committed
 move from ahead to behind between separately leased pages skips the root, while

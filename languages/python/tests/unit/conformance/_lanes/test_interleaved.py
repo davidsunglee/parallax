@@ -32,7 +32,7 @@ from parallax.core.base import INFINITY
 from parallax.core.db_port import MappingRow, Row
 from parallax.core.dialect import Dialect
 from parallax.core.execution import DatabaseOptions
-from parallax.snapshot import handle
+from parallax.snapshot import Database, ScopedDatabase
 from tests._support.root_ownership import own_root
 from tests.unit._second_dialect import BACKTICKED
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
@@ -95,13 +95,13 @@ class _ScriptedExecution:
         self.cancel_calls = 0
         self.terminate_calls = 0
         self._database = own_root(
-            handle.Database.connect(
+            Database.connect(
                 port, model, options=options, clock=clock, lifecycle_provider=lifecycle_provider
             )
         ).using_database_login()
 
     @property
-    def database(self) -> handle.ScopedDatabase:
+    def database(self) -> ScopedDatabase:
         return self._database
 
     @property

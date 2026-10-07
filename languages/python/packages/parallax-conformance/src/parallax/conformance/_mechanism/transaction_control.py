@@ -24,7 +24,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import Dialect
 from parallax.core.execution import ExecutionFailure
-from parallax.snapshot import handle
+from parallax.snapshot import ScopedDatabase, Transaction
 
 __all__ = [
     "absorbing_rollback",
@@ -65,8 +65,8 @@ def underlying[T](execution: Callable[[], T]) -> T:
 
 
 def transact[T](
-    database: handle.ScopedDatabase,
-    body: Callable[[handle.Transaction], T],
+    database: ScopedDatabase,
+    body: Callable[[Transaction], T],
     **keywords: Unpack[TransactionKeywords],
 ) -> T:
     """``db.transact`` as every lane drives it, through :func:`underlying`.

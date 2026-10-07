@@ -14,7 +14,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
     Concurrency,
 )
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Transaction
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,

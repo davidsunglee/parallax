@@ -20,11 +20,7 @@ from parallax.core import (
 )
 from parallax.core.entity._model import model_of
 from parallax.core.execution import KeyedWriteValueError
-from parallax.snapshot import connect
-from parallax.snapshot.handle import (
-    ScopedDatabase,
-    Transaction,
-)
+from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "barrier.ordering"

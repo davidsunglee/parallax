@@ -1,4 +1,3 @@
-from parallax.core.entity import UnloadedRelationshipError
 from parallax.snapshot._inspection import (
     SnapshotInspectionError,
     edge_of,
@@ -6,40 +5,32 @@ from parallax.snapshot._inspection import (
     pin_of,
     view,
 )
-from parallax.snapshot.handle import (
-    WRITE_EVIDENCE_CODES,
-    CheckedSnapshot,
-    Database,
-    NoResultFound,
-    ObjectKey,
-    ScopedDatabase,
-    Snapshot,
+from parallax.snapshot.handle._database import Database, ScopedDatabase, connect
+from parallax.snapshot.handle._errors import (
     SnapshotConnectionError,
-    SnapshotConsistencyError,
     SnapshotMaterializationError,
-    SnapshotStream,
-    TooManyResultsFound,
-    Transaction,
-    WireEntity,
-    WireValue,
-    WriteEvidenceError,
-    WriteEvidenceErrorCode,
-    WriteInstructionError,
-    connect,
 )
+from parallax.snapshot.handle._read import (
+    CheckedSnapshot,
+    NoResultFound,
+    Snapshot,
+    TooManyResultsFound,
+)
+from parallax.snapshot.handle._stream import SnapshotStream
+from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._wire import (
     WireDatabaseView,
     WireQuery,
     WireTransactionView,
 )
 from parallax.snapshot.handle._wire_writes import WireChanges, WirePredicateTarget
+from parallax.snapshot.materialize._root import SnapshotConsistencyError
+from parallax.snapshot.materialize._wire import WireEntity, WireValue
 
 __all__ = [
-    "WRITE_EVIDENCE_CODES",
     "CheckedSnapshot",
     "Database",
     "NoResultFound",
-    "ObjectKey",
     "ScopedDatabase",
     "Snapshot",
     "SnapshotConnectionError",
@@ -49,7 +40,6 @@ __all__ = [
     "SnapshotStream",
     "TooManyResultsFound",
     "Transaction",
-    "UnloadedRelationshipError",
     "WireChanges",
     "WireDatabaseView",
     "WireEntity",
@@ -57,9 +47,6 @@ __all__ = [
     "WireQuery",
     "WireTransactionView",
     "WireValue",
-    "WriteEvidenceError",
-    "WriteEvidenceErrorCode",
-    "WriteInstructionError",
     "connect",
     "edge_of",
     "is_view_loaded",

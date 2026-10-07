@@ -22,12 +22,8 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, Document, DomainModel, Entity, ValueObject, attr
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
-from parallax.core.unit_work import MissingTargetError, WritePreconditionError
-from parallax.snapshot import (
-    WriteEvidenceError,
-    connect,
-)
-from parallax.snapshot.handle import ScopedDatabase, Transaction
+from parallax.core.unit_work import MissingTargetError, WriteEvidenceError, WritePreconditionError
+from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "target.writes"

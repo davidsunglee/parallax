@@ -20,8 +20,7 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import LATEST, Attr, Bitemporal, DomainModel, Float32, TxTemporal, attr
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.entity._model import model_of
-from parallax.snapshot import connect
-from parallax.snapshot.handle import ScopedDatabase, Transaction
+from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.binary32 import narrowed, shortest_spelling
 from tests._support.root_ownership import own_root
 

@@ -32,8 +32,7 @@ from parallax.core.execution_lifecycle._pool_observation import (
     PoolObservation,
     register_pool_observation,
 )
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Database
+from parallax.snapshot import Database, connect
 from tests._support.db_port import Read, ScriptedAdapter
 from tests.unit._contention_support import observing
 from tests.unit._pool_source_support import DetachableSource

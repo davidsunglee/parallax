@@ -41,10 +41,12 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-temporal-write",
         "m-navigate",
         "m-deep-fetch",
+        "m-read-delivery",
         "m-snapshot-read",
         "m-opt-lock",
         "m-read-lock",
         "m-auto-retry",
+        "m-execution",
         "m-execution-authority",
         "m-execution-lifecycle",
         # `m-batch-write-004` tags both `m-batch-write` and `m-opt-lock`, so the

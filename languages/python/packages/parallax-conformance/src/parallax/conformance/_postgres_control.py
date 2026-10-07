@@ -29,7 +29,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresRole
 from parallax.postgres._authorization import install_role, restore_role
 from parallax.postgres._connection import PostgresConnection, initialize_connection
-from parallax.snapshot import handle
+from parallax.snapshot import Database, ScopedDatabase
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
@@ -719,7 +719,7 @@ class PostgresInterleavedExecution:
         # configuration is opened, and one that fails after opening closes the
         # runtime it was handed — which is what retires this session, since the
         # runtime owns it.
-        self._root = handle.Database.connect(
+        self._root = Database.connect(
             adapter, model, options=options, clock=clock, lifecycle_provider=lifecycle_provider
         )
         self._database = self._root.using_database_login()
@@ -756,7 +756,7 @@ class PostgresInterleavedExecution:
         return True
 
     @property
-    def database(self) -> handle.ScopedDatabase:
+    def database(self) -> ScopedDatabase:
         return self._database
 
     @property

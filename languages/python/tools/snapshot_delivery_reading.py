@@ -54,7 +54,7 @@ from parallax.core.read_delivery._read_plan import (
     ReadPlanCache,
 )
 from parallax.postgres import PostgresAdapter
-from parallax.snapshot.handle import Database, ScopedDatabase
+from parallax.snapshot import Database, ScopedDatabase
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 SUPPORT_DIRECTORY: Final = WORKSPACE / "tests" / "unit"

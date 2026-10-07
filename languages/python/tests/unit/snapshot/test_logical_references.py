@@ -21,7 +21,8 @@ from parallax.core.object_query.serde import deserialize
 from parallax.core.read_delivery._fetch import attach_children
 from parallax.core.read_delivery._page import Page, page_rows, release_page_rows, root_last_uses
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import RootView, SnapshotConsistencyError
+from parallax.snapshot import SnapshotConsistencyError
+from parallax.snapshot.materialize._root import RootView
 from tests._support.tpcs_inverse_models import INVERSE_MODEL, LINK_ROW, PARENT_ROWS
 from tests.unit.snapshot._snapshot_page_support import PageFixture
 

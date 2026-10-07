@@ -38,8 +38,7 @@ from parallax.core.execution import (
     KeyedWriteValueError,
 )
 from parallax.core.unit_work import MissingTargetError
-from parallax.snapshot import connect
-from parallax.snapshot.handle import ScopedDatabase, Transaction
+from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "insertion.authority"

@@ -36,13 +36,9 @@ from parallax.core.db_port import MappingRow
 from parallax.core.entity import DomainModel
 from parallax.core.execution import KeyedWriteValueError
 from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import MissingTargetError, WriteInstructionError
+from parallax.core.unit_work import MissingTargetError, WriteEvidenceError, WriteInstructionError
+from parallax.snapshot import Database, Transaction
 from parallax.snapshot._inspection import insertion_of, snapshot_state_of
-from parallax.snapshot.handle import (
-    Database,
-    Transaction,
-    WriteEvidenceError,
-)
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

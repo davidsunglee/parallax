@@ -32,8 +32,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import Dialect
 from parallax.core.execution import DatabaseOptions
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, Transaction, connect
 
 _ACCOUNT = MODELS["account"]
 _root_options_story = (

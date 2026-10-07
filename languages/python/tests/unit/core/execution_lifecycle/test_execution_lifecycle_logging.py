@@ -89,8 +89,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
 from parallax.core.sql_gen import LoweredStatement
-from parallax.snapshot import connect
-from parallax.snapshot.handle import ScopedDatabase, Transaction
+from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     ScriptedAdapter,

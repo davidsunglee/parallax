@@ -8,8 +8,7 @@ from parallax.conformance.story_models import Account
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import DomainModel
 from parallax.core.execution import DatabaseOptions, TransactionOptionConflictError
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Transaction, connect
 
 __all__ = [
     "ResolvedOptions",

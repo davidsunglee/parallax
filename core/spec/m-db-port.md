@@ -377,9 +377,9 @@ boundary at the requested isolation **reports a boundary failure** rather than
 opening one at a different level, because a request silently downgraded is
 indistinguishable from one honored. Absence at the port asks for nothing and
 leaves whatever the adapter or its driver already defaults to. A modeled outer
-transaction never uses that form: an omitted isolation resolves to its invoking
-Execution Scope's effective value, whose root-built-in value is Read Committed,
-and the port is asked for that concrete level on every attempt (ADRs 0065 and 0066). Absence
+transaction never uses that form: an omitted isolation resolves as `m-execution`
+*Option resolution* states, to Read Committed on a root carrying the built-in
+record, and the port is asked for that concrete level on every attempt. Absence
 remains the port's own lower-level capability for a caller below the root.
 
 For each `documentReads` pair, the adapter reads both cells before building the

@@ -18,7 +18,7 @@ from parallax.core.dialect import Dialect
 from parallax.core.execution import DatabaseOptions, ServingModel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.sql_gen import LoweredStatement
-from parallax.snapshot import handle
+from parallax.snapshot import Database, ScopedDatabase, Transaction
 
 __all__ = ["planned_read"]
 
@@ -72,7 +72,7 @@ def planned_read(
     produce.
     """
     observation = LifecycleObservation()
-    with handle.Database.connect(
+    with Database.connect(
         _EmptyDatabase(dialect),
         serving,
         options=options,
@@ -80,7 +80,7 @@ def planned_read(
     ) as root:
         db = root.using_database_login()
 
-        def read(source: handle.ScopedDatabase | handle.Transaction) -> object:
+        def read(source: ScopedDatabase | Transaction) -> object:
             return source.read_rows(query) if form == "rows" else source.wire.find(query)
 
         if transaction is None:

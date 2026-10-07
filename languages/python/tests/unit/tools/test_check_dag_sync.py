@@ -289,11 +289,11 @@ def test_a_first_scope_in_a_new_package_adds_its_root(monkeypatch: pytest.Monkey
     assert "parallax.mariadb" in dag.root_packages()
     assert "parallax.mariadb.adapter" in dag.production_scopes()
     assert dag.unowned_production_interfaces(dag.production_scopes(), dag.root_packages()) == (
-        frozenset({"parallax.core", "parallax.evolution", "parallax.mariadb", "parallax.snapshot"})
+        frozenset({"parallax.core", "parallax.evolution", "parallax.mariadb"})
     )
     block = dag.render_block({"parallax.mariadb.adapter": []}, {})
     assert '    "parallax.mariadb",\n' in block
-    assert '    "parallax.mariadb",\n    "parallax.snapshot",\n' in block
+    assert '    "parallax.evolution",\n    "parallax.mariadb",\n]\n' in block
 
 
 def test_enforcement_root_is_the_distribution_package() -> None:
@@ -557,7 +557,7 @@ def test_the_spec_and_the_tool_agree_on_first_party_grants() -> None:
 
 def test_parse_first_party_support_table_reads_the_committed_rows() -> None:
     declared = _spec_first_party_grants()
-    assert "parallax.snapshot.materialize" in declared["parallax.snapshot.handle"]
+    assert "parallax.core.read_delivery._page" in declared["parallax.snapshot.materialize"]
     # The Postgres row grants first-party scopes alone: the driver it imports is
     # declared by the restricted-external table, not by this column.
     assert declared["parallax.postgres"] == frozenset(
@@ -569,17 +569,18 @@ def test_parse_first_party_support_table_reads_the_committed_rows() -> None:
             "parallax.core.dialect",
         }
     )
-    # The composition root is application-owned and has no row at all.
-    assert "parallax.snapshot" not in declared
+    # The lifecycle extension's one Python-only edge is the Entity frontend its
+    # values are stated over; every other edge it has is a module tag's.
+    assert declared["parallax.snapshot"] == frozenset({"parallax.core.entity"})
 
 
 def test_the_write_lowering_group_row_names_its_three_scopes() -> None:
     # One row, three scopes in its scope cell, one shared grant.
     declared = _spec_first_party_grants()
     group = [
-        "parallax.snapshot.handle._family",
-        "parallax.snapshot.handle._keyed_sql",
-        "parallax.snapshot.handle._write_lowering",
+        "parallax.core.execution._family",
+        "parallax.core.execution._keyed_sql",
+        "parallax.core.execution._write_lowering",
     ]
     assert set(group) <= set(declared)
     assert len({declared[scope] for scope in group}) == 1
@@ -602,7 +603,7 @@ def test_first_party_support_parity_fails_on_a_scope_only_the_spec_declares() ->
 
 def test_first_party_support_parity_fails_on_a_scope_only_the_tool_declares() -> None:
     declared = _spec_first_party_grants()
-    del declared["parallax.snapshot.handle._materialization"]
+    del declared["parallax.core.execution._read_policy"]
     with pytest.raises(ValueError, match="declared only in the tool"):
         dag.check_first_party_support_parity(declared)
 
@@ -649,7 +650,7 @@ def test_parse_first_party_support_table_rejects_an_abbreviated_scope() -> None:
         ValueError, match=r"'\._keyed_sql' is not a `parallax\.\*` enforcement scope"
     ):
         dag.parse_first_party_support_table(
-            _first_party_table(("`parallax.snapshot.handle._family`, `._keyed_sql`", "`m-core`"))
+            _first_party_table(("`parallax.core.execution._family`, `._keyed_sql`", "`m-core`"))
         )
 
 
@@ -735,14 +736,11 @@ def test_a_first_party_row_edited_in_the_spec_alone_fails_generation(
     _spec_with(
         tmp_path,
         monkeypatch,
-        "| `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, "
-        "`parallax.snapshot.materialize`, `parallax.snapshot._read_result`, ",
-        "| `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, "
-        "`m-auto-retry`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, ",
+        "| `parallax.core.execution._read_policy` | `parallax.core.entity`, `m-read-delivery`, ",
+        "| `parallax.core.execution._read_policy` | `parallax.core.entity`, `m-batch-write`, "
+        "`m-read-delivery`, ",
     )
-    with pytest.raises(
-        ValueError, match=r"'parallax\.snapshot\.handle\._materialization' has drifted"
-    ):
+    with pytest.raises(ValueError, match=r"'parallax\.core\.execution\._read_policy' has drifted"):
         dag.generate()
 
 
@@ -753,12 +751,12 @@ def test_a_first_party_row_dropped_from_the_spec_alone_fails_generation(
     row = next(
         line
         for line in original.splitlines()
-        if line.startswith("| `parallax.snapshot.handle._materialization` | `parallax.core.")
+        if line.startswith("| `parallax.core.execution._read_policy` | `parallax.core.")
     )
     _spec_with(tmp_path, monkeypatch, f"{row}\n", "")
     with pytest.raises(
         ValueError,
-        match=r"declared only in the tool \['parallax\.snapshot\.handle\._materialization'\]",
+        match=r"declared only in the tool \['parallax\.core\.execution\._read_policy'\]",
     ):
         dag.generate()
 
@@ -771,15 +769,13 @@ def test_a_first_party_grant_added_to_the_tool_alone_fails_generation(
         "PYTHON_FIRST_PARTY_GRANTS",
         {
             **dag.PYTHON_FIRST_PARTY_GRANTS,
-            "parallax.snapshot.handle._materialization": dag.PYTHON_FIRST_PARTY_GRANTS[
-                "parallax.snapshot.handle._materialization"
+            "parallax.core.execution._read_policy": dag.PYTHON_FIRST_PARTY_GRANTS[
+                "parallax.core.execution._read_policy"
             ]
-            | {"parallax.core.auto_retry"},
+            | {"parallax.core.batch_write"},
         },
     )
-    with pytest.raises(
-        ValueError, match=r"'parallax\.snapshot\.handle\._materialization' has drifted"
-    ):
+    with pytest.raises(ValueError, match=r"'parallax\.core\.execution\._read_policy' has drifted"):
         dag.generate()
 
 
@@ -792,12 +788,12 @@ def test_a_first_party_scope_dropped_by_the_tool_alone_fails_generation(
         {
             scope: grants
             for scope, grants in dag.PYTHON_FIRST_PARTY_GRANTS.items()
-            if scope != "parallax.snapshot.handle._materialization"
+            if scope != "parallax.core.execution._read_policy"
         },
     )
     with pytest.raises(
         ValueError,
-        match=r"declared only in the spec \['parallax\.snapshot\.handle\._materialization'\]",
+        match=r"declared only in the spec \['parallax\.core\.execution\._read_policy'\]",
     ):
         dag.generate()
 
@@ -817,10 +813,9 @@ def test_a_first_party_row_edited_alone_exits_one_at_the_command(tmp_path: Path)
     shutil.copy(dag.MODULES_MD, tmp_path / "core" / "spec" / dag.MODULES_MD.name)
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
-        "| `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, "
-        "`parallax.snapshot.materialize`, `parallax.snapshot._read_result`, ",
-        "| `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, "
-        "`m-auto-retry`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, ",
+        "| `parallax.core.execution._read_policy` | `parallax.core.entity`, `m-read-delivery`, ",
+        "| `parallax.core.execution._read_policy` | `parallax.core.entity`, `m-batch-write`, "
+        "`m-read-delivery`, ",
         1,
     )
     assert edited != original
@@ -834,56 +829,52 @@ def test_a_first_party_row_edited_alone_exits_one_at_the_command(tmp_path: Path)
     )
 
     assert result.returncode == 1, result.stdout
-    assert "first-party support scope 'parallax.snapshot.handle._materialization'" in result.stderr
+    assert "first-party support scope 'parallax.core.execution._read_policy'" in result.stderr
     assert "the spec grants" in result.stderr
 
 
 # --------------------------------------------------------------------------
-# The handle grant row.
+# The execution scope and its narrower children.
 # --------------------------------------------------------------------------
-def test_handle_scope_no_longer_grants_pk_gen() -> None:
-    handle = dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
-    assert "parallax.core.pk_gen" not in handle
-    # Removing it genuinely forbids the scope: nothing else reaches pk_gen.
+def test_no_runtime_scope_reaches_primary_key_generation() -> None:
+    # Nothing in execution or the lifecycle extension imports primary-key
+    # generation, and no edge reaches it, so the complement forbids it.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    assert "parallax.core.pk_gen" in forbidden["parallax.snapshot.handle"]
+    for scope in ("parallax.core.execution", "parallax.snapshot"):
+        assert "parallax.core.pk_gen" not in dag.transitive_closure(adjacency, scope), scope
+        assert "parallax.core.pk_gen" in forbidden[scope], scope
 
 
-def test_handle_scope_still_grants_navigate() -> None:
-    # Deliberate, per spec/python.md §7: `Transaction.find` is a claimed find, and
-    # the `m-deep-fetch` plan it reads by canonicalizes navigation.
-    assert "parallax.core.navigate" in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
-
-
-def test_the_read_composition_row_forbids_the_write_policy_the_parent_grants() -> None:
-    # The exclusion the read scope exists for: a read ladder composes over the
-    # executor and reaches no write policy, which only a row narrower than the
-    # parent's can state — the parent is granted it outright.
+def test_the_read_policy_row_forbids_the_write_policy_the_parent_reaches() -> None:
+    # The exclusion the read policy scope exists for: a read ladder composes over
+    # read delivery and reaches no write policy, which only a row narrower than
+    # the parent's can state — model preparation gives the parent that edge.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    scope = "parallax.snapshot.handle._read_scope"
+    scope = "parallax.core.execution._read_policy"
     policy = "parallax.core.batch_write"
-    assert policy in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
-    assert policy not in forbidden["parallax.snapshot.handle"]
+    assert policy in adjacency["parallax.core.execution"]
+    assert policy not in forbidden["parallax.core.execution"]
     assert policy in forbidden[scope]
 
 
-def test_the_keyed_write_ingress_row_forbids_the_read_half_the_parent_grants() -> None:
+def test_the_keyed_write_ingress_row_forbids_the_read_half_the_parent_reaches() -> None:
     # The exclusion the ingress row exists for: a keyed write addresses a row its
-    # caller already holds, so it materializes no graph, publishes no read
-    # result, and takes no read lock — which only a row narrower than the
-    # parent's can state, since the parent is granted all three outright.
+    # caller already holds, so it delivers no read, takes no read lock, and pages
+    # no continuation — which only a row narrower than the parent's can state,
+    # since the parent reaches all three.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    scope = "parallax.snapshot.handle._keyed_writes"
+    scope = "parallax.core.execution._keyed_writes"
+    parent = dag.transitive_closure(adjacency, "parallax.core.execution")
     for reach in (
-        "parallax.snapshot.materialize",
-        "parallax.snapshot._read_result",
+        "parallax.core.read_delivery",
         "parallax.core.read_lock",
+        "parallax.core.continuation",
     ):
-        assert reach in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"], reach
-        assert reach not in forbidden["parallax.snapshot.handle"], reach
+        assert reach in parent, reach
+        assert reach not in forbidden["parallax.core.execution"], reach
         assert reach in forbidden[scope], reach
 
 
@@ -894,19 +885,19 @@ def test_the_keyed_write_ingress_row_inherits_the_port_rather_than_forbidding_it
     # one, and §7's prose records the closure fact instead of claiming an
     # exclusion no row could carry.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    scope = "parallax.snapshot.handle._keyed_writes"
+    scope = "parallax.core.execution._keyed_writes"
     assert "parallax.core.execution_lifecycle" in adjacency[scope]
     assert "parallax.core.db_port" in dag.transitive_closure(adjacency, scope)
     assert "parallax.core.db_port" not in dag.compute_forbidden(adjacency)[scope]
 
 
-def test_the_read_composition_row_inherits_retry_rather_than_forbidding_it() -> None:
+def test_the_read_policy_row_inherits_retry_rather_than_forbidding_it() -> None:
     # `modules.md` routes `m-auto-retry` through `m-execution-lifecycle`, which
     # the re-entry gate and the read roots both require, and a forbidden row is
     # the complement of a closure — so retry rides in and §7's prose records the
     # closure fact instead of claiming an exclusion no row could carry.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    scope = "parallax.snapshot.handle._read_scope"
+    scope = "parallax.core.execution._read_policy"
     assert "parallax.core.execution_lifecycle" in adjacency[scope]
     assert "parallax.core.auto_retry" in dag.transitive_closure(adjacency, scope)
     assert "parallax.core.auto_retry" not in dag.compute_forbidden(adjacency)[scope]
@@ -983,7 +974,7 @@ def test_parse_child_scope_table_rejects_an_undeclared_child() -> None:
 def test_parse_child_scope_table_rejects_a_child_outside_its_parent() -> None:
     with pytest.raises(ValueError, match="not nested inside its parent"):
         dag.parse_child_scope_table(
-            _child_table(("`parallax.core.base`", "`parallax.snapshot.handle`", "ordinary"))
+            _child_table(("`parallax.core.base`", "`parallax.core.execution`", "ordinary"))
         )
 
 
@@ -1055,7 +1046,7 @@ def test_an_isolated_child_is_forbidden_to_a_scope_granted_its_parent() -> None:
     # carry the engine slice inside it in on that package grant if the row did
     # not name it. No production scope holds that grant, so this states one.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    granted = "parallax.snapshot.handle"
+    granted = "parallax.core.execution"
     forbidden = dag.compute_forbidden({**adjacency, granted: adjacency[granted] | {"parallax.aws"}})
     engine_slice = "parallax.aws.postgres"
     assert "parallax.aws" not in forbidden[granted]
@@ -1067,24 +1058,21 @@ def test_an_isolated_child_is_forbidden_to_a_scope_granted_its_parent() -> None:
 
 
 def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
-    assert dag.scope_siblings("parallax.snapshot.handle._errors") == frozenset(
+    assert dag.scope_siblings("parallax.core.execution._preflight") == frozenset(
         {
-            "parallax.snapshot.handle._materialization",
-            "parallax.snapshot.handle._preflight",
-            "parallax.snapshot.handle._read_scope",
-            "parallax.snapshot.handle._keyed_writes",
-            "parallax.snapshot.handle._family",
-            "parallax.snapshot.handle._keyed_sql",
-            "parallax.snapshot.handle._write_lowering",
-            "parallax.snapshot.handle._retention",
-            "parallax.snapshot.handle._publication",
-            "parallax.snapshot.handle._execution_authority",
+            "parallax.core.execution._read_policy",
+            "parallax.core.execution._keyed_writes",
+            "parallax.core.execution._family",
+            "parallax.core.execution._keyed_sql",
+            "parallax.core.execution._write_lowering",
+            "parallax.core.execution._retention",
+            "parallax.core.execution._publication",
         }
     )
     # A scope's own name is never among its siblings, an only child has none,
     # and a scope that is nobody's child has none either.
     assert dag.scope_siblings("parallax.descriptor._hub") == frozenset()
-    assert dag.scope_siblings("parallax.snapshot.handle") == frozenset()
+    assert dag.scope_siblings("parallax.core.execution") == frozenset()
     assert dag.scope_siblings("parallax.core.base") == frozenset()
 
 
@@ -1094,62 +1082,61 @@ def test_only_a_zero_grant_row_takes_its_siblings_as_targets() -> None:
     # write-execution cluster's three modules import one another.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    assert adjacency["parallax.snapshot.handle._family"]
-    assert (
-        "parallax.snapshot.handle._keyed_sql" not in forbidden["parallax.snapshot.handle._family"]
-    )
+    assert adjacency["parallax.core.execution._family"]
+    assert "parallax.core.execution._keyed_sql" not in forbidden["parallax.core.execution._family"]
 
 
 def test_a_child_row_omits_its_own_ancestors() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    assert "parallax.snapshot.handle" not in forbidden["parallax.snapshot.handle._materialization"]
-    assert dag.scope_ancestors("parallax.snapshot.handle._materialization") == frozenset(
-        {"parallax.snapshot.handle"}
+    assert "parallax.core.execution" not in forbidden["parallax.core.execution._read_policy"]
+    assert dag.scope_ancestors("parallax.core.execution._read_policy") == frozenset(
+        {"parallax.core.execution"}
     )
-    assert dag.scope_ancestors("parallax.snapshot.handle") == frozenset()
+    assert dag.scope_ancestors("parallax.core.execution") == frozenset()
 
 
-def test_handle_child_rows_are_narrower_than_the_parent_row() -> None:
-    # The whole point of the audit: each handle child forbids strictly more than
-    # the broad parent scope does.
+def test_runtime_child_rows_are_narrower_than_their_parent_rows() -> None:
+    # The whole point of a narrowing child: each forbids strictly more than the
+    # broad parent scope does.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    parent = set(forbidden["parallax.snapshot.handle"])
-    for child, declared in dag.CHILD_SCOPES.items():
-        if declared.parent != "parallax.snapshot.handle":
-            continue
-        assert parent < set(forbidden[child]), child
-    # `_materialization` owns read preparation, SQL generation, read locking,
-    # and execution lifecycle, but still cannot reach write-policy modules. The
-    # lowering cluster may not reach the read side, and none of these restrictions
-    # exists on the parent.
-    assert "parallax.core.sql_gen" not in forbidden["parallax.snapshot.handle._materialization"]
-    assert "parallax.core.read_lock" not in forbidden["parallax.snapshot.handle._materialization"]
+    for parent in ("parallax.core.execution", "parallax.snapshot"):
+        broad = set(forbidden[parent])
+        for child, declared in dag.CHILD_SCOPES.items():
+            if declared.parent == parent:
+                assert broad < set(forbidden[child]), child
+    # The read policy owns lowering, the port, and the lifecycle activities but
+    # still cannot reach batch writes; the lowering cluster may not reach the
+    # read side; and value publication reaches the Page child alone, so read
+    # planning's SQL generation and lifecycle stay outside it.
+    assert "parallax.core.db_port" not in forbidden["parallax.core.execution._read_policy"]
     assert (
-        "parallax.core.execution_lifecycle"
-        not in forbidden["parallax.snapshot.handle._materialization"]
+        "parallax.core.execution_lifecycle" not in forbidden["parallax.core.execution._read_policy"]
     )
-    assert "parallax.core.batch_write" in forbidden["parallax.snapshot.handle._materialization"]
-    assert "parallax.snapshot.materialize" in forbidden["parallax.snapshot.handle._keyed_sql"]
+    assert "parallax.core.batch_write" in forbidden["parallax.core.execution._read_policy"]
+    assert "parallax.core.read_delivery" in forbidden["parallax.core.execution._keyed_sql"]
+    assert "parallax.core.sql_gen" in forbidden["parallax.snapshot.materialize"]
+    assert "parallax.core.execution_lifecycle" in forbidden["parallax.snapshot.materialize"]
+    assert "parallax.core.execution" in forbidden["parallax.snapshot.materialize"]
 
 
 def test_scope_descendants_inverts_the_child_chain() -> None:
     assert dag.scope_descendants("parallax.descriptor") == frozenset({"parallax.descriptor._hub"})
-    assert dag.scope_descendants("parallax.snapshot.handle") == frozenset(
+    assert dag.scope_descendants("parallax.core.execution") == frozenset(
         {
-            "parallax.snapshot.handle._materialization",
-            "parallax.snapshot.handle._preflight",
-            "parallax.snapshot.handle._read_scope",
-            "parallax.snapshot.handle._keyed_writes",
-            "parallax.snapshot.handle._errors",
-            "parallax.snapshot.handle._family",
-            "parallax.snapshot.handle._keyed_sql",
-            "parallax.snapshot.handle._write_lowering",
-            "parallax.snapshot.handle._retention",
-            "parallax.snapshot.handle._publication",
-            "parallax.snapshot.handle._execution_authority",
+            "parallax.core.execution._preflight",
+            "parallax.core.execution._read_policy",
+            "parallax.core.execution._keyed_writes",
+            "parallax.core.execution._family",
+            "parallax.core.execution._keyed_sql",
+            "parallax.core.execution._write_lowering",
+            "parallax.core.execution._retention",
+            "parallax.core.execution._publication",
         }
+    )
+    assert dag.scope_descendants("parallax.snapshot") == frozenset(
+        {"parallax.snapshot._inspection", "parallax.snapshot.materialize"}
     )
     assert dag.scope_descendants("parallax.core.base") == frozenset()
 
@@ -1178,8 +1165,8 @@ def test_an_asymmetric_child_grant_becomes_one_named_exception() -> None:
     # Only the *direct* extra grant needs naming: ignoring the first hop also
     # withdraws every indirect chain that reaches further through it.
     assert "parallax.core.predicate" in forbidden["parallax.descriptor"]
-    # A symmetric child chain — every handle child is narrower — needs none.
-    assert dag.child_grant_exceptions(adjacency, "parallax.snapshot.handle") == []
+    # A symmetric child chain — every execution child is narrower — needs none.
+    assert dag.child_grant_exceptions(adjacency, "parallax.core.execution") == []
 
 
 def test_a_child_granted_its_own_sibling_needs_no_exception() -> None:
@@ -1208,17 +1195,20 @@ def test_a_child_granted_its_own_sibling_needs_no_exception() -> None:
     assert dag.CHILD_SCOPES["parallax.core.entity._instance_state"].policy == "sealed"
 
 
-def test_execution_authority_is_a_sealed_behavioral_child_with_core_only_grants() -> None:
-    scope = "parallax.snapshot.handle._execution_authority"
-    declared = dag.parse_child_scope_table(dag.PYTHON_MD.read_text())
+def test_execution_authority_is_a_top_level_scope_with_core_only_edges() -> None:
+    scope = "parallax.core.execution_authority"
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
 
-    assert declared[scope] == dag.ChildScope(parent="parallax.snapshot.handle", policy="sealed")
+    assert dag.MODULE_SCOPE["m-execution-authority"] == scope
+    assert scope not in dag.CHILD_SCOPES
     assert adjacency[scope] == frozenset({"parallax.core.db_port", "parallax.core.unit_work"})
-    assert scope in adjacency["parallax.snapshot.handle._read_scope"]
+    assert scope in adjacency["parallax.core.execution._read_policy"]
+    # A top-level row forbids the whole of execution, which the scope's
+    # consumers sit in.
+    assert "parallax.core.execution" in dag.compute_forbidden(adjacency)[scope]
 
 
-_RETENTION_ROW = "| `parallax.snapshot.handle._retention` | `parallax.snapshot.handle` | sealed |"
+_RETENTION_ROW = "| `parallax.core.execution._retention` | `parallax.core.execution` | sealed |"
 _ENGINE_SLICE_ROW = "| `parallax.aws.postgres` | `parallax.aws` | isolated |"
 
 
@@ -1233,17 +1223,17 @@ def test_a_seal_dropped_by_the_tool_alone_fails_generation(
         "CHILD_SCOPES",
         {
             **dag.CHILD_SCOPES,
-            "parallax.snapshot.handle._retention": dag.ChildScope(
-                parent="parallax.snapshot.handle", policy="ordinary"
+            "parallax.core.execution._retention": dag.ChildScope(
+                parent="parallax.core.execution", policy="ordinary"
             ),
         },
     )
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "child scope 'parallax.snapshot.handle._retention' has drifted between the spec "
-            "and the tool: the spec declares a sealed child of 'parallax.snapshot.handle', "
-            "the tool declares an ordinary child of 'parallax.snapshot.handle'"
+            "child scope 'parallax.core.execution._retention' has drifted between the spec "
+            "and the tool: the spec declares a sealed child of 'parallax.core.execution', "
+            "the tool declares an ordinary child of 'parallax.core.execution'"
         ),
     ):
         dag.generate()
@@ -1264,7 +1254,7 @@ def test_a_child_row_dropped_by_the_spec_alone_fails_generation(
 ) -> None:
     _spec_with(tmp_path, monkeypatch, f"{_RETENTION_ROW}\n", "")
     with pytest.raises(
-        ValueError, match=r"declared only in the tool \['parallax\.snapshot\.handle\._retention'\]"
+        ValueError, match=r"declared only in the tool \['parallax\.core\.execution\._retention'\]"
     ):
         dag.generate()
 
@@ -1275,11 +1265,11 @@ def test_a_child_dropped_by_the_tool_alone_fails_generation(
     tampered = {
         child: declared
         for child, declared in dag.CHILD_SCOPES.items()
-        if child != "parallax.snapshot.handle._retention"
+        if child != "parallax.core.execution._retention"
     }
     monkeypatch.setattr(dag, "CHILD_SCOPES", tampered)
     with pytest.raises(
-        ValueError, match=r"declared only in the spec \['parallax\.snapshot\.handle\._retention'\]"
+        ValueError, match=r"declared only in the spec \['parallax\.core\.execution\._retention'\]"
     ):
         dag.generate()
 
@@ -1290,12 +1280,12 @@ def test_a_parent_differing_between_the_spec_and_the_tool_fails_parity() -> None
     # that parent from CHILD_SCOPES. Two declarations agreeing on every child and
     # every policy but one parent still promise a guarantee nothing enforces.
     declared = dag.parse_child_scope_table(dag.PYTHON_MD.read_text())
-    declared["parallax.snapshot.handle._retention"] = dag.ChildScope(
-        parent="parallax.snapshot", policy="sealed"
+    declared["parallax.core.execution._retention"] = dag.ChildScope(
+        parent="parallax.core", policy="sealed"
     )
     with pytest.raises(
         ValueError,
-        match=re.escape("the spec declares a sealed child of 'parallax.snapshot', the tool"),
+        match=re.escape("the spec declares a sealed child of 'parallax.core', the tool"),
     ):
         dag.check_child_scope_parity(declared)
 
@@ -1323,7 +1313,7 @@ def test_a_first_party_scope_declared_by_two_rows_fails_generation(
     row = next(
         line
         for line in original.splitlines()
-        if line.startswith("| `parallax.snapshot.handle._retention` |") and "`m-metamodel`" in line
+        if line.startswith("| `parallax.core.execution._retention` |") and "`m-metamodel`" in line
     )
     contradiction = row.replace("`m-metamodel`", "`m-sql`", 1)
     assert contradiction != row
@@ -1336,13 +1326,16 @@ def test_a_first_party_scope_declared_by_two_rows_fails_generation(
 # --------------------------------------------------------------------------
 # The zero-grant child scope: emptiness as a contract.
 # --------------------------------------------------------------------------
+_ZERO_GRANT_CHILD = "parallax.core.entity._construction_input"
+
+
 def test_a_zero_grant_scope_is_forbidden_every_first_party_scope() -> None:
-    # `_errors` exists so `_preflight` and `_family` can raise one error class
-    # while granting disjoint dependencies. Nothing but the emptiness makes that
-    # legal, so the row forbids every production scope outside its own package.
+    # The construction-input vocabulary is read by scopes that deliberately
+    # cannot reach one another, so nothing but its emptiness makes that legal,
+    # and the row forbids every production scope outside its own package.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    scope = "parallax.snapshot.handle._errors"
+    scope = _ZERO_GRANT_CHILD
     assert dag.PYTHON_FIRST_PARTY_GRANTS[scope] == frozenset()
     assert dag.transitive_closure(adjacency, scope) == frozenset()
     blocked = set(forbidden[scope])
@@ -1352,7 +1345,7 @@ def test_a_zero_grant_scope_is_forbidden_every_first_party_scope() -> None:
     # ...and only its own package's ancestors escape, for the overlap reason
     # every child row omits them.
     assert set(dag.PYTHON_FIRST_PARTY_GRANTS) - set(dag.CHILD_SCOPES) - blocked == {
-        "parallax.snapshot.handle"
+        "parallax.core.entity"
     }
 
 
@@ -1364,21 +1357,21 @@ def test_a_zero_grant_row_also_forbids_every_sibling_child_scope() -> None:
     # `check_scope_ownership.py` covers the undeclared import-free sibling.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    scope = "parallax.snapshot.handle._errors"
+    scope = _ZERO_GRANT_CHILD
     blocked = set(forbidden[scope])
     assert dag.scope_siblings(scope) <= blocked
-    assert "parallax.snapshot.handle._keyed_sql" in blocked
+    assert "parallax.core.entity._layout" in blocked
     # The parent itself stays out, because a package-scoped row cannot forbid
     # the package it sits inside.
-    assert "parallax.snapshot.handle" not in blocked
+    assert "parallax.core.entity" not in blocked
 
 
 def test_the_table_spells_a_zero_grant_scope_with_none() -> None:
     # A scope contributing no edge at all still has a row, and parity holds on
     # it: the emptiness is the declaration.
     declared = _spec_first_party_grants()
-    assert declared["parallax.snapshot.handle._errors"] == frozenset()
-    assert dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle._errors"] == frozenset()
+    assert declared[_ZERO_GRANT_CHILD] == frozenset()
+    assert dag.PYTHON_FIRST_PARTY_GRANTS[_ZERO_GRANT_CHILD] == frozenset()
 
 
 # --------------------------------------------------------------------------
@@ -1391,7 +1384,7 @@ def test_the_preflight_seam_grants_the_query_module_not_the_frontend() -> None:
     # port permanently out of the row's reach. The Object Query module does not
     # reach it, so the ordinary row forbids it.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    scope = "parallax.snapshot.handle._preflight"
+    scope = "parallax.core.execution._preflight"
     assert dag.PYTHON_FIRST_PARTY_GRANTS[scope] == frozenset(
         {
             "parallax.core.metamodel",
@@ -1443,23 +1436,25 @@ def test_the_expression_scope_is_narrower_than_the_frontend_it_sits_in() -> None
     assert "parallax.core._formation_profile" in forbidden["parallax.core.entity._expressions"]
     # A child named as another scope's grant needs no `ignore_imports` entry from
     # its own parent's row: the parent package already covers it.
-    assert dag.child_grant_exceptions(adjacency, "parallax.snapshot.handle") == []
+    assert dag.child_grant_exceptions(adjacency, "parallax.snapshot") == []
 
 
 # --------------------------------------------------------------------------
 # Canary 3: a child contract blocks what the parent contract permits.
 # --------------------------------------------------------------------------
 def test_child_scope_contract_blocks_an_import_the_parent_permits(linted_copy: Path) -> None:
-    # `m-batch-write` IS in the parent handle grant row, so the broad contract
-    # permits this import; only the `_materialization` child contract can reject it.
-    assert "parallax.core.batch_write" in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
+    # `m-batch-write` IS an edge of the parent execution scope, so the broad
+    # contract permits this import; only the read policy's child contract can
+    # reject it.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    assert "parallax.core.batch_write" in adjacency["parallax.core.execution"]
     reported = broken_by(
         linted_copy,
-        "parallax.snapshot.handle._materialization",
+        "parallax.core.execution._read_policy",
         "import parallax.core.batch_write  # deliberate child-scope violation",
     )
 
-    assert "parallax.snapshot.handle._materialization -> parallax.core.batch_write" in reported
+    assert "parallax.core.execution._read_policy -> parallax.core.batch_write" in reported
 
 
 # --------------------------------------------------------------------------
@@ -1526,15 +1521,15 @@ def test_the_engine_slice_may_import_the_adapter_and_the_driver(linted_copy: Pat
 def test_a_direct_port_import_in_the_preflight_seam_fails_lint_imports(linted_copy: Path) -> None:
     reported = broken_by(
         linted_copy,
-        "parallax.snapshot.handle._preflight",
+        "parallax.core.execution._preflight",
         "import parallax.core.db_port  # deliberate port violation",
     )
 
     assert (
-        "parallax.snapshot.handle._preflight may import only its permitted dependencies BROKEN"
+        "parallax.core.execution._preflight may import only its permitted dependencies BROKEN"
         in reported
     )
-    assert "parallax.snapshot.handle._preflight -> parallax.core.db_port" in reported
+    assert "parallax.core.execution._preflight -> parallax.core.db_port" in reported
 
 
 # --------------------------------------------------------------------------
@@ -1549,67 +1544,67 @@ def test_an_indirect_reach_out_of_the_preflight_seam_fails_lint_imports(linted_c
     # chain toward the port that made the whole frontend too wide a grant.
     reported = broken_by(
         linted_copy,
-        "parallax.snapshot.handle._preflight",
+        "parallax.core.execution._preflight",
         "import parallax.core.entity._model  # deliberate reach violation",
     )
 
     assert (
-        "parallax.snapshot.handle._preflight may import only its permitted dependencies BROKEN"
+        "parallax.core.execution._preflight may import only its permitted dependencies BROKEN"
         in reported
     )
     # Two hops: the seam names the Domain Model, which names model formation.
-    assert "parallax.snapshot.handle._preflight -> parallax.core.entity._model" in reported
+    assert "parallax.core.execution._preflight -> parallax.core.entity._model" in reported
     assert "parallax.core.entity._model -> parallax.core._formation_profile" in reported
 
 
 # --------------------------------------------------------------------------
-# Canary 5b: the read composition reaches no write policy, which the parent
-# scope's own row permits.
+# Canary 5b: the keyed write ingress delivers no read, which the parent scope's
+# own row permits.
 # --------------------------------------------------------------------------
-def test_a_write_policy_import_in_the_read_composition_fails_lint_imports(
+def test_a_read_delivery_import_in_the_keyed_write_ingress_fails_lint_imports(
     linted_copy: Path,
 ) -> None:
-    # `m-batch-write` IS in the parent handle grant row — the Write Planner's
-    # strategy adapters are wired there — so the broad contract permits this
+    # Read delivery IS an edge of the parent execution scope — every read the
+    # runtime executes goes through it — so the broad contract permits this
     # import and only the child row can reject it.
-    assert "parallax.core.batch_write" in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    assert "parallax.core.read_delivery" in adjacency["parallax.core.execution"]
     reported = broken_by(
         linted_copy,
-        "parallax.snapshot.handle._read_scope",
-        "import parallax.core.batch_write  # deliberate write-policy violation",
+        "parallax.core.execution._keyed_writes",
+        "import parallax.core.read_delivery  # deliberate read-half violation",
     )
 
-    assert (
-        "parallax.snapshot.handle._read_scope may import only its permitted dependencies BROKEN"
-        in reported
-    )
-    assert "parallax.snapshot.handle._read_scope -> parallax.core.batch_write" in reported
+    # The contract's name fills the report's line exactly, so no space survives
+    # before its verdict; the edge is what names the broken row.
+    assert "parallax.core.execution._keyed_writes may import only its permitted" in reported
+    assert "parallax.core.execution._keyed_writes -> parallax.core.read_delivery" in reported
 
 
 # --------------------------------------------------------------------------
-# Canary 5c: the keyed write ingress materializes nothing, which the parent
-# scope's own row permits.
+# Canary 5c: value publication reaches the Page child of read delivery and
+# nothing of the rest of it, which the parent lifecycle scope's row permits.
 # --------------------------------------------------------------------------
-def test_a_materialization_import_in_the_keyed_write_ingress_fails_lint_imports(
+def test_a_read_planning_import_in_value_publication_fails_lint_imports(
     linted_copy: Path,
 ) -> None:
-    # Row-to-graph conversion IS in the parent handle grant row — every read the
-    # package publishes goes through it — so the broad contract permits this
-    # import and only the child row can reject it.
-    assert (
-        "parallax.snapshot.materialize" in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
-    )
+    # The lifecycle extension reaches read delivery whole, so its broad contract
+    # permits this import. The publication child is granted only the Page child,
+    # whose ancestor's name the row gives up; what read planning reaches beyond
+    # it — SQL generation — is what the row reports.
     reported = broken_by(
         linted_copy,
-        "parallax.snapshot.handle._keyed_writes",
-        "import parallax.snapshot.materialize  # deliberate read-half violation",
+        "parallax.snapshot.materialize._root",
+        "import parallax.core.read_delivery._read_plan  # deliberate planning violation",
     )
 
     assert (
-        "parallax.snapshot.handle._keyed_writes may import only its permitted dependencies BROKEN"
+        "parallax.snapshot.materialize may import only its permitted dependencies BROKEN"
         in reported
     )
-    assert "parallax.snapshot.handle._keyed_writes -> parallax.snapshot.materialize" in reported
+    assert "parallax.snapshot.materialize._root -> parallax.core.read_delivery._read_plan" in (
+        reported
+    )
 
 
 # --------------------------------------------------------------------------
@@ -1633,43 +1628,37 @@ def test_reaching_model_formation_from_the_expression_scope_fails_lint_imports(
 
 
 # --------------------------------------------------------------------------
-# Canary 7: the refusal leaf may name no first-party scope outside its package.
+# Canary 7: a zero-grant scope may name no first-party scope outside its package.
 # --------------------------------------------------------------------------
-def test_a_first_party_import_in_the_refusal_leaf_fails_lint_imports(linted_copy: Path) -> None:
-    # `m-metamodel` sits in the closure of BOTH consumer scopes, so neither
-    # consumer's row would report it; the zero-grant row is what turns the
+def test_a_first_party_import_in_a_zero_grant_scope_fails_lint_imports(linted_copy: Path) -> None:
+    # `m-metamodel` sits in the closure of every reader of the vocabulary, so
+    # none of their rows would report it; the zero-grant row is what turns the
     # module's dependency-free claim into a gate.
     reported = broken_by(
         linted_copy,
-        "parallax.snapshot.handle._errors",
+        _ZERO_GRANT_CHILD,
         "import parallax.core.metamodel  # deliberate leaf violation",
     )
 
-    assert (
-        "parallax.snapshot.handle._errors may import only its permitted dependencies BROKEN"
-        in reported
-    )
+    assert f"{_ZERO_GRANT_CHILD} may import only its permitted dependencies BROKEN" in reported
 
 
 # --------------------------------------------------------------------------
 # ...and Canary 8: nor a sibling INSIDE its package. This is the half the
 # outside-the-package row cannot state, and the reason the row names siblings.
 # --------------------------------------------------------------------------
-def test_a_sibling_import_in_the_refusal_leaf_fails_lint_imports(linted_copy: Path) -> None:
-    # The zero-grant row names the preflight child directly, so an import inside
+def test_a_sibling_import_in_a_zero_grant_scope_fails_lint_imports(linted_copy: Path) -> None:
+    # The zero-grant row names the layout child directly, so an import inside
     # the shared parent package is rejected rather than escaping package-scoped
     # enforcement.
     reported = broken_by(
         linted_copy,
-        "parallax.snapshot.handle._errors",
-        "import parallax.snapshot.handle._preflight  # deliberate sibling violation",
+        _ZERO_GRANT_CHILD,
+        "import parallax.core.entity._layout  # deliberate sibling violation",
     )
 
-    assert (
-        "parallax.snapshot.handle._errors may import only its permitted dependencies BROKEN"
-        in reported
-    )
-    assert "parallax.snapshot.handle._errors -> parallax.snapshot.handle._preflight" in reported
+    assert f"{_ZERO_GRANT_CHILD} may import only its permitted dependencies BROKEN" in reported
+    assert f"{_ZERO_GRANT_CHILD} -> parallax.core.entity._layout" in reported
 
 
 # --------------------------------------------------------------------------
@@ -1856,7 +1845,7 @@ def test_an_owner_added_to_the_spec_alone_fails_generation(
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
         "| `psycopg_pool` | `parallax.postgres` |",
-        "| `psycopg_pool` | `parallax.postgres`, `parallax.snapshot.handle` |",
+        "| `psycopg_pool` | `parallax.postgres`, `parallax.snapshot` |",
         1,
     )
     assert edited != original
@@ -1893,7 +1882,7 @@ def test_an_owner_added_to_the_tool_alone_fails_generation(
         "RESTRICTED_EXTERNAL_GRANTS",
         {
             **dag.RESTRICTED_EXTERNAL_GRANTS,
-            "pydantic": dag.RESTRICTED_EXTERNAL_GRANTS["pydantic"] | {"parallax.snapshot.handle"},
+            "pydantic": dag.RESTRICTED_EXTERNAL_GRANTS["pydantic"] | {"parallax.snapshot"},
         },
     )
     with pytest.raises(ValueError, match=r"restricted external package 'pydantic' has drifted"):
@@ -1920,7 +1909,7 @@ def test_a_parity_error_exits_one_with_one_line_and_no_traceback(
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
         "| `psycopg_pool` | `parallax.postgres` |",
-        "| `psycopg_pool` | `parallax.postgres`, `parallax.snapshot.handle` |",
+        "| `psycopg_pool` | `parallax.postgres`, `parallax.snapshot` |",
         1,
     )
     assert edited != original
@@ -1933,7 +1922,7 @@ def test_a_parity_error_exits_one_with_one_line_and_no_traceback(
     assert captured.err.startswith("tools/check_dag_sync.py: ")
     assert "'psycopg_pool' has drifted between the spec and the tool" in captured.err
     # Both sides are printed, so the developer sees which declaration to move.
-    assert "the spec grants ['parallax.postgres', 'parallax.snapshot.handle']" in captured.err
+    assert "the spec grants ['parallax.postgres', 'parallax.snapshot']" in captured.err
     assert "the tool grants ['parallax.postgres']" in captured.err
     assert "Traceback" not in captured.err
     assert captured.err.count("\n") == 1
@@ -1950,12 +1939,12 @@ def test_a_programming_defect_keeps_its_traceback(monkeypatch: pytest.MonkeyPatc
 def test_minimal_scope_roots_drops_a_scope_beneath_another_member() -> None:
     assert dag.minimal_scope_roots(
         {
-            "parallax.snapshot.handle",
-            "parallax.snapshot.handle._preflight",
+            "parallax.core.execution",
+            "parallax.core.execution._preflight",
             "parallax.core.entity._layout",
             "parallax.core.base",
         }
-    ) == ("parallax.core.base", "parallax.core.entity._layout", "parallax.snapshot.handle")
+    ) == ("parallax.core.base", "parallax.core.entity._layout", "parallax.core.execution")
 
 
 def test_external_contract_sources_keep_a_blocked_child_of_a_granted_parent() -> None:
@@ -1971,8 +1960,8 @@ def test_external_contract_sources_keep_a_blocked_child_of_a_granted_parent() ->
         "parallax.core.entity._layout",
     } <= set(sources)
     # A blocked child of a blocked parent is left to the parent's entry.
-    assert "parallax.snapshot.handle" in sources
-    assert not any(source.startswith("parallax.snapshot.handle.") for source in sources)
+    assert "parallax.snapshot" in sources
+    assert not any(source.startswith("parallax.snapshot.") for source in sources)
     # Granted scopes never appear, and neither does the conformance root.
     assert not set(sources) & dag.RESTRICTED_EXTERNAL_GRANTS["pydantic"]
     assert sources == tuple(sorted(sources))
@@ -2037,7 +2026,7 @@ def test_unowned_production_interfaces_are_the_roots_no_scope_owns() -> None:
     production = frozenset(dag.compute_forbidden(adjacency))
     assert production == dag.production_scopes()
     assert dag.unowned_production_interfaces(production, dag.root_packages()) == frozenset(
-        {"parallax.core", "parallax.evolution", "parallax.snapshot"}
+        {"parallax.core", "parallax.evolution"}
     )
     # A root that is itself a scope is owned, and the conformance root sources
     # nothing.

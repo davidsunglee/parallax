@@ -27,10 +27,10 @@ from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.execution._publication import SelectedReadModel
 from parallax.snapshot._inspection import SnapshotInspectionError
 from parallax.snapshot.handle._errors import SnapshotConnectionError, SnapshotMaterializationError
-from parallax.snapshot.materialize import RootView, wire_roots
 from parallax.snapshot.materialize._publication import publish_roots
+from parallax.snapshot.materialize._root import RootView
 from parallax.snapshot.materialize._typed import typed_root
-from parallax.snapshot.materialize._wire import WireEntity
+from parallax.snapshot.materialize._wire import WireEntity, wire_roots
 
 __all__ = [
     "CheckedSnapshot",

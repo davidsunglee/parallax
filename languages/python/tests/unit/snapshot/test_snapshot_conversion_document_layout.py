@@ -49,7 +49,7 @@ from parallax.core.read_delivery._page import (
 from parallax.core.read_delivery._row_converter import bind
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import RootView
+from parallax.snapshot.materialize._root import RootView
 from tests._support.sql import compile_read
 from tests.unit._document_layout_support import columns_model, document_model, entity
 from tests.unit.snapshot._snapshot_page_support import documents_of, rendered_members

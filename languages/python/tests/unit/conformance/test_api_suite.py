@@ -131,13 +131,16 @@ def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
 # primary-module case is a foundational model reject, reasoned case-scoped), and
 # m-execution-lifecycle (its joined case is a real idiomatic story and the other
 # five name the grader that runs them), and m-execution-authority (one is a real
-# idiomatic story and four name the dedicated boundary runner), so neither needs
-# a module-wide reason.
+# idiomatic story and four name the dedicated boundary runner), m-read-delivery
+# (its one case is a real idiomatic read story), and m-execution (its one case
+# names the boundary runner), so none needs a module-wide reason.
 _BUCKET_FREE_MODULES: frozenset[str] = frozenset(
     {
         "m-relationship",
         "m-execution-lifecycle",
         "m-execution-authority",
+        "m-read-delivery",
+        "m-execution",
         "m-edit",
         "m-unit-work",
         "m-navigate",

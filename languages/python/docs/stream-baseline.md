@@ -2,7 +2,7 @@
 
 What a running streamed read holds, measured on one machine under stated
 conditions, against what the same delivery would cost a caller that kept every
-root. `m-snapshot-read` *What a delivery costs* bounds the Parallax-owned working
+root. `m-read-delivery` *What a delivery costs* bounds the Parallax-owned working
 set at `O(P_B + G_max)` and names three exclusions; this is the reading that puts
 a scale on both halves.
 
@@ -41,7 +41,7 @@ position, and across a thirty-two-fold spread of page sizes, and what it costs p
 node falls at each of eight fan-outs — which rejects a term super-linear in
 `G_max` across that grid rather than establishing the asymptote. Page-size
 equality is exact rather than
-a tolerance, because `m-snapshot-read` gives the page to the first layer alone;
+a tolerance, because `m-read-delivery` gives the page to the first layer alone;
 that is what prices Root View judgment the census cannot isolate. A high-water reading
 is a maximum, so an allocation that never takes the process above an earlier
 moment of the same publication is invisible to it however it scales — which is why
@@ -127,7 +127,7 @@ defect; each is a shape the report cannot see.
 
 **Anything a real driver holds.** The port answers each page from a counter and
 keeps only the page it last answered. A driver's own cursor, connection buffers,
-and result-set materialization are outside every window here, and `m-snapshot-read`
+and result-set materialization are outside every window here, and `m-read-delivery`
 does not bound them: what the contract bounds is the Parallax-owned working set,
 and a port that read the whole result into memory before answering the first page
 would leave every number below unchanged.

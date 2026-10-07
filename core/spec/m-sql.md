@@ -629,7 +629,7 @@ has multiple base Tables and remains refused below.
 
 Nothing is hoisted where the leading term is **document-resident**. Its extraction
 evaluates to `NULL` for a missing member, an explicit JSON null, or a parent document
-of the wrong kind — ordinary invalid stored data that `m-snapshot-read` guarantees is
+of the wrong kind — ordinary invalid stored data that `m-read-delivery` guarantees is
 delivered — while a range over an extraction is no index range to buy. Member
 Placement is therefore part of the hoist's own guard, asked of the read's resolution
 scope rather than by resolving the term, since resolving one binds an extraction's

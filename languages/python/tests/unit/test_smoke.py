@@ -29,7 +29,8 @@ def test_top_package_public_surfaces() -> None:
     # Postgres adapter surface and the snapshot developer surface
     # (`Snapshot[T]` and the vocabulary a result publishes, §8) are published
     # alongside `connect()`. Execution observability is absent by design: it is
-    # `parallax.core.execution_lifecycle`'s, installed through `connect`.
+    # `parallax.core.execution_lifecycle`'s, installed through `connect`. The
+    # Snapshot surface re-exports no name another package owns.
     assert {"Entity", "ValueObject", "Attr", "Rel", "attr", "rel", "DomainModel"} <= set(
         parallax.core.__all__
     )
@@ -41,11 +42,6 @@ def test_top_package_public_surfaces() -> None:
         "Snapshot",
         "CheckedSnapshot",
         "SnapshotStream",
-        "ObjectKey",
-        "WRITE_EVIDENCE_CODES",
-        "WriteEvidenceError",
-        "WriteEvidenceErrorCode",
-        "WriteInstructionError",
         "NoResultFound",
         "ScopedDatabase",
         "SnapshotConnectionError",
@@ -53,7 +49,6 @@ def test_top_package_public_surfaces() -> None:
         "SnapshotMaterializationError",
         "SnapshotConsistencyError",
         "TooManyResultsFound",
-        "UnloadedRelationshipError",
         "WireEntity",
         "WireValue",
         "WireDatabaseView",

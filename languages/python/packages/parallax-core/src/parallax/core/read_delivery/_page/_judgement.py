@@ -50,7 +50,7 @@ NON_HYDRATING_CODES: Final[frozenset[StoredDataIssueCode]] = frozenset(
         "stored-data-primary-key-undecodable",
     }
 )
-"""The codes for which no conforming value exists to hydrate (`m-snapshot-read`).
+"""The codes for which no conforming value exists to hydrate (`m-read-delivery`).
 
 Their complement — a required member absent or stored null, and a wrong-kind
 occurrence — is exactly the set the normative absence collapse already answers,
@@ -162,9 +162,7 @@ class _JudgedAxes:
         del at
         return self._member_row[self._layout.index_of[attribute]]
 
-    def axis_end(self, at: None, attribute: AttributeIdentity, /) -> object:
-        del at
-        return self._member_row[self._layout.index_of[attribute]]
+    axis_end = axis_start
 
 
 def _member(layout: EntityLayout, values: tuple[object, ...], member: AttributeIdentity) -> object:

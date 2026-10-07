@@ -92,7 +92,9 @@ _STORAGE_LAYOUT_DOCUMENT_AND_TWIN_READS: Final[frozenset[str]] = frozenset(
     }
 )
 _CANONICAL_ENTITY_SPELLING_READS: Final[frozenset[str]] = frozenset({"m-predicate-051"})
-_EXECUTION_LIFECYCLE_READS: Final[frozenset[str]] = frozenset({"m-execution-lifecycle-001"})
+_EXECUTION_LIFECYCLE_READS: Final[frozenset[str]] = frozenset(
+    {"m-execution-lifecycle-001", "m-read-delivery-001"}
+)
 _CORRUPT_STORED_STATE_READS: Final[frozenset[str]] = frozenset({"m-snapshot-read-049"})
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS

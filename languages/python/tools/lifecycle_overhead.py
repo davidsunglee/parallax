@@ -114,7 +114,7 @@ from parallax.core.execution_lifecycle import (
     LoggingLifecycleProvider,
     RootExecution,
 )
-from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, Transaction
 
 PAIRS: Final = 3_000
 """Timed pairs per configuration. Each contributes one sample to each arm, so the

@@ -33,8 +33,12 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.write_plan import ObjectKey
-from parallax.snapshot.materialize import WireEntity, opened_wire_entity
-from parallax.snapshot.materialize._wire import authoring_of, read_origin_of
+from parallax.snapshot.materialize._wire import (
+    WireEntity,
+    authoring_of,
+    opened_wire_entity,
+    read_origin_of,
+)
 
 __all__ = [
     "WireChanges",
@@ -466,7 +470,7 @@ def _keyed_source(
 
     One refusal covers every non-source a caller can reach for — an ordinary
     mapping, ``dict(node)``, a JSON or pickle round trip, an
-    :class:`~parallax.snapshot.materialize.InvalidData` wrapper, and every node
+    :class:`~parallax.core.read_delivery.InvalidData` wrapper, and every node
     published as diagnostic data under an invalid root. They differ only in how
     the provenance is absent; none can authorize a keyed write.
     """

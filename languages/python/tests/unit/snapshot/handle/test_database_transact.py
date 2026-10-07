@@ -33,7 +33,7 @@ from parallax.core.unit_work import (
     StaleWriteError,
     WriteEvidenceError,
 )
-from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, Transaction
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

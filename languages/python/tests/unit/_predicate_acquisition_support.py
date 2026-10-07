@@ -55,11 +55,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution import ExecutionFailure
-from parallax.snapshot.handle import (
-    Database,
-    ScopedDatabase,
-    Transaction,
-)
+from parallax.snapshot import Database, ScopedDatabase, Transaction
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit import _leaf_type_support as leaf_support
 

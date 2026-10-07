@@ -14,7 +14,7 @@ Python-specific spelling and public semantics live in the
 | Object Query | The typed query built from entity expressions | [Queries and results](spec/queries-and-results.md) |
 | Snapshot | The typed result envelope over published entity values | [Queries and results](spec/queries-and-results.md) |
 | Wire | Canonical serialized input or output at an explicit boundary | [Queries and results](spec/queries-and-results.md) |
-| Database / Scoped Database | Resource ownership versus authority-selected execution | [Execution](spec/execution.md) |
+| Database / Scoped Database | Snapshot's facades over a Database Root and an authority-selected Execution Scope ([m-execution](../../core/spec/m-execution.md)) | [Execution](spec/execution.md) |
 | Transaction | The callback's explicit read/write surface | [Execution](spec/execution.md) |
 | Edit | A copy-based write input derived from an entity value | [Execution](spec/execution.md) |
 | Insertion source | The inserted instance, its later edits, or the node a Wire insert answered | [Execution](spec/execution.md) |

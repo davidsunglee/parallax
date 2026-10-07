@@ -656,7 +656,7 @@ def test_an_entry_point_grading_no_oracle_still_drives_a_run() -> None:
 # --- the port is no longer an observation seam --------------------------------
 
 
-_HANDLE_MODULE = "parallax.snapshot.handle"
+_DATABASE_HOME = "parallax.snapshot"
 
 
 def _dotted(node: ast.expr) -> str | None:
@@ -674,7 +674,7 @@ def _handle_constructors(tree: ast.Module) -> set[str]:
 
     Resolved through the module's OWN imports rather than by matching the name
     ``Database``: a lane importing the class directly writes ``Database(...)``
-    and one importing the module writes ``handle.Database(...)``, so a guard
+    and one importing the package writes ``snapshot.Database(...)``, so a guard
     that knows only one spelling is evaded by writing the other. ``connect`` is
     the same construction under the composition-root name.
     """
@@ -682,14 +682,14 @@ def _handle_constructors(tree: ast.Module) -> set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == _HANDLE_MODULE:
+                if alias.name == _DATABASE_HOME:
                     constructors.add(f"{alias.asname or alias.name}.Database")
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 qualified = f"{node.module}.{alias.name}" if node.module else alias.name
-                if qualified == _HANDLE_MODULE:
+                if qualified == _DATABASE_HOME:
                     constructors.add(f"{alias.asname or alias.name}.Database")
-                elif node.module == _HANDLE_MODULE and alias.name == "Database":
+                elif node.module == _DATABASE_HOME and alias.name == "Database":
                     constructors.add(alias.asname or alias.name)
     return constructors | {f"{name}.connect" for name in constructors}
 
@@ -760,19 +760,19 @@ def test_the_handle_guard_refuses_a_provider_it_cannot_read_as_installed() -> No
     guard matching the bare name would report it.
     """
     evasions = (
-        "from parallax.snapshot import handle\nhandle.Database(p, m, lifecycle_provider=None)\n",
-        "from parallax.snapshot.handle import Database\nDatabase(p, m)\n",
-        "from parallax.snapshot.handle import Database as Db\nDb(p, m, lifecycle_provider=None)\n",
-        "from parallax.snapshot import handle as h\nh.Database(p, m, **options)\n",
-        "import parallax.snapshot.handle\nparallax.snapshot.handle.Database(p, m)\n",
-        "from parallax.snapshot import handle\nhandle.Database.connect(p, m)\n",
+        "from parallax import snapshot\nsnapshot.Database(p, m, lifecycle_provider=None)\n",
+        "from parallax.snapshot import Database\nDatabase(p, m)\n",
+        "from parallax.snapshot import Database as Db\nDb(p, m, lifecycle_provider=None)\n",
+        "from parallax import snapshot as s\ns.Database(p, m, **options)\n",
+        "import parallax.snapshot\nparallax.snapshot.Database(p, m)\n",
+        "from parallax import snapshot\nsnapshot.Database.connect(p, m)\n",
     )
     for source in evasions:
         assert _handle_constructions(source) == ([2], [2]), source
 
     observed = (
-        "from parallax.snapshot import handle\n"
-        "handle.Database(p, m, lifecycle_provider=run.observation().provider)\n"
+        "from parallax import snapshot\n"
+        "snapshot.Database(p, m, lifecycle_provider=run.observation().provider)\n"
     )
     assert _handle_constructions(observed) == ([2], [])
     assert _handle_constructions("import sqlite3\nsqlite3.Database(p)\n") == ([], [])

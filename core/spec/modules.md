@@ -119,7 +119,8 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-db-error` | Database error classification | active | cases |
 | `m-navigate` | Relationship navigation & semi-join (incl. polymorphic targets) | active | cases |
 | `m-deep-fetch` | Deep fetch (N+1 elimination) & narrowed relationship views | active | cases |
-| `m-snapshot-read` | Snapshot graph materialization (plain value graphs) | active | cases |
+| `m-read-delivery` | Read planning, Page assembly, stored-data judgement, and whole or streamed delivery | active | cases |
+| `m-snapshot-read` | Snapshot graph publication (plain value graphs) | active | cases |
 | `m-op-list` | Query-backed list results | active | cases |
 | `m-batch-write` | Set-based / batched writes | active | cases |
 | `m-cascade-delete` | Cascade delete | active | cases |
@@ -127,6 +128,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-write-plan` | Planned Write algebra, Write Observations, and predecessor evidence | active | cases |
 | `m-read-lock` | In-transaction shared read lock | active | cases |
 | `m-auto-retry` | Bounded retry on transient conflict | active | cases |
+| `m-execution` | Database Roots, execution scopes, option resolution, Model Edition serving, and transaction attempts | active | cases |
 | `m-execution-lifecycle` | Transient execution observability | active | cases |
 | `m-identity-map` | Transaction-scoped identity map (managed-object interning) | active | cases |
 | `m-process-cache` | Process-wide identity & query cache | deferred | cases |
@@ -269,6 +271,27 @@ m-snapshot-read --> m-temporal-read
 m-snapshot-read --> m-execution-lifecycle
 m-snapshot-read --> m-wire
 m-snapshot-read --> m-edit
+m-snapshot-read --> m-execution
+m-snapshot-read --> m-read-delivery
+m-read-delivery --> m-deep-fetch
+m-read-delivery --> m-sql
+m-read-delivery --> m-document-codec
+m-read-delivery --> m-db-port
+m-read-delivery --> m-temporal-read
+m-read-delivery --> m-execution-lifecycle
+m-read-delivery --> m-read-lock
+m-read-delivery --> m-opt-lock
+m-execution --> m-unit-work
+m-execution --> m-read-delivery
+m-execution --> m-write-plan
+m-execution --> m-sql
+m-execution --> m-deep-fetch
+m-execution --> m-execution-authority
+m-execution --> m-auto-retry
+m-execution --> m-read-lock
+m-execution --> m-execution-lifecycle
+m-execution --> m-db-port
+m-execution --> m-batch-write
 m-temporal-read --> m-predicate
 m-temporal-read --> m-object-query
 m-temporal-read --> m-metamodel
@@ -532,10 +555,50 @@ construction it may reference any behavioral module it harnesses.
   `m-deep-fetch`; naming them directly is what makes the vocabulary a snapshot
   graph is built from legible to every language target rather than an accident of
   the planner's own closure.
-- **`m-snapshot-read --> m-execution-lifecycle`.** Snapshot reads and streams
-  publish their transient Read, Stream Batch, and Snapshot Stream activities
-  through the composition-supplied lifecycle seam. Their returned graphs and
-  stream values retain no observation record.
+- **`m-snapshot-read --> m-execution-lifecycle`.** Snapshot's write doors refuse
+  re-entry from inside a lifecycle handler before they accept a value, and its
+  Publication states the representation (`typed` or `wire`) the Read or Stream
+  activity reports. The activities themselves are opened by `m-execution` and
+  `m-read-delivery`, and returned graphs and stream values retain no observation
+  record.
+- **`m-snapshot-read --> m-execution`, `--> m-read-delivery`.** A snapshot read
+  runs through the execution runtime and is published from read delivery's
+  judged Page: Snapshot is one Publication delivery invokes, and its publication
+  contract is stated over the Page states delivery owns. The delivery edge is
+  reachable through `m-execution` and is named for the reason the model edges
+  above are, so the vocabulary a snapshot graph is published from is legible
+  rather than an accident of the runtime's closure. Neither runtime module
+  depends on a lifecycle, which is what lets a managed-object surface reuse both
+  unchanged.
+- **`m-read-delivery --> m-deep-fetch`, `--> m-sql`, `--> m-db-port`,
+  `--> m-document-codec`, `--> m-temporal-read`, `--> m-execution-lifecycle`.**
+  Read delivery turns a validated read into a judged Page: it plans the deep
+  fetch, executes the statements `m-sql` compiles over the port, judges stored
+  documents through the codec, propagates the read's pins, and opens the
+  Database Calls and Stream Batches it executes. It holds no transaction, model
+  selection, or authority — those are the conditions `m-execution` establishes
+  before delivery runs.
+- **`m-read-delivery --> m-read-lock`, `--> m-opt-lock`.** The lock a fetch takes
+  is derived where the fetch is planned: the effective read lock of each level
+  comes from the read-lock suffix rule and the target's optimistic facet, so
+  read planning, not its caller, decides it. Neither lock module is reachable
+  through delivery's other edges.
+- **`m-execution --> m-unit-work`, `--> m-read-delivery`, `--> m-write-plan`,
+  `--> m-sql`, `--> m-deep-fetch`, `--> m-execution-authority`, `--> m-auto-retry`,
+  `--> m-read-lock`, `--> m-execution-lifecycle`, `--> m-db-port`.** The
+  execution runtime is the behavioral module the unit of work's ports are
+  implemented in: it runs attempts under the retry loop and the authority a
+  scope captured, executes reads through delivery, lowers and executes the
+  Write Plan, acquires the rows a write needs under the shared lock, and opens
+  the roots and attempts the lifecycle observes. `m-unit-work` takes no edge to
+  any of these, so its admission, evidence, and finalization remain SQL-free and
+  testable without a database.
+- **`m-execution --> m-batch-write`.** Model preparation builds the Write
+  Planner a Model Selection carries, and wires batch write's collapse
+  eligibility into it as the batching strategy `m-unit-work` declares. The edge
+  is the preparation's, not a write path's: `m-batch-write --> m-unit-work`
+  already runs the other way, so the unit of work cannot take it, and placing
+  preparation in a lifecycle would make each lifecycle prepare models.
 - **`m-opt-lock --> m-temporal-read`.** For a Transaction-Time Entity the
   optimistic-lock version analogue is derived from `txStart` / physical `in_z`, so
   an optimistic close references the milestoning read model.

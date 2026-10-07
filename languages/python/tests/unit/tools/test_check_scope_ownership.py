@@ -3,8 +3,8 @@
 Each of the tool's seven findings gets a canary that drives ``main()`` to a
 non-zero exit, because a gate that runs but cannot block buys nothing:
 
-* an unowned production file (the ``parallax/snapshot/wrap.py`` shape the check
-  exists for) is written to disk for real;
+* an unowned production file (a module beside a package interface no scope
+  owns, the shape the check exists for) is written to disk for real;
 * an undeclared nested scope produces overlapping owners;
 * an import-free module written beside a zero-grant scope, a shape neither half
   of that scope's forbidden row names;
@@ -69,22 +69,22 @@ def test_module_path_folds_package_interfaces() -> None:
         own.module_path("parallax-core/src/parallax/core/base/__init__.py") == "parallax.core.base"
     )
     assert (
-        own.module_path("parallax-snapshot/src/parallax/snapshot/handle/_materialization.py")
-        == "parallax.snapshot.handle._materialization"
+        own.module_path("parallax-core/src/parallax/core/execution/_read_policy.py")
+        == "parallax.core.execution._read_policy"
     )
 
 
 def test_owning_scopes_returns_the_chain_outermost_first() -> None:
     owners = own.owning_scopes(
-        "parallax.snapshot.handle._materialization", dag.declared_first_party_scopes()
+        "parallax.core.execution._read_policy", dag.declared_first_party_scopes()
     )
-    assert owners == ["parallax.snapshot.handle", "parallax.snapshot.handle._materialization"]
+    assert owners == ["parallax.core.execution", "parallax.core.execution._read_policy"]
     # ...and the most specific scope is the file's owner.
-    assert owners[-1] == "parallax.snapshot.handle._materialization"
+    assert owners[-1] == "parallax.core.execution._read_policy"
 
 
 def test_a_declared_child_chain_is_not_an_overlap() -> None:
-    chain = ["parallax.snapshot.handle", "parallax.snapshot.handle._materialization"]
+    chain = ["parallax.core.execution", "parallax.core.execution._read_policy"]
     assert own.is_declared_chain(chain, dag.CHILD_SCOPES)
     assert not own.is_declared_chain(chain, {})
 
@@ -117,9 +117,7 @@ def test_the_exemptions_are_exactly_the_derived_package_interfaces() -> None:
     # The interfaces are derived from the declared scopes, so the exemption list
     # carries only the physical path and the reason for each — never which
     # files there are.
-    assert own.unowned_interfaces() == frozenset(
-        {"parallax.core", "parallax.evolution", "parallax.snapshot"}
-    )
+    assert own.unowned_interfaces() == frozenset({"parallax.core", "parallax.evolution"})
     assert {own.module_path(relative) for relative in own.EXEMPTIONS} == own.unowned_interfaces()
 
 
@@ -180,10 +178,9 @@ def test_the_success_message_states_the_guarantee_it_actually_proves(
 # Canary 1: a real production file owned by no scope fails the check.
 # --------------------------------------------------------------------------
 def test_unowned_production_file_fails(capsys: pytest.CaptureFixture[str]) -> None:
-    # `parallax.snapshot` is a distribution package interface, not an enforcement
-    # scope, so a module dropped beside it belongs to nothing — the exact shape
-    # `parallax/snapshot/wrap.py` had before it was retired.
-    canary = _scratch_package_path("parallax-snapshot/src/parallax/snapshot/_canary_unowned.py")
+    # `parallax.core` is a distribution package interface, not an enforcement
+    # scope, so a module dropped beside it belongs to nothing.
+    canary = _scratch_package_path("parallax-core/src/parallax/core/_canary_unowned.py")
     canary.write_text('"""Deliberately outside every enforcement scope."""\n')
     assert own.main([]) == 1
     canary.unlink()
@@ -234,21 +231,21 @@ def test_dropping_a_child_declaration_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # The committed child scopes depend on this coupling too: unregister one and
-    # the five lowering/wrap modules stop having a legal owner chain.
+    # its module stops having a legal owner chain.
     tampered = {
         child: declared
         for child, declared in dag.CHILD_SCOPES.items()
-        if child != "parallax.snapshot.handle._materialization"
+        if child != "parallax.core.execution._read_policy"
     }
     monkeypatch.setattr(dag, "CHILD_SCOPES", tampered)
     assert own.main([]) == 1
-    assert "_materialization.py" in capsys.readouterr().err
+    assert "_read_policy.py" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------
 # Canary 3: an import-free module beside a zero-grant scope.
 # --------------------------------------------------------------------------
-_STDLIB_LEAF = "parallax-snapshot/src/parallax/snapshot/handle/_stdlib_leaf.py"
+_STDLIB_LEAF = "parallax-core/src/parallax/core/entity/_stdlib_leaf.py"
 _IMPORT_FREE = '"""Deliberately import-free, and outside every declared child scope."""\n'
 _FIRST_PARTY = (
     f"{_IMPORT_FREE}\n"
@@ -273,7 +270,7 @@ def test_import_free_module_beside_a_zero_grant_scope_fails(
         leaf.unlink()
     err = capsys.readouterr().err
     assert "_stdlib_leaf.py" in err
-    assert "parallax.snapshot.handle._errors cannot name it" in err
+    assert "parallax.core.entity._construction_input cannot name it" in err
     assert own.main([]) == 0
 
 
@@ -300,7 +297,6 @@ def test_the_rule_applies_only_where_a_zero_grant_scope_exists(
     assert zero_grant == {
         "parallax.core.entity._construction_input": "parallax.core.entity",
         "parallax.core.entity._pydantic_storage": "parallax.core.entity",
-        "parallax.snapshot.handle._errors": "parallax.snapshot.handle",
     }
     tampered = dict(dag.PYTHON_FIRST_PARTY_GRANTS)
     for scope in zero_grant:
@@ -315,7 +311,7 @@ def test_the_rule_applies_only_where_a_zero_grant_scope_exists(
         leaf.unlink()
 
 
-_NEST = "parallax-snapshot/src/parallax/snapshot/handle/_nest"
+_NEST = "parallax-core/src/parallax/core/entity/_nest"
 _NESTED = '"""Declared beneath a sibling scope, and import-free."""\n'
 
 
@@ -332,8 +328,8 @@ def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
         "PYTHON_FIRST_PARTY_GRANTS",
         {
             **dag.PYTHON_FIRST_PARTY_GRANTS,
-            "parallax.snapshot.handle._nest": frozenset({"parallax.core.base"}),
-            "parallax.snapshot.handle._nest._leaf": frozenset({"parallax.core.base"}),
+            "parallax.core.entity._nest": frozenset({"parallax.core.base"}),
+            "parallax.core.entity._nest._leaf": frozenset({"parallax.core.base"}),
         },
     )
     monkeypatch.setattr(
@@ -341,16 +337,16 @@ def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
         "CHILD_SCOPES",
         {
             **dag.CHILD_SCOPES,
-            "parallax.snapshot.handle._nest": dag.ChildScope(
-                parent="parallax.snapshot.handle", policy="ordinary"
+            "parallax.core.entity._nest": dag.ChildScope(
+                parent="parallax.core.entity", policy="ordinary"
             ),
-            "parallax.snapshot.handle._nest._leaf": dag.ChildScope(
-                parent="parallax.snapshot.handle._nest", policy="ordinary"
+            "parallax.core.entity._nest._leaf": dag.ChildScope(
+                parent="parallax.core.entity._nest", policy="ordinary"
             ),
         },
     )
-    assert "parallax.snapshot.handle._nest" in dag.scope_siblings(
-        "parallax.snapshot.handle._errors"
+    assert "parallax.core.entity._nest" in dag.scope_siblings(
+        "parallax.core.entity._construction_input"
     )
     nest = _scratch_package_path(_NEST)
     nest.mkdir()
@@ -358,11 +354,11 @@ def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
     (nest / "_leaf.py").write_text(_NESTED)
     try:
         assert own.owning_scopes(
-            "parallax.snapshot.handle._nest._leaf", dag.declared_first_party_scopes()
+            "parallax.core.entity._nest._leaf", dag.declared_first_party_scopes()
         ) == [
-            "parallax.snapshot.handle",
-            "parallax.snapshot.handle._nest",
-            "parallax.snapshot.handle._nest._leaf",
+            "parallax.core.entity",
+            "parallax.core.entity._nest",
+            "parallax.core.entity._nest._leaf",
         ]
         assert own.main([]) == 0
     finally:
@@ -697,14 +693,14 @@ def test_sealing_a_scope_that_reaches_its_parent_today_would_fail(
 @pytest.mark.parametrize(
     "statement",
     [
-        "from parallax.snapshot.handle import _database",
-        "from parallax.snapshot.handle._read_scope import ReadScope",
+        "from parallax.core.execution import _root",
+        "from parallax.core.execution._read_policy import StandaloneRead",
     ],
 )
-def test_execution_authority_seal_refuses_parent_and_sibling_imports(
+def test_model_publication_seal_refuses_parent_and_sibling_imports(
     statement: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    relative = "parallax-snapshot/src/parallax/snapshot/handle/_execution_authority.py"
+    relative = "parallax-core/src/parallax/core/execution/_publication.py"
     source = tmp_path / relative
     source.parent.mkdir(parents=True)
     source.write_text(f"{statement}\n")
@@ -712,18 +708,18 @@ def test_execution_authority_seal_refuses_parent_and_sibling_imports(
 
     findings = own.imports_escaping_a_sealed_child_row([relative])
     assert len(findings) == 1
-    assert "_execution_authority.py" in findings[0]
+    assert "_publication.py" in findings[0]
 
 
-def test_execution_authority_seal_allows_its_declared_core_imports(
+def test_model_publication_seal_allows_its_declared_imports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    relative = "parallax-snapshot/src/parallax/snapshot/handle/_execution_authority.py"
+    relative = "parallax-core/src/parallax/core/execution/_publication.py"
     source = tmp_path / relative
     source.parent.mkdir(parents=True)
     source.write_text(
-        "from parallax.core.db_port import DatabaseRuntime\n"
-        "from parallax.core.unit_work import SubjectActor\n"
+        "from parallax.core.entity import DomainModel\n"
+        "from parallax.core.unit_work import WritePlanner\n"
     )
     monkeypatch.setattr(own, "PACKAGES", tmp_path)
 
@@ -751,12 +747,12 @@ def test_exemption_for_an_owned_file_fails(
 ) -> None:
     # An exemption kept alive after a scope grew to cover the file is dead weight
     # that hides which scope actually owns it.
-    owned = "parallax-snapshot/src/parallax/snapshot/handle/_materialization.py"
+    owned = "parallax-core/src/parallax/core/execution/_read_policy.py"
     monkeypatch.setattr(own, "EXEMPTIONS", {**own.EXEMPTIONS, owned: "stale justification"})
     assert own.main([]) == 1
     err = capsys.readouterr().err
     assert "no longer describe the tree" in err
-    assert "now owned by parallax.snapshot.handle._materialization" in err
+    assert "now owned by parallax.core.execution._read_policy" in err
 
 
 # --------------------------------------------------------------------------
@@ -818,11 +814,11 @@ def test_an_interface_with_no_file_fails(
 def test_an_exemption_for_an_unowned_non_interface_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # The `parallax/snapshot/wrap.py` shape, excused instead of scoped: the file
-    # is unowned, so the exemption would otherwise be accepted, and no contract
-    # is sourced from it at all — the generator sources exactly the derived
-    # interfaces and nothing else.
-    canary = "parallax-snapshot/src/parallax/snapshot/_canary_unowned.py"
+    # An unowned module excused instead of scoped: the file is unowned, so the
+    # exemption would otherwise be accepted, and no contract is sourced from it
+    # at all — the generator sources exactly the derived interfaces and nothing
+    # else.
+    canary = "parallax-core/src/parallax/core/_canary_unowned.py"
     _scratch_package_path(canary).write_text('"""Deliberately outside every scope."""\n')
     monkeypatch.setattr(own, "EXEMPTIONS", {**own.EXEMPTIONS, canary: "excused rather than owned"})
     try:

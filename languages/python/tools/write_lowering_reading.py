@@ -52,7 +52,7 @@ from parallax.core.document_codec._document import (
 )
 from parallax.core.entity import DomainModel
 from parallax.core.execution import prepare_model
-from parallax.snapshot.handle import ScopedDatabase
+from parallax.snapshot import ScopedDatabase
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"

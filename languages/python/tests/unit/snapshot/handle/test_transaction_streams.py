@@ -41,15 +41,9 @@ from parallax.core.execution import (
 )
 from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.read_delivery import StreamStateError
-from parallax.core.unit_work import instructions
-from parallax.snapshot import SnapshotStream
+from parallax.core.unit_work import WriteEvidenceError, instructions
+from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, Transaction
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import (
-    Database,
-    ScopedDatabase,
-    Transaction,
-    WriteEvidenceError,
-)
 from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized

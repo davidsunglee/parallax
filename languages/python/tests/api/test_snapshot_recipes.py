@@ -44,8 +44,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
 from parallax.core.read_delivery import StreamStateError
-from parallax.snapshot import connect, is_view_loaded
-from parallax.snapshot.handle import Database, ScopedDatabase
+from parallax.snapshot import Database, ScopedDatabase, connect, is_view_loaded
 from tests._support.db_port import ConnectsAsItself, projected_row
 from tests._support.root_ownership import own_root
 

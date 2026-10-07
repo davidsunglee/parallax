@@ -9,10 +9,7 @@ from decimal import Decimal
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.base import INFINITY
-from parallax.snapshot.handle import (
-    Database,
-    Transaction,
-)
+from parallax.snapshot import Database, Transaction
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     Read,

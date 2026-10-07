@@ -23,9 +23,10 @@ from parallax.core.execution_lifecycle._activity import (
     StreamActivity,
     StreamBatchActivity,
 )
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.object_query import ObjectQueryNode, deserialize, validate_object_query
 from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.read_delivery import InvalidData, InvalidDataError, StoredDataIssue
 from parallax.core.read_delivery._page import Page, PageBuilder, ViewSchema
 from parallax.core.read_delivery._page_reader import (
     EagerPageResult,
@@ -36,6 +37,7 @@ from parallax.core.read_delivery._paging import At, PagingPlan
 from parallax.core.read_delivery._publication import RootsOf
 from parallax.core.read_delivery._stream import StreamDelivery
 from parallax.core.temporal_read import Pin, TemporalShape
+from parallax.core.write_plan import ObjectKey
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -117,10 +119,14 @@ class _Scope:
 
 
 class _Publication:
-    """Publishes ``roots`` placeholder values per Page and records its release."""
+    """Publishes ``roots`` placeholder values per Page and records its release.
 
-    def __init__(self, pages: list[int]) -> None:
+    A root position named in ``invalid`` publishes that classified root instead.
+    """
+
+    def __init__(self, pages: list[int], invalid: Mapping[int, object] | None = None) -> None:
         self._pages = pages
+        self._invalid = dict(invalid or {})
         self.released = 0
 
     @property
@@ -134,6 +140,7 @@ class _Publication:
     @property
     def roots_of(self) -> RootsOf[object]:
         pages = self._pages
+        invalid = self._invalid
 
         def roots_of(
             page: Page,
@@ -146,7 +153,8 @@ class _Publication:
             milestones: TemporalShape | None = None,
         ) -> Iterator[object]:
             del page, includes, atomic, sources, milestones
-            yield from range(ordinal_offset, ordinal_offset + pages.pop(0))
+            for ordinal in range(ordinal_offset, ordinal_offset + pages.pop(0)):
+                yield invalid.get(ordinal, ordinal)
 
         return roots_of
 
@@ -173,9 +181,10 @@ def _delivery(
     *,
     on_page_start: Callable[[deep_fetch.IncludeTree], None],
     on_release: Callable[[], None],
+    invalid: Mapping[int, object] | None = None,
 ) -> tuple[StreamDelivery[Any, _Publication], _Read, _Publication]:
     read = _Read()
-    publication = _Publication(list(pages))
+    publication = _Publication(list(pages), invalid)
     delivery: StreamDelivery[Any, _Publication] = StreamDelivery(
         _node(),
         cast("Any", _Scope(read, *pages)),
@@ -244,3 +253,51 @@ def test_a_failing_release_callback_still_releases_the_publication_at_exhaustion
         next(view)
 
     assert publication.released == 1
+
+
+def _invalid_root(ordinal: int) -> InvalidData[object]:
+    order = entity_of(ORDERS, "Order").identity
+    key = ObjectKey(order, (("id", ordinal),))
+    issue = StoredDataIssue(
+        "stored-data-leaf-undecodable",
+        order,
+        AttributeIdentity(order, "sku"),
+        key,
+        path=(),
+        stored_value="not-a-sku",
+    )
+    return InvalidData(
+        issues=frozenset({issue}),
+        data=None,
+        object_key=key,
+        version=None,
+        edge=None,
+        ordinal=ordinal,
+    )
+
+
+def test_an_unchecked_view_refuses_an_invalid_root_after_the_prefix_before_it() -> None:
+    invalid = _invalid_root(1)
+    delivery, _read, publication = _delivery(
+        [3], on_page_start=lambda _includes: None, on_release=lambda: None, invalid={1: invalid}
+    )
+    delivery.enter()
+    view = delivery.view(checked=False)
+    assert next(view) == 0
+
+    with pytest.raises(InvalidDataError) as refused:
+        next(view)
+
+    assert refused.value.invalid_data == (invalid,)
+    assert refused.value.edition == publication.edition
+    assert publication.released == 1
+
+
+def test_a_checked_view_publishes_an_invalid_root_in_band() -> None:
+    invalid = _invalid_root(1)
+    delivery, _read, _publication = _delivery(
+        [3], on_page_start=lambda _includes: None, on_release=lambda: None, invalid={1: invalid}
+    )
+    delivery.enter()
+    assert list(delivery.view(checked=True)) == [0, invalid, 2]
+    delivery.close()

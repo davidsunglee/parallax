@@ -25,8 +25,7 @@ from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity import DomainModel, Entity
 from parallax.core.execution import prepare_model
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, Transaction, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,

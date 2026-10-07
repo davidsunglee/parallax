@@ -257,8 +257,8 @@ JoinedInvocation()
 
 `isolation` is the Isolation Level this invocation **requested**, in the
 `m-db-port` portable vocabulary, and is **absent** when it requested none. An
-modeled outer invocation always requests one — the explicit level, else its
-invoking Execution Scope's effective value (ADRs 0065 and 0066) — so it always states one here;
+modeled outer invocation always requests one — the level it resolved (`m-execution`
+*Option resolution*) — so it always states one here;
 absence is the form a lower-level caller takes when it asks the port for no
 level. It is the requested level, not the level the database used: a boundary
 requesting none opens at whatever its adapter defaults to, and that default is

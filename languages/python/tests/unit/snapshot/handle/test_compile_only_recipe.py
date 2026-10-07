@@ -21,6 +21,7 @@ from typing import Any, cast
 
 import pytest
 
+import parallax.snapshot
 from parallax.conformance import case_format, engine
 from parallax.conformance._lanes import scenario
 from parallax.core.dialect import POSTGRES
@@ -28,8 +29,7 @@ from parallax.core.execution._planning import build_write_planner
 from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.unit_work import WritePlanner, WritePlanningRequest
 from parallax.core.write_plan import WritePlan
-from parallax.snapshot import handle
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Database, Transaction
 from tests._support.db_port import (
     ScriptedAdapter,
     Transact,
@@ -163,12 +163,12 @@ def test_the_reachability_walk_answers_no_for_a_structure_holding_none() -> None
 
 
 def test_the_public_surface_offers_no_plan_and_no_flush() -> None:
-    exported = set(handle.__all__)
+    exported = set(parallax.snapshot.__all__)
     assert "WritePlan" not in exported
     assert not exported.intersection(_FORBIDDEN_ENTRY_POINTS)
     for name in ("flush", *_FORBIDDEN_ENTRY_POINTS):
-        assert not hasattr(handle.Transaction, name)
-        assert not hasattr(handle.Database, name)
+        assert not hasattr(Transaction, name)
+        assert not hasattr(Database, name)
 
 
 def _reaches_a_write_plan(value: object, seen: set[int] | None = None) -> bool:

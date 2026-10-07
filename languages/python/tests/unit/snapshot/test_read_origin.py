@@ -42,15 +42,12 @@ from parallax.core.unit_work import (
     ParticipationToken,
     ReadOrigin,
     RetainedObservation,
+    WriteEvidenceError,
 )
 from parallax.core.write_plan import ObjectKey, VersionObservation
 from parallax.core.write_plan.keys import VersionedStateKey
-from parallax.snapshot import WireEntity, connect, materialize
+from parallax.snapshot import Transaction, WireEntity, connect, materialize
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import (
-    Transaction,
-    WriteEvidenceError,
-)
 from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized

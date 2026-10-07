@@ -18,7 +18,7 @@ import snapshot_delivery_reading
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.workloads import GEOMETRY_LEVELS, catalog, plan_levels
 from parallax.core.object_query._fluent import object_query_node
-from parallax.snapshot.handle import Database
+from parallax.snapshot import Database
 from snapshot_delivery_reading import (
     GEOMETRY_METRICS,
     PLAN_METRICS,

@@ -108,7 +108,7 @@ unversioned Non-Temporal fallback renders the suffix under the default
 writer too (`m-read-lock-012`).
 
 The preference a transaction resolves may come from its Database Root rather
-than from the call (ADR 0065), and the suffix follows the resolved preference
+than from the call (`m-execution` *Option resolution*), and the suffix follows the resolved preference
 either way: a locking root's `uow` group renders the shared-lock pages while the
 invocation names no preference (`m-read-lock-017`), an explicit `optimistic`
 request under that root renders them lock-free (`m-read-lock-018`), a

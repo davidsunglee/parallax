@@ -13,7 +13,8 @@ import pytest
 from parallax.conformance.read_models import Person
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.dialect import POSTGRES
-from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
+from parallax.core.unit_work import WriteEvidenceError
+from parallax.snapshot import Database, Transaction
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

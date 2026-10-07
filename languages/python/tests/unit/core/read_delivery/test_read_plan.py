@@ -28,7 +28,7 @@ from parallax.core.read_delivery import _read_plan
 from parallax.core.read_delivery._delivery import find
 from parallax.core.read_delivery._read_plan import ReadPlanCache
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot.handle import Database
+from parallax.snapshot import Database
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 from tests.unit._transact_support import db_for
 

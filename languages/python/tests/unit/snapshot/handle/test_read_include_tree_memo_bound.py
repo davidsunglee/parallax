@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from parallax.conformance.budget import BudgetContract
-from parallax.snapshot.handle import Database
+from parallax.snapshot import Database
 from tests.unit import _delivery_control_support as control_support
 from tests.unit._gc_reachability import closure
 

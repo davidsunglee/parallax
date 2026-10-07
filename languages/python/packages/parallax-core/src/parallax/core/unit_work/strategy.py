@@ -101,7 +101,7 @@ class BatchingStrategy(Protocol):
 
     Eligibility and physical grouping are separate questions: the first is a
     write-shape decision the batching policy owns, the second compares the
-    layout selections two rows make and belongs to the composition root.
+    layout selections two rows make and belongs to model preparation.
     """
 
     def collapses(
@@ -208,7 +208,7 @@ class WriteEvidencePolicy(Protocol):
 type EvidencePolicyLookup = Callable[[EntityIdentity], WriteEvidencePolicy]
 """The connected model's write-evidence policy for one accepted Entity.
 
-Bound once per accepted model by the composition root, because the policy is
+Bound once per accepted model by model preparation, because the policy is
 `m-opt-lock`'s and the module DAG runs `m-opt-lock --> m-unit-work`. An identity
 the model does not declare raises ``KeyError`` rather than answering a default
 policy: what an unrecognized Entity's write may claim cannot be read off what

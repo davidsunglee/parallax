@@ -41,11 +41,7 @@ from parallax.core.execution import (
 )
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.unit_work import OptimisticLockConflictError
-from parallax.snapshot import connect
-from parallax.snapshot.handle import (
-    ScopedDatabase,
-    Transaction,
-)
+from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_document, case_fixtures
 
@@ -290,7 +286,8 @@ def test_reachable_boundary_cases_cover_the_expected_population() -> None:
     # population): `m-auto-retry-001..011`, `m-opt-lock-010/011/024/025`, its
     # Transaction-Time-Only analogue `m-temporal-read-011`,
     # `m-unit-work-004`, the isolation pair `m-unit-work-035/036`, the five
-    # root-configured join cases `m-unit-work-037..041`, and the six
+    # root-configured join cases `m-unit-work-037..041`, the root-default
+    # resolution case `m-execution-001`, and the six
     # `m-execution-lifecycle` spine cases whose observables need an injected
     # fault or a joined boundary — never a hand list at the RUNNER level (the
     # corpus itself drives `_CASES` above); this is a coverage assertion only.
@@ -307,6 +304,7 @@ def test_reachable_boundary_cases_cover_the_expected_population() -> None:
         "m-auto-retry-009",
         "m-auto-retry-010",
         "m-auto-retry-011",
+        "m-execution-001",
         "m-execution-lifecycle-004",
         "m-execution-lifecycle-005",
         "m-execution-lifecycle-006",

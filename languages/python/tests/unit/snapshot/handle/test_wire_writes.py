@@ -41,15 +41,8 @@ from parallax.core.execution import (
 )
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
 from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import WriteRejectedError, instructions
-from parallax.snapshot import Snapshot, connect
-from parallax.snapshot.handle import (
-    Database,
-    ScopedDatabase,
-    Transaction,
-    WireEntity,
-    WriteEvidenceError,
-)
+from parallax.core.unit_work import WriteEvidenceError, WriteRejectedError, instructions
+from parallax.snapshot import Database, ScopedDatabase, Snapshot, Transaction, WireEntity, connect
 from parallax.snapshot.materialize._wire import authoring_of, read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized

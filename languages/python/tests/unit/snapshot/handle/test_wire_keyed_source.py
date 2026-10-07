@@ -28,11 +28,11 @@ from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite
 from parallax.core.write_plan import ObjectKey
+from parallax.snapshot import WireEntity
 from parallax.snapshot.handle._wire_writes import (
     WireKeyedInsertSource,
     WireKeyedWriteSource,
 )
-from parallax.snapshot.materialize import WireEntity
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter
 from tests._support.model_capabilities import cataloged_for

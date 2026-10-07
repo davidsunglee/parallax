@@ -6,7 +6,7 @@ from typing import Any
 
 from parallax.conformance.read_models import Document, Payment
 from parallax.conformance.story_models import Account, Order, OrderStatus
-from parallax.snapshot.handle import ScopedDatabase, Snapshot, Transaction, WireEntity
+from parallax.snapshot import ScopedDatabase, Snapshot, Transaction, WireEntity
 
 __all__ = [
     "publish_typed_read_as_wire",
