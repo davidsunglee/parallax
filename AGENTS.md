@@ -25,22 +25,15 @@
 - Dependency declarations are an intentional exception to single authorship: preserve the core graph, language topology declarations, and independent implementation mappings and checks. Changes to this enforcement mechanism require explicit design review.
 - Otherwise, author a fact once. Link to its owner or generate another view; do not maintain prose inventories of code, cases, or CI jobs. An internal refactor normally needs no specification edit.
 - `CONTEXT.md` files are terminology/navigation aids. ADRs record decisions and rationale at the time they were made; supersede them when a decision changes rather than keeping historical prose synchronized. Research, measurements, and task artifacts are evidence, not additional current product contracts.
-
-## Review
-
-- Judge behavior against its current contract owner and changes against these instructions. A finding must identify observable harm or a material contract violation with a credible trigger and evidence.
-- Missing repetition in a secondary document is not a defect. When duplicated prose conflicts, prefer removing the duplicate or linking to its owner; preserve any unique public contract before deleting it.
-- Generated documentation is reviewed through its authored inputs and generation checks. Tests verify exports, types, behavior, and enforced boundaries, not explanatory prose that repeats them.
 - Keep private task records out of product documentation. A bounded change needs no separate design document; a large change needs only a short execution outline unless an unresolved product decision requires design work.
 
-## Reladomo Prior Art
+## Review Prompts
 
-- Parallax specifications are authoritative.
-- For runtime semantics research—including locking, transactions, temporal behavior, and caching—document Reladomo's behavior as prior art. Start at `docs/research/reladomo/00-index.md` and consult `../reladomo` when available.
-- Adopt Reladomo semantics only through an explicit Parallax specification or design decision; do not copy its Java idioms.
+- When preparing a review prompt, name [`CODING_STANDARDS.md`](CODING_STANDARDS.md), this file, and every scoped instruction file applicable to the reviewed paths as standards sources.
 
 ## Verification
 
+- Tests verify exports, types, behavior, and enforced boundaries, not explanatory prose that repeats them.
 - Resolve what an aggregate command already runs before listing or running verification — `just show-gates <command>` prints its execution owners — and never list a focused command beside an aggregate that contains it.
 - Invoke an authoritative aggregate — `just check` for a merge-ready run — directly rather than piping it through an output filter, and trust the status the execution tool reports.
 - `just check` is the merge gate and the only aggregate to run locally. It omits the `cost` class, whose memory measurements CI owns and gates on every change: `just check-all` and `just check-cost` are CI's, not a local step. Report a green `just check` as a green merge gate, never as every blocking check having passed.
@@ -53,3 +46,9 @@
 - Commit messages must pass the repository's Commitlint and Husky hooks; do not bypass them.
 - Before committing, inspect `git log --oneline -5` and use a concise Conventional Commit subject consistent with repository history.
 - Unless requested, omit verification commands from commit bodies. Do not add generated-by, co-author, or similar trailers.
+
+## Reladomo Prior Art
+
+- Parallax specifications are authoritative.
+- For runtime semantics research—including locking, transactions, temporal behavior, and caching—document Reladomo's behavior as prior art. Start at `docs/research/reladomo/00-index.md` and consult `../reladomo` when available.
+- Adopt Reladomo semantics only through an explicit Parallax specification or design decision; do not copy its Java idioms.
