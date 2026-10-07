@@ -32,12 +32,13 @@ from parallax.core import (
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import model_of
+from parallax.core.execution import QueryTargetError
 from parallax.core.metamodel import (
     UnresolvedEntityDeclaration,
     WriteAssignmentError,
     judge_assignment,
 )
-from parallax.snapshot import QueryTargetError, SnapshotConnectionError
+from parallax.snapshot import SnapshotConnectionError
 from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
 from tests._support.db_port import (
     BeginCall,

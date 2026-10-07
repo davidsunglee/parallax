@@ -23,6 +23,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import Dialect
+from parallax.core.execution import ExecutionFailure
 from parallax.snapshot import handle
 
 __all__ = [
@@ -46,7 +47,7 @@ def underlying[T](execution: Callable[[], T]) -> T:
     What the engine grades is what the callback, the write, the boundary, or
     the read raised — a rollback sentinel, a Write Effect Error, an
     optimistic-lock conflict, a lowering refusal, a Database Error — and an
-    :class:`~parallax.snapshot.handle.ExecutionFailure` carries exactly that as
+    :class:`~parallax.core.execution.ExecutionFailure` carries exactly that as
     its cause. Re-raising the cause with its own chain intact is what lets each
     lane keep catching the failure it classifies; the edition the wrapper named
     is the case's own literal, which the lifecycle oracle grades instead.
@@ -58,7 +59,7 @@ def underlying[T](execution: Callable[[], T]) -> T:
     """
     try:
         return execution()
-    except handle.ExecutionFailure as failure:
+    except ExecutionFailure as failure:
         cause = failure.cause
     raise cause
 

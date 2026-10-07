@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping
-from typing import overload
+from typing import Any, overload
 
+from parallax.core.execution._attempt import Attempt
+from parallax.core.execution._keyed_writes import window_mutation
+from parallax.core.execution._options import OMITTED, Omitted
+from parallax.core.execution._scope import ExecutionScope
+from parallax.core.object_query import ObjectQueryNode, deserialize
+from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.unit_work import WriteInstructionError
-from parallax.snapshot.handle._keyed_writes import window_mutation
-from parallax.snapshot.handle._options import OMITTED, Omitted
-from parallax.snapshot.handle._predicate_writes import PredicateWriteContext
 from parallax.snapshot.handle._read import Snapshot, wire_publication_for
-from parallax.snapshot.handle._read_scope import ReadScope, WireQuery, wire_query_node
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._wire_writes import (
     WireChanges,
@@ -23,8 +25,36 @@ from parallax.snapshot.materialize import WireEntity
 
 __all__ = [
     "WireDatabaseView",
+    "WireQuery",
     "WireTransactionView",
+    "wire_query_node",
 ]
+
+type WireQuery = ObjectQuery[Any, Any] | ObjectQueryNode | Mapping[str, object]
+"""What a Wire read accepts: the canonical Object Query mapping, the canonical
+node itself, or — on a class-backed model — the Typed authoring value."""
+
+
+def wire_query_node(query: WireQuery) -> ObjectQueryNode:
+    """``query`` as the one canonical Object Query node every read lowers through.
+
+    Accepting three spellings adds no query semantics: the mapping goes through
+    `m-object-query`'s own deserializer, the Typed value through the same
+    accessor ``db.find`` uses, and a node passes as itself. Nothing here
+    validates the query — the shared read gate does, after this resolution and
+    before any I/O — so all three spellings meet the same refusals.
+
+    It is a stable converter a read is handed rather than a step the read
+    performs first: a Wire read refuses re-entry before it looks at what it was
+    handed, so a mapping no deserializer could accept is refused as re-entry
+    when it arrives from inside a lifecycle context, exactly as an unusable Typed
+    query is.
+    """
+    if isinstance(query, ObjectQueryNode):
+        return query
+    if isinstance(query, Mapping):
+        return deserialize(query)
+    return object_query_node(query)
 
 
 class WireDatabaseView:
@@ -37,7 +67,7 @@ class WireDatabaseView:
 
     __slots__ = ("_reads",)
 
-    def __init__(self, reads: ReadScope) -> None:
+    def __init__(self, reads: ExecutionScope | Attempt) -> None:
         self._reads = reads
 
     def find(self, query: WireQuery) -> Snapshot[WireEntity]:
@@ -111,11 +141,11 @@ class WireTransactionView(WireDatabaseView):
     nothing proves anything about.
     """
 
-    __slots__ = ("_writes",)
+    __slots__ = ("_attempt",)
 
-    def __init__(self, reads: ReadScope, writes: PredicateWriteContext) -> None:
-        super().__init__(reads)
-        self._writes = writes
+    def __init__(self, attempt: Attempt) -> None:
+        super().__init__(attempt)
+        self._attempt = attempt
 
     def insert(
         self,
@@ -155,7 +185,7 @@ class WireTransactionView(WireDatabaseView):
         """
         mutation, bound = window_mutation("insert", "insertUntil", until)
         return wire_insert(
-            self._writes.keyed,
+            self._attempt,
             entity_name,
             data,
             mutation=mutation,
@@ -226,7 +256,7 @@ class WireTransactionView(WireDatabaseView):
         if isinstance(target, str):
             mutation, bound = window_mutation("update", "updateUntil", until)
             wire_target_write(
-                self._writes,
+                self._attempt,
                 mutation,
                 target,
                 changes,
@@ -244,7 +274,7 @@ class WireTransactionView(WireDatabaseView):
                 "passing the node"
             )
         mutation, bound = window_mutation("update", "updateUntil", until)
-        wire_keyed_write(self._writes.keyed, mutation, target, changes, until=bound)
+        wire_keyed_write(self._attempt, mutation, target, changes, until=bound)
 
     def replace(
         self,
@@ -266,7 +296,7 @@ class WireTransactionView(WireDatabaseView):
         """
         mutation, bound = window_mutation("replace", "replaceUntil", until)
         wire_target_write(
-            self._writes,
+            self._attempt,
             mutation,
             entity_name,
             data,
@@ -286,7 +316,7 @@ class WireTransactionView(WireDatabaseView):
         ``delete`` physically removes the row and carries no temporal meaning, so
         a target that milestones its rows refuses it at this call and names
         :meth:`terminate`, which closes the row's history instead."""
-        wire_keyed_write(self._writes.keyed, "delete", observed)
+        wire_keyed_write(self._attempt, "delete", observed)
 
     def terminate(self, observed: WireEntity, *, until: dt.datetime | Omitted = OMITTED) -> None:
         """Buffer a Wire terminate of the coverage ``observed`` came from, exactly
@@ -294,7 +324,7 @@ class WireTransactionView(WireDatabaseView):
         Bitemporal target's current coverage ends from where ``observed`` was
         read, through infinity or up to the exclusive ``until``."""
         mutation, bound = window_mutation("terminate", "terminateUntil", until)
-        wire_keyed_write(self._writes.keyed, mutation, observed, until=bound)
+        wire_keyed_write(self._attempt, mutation, observed, until=bound)
 
     def update_where(
         self,
@@ -318,7 +348,7 @@ class WireTransactionView(WireDatabaseView):
         caller already holds, where a selection holds none."""
         mutation, bound = window_mutation("update", "updateUntil", until)
         wire_predicate_write(
-            self._writes, mutation, target, changes, valid_from=valid_from, until=bound
+            self._attempt, mutation, target, changes, valid_from=valid_from, until=bound
         )
 
     def delete_where(self, target: WirePredicateTarget) -> None:
@@ -328,7 +358,7 @@ class WireTransactionView(WireDatabaseView):
         the caller means to remove whatever matches, rather than arriving there
         by building a value nothing was read into.
         """
-        wire_predicate_write(self._writes, "delete", target)
+        wire_predicate_write(self._attempt, "delete", target)
 
     def terminate_where(
         self,
@@ -341,4 +371,4 @@ class WireTransactionView(WireDatabaseView):
         Transaction-Time-Only takes no ``valid_from``; Bitemporal requires it, and
         ``until`` follows :meth:`insert`'s rules."""
         mutation, bound = window_mutation("terminate", "terminateUntil", until)
-        wire_predicate_write(self._writes, mutation, target, valid_from=valid_from, until=bound)
+        wire_predicate_write(self._attempt, mutation, target, valid_from=valid_from, until=bound)

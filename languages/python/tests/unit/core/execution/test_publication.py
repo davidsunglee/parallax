@@ -13,41 +13,41 @@ passes on favorable scheduling. A further publication is landed at the instant
 the window closes, so a holder that carried a reread of the served selection
 into its refusal, rather than what its comparison read, fails there too.
 
-Docker-free, against the shared recording port.
+What the Snapshot connection doors add on top — refusing what is no model,
+preparing a static model once, and refusing a Typed read over a model naming no
+class — is the Snapshot database suite's.
 """
 
 from __future__ import annotations
 
 import threading
 import time
+from decimal import Decimal
 from typing import Any, Final
 
 import pytest
 
-from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import opt_lock
 from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity import _graph_construction as graph_construction_module
 from parallax.core.entity import _layout as layout_module
 from parallax.core.entity import _row_codec as row_codec_module
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import UnresolvedEntityDeclaration
-from parallax.snapshot import (
+from parallax.core.execution import (
     ModelSelection,
     PublicationConflictError,
     ServingModel,
-    SnapshotConnectionError,
-    connect,
     prepare_model,
 )
-from parallax.snapshot.handle import Database, Transaction
-from parallax.snapshot.handle._publication import read_projection, write_projection
+from parallax.core.execution._publication import (
+    read_projection,
+    write_projection,
+)
+from parallax.core.metamodel import UnresolvedEntityDeclaration
 from tests._support import mirrored_models as mm
-from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
-from tests._support.root_ownership import own_root
-from tests.unit._transact_support import FIXED, NEW_ROW, new_account
 
 _ACCOUNT: Final = mm.ACCOUNT_MODEL
+_BALANCE: Final = Decimal("5.00")
 
 _RENDEZVOUS: Final = 10.0
 """Seconds a worker waits for the others at a point they share. Nothing is
@@ -171,32 +171,11 @@ def test_a_descriptor_backed_model_prepares_with_no_graph_construction() -> None
 
     assert read.construction is None
     assert set(read.model.layouts._layouts) == _identities(selection.model)  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    assert write.codec.full_row(mm.Account(id=1, owner="Ada", balance=NEW_ROW["balance"])) == {
+    assert write.codec.full_row(mm.Account(id=1, owner="Ada", balance=_BALANCE)) == {
         "id": 1,
         "owner": "Ada",
-        "balance": NEW_ROW["balance"],
+        "balance": _BALANCE,
     }
-
-
-def test_nothing_fallible_remains_after_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
-    port = ScriptedAdapter(Read(rows=[NEW_ROW]), Transact(Write()))
-    db = own_root(connect(port, _ACCOUNT, clock=FixedClock(FIXED))).using_database_login()
-    _refuse_every_derivation(monkeypatch)
-
-    assert db.find(mm.Account.where(mm.Account.id == 7)).result().owner == "Newton"
-
-    def insert(tx: Transaction) -> None:
-        tx.insert(new_account())
-
-    db.transact(insert)
-
-
-def test_a_descriptor_backed_connection_still_refuses_a_typed_read_before_io() -> None:
-    db = own_root(
-        Database.connect(ScriptedAdapter(), _descriptor_backed(), clock=FixedClock(FIXED))
-    ).using_database_login()
-    with pytest.raises(SnapshotConnectionError, match="snapshot-class-backed-model-required"):
-        db.find(mm.Account.where(mm.Account.id == 7))
 
 
 @pytest.mark.parametrize("edition", ["", None, 7], ids=["empty", "none", "not-a-string"])
@@ -513,22 +492,3 @@ def test_two_publishers_racing_one_expectation_leave_exactly_one_holding(
     assert published == [winner]
     assert len(refusals) == len(candidates) - 1
     assert all(refused.expected is a and refused.held is winner for refused in refusals)
-
-
-# --------------------------------------------------------------------------- #
-# The static connection prepares once, under an edition of its own.            #
-# --------------------------------------------------------------------------- #
-
-
-def test_a_static_connection_prepares_once_under_a_generated_edition() -> None:
-    first = own_root(
-        connect(ScriptedAdapter(Transact(), Transact()), _ACCOUNT, clock=FixedClock(FIXED))
-    ).using_database_login()
-    second = own_root(
-        connect(ScriptedAdapter(Transact()), _ACCOUNT, clock=FixedClock(FIXED))
-    ).using_database_login()
-    editions = {db.transact(lambda tx: tx.edition) for db in (first, second)}
-    assert len(editions) == 2
-    assert all(edition.startswith("static-") for edition in editions)
-    # Fixed for the connection's life: a second invocation adopts the same one.
-    assert first.transact(lambda tx: tx.edition) in editions

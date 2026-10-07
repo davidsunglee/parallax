@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from parallax.core.execution._family import entity_layout, family_view
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.storage_layout import DocumentPath, EntityLayoutView
-from parallax.snapshot.handle._family import entity_layout, family_view
 
 __all__ = [
     "collapse_group_key",

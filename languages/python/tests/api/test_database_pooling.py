@@ -22,9 +22,14 @@ from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core.db_port import ConnectionAcquisitionError
+from parallax.core.execution import (
+    ExecutionFailure,
+    ServingModel,
+    prepare_model,
+)
 from parallax.postgres import OnDemandOptions, PoolOptions
-from parallax.snapshot import ServingModel, connect, prepare_model
-from parallax.snapshot.handle import ExecutionFailure, Transaction
+from parallax.snapshot import connect
+from parallax.snapshot.handle import Transaction
 
 _ACCOUNT = MODELS["account"]
 

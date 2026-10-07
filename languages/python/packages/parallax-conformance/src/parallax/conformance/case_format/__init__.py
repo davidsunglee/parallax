@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
 import yaml
 
 from parallax.core.db_port import IsolationLevel
+from parallax.core.execution import DatabaseOptions
 from parallax.core.unit_work import Concurrency, concurrency_preference
 from parallax.core.wire._json import authored_number
-from parallax.snapshot import DatabaseOptions
 
 __all__ = [
     "CASE_SHAPES",

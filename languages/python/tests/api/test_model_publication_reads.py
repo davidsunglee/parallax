@@ -20,9 +20,13 @@ from parallax.conformance import case_format, engine
 from parallax.conformance.boundary_runner import TARGET_ID
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
+from parallax.core.execution import (
+    ServingModel,
+    prepare_model,
+)
 from parallax.core.object_query import deserialize
 from parallax.core.read_delivery import InvalidDataError
-from parallax.snapshot import ServingModel, connect, prepare_model
+from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_fixtures

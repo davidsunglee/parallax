@@ -36,6 +36,11 @@ from parallax.core.db_port import IsolationLevel
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
+from parallax.core.execution import TransactionTimePinReadOnlyError
+from parallax.core.execution._options import (
+    OMITTED,
+    Omitted,
+)
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot import connect, edge_of, is_view_loaded, pin_of, view
 from parallax.snapshot.handle import (
@@ -43,9 +48,7 @@ from parallax.snapshot.handle import (
     ScopedDatabase,
     Snapshot,
     Transaction,
-    TransactionTimePinReadOnlyError,
 )
-from parallax.snapshot.handle._options import OMITTED, Omitted
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import (
     CollectionKinds,
@@ -163,10 +166,7 @@ class _CountingDatabase(ScopedDatabase):
         observation = LifecycleObservation()
         root = Database(adapter.open(), model, clock=clock, lifecycle_provider=observation.provider)
         scoped = cast("Any", root.using_database_login())
-        object.__setattr__(self, "_transaction_runner", scoped._transaction_runner)
-        object.__setattr__(self, "_capture", scoped._capture)
-        object.__setattr__(self, "_options", scoped._options)
-        object.__setattr__(self, "_reads", scoped._reads)
+        object.__setattr__(self, "_execution", scoped._execution)
         object.__setattr__(self, "_root", root)
         object.__setattr__(self, "observation", observation)
         object.__setattr__(self, "round_trips", [])

@@ -31,6 +31,7 @@ from parallax.core.base import INFINITY
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._construction_input import ABSENT
+from parallax.core.execution._planning import build_write_planner
 from parallax.core.metamodel import AttributeMetadata, FacetKey, Metamodel
 from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.sql_gen._write import compile_write_step
@@ -81,7 +82,10 @@ from parallax.core.write_plan.columns import (
 )
 from parallax.core.write_plan.keys import TemporalStateKey
 from parallax.core.write_plan.steps import ChangedFrom, PlannedUpdate
-from parallax.snapshot.handle import Database, Transaction, build_write_planner
+from parallax.snapshot.handle import (
+    Database,
+    Transaction,
+)
 from tests._support import mirrored_models as mm
 from tests._support.clock_probes import CountingClock, inert_instant
 from tests._support.db_port import (

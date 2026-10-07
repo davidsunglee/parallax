@@ -27,10 +27,13 @@ from parallax.conformance import database_pooling_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL
 from parallax.core.db_port import Bind, DocumentReadOrdinals, Password, Row
 from parallax.core.diagnostics import diagnostic_for
+from parallax.core.execution import (
+    ExecutionFailure,
+    ServingModel,
+    prepare_model,
+)
 from parallax.core.execution_lifecycle import ExecutionLifecycleHandlerError
 from parallax.postgres import OnDemandOptions, PoolOptions
-from parallax.snapshot import ServingModel, prepare_model
-from parallax.snapshot.handle import ExecutionFailure
 from tests._support.db_port import Read, ScriptedAdapter, ScriptedRuntime
 from tests.unit._pool_source_support import DetachableSource
 

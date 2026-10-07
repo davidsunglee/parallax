@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from parallax.conformance import execution_authority_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL
-from parallax.snapshot import DatabaseOptions
+from parallax.core.execution import DatabaseOptions
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 
 _ROW = {"id": 2, "owner": "Bob", "balance": Decimal("250.00"), "version": 1}

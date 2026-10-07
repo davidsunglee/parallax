@@ -27,6 +27,7 @@ from parallax.conformance.temporal_state import (
     TemporalShadow,
 )
 from parallax.core.base import INFINITY
+from parallax.core.execution._planning import build_write_planner
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
@@ -41,7 +42,6 @@ from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.write_plan import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.keys import ObjectKey, VersionedStateKey
 from parallax.core.write_plan.plan import PlannedSteps, RangeAcquisition
-from parallax.snapshot.handle import build_write_planner
 from tests.unit.conformance._coverage_rows_support import coverage_members
 
 POSITION = models.load_models()["position"]

@@ -52,6 +52,8 @@ from parallax.core import (
     inheritance,
     relationship,
 )
+from parallax.core.execution import TransactionTimePinReadOnlyError
+from parallax.core.execution._keyed_writes import validate_source_pin
 from parallax.core.metamodel import (
     EntityIdentity,
     Multiplicity,
@@ -61,10 +63,6 @@ from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import instructions
 from parallax.snapshot import handle
-from parallax.snapshot.handle import (
-    TransactionTimePinReadOnlyError,
-    validate_source_pin,
-)
 from parallax.snapshot.materialize import FAMILY_VARIANT_KEY
 
 __all__ = ["compile_scenario", "run_scenario"]
@@ -660,7 +658,7 @@ def _grade_mutate_step(
     the neutral error the verb raised, and the Edited Copy it derived.
 
     The verdict is the SAME production validator the keyed developer verbs run
-    (:func:`~parallax.snapshot.handle.validate_source_pin`): a mutation through a
+    (:func:`~parallax.core.execution._keyed_writes.validate_source_pin`): a mutation through a
     view pinned at a finite Transaction-Time instant raises the neutral
     `transaction-time-pin-read-only` error and derives nothing, while a Latest or
     finite-Valid-Time pin is accepted and the step's `set` reaches a copy

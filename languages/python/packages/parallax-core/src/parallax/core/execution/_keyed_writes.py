@@ -6,6 +6,13 @@ from dataclasses import dataclass
 from typing import Final, Literal, Protocol
 
 from parallax.core.entity._layout import CatalogedModel
+
+# Sibling implementation modules. None of these names carries a leading
+# underscore, precisely because it crosses a module boundary: privacy is carried
+# by the private MODULE names and by the package's frozen `__all__`, not by
+# per-name underscores.
+from parallax.core.execution._family import temporal_shape
+from parallax.core.execution._options import Omitted
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import Bitemporal, Pin, TimeInterval
@@ -28,17 +35,12 @@ from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.unit_work.uow import NO_INSERTION_AUTHORITY, NoInsertionAuthority
 from parallax.core.write_plan import ObjectKey
 
-# Sibling implementation modules. None of these names carries a leading
-# underscore, precisely because it crosses a module boundary: privacy is carried
-# by the private MODULE names and by the package's frozen `__all__`, not by
-# per-name underscores.
-from parallax.snapshot.handle._family import temporal_shape
-from parallax.snapshot.handle._options import Omitted
-
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
-    "KeyedWriteContext",
+    "KeyedInsertSource",
+    "KeyedWriteSource",
     "KeyedWriteValueError",
+    "OpenedKeyedWrite",
     "PreparedSourceWrite",
     "Provenance",
     "ResolvedKeyedInsert",
@@ -303,27 +305,6 @@ def refuse_repeated_insert(
 
 
 @dataclass(frozen=True, slots=True)
-class KeyedWriteContext:
-    """The transaction state a keyed write reads, and nothing wider.
-
-    Three facts, all fixed for a ``Transaction``'s whole life, which is why one
-    value is built at its construction and handed to every keyed verb it answers
-    — its own and ``tx.wire``'s alike. ``uow`` therefore holds the SAME admitted
-    insertions under both representations, and ``model`` the same accepted
-    metadata, so no two keyed verbs of one transaction can disagree about what
-    it stores or what it declares.
-
-    It carries no connection and no attempt: a keyed write addresses a row its
-    caller already holds and reads nothing from the store, so a context that
-    could hand it either would be wider than the writes it serves.
-    """
-
-    model: CatalogedModel
-    uow: UnitOfWork
-    lifecycle: InstalledLifecycle | None
-
-
-@dataclass(frozen=True, slots=True)
 class ResolvedKeyedWriteSource:
     """What a Keyed Write Source answers about the state a write revises.
 
@@ -547,7 +528,9 @@ def window_mutation[M: KeyedMutation | TargetMutation](
 
 
 def keyed_write(
-    ctx: KeyedWriteContext,
+    model: CatalogedModel,
+    uow: UnitOfWork,
+    lifecycle: InstalledLifecycle | None,
     source: KeyedWriteSource,
     mutation: KeyedMutation,
     *,
@@ -578,15 +561,15 @@ def keyed_write(
     dropped as the empty set it is. A refused write leaves the admissions as it
     found them, because the buffer admits all or nothing.
     """
-    refuse_reentry(ctx.lifecycle)
+    refuse_reentry(lifecycle)
     source.capture(mutation)
-    meta = ctx.model.meta
+    meta = model.meta
     resolved = source.resolve(meta, mutation)
     authoring = resolved.authoring
     anchor = (
         NO_INSERTION_AUTHORITY
         if authoring is None or resolved.hint is not None
-        else ctx.uow.insertion_authority(authoring)
+        else uow.insertion_authority(authoring)
     )
     authorized = anchor is not NO_INSERTION_AUTHORITY
     validate_provenance(
@@ -597,21 +580,21 @@ def keyed_write(
         representation=resolved.representation,
     )
     validate_source_pin(resolved.entity.identity, resolved.pin)
-    valid_from = source_start(ctx, resolved, mutation, anchor)
+    valid_from = source_start(meta, resolved, mutation, anchor)
     prepared = source.prepare(resolved, valid_from=valid_from, until=until)
     if mutation in UPDATE_MUTATIONS and not prepared.assigned:
         return
     if authorized:
-        ctx.uow.buffer(buffered_write(prepared.instruction, None, authority=authoring))
+        uow.buffer(buffered_write(prepared.instruction, None, authority=authoring))
         return
-    evidence = ctx.uow.resolve_write_evidence(
+    evidence = uow.resolve_write_evidence(
         resolved.entity, resolved.hint, mutation=mutation, object_key=prepared.object_key
     )
-    ctx.uow.buffer(buffered_write(prepared.instruction, evidence, source=resolved.hint))
+    uow.buffer(buffered_write(prepared.instruction, evidence, source=resolved.hint))
 
 
 def source_start(
-    ctx: KeyedWriteContext,
+    meta: Metamodel,
     resolved: ResolvedKeyedWriteSource,
     mutation: KeyedMutation,
     anchor: TimeInterval | NoInsertionAuthority | None,
@@ -631,7 +614,7 @@ def source_start(
     if mutation not in UPDATE_MUTATIONS and mutation not in _SOURCE_WINDOWED:
         return None
     entity = resolved.entity
-    if not isinstance(temporal_shape(ctx.model.meta, entity), Bitemporal):
+    if not isinstance(temporal_shape(meta, entity), Bitemporal):
         return None
     if isinstance(anchor, TimeInterval):
         return anchor.start
@@ -658,7 +641,9 @@ _SOURCE_WINDOWED: Final[frozenset[str]] = frozenset({"terminate", "terminateUnti
 
 
 def keyed_insert(
-    ctx: KeyedWriteContext,
+    model: CatalogedModel,
+    uow: UnitOfWork,
+    lifecycle: InstalledLifecycle | None,
     opening: KeyedInsertSource,
     mutation: KeyedMutation,
     *,
@@ -691,9 +676,9 @@ def keyed_insert(
     admission granted, which the caller's interface binds to that carrier, and
     names the row so a caller holding no Entity Class can revise it.
     """
-    refuse_reentry(ctx.lifecycle)
+    refuse_reentry(lifecycle)
     opening.capture(mutation)
-    meta = ctx.model.meta
+    meta = model.meta
     resolved = opening.resolve(meta, mutation)
     validate_source_pin(resolved.entity.identity, resolved.pin)
     validate_provenance(
@@ -711,10 +696,10 @@ def keyed_insert(
     refuse_repeated_insert(
         resolved.entity.identity,
         mutation,
-        opened_by=_opener(ctx.uow.opened_by(opened)),
+        opened_by=_opener(uow.opened_by(opened)),
     )
-    ctx.uow.buffer(prepared, opener=resolved.representation)
-    authority = ctx.uow.insertion_identity(opened)
+    uow.buffer(prepared, opener=resolved.representation)
+    authority = uow.insertion_identity(opened)
     assert authority is not None  # the admission just issued it
     return OpenedKeyedWrite(
         identity=resolved.entity.identity,

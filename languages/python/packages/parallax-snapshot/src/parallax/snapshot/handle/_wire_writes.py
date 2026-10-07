@@ -6,6 +6,14 @@ from dataclasses import dataclass
 from typing import cast
 
 from parallax.core import predicate as predicate_algebra
+from parallax.core.execution._attempt import Attempt
+from parallax.core.execution._keyed_writes import (
+    PreparedSourceWrite,
+    ResolvedKeyedInsert,
+    ResolvedKeyedWriteSource,
+    keyed_instruction,
+    retained,
+)
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.unit_work import (
@@ -26,21 +34,6 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.write_plan import ObjectKey
-from parallax.snapshot.handle._keyed_writes import (
-    KeyedWriteContext,
-    PreparedSourceWrite,
-    ResolvedKeyedInsert,
-    ResolvedKeyedWriteSource,
-    keyed_insert,
-    keyed_instruction,
-    keyed_write,
-    retained,
-)
-from parallax.snapshot.handle._predicate_writes import (
-    PredicateWriteContext,
-    buffer_predicate_instruction,
-    buffer_target_instruction,
-)
 from parallax.snapshot.materialize import WireEntity, opened_wire_entity
 from parallax.snapshot.materialize._wire import authoring_of, read_origin_of
 
@@ -77,7 +70,7 @@ set-based write has none to shape."""
 
 
 def wire_insert(
-    ctx: KeyedWriteContext,
+    attempt: Attempt,
     entity_name: str,
     data: Mapping[str, object],
     *,
@@ -120,18 +113,17 @@ def wire_insert(
     read published it: the writes off it are licensed by that authority, before
     and after a flush, and compose with the insert while it is pending.
     """
-    opened = keyed_insert(
-        ctx,
+    opened = attempt.keyed_insert(
         WireKeyedInsertSource(entity_name, data),
         mutation,
         valid_from=valid_from,
         until=until,
     )
-    return opened_wire_entity(ctx.model, opened.identity, opened.row, opened.authority)
+    return opened_wire_entity(attempt.model, opened.identity, opened.row, opened.authority)
 
 
 def wire_keyed_write(
-    ctx: KeyedWriteContext,
+    attempt: Attempt,
     mutation: KeyedMutation,
     observed: object,
     changes: WireChanges | None = None,
@@ -160,11 +152,11 @@ def wire_keyed_write(
     all; every member it does name is assigned, whatever value the source
     published for it.
     """
-    keyed_write(ctx, WireKeyedWriteSource(observed, changes), mutation, until=until)
+    attempt.keyed_write(WireKeyedWriteSource(observed, changes), mutation, until=until)
 
 
 def wire_predicate_write(
-    ctx: PredicateWriteContext,
+    attempt: Attempt,
     mutation: PredicateMutation,
     target: WirePredicateTarget,
     changes: WireChanges | None = None,
@@ -190,7 +182,7 @@ def wire_predicate_write(
     assignment owned by the target's own spelling; preparation then judges the
     target, the window, the predicate, and each assignment in authored order.
     """
-    refuse_reentry(ctx.keyed.lifecycle)
+    refuse_reentry(attempt.lifecycle)
     selection = _selection_shape(
         _authored_document(target, "a predicate-selected write's canonical target")
     )
@@ -205,13 +197,13 @@ def wire_predicate_write(
         valid_from,
         until,
     )
-    prepared = instructions.prepare_wire_write(instruction, ctx.keyed.model.meta)
+    prepared = instructions.prepare_wire_write(instruction, attempt.model.meta)
     assert isinstance(prepared, PreparedPredicateWrite)
-    buffer_predicate_instruction(ctx, prepared)
+    attempt.predicate_write(prepared)
 
 
 def wire_target_write(
-    ctx: PredicateWriteContext,
+    attempt: Attempt,
     mutation: TargetMutation,
     entity_name: str,
     document: object,
@@ -231,7 +223,7 @@ def wire_target_write(
     its whole condition: nothing ``document`` carries, and no read's evidence,
     stands in for them.
     """
-    refuse_reentry(ctx.keyed.lifecycle)
+    refuse_reentry(attempt.lifecycle)
     described = (
         f"a Wire target `{mutation}`'s {'change set' if mutation in UPDATE_MUTATIONS else 'data'}"
     )
@@ -239,9 +231,9 @@ def wire_target_write(
     instruction = TargetWrite(
         mutation, entity_name, row, if_version, if_tx_start, valid_from, until
     )
-    meta = ctx.keyed.model.meta
-    buffer_target_instruction(
-        ctx, instructions.prepare_wire_write(instruction, meta, authored_members=row.keys())
+    meta = attempt.model.meta
+    attempt.target_write(
+        instructions.prepare_wire_write(instruction, meta, authored_members=row.keys())
     )
 
 

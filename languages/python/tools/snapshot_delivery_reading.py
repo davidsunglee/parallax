@@ -44,6 +44,9 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import DomainModel
+from parallax.core.execution import prepare_model
+from parallax.core.execution._preflight import preflight
+from parallax.core.execution._publication import read_projection
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,
@@ -51,10 +54,7 @@ from parallax.core.read_delivery._read_plan import (
     ReadPlanCache,
 )
 from parallax.postgres import PostgresAdapter
-from parallax.snapshot import prepare_model
 from parallax.snapshot.handle import Database, ScopedDatabase
-from parallax.snapshot.handle._preflight import preflight
-from parallax.snapshot.handle._publication import read_projection
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 SUPPORT_DIRECTORY: Final = WORKSPACE / "tests" / "unit"

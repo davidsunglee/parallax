@@ -30,6 +30,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import _managed as managed
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.execution._keyed_sql import collapse_group_key
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -57,7 +58,6 @@ from parallax.core.write_plan.steps import (
     PlannedInsert,
     PlannedRow,
 )
-from parallax.snapshot.handle._keyed_sql import collapse_group_key
 from tests._support.lowering_probes import lower_instruction
 from tests.unit._document_layout_support import PERSON, columns_model, document_model, entity
 

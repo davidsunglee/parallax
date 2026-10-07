@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Final, cast
 
@@ -14,6 +13,14 @@ from parallax.core.document_codec import (
     PreparedEffectiveChange,
     prepare_effective_change,
 )
+from parallax.core.entity._layout import CatalogedModel
+from parallax.core.execution._concurrency import CONCURRENCY
+from parallax.core.execution._family import (
+    assignment_member,
+    entity_layout,
+    family_view,
+    temporal_shape,
+)
 from parallax.core.execution_lifecycle._activity import (
     DatabaseCallScope,
     TransactionAttemptActivity,
@@ -24,6 +31,7 @@ from parallax.core.object_query._validated import latest_temporal_selections
 from parallax.core.read_delivery._fetch import entity_read_lock, execute_read
 from parallax.core.read_delivery._page import ABSENT, Page
 from parallax.core.read_delivery._page_reader import FlatPageRequest, FlatPageResult, PageReader
+from parallax.core.read_delivery._row_lane import publishable_member_rows
 from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import (
     Bitemporal,
@@ -36,6 +44,7 @@ from parallax.core.unit_work import (
     CardinalityCorruptionError,
     MaterializedWriteGroup,
     PredicateMutation,
+    UnitOfWork,
     VersionedEvidence,
     VersionedEvidenceBuilder,
 )
@@ -45,20 +54,8 @@ from parallax.core.unit_work.write_settlement import reject_readless_document_ma
 from parallax.core.write_plan import ObjectKey, PredecessorRows, PredecessorRowsBuilder
 from parallax.core.write_plan.plan import RangeAcquisition
 from parallax.core.write_plan.steps import KeyTarget
-from parallax.snapshot.handle._concurrency import CONCURRENCY
-from parallax.snapshot.handle._family import (
-    assignment_member,
-    entity_layout,
-    family_view,
-    temporal_shape,
-)
-from parallax.snapshot.handle._keyed_writes import KeyedWriteContext
-from parallax.snapshot.handle._publication import SelectedWriteModel
-from parallax.snapshot.materialize import RootView, require_publishable
-from parallax.snapshot.materialize._publication import publish_roots
 
 __all__ = [
-    "PredicateWriteContext",
     "acquire_coverage",
     "buffer_predicate_instruction",
     "buffer_target_instruction",
@@ -69,28 +66,12 @@ __all__ = [
 _ASSIGNMENT_BEARING: Final[frozenset[PredicateMutation]] = frozenset({"update", "updateUntil"})
 
 
-@dataclass(frozen=True, slots=True)
-class PredicateWriteContext:
-    """The transaction state a write that may read before buffering reads: a
-    predicate-selected write, and a caller-addressed one.
-
-    Built once per ``Transaction`` and shared by its Typed and Wire ingress.
-    ``keyed`` is that transaction's one :class:`KeyedWriteContext`, so every
-    family reads the same accepted model, unit of work, and installed
-    lifecycle. The connection and the attempt sit beside it rather than inside
-    it because only these writes read: a materializing predicate write's
-    resolve, and a caller-addressed write's acquisition of the state it starts
-    from, are each a Read of its own under this attempt, on this transaction's
-    connection, and no source-backed keyed write reads at all.
-    """
-
-    keyed: KeyedWriteContext
-    conn: DatabaseConnection
-    attempt: TransactionAttemptActivity
-
-
 def buffer_predicate_instruction(
-    ctx: PredicateWriteContext, instruction: PreparedPredicateWrite
+    model: CatalogedModel,
+    uow: UnitOfWork,
+    conn: DatabaseConnection,
+    attempt: TransactionAttemptActivity,
+    instruction: PreparedPredicateWrite,
 ) -> None:
     """Dispatch a prepared predicate write READLESS (`m-batch-write`) or
     MATERIALIZE it (`m-opt-lock`, ADR 0014) — the seam both representations'
@@ -100,9 +81,11 @@ def buffer_predicate_instruction(
     an inheritance-family target and a verb the target does not take. What is
     decided here is execution: an unversioned non-temporal target settles as one
     statement, after refusing a document-resident ``many`` assignment no
-    readless statement can express; every other target materializes.
+    readless statement can express; every other target materializes. A
+    materializing write resolves its rows on ``conn`` through a Read of its own
+    under ``attempt``.
     """
-    meta = ctx.keyed.model.meta
+    meta = model.meta
     entity = instruction.selection.target
     shape = temporal_shape(meta, entity)
     version_attr = CONCURRENCY.version_attribute(meta, entity.identity)
@@ -110,13 +93,18 @@ def buffer_predicate_instruction(
         # Readless (`m-batch-write.md` "Predicate-selected readless forms"):
         # one statement, no materialization, no equality-elimination pass.
         reject_readless_document_many(entity, instruction)
-        ctx.keyed.uow.buffer(instruction)
+        uow.buffer(instruction)
         return
-    _materialize_predicate_write(ctx, instruction, entity, shape, version_attr)
+    _materialize_predicate_write(
+        model, uow, conn, attempt, instruction, entity, shape, version_attr
+    )
 
 
 def _materialize_predicate_write(
-    ctx: PredicateWriteContext,
+    model: CatalogedModel,
+    uow: UnitOfWork,
+    conn: DatabaseConnection,
+    attempt: TransactionAttemptActivity,
     instruction: PreparedPredicateWrite,
     entity: EntityMetadata,
     family_shape: TemporalShape,
@@ -147,14 +135,11 @@ def _materialize_predicate_write(
     so this internal authoring boundary adds one explicit Latest selection per
     declared dimension before routing the resolve through the SAME
     :func:`~parallax.core.deep_fetch.plan` root-canonicalization every
-    other read uses (:func:`~parallax.snapshot.handle.find`) rather than
+    other read uses rather than
     compiling the raw predicate directly — otherwise a temporal target's
     resolve would match every historical milestone too, not just the open
     one(s).
     """
-    model = ctx.keyed.model
-    uow = ctx.keyed.uow
-    conn = ctx.conn
     meta = model.meta
     layout = entity_layout(meta, entity)
     if layout is None:  # pragma: no cover - a predicate-write target always owns rows
@@ -237,7 +222,7 @@ def _materialize_predicate_write(
     # local builder, which nothing else reaches. Buffering the group then
     # installs its selection claims with it, or neither.
     def resolve() -> VersionedEvidence | PredecessorRows | None:
-        with ctx.attempt.read(entity.identity, "rows") as read:
+        with attempt.read(entity.identity, "rows") as read:
             query = deep_fetch.plan_mutation_read(
                 instruction,
                 model=meta,
@@ -304,24 +289,6 @@ def _effective_change(
     )
 
 
-def _publishable_member_rows(page: Page) -> Iterator[tuple[object, ...]]:
-    """Each resolved root's positional member row, in resolution order, from the
-    one traversal that refuses a root holding invalid stored data.
-
-    A predicate write has no in-band channel for a stored-data verdict, so the
-    publication gate runs before a row contributes anything.
-    """
-    return publish_roots(page, _publishable_member_row)
-
-
-def _publishable_member_row(root: RootView, _position: int) -> Iterator[tuple[object, ...]]:
-    require_publishable(root)
-    (node,) = root.roots
-    if node is None:  # pragma: no cover - a publishable flat root resolves its node
-        raise ValueError("predicate-write staging requires one Entity State per resolved row")
-    yield root.member_values(node)
-
-
 def _acquire_versioned(
     page: Page, acquisition: _Acquisition, version_position: int
 ) -> VersionedEvidence | None:
@@ -330,7 +297,7 @@ def _acquire_versioned(
     evidence = VersionedEvidenceBuilder(
         key_position=acquisition.key_position, version_position=version_position
     )
-    for row in _publishable_member_rows(page):
+    for row in publishable_member_rows(page):
         if acquisition.selects(row):
             evidence.append(row)
     return evidence.seal()
@@ -354,13 +321,19 @@ def _acquire_temporal(
         documents=documents,
     )
     raw = stage.documents
-    for position, row in enumerate(_publishable_member_rows(stage.page)):
+    for position, row in enumerate(publishable_member_rows(stage.page)):
         if acquisition.selects(row):
             evidence.append(row, raw[position] if documents else None)
     return evidence.seal()
 
 
-def buffer_target_instruction(ctx: PredicateWriteContext, prepared: PreparedTargetWrite) -> None:
+def buffer_target_instruction(
+    model: CatalogedModel,
+    uow: UnitOfWork,
+    conn: DatabaseConnection,
+    attempt: TransactionAttemptActivity,
+    prepared: PreparedTargetWrite,
+) -> None:
     """Hand a prepared caller-addressed write to the unit of work, with the
     acquisition it reads the write's starting state through where its Effective
     Concurrency Strategy needs participation."""
@@ -368,13 +341,18 @@ def buffer_target_instruction(ctx: PredicateWriteContext, prepared: PreparedTarg
     def acquire(
         entity: EntityMetadata, key: ObjectKey, valid_from: object | None
     ) -> StoredTarget | None:
-        return _acquire_target(ctx, entity, key, cast("ManagedValue | None", valid_from))
+        return _acquire_target(
+            model, uow, conn, attempt, entity, key, cast("ManagedValue | None", valid_from)
+        )
 
-    ctx.keyed.uow.buffer_target(prepared, acquire=acquire)
+    uow.buffer_target(prepared, acquire=acquire)
 
 
 def _acquire_target(
-    ctx: PredicateWriteContext,
+    model: CatalogedModel,
+    uow: UnitOfWork,
+    conn: DatabaseConnection,
+    attempt: TransactionAttemptActivity,
     entity: EntityMetadata,
     key: ObjectKey,
     valid_from: ManagedValue | None,
@@ -384,16 +362,14 @@ def _acquire_target(
     temporal object: one row-form point read of its own, under this attempt,
     executing no pending write and publishing nothing, through the
     materializing predicate write's own row-form acquisition."""
-    model = ctx.keyed.model
     meta = model.meta
-    conn = ctx.conn
     layout = entity_layout(meta, entity)
     if layout is None:  # pragma: no cover - a target write's Entity always owns rows
         raise ValueError(f"{entity.identity.canonical}: target-write target has no Table")
     ((name, value),) = key.primary_key
-    lock = entity_read_lock(meta, entity.identity, ctx.keyed.uow.settings.concurrency)
+    lock = entity_read_lock(meta, entity.identity, uow.settings.concurrency)
     version_attr = CONCURRENCY.version_attribute(meta, entity.identity)
-    with ctx.attempt.read(entity.identity, "rows") as read:
+    with attempt.read(entity.identity, "rows") as read:
         query = deep_fetch.plan_target_read(
             entity,
             model=meta,
@@ -405,7 +381,7 @@ def _acquire_target(
         stage = PageReader().read_page(
             FlatPageRequest(model, compiled, lambda: execute_read(conn, compiled, read), Pin())
         )
-        rows = tuple(_publishable_member_rows(stage.page))
+        rows = tuple(publishable_member_rows(stage.page))
     if len(rows) > 1:
         target = KeyTarget(
             key_attributes=(family_view(meta, entity).primary_key.identity,),
@@ -426,7 +402,7 @@ def _acquire_target(
 
 
 def acquire_coverage(
-    write: SelectedWriteModel,
+    model: CatalogedModel,
     conn: DatabaseConnection,
     calls: DatabaseCallScope,
     acquisition: RangeAcquisition,
@@ -442,7 +418,6 @@ def acquire_coverage(
     the Locking strategy protects every affected row with; an Optimistic range
     reads without one and guards each row it changes instead.
     """
-    model = write.model
     meta = model.meta
     entity = acquisition.entity
     layout = entity_layout(meta, entity)

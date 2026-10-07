@@ -13,6 +13,7 @@ import yaml
 from parallax.conformance import case_format
 from parallax.conformance.case_format import Case, SelectionFilter
 from parallax.core.base import FLOAT32, FLOAT64, INT32, INT64, ManagedValue, matches_neutral_type
+from parallax.core.execution import DatabaseOptions
 from parallax.core.wire import (
     WireDecodingError,
     WireEncodingError,
@@ -21,7 +22,6 @@ from parallax.core.wire import (
     decode_wire,
     encode_wire,
 )
-from parallax.snapshot import DatabaseOptions
 
 
 def _case(

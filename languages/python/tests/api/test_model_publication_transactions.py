@@ -17,7 +17,11 @@ from parallax.conformance import case_format, engine
 from parallax.conformance.boundary_runner import TARGET_ID, fault_injecting_adapter
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
-from parallax.snapshot import ServingModel, connect, prepare_model
+from parallax.core.execution import (
+    ServingModel,
+    prepare_model,
+)
+from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root

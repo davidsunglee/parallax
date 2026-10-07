@@ -52,6 +52,7 @@ from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import encode_leaf
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
+from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -85,7 +86,6 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
-from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.materialize import RootView
 from parallax.snapshot.materialize._typed import typed_root
 from tests._support.model_capabilities import graph_construction_for

@@ -61,13 +61,17 @@ from typing import Any, Final, cast
 from parallax.core.db_port import Row
 from parallax.core.entity import UNLOADED, Entity
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.execution import (
+    ModelSelection,
+    prepare_model,
+)
+from parallax.core.execution._publication import read_projection
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import ReadOrigin
-from parallax.snapshot import ModelSelection, Snapshot, prepare_model
+from parallax.snapshot import Snapshot
 from parallax.snapshot._inspection import SnapshotNodeState
 from parallax.snapshot.handle import Database
-from parallax.snapshot.handle._publication import read_projection
 from tests.unit import _delivery_control_support as control_support
 from tests.unit._gc_reachability import Closure, closure, reachable_objects
 from tests.unit._snapshot_materialization_support import (

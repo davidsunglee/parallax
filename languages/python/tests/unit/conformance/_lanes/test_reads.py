@@ -25,13 +25,16 @@ from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_port import MappingRow
+from parallax.core.execution import (
+    DatabaseOptions,
+    DeferredFeatureError,
+)
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.snapshot import DatabaseOptions, DeferredFeatureError
 from tests.unit.conformance._recording_ports import FakeDbPort, QueueDbPort
 
 

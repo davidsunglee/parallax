@@ -46,6 +46,8 @@ from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING, FrozenMap
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.execution._planning import build_write_planner
+from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -104,7 +106,6 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from parallax.descriptor import _records
-from parallax.snapshot.handle import build_write_planner, stream_lowered
 from tests._support.clock_probes import inert_instant
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer

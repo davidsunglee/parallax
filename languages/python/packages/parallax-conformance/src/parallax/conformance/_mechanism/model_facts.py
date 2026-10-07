@@ -6,12 +6,15 @@ from parallax.conformance import case_format, models
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core import inheritance
 from parallax.core.entity import DomainModel
+from parallax.core.execution import (
+    ServingModel,
+    prepare_model,
+)
+from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import EntityMetadata, entity_by_name
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.temporal_read import scans_validated_axis
-from parallax.snapshot.handle import ServingModel, prepare_model
-from parallax.snapshot.handle._preflight import preflight
 
 __all__ = [
     "case_edition",

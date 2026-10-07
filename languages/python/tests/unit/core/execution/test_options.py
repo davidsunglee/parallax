@@ -10,8 +10,11 @@ import dataclasses
 
 import pytest
 
-from parallax.snapshot import DatabaseOptions
-from parallax.snapshot.handle._options import OMITTED, Omitted
+from parallax.core.execution import DatabaseOptions
+from parallax.core.execution._options import (
+    OMITTED,
+    Omitted,
+)
 
 
 def test_the_built_in_record_is_ten_optimistic_off_and_read_committed() -> None:

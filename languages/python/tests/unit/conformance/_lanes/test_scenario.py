@@ -41,6 +41,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
+from parallax.core.execution import DatabaseOptions
 from parallax.core.metamodel import (
     EntityIdentity,
 )
@@ -67,7 +68,6 @@ from parallax.core.write_plan import (
     VersionObservation,
 )
 from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
-from parallax.snapshot import DatabaseOptions
 from parallax.snapshot.handle import WriteEvidenceError
 from tests.unit._transact_support import PERSON
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort

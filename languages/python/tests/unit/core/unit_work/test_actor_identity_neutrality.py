@@ -9,6 +9,8 @@ from parallax.conformance import models
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
+from parallax.core.execution._planning import build_write_planner
+from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
@@ -32,7 +34,6 @@ from parallax.core.write_plan import (
     WriteObservation,
     WritePlan,
 )
-from parallax.snapshot.handle import build_write_planner, stream_lowered
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.planner_probes import observed_buffer
 

@@ -15,9 +15,8 @@ class DeferredFeatureError(RuntimeError):
     Nothing about the query is wrong: it is well formed and legal against the
     connected model, and a later release executing the named
     Features runs it unchanged. That is why this is a ``RuntimeError`` rather
-    than a definition or rejection error, and why it is disjoint from
-    :class:`~parallax.snapshot.handle._errors.SnapshotConnectionError`, which
-    refuses a connection that could never materialize any read.
+    than a definition or rejection error, and why it is disjoint from a
+    lifecycle's refusal of a model it could never materialize any read from.
 
     :data:`code` and :data:`features` are its whole public state; it retains
     neither the query, the model, nor the Database. ``features``

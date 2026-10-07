@@ -1,4 +1,4 @@
-"""The Read Scope's ladder, graded against a recording execution policy.
+"""The Execution Scope's read ladder, graded against a recording begun read.
 
 What the public read verbs cannot state is what this suite is for: that the
 scope refuses re-entry before it asks its policy for anything — a Wire spelling
@@ -15,14 +15,14 @@ size it was named with, that constructing one opens no activity and entering one
 opens exactly the activity the policy answers, and that every page of a delivery
 comes back to the ONE scope and the ONE selection it was opened with.
 
-The recording policy here is the third adapter beside the two production ones:
-it begins every operation as itself, over a fixed selection, records every
-capability call, and runs each body with INERT activities over whichever
+The recording read here is the third begun read beside the two production ones:
+the scope begins every operation as it, over a fixed selection, and it records
+every capability call and runs each body with INERT activities over whichever
 :class:`ReadInputs` the case names. That is what lets each claim be stated
 once, for both lanes and both interfaces, rather than once per handle. What
-each production adapter DOES inside its own bracket — adoption included — is
-`test_read_execution.py`'s subject, and what a whole read answers stays the
-public-surface suites'.
+each production read DOES inside its own bracket — adoption included — is
+`tests/unit/core/execution/test_read_policy.py`'s subject, and what a whole read
+answers stays the public-surface suites'.
 """
 
 from __future__ import annotations
@@ -38,7 +38,12 @@ from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.execution import DatabaseOptions, QueryTargetError
+from parallax.core.execution import _read_policy as read_policy_module
+from parallax.core.execution._publication import SelectedReadModel
+from parallax.core.execution._read_policy import ReadInputs
 from parallax.core.execution._retention import ObservationLedger
+from parallax.core.execution._scope import ExecutionScope
 from parallax.core.execution_lifecycle import ExecutionLifecycleReentryError, ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -68,12 +73,16 @@ from parallax.core.read_delivery._page_reader import (
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.read_delivery._read_plan import ReadPlanCache, ReadPlanner
 from parallax.core.unit_work import Concurrency, ParticipationToken, RetainedObservation
-from parallax.snapshot import QueryTargetError, Snapshot, SnapshotConnectionError
-from parallax.snapshot.handle import _read_scope as read_scope_module
-from parallax.snapshot.handle._publication import SelectedReadModel
+from parallax.snapshot import (
+    Snapshot,
+    SnapshotConnectionError,
+)
 from parallax.snapshot.handle._read import typed_publication_for, wire_publication_for
-from parallax.snapshot.handle._read_scope import ReadInputs, ReadScope, WireQuery, wire_query_node
 from parallax.snapshot.handle._stream import SnapshotStream
+from parallax.snapshot.handle._wire import (
+    WireQuery,
+    wire_query_node,
+)
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ReadCall, RefusingAdapter, ScriptedAdapter
 from tests._support.model_capabilities import cataloged_for, graph_construction_for
@@ -154,8 +163,7 @@ class _Ledger:
 
 
 class _Recording:
-    """A recording ``_ReadExecution`` that is its own begun read: every
-    capability call, in order.
+    """A recording begun read: every capability call, in order.
 
     Each body runs immediately, with INERT activities and the fixed inputs this
     policy was built with, so a case reads what the scope DID rather than what
@@ -210,7 +218,7 @@ class _Recording:
         self.stream_calls.append((target, interface, batch_size))
         return INERT
 
-    def page[T](
+    def paged[T](
         self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T], /
     ) -> T:
         self.calls.append("page")
@@ -229,6 +237,33 @@ class _Recording:
     @property
     def interfaces(self) -> list[ReadInterface]:
         return [interface for _, interface in self.eager_calls]
+
+
+class _RecordingScope(ExecutionScope):
+    """The production scope's ladder, beginning every operation as one
+    recording read.
+
+    Only the read a scope begins is replaced, so every rung above it — the
+    re-entry refusal, the publication, the lowering, the gate, and the
+    delivery entry — is the production scope's own. A read never reaches the
+    runner, the authority, or the Serving Model, which is why none is given.
+    """
+
+    __slots__ = ("_recording",)
+
+    def __init__(self, recording: _Recording, lifecycle: InstalledLifecycle | None) -> None:
+        super().__init__(
+            cast("Any", None),
+            cast("Any", None),
+            DatabaseOptions(),
+            lifecycle=lifecycle,
+            serving=cast("Any", None),
+            planner=ReadPlanCache(0),
+        )
+        self._recording = recording
+
+    def begin(self) -> Any:
+        return self._recording.begin()
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,9 +347,9 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
             planner=planner,
         )
 
-    patch.setattr(read_scope_module, "deliver_find", recording_deliver_find)
-    patch.setattr(read_scope_module, "deliver_history", recording_deliver_history)
-    patch.setattr(read_scope_module, "find_rows", recording_find_rows)
+    patch.setattr(read_policy_module, "deliver_find", recording_deliver_find)
+    patch.setattr(read_policy_module, "deliver_history", recording_deliver_history)
+    patch.setattr(read_policy_module, "find_rows", recording_find_rows)
     return executed
 
 
@@ -348,17 +383,17 @@ def _recorded_pages(patch: pytest.MonkeyPatch) -> list[_PageRead]:
     return page_reads
 
 
-def _find(scope: ReadScope, query: Any) -> Snapshot[Any]:
+def _find(scope: ExecutionScope, query: Any) -> Snapshot[Any]:
     return scope.read(
         query, convert_query=object_query_node, build_publication=typed_publication_for
     )
 
 
-def _wire_find(scope: ReadScope, query: WireQuery) -> Snapshot[Any]:
+def _wire_find(scope: ExecutionScope, query: WireQuery) -> Snapshot[Any]:
     return scope.read(query, convert_query=wire_query_node, build_publication=wire_publication_for)
 
 
-def _stream(scope: ReadScope, query: Any, batch_size: int) -> SnapshotStream[Any]:
+def _stream(scope: ExecutionScope, query: Any, batch_size: int) -> SnapshotStream[Any]:
     return SnapshotStream(
         scope,
         query,
@@ -368,7 +403,7 @@ def _stream(scope: ReadScope, query: Any, batch_size: int) -> SnapshotStream[Any
     )
 
 
-def _wire_stream(scope: ReadScope, query: WireQuery, batch_size: int) -> SnapshotStream[Any]:
+def _wire_stream(scope: ExecutionScope, query: WireQuery, batch_size: int) -> SnapshotStream[Any]:
     return SnapshotStream(
         scope,
         query,
@@ -393,10 +428,10 @@ def _scope(
     lifecycle: InstalledLifecycle | None = None,
     preference: Concurrency | None = None,
     ledger: ObservationLedger | None = None,
-) -> tuple[ReadScope, _Recording]:
+) -> tuple[ExecutionScope, _Recording]:
     resolved = selected if selected is not None else _selection()
     execution = _Recording(resolved, ReadInputs(port, preference, ledger))
-    return ReadScope(lifecycle, execution, ReadPlanCache(0)), execution
+    return _RecordingScope(execution, lifecycle), execution
 
 
 # --------------------------------------------------------------------------- #

@@ -25,6 +25,7 @@ from parallax.core import Attr, DomainModel, Entity, attr, opt_lock, temporal_re
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
+from parallax.core.execution._planning import build_write_planner
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.temporal_read import TemporalReadError, TimeInterval
 from parallax.core.unit_work import (
@@ -97,7 +98,6 @@ from parallax.core.write_plan.plan import (
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import Finite, PlannedClose, PlannedUpdate
-from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_object_key

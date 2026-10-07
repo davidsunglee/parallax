@@ -34,14 +34,18 @@ from parallax.core import LATEST
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
+from parallax.core.execution import (
+    KeyedWriteValueError,
+    ServingModel,
+    prepare_model,
+)
 from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.read_delivery import StreamStateError
 from parallax.core.unit_work import instructions
-from parallax.snapshot import ServingModel, SnapshotStream, prepare_model
+from parallax.snapshot import SnapshotStream
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import (
     Database,
-    KeyedWriteValueError,
     ScopedDatabase,
     Transaction,
     WriteEvidenceError,
@@ -125,7 +129,7 @@ def _pending_writes(tx: Transaction) -> int:
     lowers to, so it is measured there: a bound inferred from DML would be
     satisfied by coalescing that never happened.
     """
-    uow = tx._uow  # pyright: ignore[reportPrivateUsage] - unit test reads the transaction's own ledger
+    uow = tx._attempt.uow  # pyright: ignore[reportPrivateUsage] - unit test reads the transaction's own ledger
     return len(uow._pending.writes())  # pyright: ignore[reportPrivateUsage] - the buffer IS the claim's subject
 
 

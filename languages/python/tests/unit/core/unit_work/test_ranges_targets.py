@@ -14,6 +14,7 @@ from typing import Literal
 import pytest
 
 from parallax.core.base import INFINITY, TemporalBound
+from parallax.core.execution._planning import build_write_planner
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
@@ -53,7 +54,6 @@ from parallax.core.write_plan.steps import (
     PlannedTemporalRevision,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
-from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit.core.unit_work._acquired_rows_support import acquired

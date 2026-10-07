@@ -43,8 +43,13 @@ from parallax.core import DomainModel
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
+from parallax.core.execution import ExecutionFailure
 from parallax.core.object_query._fluent import ObjectQuery
-from parallax.snapshot.handle import ExecutionFailure, ScopedDatabase, Transaction, WireEntity
+from parallax.snapshot.handle import (
+    ScopedDatabase,
+    Transaction,
+    WireEntity,
+)
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     PortCall,

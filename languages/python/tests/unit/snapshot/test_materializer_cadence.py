@@ -11,6 +11,8 @@ from parallax.core import deep_fetch
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
+from parallax.core.execution._concurrency import CONCURRENCY
+from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import deserialize
 from parallax.core.read_delivery import _row_lane
@@ -32,8 +34,6 @@ from parallax.core.read_delivery._row_lane import (
 )
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.handle._concurrency import CONCURRENCY
-from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import RootView
 from parallax.snapshot.materialize._publication import publish_roots
 from tests.unit._prepared_read_support import bound_read

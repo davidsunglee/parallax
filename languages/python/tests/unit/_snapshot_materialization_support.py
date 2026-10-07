@@ -81,6 +81,7 @@ from parallax.core.document_codec import (
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import model_of
 from parallax.core.execution._page_origins import ObservedPageProjections
+from parallax.core.execution._preflight import preflight
 from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -100,7 +101,6 @@ from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.storage_layout import DirectColumn, TableLayout
 from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import ReadOrigin
-from parallax.snapshot.handle._preflight import preflight
 from tests._support.db_port import ConnectsAsItself
 
 __all__ = [

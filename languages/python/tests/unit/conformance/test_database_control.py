@@ -48,8 +48,8 @@ from parallax.core.db_port import (
     ReleaseUnconfirmed,
 )
 from parallax.core.dialect import POSTGRES
+from parallax.core.execution import DatabaseOptions
 from parallax.postgres import PostgresRole
-from parallax.snapshot import DatabaseOptions
 from parallax.snapshot.handle import SnapshotConnectionError
 from tests._support.snapshot_models import SNAP_ORDERS_MODEL
 from tests.unit._contention_support import observing

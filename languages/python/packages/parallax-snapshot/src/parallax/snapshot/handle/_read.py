@@ -23,10 +23,10 @@ from parallax.core.unit_work import ReadOrigin
 if TYPE_CHECKING:
     from parallax.snapshot.materialize._wire import EntityReader
 
+from parallax.core.execution._concurrency import CONCURRENCY
+from parallax.core.execution._publication import SelectedReadModel
 from parallax.snapshot._inspection import SnapshotInspectionError
-from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._errors import SnapshotConnectionError, SnapshotMaterializationError
-from parallax.snapshot.handle._publication import SelectedReadModel
 from parallax.snapshot.materialize import RootView, wire_roots
 from parallax.snapshot.materialize._publication import publish_roots
 from parallax.snapshot.materialize._typed import typed_root

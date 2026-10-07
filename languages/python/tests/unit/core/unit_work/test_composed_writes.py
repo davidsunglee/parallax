@@ -10,6 +10,7 @@ import pytest
 
 from parallax.core import temporal_read
 from parallax.core.base import INFINITY
+from parallax.core.execution._planning import build_write_planner
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     BufferItem,
@@ -35,7 +36,6 @@ from parallax.core.write_plan import (
 )
 from parallax.core.write_plan.keys import TemporalStateKey
 from parallax.core.write_plan.plan import Completions, WritePlan
-from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import corpus_records, formed

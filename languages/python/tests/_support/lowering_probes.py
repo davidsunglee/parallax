@@ -12,6 +12,8 @@ statements in order.
 from __future__ import annotations
 
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.execution._planning import build_write_planner
+from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import Concurrency, PlanningRequest, TransactionInstant
@@ -24,7 +26,6 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.write_plan import WriteObservation
 from parallax.core.write_plan.plan import NO_OWNERSHIP, Ownership
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
-from parallax.snapshot.handle import build_write_planner, stream_lowered
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_write
 

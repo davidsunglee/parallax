@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from parallax.core.db_port import InvalidAuthorizationError
-from parallax.snapshot.handle._execution_authority import (
+from parallax.core.execution_authority._authority import (
     InvalidPrincipalError,
     LoginExecution,
     PrincipalExecution,

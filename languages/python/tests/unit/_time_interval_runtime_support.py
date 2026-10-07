@@ -94,13 +94,16 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.read_delivery._read_plan import DEFAULT_READ_PLAN_CACHE_CAPACITY
-from parallax.postgres._connection import adapt_binds, initialize_connection
-from parallax.snapshot import ServingModel, prepare_model
-from parallax.snapshot.handle import (
-    Database,
+from parallax.core.execution import (
     ExecutionFailure,
     KeyedWriteValueError,
+    ServingModel,
+    prepare_model,
+)
+from parallax.core.read_delivery._read_plan import DEFAULT_READ_PLAN_CACHE_CAPACITY
+from parallax.postgres._connection import adapt_binds, initialize_connection
+from parallax.snapshot.handle import (
+    Database,
     ScopedDatabase,
     Transaction,
 )

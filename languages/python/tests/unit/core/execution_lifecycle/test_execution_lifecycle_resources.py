@@ -46,6 +46,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES
+from parallax.core.execution import ExecutionFailure
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
@@ -67,7 +68,11 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.execution_lifecycle import _activity as activity_module
 from parallax.core.execution_lifecycle import _fanout as fanout_module
 from parallax.snapshot import connect
-from parallax.snapshot.handle import Database, ExecutionFailure, ScopedDatabase, Transaction
+from parallax.snapshot.handle import (
+    Database,
+    ScopedDatabase,
+    Transaction,
+)
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

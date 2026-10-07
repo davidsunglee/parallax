@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Final
 
 __all__ = [
-    "QueryTargetError",
     "SnapshotConnectionError",
     "SnapshotMaterializationError",
 ]
@@ -47,20 +46,3 @@ class SnapshotMaterializationError(RuntimeError):
     def __init__(self, message: str, *, cause: BaseException) -> None:
         super().__init__(message)
         self.cause = cause
-
-
-class QueryTargetError(RuntimeError):
-    """The connected model declares no Entity for a query's target.
-
-    Raised before any SQL, connection acquisition, or adapter activity, and
-    before a participating read force-flushes the unit of work, so a query the
-    connected model cannot answer never becomes a side effect.
-
-    The refusal reports that the CONNECTED MODEL, not the call's arguments, is
-    what makes the query unanswerable — the identical query succeeds against a
-    model declaring the Entity — which is why this is a ``RuntimeError``. It
-    retains and exposes neither the query, the model, nor the Database:
-    :data:`code` and the message are its whole public state.
-    """
-
-    code: Final[str] = "query-target-not-in-model"

@@ -17,7 +17,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from parallax.snapshot.handle import ExecutionFailure
+from parallax.core.execution import ExecutionFailure
 
 __all__ = ["Contextualized", "raises_contextualized"]
 

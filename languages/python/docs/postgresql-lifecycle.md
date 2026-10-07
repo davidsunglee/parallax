@@ -21,8 +21,9 @@ specification disagree, the specification is right.
 
 ```python
 from parallax.core.db_port import DRIVER_MANAGED, CredentialSource, DriverManaged, Password
+from parallax.core.execution import ServingModel, prepare_model
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
-from parallax.snapshot import ServingModel, connect, prepare_model
+from parallax.snapshot import connect
 ```
 
 `PostgresAdapter` is **configuration**. Constructing one opens no connection, no

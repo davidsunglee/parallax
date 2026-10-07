@@ -7,6 +7,8 @@ import pytest
 from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, TxTemporal, attr
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
+from parallax.core.execution._planning import build_write_planner
+from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.unit_work import KeyedWrite, PlanningRequest
 from parallax.core.unit_work.instructions import PreparedTargetWrite, prepare_typed_write
 from parallax.core.write_plan import WritePlan
@@ -22,7 +24,6 @@ from parallax.core.write_plan.steps import (
     PlannedInsert,
     TemporalUpperBound,
 )
-from parallax.snapshot.handle import build_write_planner, stream_lowered
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 

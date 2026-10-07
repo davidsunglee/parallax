@@ -39,6 +39,13 @@ from parallax.core import (
 from parallax.core.base import SQL_NULL, DocumentValue, FrozenMap, PresentDocument
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
+from parallax.core.execution import (
+    DeferredFeatureError,
+    KeyedWriteValueError,
+    QueryTargetError,
+    TransactionTimePinReadOnlyError,
+)
+from parallax.core.execution import _read_policy as read_policy_module
 from parallax.core.execution._retention import ObservationLedger
 from parallax.core.read_delivery._page_reader import EagerPageRequest, EagerPageResult, PageReader
 from parallax.core.read_delivery._publication import Publication
@@ -49,16 +56,12 @@ from parallax.core.unit_work import (
     StaleWriteError,
 )
 from parallax.core.write_plan import TemporalObservation
-from parallax.snapshot import DeferredFeatureError, QueryTargetError
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import (
     Database,
-    KeyedWriteValueError,
     ScopedDatabase,
     Transaction,
-    TransactionTimePinReadOnlyError,
 )
-from parallax.snapshot.handle import _read_scope as read_scope_module
 from parallax.snapshot.materialize import WireEntity
 from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support import inheritance_models as im
@@ -138,7 +141,7 @@ def test_a_standalone_find_stamps_no_participation_on_the_evidence_it_retains() 
     port = ScriptedAdapter(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(read_scope_module, "deliver_find", _recording_find(calls))
+        patch.setattr(read_policy_module, "deliver_find", _recording_find(calls))
         db.find(mm.Balance.where(mm.Balance.id == 1)).result()
     (call,) = calls
     assert call.participation is None
@@ -158,7 +161,7 @@ def test_a_participating_find_stamps_its_transactions_own_participation() -> Non
     )
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(read_scope_module, "deliver_find", _recording_find(calls))
+        patch.setattr(read_policy_module, "deliver_find", _recording_find(calls))
         db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
     (call,) = calls
     (hint,) = call.result.sources.values()
@@ -192,7 +195,7 @@ def test_every_attached_level_row_retains_its_own_evidence() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[policy_row]), Read(rows=[coverage_row])))
     db = db_for(POLICY_MODEL, port)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(read_scope_module, "deliver_find", _recording_find(calls))
+        patch.setattr(read_policy_module, "deliver_find", _recording_find(calls))
         db.transact(
             lambda tx: tx.find(
                 Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)

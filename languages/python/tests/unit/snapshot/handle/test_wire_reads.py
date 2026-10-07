@@ -46,6 +46,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import _layout as entity_layout
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
+from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.metamodel import (
     AbstractRoot,
     Column,
@@ -67,10 +68,8 @@ from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, PageBuilder, V
 from parallax.core.read_delivery._row_converter import bind
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import WireEntity, connect, handle
-from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._read import wire_publication
-from parallax.snapshot.handle._read_scope import wire_query_node
-from parallax.snapshot.handle._wire import WireDatabaseView
+from parallax.snapshot.handle._wire import WireDatabaseView, wire_query_node
 from parallax.snapshot.materialize import RootView, wire_roots
 from parallax.snapshot.materialize import (
     _wire as wire_materialize,

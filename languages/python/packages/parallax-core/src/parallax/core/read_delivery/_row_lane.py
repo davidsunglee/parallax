@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from array import array
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
@@ -19,6 +19,7 @@ from parallax.core.read_delivery._page import (
     InvalidData,
     LogicalKey,
     MaterializationObserver,
+    Page,
     PageRows,
     VersionAttributes,
     diagnosis,
@@ -30,6 +31,7 @@ from parallax.core.read_delivery._page import (
     release_page_rows,
     root_last_uses,
     state_for,
+    stored_data_refusal,
 )
 from parallax.core.read_delivery._page_reader import FlatPageRequest, FlatPageResult, PageReader
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanner
@@ -37,7 +39,7 @@ from parallax.core.read_delivery._row_converter import RowPublisher
 from parallax.core.temporal_read import validated_query_pin
 from parallax.core.unit_work import Concurrency
 
-__all__ = ["PublishedRow", "RowsResult", "find_rows"]
+__all__ = ["PublishedRow", "RowsResult", "find_rows", "publishable_member_rows"]
 
 
 type PublishedRow = Mapping[str, object] | InvalidData[Mapping[str, object]]
@@ -193,6 +195,25 @@ def _published_rows(
     for position in range(len(published)):
         observer.root_published(position)
     return tuple(published)
+
+
+def publishable_member_rows(page: Page) -> Iterator[tuple[object, ...]]:
+    """Each flat root's judged positional member row, by reference and in result
+    order, refusing the first root that holds invalid stored data.
+
+    The acquisition peer of the values lane's in-band classification: a read
+    whose rows become write evidence has no channel for a stored-data verdict,
+    so a root's findings refuse it before it contributes anything. Each root is
+    judged only when the caller asks for it, and its raw row is released once
+    judged.
+    """
+    rows = page_rows(page)
+    for root in rows.roots:
+        state = state_for(rows, root)
+        if state.findings:
+            raise stored_data_refusal(state.findings[0])
+        _release_raw_row(rows, root)
+        yield state.member_row
 
 
 def _invalid_root(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from parallax.snapshot.handle._publication import ModelSelection, ServingModel
+from parallax.core.execution._publication import ModelSelection, ServingModel
 
 __all__ = ["AdoptedExecution", "ExecutionFailure"]
 

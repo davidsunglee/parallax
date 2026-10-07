@@ -18,6 +18,10 @@ from parallax.core.db_port import (
     RolledBack,
 )
 from parallax.core.entity import model_of
+from parallax.core.execution import (
+    ServingModel,
+    prepare_model,
+)
 from parallax.evolution import (
     CreatedIndex,
     Evolution,
@@ -26,7 +30,7 @@ from parallax.evolution import (
     evolve,
     schema_delta,
 )
-from parallax.snapshot import ServingModel, connect, prepare_model
+from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
 
 __all__ = [

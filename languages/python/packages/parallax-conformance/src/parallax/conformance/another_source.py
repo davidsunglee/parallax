@@ -12,13 +12,13 @@ from parallax.core.entity import (
     NodeHandle,
     lifecycle_state_of,
 )
+from parallax.core.execution import ModelSelection
+from parallax.core.execution._preflight import preflight
+from parallax.core.execution._publication import read_projection
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.read_delivery._delivery import find as execute_read
 from parallax.core.read_delivery._page import Page
-from parallax.snapshot.handle import ModelSelection
-from parallax.snapshot.handle._preflight import preflight
-from parallax.snapshot.handle._publication import read_projection
 from parallax.snapshot.materialize import (
     RootView,
     require_publishable,

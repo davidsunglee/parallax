@@ -47,7 +47,15 @@ from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
 from parallax.core.entity._model import model_of
+from parallax.core.execution import (
+    DeferredFeatureError,
+    QueryTargetError,
+    ServingModel,
+    prepare_model,
+)
+from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.execution._page_origins import ObservedPageProjections
+from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -81,17 +89,11 @@ from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot import (
-    DeferredFeatureError,
     ObjectKey,
-    QueryTargetError,
-    ServingModel,
     SnapshotMaterializationError,
     handle,
-    prepare_model,
 )
 from parallax.snapshot.handle import _database, _read
-from parallax.snapshot.handle._concurrency import CONCURRENCY
-from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import ClassifiedRoot, RootView, classify_roots
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized

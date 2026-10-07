@@ -47,12 +47,11 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.snapshot import DatabaseOptions
+from parallax.core.execution import DatabaseOptions, TransactionOptionConflictError
 from parallax.snapshot.handle import (
     Database,
     ScopedDatabase,
     Transaction,
-    TransactionOptionConflictError,
 )
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import ConnectsAsItself, body_outcome

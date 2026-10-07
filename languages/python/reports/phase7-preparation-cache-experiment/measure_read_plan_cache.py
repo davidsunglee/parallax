@@ -22,12 +22,12 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution._page_origins import ObservedPageProjections
+from parallax.core.execution._preflight import preflight
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.object_query._validated import ContinuationCoordinate, ValidatedObjectQuery
 from parallax.core.read_delivery._delivery import find
 from parallax.core.read_delivery._read_plan import ReadPlanCache
 from parallax.postgres import _connection as postgres_connection
-from parallax.snapshot.handle._preflight import preflight
 
 WORKLOAD = catalog(BudgetContract.load())["duplicate-include"]
 META = model_of(WORKLOAD.domain_model)

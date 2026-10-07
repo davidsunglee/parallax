@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from parallax.core.base import SQL_NULL, PresentDocument
-from parallax.snapshot import prepare_model
-from parallax.snapshot.handle._publication import read_projection
+from parallax.core.execution import prepare_model
+from parallax.core.execution._publication import read_projection
 from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
     Layout,

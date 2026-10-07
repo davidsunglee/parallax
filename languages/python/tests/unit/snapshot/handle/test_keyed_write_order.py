@@ -34,12 +34,12 @@ from typing import Final, cast
 import pytest
 
 from parallax.core.entity import EditError
-from parallax.core.unit_work import WriteInstructionError
-from parallax.snapshot.handle import (
+from parallax.core.execution import (
     KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
-    WriteEvidenceError,
 )
+from parallax.core.unit_work import WriteInstructionError
+from parallax.snapshot.handle import WriteEvidenceError
 from tests.unit.snapshot.handle._keyed_write_drivers import (
     ACCOUNT_TARGET,
     BALANCE_TARGET,

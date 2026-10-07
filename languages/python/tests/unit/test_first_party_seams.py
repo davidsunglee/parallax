@@ -25,6 +25,10 @@ from parallax.conformance.story_models import Order
 from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity._model import model_of
+from parallax.core.execution import (
+    DeferredFeatureError,
+    QueryTargetError,
+)
 from parallax.core.metamodel import EntityIdentity, entity_by_name
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
@@ -38,8 +42,6 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan import ObjectKey, ObservedStateKey
 from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
 from parallax.snapshot.handle import (
-    DeferredFeatureError,
-    QueryTargetError,
     ScopedDatabase,
     Transaction,
     WireEntity,

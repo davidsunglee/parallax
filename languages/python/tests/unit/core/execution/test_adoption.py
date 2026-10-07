@@ -15,12 +15,16 @@ from typing import NoReturn
 
 import pytest
 
-from parallax.snapshot import ExecutionFailure, ServingModel, prepare_model
-from parallax.snapshot.handle._adoption import AdoptedExecution
-from tests.unit._transact_support import ACCOUNT
+from parallax.conformance.class_models import MODELS
+from parallax.core.execution import (
+    ExecutionFailure,
+    ServingModel,
+    prepare_model,
+)
+from parallax.core.execution._adoption import AdoptedExecution
 
-_A = prepare_model(ACCOUNT, edition="a")
-_B = prepare_model(ACCOUNT, edition="b")
+_A = prepare_model(MODELS["account"], edition="a")
+_B = prepare_model(MODELS["account"], edition="b")
 
 
 def _serving() -> ServingModel:

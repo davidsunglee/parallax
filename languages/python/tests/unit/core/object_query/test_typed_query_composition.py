@@ -110,6 +110,7 @@ from parallax.core import (
 )
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._model import model_of
+from parallax.core.execution._preflight import preflight
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.predicate import All
 from parallax.core.unit_work import (
@@ -121,7 +122,6 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
-from parallax.snapshot.handle._preflight import preflight
 from tests._support import snapshot_models
 from tests._support.query_probes import canonical_document, predicate_document
 from tests._support.snapshot_models import (

@@ -21,6 +21,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution._page_origins import ObservedPageProjections
+from parallax.core.execution._preflight import preflight
 from parallax.core.object_query import deserialize
 from parallax.core.object_query._validated import ContinuationCoordinate, ValidatedObjectQuery
 from parallax.core.read_delivery import _read_plan
@@ -28,7 +29,6 @@ from parallax.core.read_delivery._delivery import find
 from parallax.core.read_delivery._read_plan import ReadPlanCache
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot.handle import Database
-from parallax.snapshot.handle._preflight import preflight
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 from tests.unit._transact_support import db_for
 

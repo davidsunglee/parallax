@@ -41,6 +41,7 @@ from typing import get_type_hints
 from parallax.core import sql_gen
 from parallax.core.deep_fetch import ValidatedEntityQuery
 from parallax.core.deep_fetch import plan as plan_deep_fetch
+from parallax.core.execution._preflight import preflight
 from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.sql_gen._compile import compile_read, compile_write_predicate
@@ -53,12 +54,11 @@ from parallax.core.unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core.write_plan.steps import PlannedWrite
-from parallax.snapshot.handle._preflight import preflight
 from tests._support.repo import PY_ROOT
 from tests.unit._source_inventory_support import (
     CONFORMANCE_SRC,
     ENTITY_PACKAGE,
-    SNAPSHOT_SRC,
+    EXECUTION_SRC,
     Import,
     all_sources,
     declared_imports,
@@ -539,7 +539,7 @@ def test_build_write_planner_is_the_sole_planner_composition_root() -> None:
     # it: no shipped class descends from `WritePlanner`.
     constructed = _write_planner_constructions(production_sources())
     assert [site.rpartition(":")[0] for site in constructed] == [
-        str((SNAPSHOT_SRC / "handle" / "_planning.py").relative_to(PY_ROOT))
+        str((EXECUTION_SRC / "_planning.py").relative_to(PY_ROOT))
     ]
     import_every_module(all_sources())
     assert _shipped_descendant_names(WritePlanner) == [

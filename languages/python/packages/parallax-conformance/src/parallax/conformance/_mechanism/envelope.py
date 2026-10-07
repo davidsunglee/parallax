@@ -7,12 +7,12 @@ from typing import cast
 
 from parallax.core import read_delivery
 from parallax.core.db_port import MappingRow
+from parallax.core.execution import QueryTargetError
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel import entity_by_name
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.temporal_read import TemporalReadError
-from parallax.snapshot import handle
 
 __all__ = [
     "READ_ERRORS",
@@ -36,7 +36,7 @@ READ_ERRORS = (
     ModelRejectedError,
     SqlGenError,
     TemporalReadError,
-    handle.QueryTargetError,
+    QueryTargetError,
     KeyError,
     ValueError,
 )

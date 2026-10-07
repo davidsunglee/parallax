@@ -1,6 +1,6 @@
 """Every write lane plans through the composition-root factory.
 
-``parallax.snapshot.handle.build_write_planner`` is the one place the optional
+``parallax.core.execution._planning.build_write_planner`` is the one place the optional
 policy modules are wired into a Write Planner, so a lane that built a planner of
 its own would plan under a second set of strategies free to drift from
 production's. This grades that as behavior: the factory is made to hand back
@@ -59,6 +59,9 @@ import pytest
 
 from parallax.conformance import case_format, engine
 from parallax.core.dialect import Dialect
+from parallax.core.execution import _planning, prepare_model
+from parallax.core.execution._publication import write_projection
+from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._write import compile_write_step
@@ -71,9 +74,7 @@ from parallax.core.unit_work.strategy import (
 from parallax.core.unit_work.write_settlement import WritePlanningResult
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.steps import PlannedWrite
-from parallax.snapshot import handle
-from parallax.snapshot.handle import Transaction, _planning
-from parallax.snapshot.handle._publication import write_projection
+from parallax.snapshot.handle import Transaction
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     Read,
@@ -180,7 +181,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     """
     seen = _Composition(lane=lane, built=[], planned=[], lowered=[], rendered=[])
     finalizing = WritePlanner.finalize
-    streaming = handle.stream_lowered
+    streaming = stream_lowered
     rendering = compile_write_step
 
     def construct(
@@ -211,7 +212,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
 
     monkeypatch.setattr(_planning, "WritePlanner", construct)
     monkeypatch.setattr(WritePlanner, "finalize", finalize)
-    for replacement, original in ((lower, handle.stream_lowered), (render, compile_write_step)):
+    for replacement, original in ((lower, stream_lowered), (render, compile_write_step)):
         holders = _bindings_of(original)
         assert holders, f"nothing imported holds {original}, so watching it grades nothing"
         for module, bound in holders:
@@ -289,7 +290,7 @@ def test_a_prepared_selection_carries_the_planner_the_factory_built(
     # every transaction over that selection plans through is, by identity, the
     # one the factory handed back while preparing.
     seen = _watch("prepare_model", monkeypatch)
-    selection = handle.prepare_model(mm.ACCOUNT_MODEL, edition="one")
+    selection = prepare_model(mm.ACCOUNT_MODEL, edition="one")
 
     assert len(seen.built) == 1, "one prepared selection, one planner"
     assert write_projection(selection).planner is seen.built[0].planner

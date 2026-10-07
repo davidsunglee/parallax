@@ -49,9 +49,9 @@ from parallax.core import (
     QueryDefinitionError,
 )
 from parallax.core.entity._model import model_of
+from parallax.core.execution._preflight import preflight
 from parallax.core.object_query import LATEST
 from parallax.core.object_query._fluent import object_query_node
-from parallax.snapshot.handle._preflight import preflight
 from tests._support import inheritance_models as im
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm

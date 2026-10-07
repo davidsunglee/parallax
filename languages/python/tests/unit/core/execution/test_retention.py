@@ -31,6 +31,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core.base import INFINITY
 from parallax.core.execution._page_origins import ObservedPageProjections
+from parallax.core.execution._planning import build_write_planner
 from parallax.core.execution._retention import RecordedProjections, deferred_read_origins
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -63,7 +64,6 @@ from parallax.core.write_plan import (
     observed_state_key,
 )
 from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
-from parallax.snapshot.handle import build_write_planner
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._judged_evidence_support import judged_evidence
