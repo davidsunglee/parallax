@@ -139,17 +139,13 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
         "parallax/snapshot/handle/_features.py",
         "parallax/snapshot/handle/_keyed_sql.py",
         "parallax/snapshot/handle/_keyed_writes.py",
-        "parallax/snapshot/handle/_materialization.py",
         "parallax/snapshot/handle/_options.py",
-        "parallax/snapshot/handle/_paging.py",
         "parallax/snapshot/handle/_planning.py",
         "parallax/snapshot/handle/_predicate_writes.py",
         "parallax/snapshot/handle/_preflight.py",
-        "parallax/snapshot/handle/_read_plan.py",
         "parallax/snapshot/handle/_publication.py",
         "parallax/snapshot/handle/_read.py",
         "parallax/snapshot/handle/_read_scope.py",
-        "parallax/snapshot/handle/_retention.py",
         "parallax/snapshot/handle/_stream.py",
         "parallax/snapshot/handle/_transaction.py",
         "parallax/snapshot/handle/_transaction_runner.py",
@@ -162,16 +158,18 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
 
 
 def test_snapshot_wheel_ships_the_materialize_package(wheelhouse: Wheelhouse) -> None:
-    # Same idiom, same reasoning: the ABSENT `materialize.py` is the load-bearing
-    # half — every required path below would still pass against a tree that kept
-    # the old single-file assembler beside the split, and a wheel carrying both
+    # Same idiom, same reasoning: the ABSENT paths are the load-bearing half —
+    # every required path below would still pass against a tree that kept the
+    # old single-file assembler beside the split, or the Page and its
+    # conversion beside their read-delivery home, and a wheel carrying both
     # would mean two live copies of the conversion seam.
     names = _names(wheelhouse, "parallax-snapshot")
     assert "parallax/snapshot/materialize/__init__.py" in names
-    assert "parallax/snapshot/materialize/_convert.py" in names
-    assert "parallax/snapshot/materialize/_page.py" in names
+    assert "parallax/snapshot/materialize/_classify.py" in names
     assert "parallax/snapshot/materialize/_root.py" in names
     assert "parallax/snapshot/materialize/_typed.py" in names
+    assert "parallax/snapshot/materialize/_convert.py" not in names
+    assert "parallax/snapshot/materialize/_page.py" not in names
     assert "parallax/snapshot/materialize.py" not in names
 
 

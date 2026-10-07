@@ -53,14 +53,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.object_query import IncludeSegment
-from parallax.core.temporal_read import Pin
-from parallax.core.write_plan import ObjectKey
-from parallax.snapshot import SnapshotInspectionError, edge_of, is_view_loaded, pin_of, view
-from parallax.snapshot.handle import SnapshotMaterializationError
-from parallax.snapshot.handle._materialization import RowPublication
-from parallax.snapshot.handle._read import _published_rows  # pyright: ignore[reportPrivateUsage]
-from parallax.snapshot.materialize import RootView, SnapshotConsistencyError
-from parallax.snapshot.materialize._page import (
+from parallax.core.read_delivery._page import (
     ABSENT,
     InvalidRootInput,
     Page,
@@ -70,6 +63,16 @@ from parallax.snapshot.materialize._page import (
     page_rows,
     stored_order_key,
 )
+from parallax.core.read_delivery._page_reader import FlatPageResult
+from parallax.core.read_delivery._row_lane import (
+    _published_rows,  # pyright: ignore[reportPrivateUsage]
+)
+from parallax.core.temporal_read import Pin
+from parallax.core.write_plan import ObjectKey
+from parallax.snapshot import SnapshotInspectionError, edge_of, is_view_loaded, pin_of, view
+from parallax.snapshot.handle import SnapshotMaterializationError
+from parallax.snapshot.handle._concurrency import CONCURRENCY
+from parallax.snapshot.materialize import RootView, SnapshotConsistencyError
 from parallax.snapshot.materialize._publication import publication_issue
 from parallax.snapshot.materialize._root import _member_order  # pyright: ignore[reportPrivateUsage]
 from parallax.snapshot.materialize._wire import EntityReader
@@ -258,11 +261,11 @@ def test_flat_publication_preserves_a_classified_result_position() -> None:
     # Row publication has no record carrier of its own, so it publishes the same
     # InvalidData position the shared Page judgment produced rather than flattening
     # diagnostic state into an ordinary mapping.
-    stage = RowPublication((None,), (None,), encoded_identity_page({"id_wire": None}))
+    stage = FlatPageResult((None,), (None,), encoded_identity_page({"id_wire": None}))
     meta = ENCODED_IDENTITY
     prepared = encoded_identity_read()
 
-    (published,) = _published_rows(stage, meta, prepared.row_publisher())
+    (published,) = _published_rows(stage, meta, CONCURRENCY, prepared.row_publisher())
 
     assert invalid_record(published).data is None
 
@@ -650,8 +653,10 @@ def test_an_unrequested_invalid_projection_does_not_refuse_a_clean_root() -> Non
 def test_an_invalid_encoded_key_publishes_no_logical_identity() -> None:
     page = encoded_identity_page({"id_wire": None})
     assert page_rows(page).keys[0] is None
-    stage = RowPublication((None,), (None,), page)
-    (record,) = _published_rows(stage, ENCODED_IDENTITY, encoded_identity_read().row_publisher())
+    stage = FlatPageResult((None,), (None,), page)
+    (record,) = _published_rows(
+        stage, ENCODED_IDENTITY, CONCURRENCY, encoded_identity_read().row_publisher()
+    )
     published = invalid_record(record)
     assert published.data is None
     assert [issue.code for issue in published.issues] == ["stored-data-primary-key-null"]

@@ -44,8 +44,8 @@ from parallax.core.entity._graph_construction import require_correspondence
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import IncludeSegment
 from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.read_delivery import InvalidData
 from parallax.snapshot import (
-    InvalidData,
     Snapshot,
     SnapshotInspectionError,
     SnapshotStream,

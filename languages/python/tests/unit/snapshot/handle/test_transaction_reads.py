@@ -37,11 +37,11 @@ from parallax.core import (
     attr,
 )
 from parallax.core.base import SQL_NULL, DocumentValue, FrozenMap, PresentDocument
-from parallax.core.db_port import DatabaseConnection, JsonDocument, MappingRow
+from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
-from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.execution._retention import ObservationLedger
+from parallax.core.read_delivery._page_reader import EagerPageRequest, EagerPageResult, PageReader
+from parallax.core.read_delivery._publication import Publication
 from parallax.core.unit_work import (
     Concurrency,
     OptimisticLockConflictError,
@@ -51,7 +51,6 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan import TemporalObservation
 from parallax.snapshot import DeferredFeatureError, QueryTargetError
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot._read_result import FindResult
 from parallax.snapshot.handle import (
     Database,
     KeyedWriteValueError,
@@ -59,10 +58,7 @@ from parallax.snapshot.handle import (
     Transaction,
     TransactionTimePinReadOnlyError,
 )
-from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _read_scope as read_scope_module
-from parallax.snapshot.handle._read_plan import ReadPlanner
-from parallax.snapshot.handle._retention import ObservationLedger
 from parallax.snapshot.materialize import WireEntity
 from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support import inheritance_models as im
@@ -112,41 +108,23 @@ class _RecordedFind:
     """
 
     participation: object | None
-    result: FindResult
+    result: EagerPageResult[Any]
 
 
-def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., FindResult]:
-    """A ``find`` stand-in recording the ledger each call was handed.
+def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., object]:
+    """A whole-result delivery stand-in recording the ledger each Page read's
+    projection collector was built over.
 
-    Spelled with the executor's full signature rather than ``*args`` so the
+    Spelled with the delivery's full signature rather than ``*args`` so the
     recorded parameter is the real one — a rename or a move to a positional
     parameter fails here rather than silently recording ``None`` forever.
     """
-    real = handle_read.find
 
-    def recording(
-        query: ValidatedObjectQuery,
-        model: CatalogedModel,
-        port: DatabaseConnection,
-        *,
-        preference: Concurrency | None = None,
-        ledger: ObservationLedger | None = None,
-        calls: DatabaseCallScope = INERT,
-        edition: str = "",
-        planner: ReadPlanner,
-    ) -> FindResult:
-        result = real(
-            query,
-            model,
-            port,
-            preference=preference,
-            ledger=ledger,
-            calls=calls,
-            edition=edition,
-            planner=planner,
-        )
+    def recording(request: EagerPageRequest[Any], publication: Publication[Any, Any]) -> object:
+        ledger: ObservationLedger | None = cast("Any", request.origins)._ledger
+        result = PageReader().read_page(request)
         recorded.append(_RecordedFind(None if ledger is None else ledger.participation, result))
-        return result
+        return publication.from_find(result)
 
     return recording
 
@@ -160,7 +138,7 @@ def test_a_standalone_find_stamps_no_participation_on_the_evidence_it_retains() 
     port = ScriptedAdapter(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(read_scope_module, "find", _recording_find(calls))
+        patch.setattr(read_scope_module, "deliver_find", _recording_find(calls))
         db.find(mm.Balance.where(mm.Balance.id == 1)).result()
     (call,) = calls
     assert call.participation is None
@@ -180,7 +158,7 @@ def test_a_participating_find_stamps_its_transactions_own_participation() -> Non
     )
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(read_scope_module, "find", _recording_find(calls))
+        patch.setattr(read_scope_module, "deliver_find", _recording_find(calls))
         db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
     (call,) = calls
     (hint,) = call.result.sources.values()
@@ -214,7 +192,7 @@ def test_every_attached_level_row_retains_its_own_evidence() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[policy_row]), Read(rows=[coverage_row])))
     db = db_for(POLICY_MODEL, port)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(read_scope_module, "find", _recording_find(calls))
+        patch.setattr(read_scope_module, "deliver_find", _recording_find(calls))
         db.transact(
             lambda tx: tx.find(
                 Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)

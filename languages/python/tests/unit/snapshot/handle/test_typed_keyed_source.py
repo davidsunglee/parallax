@@ -33,10 +33,10 @@ from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import EntityRowCodec
 from parallax.core.metamodel import Metamodel
+from parallax.core.read_delivery import InvalidData
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import WriteInstructionError
 from parallax.core.write_plan import ObjectKey
-from parallax.snapshot import InvalidData
 from parallax.snapshot.handle._typed_writes import (
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,

@@ -20,8 +20,8 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
+from parallax.core.read_delivery._page._views import SourceLevel, SourceViewLayout, ViewSchema
 from parallax.core.temporal_read import Edge, Pin, TemporalReadError, TemporalShape, milestone_edge
-from parallax.snapshot.materialize._views import SourceLevel, SourceViewLayout, ViewSchema
 
 __all__ = [
     "ABSENT",
@@ -43,6 +43,7 @@ __all__ = [
     "release_page_rows",
     "root_last_uses",
     "same_witness",
+    "state_for",
     "stored_order_key",
 ]
 
@@ -73,7 +74,7 @@ type StoredDataIssueCode = Literal[
     "stored-data-primary-key-null",
     "stored-data-primary-key-undecodable",
 ]
-"""The closed internal stored-data issue vocabulary for snapshot reads."""
+"""The closed internal stored-data issue vocabulary for read delivery."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,7 +119,7 @@ class LogicalKey(NamedTuple):
 
 
 class EntityState(NamedTuple):
-    """One judged positional payload shared by Root Views in a Page."""
+    """One judged positional payload shared by every reader of a Page."""
 
     member_row: tuple[object, ...]
     findings: tuple[StoredDataIssueInput, ...]
@@ -382,12 +383,12 @@ class Page:
 
     Opaque, and opaque publicly rather than only by convention: a result holder
     carrying one can read no row, layout, edge, identity, or issue off it, and
-    has nothing to read one with. The Root View that consumes it lives beside it
-    in this scope and reads the sealed arrays through :func:`page_rows`, which is
-    never exported.
+    has nothing to read one with. Its readers — Page-owned judgement here, and the
+    lifecycle publication granted this scope — read the sealed arrays through
+    :func:`page_rows`, which no package facade exports.
 
     :attr:`pin` is the one exception, and it is one because the Page pin
-    is a fact about the RESULT rather than about the representation: a Snapshot
+    is a fact about the RESULT rather than about the representation: a lifecycle
     publishes it, so a result holder reads it off the Page it holds rather than
     off a second copy travelling beside one.
 
@@ -416,9 +417,9 @@ class Page:
 
 
 def page_rows(page: object) -> PageRows:
-    """``page``'s sealed arrays — the internal read a Root View is granted."""
+    """``page``'s sealed arrays — the internal read its judged-state readers are granted."""
     if not isinstance(page, Page):
-        raise TypeError("a Root View requires a finished Page")
+        raise TypeError("reading Page rows requires a finished Page")
     return page._rows  # pyright: ignore[reportPrivateUsage] - the one seam this scope reads a finished page through
 
 
@@ -455,6 +456,49 @@ def judged_state(rows: PageRows, projection: int) -> EntityState | None:
         ),
         None,
     )
+
+
+def state_for(rows: PageRows, projection: int) -> EntityState:
+    """``projection``'s Page-owned Entity State, judging its payload on first need.
+
+    A keyed projection shares the state already judged for its logical node: the
+    one state of a singleton claim, or the witness-equal state of a grouped one.
+    A keyless projection shares nothing, so every request judges it again. The
+    identity findings conversion recorded join the payload findings once.
+    """
+    if rows.keys[projection] is None:
+        return _decoded(rows, projection)
+    held = judged_state(rows, projection)
+    if held is not None:
+        _notify(rows.observer, "states_shared")
+        return held
+    state = _decoded(rows, projection)
+    logical = rows.logical_ids[projection]
+    if isinstance(rows.claims[logical], int):
+        rows.judged_states.set_singleton(logical, state)
+        if isinstance(rows.witnesses, list):
+            rows.witnesses[projection] = None
+    else:
+        rows.judged_states.group(logical).append((projection, state))
+    return state
+
+
+def _decoded(rows: PageRows, projection: int) -> EntityState:
+    member_row, findings = rows.decoders.decode(projection)
+    if rows.keys[projection] is not None:
+        rows.decoders.settle(projection)
+    identity_findings = rows.issues[projection]
+    if not findings:
+        findings = identity_findings
+    elif identity_findings:
+        findings = dedupe_issues((*findings, *identity_findings))
+    _notify(rows.observer, "states_decoded")
+    return EntityState(member_row, findings)
+
+
+def _notify(observer: object | None, name: str) -> None:
+    if observer is not None:
+        getattr(observer, name)()
 
 
 def release_page_rows(page: Page) -> None:

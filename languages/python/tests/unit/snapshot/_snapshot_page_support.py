@@ -5,7 +5,7 @@ A read driver composes a Page by converting provider rows through a bound read
 into a Page builder and writing each level's views as that level lands. These
 suites need the same composition without a database, so this builds one the same
 way — compiling a real read, binding it as a find binds it, and converting rows
-through ``PreparedRead.convert_row`` — rather than hand-assembling rows or levels
+through ``ReadRowConverter.convert_row`` — rather than hand-assembling rows or levels
 that no driver would produce.
 
 ``materialize`` then publishes it through the typed read's own publication, which
@@ -29,12 +29,12 @@ import pytest
 from parallax.core import DomainModel
 from parallax.core.base import (
     SQL_NULL,
-    Admission,
     DocumentValue,
     NeutralType,
     PresentDocument,
     SqlNull,
-    admits_stored_scalar,
+    StoredScalarVerdict,
+    check_stored_scalar,
 )
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.deep_fetch._include_tree import build_include_tree
@@ -51,19 +51,20 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     entity_by_name,
 )
+from parallax.core.read_delivery import InvalidData, _convert
+from parallax.core.read_delivery._page import (
+    ABSENT,
+    ROOT_LEVEL,
+    ChildSlot,
+    Page,
+    PageBuilder,
+    ViewSchema,
+)
+from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.core.wire import WireValue, decode_canonical_wire
 from parallax.snapshot.handle._read import typed_publication
-from parallax.snapshot.materialize import (
-    InvalidData,
-    Page,
-    PageBuilder,
-    _convert,
-)
-from parallax.snapshot.materialize._page import ABSENT
-from parallax.snapshot.materialize._prepared import PreparedRead, bind
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ChildSlot, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._prepared_read_support import compiled_read
 
@@ -157,13 +158,13 @@ def recorded_conversion_dependencies() -> Generator[ConversionCalls]:
 
     def admitting(
         value: object, declared: NeutralType, *, nullable: bool, temporal_end: bool
-    ) -> Admission:
+    ) -> StoredScalarVerdict:
         calls.admitted.append(value)
-        return admits_stored_scalar(value, declared, nullable=nullable, temporal_end=temporal_end)
+        return check_stored_scalar(value, declared, nullable=nullable, temporal_end=temporal_end)
 
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(_convert, "decode_canonical_wire", decoding)
-        patched.setattr(_convert, "admits_stored_scalar", admitting)
+        patched.setattr(_convert, "check_stored_scalar", admitting)
         yield calls
 
 
@@ -323,7 +324,7 @@ class PageFixture:
                 )
             )
         )
-        self._reads: dict[str, tuple[CompiledRead, PreparedRead]] = {}
+        self._reads: dict[str, tuple[CompiledRead, ReadRowConverter]] = {}
         self._sealed: tuple[tuple[tuple[int, ...], Pin], Page] | None = None
 
     def _declared(self, view: str | tuple[str, str]) -> RelationshipViewKey:

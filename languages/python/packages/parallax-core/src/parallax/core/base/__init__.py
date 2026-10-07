@@ -83,8 +83,8 @@ __all__ = [
     "Timestamp",
     "UnknownFamilyTag",
     "Uuid",
-    "admits_stored_scalar",
     "adopt_frozen_map",
+    "check_stored_scalar",
     "coerce_neutral_input",
     "detach_json_container",
     "frozen_map_json_backing",
@@ -356,19 +356,19 @@ def inert_scalar(value: object) -> object:
 
 
 @dataclass(frozen=True, slots=True)
-class Admission:
+class StoredScalarVerdict:
     """One stored scalar's read-contract verdict, and what a rejection judged.
 
-    ``rejected`` is the value a negative verdict was formed about — the evidence
-    a diagnosis of it publishes — and is ``None`` for an admitted one. The
-    decoding reason behind that value stays unpublished.
+    ``rejected_value`` is the value a negative verdict was formed about — the
+    evidence a diagnosis of it publishes — and is ``None`` for an accepted one.
+    The decoding reason behind that value stays unpublished.
     """
 
-    admitted: bool
-    rejected: object = None
+    accepted: bool
+    rejected_value: object = None
 
 
-_ADMITTED: Final[Admission] = Admission(True)
+_ACCEPTED_STORED_SCALAR: Final[StoredScalarVerdict] = StoredScalarVerdict(True)
 """The one positive verdict, so a conforming scalar allocates nothing."""
 
 
@@ -386,26 +386,26 @@ class UnknownFamilyTag:
     stored_value: object
 
 
-def admits_stored_scalar(
+def check_stored_scalar(
     value: object,
     declared: NeutralType,
     *,
     nullable: bool,
     temporal_end: bool,
-) -> Admission:
+) -> StoredScalarVerdict:
     """Whether one decoded stored scalar satisfies its logical read contract.
 
-    SQL NULL is admitted only by a nullable Attribute, the native infinity
+    SQL NULL is accepted only by a nullable Attribute, the native infinity
     sentinel only by a temporal end Attribute, and every other value must
     inhabit the Attribute's declared Neutral Type.
     """
     if value is None:
-        admitted = nullable
+        accepted = nullable
     elif value is INFINITY:
-        admitted = temporal_end
+        accepted = temporal_end
     else:
-        admitted = matches_neutral_type(value, declared)
-    return _ADMITTED if admitted else Admission(False, value)
+        accepted = matches_neutral_type(value, declared)
+    return _ACCEPTED_STORED_SCALAR if accepted else StoredScalarVerdict(False, value)
 
 
 def normalize_instant(value: dt.datetime) -> dt.datetime:

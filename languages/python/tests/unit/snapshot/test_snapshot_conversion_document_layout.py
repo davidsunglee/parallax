@@ -39,12 +39,17 @@ from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import Metamodel
+from parallax.core.read_delivery._page import (
+    ROOT_LEVEL,
+    PageBuilder,
+    StoredDataIssueInput,
+    ViewSchema,
+    page_rows,
+)
+from parallax.core.read_delivery._row_converter import bind
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import PageBuilder, RootView
-from parallax.snapshot.materialize._page import StoredDataIssueInput, page_rows
-from parallax.snapshot.materialize._prepared import bind
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from parallax.snapshot.materialize import RootView
 from tests._support.sql import compile_read
 from tests.unit._document_layout_support import columns_model, document_model, entity
 from tests.unit.snapshot._snapshot_page_support import documents_of, rendered_members

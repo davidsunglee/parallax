@@ -21,6 +21,9 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata
 from parallax.core.object_query._validated import latest_temporal_selections
+from parallax.core.read_delivery._fetch import entity_read_lock, execute_read
+from parallax.core.read_delivery._page import ABSENT, Page
+from parallax.core.read_delivery._page_reader import FlatPageRequest, FlatPageResult, PageReader
 from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import (
     Bitemporal,
@@ -50,11 +53,9 @@ from parallax.snapshot.handle._family import (
     temporal_shape,
 )
 from parallax.snapshot.handle._keyed_writes import KeyedWriteContext
-from parallax.snapshot.handle._materialization import FlatPageRead, Materializer, RowPublication
 from parallax.snapshot.handle._publication import SelectedWriteModel
-from parallax.snapshot.handle._read import entity_read_lock, execute_read
-from parallax.snapshot.materialize import Page, RootView, require_publishable
-from parallax.snapshot.materialize._page import ABSENT
+from parallax.snapshot.materialize import RootView, require_publishable
+from parallax.snapshot.materialize._publication import publish_roots
 
 __all__ = [
     "PredicateWriteContext",
@@ -253,8 +254,8 @@ def _materialize_predicate_write(
                 result_form="row",
                 lock=lock,
             )
-            stage = Materializer().read_page(
-                FlatPageRead(model, compiled, lambda: execute_read(conn, compiled, read), Pin())
+            stage = PageReader().read_page(
+                FlatPageRequest(model, compiled, lambda: execute_read(conn, compiled, read), Pin())
             )
             if version_position is not None:
                 return _acquire_versioned(stage.page, acquisition, version_position)
@@ -310,7 +311,7 @@ def _publishable_member_rows(page: Page) -> Iterator[tuple[object, ...]]:
     A predicate write has no in-band channel for a stored-data verdict, so the
     publication gate runs before a row contributes anything.
     """
-    return Materializer().roots(page, _publishable_member_row)
+    return publish_roots(page, _publishable_member_row)
 
 
 def _publishable_member_row(root: RootView, _position: int) -> Iterator[tuple[object, ...]]:
@@ -336,7 +337,7 @@ def _acquire_versioned(
 
 
 def _acquire_temporal(
-    stage: RowPublication, acquisition: _Acquisition, *, documents: bool
+    stage: FlatPageResult, acquisition: _Acquisition, *, documents: bool
 ) -> PredecessorRows | None:
     """A temporal target's evidence: the complete Predecessor Row of every row
     that is not a no-op (`m-write-plan` "A Predecessor Row is the complete,
@@ -401,8 +402,8 @@ def _acquire_target(
             valid_from=valid_from,
         )
         compiled = compile_read(query, meta, conn.dialect, result_form="row", lock=lock)
-        stage = Materializer().read_page(
-            FlatPageRead(model, compiled, lambda: execute_read(conn, compiled, read), Pin())
+        stage = PageReader().read_page(
+            FlatPageRequest(model, compiled, lambda: execute_read(conn, compiled, read), Pin())
         )
         rows = tuple(_publishable_member_rows(stage.page))
     if len(rows) > 1:
@@ -462,8 +463,8 @@ def acquire_coverage(
         result_form="row",
         lock="locking" if acquisition.locking else None,
     )
-    stage = Materializer().read_page(
-        FlatPageRead(model, compiled, lambda: execute_read(conn, compiled, calls), Pin())
+    stage = PageReader().read_page(
+        FlatPageRequest(model, compiled, lambda: execute_read(conn, compiled, calls), Pin())
     )
     return _acquire_temporal(
         stage,

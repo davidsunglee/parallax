@@ -22,7 +22,13 @@ from parallax.core.execution_lifecycle._pool_observation import (
     register_pool_observation,
 )
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._fluent import ObjectQuery
+from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.read_delivery import RowsResult
+from parallax.core.read_delivery._read_plan import (
+    DEFAULT_READ_PLAN_CACHE_CAPACITY,
+    ReadPlanCache,
+    check_read_plan_cache_capacity,
+)
 from parallax.core.unit_work import Clock, Concurrency, SystemClock
 from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._execution_authority import (
@@ -44,12 +50,7 @@ from parallax.snapshot.handle._publication import (
     check_edition,
     select_model,
 )
-from parallax.snapshot.handle._read import RowsResult, Snapshot
-from parallax.snapshot.handle._read_plan import (
-    DEFAULT_READ_PLAN_CACHE_CAPACITY,
-    ReadPlanCache,
-    check_read_plan_cache_capacity,
-)
+from parallax.snapshot.handle._read import Snapshot, typed_publication_for
 from parallax.snapshot.handle._read_scope import ReadScope, standalone_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._transaction import Transaction
@@ -323,10 +324,21 @@ class ScopedDatabase:
         )
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
-        return cast("Snapshot[S]", self._reads.find(query))
+        return cast(
+            "Snapshot[S]",
+            self._reads.read(
+                query, convert_query=object_query_node, build_publication=typed_publication_for
+            ),
+        )
 
     def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
-        return cast("SnapshotStream[S]", self._reads.stream(query, batch_size))
+        return SnapshotStream(
+            self._reads,
+            query,
+            batch_size,
+            convert_query=object_query_node,
+            build_publication=typed_publication_for,
+        )
 
     @property
     def wire(self) -> WireDatabaseView:

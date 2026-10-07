@@ -11,7 +11,7 @@ from parallax.core.base import (
     PresentDocument,
     SqlNull,
     UnknownFamilyTag,
-    admits_stored_scalar,
+    check_stored_scalar,
 )
 from parallax.core.document_codec import (
     UNAVAILABLE,
@@ -36,22 +36,20 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
-from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
-from parallax.snapshot.materialize._evidence import freeze_evidence
-from parallax.snapshot.materialize._page import (
+from parallax.core.read_delivery._evidence import freeze_evidence
+from parallax.core.read_delivery._page import (
     ABSENT,
     LogicalKey,
     PageBuilder,
+    SourceLevel,
     StoredDataIssueCode,
     StoredDataIssueInput,
 )
-from parallax.snapshot.materialize._publication import SnapshotDecodingError
-from parallax.snapshot.materialize._views import SourceLevel
+from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
 
 __all__ = [
     "AttributeReadContract",
-    "BoundLevel",
-    "SnapshotDecodingError",
+    "EntityReadMapping",
     "build_positional_many",
     "build_positional_object",
     "register_reduced_row",
@@ -76,8 +74,8 @@ class AttributeReadContract(Protocol):
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class BoundLevel:
-    """What every row a prepared read resolves to one exact Entity converts under.
+class EntityReadMapping:
+    """What every row a compiled read resolves to one exact Entity converts under.
 
     ``layout`` is that Entity's model-owned member layout. ``attribute_reads``
     carries the statement's contract for each of its Attributes in
@@ -135,7 +133,7 @@ class BoundLevel:
             or len(self.classifiers) != member_count
             or len(self.document_member_names) != member_count
         ):
-            raise ValueError("a bound level's member sources must align with its members")
+            raise ValueError("an entity read mapping's member sources must align with its members")
         object.__setattr__(self, "concrete_entity", layout.concrete)
         projected = frozenset(member.storage.name for member in documents)
         projected_by_position = tuple(
@@ -206,7 +204,7 @@ class BoundLevel:
         correlation_findings: tuple[StoredDataIssueInput, ...],
         unknown_family_tag: UnknownFamilyTag | None,
     ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
-        """Judge the payload of one reduced row claimed under this level, from the
+        """Judge the payload of one reduced row claimed under this mapping, from the
         inputs its Page retained for it, answering its member row and findings."""
         values, findings, classified = _classify_payload(
             witness,
@@ -226,7 +224,7 @@ class BoundLevel:
 
 def register_reduced_row(
     witness: tuple[object, ...],
-    level: BoundLevel,
+    mapping: EntityReadMapping,
     builder: PageBuilder,
     *,
     source: SourceLevel,
@@ -237,7 +235,7 @@ def register_reduced_row(
     payload deferred to the Root View that needs it, and answer the projection
     index the builder assigned.
 
-    ``witness`` is positional, laid out by ``level.layout``, with ``ABSENT``
+    ``witness`` is positional, laid out by ``mapping.layout``, with ``ABSENT``
     wherever the read carried no value. ``classifiable`` marks, one bit per
     position, the members the row carried for document classification.
 
@@ -248,12 +246,14 @@ def register_reduced_row(
     findings wait for the payload judgment, which places them at their own
     positions.
     """
-    routed, identity_findings = _judge(level.eager_identity_positions, witness, level, None, None)
+    routed, identity_findings = _judge(
+        mapping.eager_identity_positions, witness, mapping, None, None
+    )
     routed, correlation_findings = _judge(
-        level.eager_correlation_positions, witness, level, routed, None
+        mapping.eager_correlation_positions, witness, mapping, routed, None
     )
     routed_values = witness if routed is None else tuple(routed)
-    layout = level.layout
+    layout = mapping.layout
     key = (
         None
         if unknown_family_tag is not None
@@ -261,7 +261,7 @@ def register_reduced_row(
         else LogicalKey(
             layout.family,
             routed_values[layout.primary_key[0]],
-            level.temporal_start_values(routed_values),
+            mapping.temporal_start_values(routed_values),
         )
     )
     projection = builder.add_claim(
@@ -271,9 +271,9 @@ def register_reduced_row(
         witness,
         routed_values,
         () if identity_findings is None else tuple(identity_findings),
-        level,
+        mapping,
     )
-    partial = None if classifiable == level.every_member_present else classifiable
+    partial = None if classifiable == mapping.every_member_present else classifiable
     if partial is not None or correlation_findings or unknown_family_tag is not None:
         builder.add_payload_inputs(
             projection,
@@ -302,17 +302,17 @@ def _no_values(_values: tuple[object, ...]) -> tuple[object, ...]:
 
 def _classify_payload(
     witness: tuple[object, ...],
-    level: BoundLevel,
+    mapping: EntityReadMapping,
     classifiable: int,
 ) -> tuple[tuple[object, ...], tuple[DocumentFinding, ...], int]:
     """Classify each document member the row carried, answering the classified
     values, the codec's findings, and the classified positions, one bit each."""
-    if not level.classified_members:
+    if not mapping.classified_members:
         return witness, (), 0
     values = list(witness)
     findings: list[DocumentFinding] = []
     classified = 0
-    for position, optional_classifier in enumerate(level.classifiers):
+    for position, optional_classifier in enumerate(mapping.classifiers):
         if optional_classifier is None:
             continue
         raw = witness[position]
@@ -327,7 +327,7 @@ def _classify_payload(
 
 def _decode_payload(
     values: tuple[object, ...],
-    level: BoundLevel,
+    mapping: EntityReadMapping,
     routed_values: tuple[object, ...],
     correlation_findings: tuple[StoredDataIssueInput, ...],
     findings: tuple[DocumentFinding, ...],
@@ -335,7 +335,7 @@ def _decode_payload(
     classified: int,
 ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
     issues: list[StoredDataIssueInput] | None = (
-        [_translate_finding(finding, level) for finding in findings] if findings else None
+        [_translate_finding(finding, mapping) for finding in findings] if findings else None
     )
     if unknown_family_tag is not None:
         if issues is None:
@@ -343,27 +343,27 @@ def _decode_payload(
         issues.append(
             StoredDataIssueInput(
                 "stored-data-family-tag-unknown",
-                level.concrete_entity,
+                mapping.concrete_entity,
                 stored_value=freeze_evidence(unknown_family_tag.stored_value),
             )
         )
     members: list[object] | None = None
-    for position in level.eager_identity_positions:
+    for position in mapping.eager_identity_positions:
         if routed_values[position] is not values[position]:
             if members is None:
                 members = list(values)
             members[position] = routed_values[position]
     members, issues = _judge(
-        level.payload_positions,
+        mapping.payload_positions,
         values,
-        level,
+        mapping,
         members,
         issues,
         routed_values=routed_values,
         captured=correlation_findings,
         classified=classified,
     )
-    members, issues = _decode_occurrences(values, level, classified, members, issues)
+    members, issues = _decode_occurrences(values, mapping, classified, members, issues)
     return (
         values if members is None else tuple(members),
         () if issues is None else tuple(issues),
@@ -372,14 +372,14 @@ def _decode_payload(
 
 def _decode_occurrences(
     values: tuple[object, ...],
-    level: BoundLevel,
+    mapping: EntityReadMapping,
     classified: int,
     members: list[object] | None,
     issues: list[StoredDataIssueInput] | None,
 ) -> tuple[list[object] | None, list[StoredDataIssueInput] | None]:
-    layout = level.layout
+    layout = mapping.layout
     for occurrence_position, (occurrence, projected) in enumerate(
-        zip(layout.occurrences, level.projected_by_position, strict=True),
+        zip(layout.occurrences, mapping.projected_by_position, strict=True),
         start=layout.attribute_count,
     ):
         if not projected or (raw := values[occurrence_position]) is ABSENT:
@@ -393,7 +393,7 @@ def _decode_occurrences(
             if issues is None:
                 issues = []
             issues.extend(
-                _occurrence_issue(finding, occurrence, level.concrete_entity)
+                _occurrence_issue(finding, occurrence, mapping.concrete_entity)
                 for finding in occurrence_findings
             )
         if value is not raw:
@@ -408,7 +408,7 @@ def _decode_occurrences(
 def _judge(  # noqa: C901
     selection: tuple[int, ...],
     values: tuple[object, ...],
-    level: BoundLevel,
+    mapping: EntityReadMapping,
     members: list[object] | None,
     issues: list[StoredDataIssueInput] | None,
     *,
@@ -420,14 +420,14 @@ def _judge(  # noqa: C901
     every replaced value written into it, copied from ``values`` on the first
     replacement, and ``issues`` with each new finding appended.
 
-    Given ``routed_values``, the level's eager correlation positions reuse the
+    Given ``routed_values``, the mapping's eager correlation positions reuse the
     value their claim routed and the finding it ``captured``, in attribute order;
     a ``classified`` position takes its document codec's verdict; every other
     position is a host-checked stored scalar, decoded and admitted here.
     """
-    layout = level.layout
-    reads = level.attribute_reads
-    reused = level.eager_correlation_positions if routed_values else ()
+    layout = mapping.layout
+    reads = mapping.attribute_reads
+    reused = mapping.eager_correlation_positions if routed_values else ()
     next_reused = 0
     next_captured = 0
     for position in selection:
@@ -458,7 +458,7 @@ def _judge(  # noqa: C901
                     value = decode_canonical_wire(attribute.type, cast("WireValue", raw))
                 except WireDecodingError:
                     value = raw
-            admission = admits_stored_scalar(
+            verdict = check_stored_scalar(
                 value,
                 attribute.type,
                 nullable=attribute.nullable,
@@ -468,11 +468,11 @@ def _judge(  # noqa: C901
                     else contract.temporal_end
                 ),
             )
-            if not admission.admitted:
+            if not verdict.accepted:
                 if issues is None:
                     issues = []
                 issues.append(
-                    _attribute_issue(attribute, admission.rejected, level.concrete_entity)
+                    _attribute_issue(attribute, verdict.rejected_value, mapping.concrete_entity)
                 )
                 value = ABSENT
         if value is not raw:
@@ -556,7 +556,9 @@ def _occurrence(
     return value, classified.findings
 
 
-def _translate_finding(finding: DocumentFinding, level: BoundLevel) -> StoredDataIssueInput:
+def _translate_finding(
+    finding: DocumentFinding, mapping: EntityReadMapping
+) -> StoredDataIssueInput:
     """One Entity-document finding as the issue it publishes.
 
     A finding that resolves to a direct Entity Attribute publishes the empty
@@ -567,7 +569,7 @@ def _translate_finding(finding: DocumentFinding, level: BoundLevel) -> StoredDat
     occurrence = next(
         (
             declared
-            for declared in level.layout.occurrences
+            for declared in mapping.layout.occurrences
             if path and declared.identity.path[-1] == path[0]
         ),
         None,
@@ -575,7 +577,7 @@ def _translate_finding(finding: DocumentFinding, level: BoundLevel) -> StoredDat
     attribute = next(
         (
             declared
-            for declared in level.layout.attributes
+            for declared in mapping.layout.attributes
             if path and declared.identity.name == path[0]
         ),
         None,
@@ -594,7 +596,7 @@ def _translate_finding(finding: DocumentFinding, level: BoundLevel) -> StoredDat
     )
     return StoredDataIssueInput(
         code,
-        level.concrete_entity,
+        mapping.concrete_entity,
         member,
         () if attribute is not None else finding.path,
         stored_value=freeze_evidence(finding.stored_value),

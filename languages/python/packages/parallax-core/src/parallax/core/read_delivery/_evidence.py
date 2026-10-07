@@ -6,7 +6,7 @@ from typing import cast
 
 from parallax.core.base import inert_scalar
 from parallax.core.document_codec import MISSING
-from parallax.snapshot.materialize._invalid import MISSING_STORED_VALUE
+from parallax.core.read_delivery._page import MISSING_STORED_VALUE
 
 __all__ = ["freeze_evidence"]
 
@@ -15,7 +15,7 @@ def freeze_evidence(value: object) -> object:
     """``value`` as the judging row's immutable candidate for public evidence.
 
     The codec's absence marker becomes the public one — a genuinely absent
-    member reads :data:`~parallax.snapshot.materialize.MISSING_STORED_VALUE` —
+    member reads :data:`~parallax.core.read_delivery.MISSING_STORED_VALUE` —
     while a stored SQL or JSON null needs no translation: every judging seam
     captures one as the ordinary ``None`` a caller reads it as. Arrays become
     tuples, objects become detached read-only mappings, and every scalar — the

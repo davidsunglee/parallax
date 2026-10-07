@@ -6,7 +6,6 @@ from parallax.snapshot._inspection import (
     pin_of,
     view,
 )
-from parallax.snapshot._read_result import RowsResult
 from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
     WRITE_EVIDENCE_CODES,
@@ -14,8 +13,6 @@ from parallax.snapshot.handle import (
     DatabaseOptions,
     DeferredFeatureError,
     ExecutionFailure,
-    InvalidData,
-    InvalidDataError,
     InvalidPrincipalError,
     KeyedWriteValueError,
     ModelSelection,
@@ -31,9 +28,6 @@ from parallax.snapshot.handle import (
     SnapshotConsistencyError,
     SnapshotMaterializationError,
     SnapshotStream,
-    SnapshotStreamContinuationError,
-    SnapshotStreamStateError,
-    StoredDataIssue,
     TooManyResultsFound,
     TransactionAuthorityError,
     TransactionOwnershipError,
@@ -48,18 +42,14 @@ from parallax.snapshot.handle import (
 from parallax.snapshot.handle._read_scope import WireQuery
 from parallax.snapshot.handle._wire import WireDatabaseView, WireTransactionView
 from parallax.snapshot.handle._wire_writes import WireChanges, WirePredicateTarget
-from parallax.snapshot.materialize import MISSING_STORED_VALUE, SnapshotDecodingError
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
-    "MISSING_STORED_VALUE",
     "WRITE_EVIDENCE_CODES",
     "CheckedSnapshot",
     "DatabaseOptions",
     "DeferredFeatureError",
     "ExecutionFailure",
-    "InvalidData",
-    "InvalidDataError",
     "InvalidPrincipalError",
     "KeyedWriteValueError",
     "ModelSelection",
@@ -68,19 +58,14 @@ __all__ = [
     "Principal",
     "PublicationConflictError",
     "QueryTargetError",
-    "RowsResult",
     "ScopedDatabase",
     "ServingModel",
     "Snapshot",
     "SnapshotConnectionError",
     "SnapshotConsistencyError",
-    "SnapshotDecodingError",
     "SnapshotInspectionError",
     "SnapshotMaterializationError",
     "SnapshotStream",
-    "SnapshotStreamContinuationError",
-    "SnapshotStreamStateError",
-    "StoredDataIssue",
     "TooManyResultsFound",
     "TransactionAuthorityError",
     "TransactionOwnershipError",

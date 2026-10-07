@@ -69,8 +69,6 @@ from parallax.core.execution_lifecycle import (
     ReleaseStarted,
     RetryPolicy,
     RootExecution,
-    SnapshotStreamFinished,
-    SnapshotStreamStarted,
     StreamBatchCompleted,
     StreamBatchFailed,
     StreamBatchFinished,
@@ -78,6 +76,8 @@ from parallax.core.execution_lifecycle import (
     StreamClosedEarly,
     StreamExhausted,
     StreamFailed,
+    StreamFinished,
+    StreamStarted,
     TransactionAttemptFinished,
     TransactionAttemptStarted,
     TransactionInvocationFinished,
@@ -102,7 +102,7 @@ from tests.unit._transact_support import ACCOUNT, FIXED, deadlock, new_account
 
 EXECUTION = RootExecution(uuid4(), "read")
 TRANSACTION = RootExecution(uuid4(), "transaction_invocation")
-STREAM = RootExecution(uuid4(), "snapshot_stream")
+STREAM = RootExecution(uuid4(), "stream")
 STATEMENT = LoweredStatement("select id from account where id = ?", (7,))
 
 _STANDARD: Final = frozenset(
@@ -222,7 +222,7 @@ def test_a_participating_read_or_stream_logs_no_edition_of_its_own(
         caplog,
         [
             ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "typed", None),
-            SnapshotStreamStarted(EXECUTION.id, 2, 3, 1, "Account", "wire", 10, None),
+            StreamStarted(EXECUTION.id, 2, 3, 1, "Account", "wire", 10, None),
         ],
     )
     assert all("edition" not in record.fields for record in records)
@@ -319,14 +319,14 @@ def test_every_runtime_classification_is_logged_in_its_own_python_spelling(
         kinds |= _logged(
             "execution_kind", [ReadStarted(root.id, 1, 1, None, "Account", "typed", None)], root
         )
-    assert kinds == {"read", "transaction_invocation", "snapshot_stream"}
+    assert kinds == {"read", "transaction_invocation", "stream"}
 
     assert _logged(
         "interface",
         [
             ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", None),
             ReadStarted(EXECUTION.id, 2, 2, 1, "Account", "wire", None),
-            SnapshotStreamStarted(EXECUTION.id, 3, 3, 1, "Account", "rows", 100, None),
+            StreamStarted(EXECUTION.id, 3, 3, 1, "Account", "rows", 100, None),
         ],
     ) == {"typed", "wire", "rows"}
 
@@ -678,13 +678,13 @@ def test_the_stream_vocabulary_logs_like_every_other_transition(
     records = _records(
         caplog,
         [
-            SnapshotStreamStarted(STREAM.id, 1, 1, None, "Account", "wire", 500, "edition"),
+            StreamStarted(STREAM.id, 1, 1, None, "Account", "wire", 500, "edition"),
             StreamBatchStarted(STREAM.id, 2, 2, 1),
             StreamBatchFinished(STREAM.id, 3, 2, 1, StreamBatchCompleted()),
             StreamBatchFinished(STREAM.id, 4, 3, 1, StreamBatchFailed(_failure())),
-            SnapshotStreamFinished(STREAM.id, 5, 1, None, StreamExhausted()),
-            SnapshotStreamFinished(STREAM.id, 6, 1, None, StreamClosedEarly()),
-            SnapshotStreamFinished(STREAM.id, 7, 1, None, StreamFailed(_failure())),
+            StreamFinished(STREAM.id, 5, 1, None, StreamExhausted()),
+            StreamFinished(STREAM.id, 6, 1, None, StreamClosedEarly()),
+            StreamFinished(STREAM.id, 7, 1, None, StreamFailed(_failure())),
         ],
         execution=STREAM,
     )
@@ -746,8 +746,8 @@ def test_the_logger_answers_every_transition_the_algebra_admits(
         TransactionInvocationFinished(EXECUTION.id, 8, 4, 1, JoinedInvocationReturned()),
         TransactionAttemptStarted(EXECUTION.id, 9, 5, 1, "account"),
         TransactionAttemptFinished(EXECUTION.id, 10, 5, 1, AttemptCommitted()),
-        SnapshotStreamStarted(EXECUTION.id, 11, 6, 1, "Account", "rows", 100, None),
-        SnapshotStreamFinished(EXECUTION.id, 12, 6, 1, StreamExhausted()),
+        StreamStarted(EXECUTION.id, 11, 6, 1, "Account", "rows", 100, None),
+        StreamFinished(EXECUTION.id, 12, 6, 1, StreamExhausted()),
         StreamBatchStarted(EXECUTION.id, 13, 7, 6),
         StreamBatchFinished(EXECUTION.id, 14, 7, 6, StreamBatchCompleted()),
         AcquisitionStarted(EXECUTION.id, 15, 8, 1),
@@ -866,7 +866,7 @@ def test_only_a_root_activity_or_an_attempt_finishing_is_worth_more_than_debug(
                     _attempt_failure(retry_eligible=True), diagnostic_for(RuntimeError("stuck"))
                 ),
             ),
-            SnapshotStreamFinished(EXECUTION.id, 12, 9, 1, StreamFailed(root)),
+            StreamFinished(EXECUTION.id, 12, 9, 1, StreamFailed(root)),
             StreamBatchFinished(EXECUTION.id, 13, 10, 9, StreamBatchFailed(root)),
         ],
     ):

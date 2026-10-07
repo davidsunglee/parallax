@@ -56,12 +56,12 @@ from parallax.core.execution_lifecycle._activity import (
     open_read_root,
 )
 from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.read_delivery import _read_plan as read_plan_module
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import QueryTargetError, ScopedDatabase, SnapshotMaterializationError
 from parallax.snapshot.handle import _read as read_module
-from parallax.snapshot.handle import _read_plan as read_plan_module
 from parallax.snapshot.handle import _read_scope as read_scope_module
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized

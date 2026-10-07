@@ -13,33 +13,35 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import deserialize
-from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.temporal_read import Pin
-from parallax.snapshot.handle._materialization import (
-    INERT,
-    FlatPageRead,
+from parallax.core.read_delivery import _row_lane
+from parallax.core.read_delivery._page import (
+    INERT_OBSERVER,
+    ROOT_LEVEL,
+    EntityState,
     MaterializationObserver,
-    Materializer,
-    page_cadence,
-)
-from parallax.snapshot.handle._preflight import preflight
-from parallax.snapshot.handle._read import _published_rows  # pyright: ignore[reportPrivateUsage]
-from parallax.snapshot.materialize import (
     Page,
     PageBuilder,
-    RootView,
-    VersionAttributes,
-    classify_roots,
+    PageRows,
+    ViewSchema,
+    page_cadence,
 )
-from parallax.snapshot.materialize._classify import RootClassifications
-from parallax.snapshot.materialize._prepared import bind
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from parallax.core.read_delivery._page_reader import FlatPageRequest, PageReader
+from parallax.core.read_delivery._row_converter import bind
+from parallax.core.read_delivery._row_lane import (
+    _published_rows,  # pyright: ignore[reportPrivateUsage]
+)
+from parallax.core.sql_gen._compile import CompiledRead, compile_read
+from parallax.core.temporal_read import Pin
+from parallax.snapshot.handle._concurrency import CONCURRENCY
+from parallax.snapshot.handle._preflight import preflight
+from parallax.snapshot.materialize import RootView
+from parallax.snapshot.materialize._publication import publish_roots
 from tests.unit._prepared_read_support import bound_read
 from tests.unit.snapshot._snapshot_page_support import RecordingObserver
 
 
 def test_the_inert_observer_accepts_a_witness_comparison_total() -> None:
-    INERT.witnesses_compared(1)
+    INERT_OBSERVER.witnesses_compared(1)
 
 
 def _row(order_id: int) -> dict[str, object]:
@@ -88,14 +90,16 @@ def _order_read() -> tuple[Metamodel, CatalogedModel, CompiledRead]:
 
 def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
     observer = RecordingObserver()
-    materializer = Materializer(observer)
+    materializer = PageReader(observer)
     meta, model, compiled = _order_read()
     rows = tuple(tuple(_row(1)[key] for key in compiled.result_keys) for _ in range(2))
 
-    stage = materializer.read_page(FlatPageRead(model, compiled, lambda: rows, Pin()))
+    stage = materializer.read_page(FlatPageRequest(model, compiled, lambda: rows, Pin()))
 
     assert page_cadence(stage.page) is observer
-    assert len(_published_rows(stage, meta, bind(model, compiled).row_publisher())) == 2
+    assert (
+        len(_published_rows(stage, meta, CONCURRENCY, bind(model, compiled).row_publisher())) == 2
+    )
     assert observer.events == [
         ("prepared", 1),
         ("statement_rendered", ROOT_LEVEL),
@@ -116,22 +120,20 @@ def test_eager_row_publication_withholds_events_when_a_later_root_fails(
     observer = RecordingObserver()
     meta, model, compiled = _order_read()
     rows = tuple(tuple(_row(order_id)[key] for key in compiled.result_keys) for order_id in (1, 2))
-    stage = Materializer(observer).read_page(FlatPageRead(model, compiled, lambda: rows, Pin()))
+    stage = PageReader(observer).read_page(FlatPageRequest(model, compiled, lambda: rows, Pin()))
 
-    def fail_on_second_root(
-        root: RootView,
-        accepted: Metamodel,
-        versions: VersionAttributes,
-        *,
-        ordinal_offset: int = 0,
-    ) -> RootClassifications:
-        if ordinal_offset == 1:
+    judged: list[int] = []
+    state_for = vars(_row_lane)["state_for"]
+
+    def fail_on_second_root(rows: PageRows, projection: int) -> EntityState:
+        judged.append(projection)
+        if len(judged) == 2:
             raise RuntimeError("later row failed")
-        return classify_roots(root, accepted, versions, ordinal_offset=ordinal_offset)
+        return state_for(rows, projection)
 
-    monkeypatch.setattr("parallax.snapshot.handle._read.classify_roots", fail_on_second_root)
+    monkeypatch.setattr(_row_lane, "state_for", fail_on_second_root)
     with pytest.raises(RuntimeError, match="later row failed"):
-        _published_rows(stage, meta, bind(model, compiled).row_publisher())
+        _published_rows(stage, meta, CONCURRENCY, bind(model, compiled).row_publisher())
 
     assert [event for event in observer.events if event[0] == "root_published"] == []
 
@@ -140,31 +142,29 @@ def test_a_flat_page_read_without_an_observer_records_none_and_publishes_inertly
     _meta, model, compiled = _order_read()
     rows = (tuple(_row(1)[key] for key in compiled.result_keys),)
 
-    stage = Materializer().read_page(FlatPageRead(model, compiled, lambda: rows, Pin()))
+    stage = PageReader().read_page(FlatPageRequest(model, compiled, lambda: rows, Pin()))
 
     assert stage.page.observer is None
-    assert page_cadence(stage.page) is INERT
+    assert page_cadence(stage.page) is INERT_OBSERVER
 
 
 def test_root_publication_requires_one_pin_per_page_root() -> None:
     observer = RecordingObserver()
     page = _page(observer, 1)
     with pytest.raises(ValueError, match="pin count must match"):
-        list(Materializer(observer).roots(page, _publish(page), pins=()))
+        list(publish_roots(page, _publish(page), pins=()))
 
 
 def test_eager_and_streamed_pages_report_the_same_publication_totals() -> None:
     eager = RecordingObserver()
     eager_page = _page(eager, 1, 2)
-    assert list(Materializer(eager).roots(eager_page, _publish(eager_page))) == [0, 1]
+    assert list(publish_roots(eager_page, _publish(eager_page))) == [0, 1]
 
     streamed = RecordingObserver()
     ordinal = 0
     for order_id in (1, 2):
         page = _page(streamed, order_id)
-        assert list(Materializer(streamed).roots(page, _publish(page), ordinal_offset=ordinal)) == [
-            0
-        ]
+        assert list(publish_roots(page, _publish(page), ordinal_offset=ordinal)) == [0]
         ordinal += page.root_count
 
     totals = {"occurrences_reached": 2, "states_decoded": 2}
@@ -189,9 +189,7 @@ def test_atomic_publication_withholds_every_root_and_event_when_a_later_root_fai
 
     received: list[object] = []
     with pytest.raises(RuntimeError, match="later root failed"):
-        received.extend(
-            Materializer(observer).roots(page, publish, atomic=True, model=model_of(ORDERS_MODEL))
-        )
+        received.extend(publish_roots(page, publish, atomic=True, model=model_of(ORDERS_MODEL)))
 
     assert received == []
     assert [event for event in observer.events if event[0] == "root_published"] == []
@@ -201,7 +199,7 @@ def test_an_atomic_publication_needs_the_model_that_decides_state_deferral() -> 
     observer = RecordingObserver()
     page = _page(observer, 1)
     with pytest.raises(ValueError, match="state deferral against its model"):
-        list(Materializer(observer).roots(page, _publish(page), atomic=True))
+        list(publish_roots(page, _publish(page), atomic=True))
     assert observer.events == []
 
 
@@ -218,7 +216,7 @@ def test_incremental_publication_keeps_the_prefix_before_a_later_root_fails() ->
             raise RuntimeError("later root failed")
         yield position
 
-    roots = Materializer(observer).roots(page, publish)
+    roots = publish_roots(page, publish)
     received.append(next(roots))
     assert received == [0]
     with pytest.raises(RuntimeError, match="later root failed"):

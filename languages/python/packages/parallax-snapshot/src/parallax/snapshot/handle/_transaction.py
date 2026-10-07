@@ -11,7 +11,9 @@ from parallax.core.execution_lifecycle._activity import (
     TransactionAttemptActivity,
 )
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._fluent import ObjectQuery
+from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.read_delivery import RowsResult
+from parallax.core.read_delivery._read_plan import ReadPlanner
 from parallax.core.unit_work import UnitOfWork
 
 # Sibling implementation modules. None of these names carries a leading
@@ -29,8 +31,7 @@ from parallax.snapshot.handle._keyed_writes import (
 from parallax.snapshot.handle._options import OMITTED, DatabaseOptions, Omitted
 from parallax.snapshot.handle._predicate_writes import PredicateWriteContext
 from parallax.snapshot.handle._publication import SelectedReadModel, SelectedWriteModel
-from parallax.snapshot.handle._read import RowsResult, Snapshot
-from parallax.snapshot.handle._read_plan import ReadPlanner
+from parallax.snapshot.handle._read import Snapshot, typed_publication_for
 from parallax.snapshot.handle._read_scope import participating_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._typed_writes import (
@@ -355,7 +356,9 @@ class Transaction:
         retains no evidence at all: its roots stand at coordinates no keyed
         write may address.
         """
-        return self._reads.find(query)
+        return self._reads.read(
+            query, convert_query=object_query_node, build_publication=typed_publication_for
+        )
 
     @property
     def wire(self) -> WireTransactionView:
@@ -392,7 +395,13 @@ class Transaction:
         callback, and roots already consumed cannot be revoked, so a retried
         callback opens a fresh stream and may observe them again.
         """
-        return self._reads.stream(query, batch_size)
+        return SnapshotStream(
+            self._reads,
+            query,
+            batch_size,
+            convert_query=object_query_node,
+            build_publication=typed_publication_for,
+        )
 
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
         """Run a PARTICIPATING row-form read and return its published rows.

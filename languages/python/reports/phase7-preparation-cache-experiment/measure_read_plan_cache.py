@@ -21,12 +21,13 @@ from parallax.core import continuation
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
+from parallax.core.execution._page_origins import ObservedPageProjections
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.object_query._validated import ContinuationCoordinate, ValidatedObjectQuery
+from parallax.core.read_delivery._delivery import find
+from parallax.core.read_delivery._read_plan import ReadPlanCache
 from parallax.postgres import _connection as postgres_connection
 from parallax.snapshot.handle._preflight import preflight
-from parallax.snapshot.handle._read import find
-from parallax.snapshot.handle._read_plan import ReadPlanCache
 
 WORKLOAD = catalog(BudgetContract.load())["duplicate-include"]
 META = model_of(WORKLOAD.domain_model)
@@ -107,7 +108,14 @@ def delivery_trace(capacity: int, selected: Sequence[ValidatedObjectQuery]) -> N
     cache = ReadPlanCache(capacity)
     port = CatalogPort(WORKLOAD, 200)
     for query_ in selected:
-        result = find(query_, MODEL, port, edition="edition-a", planner=cache)
+        result = find(
+            query_,
+            MODEL,
+            port,
+            origins=ObservedPageProjections(MODEL.meta, ledger=None, scanned=False),
+            edition="edition-a",
+            planner=cache,
+        )
         del result
 
 

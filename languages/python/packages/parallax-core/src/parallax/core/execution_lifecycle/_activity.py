@@ -65,9 +65,6 @@ from parallax.core.execution_lifecycle._events import (
     ReleaseStarted,
     RetryPolicy,
     RootExecution,
-    SnapshotStreamFinished,
-    SnapshotStreamOutcome,
-    SnapshotStreamStarted,
     StreamBatchCompleted,
     StreamBatchFailed,
     StreamBatchFinished,
@@ -75,6 +72,9 @@ from parallax.core.execution_lifecycle._events import (
     StreamClosedEarly,
     StreamExhausted,
     StreamFailed,
+    StreamFinished,
+    StreamOutcome,
+    StreamStarted,
     TransactionAttemptFinished,
     TransactionAttemptOutcome,
     TransactionAttemptStarted,
@@ -534,7 +534,7 @@ class StreamBatchActivity(ConnectionOwnerActivity, Protocol):
         ...
 
 
-class SnapshotStreamActivity(Protocol):
+class StreamActivity(Protocol):
     """One stream's scope: its pages, and which of its two non-failure endings
     it reached.
 
@@ -550,7 +550,7 @@ class SnapshotStreamActivity(Protocol):
     cannot rewrite it: the scope has nothing left to finish.
     """
 
-    def __enter__(self) -> SnapshotStreamActivity: ...
+    def __enter__(self) -> StreamActivity: ...
 
     def __exit__(
         self,
@@ -615,10 +615,10 @@ class TransactionAttemptActivity(ConnectionOwnerActivity, Protocol):
         """Open the Write Batch one flush of this attempt's buffer runs inside."""
         ...
 
-    def snapshot_stream(
+    def stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
-    ) -> SnapshotStreamActivity:
-        """Open a participating Snapshot Stream under this attempt.
+    ) -> StreamActivity:
+        """Open a participating Stream under this attempt.
 
         A stream is a CHILD of the attempt rather than of the pages it runs, so
         the dependency batch a page flushes out is its ordered sibling under the
@@ -745,7 +745,7 @@ class _InertActivity:
     def write_batch(self, trigger: WriteBatchTrigger, /) -> _InertActivity:
         return self
 
-    def snapshot_stream(
+    def stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
     ) -> _InertActivity:
         return self
@@ -1140,7 +1140,7 @@ class _LiveConnectionOwner(_LiveActivity):
     """An observed scope that owns one operation's connection.
 
     The two openers are written once here because a standalone Read, a
-    Transaction Attempt, and a standalone Snapshot Stream answer them
+    Transaction Attempt, and a standalone Stream answer them
     identically: an acquisition and a release are the owner's own children
     whichever of the three is asking, and the difference between the three is
     the shape of the operation between them rather than either end of it.
@@ -1664,7 +1664,7 @@ class _LiveStreamBatch(_LiveConnectionOwner):
         return _LiveDatabaseCall(self._publisher, self, statement, kind, target)
 
 
-class _LiveSnapshotStream(_LiveActivity):
+class _LiveStream(_LiveActivity):
     """One observed stream: its pages, and the one ending it reached.
 
     The ending is delivered by whichever of the two routes reaches it first —
@@ -1699,13 +1699,13 @@ class _LiveSnapshotStream(_LiveActivity):
         self._edition = edition
         self._finished = False
 
-    def __enter__(self) -> _LiveSnapshotStream:
+    def __enter__(self) -> _LiveStream:
         publisher = self._publisher
         if not publisher.active:
             return self
         self._open()
         publisher.deliver(
-            SnapshotStreamStarted(
+            StreamStarted(
                 publisher.execution_id,
                 publisher.take_sequence(),
                 self._activity_id,
@@ -1738,13 +1738,13 @@ class _LiveSnapshotStream(_LiveActivity):
         """
         self._finish(StreamExhausted())
 
-    def _finish(self, outcome: SnapshotStreamOutcome) -> None:
+    def _finish(self, outcome: StreamOutcome) -> None:
         publisher = self._publisher
         if self._finished or not publisher.active:
             return
         self._finished = True
         publisher.deliver(
-            SnapshotStreamFinished(
+            StreamFinished(
                 publisher.execution_id,
                 publisher.take_sequence(),
                 self._activity_id,
@@ -1862,10 +1862,10 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
     def write_batch(self, trigger: WriteBatchTrigger, /) -> _LiveWriteBatch:
         return _LiveWriteBatch(self._publisher, self, trigger)
 
-    def snapshot_stream(
+    def stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
-    ) -> _LiveSnapshotStream:
-        return _LiveSnapshotStream(self._publisher, self, target, interface, batch_size, None)
+    ) -> _LiveStream:
+        return _LiveStream(self._publisher, self, target, interface, batch_size, None)
 
     def joined_invocation(self) -> _LiveJoinedInvocation:
         return _LiveJoinedInvocation(self._publisher, self)
@@ -2074,15 +2074,15 @@ def open_read_root(
     return _LiveRead(_Publisher(execution.id, installed, handler), None, target, interface, edition)
 
 
-def open_snapshot_stream_root(
+def open_stream_root(
     installed: InstalledLifecycle | None,
     *,
     target: ActivityTarget,
     interface: ReadInterface,
     batch_size: int,
     edition: str,
-) -> SnapshotStreamActivity:
-    """The Snapshot Stream root activity for one standalone stream, or
+) -> StreamActivity:
+    """The Stream root activity for one standalone stream, or
     :data:`INERT`.
 
     Called at context entry, after the deterministic gate and the page plan the
@@ -2095,11 +2095,11 @@ def open_snapshot_stream_root(
     """
     if installed is None:
         return INERT
-    execution = RootExecution(uuid4(), "snapshot_stream")
+    execution = RootExecution(uuid4(), "stream")
     handler = _opened(installed, execution)
     if handler is None:
         return INERT
-    return _LiveSnapshotStream(
+    return _LiveStream(
         _Publisher(execution.id, installed, handler), None, target, interface, batch_size, edition
     )
 

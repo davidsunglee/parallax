@@ -345,7 +345,7 @@
       "required": ["execution", "kind", "events"],
       "properties": {
         "execution": {"type": "integer", "minimum": 1},
-        "kind": {"enum": ["read", "transaction-invocation", "snapshot-stream"]},
+        "kind": {"enum": ["read", "transaction-invocation", "stream"]},
         "events": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/lifecycleEvent"}}
       }
     },
@@ -368,8 +368,8 @@
         "transactionInvocationFinished": {"$ref": "#/$defs/lifecycleInvocationFinished"},
         "transactionAttemptStarted": {"$ref": "#/$defs/lifecycleAttemptStarted"},
         "transactionAttemptFinished": {"$ref": "#/$defs/lifecycleAttemptFinished"},
-        "snapshotStreamStarted": {"$ref": "#/$defs/lifecycleStreamStarted"},
-        "snapshotStreamFinished": {"$ref": "#/$defs/lifecycleStreamFinished"},
+        "streamStarted": {"$ref": "#/$defs/lifecycleStreamStarted"},
+        "streamFinished": {"$ref": "#/$defs/lifecycleStreamFinished"},
         "streamBatchStarted": {"$ref": "#/$defs/lifecycleNoFields"},
         "streamBatchFinished": {"$ref": "#/$defs/lifecycleActivityOutcome"},
         "acquisitionStarted": {"$ref": "#/$defs/lifecycleNoFields"},
@@ -388,8 +388,8 @@
         {"required": ["transactionInvocationFinished"]},
         {"required": ["transactionAttemptStarted"]},
         {"required": ["transactionAttemptFinished"]},
-        {"required": ["snapshotStreamStarted"]},
-        {"required": ["snapshotStreamFinished"]},
+        {"required": ["streamStarted"]},
+        {"required": ["streamFinished"]},
         {"required": ["streamBatchStarted"]},
         {"required": ["streamBatchFinished"]},
         {"required": ["acquisitionStarted"]},
@@ -405,10 +405,10 @@
           "else": {"properties": {"readStarted": {"not": {"required": ["edition"]}}}}
         },
         {
-          "description": "A Snapshot Stream that IS the root activity adopted its own edition at entry and states it; a stream under an attempt inherits the attempt's and states none.",
-          "if": {"required": ["snapshotStreamStarted"], "properties": {"parent": {"type": "null"}}},
-          "then": {"properties": {"snapshotStreamStarted": {"required": ["edition"]}}},
-          "else": {"properties": {"snapshotStreamStarted": {"not": {"required": ["edition"]}}}}
+          "description": "A Stream that IS the root activity adopted its own edition at entry and states it; a stream under an attempt inherits the attempt's and states none.",
+          "if": {"required": ["streamStarted"], "properties": {"parent": {"type": "null"}}},
+          "then": {"properties": {"streamStarted": {"required": ["edition"]}}},
+          "else": {"properties": {"streamStarted": {"not": {"required": ["edition"]}}}}
         }
       ]
     },

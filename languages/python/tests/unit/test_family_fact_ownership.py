@@ -44,6 +44,7 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.object_query._fluent import ObjectQuery
+from parallax.core.read_delivery import InvalidData
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
@@ -92,7 +93,7 @@ from parallax.snapshot.handle import (
 )
 from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._read import typed_publication, wire_publication
-from parallax.snapshot.materialize import ClassifiedRoot, InvalidData, RootView, classify_roots
+from parallax.snapshot.materialize import ClassifiedRoot, RootView, classify_roots
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.db_port import (
     Read,

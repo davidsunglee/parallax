@@ -11,26 +11,25 @@ from parallax.core.metamodel import (
     MemberIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.temporal_read import Pin
-from parallax.core.write_plan import ObjectKey
-from parallax.snapshot.materialize._page import (
+from parallax.core.read_delivery._page import (
     ABSENT,
     EntityState,
     InvalidRootInput,
     LogicalKey,
     Page,
     PageRows,
+    RootViewLayout,
     StoredDataIssueInput,
-    dedupe_issues,
     exact_stored_equal,
-    judged_state,
     layout_order_key,
     page_rows,
     push_edges,
     same_witness,
+    state_for,
     stored_order_key,
 )
-from parallax.snapshot.materialize._views import RootViewLayout
+from parallax.core.temporal_read import Pin
+from parallax.core.write_plan import ObjectKey
 
 __all__ = ["RootView", "SnapshotConsistencyError"]
 
@@ -273,7 +272,7 @@ class RootView:
     def _complete_invalid(self) -> None:
         if self._pending_invalid:
             self._invalid_roots = tuple(
-                InvalidRootInput(ordinal, self._decode(root).findings)
+                InvalidRootInput(ordinal, self._state(root).findings)
                 for ordinal, root in self._pending_invalid
             )
             self._pending_invalid = ()
@@ -448,21 +447,6 @@ class RootView:
             push_edges(rows, projection, pending)
         return tuple(order)
 
-    def _decode(self, projection: int) -> EntityState:
-        rows = self._rows
-        if rows is None:  # pragma: no cover - completion owns a live Page
-            raise ValueError("a completed Root View cannot decode another state")
-        member_row, findings = rows.decoders.decode(projection)
-        if rows.keys[projection] is not None:
-            rows.decoders.settle(projection)
-        identity_findings = rows.issues[projection]
-        if not findings:
-            findings = identity_findings
-        elif identity_findings:
-            findings = dedupe_issues((*findings, *identity_findings))
-        _notify(rows.observer, "states_decoded")
-        return EntityState(member_row, findings)
-
     def _canonical(self, occurrences: Sequence[int]) -> int:
         rows = self._rows
         if rows is None:  # pragma: no cover - construction owns a live Page
@@ -499,20 +483,7 @@ class RootView:
         rows = self._rows
         if rows is None:  # pragma: no cover - completion owns a live Page
             raise ValueError("a completed Root View cannot judge another state")
-        if rows.keys[canonical] is None:
-            return self._decode(canonical)
-        held = judged_state(rows, canonical)
-        if held is not None:
-            _notify(rows.observer, "states_shared")
-            return held
-        state = self._decode(canonical)
-        logical = rows.logical_ids[canonical]
-        if isinstance(rows.claims[logical], int):
-            rows.judged_states.set_singleton(logical, state)
-            _release_witness(rows, canonical)
-        else:
-            rows.judged_states.group(logical).append((canonical, state))
-        return state
+        return state_for(rows, canonical)
 
     def _conflict(self, left: int, right: int) -> SnapshotConsistencyError:
         rows = cast("PageRows", self._rows)
@@ -661,8 +632,3 @@ def _notify(observer: object | None, name: str, *args: object) -> None:
     if observer is not None:
         callback = getattr(observer, name)
         callback(*args)
-
-
-def _release_witness(rows: PageRows, projection: int) -> None:
-    if isinstance(rows.witnesses, list):
-        rows.witnesses[projection] = None

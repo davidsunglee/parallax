@@ -24,6 +24,7 @@ from parallax.conformance._mechanism.model_facts import (
 )
 from parallax.conformance._mechanism.planned_reads import planned_read
 from parallax.conformance._mechanism.transaction_control import transact, underlying
+from parallax.core import read_delivery
 from parallax.core.base import normalize_instant
 from parallax.core.continuation import ContinuationError
 from parallax.core.db_port import MappingRow
@@ -216,7 +217,9 @@ def run_read_case(
         )
 
 
-def _conforming_row(case: case_format.Case, row: handle.PublishedRow) -> Mapping[str, object]:
+def _conforming_row(
+    case: case_format.Case, row: read_delivery.PublishedRow
+) -> Mapping[str, object]:
     """One published row-form element as the row a `then.rows` case grades.
 
     A row whose stored state contradicted the model publishes its record instead
@@ -224,7 +227,7 @@ def _conforming_row(case: case_format.Case, row: handle.PublishedRow) -> Mapping
     lane names the shape rather than grading a record as though it were a row.
     Graph-form cases grade `InvalidData` through `then.storedDataIssues`.
     """
-    if isinstance(row, handle.InvalidData):
+    if isinstance(row, read_delivery.InvalidData):
         raise EngineError(
             f"{case.path.name}: a row-form read published an InvalidData record — stored data "
             "that contradicts the model is graded through a `then.graph` case's own "
@@ -295,7 +298,7 @@ def run_graph_case(
     )
 
 
-_STREAM_ERRORS = (*READ_ERRORS, ContinuationError, handle.SnapshotStreamStateError)
+_STREAM_ERRORS = (*READ_ERRORS, ContinuationError, read_delivery.StreamStateError)
 
 
 def _stream_batch_size(case: case_format.Case) -> int:
@@ -563,17 +566,17 @@ def _stored_data_records(
     expectation is never handed an empty array to explain.
     """
     records = [
-        _stored_data_record(cast("handle.InvalidData[object]", root), model)
+        _stored_data_record(cast("read_delivery.InvalidData[object]", root), model)
         for root in roots
-        if isinstance(root, handle.InvalidData)
+        if isinstance(root, read_delivery.InvalidData)
     ]
     return records or None
 
 
 def _stored_data_record(
-    record: handle.InvalidData[object], model: AcceptedMetamodel
+    record: read_delivery.InvalidData[object], model: AcceptedMetamodel
 ) -> dict[str, object]:
-    """One published :class:`~parallax.snapshot.InvalidData` on the wire.
+    """One published :class:`~parallax.core.read_delivery.InvalidData` on the wire.
 
     ``hydrated`` states the one thing the graph position cannot: whether the
     ``null`` at that position means "no value could be produced without inventing
@@ -594,7 +597,7 @@ def _stored_data_record(
 
 
 def _stored_data_issue(
-    issue: handle.StoredDataIssue, model: AcceptedMetamodel
+    issue: read_delivery.StoredDataIssue, model: AcceptedMetamodel
 ) -> dict[str, object]:
     """One diagnosis as its cross-language record (`m-snapshot-read`).
 

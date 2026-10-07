@@ -54,6 +54,7 @@ from parallax.core import (
     inheritance,
     opt_lock,
     predicate,
+    read_delivery,
     storage_layout,
 )
 from parallax.core.base import (
@@ -2696,8 +2697,8 @@ def _published_from(roots: Iterable[object]) -> tuple[handle.WireEntity, ...]:
     nodes: list[handle.WireEntity] = []
     visited: set[int] = set()
     frontier: list[object] = [
-        cast("handle.InvalidData[object]", root).data
-        if isinstance(root, handle.InvalidData)
+        cast("read_delivery.InvalidData[object]", root).data
+        if isinstance(root, read_delivery.InvalidData)
         else root
         for root in roots
     ]

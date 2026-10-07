@@ -35,6 +35,7 @@ from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import EntityGraphWriter, NodeHandle
 from parallax.core.entity._errors import EntityRowError
+from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
     StaleWriteError,
@@ -42,7 +43,7 @@ from parallax.core.unit_work import (
     instructions,
 )
 from parallax.core.write_plan import ObjectKey
-from parallax.snapshot import InvalidData, handle
+from parallax.snapshot import handle
 from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
     Database,

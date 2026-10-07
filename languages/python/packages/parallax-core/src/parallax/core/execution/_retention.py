@@ -30,17 +30,17 @@ from parallax.core.write_plan import (
 
 __all__ = [
     "ObservationLedger",
-    "ObservedRows",
-    "ReadSources",
-    "deferred_read_sources",
+    "ReadOrigins",
+    "RecordedProjections",
+    "deferred_read_origins",
 ]
 
 
 @dataclass(frozen=True, slots=True)
-class _ObservedRow:
-    """One materialized row's observation provenance, pending its judged state.
+class _ObservedPageProjection:
+    """One Page projection's observation provenance, pending its judged state.
 
-    ``node`` is the Page occurrence this row converted into, which is how
+    ``node`` is the Page projection this row converted into, which is how
     the evidence built from it reaches the value that projection becomes.
     ``entity`` is the row's own resolved concrete Entity. ``document`` is the
     raw Structured Column under Relational Document Layout, held as the dialect
@@ -55,16 +55,17 @@ class _ObservedRow:
     document: object | None
 
 
-type _PendingObservation = int | _ObservedRow
+type _PendingObservation = int | _ObservedPageProjection
 
 
-class ObservedRows:
-    """What one :func:`~parallax.snapshot.handle.find` collects for the write
-    side while its rows are still live.
+class RecordedProjections:
+    """What one Page read records for the write side while its rows are still live.
 
-    Occurrence references paired with their row provenance, recorded through
-    :meth:`observe_occurrence`: each receives its members only from the judged,
-    Page-owned Entity State, and :func:`deferred_read_sources` is the only consumer.
+    Projection references paired with their row provenance, recorded through
+    :meth:`observe_projection`: each receives its members only from the judged,
+    Page-owned Entity State, and :func:`deferred_read_origins` is the only
+    consumer. A projection whose state turns out not to hydrate is recorded like
+    any other and simply resolves to no origin.
     """
 
     __slots__ = ("_rows",)
@@ -72,29 +73,31 @@ class ObservedRows:
     def __init__(self) -> None:
         self._rows: list[_PendingObservation] = []
 
-    def observe_occurrence(
+    def observe_projection(
         self,
         node: int,
         entity: EntityIdentity,
         document: object | None,
     ) -> None:
         """Record a projection whose columns will come from its judged Entity State."""
-        self._rows.append(node if document is None else _ObservedRow(node, entity, document))
+        self._rows.append(
+            node if document is None else _ObservedPageProjection(node, entity, document)
+        )
 
 
-type ReadSources = Mapping[int, ReadOrigin]
+type ReadOrigins = Mapping[int, ReadOrigin]
 """The Read Origin each observed projection's value carries, keyed by that
 projection's own index in the read's sealed Page.
 
-Only the executor can build this pairing: it alone holds the row and the
-projection it converted into at the same time, and by the time a materializer
-builds the value the row is gone."""
+Only the read can build this pairing: it alone holds the row and the
+projection it converted into at the same time, and by the time a lifecycle
+publishes the value the row is gone."""
 
 
 class ObservationLedger(Protocol):
     """The unit of work an observing read files into, satisfied structurally.
 
-    ``find`` needs exactly three things from a transaction — the participation
+    A read needs exactly three things from a transaction — the participation
     its reads stamp, the freshness its rows were acquired at, and the chance to
     answer evidence it already holds for a state this read saw again — so it
     names those three rather than the whole scope. A standalone read passes none
@@ -118,10 +121,10 @@ explicit version key, or its family's shared Temporal Shape."""
 
 
 def _released_callback(*_args: object) -> None:
-    raise RuntimeError("all deferred read sources have already resolved")
+    raise RuntimeError("all deferred read origins have already resolved")
 
 
-class _DeferredReadSources(Mapping[int, ReadOrigin]):
+class _DeferredReadOrigins(Mapping[int, ReadOrigin]):
     """Evidence retained only after its page-owned Entity State is judged valid.
 
     The pass holds the three family-fact owners by reference until every
@@ -154,7 +157,7 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
     def __init__(
         self,
         meta: Metamodel,
-        observations: ObservedRows,
+        observations: RecordedProjections,
         admitted: Callable[[int], tuple[EntityLayout, tuple[object, ...]] | None],
         entity: Callable[[int], EntityIdentity],
         primary_key: Callable[[int], object | None],
@@ -167,7 +170,7 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
         self._temporal = temporal_read.view(meta)
         retained: list[_PendingObservation] = [
             pending
-            if not isinstance(pending, _ObservedRow)
+            if not isinstance(pending, _ObservedPageProjection)
             or isinstance(self._keys.key(pending.entity), TransactionTimeDerived)
             else pending.node
             for pending in observations._rows  # pyright: ignore[reportPrivateUsage] - same-module transfer
@@ -207,7 +210,7 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
     def _resolve_origin(self, key: int) -> None:
         try:
             pending = self._observations[key]
-        except IndexError:  # pragma: no cover - Root Views request Page occurrence indices only
+        except IndexError:  # pragma: no cover - publication requests Page projection indices only
             raise KeyError(key) from None
         entity = self._entity(key) if isinstance(pending, int) else pending.entity
         self._observations[key] = key
@@ -297,16 +300,16 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
         self._temporal = cast("TemporalFacet", None)
 
 
-def deferred_read_sources(
+def deferred_read_origins(
     meta: Metamodel,
-    observations: ObservedRows,
+    observations: RecordedProjections,
     admitted: Callable[[int], tuple[EntityLayout, tuple[object, ...]] | None],
     entity: Callable[[int], EntityIdentity],
     primary_key: Callable[[int], object | None],
     *,
     ledger: ObservationLedger | None,
     pin: Pin,
-) -> ReadSources:
+) -> ReadOrigins:
     """A mapping that retains evidence as valid judged states become reachable
     (`m-opt-lock`; ADR 0013; `m-unit-work` "Observation lifetime").
 
@@ -342,7 +345,7 @@ def deferred_read_sources(
     row's raw Structured Column, so a successor is patched from what the row
     held rather than rebuilt from the members this model declares.
     """
-    return _DeferredReadSources(
+    return _DeferredReadOrigins(
         meta,
         observations,
         admitted,

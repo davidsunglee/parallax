@@ -7,14 +7,14 @@ from dataclasses import dataclass
 
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
+from parallax.core.execution._retention import (
+    ObservationLedger,
+    ReadOrigins,
+    RecordedProjections,
+    deferred_read_origins,
+)
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.handle._retention import (
-    ObservationLedger,
-    ObservedRows,
-    ReadSources,
-    deferred_read_sources,
-)
 from tests.unit._positional_row_support import positional_row
 
 
@@ -44,16 +44,16 @@ def retained_sources(
     *,
     document: object | None = None,
     ledger: ObservationLedger | None = None,
-) -> ReadSources:
+) -> ReadOrigins:
     """The sources a graph-form read retains for one projection per judged
     row, each admitted with its positional state; ``document`` is the raw
     Structured Column every projection carries."""
     layout, member_rows = judged.layout, judged.member_rows
     entity = layout.concrete
-    observations = ObservedRows()
+    observations = RecordedProjections()
     for node in range(len(member_rows)):
-        observations.observe_occurrence(node, entity, document)
-    return deferred_read_sources(
+        observations.observe_projection(node, entity, document)
+    return deferred_read_origins(
         model,
         observations,
         lambda node: (layout, member_rows[node]),
@@ -70,7 +70,7 @@ def judged_evidence(
     *rows: Mapping[str, object],
     document: object | None = None,
     ledger: ObservationLedger | None = None,
-) -> ReadSources:
+) -> ReadOrigins:
     """The sources a graph-form read retains for one projection per ``rows``
     entry, as :func:`judged_rows` lays them out and :func:`retained_sources`
     admits them."""

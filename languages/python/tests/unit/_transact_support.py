@@ -38,8 +38,9 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleProvider,
     RootExecution,
 )
+from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import RetainedObservation
-from parallax.snapshot import InvalidData, connect
+from parallax.snapshot import connect
 from parallax.snapshot.handle import ScopedDatabase, Snapshot
 from parallax.snapshot.materialize import WireEntity
 from parallax.snapshot.materialize._wire import read_origin_of

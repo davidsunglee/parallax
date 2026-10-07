@@ -4,17 +4,26 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields
 from typing import ClassVar, Final, Self, cast
 
-from parallax.core.metamodel import EntityIdentity, MemberIdentity
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    MemberIdentity,
+    ValueObjectAttributeIdentity,
+    ValueObjectIdentity,
+)
+from parallax.core.read_delivery._page._rows import StoredDataIssueCode, StoredDataIssueInput
 from parallax.core.temporal_read import Edge
 from parallax.core.write_plan import ObjectKey
-from parallax.snapshot.materialize._page import StoredDataIssueCode
 
 __all__ = [
     "EXCEPTION_MACHINERY",
     "MISSING_STORED_VALUE",
+    "STORED_DATA_DECODING_FAILED",
     "InvalidData",
     "InvalidDataError",
+    "StoredDataDecodingError",
     "StoredDataIssue",
+    "stored_data_refusal",
 ]
 
 
@@ -249,3 +258,38 @@ class InvalidDataError(RuntimeError):
     @property
     def edition(self) -> str:
         return self._edition
+
+
+STORED_DATA_DECODING_FAILED: Final[str] = "stored-data-decoding-failed"
+"""The stable code of a stored-data refusal that interrupts an atomic operation."""
+
+
+class StoredDataDecodingError(ValueError):
+    """A judged stored-data issue that prevents an operation from completing.
+
+    Raised where invalid stored data cannot travel in band: atomic publication
+    and evidence acquisition both refuse the first issue they reach.
+    """
+
+    code: Final[str] = STORED_DATA_DECODING_FAILED
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        entity: EntityIdentity,
+        member: AttributeIdentity | ValueObjectIdentity | ValueObjectAttributeIdentity | None,
+    ) -> None:
+        super().__init__(f"{STORED_DATA_DECODING_FAILED}: {message}")
+        self.message = message
+        self.entity = entity
+        self.member = member
+
+
+def stored_data_refusal(issue: StoredDataIssueInput) -> StoredDataDecodingError:
+    """The refusal ``issue`` raises where it cannot be published in band."""
+    return StoredDataDecodingError(
+        f"{issue.entity.canonical} holds invalid stored data ({issue.code})",
+        entity=issue.entity,
+        member=issue.member,
+    )

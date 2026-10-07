@@ -35,8 +35,9 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.object_query import TX_TIME, VALID_TIME
+from parallax.core.read_delivery import StreamStateError
 from parallax.core.unit_work import instructions
-from parallax.snapshot import ServingModel, SnapshotStream, SnapshotStreamStateError, prepare_model
+from parallax.snapshot import ServingModel, SnapshotStream, prepare_model
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import (
     Database,
@@ -528,7 +529,7 @@ def test_a_retried_callback_opens_a_fresh_stream_and_observes_the_roots_again() 
     assert attempts == [[1, 2, 3], [1, 2, 3]]
     assert port.calls.count(BeginCall()) == 2
     assert opened[0] is not opened[1]
-    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+    with pytest.raises(StreamStateError, match="inside its own scope"):
         _ = opened[0].pin
 
 

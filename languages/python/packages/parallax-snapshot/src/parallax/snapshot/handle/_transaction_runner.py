@@ -23,6 +23,11 @@ from parallax.core.execution_lifecycle._activity import (
     open_transaction_root,
     refuse_reentry,
 )
+
+# Sibling implementation modules. None of these names carries a leading
+# underscore, precisely because it crosses a module boundary: privacy is carried
+# by the private MODULE names and by the package's frozen `__all__`.
+from parallax.core.read_delivery._read_plan import ReadPlanner
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     Clock,
@@ -47,10 +52,6 @@ from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import ExecutionUnit
 from parallax.core.write_plan.steps import PlannedInsert
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
-
-# Sibling implementation modules. None of these names carries a leading
-# underscore, precisely because it crosses a module boundary: privacy is carried
-# by the private MODULE names and by the package's frozen `__all__`.
 from parallax.snapshot.handle._adoption import AdoptedExecution
 from parallax.snapshot.handle._connection_lifecycle import enter_connection, exit_connection
 from parallax.snapshot.handle._execution_authority import ExecutionCapture, same_execution
@@ -68,7 +69,6 @@ from parallax.snapshot.handle._publication import (
     read_projection,
     write_projection,
 )
-from parallax.snapshot.handle._read_plan import ReadPlanner
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._write_lowering import lowered, stream_lowered
 

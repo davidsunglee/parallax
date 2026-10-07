@@ -8,8 +8,8 @@ from parallax.core.unit_work import WriteInstructionError
 from parallax.snapshot.handle._keyed_writes import window_mutation
 from parallax.snapshot.handle._options import OMITTED, Omitted
 from parallax.snapshot.handle._predicate_writes import PredicateWriteContext
-from parallax.snapshot.handle._read import Snapshot
-from parallax.snapshot.handle._read_scope import ReadScope, WireQuery
+from parallax.snapshot.handle._read import Snapshot, wire_publication_for
+from parallax.snapshot.handle._read_scope import ReadScope, WireQuery, wire_query_node
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._wire_writes import (
     WireChanges,
@@ -46,10 +46,17 @@ class WireDatabaseView:
         Each root is a frozen :class:`~parallax.snapshot.materialize.WireEntity`
         keyed by declared member name, unwound finitely along the requested
         Include Paths, or the
-        :class:`~parallax.snapshot.materialize.InvalidData` record a root whose
+        :class:`~parallax.core.read_delivery.InvalidData` record a root whose
         stored state contradicted the model publishes in its place.
+
+        The refusal order is the Typed read's without its classless rung — no
+        Wire node is an Entity Class instance, so none needs a materializer:
+        re-entry, then the read begun, then the spelling it was handed lowered
+        to the canonical node.
         """
-        return self._reads.wire_find(query)
+        return self._reads.read(
+            query, convert_query=wire_query_node, build_publication=wire_publication_for
+        )
 
     def stream(self, query: WireQuery, *, batch_size: int = 1000) -> SnapshotStream[WireEntity]:
         """Deliver ``query``'s roots one at a time, in the Continuation Order,
@@ -65,7 +72,13 @@ class WireDatabaseView:
         there, exactly as in the Typed namespace. :class:`SnapshotStream` states
         the one stored value outside that, for both namespaces.
         """
-        return self._reads.wire_stream(query, batch_size)
+        return SnapshotStream(
+            self._reads,
+            query,
+            batch_size,
+            convert_query=wire_query_node,
+            build_publication=wire_publication_for,
+        )
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"

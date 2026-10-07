@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
 
+from parallax.core import read_delivery
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel import entity_by_name
@@ -164,8 +165,8 @@ def graph_root(root: object) -> MappingRow | None:
     position then carries ``null``, because a record is graded through
     `then.storedDataIssues` rather than rendered as though it were a node.
     """
-    if isinstance(root, handle.InvalidData):
-        return cast("MappingRow | None", cast("handle.InvalidData[object]", root).data)
+    if isinstance(root, read_delivery.InvalidData):
+        return cast("MappingRow | None", cast("read_delivery.InvalidData[object]", root).data)
     return cast("MappingRow", root)
 
 

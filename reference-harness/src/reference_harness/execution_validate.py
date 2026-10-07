@@ -78,7 +78,7 @@ _STARTED_FINISHED: dict[str, str] = {
     "databaseCallStarted": "databaseCallFinished",
     "transactionInvocationStarted": "transactionInvocationFinished",
     "transactionAttemptStarted": "transactionAttemptFinished",
-    "snapshotStreamStarted": "snapshotStreamFinished",
+    "streamStarted": "streamFinished",
     "streamBatchStarted": "streamBatchFinished",
     "acquisitionStarted": "acquisitionFinished",
     "releaseStarted": "releaseFinished",
@@ -91,7 +91,7 @@ _FINISHED_STARTED: dict[str, str] = {
 _ROOT_ACTIVITY: dict[str, str] = {
     "read": "readStarted",
     "transaction-invocation": "transactionInvocationStarted",
-    "snapshot-stream": "snapshotStreamStarted",
+    "stream": "streamStarted",
 }
 
 _OUTER: str = "transactionInvocationStarted:outer"
@@ -112,15 +112,15 @@ _CONTAINED_BY: dict[str, tuple[str, ...]] = {
     "writeBatchStarted": ("transactionAttemptStarted",),
     "databaseCallStarted": ("readStarted", "writeBatchStarted", "streamBatchStarted"),
     "transactionAttemptStarted": (_OUTER,),
-    "snapshotStreamStarted": ("transactionAttemptStarted",),
-    "streamBatchStarted": ("snapshotStreamStarted",),
+    "streamStarted": ("transactionAttemptStarted",),
+    "streamBatchStarted": ("streamStarted",),
     "acquisitionStarted": _OWNS_CONNECTION,
     "releaseStarted": _OWNS_CONNECTION,
     _OUTER: (),
     _JOINED: ("transactionAttemptStarted",),
 }
 
-_ROOT_KINDS: frozenset[str] = frozenset({"readStarted", _OUTER, "snapshotStreamStarted"})
+_ROOT_KINDS: frozenset[str] = frozenset({"readStarted", _OUTER, "streamStarted"})
 
 _LEADING_KIND: dict[str, str] = {
     "select": "read",
@@ -417,7 +417,7 @@ def _is_connection_owner(kind: str, parent: int | None, holder: _Activity | None
     return (
         kind == "streamBatchStarted"
         and holder is not None
-        and holder.started == "snapshotStreamStarted"
+        and holder.started == "streamStarted"
         and holder.parent is None
     )
 

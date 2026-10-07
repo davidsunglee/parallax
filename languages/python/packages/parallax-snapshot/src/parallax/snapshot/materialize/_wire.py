@@ -34,18 +34,13 @@ from parallax.core.metamodel import (
     Metamodel,
     OccurrenceMetadata,
 )
+from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
 from parallax.core.unit_work import ReadOrigin
 from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.wire import encode_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import SnapshotInspectionError, snapshot_state_of
-from parallax.snapshot.materialize._classify import (
-    ClassifiedRoot,
-    VersionAttributes,
-    classify_roots,
-)
-from parallax.snapshot.materialize._invalid import InvalidData
-from parallax.snapshot.materialize._page import ABSENT
+from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots
 from parallax.snapshot.materialize._root import RootView
 from parallax.snapshot.materialize._wire_memo import IndexMemo, WireMemo
 

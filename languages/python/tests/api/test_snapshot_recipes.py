@@ -43,7 +43,8 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
-from parallax.snapshot import SnapshotStreamStateError, connect, is_view_loaded
+from parallax.core.read_delivery import StreamStateError
+from parallax.snapshot import connect, is_view_loaded
 from parallax.snapshot.handle import Database, ScopedDatabase
 from tests._support.db_port import ConnectsAsItself, projected_row
 from tests._support.root_ownership import own_root
@@ -264,10 +265,10 @@ def test_a_streamed_delivery_is_scope_bound_and_single_pass(profile_run: Any) ->
 
     with db.stream(Order.where(Order.all), batch_size=2) as orders:
         assert [order.id for order in orders] == [1, 2, 3]
-        with pytest.raises(SnapshotStreamStateError, match="single-pass"):
+        with pytest.raises(StreamStateError, match="single-pass"):
             iter(orders)
     escaped = db.stream(Order.where(Order.all), batch_size=2)
-    with pytest.raises(SnapshotStreamStateError, match="own scope"):
+    with pytest.raises(StreamStateError, match="own scope"):
         escaped.pin  # noqa: B018 - the access itself is the assertion
 
 

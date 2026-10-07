@@ -1,4 +1,4 @@
-# Streamed delivery (m-execution-lifecycle): a Snapshot Stream is a Root
+# Streamed delivery (m-execution-lifecycle): a Stream is a Root
 # Execution of its own, and each page it reads is a Stream Batch under it.
 model: models/orders.yaml
 tags: [m-execution-lifecycle, m-snapshot-read, m-deep-fetch, stream, streamed-delivery, to-many, relationship, graph, slice-snapshot-1]
@@ -76,12 +76,12 @@ then:
   executionLifecycle:
     roots:
       - execution: 1
-        kind: snapshot-stream
+        kind: stream
         events:
           - sequence: 1
             activity: 1
             parent: null
-            snapshotStreamStarted:
+            streamStarted:
               target: parallax.compatibility.Order
               interface: wire
               batchSize: 2
@@ -181,4 +181,4 @@ then:
           - sequence: 22
             activity: 1
             parent: null
-            snapshotStreamFinished: { outcome: exhausted }
+            streamFinished: { outcome: exhausted }

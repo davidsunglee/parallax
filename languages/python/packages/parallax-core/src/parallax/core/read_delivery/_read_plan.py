@@ -16,6 +16,9 @@ from parallax.core.object_query._validated import (
     Paging,
     ValidatedObjectQuery,
 )
+from parallax.core.read_delivery._fetch import correlation_table, entity_read_lock, slot_table
+from parallax.core.read_delivery._page import PageBuilder, ViewSchema
+from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import (
     CompiledRead,
     CompiledTemplate,
@@ -25,9 +28,6 @@ from parallax.core.sql_gen._compile import (
 from parallax.core.sql_gen._seek import null_pattern
 from parallax.core.temporal_read import scans_validated_axis
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot.materialize import PageBuilder
-from parallax.snapshot.materialize._prepared import PreparedRead, bind
-from parallax.snapshot.materialize._views import ViewSchema
 
 __all__ = [
     "DEFAULT_READ_PLAN_CACHE_CAPACITY",
@@ -41,7 +41,7 @@ __all__ = [
 type ResultForm = Literal["row", "instance"]
 
 DEFAULT_READ_PLAN_CACHE_CAPACITY: Final = 16
-"""The bounded plan reuse a handle composed without an explicit capacity gets."""
+"""The bounded plan reuse a root composed without an explicit capacity gets."""
 
 
 def check_read_plan_cache_capacity(capacity: int) -> int:
@@ -63,7 +63,7 @@ class _ReadPlanCacheStatistics:
 @dataclass(frozen=True, slots=True)
 class _PreparedFetch:
     template: CompiledTemplate
-    rows: PreparedRead
+    rows: ReadRowConverter
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +72,7 @@ class ReadPlan:
 
     _query_plan: deep_fetch.ObjectQueryPlan
     _root: CompiledRead
-    _root_rows: PreparedRead
+    _root_rows: ReadRowConverter
     _schema: ViewSchema
     _correlations: tuple[tuple[AttributeIdentity, ...], ...]
     _fetches: tuple[_PreparedFetch | None, ...]
@@ -81,7 +81,7 @@ class ReadPlan:
     def fetch_count(self) -> int:
         return len(self._query_plan.fetch_steps)
 
-    def root_read(self) -> tuple[CompiledRead, PreparedRead]:
+    def root_read(self) -> tuple[CompiledRead, ReadRowConverter]:
         return self._root, self._root_rows
 
     def page_builder(self, observer: object | None) -> PageBuilder:
@@ -98,7 +98,9 @@ class ReadPlan:
     def fetch_step(self, index: int) -> deep_fetch.FetchStep:
         return self._query_plan.fetch_steps[index]
 
-    def fetch_read(self, index: int, keys: list[ManagedValue]) -> tuple[CompiledRead, PreparedRead]:
+    def fetch_read(
+        self, index: int, keys: list[ManagedValue]
+    ) -> tuple[CompiledRead, ReadRowConverter]:
         fetch = self._fetches[index]
         if fetch is None:
             raise ValueError("an executable fetch step requires a prepared template")
@@ -306,8 +308,6 @@ def _plan_uncached(
     preference: Concurrency | None,
     reusable: ReadPlan | None = None,
 ) -> _CachedDelivery:
-    from parallax.snapshot.handle import _read
-
     compiled_query, markers, limit_marker = _template_query(query)
     planned = deep_fetch.plan(
         compiled_query,
@@ -320,11 +320,11 @@ def _plan_uncached(
     locks = cast(
         "tuple[LockMode | None, ...]",
         (
-            _read.entity_read_lock(model.meta, query.root.identity, preference),
+            entity_read_lock(model.meta, query.root.identity, preference),
             *(
                 None
                 if isinstance(step, deep_fetch.BackReferenceFetchStep)
-                else _read.entity_read_lock(model.meta, step.query_template().target, preference)
+                else entity_read_lock(model.meta, step.query_template().target, preference)
                 for step in planned.fetch_steps
             ),
         ),
@@ -332,7 +332,7 @@ def _plan_uncached(
     correlations = (
         reusable._correlations  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
         if reusable is not None
-        else _read.correlation_table(planned, model.meta)
+        else correlation_table(planned, model.meta)
     )
     root = compile_read(
         planned.root,
@@ -369,7 +369,7 @@ def _plan_uncached(
         if reusable is not None
         else (
             ViewSchema.prepared(
-                _read.slot_table(planned),
+                slot_table(planned),
                 (model.layouts.entity(entity.identity) for entity in model.meta.entities),
             )
             if result_form == "instance" and not scans_validated_axis(query.temporal)

@@ -5,12 +5,12 @@ middle, nested One and Many Value Objects at two depths, every declarable Neutra
 Type as an Entity Attribute and again as a document leaf, duplicate logical nodes
 through a narrowed view, three view slots and a back-reference — driven through
 production's own read loop with no database anywhere: ``UNCACHED_READ_PLANNER``
-plans the read, ``Materializer._read_root`` executes and holds the root statement,
-and ``Materializer._build_page`` converts it, renders and executes every fetch
+plans the read, ``PageReader._read_root`` executes and holds the root statement,
+and ``PageReader._build_page`` converts it, renders and executes every fetch
 template, and retains the Page's read sources. :class:`StressPort` answers each
 statement with rows composed before it.
 
-The two Materializer steps are private, and are reached here rather than copied:
+The two PageReader steps are private, and are reached here rather than copied:
 a measured window opens between them, so the root statement's execution stays
 outside it while every fetch the Page build runs stays inside.
 
@@ -80,6 +80,7 @@ from parallax.core.document_codec import (
 )
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import model_of
+from parallax.core.execution._page_origins import ObservedPageProjections
 from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -88,18 +89,18 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.read_delivery._page import ABSENT, Page, page_rows
+from parallax.core.read_delivery._page_reader import (
+    EagerPageResult,
+    PageReader,
+    _RootRead,  # pyright: ignore[reportPrivateUsage]
+)
+from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlan
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.storage_layout import DirectColumn, TableLayout
 from parallax.core.storage_layout import view as storage_layout_view
-from parallax.snapshot._read_result import FindResult
-from parallax.snapshot.handle._materialization import (
-    Materializer,
-    _RootRead,  # pyright: ignore[reportPrivateUsage]
-)
+from parallax.core.unit_work import ReadOrigin
 from parallax.snapshot.handle._preflight import preflight
-from parallax.snapshot.handle._read_plan import UNCACHED_READ_PLANNER, ReadPlan
-from parallax.snapshot.materialize import Page
-from parallax.snapshot.materialize._page import ABSENT, page_rows
 from tests._support.db_port import ConnectsAsItself
 
 __all__ = [
@@ -559,7 +560,7 @@ class StressPort(ConnectsAsItself):
         raise NotImplementedError
 
 
-_MATERIALIZER: Final = Materializer()
+_MATERIALIZER: Final = PageReader()
 
 
 def read_root(
@@ -576,16 +577,24 @@ def read_root(
     )
 
 
-def build_page(model: CatalogedModel, root: _RootRead, port: StressPort) -> FindResult:
+def build_page(
+    model: CatalogedModel, root: _RootRead, port: StressPort
+) -> EagerPageResult[ReadOrigin]:
     """One whole Page built from an executed ``root``: its rows converted, every
     fetch rendered, executed on ``port``, converted, and attached, and the Page's
     read sources retained. ``root`` is consumed."""
-    return _MATERIALIZER._build_page(root, model, port, calls=INERT)  # pyright: ignore[reportPrivateUsage]
+    return _MATERIALIZER._build_page(  # pyright: ignore[reportPrivateUsage]
+        root,
+        model,
+        port,
+        origins=ObservedPageProjections(model.meta, ledger=None, scanned=False),
+        calls=INERT,
+    )
 
 
 def batch(
     model: CatalogedModel, validated: ValidatedObjectQuery, plan: ReadPlan, port: StressPort
-) -> FindResult:
+) -> EagerPageResult[ReadOrigin]:
     """One whole standalone find of ``validated`` over ``port``."""
     return build_page(model, read_root(model, validated, plan, port), port)
 

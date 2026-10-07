@@ -94,6 +94,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.read_delivery._read_plan import DEFAULT_READ_PLAN_CACHE_CAPACITY
 from parallax.postgres._connection import adapt_binds, initialize_connection
 from parallax.snapshot import ServingModel, prepare_model
 from parallax.snapshot.handle import (
@@ -103,7 +104,6 @@ from parallax.snapshot.handle import (
     ScopedDatabase,
     Transaction,
 )
-from parallax.snapshot.handle._read_plan import DEFAULT_READ_PLAN_CACHE_CAPACITY
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _write_lowering_support as lowering_support

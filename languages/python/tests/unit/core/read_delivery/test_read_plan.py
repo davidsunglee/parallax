@@ -20,13 +20,15 @@ from parallax.core import continuation
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
+from parallax.core.execution._page_origins import ObservedPageProjections
 from parallax.core.object_query import deserialize
 from parallax.core.object_query._validated import ContinuationCoordinate, ValidatedObjectQuery
+from parallax.core.read_delivery import _read_plan
+from parallax.core.read_delivery._delivery import find
+from parallax.core.read_delivery._read_plan import ReadPlanCache
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot.handle import Database, _read_plan
+from parallax.snapshot.handle import Database
 from parallax.snapshot.handle._preflight import preflight
-from parallax.snapshot.handle._read import find
-from parallax.snapshot.handle._read_plan import ReadPlanCache
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 from tests.unit._transact_support import db_for
 
@@ -817,7 +819,14 @@ def test_read_plan_cache_retains_no_connection_rows_page_evidence_or_result() ->
     port = ScriptedAdapter(Read(rows=[stored_row]))
     retained = weakref.ref(port)
 
-    result = find(_query(), _MODEL, port, edition="edition-a", planner=cache)
+    result = find(
+        _query(),
+        _MODEL,
+        port,
+        origins=ObservedPageProjections(_MODEL.meta, ledger=None, scanned=False),
+        edition="edition-a",
+        planner=cache,
+    )
     assert result.page.root_count == 1
     assert not _reaches(cache, port)
     assert not _reaches(cache, stored_row)

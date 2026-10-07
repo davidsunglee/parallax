@@ -39,11 +39,11 @@ from parallax.core.db_port import DatabaseConnection
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ReadStarted,
-    SnapshotStreamStarted,
+    StreamStarted,
 )
 from parallax.core.execution_lifecycle._activity import (
     ActivityTarget,
-    SnapshotStreamActivity,
+    StreamActivity,
     installed_lifecycle,
     open_transaction_root,
 )
@@ -463,18 +463,18 @@ def test_a_standalone_stream_opens_a_root_execution_of_its_own() -> None:
         _capture(ScriptedAdapter().open()),
     )
 
-    activity: SnapshotStreamActivity = execution.begin().open_stream(_TARGET, "typed", 5)
+    activity: StreamActivity = execution.begin().open_stream(_TARGET, "typed", 5)
     with activity:
         pass
 
     (root,) = provider.roots
-    assert root.execution.kind == "snapshot_stream"
+    assert root.execution.kind == "stream"
     assert _parentage(root) == [
-        ("SnapshotStreamStarted", 1, None),
-        ("SnapshotStreamFinished", 1, None),
+        ("StreamStarted", 1, None),
+        ("StreamFinished", 1, None),
     ]
     started = root.events[0]
-    assert isinstance(started, SnapshotStreamStarted)
+    assert isinstance(started, StreamStarted)
     assert started.edition == "test"
 
 
@@ -492,8 +492,8 @@ def test_a_participating_stream_is_a_child_of_the_current_attempt() -> None:
     assert _parentage(root) == [
         ("TransactionInvocationStarted", 1, None),
         ("TransactionAttemptStarted", 2, 1),
-        ("SnapshotStreamStarted", 3, 2),
-        ("SnapshotStreamFinished", 3, 2),
+        ("StreamStarted", 3, 2),
+        ("StreamFinished", 3, 2),
         ("TransactionAttemptFinished", 2, 1),
         ("TransactionInvocationFinished", 1, None),
     ]
@@ -516,20 +516,20 @@ def test_a_standalone_page_enters_its_batch_around_the_body_and_flushes_nothing(
     # The page's Stream Batch starts before its lease, and the body runs only
     # after that batch-owned Acquisition has finished.
     assert body.only.transitions == (
-        "SnapshotStreamStarted",
+        "StreamStarted",
         "StreamBatchStarted",
         "AcquisitionStarted",
         "AcquisitionFinished",
     )
     assert _parentage(root) == [
-        ("SnapshotStreamStarted", 1, None),
+        ("StreamStarted", 1, None),
         ("StreamBatchStarted", 2, 1),
         ("AcquisitionStarted", 3, 2),
         ("AcquisitionFinished", 3, 2),
         ("ReleaseStarted", 4, 2),
         ("ReleaseFinished", 4, 2),
         ("StreamBatchFinished", 2, 1),
-        ("SnapshotStreamFinished", 1, None),
+        ("StreamFinished", 1, None),
     ]
     handed = body.only.inputs
     assert (handed.preference, handed.ledger) == (None, None)
@@ -556,12 +556,12 @@ def test_every_participating_page_flushes_first_and_opens_its_batch_inside_that_
     assert _parentage(root) == [
         ("TransactionInvocationStarted", 1, None),
         ("TransactionAttemptStarted", 2, 1),
-        ("SnapshotStreamStarted", 3, 2),
+        ("StreamStarted", 3, 2),
         ("WriteBatchStarted", 4, 2),
         ("WriteBatchFinished", 4, 2),
         ("StreamBatchStarted", 5, 3),
         ("StreamBatchFinished", 5, 3),
-        ("SnapshotStreamFinished", 3, 2),
+        ("StreamFinished", 3, 2),
         ("TransactionAttemptFinished", 2, 1),
         ("TransactionInvocationFinished", 1, None),
     ]

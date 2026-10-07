@@ -39,7 +39,7 @@ from typing import Final
 
 from parallax.conformance import vo_models as vo
 from parallax.core.db_port import MappingRow
-from parallax.snapshot.materialize._evidence import freeze_evidence
+from parallax.core.read_delivery._evidence import freeze_evidence
 from tests.unit.memory_instruments import (
     Seam,
     in_a_child_interpreter,
