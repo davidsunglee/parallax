@@ -560,6 +560,7 @@ def test_the_local_default_still_writes_the_complete_legacy_portfolio_over_whole
 ) -> None:
     run, invoked = _member_runner(contract, envelopes)
     monkeypatch.setattr(cost_report, "run_member", run)
+    monkeypatch.setattr(cost_report, "preflight", lambda: None)
     out = tmp_path / "reports"
     assert cost_report.main(["--out", str(out)]) == 0
     capsys.readouterr()
@@ -594,6 +595,7 @@ def test_a_failed_required_head_exits_non_zero_after_writing_every_shard(
 
     run, invoked = _member_runner(contract, envelopes, failing=failing)
     monkeypatch.setattr(cost_report, "run_member", run)
+    monkeypatch.setattr(cost_report, "preflight", lambda: None)
     out = tmp_path / "reports"
     assert cost_report.main(["--shard", ALL_SHARDS, "--out", str(out)]) == 1
     capsys.readouterr()

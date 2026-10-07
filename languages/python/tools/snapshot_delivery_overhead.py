@@ -850,6 +850,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--canary", action="store_true")
+    parser.add_argument("--authority-preflight", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--diagnostic",
         action="store_true",
@@ -895,7 +896,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.canary:
         rendered = json.dumps(canary(contract, run_child).document(), indent=2, sort_keys=True)
     else:
-        envelope = _measured(contract, args.durations, args.metadata, selected)
+        try:
+            envelope = _measured(
+                contract,
+                args.durations,
+                args.metadata,
+                selected,
+                authority_preflight=args.authority_preflight,
+            )
+        except ValueError as error:
+            if not args.authority_preflight:
+                raise
+            print(error, file=sys.stderr)
+            return 1
         rendered = json.dumps(envelope.document(), indent=2, sort_keys=True)
     if args.out is None:
         print(rendered)
@@ -906,6 +919,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _refuse_misplaced_options(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.authority_preflight and (args.diagnostic or args.canary):
+        parser.error("--authority-preflight requires a measurement")
     if (args.select or args.cell or args.runtime) and not args.diagnostic:
         parser.error("--select, --cell, and --runtime are diagnostic options")
     if args.diagnostic and args.out is not None:
@@ -935,6 +950,8 @@ def _measured(
     durations: Path | None,
     metadata: Path | None,
     selected: Selection = every_cell,
+    *,
+    authority_preflight: bool = False,
 ) -> CostReportEnvelope:
     spans = Spans()
     try:
@@ -944,6 +961,15 @@ def _measured(
         with spans.span("setup", "provisioner", member=SUBJECT):
             provisioner = Provisioner()
         try:
+            if authority_preflight:
+                actual = str(provisioner.port.execute("show server_version", ())[0][0])
+                expected = contract.authority.get("postgres")
+                if actual != expected:
+                    raise ValueError(
+                        f"authority preflight refused: postgres: observed {actual!r}, "
+                        f"authority requires {expected!r}. Change the contract's authority "
+                        "block first, or run --diagnostic."
+                    )
             return measure(contract, provisioner, run_child, spans=spans, selected=selected)
         finally:
             with spans.span("setup", "close", member=SUBJECT):
