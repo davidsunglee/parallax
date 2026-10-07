@@ -78,28 +78,33 @@ This contract-only remedy does not require another capture.
 
 ### Live timing and interpreter patches
 
-On 2026-10-07, one sequential diagnostic pair used uv-managed CPython 3.14.7 and
-3.14.8 on the same clean tree, `c4a0533f2`, with identical frozen dependencies,
-psycopg 3.3.6/libpq 18.6, and the pinned PostgreSQL 18.6 image. Each interpreter
-completed 40 live and first-result cells over the five live workloads, using the
-contract's 200-root arm, three warmups, and nine measured samples.
+On 2026-10-07, two sequential diagnostic pairs used uv-managed CPython 3.14.7
+and 3.14.8 on the same clean tree, `c4a0533f2`, with identical frozen
+dependencies, psycopg 3.3.6/libpq 18.6, and the pinned PostgreSQL 18.6 image.
+Each interpreter in each pair completed 40 live and first-result cells over the
+five live workloads, using the contract's 200-root arm, three warmups, and nine
+measured samples. The first pair had background application activity; the
+repeat followed the user's signal that the machine was relatively quiet.
+System and desktop activity remained present during that window.
 
 The table shows the range of changes in median full-delivery milliseconds from
 3.14.7 to 3.14.8 across eager, page-32, and page-128 delivery; positive means
 slower.
 
-| Workload | Change in median full-delivery time |
-|---|---|
-| conventional-fanout | −8.2% to +0.7% |
-| duplicate-include | −7.9% to +5.3% |
-| document-heavy | −2.5% to +4.3% |
-| versioned-document | +0.5% to +6.5% |
-| bitemporal-current | +10.6% to +28.8% |
+| Workload | First pair | Relatively quiet repeat |
+|---|---|---|
+| conventional-fanout | −8.2% to +0.7% | −10.6% to −1.9% |
+| duplicate-include | −7.9% to +5.3% | +3.1% to +7.5% |
+| document-heavy | −2.5% to +4.3% | −4.3% to +1.8% |
+| versioned-document | +0.5% to +6.5% | −3.3% to +17.1% |
+| bitemporal-current | +10.6% to +28.8% | −4.2% to +0.9% |
 
-Across the 15 full-delivery cells, the median change was +0.7%. First-result
-cells ranged from −27.3% to +14.6%. This pair does not establish a general
-interpreter-patch effect or explain the earlier 15–89% live slowdown. The runs
-were sequential and the workstation had background application activity, so
-host state remains a confounder. Live comparisons need matched host conditions
-and a quiet measurement window. The recovered capture's exclusion as a live
-timing baseline remains in force; this diagnostic pair does not replace it.
+Across the 15 full-delivery cells, the median change was +0.7% in the first
+pair and −0.7% in the repeat. First-result cells ranged from −27.3% to +14.6%
+in the first pair and −44.0% to +17.6% in the repeat. The first pair's
+bitemporal slowdown did not repeat. Neither pair establishes a general
+interpreter-patch effect or explains the earlier 15–89% live slowdown. Both
+pairs were sequential, with background activity still present, so host state
+remains a confounder. Live comparisons need matched host conditions and a quiet
+measurement window. The recovered capture's exclusion as a live timing
+baseline remains in force; these diagnostic pairs do not replace it.
