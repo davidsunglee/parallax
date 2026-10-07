@@ -230,7 +230,7 @@ class StreamDelivery[R: StreamRead[Any], P: Publication[Any, Any]]:
     lifecycle projection state, before the remaining roots and the publication
     are released. A delivery that settles and then closes releases twice, so
     ``on_release`` is idempotent; a failure it raises still leaves the roots and
-    the publication released.
+    the publication released and the delivery's verdict recorded.
     """
 
     __slots__ = (
@@ -454,14 +454,16 @@ class StreamDelivery[R: StreamRead[Any], P: Publication[Any, Any]]:
         if self._state != _DRAINING:
             return
         self._state = terminal
-        read = self._read
-        if read is not None:
-            read.release(failure)
-        self._release_delivery()
-        if terminal == _EXHAUSTED:
-            self._activity.exhausted()
-        else:
+        if terminal == _FAILED:
             self._failure = failure
+        try:
+            read = self._read
+            if read is not None:
+                read.release(failure)
+            self._release_delivery()
+        finally:
+            if terminal == _EXHAUSTED:
+                self._activity.exhausted()
 
     def _release_delivery(self) -> None:
         """Release the lifecycle's projection state, then the remaining roots,

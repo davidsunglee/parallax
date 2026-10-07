@@ -49,11 +49,37 @@ class _CallbackFailed(Exception):
     pass
 
 
+class _Stream:
+    """Records how the delivery ended its observed stream."""
+
+    def __init__(self) -> None:
+        self.endings: list[object] = []
+
+    def __enter__(self) -> _Stream:
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: object,
+        /,
+    ) -> None:
+        self.endings.append(("closed", exc))
+
+    def batch(self) -> StreamBatchActivity:
+        return INERT.batch()
+
+    def exhausted(self) -> None:
+        self.endings.append("exhausted")
+
+
 class _Read:
     """A begun read that owns nothing and brackets nothing."""
 
     def __init__(self) -> None:
         self.released: list[BaseException | None] = []
+        self.stream = _Stream()
 
     @property
     def selected(self) -> str:
@@ -71,7 +97,7 @@ class _Read:
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
     ) -> StreamActivity:
         del target, interface, batch_size
-        return INERT
+        return self.stream
 
     def release(self, failure: BaseException | None, /) -> None:
         self.released.append(failure)
@@ -242,7 +268,7 @@ def test_a_failing_release_callback_still_releases_the_publication_at_exhaustion
     def failing_release() -> None:
         raise _CallbackFailed
 
-    delivery, _read, publication = _delivery(
+    delivery, read, publication = _delivery(
         [1], on_page_start=lambda _includes: None, on_release=failing_release
     )
     delivery.enter()
@@ -253,6 +279,33 @@ def test_a_failing_release_callback_still_releases_the_publication_at_exhaustion
         next(view)
 
     assert publication.released == 1
+    assert read.stream.endings == ["exhausted"]
+
+
+def test_a_failing_release_callback_still_retains_the_failure_the_delivery_announces() -> None:
+    def failing_release() -> None:
+        raise _CallbackFailed
+
+    delivery, read, publication = _delivery(
+        [3],
+        on_page_start=lambda _includes: None,
+        on_release=failing_release,
+        invalid={1: _invalid_root(1)},
+    )
+    delivery.enter()
+    view = delivery.view(checked=False)
+    assert next(view) == 0
+
+    with pytest.raises(_CallbackFailed) as settling:
+        next(view)
+    refusal = settling.value.__context__
+    assert isinstance(refusal, InvalidDataError)
+
+    with pytest.raises(_CallbackFailed):
+        delivery.close()
+
+    assert publication.released == 1
+    assert read.stream.endings == [("closed", refusal)]
 
 
 def _invalid_root(ordinal: int) -> InvalidData[object]:
