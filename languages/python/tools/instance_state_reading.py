@@ -43,8 +43,8 @@ from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.read_delivery._page import ROOT_LEVEL, LogicalKey, PageBuilder, ViewSchema
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import Snapshot
-from parallax.snapshot.materialize._root import RootView
-from parallax.snapshot.materialize._wire import shared_wire_encoder, wire_roots
+from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._wire import shared_wire_encoder, wire_roots
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"

@@ -509,7 +509,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # whole keeps read planning, `m-sql`, `m-db-error`, `m-auto-retry`, and
     # `m-dialect` outside this representation scope. Sealed, because the
     # facades beside it reach every one of them.
-    "parallax.snapshot.materialize": frozenset(
+    "parallax.snapshot._publication": frozenset(
         {
             "parallax.core.entity",
             "parallax.core.entity._construction_input",
@@ -685,7 +685,7 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
     # Value publication is sealed for the same reason: every other module of the
     # lifecycle extension reaches read planning, SQL generation, or the execution
     # lifecycle, and Root View and value construction must reach none of them.
-    "parallax.snapshot.materialize": ChildScope(parent="parallax.snapshot", policy="sealed"),
+    "parallax.snapshot._publication": ChildScope(parent="parallax.snapshot", policy="sealed"),
 }
 
 

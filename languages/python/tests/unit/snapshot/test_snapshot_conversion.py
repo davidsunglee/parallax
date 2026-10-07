@@ -1,6 +1,6 @@
 """Per-row conversion into one compact projection row (m-snapshot-read).
 
-Exercises `parallax.snapshot.materialize`'s conversion seam independently of the
+Exercises read delivery's conversion seam independently of the
 Docker-gated compile/run sweeps: value-object document decoding (declared-shape
 projection, the absence-collapse vocabulary, the refusal shape for stored data
 that contradicts its declared type), scalar provenance, Page identity claims
@@ -86,8 +86,8 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
-from parallax.snapshot.materialize._root import RootView
-from parallax.snapshot.materialize._typed import typed_root
+from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._typed import typed_root
 from tests._support.model_capabilities import graph_construction_for
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, target

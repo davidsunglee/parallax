@@ -19,11 +19,11 @@ from parallax.core.read_delivery._read_plan import (
     check_read_plan_cache_capacity,
 )
 from parallax.core.unit_work import Clock, Concurrency
-from parallax.snapshot.handle._errors import SnapshotConnectionError
-from parallax.snapshot.handle._read import Snapshot, typed_publication_for
-from parallax.snapshot.handle._stream import SnapshotStream
-from parallax.snapshot.handle._transaction import Transaction, transaction_for
-from parallax.snapshot.handle._wire import WireDatabaseView
+from parallax.snapshot._handle._errors import SnapshotConnectionError
+from parallax.snapshot._handle._read import Snapshot, typed_publication_for
+from parallax.snapshot._handle._stream import SnapshotStream
+from parallax.snapshot._handle._transaction import Transaction, transaction_for
+from parallax.snapshot._handle._wire import WireDatabaseView
 
 __all__ = ["Database", "ScopedDatabase", "connect"]
 

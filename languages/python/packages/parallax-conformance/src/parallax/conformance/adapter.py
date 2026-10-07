@@ -148,7 +148,7 @@ def _scenario_lane_error(case: case_format.Case) -> engine.EngineError:
     # A `scenario`-shape case whose top-level `lane` is `api-conformance` (m-
     # snapshot-read-009, `action: access`'s closed-world absence witness): its
     # observable is a per-language surfacing (the developer-facing surface
-    # `parallax.snapshot.handle` builds), not a wire-observable golden this
+    # `parallax.snapshot` builds), not a wire-observable golden this
     # lane can grade — the SAME `_boundary_lane_error` precedent, extended to
     # a second shape. A `mutate`-action-only scenario is the one exception:
     # the engine grades the mutate verb itself, including its `expectError`

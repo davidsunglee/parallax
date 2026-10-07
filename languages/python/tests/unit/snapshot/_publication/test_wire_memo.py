@@ -9,8 +9,8 @@ from typing import cast
 import pytest
 
 from parallax.snapshot import WireEntity
-from parallax.snapshot.materialize import _wire_memo
-from parallax.snapshot.materialize._wire_memo import (
+from parallax.snapshot._publication import _wire_memo
+from parallax.snapshot._publication._wire_memo import (
     IndexMemo,
     StrongIdentityMemo,
     WeakIdentityMemo,

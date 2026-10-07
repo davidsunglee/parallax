@@ -33,7 +33,7 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.write_plan import ObjectKey
-from parallax.snapshot.materialize._wire import (
+from parallax.snapshot._publication._wire import (
     WireEntity,
     authoring_of,
     opened_wire_entity,

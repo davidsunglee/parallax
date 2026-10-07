@@ -188,7 +188,7 @@ def first_declared_entity(case: case_format.Case) -> str:
 
 
 def gate_read(query: ObjectQueryNode, model: AcceptedMetamodel) -> None:
-    """Run production's own read gate (`handle.preflight`) over ``query`` for its
+    """Run production's own read gate (`execution._preflight.preflight`) over ``query`` for its
     refusal alone: it resolves the target, validates every clause from that
     root, and classifies Deferred Execution Features."""
     preflight(query, model=model, form="graph")
@@ -196,5 +196,5 @@ def gate_read(query: ObjectQueryNode, model: AcceptedMetamodel) -> None:
 
 def read_scans(query: ObjectQueryNode, model: AcceptedMetamodel) -> bool:
     """Whether ``query`` scans any temporal dimension — a milestone-set read — as
-    production's own gate (`handle.preflight`) validates it."""
+    production's own gate (`execution._preflight.preflight`) validates it."""
     return scans_validated_axis(preflight(query, model=model, form="graph").temporal)

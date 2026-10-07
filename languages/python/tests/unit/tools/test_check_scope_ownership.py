@@ -371,10 +371,10 @@ def test_first_party_imports_sees_every_import_form() -> None:
     source = (
         "import os\n"
         "import parallax.core.base\n"
-        "from parallax.snapshot.handle import _errors\n"
+        "from parallax.snapshot._handle import _errors\n"
         "from . import sibling\n"
         "from .child import leaf\n"
-        "from ..materialize import view\n"
+        "from .._publication import view\n"
         "from .star import *\n"
         "from typing import TYPE_CHECKING\n"
         "if TYPE_CHECKING:\n"
@@ -384,17 +384,17 @@ def test_first_party_imports_sees_every_import_form() -> None:
     # came from, because `from p import q` is how a submodule is imported and
     # nothing in the syntax says whether `q` is one. An attribute read that way
     # contributes a dotted path no scope declares, which costs nothing.
-    assert own.first_party_imports(source, "parallax.snapshot.handle") == frozenset(
+    assert own.first_party_imports(source, "parallax.snapshot._handle") == frozenset(
         {
             "parallax.core.base",
-            "parallax.snapshot.handle",
-            "parallax.snapshot.handle._errors",
-            "parallax.snapshot.handle.sibling",
-            "parallax.snapshot.handle.child",
-            "parallax.snapshot.handle.child.leaf",
-            "parallax.snapshot.handle.star",
-            "parallax.snapshot.materialize",
-            "parallax.snapshot.materialize.view",
+            "parallax.snapshot._handle",
+            "parallax.snapshot._handle._errors",
+            "parallax.snapshot._handle.sibling",
+            "parallax.snapshot._handle.child",
+            "parallax.snapshot._handle.child.leaf",
+            "parallax.snapshot._handle.star",
+            "parallax.snapshot._publication",
+            "parallax.snapshot._publication.view",
             "parallax.core.metamodel",
             "parallax.core.metamodel.EntityDescriptor",
         }
@@ -428,13 +428,13 @@ def test_first_party_reaches_keep_a_package_form_import_whole() -> None:
 
 
 def test_containing_package_folds_only_a_package_interface() -> None:
-    # A relative import in `handle/_read.py` is spelled against `handle`, while
-    # one in `handle/__init__.py` is spelled against `handle` itself, so the two
+    # A relative import in `_handle/_read.py` is spelled against `_handle`, while
+    # one in `_handle/__init__.py` is spelled against `_handle` itself, so the two
     # file shapes resolve the same dot to the same package.
-    interface = "parallax-snapshot/src/parallax/snapshot/handle/__init__.py"
-    module = "parallax-snapshot/src/parallax/snapshot/handle/_read.py"
-    assert own.containing_package(interface) == "parallax.snapshot.handle"
-    assert own.containing_package(module) == "parallax.snapshot.handle"
+    interface = "parallax-snapshot/src/parallax/snapshot/_handle/__init__.py"
+    module = "parallax-snapshot/src/parallax/snapshot/_handle/_read.py"
+    assert own.containing_package(interface) == "parallax.snapshot._handle"
+    assert own.containing_package(module) == "parallax.snapshot._handle"
 
 
 # --------------------------------------------------------------------------

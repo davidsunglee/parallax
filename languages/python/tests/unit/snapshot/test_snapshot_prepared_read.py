@@ -87,8 +87,8 @@ from parallax.descriptor._records import (
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.descriptor._records import ValueObject as DescriptorValueObject
-from parallax.snapshot.materialize._publication import publication_issue, publish_roots
-from parallax.snapshot.materialize._root import RootView
+from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._root_publication import publication_issue, publish_roots
 from tests._support.sql import compile_read
 from tests.unit import _predicate_acquisition_support as acquisition
 from tests.unit._corpus_model_support import formed, target

@@ -12,14 +12,14 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.read_delivery import InvalidData, StreamStateError
 from parallax.core.read_delivery._stream import StreamDelivery
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.handle._read import (
+from parallax.snapshot._handle._read import (
     SnapshotPublication,
     projection_concrete,
     wire_position,
 )
-from parallax.snapshot.materialize import _wire as wire_materialize
-from parallax.snapshot.materialize._wire import EntityReader, WireEntity, WireWalk
-from parallax.snapshot.materialize._wire_memo import WeakIdentityMemo
+from parallax.snapshot._publication import _wire as wire_materialize
+from parallax.snapshot._publication._wire import EntityReader, WireEntity, WireWalk
+from parallax.snapshot._publication._wire_memo import WeakIdentityMemo
 
 __all__ = ["SnapshotStream", "StreamExecution"]
 

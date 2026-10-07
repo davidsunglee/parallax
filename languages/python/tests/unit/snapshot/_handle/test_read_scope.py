@@ -77,9 +77,9 @@ from parallax.snapshot import (
     Snapshot,
     SnapshotConnectionError,
 )
-from parallax.snapshot.handle._read import typed_publication_for, wire_publication_for
-from parallax.snapshot.handle._stream import SnapshotStream
-from parallax.snapshot.handle._wire import (
+from parallax.snapshot._handle._read import typed_publication_for, wire_publication_for
+from parallax.snapshot._handle._stream import SnapshotStream
+from parallax.snapshot._handle._wire import (
     WireQuery,
     wire_query_node,
 )

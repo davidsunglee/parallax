@@ -109,7 +109,7 @@ def test_every_scope_submodule_imports() -> None:
     assert "parallax.core.base" in imported
     assert "parallax.core.predicate" in imported
     assert "parallax.descriptor._ingest" in imported
-    assert "parallax.snapshot.materialize" in imported
+    assert "parallax.snapshot._publication" in imported
     assert "parallax.postgres.adapter" in imported
     assert f"parallax.postgres._cloaders_{psycopg.pq.__impl__}" in imported
     assert "parallax.conformance.cli" in imported
@@ -119,8 +119,10 @@ def test_every_scope_submodule_imports() -> None:
     "module",
     [
         "parallax.snapshot",
-        "parallax.snapshot.handle",
-        "parallax.snapshot.materialize",
+        "parallax.snapshot._handle",
+        "parallax.snapshot._publication",
+        "parallax.snapshot._publication._wire",
+        "parallax.core.read_delivery",
         "parallax.core.read_delivery._page",
         "parallax.core.execution",
         "parallax.core.execution._retention",

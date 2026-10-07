@@ -37,7 +37,7 @@ from parallax.core.read_delivery import InvalidData
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import WriteInstructionError
 from parallax.core.write_plan import ObjectKey
-from parallax.snapshot.handle._typed_writes import (
+from parallax.snapshot._handle._typed_writes import (
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,
     provenance_of,

@@ -19,7 +19,7 @@ from parallax.core.read_delivery._page import (
 )
 from parallax.core.temporal_read import Edge
 from parallax.core.write_plan import ObjectKey
-from parallax.snapshot.materialize._root import RootView
+from parallax.snapshot._publication._root import RootView
 
 __all__ = [
     "ClassifiedRoot",

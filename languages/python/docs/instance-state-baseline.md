@@ -702,7 +702,7 @@ entries at 8 B apiece, the tree's slot row having grown from two to six.
 
 A projected result additionally holds the keys its own walk reached, which the
 flatness proof in
-`tests/unit/snapshot/handle/test_read_include_tree_memo_bound.py`
+`tests/unit/snapshot/_handle/test_read_include_tree_memo_bound.py`
 pins as identical at both memory scaling arms. Against `e372c69c` the `closed`
 reading is 6.4 KiB larger on the small model and 12.5-12.7 KiB on the larger
 one, which is COR-112's metadata retention with this change's 0.281 KiB

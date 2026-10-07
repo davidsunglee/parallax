@@ -15,7 +15,7 @@ lives in ``memory_instruments``, which the two suites import beside this module.
 Exported names carry no leading underscore: importing an underscored name across
 modules is a `reportPrivateUsage` error under pyright strict, so privacy is
 carried by this MODULE's underscore — the same convention the private
-`parallax.snapshot.handle` modules follow. Never imported by production code.
+`parallax.snapshot._handle` modules follow. Never imported by production code.
 """
 
 from __future__ import annotations

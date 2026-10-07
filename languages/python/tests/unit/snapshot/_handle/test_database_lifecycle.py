@@ -442,7 +442,7 @@ def test_a_model_that_cannot_be_prepared_opens_no_runtime_at_all(
     # anything is opened: a model that could never be served costs no resource,
     # not merely no statement. The adapter here refuses to open at all, so
     # reaching it is the failure.
-    from parallax.snapshot.handle import _database as database_module
+    from parallax.snapshot._handle import _database as database_module
 
     def refuse(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("this model cannot be prepared")

@@ -29,7 +29,7 @@ from parallax.core.unit_work import instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import WireEntity
-from parallax.snapshot.handle._wire_writes import (
+from parallax.snapshot._handle._wire_writes import (
     WireKeyedInsertSource,
     WireKeyedWriteSource,
 )

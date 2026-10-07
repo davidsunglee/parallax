@@ -1,4 +1,4 @@
-"""Participating-stream unit tests for `parallax.snapshot.handle` (Docker-free fake ports).
+"""Participating-stream unit tests for `parallax.snapshot._handle` (Docker-free fake ports).
 
 `Transaction.stream` and `tx.wire.stream`: what participation adds to a delivery
 whose own contract — the state table, statement accounting, root-local identity,
@@ -44,7 +44,7 @@ from parallax.core.read_delivery import StreamStateError
 from parallax.core.unit_work import WriteEvidenceError, instructions
 from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, Transaction
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.materialize._wire import read_origin_of
+from parallax.snapshot._publication._wire import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -61,7 +61,7 @@ from tests._support.db_port import (
 from tests._support.root_ownership import own_root
 from tests.unit._stream_page_support import paged_reads
 from tests.unit._transact_support import ACCOUNT, FIXED, account_db, db_for, deadlock, new_account
-from tests.unit.snapshot.handle import _mixed_strategy_model as mx
+from tests.unit.snapshot._handle import _mixed_strategy_model as mx
 
 _UPDATE_SQL = POSTGRES.to_driver_sql(
     "update account set balance = ?, version = ? where id = ? and version = ?"

@@ -142,7 +142,7 @@ from parallax.core.write_plan import (
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP
 from parallax.core.write_plan.steps import KeyTarget, PlannedWrite
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, Transaction, WireEntity
-from parallax.snapshot.materialize._wire import authoring_of, read_origin_of
+from parallax.snapshot._publication._wire import authoring_of, read_origin_of
 
 __all__ = [
     "INERT_CLOCK_INSTANT",

@@ -34,7 +34,7 @@ from parallax.core.unit_work import (
     WriteRejectedError,
 )
 from parallax.snapshot import Transaction
-from parallax.snapshot.handle._wire import WireTransactionView
+from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

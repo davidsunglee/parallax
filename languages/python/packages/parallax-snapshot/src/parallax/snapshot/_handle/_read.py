@@ -21,16 +21,16 @@ from parallax.core.temporal_read import Edge, Pin, TemporalShape
 from parallax.core.unit_work import ReadOrigin
 
 if TYPE_CHECKING:
-    from parallax.snapshot.materialize._wire import EntityReader
+    from parallax.snapshot._publication._wire import EntityReader
 
 from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.execution._publication import SelectedReadModel
+from parallax.snapshot._handle._errors import SnapshotConnectionError, SnapshotMaterializationError
 from parallax.snapshot._inspection import SnapshotInspectionError
-from parallax.snapshot.handle._errors import SnapshotConnectionError, SnapshotMaterializationError
-from parallax.snapshot.materialize._publication import publish_roots
-from parallax.snapshot.materialize._root import RootView
-from parallax.snapshot.materialize._typed import typed_root
-from parallax.snapshot.materialize._wire import WireEntity, wire_roots
+from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._root_publication import publish_roots
+from parallax.snapshot._publication._typed import typed_root
+from parallax.snapshot._publication._wire import WireEntity, wire_roots
 
 __all__ = [
     "CheckedSnapshot",
@@ -264,7 +264,7 @@ def _require_projection_inputs(
     operation: str = "Snapshot.wire",
 ) -> EntityReader:
     """Validate explicit inputs before resolving a separately supplied position."""
-    from parallax.snapshot.materialize._wire import EntityReader
+    from parallax.snapshot._publication._wire import EntityReader
 
     reader = EntityReader(projection, operation=operation)
     for value in values:
@@ -280,7 +280,7 @@ def projection_concrete(
     reader: EntityReader, node: object, *, operation: str = "Snapshot.wire"
 ) -> EntityIdentity:
     """Require lifecycle identity and retained layout to describe one concrete."""
-    from parallax.snapshot.materialize._wire import projection_entity
+    from parallax.snapshot._publication._wire import projection_entity
 
     concrete = projection_entity(node, operation=operation)
     layout = reader.layout(node)
@@ -345,12 +345,12 @@ def _project_eager_values(
     *,
     reader: EntityReader | None = None,
 ) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
-    from parallax.snapshot.materialize._wire import (
+    from parallax.snapshot._publication._wire import (
         EntityReader,
         WireWalk,
         shared_wire_encoder,
     )
-    from parallax.snapshot.materialize._wire_memo import StrongIdentityMemo
+    from parallax.snapshot._publication._wire_memo import StrongIdentityMemo
 
     walk: WireWalk[object] | None = None
     encoder: _DeliveryWireEncoder | None = None
@@ -645,7 +645,7 @@ def wire_publication(model: CatalogedModel, edition: str) -> SnapshotPublication
     delivery-scoped reuse state is the scalar encoder.
     """
 
-    from parallax.snapshot.materialize._wire import shared_wire_encoder
+    from parallax.snapshot._publication._wire import shared_wire_encoder
 
     encode: _DeliveryWireEncoder | None = shared_wire_encoder()
     released = False

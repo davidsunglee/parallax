@@ -39,7 +39,7 @@ from parallax.core.execution import (
     TransactionTimePinReadOnlyError,
 )
 from parallax.core.unit_work import WriteEvidenceError, WriteInstructionError
-from tests.unit.snapshot.handle._keyed_write_drivers import (
+from tests.unit.snapshot._handle._keyed_write_drivers import (
     ACCOUNT_TARGET,
     BALANCE_TARGET,
     BLANK_CONTACT_TARGET,

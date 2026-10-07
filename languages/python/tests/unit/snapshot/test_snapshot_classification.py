@@ -57,14 +57,14 @@ from parallax.core.temporal_read import (
 from parallax.core.temporal_read import view as temporal_view
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import connect
-from parallax.snapshot.materialize._classify import (
+from parallax.snapshot._publication._classify import (
     ClassifiedRoot,
     ConformingRoot,
     RootClassification,
     RootClassifications,
     classify_roots,
 )
-from parallax.snapshot.materialize._root import RootView
+from parallax.snapshot._publication._root import RootView
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,

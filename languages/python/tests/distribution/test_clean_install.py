@@ -62,6 +62,18 @@ def _import_ok(python: Path, module: str) -> bool:
     return result.returncode == 0
 
 
+def _module_absent(python: Path, module: str) -> bool:
+    # Resolved rather than imported, so the answer is "nothing is there" and not
+    # "something there failed to import"; a failing probe is neither answer.
+    probe = (
+        "import importlib.util, sys\n"
+        f"sys.exit(0 if importlib.util.find_spec({module!r}) is None else 3)"
+    )
+    result = subprocess.run([str(python), "-c", probe], capture_output=True, text=True)
+    assert result.returncode in (0, 3), result.stderr
+    return result.returncode == 0
+
+
 def _dist_installed(python: Path, distribution: str) -> bool:
     result = subprocess.run(
         [str(python), "-c", f"import importlib.metadata as m; m.distribution('{distribution}')"],
@@ -88,6 +100,10 @@ def test_core_alone(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     # import of the retired `compile`, or an import cycle among the five private
     # modules fails here and nowhere else in the clean-install lane.
     assert _import_ok(python, "parallax.core.sql_gen")
+    # The execution runtime and read delivery are core's own: both cold-import
+    # with no lifecycle extension installed.
+    assert _import_ok(python, "parallax.core.execution")
+    assert _import_ok(python, "parallax.core.read_delivery")
     # Unselected interchange, lifecycle, adapter, driver, and dev tooling are all
     # absent — the Descriptor Frontend and both of the dependencies it alone
     # declares included, so `parallax-core`'s manifest really is Pydantic only.
@@ -175,6 +191,10 @@ def test_core_and_snapshot(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
 
     assert _import_ok(python, "parallax.core")
     assert _import_ok(python, "parallax.snapshot")
+    # The retired implementation packages are gone from the installed tree, not
+    # merely unexported: neither old path resolves to any module.
+    assert _module_absent(python, "parallax.snapshot.handle")
+    assert _module_absent(python, "parallax.snapshot.materialize")
     # No Descriptor Frontend, descriptor parser, schema validator, sibling
     # evolution/adapter/driver, or conformance harness.
     assert not _import_ok(python, "parallax.descriptor")

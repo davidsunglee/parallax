@@ -15,7 +15,7 @@ from parallax.core.read_delivery._page import (
     stored_data_refusal,
 )
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize._root import RootView
+from parallax.snapshot._publication._root import RootView
 
 __all__ = ["publication_issue", "publish_roots", "require_publishable"]
 

@@ -11,9 +11,9 @@ from parallax.core.execution._scope import ExecutionScope
 from parallax.core.object_query import ObjectQueryNode, deserialize
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.unit_work import WriteInstructionError
-from parallax.snapshot.handle._read import Snapshot, wire_publication_for
-from parallax.snapshot.handle._stream import SnapshotStream
-from parallax.snapshot.handle._wire_writes import (
+from parallax.snapshot._handle._read import Snapshot, wire_publication_for
+from parallax.snapshot._handle._stream import SnapshotStream
+from parallax.snapshot._handle._wire_writes import (
     WireChanges,
     WirePredicateTarget,
     wire_insert,
@@ -21,7 +21,7 @@ from parallax.snapshot.handle._wire_writes import (
     wire_predicate_write,
     wire_target_write,
 )
-from parallax.snapshot.materialize._wire import WireEntity
+from parallax.snapshot._publication._wire import WireEntity
 
 __all__ = [
     "WireDatabaseView",
