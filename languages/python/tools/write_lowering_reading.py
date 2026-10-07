@@ -51,7 +51,7 @@ from parallax.core.document_codec._document import (
     encode_managed_many,
 )
 from parallax.core.entity import DomainModel
-from parallax.snapshot import prepare_model
+from parallax.core.execution import prepare_model
 from parallax.snapshot.handle import ScopedDatabase
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]

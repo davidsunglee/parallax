@@ -67,6 +67,14 @@ from parallax.core.db_port import (
     MappingRow,
 )
 from parallax.core.dialect import Dialect
+from parallax.core.execution import (
+    DatabaseOptions,
+    ServingModel,
+    TransactionTimePinReadOnlyError,
+)
+from parallax.core.execution._keyed_writes import validate_source_pin
+from parallax.core.execution._planning import build_write_planner
+from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -131,14 +139,7 @@ from parallax.core.write_plan import (
 )
 from parallax.core.write_plan.plan import NO_OWNERSHIP
 from parallax.core.write_plan.steps import KeyTarget, PlannedWrite
-from parallax.snapshot import DatabaseOptions, handle
-from parallax.snapshot.handle import (
-    ServingModel,
-    TransactionTimePinReadOnlyError,
-    build_write_planner,
-    stream_lowered,
-    validate_source_pin,
-)
+from parallax.snapshot import handle
 from parallax.snapshot.materialize._wire import authoring_of, read_origin_of
 
 __all__ = [
@@ -175,7 +176,7 @@ __all__ = [
 # A write step is one unit of work: its buffered keyed writes are planned by
 # the SAME ``build_write_planner`` factory production uses (``m-unit-work``)
 # and each surviving :class:`~parallax.core.unit_work.PlannedWrite` is lowered
-# to DML by the shared ``snapshot.handle.stream_lowered`` seam — the deliberate
+# to DML by the shared ``execution._write_lowering.stream_lowered`` seam — the deliberate
 # ``m-sql`` write edge the conformance family may compose (the import-side DAG
 # exemption). A **scenario** is a *sequence* of units of work: a write step
 # commits (or, ``rollback: true``, aborts) its coalesced DML, then a ``find``
@@ -871,7 +872,7 @@ def _binds_row_observations(
     This decides OBSERVATION BINDING only, never statement count:
     :func:`_build_instructions` buffers one single-row instruction per row
     regardless, and leaves every merge to the planner's own collapse stage
-    (:func:`_lower_resolved`, `parallax.snapshot.handle.ScopedDatabase.transact`).
+    (:func:`_lower_resolved`, an Attempt's flush execution).
     What a bound observation changes is that the planner refuses to merge that
     row at all, which is exactly the point — a merged multi-row instruction has
     nowhere to carry a per-row observed version. The question is answered with
@@ -955,7 +956,7 @@ def _seed_insert_version(
     (`opt_lock.INITIAL_VERSION`) — a no-op for every other mutation/entity/row
     shape.
 
-    `parallax.snapshot.handle`'s own write finalization derives the INITIAL
+    The runtime's own write finalization derives the INITIAL
     version at the version Attribute UNCONDITIONALLY, ignoring any row-carried
     value
     — every reachable insert witness already authors an explicit `version`
@@ -1212,7 +1213,7 @@ def _lower_resolved(
     advances: TemporalShadow | None,
 ) -> tuple[LoweredStatement, ...]:
     """Plan one write buffer through the SAME ``build_write_planner`` factory
-    the composition layer uses (`parallax.snapshot.handle.ScopedDatabase.transact`)
+    model preparation uses (`parallax.core.execution.prepare_model`)
     and lower each survivor — PURE, no database. The planner is the ONE
     authority that merges a case entry's rows: every entry arrives as its own
     per-row instructions, and which of them share a statement is decided HERE,
@@ -3870,7 +3871,7 @@ def _lower_conflict_write(
 ) -> tuple[LoweredStatement, ...]:
     """PURE-lower one NON-TEMPORAL conflict attempt's resolved ``write`` rows:
     plan the whole buffer through the SAME ``build_write_planner`` factory the
-    composition layer uses (`parallax.snapshot.handle.ScopedDatabase.transact`) and
+    model preparation uses (`parallax.core.execution.prepare_model`) and
     lower every survivor, so a MULTI-KEY attempt reports the ONE set-based
     statement its real execution emits rather than the per-row statements an
     uncollapsed plan would have rendered.

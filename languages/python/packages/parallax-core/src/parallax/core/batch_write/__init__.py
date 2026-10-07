@@ -130,7 +130,7 @@ def collapses(
 ) -> bool:
     """The single ``(model, entity, mutation, rows) -> bool`` entry point
     (``BatchingStrategy.collapses``'s own shape) — the function
-    :mod:`parallax.snapshot.handle` wires into the
+    execution's model preparation wires into the
     :class:`~parallax.core.unit_work.WritePlanner` and the conformance engine
     reaches through the SAME ``build_write_planner`` factory, dispatching to
     :func:`insert_collapses` / :func:`update_collapses` / :func:`delete_collapses`

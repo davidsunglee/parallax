@@ -42,17 +42,17 @@ class SelectedReadModel:
     and — for a class-backed model — the Entity Graph Construction that
     materializes its rows into instances.
 
-    A property of the operation rather than of the Handle: the scope above takes
-    the record its execution policy hands back for THIS operation, and a stream
-    keeps the one it opened under through all of its pages.
+    A property of the operation rather than of the scope: each begun read
+    carries the record adopted for THIS operation, and a stream keeps the one it
+    opened under through all of its pages.
 
     The write codec is deliberately absent. A read never derives a row, so a
     record carrying one would offer the write half to every read composition
     that holds it. The construction is the only half that can be missing at
     all: a member layout and a row are both derived from accepted metadata, so
     a descriptor-backed model prepares a fully functional catalog while
-    preparing no materializer, and a Typed read is refused on that absence
-    before any I/O.
+    preparing no materializer, and a publication that needs one refuses on
+    that absence before any I/O.
     """
 
     edition: str

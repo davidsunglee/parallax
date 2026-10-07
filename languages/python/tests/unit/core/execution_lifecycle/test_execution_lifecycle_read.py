@@ -34,6 +34,12 @@ from parallax.core.db_port import (
     Row,
 )
 from parallax.core.dialect import POSTGRES
+from parallax.core.execution import (
+    QueryTargetError,
+    ServingModel,
+    prepare_model,
+)
+from parallax.core.execution import _read_policy as read_policy_module
 from parallax.core.execution_lifecycle import (
     CausedFailure,
     DatabaseCallFailed,
@@ -59,10 +65,12 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.read_delivery import _read_plan as read_plan_module
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.snapshot import ServingModel, connect, prepare_model
-from parallax.snapshot.handle import QueryTargetError, ScopedDatabase, SnapshotMaterializationError
+from parallax.snapshot import connect
+from parallax.snapshot.handle import (
+    ScopedDatabase,
+    SnapshotMaterializationError,
+)
 from parallax.snapshot.handle import _read as read_module
-from parallax.snapshot.handle import _read_scope as read_scope_module
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -678,7 +686,7 @@ def _recorded_openings(
         recorded.append((target, interface))
         return open_read_root(installed, target=target, interface=interface, edition=edition)
 
-    monkeypatch.setattr(read_scope_module, "open_read_root", recording)
+    monkeypatch.setattr(read_policy_module, "open_read_root", recording)
     return recorded
 
 

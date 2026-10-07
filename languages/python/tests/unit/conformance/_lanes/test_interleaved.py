@@ -31,7 +31,8 @@ from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.base import INFINITY
 from parallax.core.db_port import MappingRow, Row
 from parallax.core.dialect import Dialect
-from parallax.snapshot import DatabaseOptions, handle
+from parallax.core.execution import DatabaseOptions
+from parallax.snapshot import handle
 from tests._support.root_ownership import own_root
 from tests.unit._second_dialect import BACKTICKED
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort

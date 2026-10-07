@@ -33,9 +33,9 @@ from parallax.conformance.workloads import (
 )
 from parallax.core import deep_fetch, inheritance
 from parallax.core.dialect import POSTGRES
+from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.sql_gen._compile import compile_read, compile_template
-from parallax.snapshot.handle._preflight import preflight
 
 
 def test_every_workload_loads_and_compiles_its_query_and_delivery_sizes() -> None:

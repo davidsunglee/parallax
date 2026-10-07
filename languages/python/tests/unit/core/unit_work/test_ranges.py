@@ -16,9 +16,10 @@ from typing import Any
 
 import pytest
 
-import parallax.snapshot.handle._planning as planning_composition
+import parallax.core.execution._planning as planning_composition
 from parallax.core import inheritance, temporal_read
 from parallax.core.base import INFINITY
+from parallax.core.execution._planning import build_write_planner
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     KeyedMutation,
@@ -73,7 +74,6 @@ from parallax.core.write_plan.steps import (
     PlannedTemporalRevision,
     PlannedWrite,
 )
-from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock, instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model

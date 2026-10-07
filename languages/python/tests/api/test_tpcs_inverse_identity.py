@@ -6,7 +6,8 @@ import pytest
 
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.core.entity import model_of
-from parallax.snapshot import ExecutionFailure, connect
+from parallax.core.execution import ExecutionFailure
+from parallax.snapshot import connect
 from parallax.snapshot.materialize import SnapshotConsistencyError
 from tests._support.db_port import Read, ScriptedAdapter
 from tests._support.root_ownership import own_root

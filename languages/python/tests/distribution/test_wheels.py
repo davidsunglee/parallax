@@ -129,30 +129,14 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     # package, and a wheel carrying it is a stale build or a half-applied split.
     assert _modules_directly_in(wheelhouse, "parallax-snapshot", "parallax/snapshot/handle/") == {
         "parallax/snapshot/handle/__init__.py",
-        "parallax/snapshot/handle/_adoption.py",
-        "parallax/snapshot/handle/_concurrency.py",
-        "parallax/snapshot/handle/_connection_lifecycle.py",
         "parallax/snapshot/handle/_database.py",
         "parallax/snapshot/handle/_errors.py",
-        "parallax/snapshot/handle/_execution_authority.py",
-        "parallax/snapshot/handle/_family.py",
-        "parallax/snapshot/handle/_features.py",
-        "parallax/snapshot/handle/_keyed_sql.py",
-        "parallax/snapshot/handle/_keyed_writes.py",
-        "parallax/snapshot/handle/_options.py",
-        "parallax/snapshot/handle/_planning.py",
-        "parallax/snapshot/handle/_predicate_writes.py",
-        "parallax/snapshot/handle/_preflight.py",
-        "parallax/snapshot/handle/_publication.py",
         "parallax/snapshot/handle/_read.py",
-        "parallax/snapshot/handle/_read_scope.py",
         "parallax/snapshot/handle/_stream.py",
         "parallax/snapshot/handle/_transaction.py",
-        "parallax/snapshot/handle/_transaction_runner.py",
         "parallax/snapshot/handle/_typed_writes.py",
         "parallax/snapshot/handle/_wire.py",
         "parallax/snapshot/handle/_wire_writes.py",
-        "parallax/snapshot/handle/_write_lowering.py",
     }
     assert "parallax/snapshot/handle.py" not in _names(wheelhouse, "parallax-snapshot")
 

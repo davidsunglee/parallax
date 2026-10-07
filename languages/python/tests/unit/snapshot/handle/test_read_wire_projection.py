@@ -41,6 +41,8 @@ from parallax.core import (
 )
 from parallax.core.base import INFINITY
 from parallax.core.entity._graph_construction import require_correspondence
+from parallax.core.execution import ServingModel, prepare_model
+from parallax.core.execution import _preflight as preflight_module
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import IncludeSegment
 from parallax.core.object_query import deserialize as deserialize_query
@@ -54,7 +56,6 @@ from parallax.snapshot import (
     view,
 )
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import _preflight as preflight_module
 from parallax.snapshot.materialize import _wire as wire_materialize
 from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support.db_port import Read, ScriptedAdapter
@@ -509,9 +510,9 @@ def test_whole_result_projection_accepts_no_position_override() -> None:
 
 
 def test_projection_uses_the_retained_model_for_equivalent_positions() -> None:
-    old = handle.prepare_model(ANIMAL_MODEL, edition="old")
-    current = handle.prepare_model(_EXPANDED_ANIMAL_MODEL, edition="current")
-    serving = handle.ServingModel(old)
+    old = prepare_model(ANIMAL_MODEL, edition="old")
+    current = prepare_model(_EXPANDED_ANIMAL_MODEL, edition="current")
+    serving = ServingModel(old)
     root = cast(
         "handle.Database[Any]",
         handle.Database.connect(

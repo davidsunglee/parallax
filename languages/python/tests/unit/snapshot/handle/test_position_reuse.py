@@ -30,11 +30,15 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity._model import model_of
+from parallax.core.execution import (
+    ServingModel,
+    prepare_model,
+)
 from parallax.core.inheritance import InheritanceError
 from parallax.core.inheritance._facet import _InheritanceFacet
 from parallax.core.metamodel import EntityIdentity, TablePerConcreteSubtype
 from parallax.core.storage_layout._facet import _StorageLayoutFacet
-from parallax.snapshot import ServingModel, connect, prepare_model
+from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
 from tests._support.root_ownership import own_root
 

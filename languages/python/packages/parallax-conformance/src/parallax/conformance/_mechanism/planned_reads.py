@@ -15,10 +15,10 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import Dialect
+from parallax.core.execution import DatabaseOptions, ServingModel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.sql_gen import LoweredStatement
-from parallax.snapshot import DatabaseOptions, handle
-from parallax.snapshot.handle import ServingModel
+from parallax.snapshot import handle
 
 __all__ = ["planned_read"]
 

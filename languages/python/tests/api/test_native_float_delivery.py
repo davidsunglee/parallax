@@ -42,9 +42,14 @@ from parallax.core import wire as wire_codec
 from parallax.core.base import ManagedValue
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
+from parallax.core.execution import ExecutionFailure
 from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate
 from parallax.snapshot import connect
-from parallax.snapshot.handle import ExecutionFailure, ScopedDatabase, SnapshotStream, Transaction
+from parallax.snapshot.handle import (
+    ScopedDatabase,
+    SnapshotStream,
+    Transaction,
+)
 from tests._support.binary32 import narrowed, rounded_once, shortest_spelling
 from tests._support.root_ownership import own_root
 

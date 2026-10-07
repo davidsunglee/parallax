@@ -7,11 +7,11 @@ from typing import Any, Final, Protocol, cast, overload
 from parallax.core import deep_fetch
 from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.entity import Entity, EntityGraphConstruction, RelationshipPath
+from parallax.core.execution._publication import SelectedReadModel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.read_delivery import InvalidData, StreamStateError
 from parallax.core.read_delivery._stream import StreamDelivery
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.handle._publication import SelectedReadModel
 from parallax.snapshot.handle._read import (
     SnapshotPublication,
     projection_concrete,

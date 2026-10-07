@@ -59,18 +59,23 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
+from parallax.core.execution import (
+    ServingModel,
+    TransactionTimePinReadOnlyError,
+    prepare_model,
+)
+from parallax.core.execution._options import (
+    OMITTED,
+    Omitted,
+)
 from parallax.core.unit_work import Clock, Concurrency
 from parallax.snapshot import is_view_loaded
 from parallax.snapshot.handle import (
     Database,
     ScopedDatabase,
-    ServingModel,
     Snapshot,
     Transaction,
-    TransactionTimePinReadOnlyError,
-    prepare_model,
 )
-from parallax.snapshot.handle._options import OMITTED, Omitted
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import (
     CollectionKinds,
@@ -742,10 +747,7 @@ class _RecordingDatabase(ScopedDatabase):
     ) -> None:
         root = Database(port.open(), model, clock=clock)
         scoped = cast("Any", root.using_database_login())
-        object.__setattr__(self, "_transaction_runner", scoped._transaction_runner)
-        object.__setattr__(self, "_capture", scoped._capture)
-        object.__setattr__(self, "_options", scoped._options)
-        object.__setattr__(self, "_reads", scoped._reads)
+        object.__setattr__(self, "_execution", scoped._execution)
         object.__setattr__(self, "_root", root)
         object.__setattr__(self, "_port", port)
         object.__setattr__(self, "queries", [])

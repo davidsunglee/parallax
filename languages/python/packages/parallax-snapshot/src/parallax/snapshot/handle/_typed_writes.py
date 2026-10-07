@@ -11,6 +11,16 @@ from parallax.core.entity import (
 )
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._declaration import declaration_of
+from parallax.core.execution._attempt import Attempt
+from parallax.core.execution._family import family_view
+from parallax.core.execution._keyed_writes import (
+    PreparedSourceWrite,
+    Provenance,
+    ResolvedKeyedInsert,
+    ResolvedKeyedWriteSource,
+    keyed_instruction,
+    retained,
+)
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
@@ -36,20 +46,6 @@ from parallax.core.write_plan import ObjectKey
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
 from parallax.snapshot._inspection import insertion_of, snapshot_state_of
-from parallax.snapshot.handle._family import family_view
-from parallax.snapshot.handle._keyed_writes import (
-    PreparedSourceWrite,
-    Provenance,
-    ResolvedKeyedInsert,
-    ResolvedKeyedWriteSource,
-    keyed_instruction,
-    retained,
-)
-from parallax.snapshot.handle._predicate_writes import (
-    PredicateWriteContext,
-    buffer_predicate_instruction,
-    buffer_target_instruction,
-)
 
 __all__ = [
     "TypedKeyedInsertSource",
@@ -319,7 +315,7 @@ class TypedKeyedInsertSource:
 
 
 def typed_predicate_write(
-    ctx: PredicateWriteContext,
+    attempt: Attempt,
     mutation: PredicateMutation,
     query: ObjectQuery[Any, Any],
     assignments: Sequence[AttributeAssignment[Any]],
@@ -339,10 +335,9 @@ def typed_predicate_write(
     such a clause. Everything the instruction states — its target, verb, window,
     predicate, and assignments — is judged by
     :func:`~parallax.core.unit_work.instructions.prepare_typed_write` before
-    :func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate_instruction`
-    dispatches the prepared product.
+    the attempt dispatches the prepared product.
     """
-    refuse_reentry(ctx.keyed.lifecycle)
+    refuse_reentry(attempt.lifecycle)
     selection = mutation_selection(query)
     instruction = PredicateWrite(
         mutation,
@@ -353,13 +348,13 @@ def typed_predicate_write(
         valid_from,
         until,
     )
-    prepared = instructions.prepare_typed_write(instruction, ctx.keyed.model.meta)
+    prepared = instructions.prepare_typed_write(instruction, attempt.model.meta)
     assert isinstance(prepared, PreparedPredicateWrite)
-    buffer_predicate_instruction(ctx, prepared)
+    attempt.predicate_write(prepared)
 
 
 def typed_target_write(
-    ctx: PredicateWriteContext,
+    attempt: Attempt,
     mutation: TargetMutation,
     instance: EntityBase,
     codec: EntityRowCodec,
@@ -378,8 +373,8 @@ def typed_target_write(
     key names, under the condition its caller states, so neither a read's
     evidence nor an insertion's authority the instance carries is consulted.
     """
-    refuse_reentry(ctx.keyed.lifecycle)
-    meta = ctx.keyed.model.meta
+    refuse_reentry(attempt.lifecycle)
+    meta = attempt.model.meta
     entity = metadata_of_instance(meta, instance)
     instruction = TargetWrite(
         mutation,
@@ -390,4 +385,4 @@ def typed_target_write(
         valid_from,
         until,
     )
-    buffer_target_instruction(ctx, instructions.prepare_typed_write(instruction, meta))
+    attempt.target_write(instructions.prepare_typed_write(instruction, meta))

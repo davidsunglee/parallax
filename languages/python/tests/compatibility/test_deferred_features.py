@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from parallax.conformance import case_format, sweep
 from parallax.conformance.claim import SNAPSHOT_CLAIM
-from parallax.snapshot.handle._features import (
+from parallax.core.execution._features import (
     _DEFERRED_EXECUTION_FEATURES,  # pyright: ignore[reportPrivateUsage] - the inventory is package-private on purpose; nothing but this proof reads it
 )
 

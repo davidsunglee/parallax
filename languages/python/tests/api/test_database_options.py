@@ -31,7 +31,8 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import Dialect
-from parallax.snapshot import DatabaseOptions, connect
+from parallax.core.execution import DatabaseOptions
+from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
 
 _ACCOUNT = MODELS["account"]

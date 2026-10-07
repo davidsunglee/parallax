@@ -33,9 +33,13 @@ from parallax.core.dialect import POSTGRES, Dialect, PhysicalIndexName
 from parallax.core.entity import GraphConstructionError, model_of
 from parallax.core.entity import _graph_construction as graph_construction_module
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.execution import (
+    ModelSelection,
+    ServingModel,
+)
 from parallax.core.metamodel import EntityIdentity, IndexIdentity, Table
 from parallax.evolution import CreatedIndex, SchemaDelta, evolve
-from parallax.snapshot import ModelSelection, ServingModel, connect
+from parallax.snapshot import connect
 from parallax.snapshot.handle import Database
 from tests._support.db_port import ConnectsAsItself, body_outcome
 

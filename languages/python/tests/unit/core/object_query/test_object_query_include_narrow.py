@@ -42,14 +42,14 @@ from parallax.core.base import TIMESTAMP
 from parallax.core.entity import RelationshipPath
 from parallax.core.entity._entity import build_object_query
 from parallax.core.entity._model import model_of
+from parallax.core.execution import DeferredFeatureError
+from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import AsOf, AsOfRange, History, IncludeSegment
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.object_query._nodes import IncludePath
 from parallax.core.predicate import All, Exists, ModelRejectedError, Narrow, NotExists, Or
 from parallax.core.wire import encode_wire
-from parallax.snapshot import DeferredFeatureError
-from parallax.snapshot.handle._preflight import preflight
 from tests._support import inheritance_models as im
 from tests._support import snapshot_models as sm
 from tests._support.query_probes import canonical_query

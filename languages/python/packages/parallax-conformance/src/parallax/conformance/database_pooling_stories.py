@@ -18,6 +18,7 @@ from parallax.core.db_port import (
     PoolSample,
 )
 from parallax.core.entity import DomainModel
+from parallax.core.execution import ServingModel
 from parallax.core.execution_lifecycle import (
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
@@ -25,7 +26,7 @@ from parallax.core.execution_lifecycle import (
     RootExecution,
 )
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
-from parallax.snapshot import ServingModel, connect
+from parallax.snapshot import connect
 from parallax.snapshot.handle import ScopedDatabase
 
 __all__ = [

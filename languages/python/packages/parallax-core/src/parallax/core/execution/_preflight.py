@@ -1,16 +1,32 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Final, Literal
 
+from parallax.core.execution._features import DeferredFeatureError, deferred_features
 from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.object_query import ObjectQueryNode, validate_object_query
 from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.predicate import ModelRejectedError
-from parallax.snapshot.handle._errors import QueryTargetError
-from parallax.snapshot.handle._features import DeferredFeatureError, deferred_features
 
-__all__ = ["preflight"]
+__all__ = ["QueryTargetError", "preflight"]
+
+
+class QueryTargetError(RuntimeError):
+    """The connected model declares no Entity for a query's target.
+
+    Raised before any SQL, connection acquisition, or adapter activity, and
+    before a participating read force-flushes the unit of work, so a query the
+    connected model cannot answer never becomes a side effect.
+
+    The refusal reports that the CONNECTED MODEL, not the call's arguments, is
+    what makes the query unanswerable — the identical query succeeds against a
+    model declaring the Entity — which is why this is a ``RuntimeError``. It
+    retains and exposes neither the query, the model, nor the Database:
+    :data:`code` and the message are its whole public state.
+    """
+
+    code: Final[str] = "query-target-not-in-model"
 
 
 def preflight(
@@ -21,11 +37,11 @@ def preflight(
     Target resolution follows the reference-position rule every validator and
     lowering site resolves a spelling by, so "preflight accepted this target"
     implies "planning resolves it". Raises
-    :class:`~parallax.snapshot.handle._errors.QueryTargetError` when ``model``
+    the :class:`QueryTargetError` when ``model``
     declares no Entity for it,
     :class:`~parallax.core.predicate.ModelRejectedError` when a clause is not
     applicable from that resolved root, and
-    :class:`~parallax.snapshot.handle._features.DeferredFeatureError` when the
+    :class:`~parallax.core.execution._features.DeferredFeatureError` when the
     query is applicable but requires a Feature this implementation has not built
     yet. Performs no SQL generation, Database Port or connection work,
     transaction demarcation, or materialization.

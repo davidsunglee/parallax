@@ -6,7 +6,7 @@ predicate write used to build a `list[KeyedWrite]` and a parallel `pending`
 list of `(ObjectKey, WriteObservation)` pairs, both sized by the resolving
 read's own result count — "a million input wrappers" the design names as the
 avoidable cost. `_materialize_predicate_write`
-(`parallax.snapshot.handle._predicate_writes`) now streams each resolved
+(`parallax.core.execution._predicate_writes`) now streams each resolved
 row's key and observation values directly into bounded column builders and
 constructs no `KeyedWrite` at all while buffering, so a resolving read
 matching five rows and one matching eight hundred rows both construct exactly

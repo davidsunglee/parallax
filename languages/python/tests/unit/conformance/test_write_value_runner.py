@@ -24,7 +24,8 @@ from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Accou
 from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity import DomainModel, Entity
-from parallax.snapshot import connect, prepare_model
+from parallax.core.execution import prepare_model
+from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

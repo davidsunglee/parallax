@@ -26,9 +26,13 @@ from parallax.conformance.stale_web_edit import (
 from parallax.conformance.vo_models import Address, Branch, Geo
 from parallax.core import LATEST
 from parallax.core.entity._model import model_of
+from parallax.core.execution import TransactionTimePinReadOnlyError
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot import connect
-from parallax.snapshot.handle import ScopedDatabase, Transaction, TransactionTimePinReadOnlyError
+from parallax.snapshot.handle import (
+    ScopedDatabase,
+    Transaction,
+)
 from tests._support.adoption import raises_contextualized
 from tests._support.root_ownership import own_root
 

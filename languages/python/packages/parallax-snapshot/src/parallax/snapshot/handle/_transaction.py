@@ -3,18 +3,15 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity import AttributeAssignment, EntityRowCodec
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.execution_lifecycle._activity import (
-    InstalledLifecycle,
-    TransactionAttemptActivity,
-)
+from parallax.core.execution import DatabaseOptions
+from parallax.core.execution._attempt import Attempt
+from parallax.core.execution._keyed_writes import window_mutation
+from parallax.core.execution._options import OMITTED, Omitted
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.read_delivery import RowsResult
-from parallax.core.read_delivery._read_plan import ReadPlanner
-from parallax.core.unit_work import UnitOfWork
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -22,17 +19,7 @@ from parallax.core.unit_work import UnitOfWork
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
 from parallax.snapshot._inspection import bind_insertion
-from parallax.snapshot.handle._keyed_writes import (
-    KeyedWriteContext,
-    keyed_insert,
-    keyed_write,
-    window_mutation,
-)
-from parallax.snapshot.handle._options import OMITTED, DatabaseOptions, Omitted
-from parallax.snapshot.handle._predicate_writes import PredicateWriteContext
-from parallax.snapshot.handle._publication import SelectedReadModel, SelectedWriteModel
 from parallax.snapshot.handle._read import Snapshot, typed_publication_for
-from parallax.snapshot.handle._read_scope import participating_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._typed_writes import (
     TypedKeyedInsertSource,
@@ -42,11 +29,14 @@ from parallax.snapshot.handle._typed_writes import (
 )
 from parallax.snapshot.handle._wire import WireTransactionView
 
+__all__ = ["Transaction", "transaction_for"]
+
 
 class Transaction:
     """The developer transaction handed to a ``db.transact`` closure.
 
-    A facade over the active unit of work and the transaction's own connection.
+    A facade over one transaction attempt: its unit of work, its connection, and
+    the selection it adopted.
     The keyed verbs take entity instances: :meth:`insert` a full
     instance (the Create Payload), :meth:`update` an edited copy (the sparse
     row: primary key + effective change set — an empty effective set is a
@@ -59,8 +49,8 @@ class Transaction:
     :meth:`update_where`, :meth:`delete_where`, :meth:`terminate_where` — mirrors
     the keyed surface over a mutation-compatible Object Query: readless for an
     unversioned, non-temporal target, materializing to per-row keyed writes
-    otherwise (:mod:`parallax.snapshot.handle._predicate_writes`, ADR 0014, which
-    those verbs reach through the Typed predicate ingress). Every windowed verb
+    otherwise (ADR 0014, which those verbs reach through the Typed predicate
+    ingress). Every windowed verb
     selects its bounded form with keyword-only ``until``. A reference used after
     its owning scope ends raises
     :class:`~parallax.core.unit_work.EscapedTransactionError` (every verb
@@ -81,66 +71,17 @@ class Transaction:
     its key under the revision its caller states.
     """
 
-    __slots__ = (
-        "_codec",
-        "_edition",
-        "_keyed",
-        "_options",
-        "_predicates",
-        "_reads",
-        "_uow",
-    )
+    __slots__ = ("_attempt", "_codec")
 
-    def __init__(
-        self,
-        uow: UnitOfWork,
-        conn: DatabaseConnection,
-        read: SelectedReadModel,
-        write: SelectedWriteModel,
-        attempt: TransactionAttemptActivity,
-        lifecycle: InstalledLifecycle | None,
-        planner: ReadPlanner,
-        options: DatabaseOptions,
-    ) -> None:
-        self._uow = uow
-        # The invocation's resolved record, shared by reference across every
-        # attempt of the invocation: what a joining call is compared against,
-        # and what a caller inspects, without ambient state on either path.
-        self._options = options
-        # The two projections of the one selection this attempt adopted: the
-        # read projection serves every participating read, and the write
-        # projection's cataloged model and codec serve every keyed verb — a
-        # write names Entities and derives rows, so it needs the catalog without
-        # the materialization capability beside it. Both carry the edition.
-        self._edition = write.edition
-        self._codec: EntityRowCodec = write.codec
-        # The one Read Scope this transaction's eager reads run through — its
-        # own Typed verbs and the Wire view it answers alike (the Python binding "Private
-        # read composition"). The opening handle's own installed lifecycle rides
-        # every read and write context, which is what makes "the originating
-        # Handle or Transaction" one refusal rather than two: a verb called from
-        # inside that handle's provider, handler, or reporter is refused on
-        # exactly the state the handle refuses on (`m-execution-lifecycle`).
-        self._reads = participating_read_scope(
-            lifecycle=lifecycle,
-            selected=read,
-            uow=uow,
-            conn=conn,
-            attempt=attempt,
-            planner=planner,
-        )
-        # The transaction state every keyed write of this transaction reads,
-        # built once because all three facts are fixed for its life. The unit
-        # of work's admitted insertions are what a same-transaction insert
-        # leaves for a subsequent keyed write to build on, so both
-        # read-your-own-writes exemptions — the value-provenance refusal and the
-        # write-evidence resolution — and the repeated-insert refusal read one
-        # record, through either representation.
-        self._keyed = KeyedWriteContext(model=write.model, uow=uow, lifecycle=lifecycle)
-        # The predicate-selected writes of both representations share the keyed
-        # context plus what only a materializing write reads: this connection,
-        # and the physical attempt its resolving read hangs under as a child.
-        self._predicates = PredicateWriteContext(self._keyed, conn, attempt)
+    def __init__(self, attempt: Attempt, codec: EntityRowCodec) -> None:
+        # The attempt is this transaction's every read and write: its reads
+        # participate in its unit of work on its connection, its keyed,
+        # predicate, and caller-addressed verbs admit into that unit of work,
+        # and its own installed lifecycle is what makes "the originating Handle
+        # or Transaction" one re-entry refusal rather than two. The codec is the
+        # adopted selection's, which every Typed verb derives its rows through.
+        self._attempt = attempt
+        self._codec = codec
 
     @property
     def edition(self) -> str:
@@ -150,7 +91,7 @@ class Transaction:
         callback runs changes nothing here, and a retried callback receives a
         new transaction that may report another edition.
         """
-        return self._edition
+        return self._attempt.edition
 
     @property
     def options(self) -> DatabaseOptions:
@@ -161,7 +102,7 @@ class Transaction:
         joining call reads the same values; a joining call's explicit keyword is
         compared against exactly this.
         """
-        return self._options
+        return self._attempt.options
 
     def insert(
         self,
@@ -188,7 +129,7 @@ class Transaction:
         An object whose insertion still stands is not opened twice: a repeated
         insert of it — the same instance again, or another instance of the same
         primary key, through either interface — is refused at the verb
-        (:class:`~parallax.snapshot.handle.KeyedWriteValueError`,
+        (:class:`~parallax.core.execution.KeyedWriteValueError`,
         ``write-value-already-stored``) rather than left for the database to
         refuse at commit. Once everything the insertion opened has been removed,
         or a pending write removes it, the object may be inserted again: the new
@@ -204,8 +145,7 @@ class Transaction:
         call, before any buffering. Both bounds come from these arguments, never
         from instance fields: an As-Of Axis endpoint is framework-owned."""
         mutation, bound = window_mutation("insert", "insertUntil", until)
-        opened = keyed_insert(
-            self._keyed,
+        opened = self._attempt.keyed_insert(
             TypedKeyedInsertSource(instance, self._codec),
             mutation,
             valid_from=valid_from,
@@ -221,7 +161,7 @@ class Transaction:
         the source was read with is still written, and a copy whose chain touched
         nothing is the empty set, which buffers nothing and issues no statement. A
         value no read of this store produced is refused instead, before any row is
-        derived (:class:`~parallax.snapshot.handle.KeyedWriteValueError`,
+        derived (:class:`~parallax.core.execution.KeyedWriteValueError`,
         ``write-value-not-stored``) — unless THIS transaction already admitted its
         insert, which is the row it stores (`m-unit-work` "Insert-then-update
         coalesces in place"). The version column, if any, is never authored here —
@@ -238,7 +178,7 @@ class Transaction:
         :meth:`insert`'s rules, and is judged at THIS call even when the set is
         empty."""
         mutation, bound = window_mutation("update", "updateUntil", until)
-        keyed_write(self._keyed, TypedKeyedWriteSource(copy, self._codec), mutation, until=bound)
+        self._attempt.keyed_write(TypedKeyedWriteSource(copy, self._codec), mutation, until=bound)
 
     def replace(
         self,
@@ -284,7 +224,7 @@ class Transaction:
         read reports the saved state."""
         mutation, bound = window_mutation("replace", "replaceUntil", until)
         typed_target_write(
-            self._predicates,
+            self._attempt,
             mutation,
             instance,
             self._codec,
@@ -299,13 +239,13 @@ class Transaction:
         key (a frozen ``Snapshot`` node, a fresh instance, or an edited copy —
         all carry valid primary-key values). A source view pinned at a
         finite Transaction-Time instant is read-only and raises
-        :class:`~parallax.snapshot.handle.TransactionTimePinReadOnlyError`
+        :class:`~parallax.core.execution.TransactionTimePinReadOnlyError`
         before any buffering, exactly as every other keyed verb does.
 
         ``delete`` physically removes the row and carries no temporal meaning, so
         a target that milestones its rows refuses it at this call and names
         :meth:`terminate`, which closes the row's history instead."""
-        keyed_write(self._keyed, TypedKeyedWriteSource(node_or_instance, self._codec), "delete")
+        self._attempt.keyed_write(TypedKeyedWriteSource(node_or_instance, self._codec), "delete")
 
     def terminate(
         self, node_or_instance: EntityBase, *, until: dt.datetime | Omitted = OMITTED
@@ -320,11 +260,8 @@ class Transaction:
         ``until`` is omitted, or up to the exclusive ``until``; history and
         coverage outside that window survive."""
         mutation, bound = window_mutation("terminate", "terminateUntil", until)
-        keyed_write(
-            self._keyed,
-            TypedKeyedWriteSource(node_or_instance, self._codec),
-            mutation,
-            until=bound,
+        self._attempt.keyed_write(
+            TypedKeyedWriteSource(node_or_instance, self._codec), mutation, until=bound
         )
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
@@ -336,7 +273,7 @@ class Transaction:
         Lock Facet, takes the dialect's shared row lock under Locking and none
         under Optimistic. One deep fetch may therefore lock some levels and not
         others. Otherwise identical to :meth:`ScopedDatabase.find` — the SAME
-        :func:`~parallax.snapshot.handle._preflight.preflight` gate, which
+        read gate, which
         runs BEFORE the force-flush so a refused read flushes nothing, the SAME
         shared find executor, the SAME frozen-node wrapping, and the SAME
         parameter answer: the Snapshot carries the query's RESULT Entity.
@@ -356,7 +293,7 @@ class Transaction:
         retains no evidence at all: its roots stand at coordinates no keyed
         write may address.
         """
-        return self._reads.read(
+        return self._attempt.read(
             query, convert_query=object_query_node, build_publication=typed_publication_for
         )
 
@@ -371,14 +308,13 @@ class Transaction:
         claim, and a Wire write and a Typed write of one object meet in the one
         claim algebra.
 
-        Its read half is this transaction's one Read Scope, retained rather than
-        wrapped, so a Wire read enters at that scope's own verb and refuses
-        re-entry at the same first line ``tx.find`` crosses. Its write half is
-        the same write context the Typed verbs here use, so a Wire write meets
-        the insertions the Typed verbs admitted in one unit of work, and a
-        repeated insert is refused across both representations.
+        Its read and write halves are this transaction's one attempt, retained
+        rather than wrapped, so a Wire read enters at the attempt's own read and
+        refuses re-entry at the same first line ``tx.find`` crosses, and a Wire
+        write meets the insertions the Typed verbs admitted in one unit of work,
+        so a repeated insert is refused across both representations.
         """
-        return WireTransactionView(self._reads, self._predicates)
+        return WireTransactionView(self._attempt)
 
     def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
         """Deliver ``query``'s roots one at a time inside this transaction, as
@@ -396,7 +332,7 @@ class Transaction:
         callback opens a fresh stream and may observe them again.
         """
         return SnapshotStream(
-            self._reads,
+            self._attempt,
             query,
             batch_size,
             convert_query=object_query_node,
@@ -419,7 +355,7 @@ class Transaction:
         evidence reads the graph form, which is what :meth:`find` and
         ``tx.wire.find`` always run.
         """
-        return self._reads.read_rows(query)
+        return self._attempt.read_rows(query)
 
     def update_where(
         self,
@@ -442,7 +378,7 @@ class Transaction:
         rules."""
         mutation, bound = window_mutation("update", "updateUntil", until)
         typed_predicate_write(
-            self._predicates, mutation, query, assignments, valid_from=valid_from, until=bound
+            self._attempt, mutation, query, assignments, valid_from=valid_from, until=bound
         )
 
     def delete_where(self, query: ObjectQuery[Any, Any]) -> None:
@@ -452,7 +388,7 @@ class Transaction:
          — in both modes, since each row's write requires that row's own prior
          observation — with no no-op elimination, because a delete changes a
          row's existence, never a value (`m-opt-lock`)."""
-        typed_predicate_write(self._predicates, "delete", query, (), valid_from=None)
+        typed_predicate_write(self._attempt, "delete", query, (), valid_from=None)
 
     def terminate_where(
         self,
@@ -468,5 +404,11 @@ class Transaction:
         :meth:`insert`'s rules."""
         mutation, bound = window_mutation("terminate", "terminateUntil", until)
         typed_predicate_write(
-            self._predicates, mutation, query, (), valid_from=valid_from, until=bound
+            self._attempt, mutation, query, (), valid_from=valid_from, until=bound
         )
+
+
+def transaction_for(attempt: Attempt) -> Transaction:
+    """The Snapshot transaction one fully constructed attempt is handed to its
+    callback as, deriving rows through the codec that attempt adopted."""
+    return Transaction(attempt, attempt.codec)

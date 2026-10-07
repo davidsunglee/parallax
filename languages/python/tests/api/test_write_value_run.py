@@ -24,8 +24,9 @@ from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.conformance.vo_models import Customer
+from parallax.core.execution import prepare_model
 from parallax.core.read_delivery import InvalidData
-from parallax.snapshot import connect, prepare_model
+from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root

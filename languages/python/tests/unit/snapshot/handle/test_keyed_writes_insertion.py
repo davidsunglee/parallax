@@ -34,12 +34,12 @@ from parallax.core.base import DocumentValue, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import DomainModel
+from parallax.core.execution import KeyedWriteValueError
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import MissingTargetError, WriteInstructionError
 from parallax.snapshot._inspection import insertion_of, snapshot_state_of
 from parallax.snapshot.handle import (
     Database,
-    KeyedWriteValueError,
     Transaction,
     WriteEvidenceError,
 )

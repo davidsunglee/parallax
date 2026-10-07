@@ -33,6 +33,7 @@ from parallax.core import DomainModel
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity._model import model_of
+from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -55,7 +56,6 @@ from parallax.core.temporal_read import (
 )
 from parallax.core.temporal_read import view as temporal_view
 from parallax.snapshot import ObjectKey, connect
-from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.materialize import ClassifiedRoot, RootView, classify_roots
 from parallax.snapshot.materialize._classify import (
     ConformingRoot,

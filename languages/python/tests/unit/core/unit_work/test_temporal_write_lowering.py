@@ -46,6 +46,7 @@ from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
+from parallax.core.execution._planning import build_write_planner
 from parallax.core.metamodel import EntityIdentity, EntityMetadata
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
@@ -95,7 +96,7 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from parallax.descriptor._records import Metamodel
-from parallax.snapshot.handle import Transaction, build_write_planner
+from parallax.snapshot.handle import Transaction
 from tests._support.clock_probes import instant_at
 from tests._support.db_port import (
     Read,

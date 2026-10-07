@@ -815,10 +815,10 @@ def _address(target: ObjectKey) -> _Address:
 class UnitOfWork:
     """The buffering, observing, flushing transaction scope (m-unit-work).
 
-    Construct via :func:`run_unit_of_work` (which owns the frame lifecycle); the
-    body receives the unit of work and drives it with :meth:`buffer`, :meth:`retain`,
-    and :meth:`read`, asking :meth:`resolve_write_evidence` what a keyed write's
-    source licenses here.
+    Run it through :meth:`run_outermost` or :func:`run_unit_of_work`, which own
+    the frame lifecycle; the body receives the unit of work and drives it with
+    :meth:`buffer`, :meth:`retain`, and :meth:`read`, asking
+    :meth:`resolve_write_evidence` what a keyed write's source licenses here.
     """
 
     __slots__ = (
@@ -865,7 +865,7 @@ class UnitOfWork:
         self.write_batch_opening = write_batch_opening
         # The injected Write Planner (`m-unit-work`'s single finalization
         # authority) — constructed once per accepted Metamodel by the
-        # composition layer (`parallax.snapshot.handle.build_write_planner`),
+        # execution's model preparation (`parallax.core.execution.prepare_model`),
         # which alone may wire the optional policy modules the planner reaches
         # only through its strategy ports. Production and the conformance
         # engine both drive writes through this SAME shell.

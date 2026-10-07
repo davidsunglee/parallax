@@ -188,6 +188,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.execution import ExecutionFailure
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -215,7 +216,10 @@ from parallax.core.execution_lifecycle._activity import (
     open_transaction_root,
 )
 from parallax.snapshot import connect
-from parallax.snapshot.handle import ExecutionFailure, ScopedDatabase, Transaction
+from parallax.snapshot.handle import (
+    ScopedDatabase,
+    Transaction,
+)
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     ConnectsAsItself,

@@ -41,6 +41,9 @@ from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
+from parallax.core.execution._concurrency import CONCURRENCY
+from parallax.core.execution._planning import build_write_planner
+from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.object_query._fluent import ObjectQuery
@@ -88,10 +91,7 @@ from parallax.snapshot.handle import (
     Database,
     ScopedDatabase,
     Transaction,
-    build_write_planner,
-    stream_lowered,
 )
-from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._read import typed_publication, wire_publication
 from parallax.snapshot.materialize import ClassifiedRoot, RootView, classify_roots
 from tests._support.clock_probes import inert_instant, instant_at

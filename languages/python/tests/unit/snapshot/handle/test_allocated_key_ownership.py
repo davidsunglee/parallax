@@ -84,7 +84,7 @@ def _insert_allocated(
         ({"id": {"computed": "maxPlusOne"}, **row},),
         valid_from=valid_from,
     )
-    tx._uow.buffer(prepare_typed_write(instruction, model_of(_MODEL)))
+    tx._attempt.uow.buffer(prepare_typed_write(instruction, model_of(_MODEL)))
 
 
 def _seed(profile_run: Any, entity: type[Any], key: int) -> None:

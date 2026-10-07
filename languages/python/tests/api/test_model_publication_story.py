@@ -19,13 +19,13 @@ from parallax.conformance.story_models import (
     NicknamedAccount,
 )
 from parallax.core.entity import model_of
-from parallax.evolution import evolve, schema_delta
-from parallax.snapshot import (
+from parallax.core.execution import (
     PublicationConflictError,
     ServingModel,
-    connect,
     prepare_model,
 )
+from parallax.evolution import evolve, schema_delta
+from parallax.snapshot import connect
 from tests._support.root_ownership import own_root
 
 _TARGET_ID = 2

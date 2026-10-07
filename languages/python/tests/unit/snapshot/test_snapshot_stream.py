@@ -45,6 +45,12 @@ from parallax.conformance.story_models import (
 from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter, MappingRow
+from parallax.core.execution import (
+    DeferredFeatureError,
+    QueryTargetError,
+    ServingModel,
+    prepare_model,
+)
 from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.read_delivery import (
@@ -56,14 +62,10 @@ from parallax.core.read_delivery import (
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.wire import encode_wire
 from parallax.snapshot import (
-    DeferredFeatureError,
-    QueryTargetError,
-    ServingModel,
     SnapshotInspectionError,
     WireEntity,
     edge_of,
     pin_of,
-    prepare_model,
 )
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import (

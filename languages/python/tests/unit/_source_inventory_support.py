@@ -36,6 +36,7 @@ __all__ = [
     "CONFORMANCE_SRC",
     "ENTITY_PACKAGE",
     "ENTITY_SRC",
+    "EXECUTION_SRC",
     "SNAPSHOT_SRC",
     "Import",
     "all_sources",
@@ -56,6 +57,7 @@ _PACKAGES = PY_ROOT / "packages"
 _CORE_SRC = _PACKAGES / "parallax-core" / "src" / "parallax" / "core"
 SNAPSHOT_SRC = _PACKAGES / "parallax-snapshot" / "src" / "parallax" / "snapshot"
 ENTITY_SRC = _CORE_SRC / "entity"
+EXECUTION_SRC = _CORE_SRC / "execution"
 CONFORMANCE_SRC = _PACKAGES / "parallax-conformance" / "src" / "parallax" / "conformance"
 
 ENTITY_PACKAGE = "parallax.core.entity"

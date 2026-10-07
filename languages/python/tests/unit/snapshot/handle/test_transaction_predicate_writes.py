@@ -67,6 +67,9 @@ from parallax.core.document_codec import (
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import model_of
+from parallax.core.execution import QueryTargetError
+from parallax.core.execution import _predicate_writes as predicate_writes
+from parallax.core.execution._family import comparison_shape
 from parallax.core.execution_lifecycle import (
     DirectFailure,
     ExecutionEvent,
@@ -96,10 +99,11 @@ from parallax.core.write_plan import (
     PredecessorRowsBuilder,
 )
 from parallax.core.write_plan.columns import ColumnSlice
-from parallax.snapshot import QueryTargetError, Snapshot, connect
+from parallax.snapshot import (
+    Snapshot,
+    connect,
+)
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
-from parallax.snapshot.handle import _predicate_writes as predicate_writes
-from parallax.snapshot.handle._family import comparison_shape
 from parallax.snapshot.materialize import RootView
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
@@ -2611,13 +2615,13 @@ def _traversals(
     """Every Page-root traversal from now on, each as the event names its
     transaction had delivered when the traversal began."""
     traversals: list[list[str]] = []
-    roots = vars(predicate_writes)["publish_roots"]
+    roots = vars(predicate_writes)["publishable_member_rows"]
 
-    def counting(page: Any, publish: Any, **options: Any) -> Any:
+    def counting(page: Any) -> Any:
         traversals.append([] if recorder is None else _names(recorder.roots[-1].events))
-        return roots(page, publish, **options)
+        return roots(page)
 
-    monkeypatch.setattr(predicate_writes, "publish_roots", counting)
+    monkeypatch.setattr(predicate_writes, "publishable_member_rows", counting)
     return traversals
 
 

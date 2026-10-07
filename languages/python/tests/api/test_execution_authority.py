@@ -13,9 +13,10 @@ from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.boundary_runner import TARGET_ID, fault_injecting_adapter
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
+from parallax.core.execution import DatabaseOptions
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.object_query import deserialize
-from parallax.snapshot import DatabaseOptions, connect
+from parallax.snapshot import connect
 from parallax.snapshot.handle import ScopedDatabase, Transaction
 from tests._support.corpus import case_fixtures
 

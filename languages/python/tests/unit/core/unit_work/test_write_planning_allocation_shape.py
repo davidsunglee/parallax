@@ -55,6 +55,7 @@ from typing import Final, NamedTuple
 
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY
+from parallax.core.execution._planning import build_write_planner
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -76,7 +77,6 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
 from parallax.core.unit_work.write_settlement import OrderedWrite
-from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source

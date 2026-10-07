@@ -36,8 +36,12 @@ from parallax.core.db_port import (
     report_resource_issues,
 )
 from parallax.core.diagnostics import diagnostic_for
-from parallax.snapshot import DatabaseOptions, connect
-from parallax.snapshot.handle import Database, ExecutionFailure, Transaction
+from parallax.core.execution import DatabaseOptions, ExecutionFailure
+from parallax.snapshot import connect
+from parallax.snapshot.handle import (
+    Database,
+    Transaction,
+)
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -459,14 +463,14 @@ def test_a_composition_that_fails_after_the_runtime_opened_closes_it_again(
     # A refusal on the other side of the open closes what it took, so no
     # half-composed handle is published and the runtime is not left to a caller
     # that never received one. The refusal is injected into the transaction
-    # runner the handle composes, which is work that genuinely runs after
+    # runner the root composes, which is work that genuinely runs after
     # opening.
-    from parallax.snapshot.handle import _database as database_module
+    from parallax.core.execution import _root as root_module
 
     def refuse(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("this handle cannot be composed")
 
-    monkeypatch.setattr(database_module, "TransactionRunner", refuse)
+    monkeypatch.setattr(root_module, "TransactionRunner", refuse)
     adapter = ScriptedAdapter()
 
     with pytest.raises(RuntimeError, match="cannot be composed"):

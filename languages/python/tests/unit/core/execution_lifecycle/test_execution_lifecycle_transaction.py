@@ -41,6 +41,11 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.execution import (
+    ServingModel,
+    TransactionRollbackError,
+    prepare_model,
+)
 from parallax.core.execution_lifecycle import (
     AttemptBeginFailed,
     AttemptCommitted,
@@ -75,8 +80,11 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
 )
-from parallax.snapshot import ServingModel, connect, prepare_model
-from parallax.snapshot.handle import ScopedDatabase, Transaction, TransactionRollbackError
+from parallax.snapshot import connect
+from parallax.snapshot.handle import (
+    ScopedDatabase,
+    Transaction,
+)
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

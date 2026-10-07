@@ -45,6 +45,7 @@ from parallax.core import (
 from parallax.core.base import PresentDocument
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import GraphConstructionError, RelationshipPath
+from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -53,6 +54,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.object_query import IncludeSegment
+from parallax.core.read_delivery import StoredDataDecodingError
 from parallax.core.read_delivery._page import (
     ABSENT,
     InvalidRootInput,
@@ -71,9 +73,8 @@ from parallax.core.temporal_read import Pin
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import SnapshotInspectionError, edge_of, is_view_loaded, pin_of, view
 from parallax.snapshot.handle import SnapshotMaterializationError
-from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.materialize import RootView, SnapshotConsistencyError
-from parallax.snapshot.materialize._publication import publication_issue
+from parallax.snapshot.materialize._publication import publication_issue, require_publishable
 from parallax.snapshot.materialize._root import _member_order  # pyright: ignore[reportPrivateUsage]
 from parallax.snapshot.materialize._wire import EntityReader
 from tests._support import snapshot_models as sm
@@ -255,6 +256,20 @@ def test_an_invalid_root_preserves_its_result_position_without_allocating_a_node
 def test_publication_issue_reads_the_first_invalid_root_issue() -> None:
     root_view = RootView(encoded_identity_page({"id_wire": None}))
     assert publication_issue(root_view) is root_view.invalid_roots[0].issues[0]
+
+
+def test_an_issue_bearing_root_view_is_refused_with_its_first_issue() -> None:
+    # A lifecycle that has no in-band channel for a stored-data verdict refuses
+    # the Root View before deriving anything from it, naming the issue the
+    # publication order reaches first; a conforming one passes untouched.
+    root_view = RootView(encoded_identity_page({"id_wire": None}))
+    first = root_view.invalid_roots[0].issues[0]
+
+    with pytest.raises(StoredDataDecodingError) as refused:
+        require_publishable(root_view)
+
+    assert (refused.value.entity, refused.value.member) == (first.entity, first.member)
+    require_publishable(RootView(encoded_identity_page({"id_wire": KEY_TEXT})))
 
 
 def test_flat_publication_preserves_a_classified_result_position() -> None:

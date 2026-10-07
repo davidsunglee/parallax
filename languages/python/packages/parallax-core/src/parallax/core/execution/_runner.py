@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, cast
 
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import (
@@ -15,62 +15,35 @@ from parallax.core.db_port import (
     TransactionOutcome,
     isolation_level,
 )
-from parallax.core.execution_lifecycle._activity import (
-    INERT,
-    InstalledLifecycle,
-    TransactionAttemptActivity,
-    WriteBatchActivity,
-    open_transaction_root,
-    refuse_reentry,
-)
-
-# Sibling implementation modules. None of these names carries a leading
-# underscore, precisely because it crosses a module boundary: privacy is carried
-# by the private MODULE names and by the package's frozen `__all__`.
-from parallax.core.read_delivery._read_plan import ReadPlanner
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import (
-    Clock,
-    Concurrency,
-    EvidencePolicyLookup,
-    OptimisticLockConflictError,
-    RollbackOnlyError,
-    TransactionSettings,
-    UnitOfWork,
-    UnitOfWorkError,
-    WriteBatchTrigger,
-    WritePlanner,
-    active_unit_of_work,
-    allocated_keys,
-    concurrency_preference,
-    enforce_affected_rows,
-    returns_rows,
-    run_unit_of_work,
-)
-from parallax.core.unit_work.uow import DeferredBinder, UnitReport
-from parallax.core.write_plan import WritePlan
-from parallax.core.write_plan.plan import ExecutionUnit
-from parallax.core.write_plan.steps import PlannedInsert
-from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
-from parallax.snapshot.handle._adoption import AdoptedExecution
-from parallax.snapshot.handle._connection_lifecycle import enter_connection, exit_connection
-from parallax.snapshot.handle._execution_authority import ExecutionCapture, same_execution
-from parallax.snapshot.handle._options import (
+from parallax.core.execution._adoption import AdoptedExecution
+from parallax.core.execution._attempt import Attempt
+from parallax.core.execution._connection_lifecycle import enter_connection, exit_connection
+from parallax.core.execution._options import (
     OMITTED,
     DatabaseOptions,
     Omitted,
     check_max_retries,
     check_retry_optimistic_conflicts,
 )
-from parallax.snapshot.handle._predicate_writes import acquire_coverage
-from parallax.snapshot.handle._publication import (
-    SelectedWriteModel,
-    ServingModel,
-    read_projection,
-    write_projection,
+from parallax.core.execution._publication import ServingModel, read_projection, write_projection
+from parallax.core.execution_authority._authority import ExecutionCapture, same_execution
+from parallax.core.execution_lifecycle._activity import (
+    InstalledLifecycle,
+    TransactionAttemptActivity,
+    open_transaction_root,
+    refuse_reentry,
 )
-from parallax.snapshot.handle._transaction import Transaction
-from parallax.snapshot.handle._write_lowering import lowered, stream_lowered
+from parallax.core.read_delivery._read_plan import ReadPlanner
+from parallax.core.unit_work import (
+    Clock,
+    Concurrency,
+    OptimisticLockConflictError,
+    RollbackOnlyError,
+    UnitOfWork,
+    UnitOfWorkError,
+    active_unit_of_work,
+    concurrency_preference,
+)
 
 __all__ = [
     "TransactionAuthorityError",
@@ -96,7 +69,7 @@ class TransactionOwnershipError(RuntimeError):
 
     The active transaction records the shared resource identity behind the
     Database Root that opened it. Scopes derived from that root or any root alias
-    join and receive the identical :class:`Transaction`; a scope from every other
+    join and receive the identical transaction; a scope from every other
     root is refused even when it carries the same model, adapter, clock, or
     otherwise equivalent configuration.
 
@@ -163,27 +136,21 @@ class _BeginFailure(Exception):
 class _ActiveTransaction:
     """What the outermost attempt publishes on the unit of work's ``companion``.
 
-    A joining ``db.transact`` call needs the same :class:`Transaction` to hand
-    its closure — which also carries the resolved options the join is compared
-    against — the shared resource root that opened the transaction so ownership
-    can be settled before that comparison, the capture that fixes execution
-    authority, the physical attempt currently
-    running — which is what a joined invocation is a child activity OF — and the
-    Write Planner and write-evidence policy of the selection that attempt
-    adopted, so a join plans and admits through what it inherited rather than
-    adopting anything. All six ride core's single per-thread active binding,
-    so their visibility ends exactly when it does (no handle-owned
-    thread-local, nothing to clean up). ``root`` is a strong
-    reference deliberately: it is resource-scoped state whose lifetime is the
+    A joining ``transact`` call needs the same lifecycle ``transaction`` to hand
+    its callback, the shared resource ``root`` that opened it so ownership can
+    be settled first, the ``capture`` that fixes execution authority, and the
+    ``attempt`` currently running — whose resolved options the join is compared
+    against and whose activity a joined invocation is a child OF. All four ride
+    core's single per-thread active binding, so their visibility ends exactly
+    when it does (nothing to clean up). ``root`` is a strong reference
+    deliberately: it is resource-scoped state whose lifetime is the
     transaction's, not a registry entry.
     """
 
-    tx: Transaction
+    transaction: object
     root: object
     capture: ExecutionCapture
-    attempt: TransactionAttemptActivity
-    planner: WritePlanner
-    evidence_policy_for: EvidencePolicyLookup
+    attempt: Attempt
 
 
 class TransactionRunner:
@@ -216,9 +183,10 @@ class TransactionRunner:
         self._serving = serving
         self._planner = planner
 
-    def transact[T](
+    def transact[Tx, T](
         self,
-        fn: Callable[[Transaction], T],
+        fn: Callable[[Tx], T],
+        transaction_for: Callable[[Attempt], Tx],
         *,
         capture: ExecutionCapture,
         defaults: DatabaseOptions,
@@ -227,14 +195,19 @@ class TransactionRunner:
         retry_optimistic_conflicts: bool | Omitted,
         isolation: IsolationLevel | Omitted,
     ) -> T:
-        """Run ``fn(tx)`` under ``capture``, returning its value after commit.
+        """Run ``fn`` under ``capture``, returning its value after commit.
 
-        The public contract is ``ScopedDatabase.transact``'s. What is decided here:
-        the deterministic refusals run first and keep their own types, the join
-        path returns inside the active attempt without adopting or wrapping,
-        and an outer invocation resolves its options once, opens its root, runs
-        the retry loop with one adoption per attempt, and is contextualized as
-        a whole once the loop has resolved.
+        The public contract is the lifecycle scope's ``transact``. What is
+        decided here: the deterministic refusals run first and keep their own
+        types, the join path returns inside the active attempt without adopting
+        or wrapping, and an outer invocation resolves its options once, opens its
+        root, runs the retry loop with one adoption per attempt, and is
+        contextualized as a whole once the loop has resolved.
+
+        Each attempt is constructed fully wired before ``transaction_for``
+        receives it, and ``fn`` is handed what that factory answered. A retry
+        constructs a fresh attempt and asks the factory again; a join reuses the
+        active transaction and asks nothing.
         """
         refuse_reentry(self._lifecycle)
         # Every explicit value is validated ahead of the join comparison below,
@@ -301,54 +274,35 @@ class TransactionRunner:
                     selection = execution.adopt()
                     read = read_projection(selection)
                     write = write_projection(selection)
-                    meta = write.model.meta
                     with invocation.attempt(selection.edition) as physical:
 
                         def in_txn(conn: DatabaseConnection) -> T:
-                            edge = _FlushEdge(conn, write, physical)
+                            attempt = Attempt(
+                                conn,
+                                read,
+                                write,
+                                physical,
+                                lifecycle=self._lifecycle,
+                                planner=self._planner,
+                                options=options,
+                                clock=self._clock,
+                                actor=capture.actor,
+                            )
 
                             def body(uow: UnitOfWork) -> T:
-                                tx = Transaction(
-                                    uow,
-                                    conn,
-                                    read,
-                                    write,
-                                    physical,
-                                    self._lifecycle,
-                                    self._planner,
-                                    options,
-                                )
+                                transaction = transaction_for(attempt)
                                 # Published for joining calls; visible only
                                 # while core's active-transaction binding is,
                                 # so it needs no cleanup.
                                 uow.companion = _ActiveTransaction(
-                                    tx=tx,
+                                    transaction=transaction,
                                     root=self._root,
                                     capture=capture,
-                                    attempt=physical,
-                                    planner=write.planner,
-                                    evidence_policy_for=write.evidence_policy_for,
+                                    attempt=attempt,
                                 )
-                                return fn(tx)
+                                return fn(transaction)
 
-                            return run_unit_of_work(
-                                body,
-                                settings=TransactionSettings(
-                                    concurrency=options.concurrency,
-                                    counts_unchanged_rows=conn.dialect.counts_unchanged_rows,
-                                ),
-                                clock=self._clock,
-                                meta=meta,
-                                flush_executor=edge.execute,
-                                write_batch_opening=edge.opening,
-                                # The adopted selection's Write Planner:
-                                # retained by this unit of work for its life,
-                                # and reused by every join into it rather than
-                                # re-adopted.
-                                planner=write.planner,
-                                actor_identity=capture.actor,
-                                evidence_policy_for=write.evidence_policy_for,
-                            )
+                            return attempt.uow.run_outermost(body)
 
                         # One connection for this attempt and everything inside
                         # it — the boundary, the reads, the write batches, the
@@ -408,10 +362,10 @@ class TransactionRunner:
         # the edition of the attempt that failed last.
         return execution.contextualized(invoke)
 
-    def _join[T](
+    def _join[Tx, T](
         self,
         active: UnitOfWork,
-        fn: Callable[[Transaction], T],
+        fn: Callable[[Tx], T],
         capture: ExecutionCapture,
         *,
         max_retries: int | Omitted,
@@ -441,32 +395,24 @@ class TransactionRunner:
                 "(transaction-authority-mismatch)"
             )
         _check_join_options(
-            joined.tx.options,
+            joined.attempt.options,
             max_retries=max_retries,
             concurrency=concurrency,
             retry_optimistic_conflicts=retry_optimistic_conflicts,
             isolation=isolation,
         )
-        # The join path returns immediately and ignores these arguments in
-        # favor of the active transaction's own (m-unit-work); rollback-only
-        # foreclosure happens before the closure runs. The joined activity is
+        # The join runs in the active unit of work under its own settings and
+        # returns immediately (m-unit-work); rollback-only foreclosure happens
+        # before the closure runs, and the lifecycle transaction it is handed is
+        # the one the outer attempt's factory answered. The joined activity is
         # a child of the attempt currently running rather than a root of its
         # own, and it opens after the deterministic refusals above precisely
         # because those refusals reach no transaction at all. Nothing is
         # adopted and nothing is wrapped: the selection and the failure
         # contract are the outer invocation's.
+        transaction = cast("Tx", joined.transaction)
         with joined.attempt.joined_invocation():
-            return run_unit_of_work(
-                lambda _: fn(joined.tx),
-                settings=active.settings,
-                clock=active.clock,
-                meta=active.meta,
-                flush_executor=active.flush_executor,
-                write_batch_opening=active.write_batch_opening,
-                planner=joined.planner,
-                actor_identity=joined.capture.actor,
-                evidence_policy_for=joined.evidence_policy_for,
-            )
+            return active.run_joined(lambda _: fn(transaction))
 
 
 def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptActivity) -> T:
@@ -607,151 +553,3 @@ def _refuse_conflict(name: str, explicit: object, active_value: object) -> None:
             f"was opened with {name}={active_value!r} (a joining call may not "
             "re-negotiate; omit the option to inherit)"
         )
-
-
-class _FlushEdge:
-    """One attempt's flush edge: the Write Batch each flush runs inside, and the
-    statements that flush's plan lowers to.
-
-    The two are one object because they are one batch. The unit of work
-    announces a flush before planning it and hands the finished plan over
-    afterwards, so nothing passed through either call alone could carry the
-    activity from the first to the second — and one flush is ONE Write Batch
-    (`m-execution-lifecycle`) however many statements the plan lowers to, with
-    each statement one Database Call child of it. A flush never nests: the
-    executor reaches the port and nothing else, so the batch a call runs under is
-    always the one most recently opened.
-    """
-
-    __slots__ = ("_attempt", "_batch", "_conn", "_model")
-
-    def __init__(
-        self,
-        conn: DatabaseConnection,
-        write: SelectedWriteModel,
-        attempt: TransactionAttemptActivity,
-    ) -> None:
-        self._conn = conn
-        self._model = write
-        self._attempt = attempt
-        self._batch: WriteBatchActivity = INERT
-
-    def opening(self, trigger: WriteBatchTrigger) -> WriteBatchActivity:
-        """The scope one flush of this attempt's buffer runs inside.
-
-        The unit of work enters it before planning and leaves it when the flush
-        is over, so a planning refusal is a failed batch rather than work outside
-        every batch, and a batch planning reduces to no DML at all still
-        completes.
-        """
-        batch = self._attempt.write_batch(trigger)
-        self._batch = batch
-        return batch
-
-    def execute(
-        self,
-        plan: WritePlan,
-        *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
-        completed: UnitReport,
-    ) -> None:
-        """Lower each planned step, execute every statement in order, hand each
-        result back to the unit of work to interpret, and report each execution
-        unit to it as soon as that unit's last step has been enforced.
-
-        The single write-lowering seam (:func:`stream_lowered`) run on the
-        transaction's own connection, inside the still-open ``port.transaction``
-        scope — so an abort rolls back force-flushed writes with everything else.
-        Every step lowers to exactly one statement, and a temporal mutation's
-        effect on its predecessor precedes the rows it opens, so a failure there
-        aborts BEFORE those rows ever execute. A unit is reported before any
-        step of the next one runs, so what it changed is published before later
-        work proceeds.
-
-        A unit with a deferred range reaches its turn with no planned step: its
-        coverage is read first (:func:`acquire_coverage`), the unit of work
-        binds the range to it (``bind_deferred``), and the bound steps execute
-        and are enforced exactly as planned ones are before the unit is
-        reported with what it bound.
-
-        This performs NO classification of its own: the adopted Write Planner
-        already spent the concurrency mode while settling each step, and this
-        reports only the driver's count to
-        :func:`~parallax.core.unit_work.enforce_affected_rows`, which owns the
-        authoritative reading of the step's Affected Rows Policy (ADR 0048).
-        That enforcement runs inside its own attribution bracket, because a
-        shortfall is judged AFTER the call it judges has already completed: the
-        bracket is what lets the batch's failure name that completed call
-        instead of the enforcement being read as a failure of the batch itself.
-
-        An insert whose key the database allocates for a row the unit records
-        answers that key: it runs as row-producing DML, core reads the key from
-        the rows it returned (:func:`~parallax.core.unit_work.allocated_keys`)
-        inside the same bracket, and the unit is reported with it.
-        """
-        # The trigger is the batch's, and the batch this runs inside already
-        # carries it; taking it again here would be a second spelling of one
-        # fact.
-        del trigger
-        meta = self._model.model.meta
-        dialect = self._conn.dialect
-        units = iter(plan.units)
-        unit = next(units, None)
-        executed = 0
-        allocated: tuple[object, ...] = ()
-        for step, statement in stream_lowered(plan, meta, dialect):
-            while unit is not None and unit.end == executed:
-                self._complete(unit, bind_deferred, completed, allocated)
-                allocated = ()
-                unit = next(units, None)
-            if unit is not None and unit.opened.allocated and returns_rows(step):
-                allocated = (*allocated, *self._run_returning(step, statement))
-            else:
-                self._run(step, statement)
-            executed += 1
-        while unit is not None and unit.end == executed:
-            self._complete(unit, bind_deferred, completed, allocated)
-            allocated = ()
-            unit = next(units, None)
-
-    def _complete(
-        self,
-        unit: ExecutionUnit,
-        bind_deferred: DeferredBinder,
-        completed: UnitReport,
-        allocated: tuple[object, ...],
-    ) -> None:
-        deferred = unit.deferred
-        if deferred is None:
-            completed(unit, None, allocated=allocated)
-            return
-        rows = acquire_coverage(self._model, self._conn, self._batch, deferred.acquisition)
-        bound = bind_deferred(deferred, rows)
-        meta = self._model.model.meta
-        dialect = self._conn.dialect
-        for step in bound.steps:
-            self._run(step, lowered(step, meta, dialect))
-        completed(unit, bound)
-
-    def _run(self, step: PlannedStep, statement: LoweredStatement) -> None:
-        batch = self._batch
-        with batch.database_call(statement, "write", step.entity) as call:
-            affected = self._conn.execute_write(
-                self._conn.dialect.to_driver_sql(statement.sql), list(statement.binds)
-            )
-            call.write_completed(affected)
-        with batch.enforcing(call):
-            enforce_affected_rows(step, affected)
-
-    def _run_returning(
-        self, step: PlannedInsert, statement: LoweredStatement
-    ) -> tuple[object, ...]:
-        batch = self._batch
-        with batch.database_call(statement, "write", step.entity) as call:
-            rows = self._conn.execute(
-                self._conn.dialect.to_driver_sql(statement.sql), list(statement.binds)
-            )
-            call.write_rows_completed(rows)
-        with batch.enforcing(call):
-            return allocated_keys(step, rows)

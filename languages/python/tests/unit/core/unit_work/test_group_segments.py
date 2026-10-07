@@ -27,6 +27,7 @@ from parallax.core.document_codec import (
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import model_of
+from parallax.core.execution._planning import build_write_planner
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
@@ -94,7 +95,6 @@ from parallax.core.write_plan.steps import (
     PlannedWrite,
     TemporalUpperBound,
 )
-from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit import _predicate_acquisition_support as acquisition_support

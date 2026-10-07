@@ -17,7 +17,7 @@ from parallax.conformance import database_options_stories
 from parallax.conformance.class_models import MODELS
 from parallax.core.db_port import Bind, DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.snapshot import DatabaseOptions
+from parallax.core.execution import DatabaseOptions
 from tests._support.db_port import ConnectsAsItself, body_outcome
 
 _story = (

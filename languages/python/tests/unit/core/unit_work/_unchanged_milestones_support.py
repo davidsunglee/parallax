@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from parallax.core import temporal_read
 from parallax.core.base import INFINITY
+from parallax.core.execution._planning import build_write_planner
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     KeyedMutation,
@@ -37,7 +38,6 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import (
     PlannedWrite,
 )
-from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model

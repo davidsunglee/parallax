@@ -7,8 +7,9 @@ from decimal import Decimal
 from parallax.conformance.story_models import Account
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import DomainModel
-from parallax.snapshot import DatabaseOptions, connect
-from parallax.snapshot.handle import Transaction, TransactionOptionConflictError
+from parallax.core.execution import DatabaseOptions, TransactionOptionConflictError
+from parallax.snapshot import connect
+from parallax.snapshot.handle import Transaction
 
 __all__ = [
     "ResolvedOptions",

@@ -47,10 +47,9 @@ if TYPE_CHECKING:
         TransactionOutcome,
     )
     from parallax.core.entity import DomainModel
+    from parallax.core.execution import DatabaseOptions, ServingModel
     from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
     from parallax.core.unit_work import Clock
-    from parallax.snapshot import DatabaseOptions
-    from parallax.snapshot.handle import ServingModel
 
 __all__ = ["PostgresControl", "PostgresInterleavedExecution"]
 

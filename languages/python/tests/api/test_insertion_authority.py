@@ -33,8 +33,12 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity._model import model_of
+from parallax.core.execution import (
+    ExecutionFailure,
+    KeyedWriteValueError,
+)
 from parallax.core.unit_work import MissingTargetError
-from parallax.snapshot import ExecutionFailure, KeyedWriteValueError, connect
+from parallax.snapshot import connect
 from parallax.snapshot.handle import ScopedDatabase, Transaction
 from tests._support.root_ownership import own_root
 
