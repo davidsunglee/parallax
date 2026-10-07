@@ -31,9 +31,10 @@ from parallax.core.unit_work import (
     WritePreconditionError,
     WriteRejectedError,
 )
+from parallax.core.unit_work.ranges import DeferredTemporalRange
 from parallax.core.unit_work.write_planner import WritePlanner
 from parallax.core.write_plan import PredecessorRows
-from parallax.core.write_plan.plan import BoundRange, DeferredRange
+from parallax.core.write_plan.plan import BoundRange
 from parallax.snapshot.handle import ScopedDatabase, Transaction, WriteEvidenceError
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -54,10 +55,12 @@ from tests.unit._transact_support import (
     FIXED,
     INFINITY_INSTANT,
     RATE,
-    WHERE_POSITION_META,
-    WherePosition,
     balance_row,
     db_for,
+)
+from tests.unit._where_position_model import (
+    WHERE_POSITION_META,
+    WherePosition,
 )
 
 type _Concurrency = Literal["optimistic", "locking"]
@@ -198,7 +201,7 @@ def test_a_deferred_range_is_bound_once_between_its_coverage_read_and_its_first_
 
     def recording(
         planner: WritePlanner,
-        description: DeferredRange,
+        description: DeferredTemporalRange,
         rows: PredecessorRows | None,
         /,
         **supplied: Any,

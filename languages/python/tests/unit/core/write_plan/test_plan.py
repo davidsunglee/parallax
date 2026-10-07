@@ -18,13 +18,13 @@ from parallax.core.write_plan import PlannedInsert, WritePlan
 from parallax.core.write_plan.keys import ObjectKey, VersionedStateKey
 from parallax.core.write_plan.plan import (
     NO_OPENINGS,
-    NO_OWNERSHIP,
+    NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
+    DeferredRange,
     ExecutionUnit,
     OwnedEndpoint,
     PlannedSteps,
-    RangeAcquisition,
     UnitEffects,
     eager_segment,
 )
@@ -79,16 +79,16 @@ def test_planned_steps_compares_unequal_to_a_non_planned_steps_value() -> None:
 
 def test_an_attempt_that_opened_nothing_owns_nothing_an_insertion_opened() -> None:
     endpoint = OwnedEndpoint(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
-    assert not NO_OWNERSHIP.owns(endpoint)
-    assert not NO_OWNERSHIP.continues_insertion(endpoint)
+    assert not NO_TEMPORAL_WRITE_OWNERSHIP.owns(endpoint)
+    assert not NO_TEMPORAL_WRITE_OWNERSHIP.continues_insertion(endpoint)
 
 
 def test_an_attempt_that_opened_nothing_has_proved_and_derived_nothing() -> None:
     endpoint = OwnedEndpoint(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
     state = VersionedStateKey(ObjectKey(_ACCOUNT, (("id", 1),)), 1)
-    assert NO_OWNERSHIP.proven(state) is None
-    assert tuple(NO_OWNERSHIP.descendants(state, None)) == ()
-    assert NO_OWNERSHIP.descent(endpoint) is None
+    assert NO_TEMPORAL_WRITE_OWNERSHIP.proven(state) is None
+    assert tuple(NO_TEMPORAL_WRITE_OWNERSHIP.descendants(state, None)) == ()
+    assert NO_TEMPORAL_WRITE_OWNERSHIP.descent(endpoint) is None
 
 
 def test_a_plan_without_units_forms_one_unit_of_every_step() -> None:
@@ -132,22 +132,13 @@ def test_a_unit_publishes_nothing_it_does_not_name() -> None:
     assert (unit.claim, unit.deferred) == (None, None)
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class _Deferred:
-    acquisition: RangeAcquisition
+class _Deferred(DeferredRange):
+    __slots__ = ()
 
 
 def test_a_deferred_unit_spans_no_step_between_the_units_around_it() -> None:
     steps = PlannedSteps((eager_segment((_insert(1), _insert(2))),))
-    deferred = _Deferred(
-        RangeAcquisition(
-            entity=entity_of(corpus_model("account"), "Account"),
-            key_attribute=_ID,
-            key_value=1,
-            valid_time_window=None,
-            locking=False,
-        )
-    )
+    deferred = _Deferred()
     units = (
         ExecutionUnit(end=1),
         ExecutionUnit(end=1, deferred=deferred),

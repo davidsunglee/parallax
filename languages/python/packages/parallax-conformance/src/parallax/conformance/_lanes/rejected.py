@@ -20,7 +20,7 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
 from parallax.core.unit_work import KeyedWrite, PredicateWrite, WriteRejectedError, instructions
 from parallax.core.unit_work.instructions import PreparedPredicateWrite
-from parallax.core.unit_work.write_settlement import reject_readless_document_many
+from parallax.core.unit_work.materialized import reject_readless_document_many
 from parallax.core.write_plan import WritePlanningError
 from parallax.descriptor import (
     DescriptorError,

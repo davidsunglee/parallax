@@ -66,10 +66,12 @@ from tests.unit._transact_support import (
     CONTACT,
     INFINITY_INSTANT,
     PERSON,
-    WHERE_POSITION_META,
-    WherePosition,
     balance_row,
     db_for,
+)
+from tests.unit._where_position_model import (
+    WHERE_POSITION_META,
+    WherePosition,
 )
 
 __all__ = [

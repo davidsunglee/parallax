@@ -17,8 +17,8 @@ from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform
 from parallax.core.temporal_write.expansion import (
-    Expansion,
     ExpansionRole,
+    PredecessorExpander,
     PredecessorExpansion,
     TemporalFacts,
     opening,
@@ -26,12 +26,12 @@ from parallax.core.temporal_write.expansion import (
 from parallax.core.write_plan import ObjectKey, PredecessorRow
 from parallax.core.write_plan.keys import TemporalStateKey
 from parallax.core.write_plan.plan import (
-    NO_OWNERSHIP,
+    NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
     Derivation,
     OwnedEndpoint,
-    Ownership,
+    TemporalWriteOwnership,
 )
 from parallax.core.write_plan.steps import (
     FAILED_PRECONDITION,
@@ -114,9 +114,9 @@ def _expansion(
     guards: bool = False,
     addressed: tuple[TimeInterval | None, ...] = (),
     derives: bool = False,
-    ownership: Ownership = NO_OWNERSHIP,
-) -> PredecessorExpansion:
-    return PredecessorExpansion(
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
+) -> PredecessorExpander:
+    return PredecessorExpander(
         facts,
         transform,
         key_attribute=facts.view.primary_key.identity,
@@ -130,11 +130,11 @@ def _expansion(
 
 
 def _expand(
-    expansion: PredecessorExpansion,
+    expansion: PredecessorExpander,
     facts: TemporalFacts,
     predecessor: PredecessorRow,
     role: ExpansionRole = "coverage",
-) -> Expansion:
+) -> PredecessorExpansion:
     return expansion.expand(
         predecessor,
         role=role,
@@ -348,14 +348,14 @@ _RESTATING = _assigning(TimeInterval(_MAR, _SEP), {"amount": 100})
 @pytest.mark.parametrize(
     ("gated", "ownership", "kinds"),
     [
-        (True, NO_OWNERSHIP, [PlannedTemporalGuard]),
-        (False, NO_OWNERSHIP, []),
+        (True, NO_TEMPORAL_WRITE_OWNERSHIP, [PlannedTemporalGuard]),
+        (False, NO_TEMPORAL_WRITE_OWNERSHIP, []),
         (True, OpenedRows(frozenset({_endpoint(INFINITY)})), []),
     ],
     ids=["optimistic-guard", "locking", "owned"],
 )
 def test_an_equal_bounded_assignment_keeps_the_rectangle_across_carried_head_and_tail(
-    gated: bool, ownership: Ownership, kinds: list[type[PlannedWrite]]
+    gated: bool, ownership: TemporalWriteOwnership, kinds: list[type[PlannedWrite]]
 ) -> None:
     expanded = _expand(
         _expansion(_SPAN_FACTS, _RESTATING, gated=gated, guards=True, ownership=ownership),

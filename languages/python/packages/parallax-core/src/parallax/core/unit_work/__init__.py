@@ -73,15 +73,15 @@ from parallax.core.unit_work.uow import (
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
-    WriteBatchTrigger,
+    WriteBatchReason,
     WriteEvidenceError,
     WriteEvidenceErrorCode,
     active_unit_of_work,
     run_unit_of_work,
 )
 from parallax.core.unit_work.write_planner import (
-    PlanningRequest,
     WritePlanner,
+    WritePlanningRequest,
 )
 from parallax.core.unit_work.write_validate import WriteRejectedError
 
@@ -109,7 +109,6 @@ __all__ = [
     "MissingTargetError",
     "OptimisticLockConflictError",
     "ParticipationToken",
-    "PlanningRequest",
     "PredicateMutation",
     "PredicateSelection",
     "PredicateWrite",
@@ -130,7 +129,7 @@ __all__ = [
     "VersionedEvidence",
     "VersionedEvidenceBuilder",
     "WriteAssignment",
-    "WriteBatchTrigger",
+    "WriteBatchReason",
     "WriteEffectError",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
@@ -138,6 +137,7 @@ __all__ = [
     "WriteInstructionError",
     "WriteIntent",
     "WritePlanner",
+    "WritePlanningRequest",
     "WritePreconditionError",
     "WriteRejectedError",
     "WriteResultError",

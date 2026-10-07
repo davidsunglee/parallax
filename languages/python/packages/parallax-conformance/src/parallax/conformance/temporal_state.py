@@ -3,10 +3,12 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 from collections.abc import Generator, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Final, cast
 
 from parallax.core import inheritance, temporal_read
 from parallax.core.base import INFINITY, normalize_instant
+from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
     AttributeIdentity,
     DocumentMember,
@@ -19,16 +21,19 @@ from parallax.core.metamodel import (
     TemporalDimension,
     ValueObjectIdentity,
 )
+from parallax.core.unit_work.acquisition import (
+    AcquireRows,
+    CoverageReadRequest,
+    RowConsumer,
+    RowReadRequest,
+)
 from parallax.core.write_plan import (
     ObservedStateKey,
     PlannedInsert,
     PredecessorRow,
-    PredecessorRows,
-    PredecessorRowsBuilder,
     TemporalObservation,
 )
 from parallax.core.write_plan.keys import TemporalStateKey
-from parallax.core.write_plan.plan import RangeAcquisition
 from parallax.core.write_plan.steps import (
     Finite,
     PlannedClose,
@@ -392,24 +397,25 @@ class TemporalShadow:
             )
             self._track(key, observation)
 
-    def coverage(self, model: Metamodel, acquisition: RangeAcquisition) -> PredecessorRows | None:
-        """The tracked current milestones of ``acquisition``'s object that
-        overlap its Valid-Time window, or all of them where it has none — what
-        the execution's own coverage read returns from the rows this tracker
-        accounts for, as the same evidence: ``None`` where it holds none."""
-        entity = acquisition.entity
-        identity = (entity.identity.name, (acquisition.key_value,))
-        window = acquisition.valid_time_window
+    def acquisition(self, model: Metamodel) -> AcquireRows:
+        """The row acquisition a unit of work planning against this case state
+        reads its coverage through: each coverage read answers the tracked
+        current milestones of its object that overlap its Valid-Time window, or
+        all of them where it has none — what the execution's own coverage read
+        returns from the rows this tracker accounts for, through the same
+        consumer."""
+        return _CaseStateAcquisition(self, model)
+
+    def covering(self, model: Metamodel, request: CoverageReadRequest) -> list[tuple[object, ...]]:
+        """The tracked current milestones ``request`` reads, each positional
+        over its target's member selection."""
+        entity = request.entity
+        identity = (entity.identity.name, (request.key_value,))
+        window = request.valid_time_window
         shape = temporal_read.view(model).shape(entity.identity)
         assert shape is not None  # the facet covers every accepted Entity
-        position = inheritance.view(model).entity(entity.identity)
-        assert position is not None  # every accepted Entity has a view
-        selection = position.member_selection
-        key = selection.shape.position(position.primary_key.identity.name)
-        assert key is not None  # a family's key is one of its members
-        evidence = PredecessorRowsBuilder(
-            selection, key_position=key, absent=_ABSENT, documents=False
-        )
+        members = _member_selection(model, entity).shape
+        rows: list[tuple[object, ...]] = []
         for slot, observation in self._current.items():
             if slot[:2] != identity:
                 continue
@@ -418,8 +424,8 @@ class TemporalShadow:
                 coverage = temporal_read.valid_time_coverage(shape, predecessor, None)
                 if coverage is None or not coverage.overlaps(window):
                     continue
-            evidence.append(_positional(selection.shape, predecessor.members))
-        return evidence.seal()
+            rows.append(_positional(members, predecessor.members))
+        return rows
 
     def _track(self, key: _ObjectKey, observation: TemporalObservation) -> None:
         """Store one milestone in its own slot, refusing a slot already taken.
@@ -459,6 +465,32 @@ class TemporalShadow:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _CaseStateAcquisition:
+    """:meth:`TemporalShadow.acquisition`'s answer: coverage reads over the
+    tracked milestones, which hold no raw Structured Column."""
+
+    shadow: TemporalShadow
+    model: Metamodel
+
+    def __call__[Request: RowReadRequest, Result](
+        self, request: Request, consumer: RowConsumer[Request, Result], /
+    ) -> Result:
+        if not isinstance(
+            request, CoverageReadRequest
+        ):  # pragma: no cover - planning reads coverage alone
+            raise TypeError(f"case state answers coverage reads alone, not {request!r}")
+        rows = self.shadow.covering(self.model, request)
+        selection = _member_selection(self.model, request.entity)
+        return consumer(request, selection, iter(rows), _ABSENT, None, len(rows))
+
+
+def _member_selection(model: Metamodel, entity: EntityMetadata) -> EntityMemberSelection:
+    position = inheritance.view(model).entity(entity.identity)
+    assert position is not None  # every accepted Entity has a view
+    return position.member_selection
+
+
 def predecessor_row(
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
@@ -486,8 +518,8 @@ def predecessor_row(
 
 
 _ABSENT: Final = object()
-"""The member a tracked milestone does not hold, in the positional evidence
-:meth:`TemporalShadow.coverage` answers."""
+"""The member a tracked milestone does not hold, in the positional rows
+:meth:`TemporalShadow.covering` answers."""
 
 
 def _positional(shape: MemberShape, members: Mapping[str, object]) -> tuple[object, ...]:

@@ -36,10 +36,9 @@ from parallax.core.metamodel import AttributeMetadata, FacetKey, Metamodel
 from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.temporal_write.expansion import PredecessorExpansion
+from parallax.core.temporal_write.expansion import PredecessorExpander
 from parallax.core.unit_work import (
     MaterializedWriteGroup,
-    PlanningRequest,
     PredicateSelection,
     PredicateWrite,
     SystemClock,
@@ -49,6 +48,7 @@ from parallax.core.unit_work import (
     VersionedEvidenceBuilder,
     WriteAssignment,
     WritePlanner,
+    WritePlanningRequest,
 )
 from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
@@ -58,7 +58,7 @@ from parallax.core.unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core.unit_work.materialized import GroupStates, target_write
-from parallax.core.unit_work.ranges import Decoration, DeferredTemporalRange
+from parallax.core.unit_work.ranges import AuditDecoration, DeferredTemporalRange
 from parallax.core.unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
@@ -66,7 +66,7 @@ from parallax.core.unit_work.strategy import (
 )
 from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.unit_work.write_settlement import (
-    WriteSettlement,  # producer-reach regression only
+    WritePlanCompiler,  # producer-reach regression only
 )
 from parallax.core.write_plan import (
     ChunkedColumnBuilder,
@@ -82,25 +82,10 @@ from parallax.core.write_plan.columns import (
 )
 from parallax.core.write_plan.keys import TemporalStateKey
 from parallax.core.write_plan.steps import ChangedFrom, PlannedUpdate
-from parallax.snapshot.handle import (
-    Database,
-    Transaction,
-)
-from tests._support import mirrored_models as mm
 from tests._support.clock_probes import CountingClock, inert_instant
-from tests._support.db_port import (
-    Read,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    WriteCall,
-)
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
-from tests._support.root_ownership import own_root
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._temporal_group_support import temporal_group
-from tests.unit._transact_support import BALANCE as BALANCE_MODEL
-from tests.unit._transact_support import WHERE_POSITION_META, WherePosition, db_for
 from tests.unit.core import _milestone_rows_support as milestone_rows
 from tests.unit.core.unit_work._ownership_support import OpenedRows
 
@@ -189,17 +174,13 @@ def _version_group(
 
 def test_a_materialized_groups_steps_are_equal_but_not_identity_stable_on_repeat_access() -> None:
     group = _version_group("Account", "id", [(1, 1), (2, 1), (3, 1)], assigned=0.00)
-    plan = (
-        build_write_planner(_ACCOUNT)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[group],
-            )
+    plan = build_write_planner(_ACCOUNT).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[group],
         )
-        .plan
     )
     assert len(plan.steps) == 3
     first_access = plan.steps[0]
@@ -254,17 +235,13 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
         for row_id in (1, 2)
     ]
     group = _temporal_group("Balance", "id", rows)
-    plan = (
-        build_write_planner(_BALANCE)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[group],
-            )
+    plan = build_write_planner(_BALANCE).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[group],
         )
-        .plan
     )
     # A plain terminate over Balance (Transaction-Time-Only) closes with no
     # chained successor, so each row settles to exactly one Planned Close.
@@ -292,8 +269,8 @@ _PRODUCER_CLASSES = (
     FixedClock,
     SystemClock,
     WritePlanner,
-    WriteSettlement,
-    PredecessorExpansion,
+    WritePlanCompiler,
+    PredecessorExpander,
     BatchingStrategy,
     ConcurrencyStrategy,
     AuditStrategy,
@@ -360,17 +337,13 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
         )
         for row_id in (1, 2)
     ]
-    plan = (
-        build_write_planner(_BALANCE)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[_temporal_group("Balance", "id", rows)],
-            )
+    plan = build_write_planner(_BALANCE).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[_temporal_group("Balance", "id", rows)],
         )
-        .plan
     )
     walked = _reachable_from_plan(plan)
     assert not [value for value in walked if _is_producer(value)]
@@ -400,26 +373,22 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
         _POSITION,
     )
     assert isinstance(prepared, PreparedTargetWrite)
-    plan = (
-        build_write_planner(_POSITION)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=TransactionInstant(clock),
-                concurrency="optimistic",
-                buffered_writes=compose_writes(
-                    _POSITION, [target_write(prepared, inheritance.view(_POSITION))]
-                ),
-                ownership=ownership,
-            )
+    plan = build_write_planner(_POSITION).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=TransactionInstant(clock),
+            concurrency="optimistic",
+            buffered_writes=compose_writes(
+                _POSITION, [target_write(prepared, inheritance.view(_POSITION))]
+            ),
+            ownership=ownership,
         )
-        .plan
     )
     (unit,) = plan.units
     assert isinstance(unit.deferred, DeferredTemporalRange)
     walked = _reachable_from_plan(plan)
     assert not [value for value in walked if _is_producer(value)]
-    assert not [value for value in walked if isinstance(value, OpenedRows | Decoration)]
+    assert not [value for value in walked if isinstance(value, OpenedRows | AuditDecoration)]
     assert all(value is not TEST_ACTOR_IDENTITY for value in walked)
     assert not [value for value in walked if isinstance(value, MethodType | FunctionType)]
     # The walk descended into the description: its resolved instant and the
@@ -430,17 +399,13 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
 
 
 def _account_plan(group: MaterializedWriteGroup) -> WritePlan:
-    return (
-        build_write_planner(_ACCOUNT)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[group],
-            )
+    return build_write_planner(_ACCOUNT).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[group],
         )
-        .plan
     )
 
 
@@ -512,17 +477,13 @@ def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step
         )
         for row_id in (1, 2, 3)
     ]
-    plan = (
-        build_write_planner(_BALANCE)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=TransactionInstant(clock),
-                concurrency="optimistic",
-                buffered_writes=[_temporal_group("Balance", "id", rows)],
-            )
+    plan = build_write_planner(_BALANCE).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=TransactionInstant(clock),
+            concurrency="optimistic",
+            buffered_writes=[_temporal_group("Balance", "id", rows)],
         )
-        .plan
     )
     assert clock.calls == 1
     _ = plan.steps[0]
@@ -544,7 +505,7 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
     # consumption is the same defect as re-capturing the instant there.
     calls: list[str] = []
     resolve = expansion.resolved_assignments  # pyright: ignore[reportPrivateImportUsage]
-    settle = PredecessorExpansion.settle_group
+    settle = PredecessorExpander.settle_group
 
     def counting_resolve(*args: Any, **kwargs: Any) -> Any:
         calls.append("resolve")
@@ -555,7 +516,7 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
         return settle(*args, **kwargs)
 
     monkeypatch.setattr(expansion, "resolved_assignments", counting_resolve)
-    monkeypatch.setattr(PredecessorExpansion, "settle_group", counting_settle)
+    monkeypatch.setattr(PredecessorExpander, "settle_group", counting_settle)
     rows = [
         {
             "id": row_id,
@@ -566,17 +527,13 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
         }
         for row_id in (1, 2, 3)
     ]
-    plan = (
-        build_write_planner(_BALANCE)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[temporal_group(_value_update("Balance", None), _BALANCE, rows)],
-            )
+    plan = build_write_planner(_BALANCE).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[temporal_group(_value_update("Balance", None), _BALANCE, rows)],
         )
-        .plan
     )
     assert calls == ["settle", "resolve"]
     _ = plan.steps[0]
@@ -656,17 +613,13 @@ def test_packed_temporal_steps_consult_no_producer_on_repeated_access(
         }
         for row_id in (1, 2, 3)
     ]
-    plan = (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[temporal_group(_value_update(entity, valid_from), model, rows)],
-            )
+    plan = build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[temporal_group(_value_update(entity, valid_from), model, rows)],
         )
-        .plan
     )
     settled = list(plan.steps)
     assert len(settled) == len(rows) * (3 if valid_from is not None else 2)
@@ -680,17 +633,13 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
     # Any mapping stored on a Step Segment is retained across later `step()`
     # calls rather than copied afresh. It must therefore be read-only so every
     # subsequent access observes the same planned values.
-    versioned_plan = (
-        build_write_planner(_ACCOUNT)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[_version_group("Account", "id", [(1, 1)], assigned=9.0)],
-            )
+    versioned_plan = build_write_planner(_ACCOUNT).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[_version_group("Account", "id", [(1, 1)], assigned=9.0)],
         )
-        .plan
     )
     rows = [
         (
@@ -704,17 +653,13 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
             },
         )
     ]
-    temporal_plan = (
-        build_write_planner(_BALANCE)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[_temporal_group("Balance", "id", rows)],
-            )
+    temporal_plan = build_write_planner(_BALANCE).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[_temporal_group("Balance", "id", rows)],
         )
-        .plan
     )
     held = [
         held
@@ -749,17 +694,13 @@ def test_mutating_a_materialized_groups_assignments_leaves_steps_unaffected() ->
         }
     ]
     group = temporal_group(_value_update("Balance", None), _BALANCE, rows)
-    plan = (
-        build_write_planner(_BALANCE)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[group],
-            )
+    plan = build_write_planner(_BALANCE).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[group],
         )
-        .plan
     )
     before = plan.steps[1]
     assert isinstance(before, PlannedInsert)
@@ -811,17 +752,13 @@ def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predec
     )
     assert isinstance(group.evidence, PredecessorRows)
     retained = group.evidence.rows[0]
-    plan = (
-        build_write_planner(_BRANCH)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[group],
-            )
+    plan = build_write_planner(_BRANCH).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[group],
         )
-        .plan
     )
     changed = cast("PlannedInsert", plan.steps[2])
     (entry,) = changed.entries
@@ -884,17 +821,13 @@ def test_a_materialized_groups_planned_writes_are_constructed_only_on_step_acces
     monkeypatch.setattr(PlannedUpdate, "__init__", counting_init)
 
     group = _version_group("Account", "id", [(row_id, 1) for row_id in range(500)], assigned=0.00)
-    plan = (
-        build_write_planner(_ACCOUNT)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[group],
-            )
+    plan = build_write_planner(_ACCOUNT).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[group],
         )
-        .plan
     )
     assert len(constructed) == 0  # `finalize()` alone constructs none
     assert len(plan.steps) == 500
@@ -904,128 +837,21 @@ def test_a_materialized_groups_planned_writes_are_constructed_only_on_step_acces
 
 
 def test_repeated_planning_of_an_equal_materialized_group_yields_equal_plans() -> None:
-    first_plan = (
-        build_write_planner(_ACCOUNT)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[_version_group("Account", "id", [(1, 1), (2, 1)], assigned=5.00)],
-            )
+    first_plan = build_write_planner(_ACCOUNT).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[_version_group("Account", "id", [(1, 1), (2, 1)], assigned=5.00)],
         )
-        .plan
     )
-    second_plan = (
-        build_write_planner(_ACCOUNT)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="optimistic",
-                buffered_writes=[_version_group("Account", "id", [(1, 1), (2, 1)], assigned=5.00)],
-            )
+    second_plan = build_write_planner(_ACCOUNT).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[_version_group("Account", "id", [(1, 1), (2, 1)], assigned=5.00)],
         )
-        .plan
     )
     assert first_plan == second_plan
     assert first_plan.steps == second_plan.steps
-
-
-# --------------------------------------------------------------------------- #
-# End to end: structural sharing survives materialization, temporal          #
-# expansion, and lowering together, for a multi-row bitemporal resolve.       #
-# --------------------------------------------------------------------------- #
-def _position_row(row_id: int) -> dict[str, object]:
-    return {
-        "id": row_id,
-        "acct_num": "A",
-        "value": Decimal("200.00"),
-        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        "thru_z": INFINITY,
-        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        "out_z": INFINITY,
-    }
-
-
-def test_a_multi_row_materialized_bitemporal_update_lowers_one_close_and_chain_per_row() -> None:
-    port = ScriptedAdapter(
-        Transact(Read(rows=[_position_row(1), _position_row(2), _position_row(3)]), Write(times=9))
-    )
-    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-    clock = FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
-
-    def fn(tx: Transaction) -> None:
-        tx.update_where(
-            WherePosition.where(WherePosition.value == Decimal("200.00")),
-            WherePosition.value.set(Decimal("300.00")),
-            valid_from=valid_from,
-        )
-
-    own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=clock)
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [(op.sql, op.binds) for op in port.calls if isinstance(op, WriteCall)]
-    # Each resolved row settles to its own close + head + tail (three
-    # statements), and the three rows' own topologies never interleave or
-    # merge — the SAME per-row shape a single-row materialize proves,
-    # scaled to three, with no shared mutable state between rows.
-    assert len(writes) == 9
-    closes = [(sql, binds) for sql, binds in writes if sql.startswith("update ")]
-    inserts = [(sql, binds) for sql, binds in writes if sql.startswith("insert ")]
-    assert len(closes) == 3
-    assert len(inserts) == 6
-    closed_keys = {binds[1] for _sql, binds in closes}  # `... where pos_id = ? and ...`
-    inserted_keys = {binds[0] for _sql, binds in inserts}  # `insert into position(pos_id, ...`
-    assert closed_keys == {1, 2, 3}
-    assert inserted_keys == {1, 2, 3}
-
-
-# --------------------------------------------------------------------------- #
-# Streaming no-op elimination applies uniformly to the temporal (Predecessor  #
-# Columns) branch, not only the versioned one — the per-row equality filter   #
-# never retains a comparison-only column for either shape.                    #
-# --------------------------------------------------------------------------- #
-def _balance_row(row_id: int, value: Decimal) -> dict[str, object]:
-    return {
-        "bal_id": row_id,
-        "acct_num": "A",
-        "val": value,
-        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        "out_z": INFINITY,
-    }
-
-
-def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_rest() -> None:
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[_balance_row(1, Decimal("5.00")), _balance_row(2, Decimal("10.00"))]),
-            Write(times=2),
-        )
-    )
-
-    def fn(tx: Transaction) -> None:
-        tx.update_where(
-            mm.Balance.where(mm.Balance.value < Decimal("1000000.00")),
-            mm.Balance.value.set(Decimal("5.00")),
-        )
-
-    db_for(BALANCE_MODEL, port).transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    # Row 1 already holds the assigned value and is streamed out before it
-    # ever reaches a column builder; only row 2's close + chain reach the
-    # driver.
-    assert len(writes) == 2
-
-
-def test_a_temporal_materializing_update_with_every_row_a_no_op_buffers_nothing() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_balance_row(1, Decimal("5.00"))])))
-
-    def fn(tx: Transaction) -> None:
-        tx.update_where(
-            mm.Balance.where(mm.Balance.value < Decimal("1000000.00")),
-            mm.Balance.value.set(Decimal("5.00")),
-        )
-
-    db_for(BALANCE_MODEL, port).transact(fn, concurrency="optimistic")
-    assert not any(isinstance(op, WriteCall) for op in port.calls)

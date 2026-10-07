@@ -14,8 +14,8 @@ from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     KeyedMutation,
     KeyedWrite,
-    PlanningRequest,
     RetainedObservation,
+    WritePlanningRequest,
     buffered_write,
 )
 from parallax.core.unit_work.instructions import prepare_wire_write
@@ -29,10 +29,10 @@ from parallax.core.write_plan import (
 )
 from parallax.core.write_plan.keys import TemporalStateKey
 from parallax.core.write_plan.plan import (
-    NO_OWNERSHIP,
+    NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
     ExecutionUnit,
-    Ownership,
+    TemporalWriteOwnership,
     WritePlan,
 )
 from parallax.core.write_plan.steps import (
@@ -41,7 +41,7 @@ from parallax.core.write_plan.steps import (
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model
-from tests.unit.core.unit_work._acquired_rows_support import acquired
+from tests.unit.core.unit_work._acquired_rows_support import bind_held
 
 SPANS = model("buffered-sequence-layout-twin-columns")
 BALANCES = model("balance")
@@ -117,21 +117,17 @@ def planned(
     *writes: BufferItem,
     concurrency: str = "optimistic",
     counts_unchanged_rows: bool = True,
-    ownership: Ownership = NO_OWNERSHIP,
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> WritePlan:
-    return (
-        build_write_planner(meta)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant_at("2024-11-01T00:00:00+00:00"),
-                concurrency=concurrency,  # type: ignore[arg-type]
-                buffered_writes=compose_writes(meta, list(writes)),
-                ownership=ownership,
-                counts_unchanged_rows=counts_unchanged_rows,
-            )
+    return build_write_planner(meta).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-11-01T00:00:00+00:00"),
+            concurrency=concurrency,  # type: ignore[arg-type]
+            buffered_writes=compose_writes(meta, list(writes)),
+            ownership=ownership,
+            counts_unchanged_rows=counts_unchanged_rows,
         )
-        .plan
     )
 
 
@@ -140,16 +136,14 @@ def bound_range(
     plan: WritePlan,
     rows: Sequence[PredecessorRow],
     *,
-    ownership: Ownership = NO_OWNERSHIP,
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> tuple[ExecutionUnit, BoundRange]:
     (unit,) = plan.units
-    deferred = unit.deferred
-    assert deferred is not None
-    return unit, build_write_planner(meta).bind_deferred(
-        deferred,
-        acquired(meta, deferred.acquisition, rows),
+    return unit, bind_held(
+        meta,
+        unit,
+        rows,
         ownership=ownership,
-        actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=instant_at("2024-11-01T00:00:00+00:00"),
     )
 

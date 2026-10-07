@@ -65,13 +65,12 @@ from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._write import compile_write_step
-from parallax.core.unit_work import NO_AUDIT, PlanningRequest, WritePlanner
+from parallax.core.unit_work import NO_AUDIT, WritePlanner, WritePlanningRequest
 from parallax.core.unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
     ConcurrencyStrategy,
 )
-from parallax.core.unit_work.write_settlement import WritePlanningResult
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.steps import PlannedWrite
 from parallax.snapshot.handle import Transaction
@@ -107,7 +106,7 @@ class _Planning:
     """One planning: its receiver, what it was asked to plan, and what it returned."""
 
     planner: WritePlanner
-    request: PlanningRequest
+    request: WritePlanningRequest
     plan: WritePlan
 
 
@@ -123,7 +122,7 @@ class _Composition:
     lowered: list[WritePlan]
     rendered: list[PlannedWrite]
 
-    def escaped(self) -> list[PlanningRequest]:
+    def escaped(self) -> list[WritePlanningRequest]:
         """The plannings whose receiver the composition root did not build."""
         return [
             one.request
@@ -195,9 +194,9 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         seen.built.append(_Built(planner=planner, audit=audit))
         return planner
 
-    def finalize(self: WritePlanner, request: PlanningRequest) -> WritePlanningResult:
+    def finalize(self: WritePlanner, request: WritePlanningRequest) -> WritePlan:
         finalized = finalizing(self, request)
-        seen.planned.append(_Planning(planner=self, request=request, plan=finalized.plan))
+        seen.planned.append(_Planning(planner=self, request=request, plan=finalized))
         return finalized
 
     def lower(
@@ -253,7 +252,7 @@ def _assert_planned_only_through_the_factory(seen: _Composition, plannings: int)
     )
 
 
-def _buffer_shapes(request: PlanningRequest) -> list[str]:
+def _buffer_shapes(request: WritePlanningRequest) -> list[str]:
     """One planning's buffer as the item shapes it held — what a failure needs to
     say about a planning nothing here accounts for."""
     return [type(item).__name__ for item in request.buffered_writes]

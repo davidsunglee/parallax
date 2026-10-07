@@ -41,7 +41,7 @@ from parallax.core.write_plan.plan import (
     Derivation,
     Openings,
     OwnedEndpoint,
-    Ownership,
+    TemporalWriteOwnership,
     UnitEffects,
 )
 from parallax.core.write_plan.planned_rows import (
@@ -85,8 +85,8 @@ from parallax.core.write_plan.steps import (
 from parallax.core.write_plan.steps import INFINITY as OPEN_UPPER_BOUND
 
 __all__ = [
-    "Expansion",
     "ExpansionRole",
+    "PredecessorExpander",
     "PredecessorExpansion",
     "PredecessorUse",
     "SettledGroup",
@@ -125,17 +125,17 @@ class TemporalFacts:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class Expansion(UnitEffects):
+class PredecessorExpansion(UnitEffects):
     """One predecessor's planned steps — its own effect before the successors it
     opens — beside the effects their success publishes."""
 
     steps: tuple[PlannedWrite, ...]
 
 
-_NOTHING: Final[Expansion] = Expansion(steps=())
+_NOTHING: Final[PredecessorExpansion] = PredecessorExpansion(steps=())
 
 
-class PredecessorExpansion:
+class PredecessorExpander:
     """The per-predecessor rules of one temporal unit: whether its transform
     reaches a predecessor, whether the predecessor stays unchanged, how it is
     closed and gated, how the attempt's ownership disposes of it, and which
@@ -176,7 +176,7 @@ class PredecessorExpansion:
         guards: bool = False,
         addressed: tuple[TimeInterval | None, ...] = (),
         derives: bool = False,
-        ownership: Ownership,
+        ownership: TemporalWriteOwnership,
     ) -> None:
         self._facts = facts
         self._transform = transform
@@ -196,7 +196,7 @@ class PredecessorExpansion:
         role: ExpansionRole,
         state: ObservedStateKey,
         coverage: TimeInterval | None,
-    ) -> Expansion:
+    ) -> PredecessorExpansion:
         """``predecessor`` — the current row whose observed state is ``state``
         and whose Valid Time is ``coverage`` (``None`` without Valid Time) —
         expanded in its ``role``.
@@ -346,7 +346,7 @@ class PredecessorExpansion:
         predecessor: PredecessorRow,
         coverage: TimeInterval | None,
         successors: Sequence[Successor],
-    ) -> Expansion | None:
+    ) -> PredecessorExpansion | None:
         """How an unchanged coverage predecessor is kept, or ``None`` where it
         changes or its unchanged state cannot be proven."""
         if not (self._guards or not self._gated or self._owns(coverage)) or not self._unchanged(
@@ -398,7 +398,7 @@ class PredecessorExpansion:
         coverage: TimeInterval | None,
         closing: PlannedClose,
         successors: Sequence[Successor],
-    ) -> Expansion:
+    ) -> PredecessorExpansion:
         """The predecessor's own effect by ownership and the successors it opens
         (`m-temporal-write` *Ownership disposal*).
 
@@ -419,7 +419,7 @@ class PredecessorExpansion:
         changed = (state,)
         if not owned:
             inserts = self._opened(predecessor, successors)
-            return Expansion(
+            return PredecessorExpansion(
                 steps=(closing, *inserts),
                 changed=changed,
                 opened=Openings(fresh=openings(facts, inserts)),
@@ -830,7 +830,7 @@ class _RowDisposal:
 
     facts: TemporalFacts
     transform: CoverageTransform
-    ownership: Ownership
+    ownership: TemporalWriteOwnership
     owning: bool
     key_position: int
     valid_positions: tuple[int, int] | None
@@ -986,7 +986,9 @@ def _complete(successors: Sequence[Successor], coverage: TimeInterval) -> bool:
     return True
 
 
-def _preserved(facts: TemporalFacts, closing: PlannedClose, ownership: Ownership) -> Expansion:
+def _preserved(
+    facts: TemporalFacts, closing: PlannedClose, ownership: TemporalWriteOwnership
+) -> PredecessorExpansion:
     """How a milestone a write leaves as it was is kept, once its unchanged
     state is provable without changing it. A kept milestone is no change, even
     where a guard proves it.
@@ -1007,7 +1009,7 @@ def _preserved(facts: TemporalFacts, closing: PlannedClose, ownership: Ownership
         concurrency=concurrency,
         affected_rows=closing.affected_rows,
     )
-    return Expansion(steps=(guard,))
+    return PredecessorExpansion(steps=(guard,))
 
 
 def _successor_insert(
@@ -1094,10 +1096,10 @@ def _owned(
     changed: tuple[ObservedStateKey, ...],
     derived: tuple[Derivation, ...],
     removed: OwnedEndpoint | None = None,
-) -> Expansion:
+) -> PredecessorExpansion:
     """An owned predecessor's effects, its successors continuing the insertion
     that opened it when ``continues``."""
-    return Expansion(
+    return PredecessorExpansion(
         steps=steps,
         changed=changed,
         opened=Openings(continued=opened) if continues else Openings(fresh=opened),

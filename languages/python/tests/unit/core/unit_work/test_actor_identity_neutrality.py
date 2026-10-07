@@ -18,11 +18,11 @@ from parallax.core.unit_work import (
     Concurrency,
     DatabaseLoginActor,
     KeyedWrite,
-    PlanningRequest,
     PredicateSelection,
     PredicateWrite,
     SubjectActor,
     TransactionInstant,
+    WritePlanningRequest,
     object_key,
 )
 from parallax.core.unit_work.strategy import ActorIdentity
@@ -55,17 +55,13 @@ def _plan_under(
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
 ) -> WritePlan:
-    return (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=actor,
-                transaction_instant=tx_instant if tx_instant is not None else inert_instant(),
-                concurrency=concurrency,
-                buffered_writes=observed_buffer(buffer, model, observations),
-            )
+    return build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=actor,
+            transaction_instant=tx_instant if tx_instant is not None else inert_instant(),
+            concurrency=concurrency,
+            buffered_writes=observed_buffer(buffer, model, observations),
         )
-        .plan
     )
 
 

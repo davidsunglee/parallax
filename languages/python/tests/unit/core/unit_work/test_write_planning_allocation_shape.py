@@ -67,12 +67,12 @@ from parallax.core.predicate import Comparison
 from parallax.core.unit_work import (
     KeyedWrite,
     MaterializedWriteGroup,
-    PlanningRequest,
     PredicateSelection,
     PredicateWrite,
     VersionedEvidenceBuilder,
     WriteAssignment,
     WritePlanner,
+    WritePlanningRequest,
     object_key,
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
@@ -271,7 +271,7 @@ def _flush_of(entities: int, writes: int) -> Seam:
     """
     model = _model(entities)
     planner = build_write_planner(model)
-    request = PlanningRequest(
+    request = WritePlanningRequest(
         actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=INSTANT,
         concurrency="optimistic",
@@ -332,7 +332,7 @@ class _Settlement(NamedTuple):
     """
 
     planner: WritePlanner
-    request: PlanningRequest
+    request: WritePlanningRequest
 
 
 def _versioned_settlement(rows: int) -> _Settlement:
@@ -345,7 +345,7 @@ def _versioned_settlement(rows: int) -> _Settlement:
     model = _versioned_model()
     return _Settlement(
         planner=build_write_planner(model),
-        request=PlanningRequest(
+        request=WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=INSTANT,
             concurrency="optimistic",
@@ -364,7 +364,7 @@ def _temporal_settlement(rows: int) -> _Settlement:
     model = _temporal_model()
     return _Settlement(
         planner=build_write_planner(model),
-        request=PlanningRequest(
+        request=WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
             concurrency="optimistic",
@@ -395,7 +395,7 @@ def _settled_group_plan(settlement: _Settlement) -> Seam:
     """
 
     def run(sample: Callable[[], None]) -> None:
-        plan = settlement.planner.finalize(settlement.request).plan
+        plan = settlement.planner.finalize(settlement.request)
         sample()
         del plan
 
@@ -415,7 +415,7 @@ def _settling_a_group(settlement: _Settlement) -> Span:
 
     def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
         opened()
-        plan = settlement.planner.finalize(settlement.request).plan
+        plan = settlement.planner.finalize(settlement.request)
         closed()
         del plan
 

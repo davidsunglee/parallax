@@ -48,10 +48,12 @@ from tests._support.model_capabilities import cataloged_for, row_codec_for
 from tests.unit._transact_support import (
     ACCOUNT,
     INFINITY_INSTANT,
-    WHERE_POSITION_META,
-    WherePosition,
     db_for,
     new_account,
+)
+from tests.unit._where_position_model import (
+    WHERE_POSITION_META,
+    WherePosition,
 )
 
 _TX_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)

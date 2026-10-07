@@ -41,9 +41,9 @@ from parallax.core.unit_work import (
     KeyedWrite,
     MissingTargetError,
     OptimisticLockConflictError,
-    PlanningRequest,
     StaleWriteError,
     WriteEffectError,
+    WritePlanningRequest,
     enforce_affected_rows,
     object_key,
 )
@@ -79,17 +79,13 @@ def _locking_policy(
     observations = (
         None if observed is None else {key: VersionObservation(observed_version=observed)}
     )
-    plan = (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=inert_instant(),
-                concurrency="locking",
-                buffered_writes=observed_buffer([write], model, observations),
-            )
+    plan = build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="locking",
+            buffered_writes=observed_buffer([write], model, observations),
         )
-        .plan
     )
     (step,) = plan.steps
     assert isinstance(step, PlannedUpdate | PlannedDelete)  # neither write opens a row

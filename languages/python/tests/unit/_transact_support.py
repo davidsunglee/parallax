@@ -21,7 +21,7 @@ from typing import Any, Final, cast
 
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import Attr, Bitemporal, DomainModel, attr
+from parallax.core import DomainModel
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -62,8 +62,6 @@ __all__ = [
     "PERSON",
     "RATE",
     "SHIPMENT",
-    "WHERE_POSITION_META",
-    "WherePosition",
     "WriteDocumentBinds",
     "account_db",
     "balance_row",
@@ -90,22 +88,6 @@ RATE = MODELS["rate"]
 
 
 FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-
-
-# A LOCAL bitemporal entity — the `_where`-verb materialization tests' own
-# bounded/plain rectangle-split fixture. `models/position.yaml` DOES have a
-# shared mirror now (`parallax.conformance.story_models.Position`), but it is
-# not a drop-in: it maps to table `position` with columns
-# `pos_id`/`val`, while the assertions below pin emitted SQL against
-# `where_position`/`id`/`value`. Swapping would rewrite every one of them for no
-# gain, so the local fixture stays.
-class WherePosition(Bitemporal, table="where_position", namespace="parallax.compatibility"):
-    id: Attr[int] = attr(primary_key=True)
-    acct_num: Attr[str] = attr(max_length=32)
-    value: Attr[Decimal] = attr(precision=18, scale=2)
-
-
-WHERE_POSITION_META = DomainModel(WherePosition)
 
 
 NEW_ROW: MappingRow = {"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1}

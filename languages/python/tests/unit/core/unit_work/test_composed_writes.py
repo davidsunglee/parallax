@@ -16,8 +16,8 @@ from parallax.core.unit_work import (
     BufferItem,
     KeyedMutation,
     KeyedWrite,
-    PlanningRequest,
     RetainedObservation,
+    WritePlanningRequest,
     buffered_write,
 )
 from parallax.core.unit_work.instructions import prepare_wire_write
@@ -35,7 +35,7 @@ from parallax.core.write_plan import (
     WritePlanningError,
 )
 from parallax.core.write_plan.keys import TemporalStateKey
-from parallax.core.write_plan.plan import Completions, WritePlan
+from parallax.core.write_plan.plan import CombinedSourceAuthority, WritePlan
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import corpus_records, formed
@@ -84,17 +84,13 @@ def _write(
 
 
 def _plan(*writes: ObservedKeyedWrite) -> WritePlan:
-    return (
-        build_write_planner(_BALANCE)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
-                concurrency="optimistic",
-                buffered_writes=compose_writes(_BALANCE, writes),
-            )
+    return build_write_planner(_BALANCE).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+            concurrency="optimistic",
+            buffered_writes=compose_writes(_BALANCE, writes),
         )
-        .plan
     )
 
 
@@ -119,7 +115,7 @@ def test_two_observations_of_one_transaction_time_row_validate_the_earlier() -> 
         Decimal("175.00")
     )
     (unit,) = plan.units
-    assert isinstance(unit.claim, Completions)
+    assert isinstance(unit.claim, CombinedSourceAuthority)
     unit.claim.consume()
     assert _STALE.consumed and _CURRENT.consumed
 
@@ -167,7 +163,7 @@ def test_a_pair_no_verb_admitted_is_left_standing_rather_than_composed() -> None
 
 def test_completions_spend_every_member() -> None:
     first, second = _observation(_JAN, "1.00"), _observation(_MAR, "2.00")
-    Completions((first, second)).consume()
+    CombinedSourceAuthority((first, second)).consume()
     assert first.consumed and second.consumed
 
 
@@ -187,7 +183,7 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
     )
     with pytest.raises(WritePlanningError, match="requires the Temporal Observation"):
         build_write_planner(model).finalize(
-            PlanningRequest(
+            WritePlanningRequest(
                 actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
                 concurrency="optimistic",
@@ -233,17 +229,13 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
             update(aug, "300.00", rectangle(jun, INFINITY, "200.00")),
         ],
     )
-    plan = (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
-                concurrency="optimistic",
-                buffered_writes=writes,
-            )
+    plan = build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
+            concurrency="optimistic",
+            buffered_writes=writes,
         )
-        .plan
     )
     assert [type(step) for step in plan.steps] == [PlannedClose] * 2 + [PlannedInsert] * 4
     (unit,) = plan.units

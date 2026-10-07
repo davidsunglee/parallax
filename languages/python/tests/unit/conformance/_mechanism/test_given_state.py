@@ -43,9 +43,9 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.write_plan.plan import RangeAcquisition
+from parallax.core.unit_work.acquisition import CoverageReadRequest
 from tests._support.db_port import body_outcome
-from tests.unit.conformance._coverage_rows_support import coverage_members
+from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 from tests.unit.conformance._recording_ports import FakeWritePort
 
 
@@ -349,9 +349,10 @@ def test_fixture_seeding_tracks_current_milestones_with_managed_axis_ends() -> N
     entity = case_entity(model, "parallax.compatibility.Position")
     shadow = TemporalShadow()
     seed_shadow_from_fixtures(case, model, shadow)
-    covered = shadow.coverage(
+    covered = read_coverage(
+        shadow,
         model,
-        RangeAcquisition(
+        CoverageReadRequest(
             entity=entity,
             key_attribute=AttributeIdentity(entity.identity, "id"),
             key_value=1,

@@ -74,7 +74,7 @@ from parallax.core.execution_lifecycle import (
     WriteBatchStarted,
 )
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import WriteBatchTrigger
+from parallax.core.unit_work import WriteBatchReason
 
 __all__ = [
     "LifecycleObservation",
@@ -129,7 +129,7 @@ _READ_INTERFACE: Final[dict[ReadInterface, str]] = {
     "rows": "rows",
 }
 
-_WRITE_BATCH_TRIGGER: Final[dict[WriteBatchTrigger, str]] = {
+_WRITE_BATCH_TRIGGER: Final[dict[WriteBatchReason, str]] = {
     "read_dependency": "read-dependency",
     "pre_commit": "pre-commit",
 }

@@ -37,7 +37,7 @@ from parallax.core.unit_work import (
     WriteAssignment,
     instructions,
 )
-from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPredicateWrite
+from parallax.core.unit_work.instructions import PreparedKeyedWrite
 from parallax.core.write_plan import ObjectKey
 
 # Sibling implementation modules. None of these names carries a leading
@@ -172,7 +172,6 @@ def prepared_typed_write(
         keyed_instruction(mutation, entity.identity, row, valid_from=valid_from, until=until),
         meta,
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
     return prepared
 
 
@@ -349,7 +348,6 @@ def typed_predicate_write(
         until,
     )
     prepared = instructions.prepare_typed_write(instruction, attempt.model.meta)
-    assert isinstance(prepared, PreparedPredicateWrite)
     attempt.predicate_write(prepared)
 
 

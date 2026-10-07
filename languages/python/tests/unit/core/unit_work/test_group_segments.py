@@ -37,19 +37,19 @@ from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write import expansion as expansion_module
 from parallax.core.temporal_write.coverage import Successor
-from parallax.core.temporal_write.expansion import Expansion, PredecessorExpansion
+from parallax.core.temporal_write.expansion import PredecessorExpander, PredecessorExpansion
 from parallax.core.unit_work import (
     BufferItem,
     Concurrency,
     KeyedWrite,
     MaterializedWriteGroup,
-    PlanningRequest,
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
     TransactionInstant,
     VersionedEvidenceBuilder,
     WriteAssignment,
+    WritePlanningRequest,
     buffered_write,
     object_key,
 )
@@ -75,12 +75,12 @@ from parallax.core.write_plan import (
 from parallax.core.write_plan.columns import ColumnSlice
 from parallax.core.write_plan.keys import ObservedStateKey
 from parallax.core.write_plan.plan import (
-    NO_OWNERSHIP,
+    NO_TEMPORAL_WRITE_OWNERSHIP,
     Derivation,
     Descent,
     ExecutionUnit,
     OwnedEndpoint,
-    Ownership,
+    TemporalWriteOwnership,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import (
@@ -128,17 +128,13 @@ def _plan(
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
 ) -> WritePlan:
-    return (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
-                concurrency=concurrency,
-                buffered_writes=observed_buffer(buffer, model, observations),
-            )
+    return build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
+            concurrency=concurrency,
+            buffered_writes=observed_buffer(buffer, model, observations),
         )
-        .plan
     )
 
 
@@ -838,18 +834,14 @@ def _planned_group(
         frozenset(_endpoint(entity, key, *_open_ends(entity)) for key in owned),
         frozenset(_endpoint(entity, key, *_open_ends(entity)) for key in inserted),
     )
-    return (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
-                concurrency="locking",
-                buffered_writes=[_temporal_topology_group(model, entity, mutation)],
-                ownership=ownership,
-            )
+    return build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+            concurrency="locking",
+            buffered_writes=[_temporal_topology_group(model, entity, mutation)],
+            ownership=ownership,
         )
-        .plan
     )
 
 
@@ -938,17 +930,13 @@ def test_a_group_never_opens_a_successor_that_covers_no_valid_time() -> None:
             for key, start in ((1, _OPENED_AT), (2, dt.datetime(2023, 1, 1, tzinfo=dt.UTC)))
         ],
     )
-    plan = (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
-                concurrency="locking",
-                buffered_writes=[group],
-            )
+    plan = build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+            concurrency="locking",
+            buffered_writes=[group],
         )
-        .plan
     )
     # Row 1 starts where the update does, so it has no head; row 2 keeps one.
     assert [type(step).__name__ for step in plan.steps] == [
@@ -1002,20 +990,18 @@ def _position_group(mutation: PredicateMutation, *starts: dt.datetime) -> Materi
 
 
 def _finalized(
-    model: Metamodel, *groups: MaterializedWriteGroup, ownership: Ownership = NO_OWNERSHIP
+    model: Metamodel,
+    *groups: MaterializedWriteGroup,
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> WritePlan:
-    return (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
-                concurrency="locking",
-                buffered_writes=groups,
-                ownership=ownership,
-            )
+    return build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+            concurrency="locking",
+            buffered_writes=groups,
+            ownership=ownership,
         )
-        .plan
     )
 
 
@@ -1271,7 +1257,7 @@ def test_steps_and_effects_stay_as_settled_when_the_attempts_ownership_changes(
     assert not [
         value
         for value in walked
-        if isinstance(value, _LiveOwnership | PredecessorExpansion | MethodType | FunctionType)
+        if isinstance(value, _LiveOwnership | PredecessorExpander | MethodType | FunctionType)
     ]
 
 
@@ -1319,22 +1305,18 @@ def test_an_owned_row_settles_identically_through_a_keyed_write_and_a_group(
     keyed = KeyedWrite(mutation, entity, ({"id": 1, **assigned},), *bounds)
     key_ = object_key(keyed, model)
     assert key_ is not None
-    eager = (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
-                concurrency="locking",
-                buffered_writes=observed_buffer(
-                    [keyed],
-                    model,
-                    {key_: TemporalObservation(predecessor=PredecessorRow(members=row))},
-                ),
-                ownership=ownership,
-            )
+    eager = build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+            concurrency="locking",
+            buffered_writes=observed_buffer(
+                [keyed],
+                model,
+                {key_: TemporalObservation(predecessor=PredecessorRow(members=row))},
+            ),
+            ownership=ownership,
         )
-        .plan
     )
     group = temporal_group(
         PredicateWrite(
@@ -1395,7 +1377,7 @@ class _Built:
 _SIZING_FORBIDDEN: Final = (
     TimeInterval,
     Successor,
-    Expansion,
+    PredecessorExpansion,
     PlannedClose,
     PlannedInsert,
     InsertEntry,

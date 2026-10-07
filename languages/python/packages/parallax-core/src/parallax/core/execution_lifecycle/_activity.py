@@ -86,7 +86,7 @@ from parallax.core.execution_lifecycle._events import (
     WriteBatchStarted,
 )
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import Concurrency, WriteBatchTrigger
+from parallax.core.unit_work import Concurrency, WriteBatchReason
 
 
 @runtime_checkable
@@ -611,7 +611,7 @@ class TransactionAttemptActivity(ConnectionOwnerActivity, Protocol):
         """Open a participating Read under this attempt."""
         ...
 
-    def write_batch(self, trigger: WriteBatchTrigger, /) -> WriteBatchActivity:
+    def write_batch(self, trigger: WriteBatchReason, /) -> WriteBatchActivity:
         """Open the Write Batch one flush of this attempt's buffer runs inside."""
         ...
 
@@ -742,7 +742,7 @@ class _InertActivity:
     def read(self, target: ActivityTarget, interface: ReadInterface, /) -> _InertActivity:
         return self
 
-    def write_batch(self, trigger: WriteBatchTrigger, /) -> _InertActivity:
+    def write_batch(self, trigger: WriteBatchReason, /) -> _InertActivity:
         return self
 
     def stream(
@@ -1550,10 +1550,10 @@ class _LiveWriteBatch(_LiveActivity):
 
     __slots__ = ("_attempt", "_trigger")
 
-    _trigger: WriteBatchTrigger
+    _trigger: WriteBatchReason
 
     def __init__(
-        self, publisher: _Publisher, parent: _LiveTransactionAttempt, trigger: WriteBatchTrigger
+        self, publisher: _Publisher, parent: _LiveTransactionAttempt, trigger: WriteBatchReason
     ) -> None:
         super().__init__(publisher, parent)
         self._attempt = parent
@@ -1859,7 +1859,7 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
     def read(self, target: ActivityTarget, interface: ReadInterface, /) -> _LiveRead:
         return _LiveRead(self._publisher, self, target, interface, None)
 
-    def write_batch(self, trigger: WriteBatchTrigger, /) -> _LiveWriteBatch:
+    def write_batch(self, trigger: WriteBatchReason, /) -> _LiveWriteBatch:
         return _LiveWriteBatch(self._publisher, self, trigger)
 
     def stream(

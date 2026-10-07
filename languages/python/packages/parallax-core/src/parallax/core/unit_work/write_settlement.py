@@ -2,18 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, cast
 
 from parallax.core.inheritance import InheritanceFacet
-from parallax.core.metamodel import (
-    AttributeIdentity,
-    AttributeMetadata,
-    Document,
-    EntityMetadata,
-    Metamodel,
-    Multiplicity,
-    OccurrenceMetadata,
-)
+from parallax.core.metamodel import AttributeIdentity, AttributeMetadata, EntityMetadata, Metamodel
 from parallax.core.temporal_read import (
     NON_TEMPORAL,
     Bitemporal,
@@ -23,7 +14,7 @@ from parallax.core.temporal_read import (
 )
 from parallax.core.temporal_write.coverage import NO_TRANSFORM
 from parallax.core.temporal_write.expansion import (
-    PredecessorExpansion,
+    PredecessorExpander,
     TemporalFacts,
     entry_ends,
     opening,
@@ -46,7 +37,6 @@ from parallax.core.unit_work.instructions import (
     UPDATE_MUTATIONS,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
-    PreparedWrite,
 )
 from parallax.core.unit_work.materialized import (
     ComposedTemporalWrite,
@@ -55,11 +45,12 @@ from parallax.core.unit_work.materialized import (
     InsertionKeyedWrite,
     MaterializedWriteGroup,
     ObservedKeyedWrite,
+    ReadlessPredicateWrite,
     TargetKeyedWrite,
     VersionedEvidence,
 )
 from parallax.core.unit_work.ranges import (
-    Decoration,
+    AuditDecoration,
     DeferredTemporalRange,
     range_claims,
     settle_range,
@@ -71,7 +62,6 @@ from parallax.core.unit_work.strategy import (
     Concurrency,
     ConcurrencyStrategy,
 )
-from parallax.core.unit_work.write_validate import WriteRejectedError
 from parallax.core.write_plan.keys import (
     ObservedStateKey,
     VersionedStateKey,
@@ -79,15 +69,15 @@ from parallax.core.write_plan.keys import (
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import TemporalObservation, WriteObservation
 from parallax.core.write_plan.plan import (
-    NO_OWNERSHIP,
+    NO_TEMPORAL_WRITE_OWNERSHIP,
     AllocatedOpening,
-    Completion,
-    Completions,
+    CombinedSourceAuthority,
     ExecutionUnit,
     Openings,
-    Ownership,
     PlannedSteps,
+    SourceAuthority,
     StepSegment,
+    TemporalWriteOwnership,
     UnitEffects,
     WritePlan,
     eager_segment,
@@ -121,13 +111,12 @@ from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 __all__ = [
     "OrderedWrite",
-    "WritePlanningResult",
-    "WriteSettlement",
-    "reject_readless_document_many",
+    "WritePlanCompiler",
 ]
 
 type OrderedWrite = (
-    PreparedWrite
+    PreparedKeyedWrite
+    | ReadlessPredicateWrite
     | ObservedKeyedWrite
     | InsertionKeyedWrite
     | TargetKeyedWrite
@@ -144,25 +133,6 @@ ordinary instruction it always was, so batching, ordering, and settlement see an
 unversioned write as the bare instruction they measure every other one by.
 """
 
-# The predicate-selected verbs a readless template exists for. A `terminate`
-# or `*Until` predicate write names a milestone, so its only legal targets
-# materialize to keyed writes long before finalization.
-_READLESS_VERBS: Final[frozenset[str]] = frozenset({"update", "delete"})
-
-
-@dataclass(frozen=True, slots=True)
-class WritePlanningResult:
-    """One flush's finalized plan.
-
-    Each of its execution units carries the claim its SURVIVING write settled
-    against. Work the earlier stages retired (folded into a pending insert,
-    cancelled against one, eliminated as a known no-op) reaches no unit, which
-    is what keeps a batch's surviving write from spending a claim no statement
-    of it will carry (`m-unit-work` "A successful execution unit consumes").
-    """
-
-    plan: WritePlan
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Settled(UnitEffects):
@@ -171,13 +141,16 @@ class _Settled(UnitEffects):
     steps: tuple[PlannedStep, ...]
 
 
-class WriteSettlement:
-    """The Write Planner's own settlement module (`m-unit-work`).
+class WritePlanCompiler:
+    """The Write Planner's own compiler of ordered writes into a Write Plan
+    (`m-unit-work`): it interprets each write's concurrency and its ordinary,
+    grouped, or temporal semantics and audit, and assembles step segments,
+    unit boundaries, claims, and proposed effects.
 
     Constructed once per accepted Metamodel by the planner that owns it, with
     that model, the Inheritance and Temporal facets it compiled, and the
     concurrency and audit strategies the composition layer wired.
-    :meth:`settle` is its entire surface: no caller settles one item, packs a
+    :meth:`compile` is its entire surface: no caller settles one item, packs a
     segment, decorates a step, or collects a claim by hand.
     """
 
@@ -204,20 +177,24 @@ class WriteSettlement:
         self._concurrency = concurrency
         self._audit = audit
 
-    def settle(
+    def compile(
         self,
         ordered_writes: Sequence[OrderedWrite],
         *,
         concurrency: Concurrency,
         actor_identity: ActorIdentity,
         transaction_instant: TransactionInstant,
-        ownership: Ownership = NO_OWNERSHIP,
+        ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
         counts_unchanged_rows: bool = False,
-    ) -> WritePlanningResult:
-        """The whole ordered sequence as one Write Planning Result.
+    ) -> WritePlan:
+        """The whole ordered sequence as one Write Plan.
 
-        An item the planner's earlier stages retired never reaches this loop,
-        and therefore no execution unit carries the evidence it was holding.
+        Each execution unit carries the claim its surviving write settled
+        against. An item the planner's earlier stages retired — folded into a
+        pending insert, cancelled against one, or eliminated as a known no-op —
+        never reaches this loop, and therefore no execution unit carries the
+        evidence it was holding (`m-unit-work` "A successful execution unit
+        consumes").
 
         Packing is a property of adjacency, which is why the whole sequence
         crosses in one call: a run of eagerly settled steps stays one eager
@@ -260,7 +237,7 @@ class WriteSettlement:
         pending: list[PlannedStep] = []
         units: list[ExecutionUnit] = []
         count = 0
-        decorate: Decoration | None = None
+        decorate: AuditDecoration | None = None
 
         def flush_pending() -> None:
             if pending:
@@ -282,9 +259,9 @@ class WriteSettlement:
                 continue
             shape = self._carrier_shape(item)
             if isinstance(shape, TransactionTimeOnly | Bitemporal):
-                assert not isinstance(item, PreparedWrite)  # only a carrier reads its shape here
+                assert not isinstance(item, PreparedKeyedWrite | ReadlessPredicateWrite)
                 if decorate is None:
-                    decorate = Decoration(self._audit, actor_identity, transaction_instant)
+                    decorate = AuditDecoration(self._audit, actor_identity, transaction_instant)
                 steps, unit = self._range(
                     item,
                     shape,
@@ -324,9 +301,7 @@ class WriteSettlement:
                 )
             )
         flush_pending()
-        return WritePlanningResult(
-            WritePlan(steps=PlannedSteps(tuple(segments)), units=tuple(units))
-        )
+        return WritePlan(steps=PlannedSteps(tuple(segments)), units=tuple(units))
 
     def _carrier_shape(self, item: OrderedWrite) -> TemporalShape | None:
         """The Temporal Shape of a buffered carrier's target, read once at
@@ -339,12 +314,18 @@ class WriteSettlement:
 
     def _settle_keyed(
         self,
-        item: PreparedWrite | ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite,
+        item: (
+            PreparedKeyedWrite
+            | ReadlessPredicateWrite
+            | ObservedKeyedWrite
+            | InsertionKeyedWrite
+            | TargetKeyedWrite
+        ),
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
         shape: TemporalShape | None,
         advances: int = 0,
-    ) -> tuple[_Settled, Completion | None, VersionedStateKey | None]:
+    ) -> tuple[_Settled, SourceAuthority | None, VersionedStateKey | None]:
         """One ordered keyed write's settled steps and effects, beside the
         claim its unit spends and the state its carrier itself names as
         changed. ``advances`` is how many versions earlier writes of its scope
@@ -354,9 +335,11 @@ class WriteSettlement:
         A write spending one retained observation, or several twinned
         observations of one state, changes that state wherever its steps
         change the row it observed."""
+        if isinstance(item, ReadlessPredicateWrite):
+            return _Settled(steps=(_readless_step(item.instruction),)), None, None
         own_state: VersionedStateKey | None = None
         observation: WriteObservation | None = None
-        claim: Completion | None = None
+        claim: SourceAuthority | None = None
         source: ObservedStateKey | None = None
         if isinstance(item, ObservedKeyedWrite):
             instruction, observation = item.instruction, item.observation
@@ -401,7 +384,7 @@ class WriteSettlement:
 
     def _settle(
         self,
-        instruction: PreparedWrite,
+        instruction: PreparedKeyedWrite,
         observation: WriteObservation | None,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
@@ -425,8 +408,6 @@ class WriteSettlement:
         A temporal write reaching here travels with no carrier the range path
         takes: an insert opens a new lineage, and any other closes a milestone
         it holds no observation of, which is refused."""
-        if isinstance(instruction, PreparedPredicateWrite):
-            return _Settled(steps=self._settle_predicate(instruction))
         entity = instruction.target
         if shape is None:
             shape = self._temporal_facet.shape(entity.identity)
@@ -478,8 +459,8 @@ class WriteSettlement:
         shape: TransactionTimeOnly | Bitemporal,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
-        ownership: Ownership,
-        decorate: Decoration,
+        ownership: TemporalWriteOwnership,
+        decorate: AuditDecoration,
         *,
         start: int,
         guards: bool,
@@ -524,56 +505,6 @@ class WriteSettlement:
             opened=ranged.opened,
             derived=ranged.derived,
             concludes=ranged.concludes,
-        )
-
-    def _settle_predicate(self, instruction: PreparedPredicateWrite) -> tuple[PlannedStep, ...]:
-        """One readless predicate-selected write as its single step.
-
-        Admissibility is the prepared product's own: preparation already refused
-        an inheritance-family target and a verb the target does not take. What
-        is refused here is routing — a versioned or temporal target has no
-        readless template at all and materializes to keyed writes at buffer
-        time, so reaching this stage with one is a caller wiring defect.
-        """
-        entity = instruction.selection.target
-        if (
-            isinstance(
-                self._temporal_facet.shape(entity.identity), TransactionTimeOnly | Bitemporal
-            )
-            or self._concurrency.version_attribute(self._model, entity.identity) is not None
-        ):
-            raise WritePlanningError(
-                f"{instruction.selection.target.identity.canonical!r}: a predicate write on a "
-                "versioned or temporal "
-                "target has no readless template — it must materialize to keyed writes before "
-                "reaching planning (m-opt-lock; ADR 0014); this is a caller wiring defect"
-            )
-        if instruction.mutation not in _READLESS_VERBS:
-            raise WritePlanningError(
-                f"{instruction.selection.target.identity.canonical!r}: a readless predicate "
-                f"{instruction.mutation!r} "
-                "names a milestone, and every legal milestone target materializes to keyed "
-                "writes before planning (m-batch-write 'Predicate-selected readless forms')"
-            )
-        reject_readless_document_many(entity, instruction)
-        target = instruction.selection
-        if instruction.mutation == "delete":
-            return (
-                PlannedDelete(
-                    entity=entity.identity,
-                    target=target,
-                    concurrency=UNVERSIONED,
-                    affected_rows=ANY_COUNT,
-                ),
-            )
-        return (
-            PlannedUpdate(
-                entity=entity.identity,
-                target=target,
-                assignments=prepared_assignments(entity, instruction.managed_assignments),
-                concurrency=UNVERSIONED,
-                affected_rows=ANY_COUNT,
-            ),
         )
 
     def _settle_insert(
@@ -727,7 +658,7 @@ class WriteSettlement:
         group: MaterializedWriteGroup,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
-        ownership: Ownership,
+        ownership: TemporalWriteOwnership,
     ) -> NonTemporalGroupSegment | TemporalGroupSegment:
         """One Materialized Write Group as one already-settled segment.
 
@@ -813,16 +744,16 @@ class WriteSettlement:
         shape: TransactionTimeOnly | Bitemporal,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
-        ownership: Ownership,
+        ownership: TemporalWriteOwnership,
     ) -> TemporalGroupSegment:
         """A temporal Materialized Write Group's segment.
 
         The group's one mutation is one transform over every selected row,
-        settled through the same :class:`PredecessorExpansion` a range expands
+        settled through the same :class:`PredecessorExpander` a range expands
         its originals through — the only clock consultation this group's whole
         flush makes, however many rows it resolved — which decides each row's
         disposition before the segment exists
-        (:meth:`~parallax.core.temporal_write.expansion.PredecessorExpansion.settle_group`).
+        (:meth:`~parallax.core.temporal_write.expansion.PredecessorExpander.settle_group`).
         The segment then builds each step from the settled backing and the
         group's own evidence alone, and neither consults the attempt's
         ownership again.
@@ -843,7 +774,7 @@ class WriteSettlement:
             ),
             replaces=False,
         )
-        expansion = PredecessorExpansion(
+        expansion = PredecessorExpander(
             # Reaching a surviving temporal group is what makes the attempt
             # capture its instant, once for every row it resolved.
             TemporalFacts(entity=entity, view=view, shape=shape, instant=tx_instant.value()),
@@ -865,22 +796,22 @@ def _unobserved_close(entity: EntityMetadata, mutation: str) -> WritePlanningErr
     )
 
 
-def _observed_claim(item: ObservedKeyedWrite) -> Completion | None:
+def _observed_claim(item: ObservedKeyedWrite) -> SourceAuthority | None:
     """What an observed keyed write's unit spends: its claim, together with
     every twinned observation of the same state."""
     if not item.twins:
         return item.claim
     assert item.claim is not None  # twins meet only at their claim's own scope
-    return Completions((item.claim, *item.twins))
+    return CombinedSourceAuthority((item.claim, *item.twins))
 
 
-def _target_claim(item: TargetKeyedWrite) -> Completion | None:
+def _target_claim(item: TargetKeyedWrite) -> SourceAuthority | None:
     """What a caller-conditioned write's unit spends: the observations of the
     observed writes composed into it, if any."""
     claims = item.claims
     if not claims:
         return None
-    return claims[0] if len(claims) == 1 else Completions(claims)
+    return claims[0] if len(claims) == 1 else CombinedSourceAuthority(claims)
 
 
 def _changes(source: ObservedStateKey | None) -> tuple[ObservedStateKey, ...]:
@@ -938,47 +869,22 @@ def _addressed_assignments(
     )
 
 
-def reject_readless_document_many(
-    entity: EntityMetadata, instruction: PreparedPredicateWrite
-) -> None:
-    """Refuse the readless document-array assignment shape before planning."""
-    if not isinstance(entity.declared_layout, Document):
-        return
-    occurrences = {
-        occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
-    }
-    for assignment in instruction.managed_assignments:
-        if isinstance(assignment.member, AttributeMetadata):
-            continue
-        member = assignment.member.identity.path[-1]
-        occurrence = occurrences.get(member)
-        if occurrence is None:
-            continue
-        nested_many = assigned_many_path(occurrence, assignment.value)
-        if occurrence.multiplicity is Multiplicity.MANY or nested_many is not None:
-            path = member if nested_many is None else ".".join((member, *nested_many))
-            raise WriteRejectedError(
-                "predicate-write-readless-document-many-unsupported",
-                f"{entity.identity.canonical}.{path}: a readless predicate write cannot "
-                "assign a document-resident `many` occurrence",
-            )
-
-
-def assigned_many_path(occurrence: OccurrenceMetadata, authored: object) -> tuple[str, ...] | None:
-    """Return the first authored nested ``many`` path in declaration order."""
-    if not isinstance(authored, Mapping):
-        return None
-    authored_members = cast("Mapping[object, object]", authored)
-    for nested in occurrence.value_objects:
-        name = nested.identity.path[-1]
-        if name not in authored_members:
-            continue
-        if nested.multiplicity is Multiplicity.MANY:
-            return (name,)
-        path = assigned_many_path(nested, authored_members[name])
-        if path is not None:
-            return (name, *path)
-    return None
+def _readless_step(instruction: PreparedPredicateWrite) -> PlannedStep:
+    """A readless predicate-selected write's one unversioned statement over
+    every row its selection matches."""
+    entity = instruction.selection.target
+    target = instruction.selection
+    if instruction.mutation == "delete":
+        return PlannedDelete(
+            entity=entity.identity, target=target, concurrency=UNVERSIONED, affected_rows=ANY_COUNT
+        )
+    return PlannedUpdate(
+        entity=entity.identity,
+        target=target,
+        assignments=prepared_assignments(entity, instruction.managed_assignments),
+        concurrency=UNVERSIONED,
+        affected_rows=ANY_COUNT,
+    )
 
 
 def _require_unobserved(entity: EntityMetadata, mutation: str, observation: object | None) -> None:

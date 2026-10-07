@@ -8,13 +8,28 @@ from dataclasses import dataclass
 from enum import Enum
 from itertools import islice
 from types import TracebackType
-from typing import Final, Literal, Protocol, final
+from typing import Final, Literal, Protocol, cast, final
 from weakref import WeakValueDictionary
 
-from parallax.core import inheritance
-from parallax.core.base import INFINITY, TemporalBound
+from parallax.core import inheritance, temporal_read
+from parallax.core.base import INFINITY, TemporalBound, normalize_instant
+from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.temporal_read import Edge, TimeInterval
+from parallax.core.temporal_read import (
+    Bitemporal,
+    Edge,
+    NonTemporal,
+    TimeInterval,
+    TransactionTimeOnly,
+)
+from parallax.core.unit_work.acquisition import (
+    AcquireRows,
+    SelectionReadRequest,
+    TargetReadRequest,
+    consume_coverage,
+    consume_selection,
+    consume_target,
+)
 from parallax.core.unit_work.claims import (
     SELECTION_INTENT,
     ClaimScope,
@@ -24,7 +39,7 @@ from parallax.core.unit_work.claims import (
     keyed_intent,
 )
 from parallax.core.unit_work.clock import Clock, TransactionInstant
-from parallax.core.unit_work.effects import WritePreconditionError
+from parallax.core.unit_work.effects import CardinalityCorruptionError, WritePreconditionError
 from parallax.core.unit_work.instructions import (
     DESTRUCTIVE_MUTATIONS,
     INSERT_MUTATIONS,
@@ -32,6 +47,7 @@ from parallax.core.unit_work.instructions import (
     ExpectedVersion,
     KeyedMutation,
     PreparedKeyedWrite,
+    PreparedPredicateWrite,
     PreparedTargetWrite,
 )
 from parallax.core.unit_work.keys import resolve_object_key
@@ -44,8 +60,10 @@ from parallax.core.unit_work.materialized import (
     TargetKeyedWrite,
     buffered_instruction,
     group_state_keys,
+    readless_write,
     target_write,
 )
+from parallax.core.unit_work.ranges import DeferredTemporalRange
 from parallax.core.unit_work.retain import (
     InsertionIdentity,
     ParticipationToken,
@@ -55,8 +73,8 @@ from parallax.core.unit_work.retain import (
 from parallax.core.unit_work.strategy import ActorIdentity, Concurrency, EvidencePolicyLookup
 from parallax.core.unit_work.write_planner import (
     PendingWrites,
-    PlanningRequest,
     WritePlanner,
+    WritePlanningRequest,
 )
 from parallax.core.write_plan.keys import (
     ObjectKey,
@@ -64,7 +82,6 @@ from parallax.core.write_plan.keys import (
     TemporalStateKey,
     VersionedStateKey,
 )
-from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.plan import (
     AllocatedOpening,
     BoundRange,
@@ -74,33 +91,36 @@ from parallax.core.write_plan.plan import (
     ExecutionUnit,
     Openings,
     OwnedEndpoint,
+    TemporalWriteOwnership,
     UnitEffects,
     WritePlan,
 )
-from parallax.core.write_plan.steps import Finite
+from parallax.core.write_plan.steps import Finite, KeyTarget
 
 __all__ = [
     "NO_INSERTION_AUTHORITY",
     "WRITE_EVIDENCE_CODES",
+    "BindDeferredRange",
     "BufferOutcome",
     "Concurrency",
-    "DeferredBinder",
+    "ExecuteFlush",
     "NoInsertionAuthority",
+    "OpenWriteBatch",
+    "ReportUnitCompletion",
     "RollbackOnlyError",
     "StoredTarget",
-    "TargetAcquisition",
     "TransactionSettings",
     "UnitOfWork",
     "UnitOfWorkError",
-    "UnitReport",
-    "WriteBatchTrigger",
+    "WriteBatchReason",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
     "active_unit_of_work",
+    "bind_deferred_range",
     "run_unit_of_work",
 ]
 
-type WriteBatchTrigger = Literal["read_dependency", "pre_commit"]
+type WriteBatchReason = Literal["read_dependency", "pre_commit"]
 """The CLOSED set of reasons a unit of work flushes its buffer.
 
 ``read_dependency`` is the batch :meth:`UnitOfWork.read` forces out so a
@@ -116,8 +136,8 @@ trigger goes through.
 """
 
 
-class UnitReport(Protocol):
-    """How a :class:`FlushExecutor` reports one execution unit it completed:
+class ReportUnitCompletion(Protocol):
+    """How a :class:`ExecuteFlush` reports one execution unit it completed:
     with the range its coverage bound, if deferred, and the key each of its
     inserts answered for a row whose key the database allocated, in step
     order."""
@@ -132,17 +152,16 @@ class UnitReport(Protocol):
     ) -> None: ...
 
 
-class DeferredBinder(Protocol):
-    """How a :class:`FlushExecutor` binds a deferred range to the coverage its
-    acquisition read — ``None`` where the read found no row — once every
-    earlier unit of the flush has completed."""
+class BindDeferredRange(Protocol):
+    """How a :class:`ExecuteFlush` has the unit of work bind a deferred range
+    at its unit's turn, once every earlier unit of the flush has completed: the
+    unit of work reads the range's coverage through its :class:`AcquireRows`
+    and binds the range to it."""
 
-    def __call__(
-        self, description: DeferredRange, rows: PredecessorRows | None, /
-    ) -> BoundRange: ...
+    def __call__(self, description: DeferredRange, /) -> BoundRange: ...
 
 
-class FlushExecutor(Protocol):
+class ExecuteFlush(Protocol):
     """The composition-layer sink a Write Plan is handed to for lowering and
     execution. It is neutral because m-unit-work takes no m-sql edge.
 
@@ -154,9 +173,9 @@ class FlushExecutor(Protocol):
     ``completed`` is called with each of the plan's execution units, in order,
     as soon as every step of that unit has executed and been enforced, and
     before any step of a later unit executes. A unit with a deferred range is
-    reached with no step: the executor acquires its coverage, binds it through
-    ``bind_deferred`` once, executes and enforces every bound step, and reports
-    the unit with that bound range; every other unit is reported with ``None``.
+    reached with no step: the executor binds it through ``bind_deferred`` once,
+    executes and enforces every bound step, and reports the unit with that
+    bound range; every other unit is reported with ``None``.
     A unit opening rows whose keys the database allocates is reported with
     those keys. A normal return reports every unit not yet reported; an
     exception reports none after it.
@@ -167,9 +186,9 @@ class FlushExecutor(Protocol):
         plan: WritePlan,
         /,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
-        completed: UnitReport,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
+        completed: ReportUnitCompletion,
     ) -> None: ...
 
 
@@ -193,7 +212,7 @@ class WriteBatchScope(Protocol):
     ) -> None: ...
 
 
-class WriteBatchOpening(Protocol):
+class OpenWriteBatch(Protocol):
     """The composition-layer opener a flush announces itself to.
 
     Called once per flush that has something to flush, BEFORE the buffered
@@ -205,33 +224,17 @@ class WriteBatchOpening(Protocol):
     all. Optional, because the shell itself needs nothing from it.
     """
 
-    def __call__(self, trigger: WriteBatchTrigger, /) -> WriteBatchScope: ...
+    def __call__(self, trigger: WriteBatchReason, /) -> WriteBatchScope: ...
 
 
 @dataclass(frozen=True, slots=True)
 class StoredTarget:
-    """What an internal acquisition found of the stored state a caller-addressed
+    """What a target acquisition found of the stored state a caller-addressed
     write starts from: its version, where its family has one, or its current
     Transaction-Time start, where its family is temporal."""
 
     version: int | None = None
     tx_start: object | None = None
-
-
-class TargetAcquisition(Protocol):
-    """The composition-layer capability that reads the stored state a
-    caller-addressed write of ``key`` starts from, under the shared row lock,
-    on the transaction's own connection: the row current at Valid-Time
-    ``valid_from`` of a Bitemporal object, which is ``None`` for any other.
-
-    It executes no pending write and publishes nothing to any caller: what it
-    answers is participation and the stored revision, and ``None`` where no
-    current row stands.
-    """
-
-    def __call__(
-        self, target: EntityMetadata, key: ObjectKey, valid_from: object | None, /
-    ) -> StoredTarget | None: ...
 
 
 class UnitOfWorkError(RuntimeError):
@@ -328,7 +331,7 @@ class TransactionSettings:
     preference, not a uniform strategy — each Entity's own Optimistic Lock Facet
     decides whether it yields Optimistic or the mandatory Locking fallback
     (`m-opt-lock`). ``counts_unchanged_rows`` is the connection's dialect fact
-    every flush plans with (:class:`~parallax.core.unit_work.write_planner.PlanningRequest`).
+    every flush plans with (:class:`~parallax.core.unit_work.write_planner.WritePlanningRequest`).
     """
 
     concurrency: Concurrency = "optimistic"
@@ -817,8 +820,14 @@ class UnitOfWork:
 
     Run it through :meth:`run_outermost` or :func:`run_unit_of_work`, which own
     the frame lifecycle; the body receives the unit of work and drives it with
-    :meth:`buffer`, :meth:`retain`, and :meth:`read`, asking
-    :meth:`resolve_write_evidence` what a keyed write's source licenses here.
+    :meth:`buffer`, :meth:`buffer_predicate`, :meth:`buffer_target`,
+    :meth:`retain`, and :meth:`read`, asking :meth:`resolve_write_evidence`
+    what a keyed write's source licenses here.
+
+    Every row a write reads — a predicate's selection, a caller-addressed
+    target's starting state, a deferred range's coverage — is read through
+    ``acquire_rows`` and consumed into evidence while the read's resources are
+    live.
     """
 
     __slots__ = (
@@ -838,6 +847,7 @@ class UnitOfWork:
         "_rollback_only",
         "_targets",
         "_transaction_instant",
+        "acquire_rows",
         "clock",
         "companion",
         "flush_executor",
@@ -852,16 +862,18 @@ class UnitOfWork:
         settings: TransactionSettings,
         clock: Clock,
         meta: Metamodel,
-        flush_executor: FlushExecutor,
+        flush_executor: ExecuteFlush,
+        acquire_rows: AcquireRows,
         planner: WritePlanner,
         actor_identity: ActorIdentity,
         evidence_policy_for: EvidencePolicyLookup,
-        write_batch_opening: WriteBatchOpening | None = None,
+        write_batch_opening: OpenWriteBatch | None = None,
     ) -> None:
         self.settings = settings
         self.clock = clock
         self.meta = meta
         self.flush_executor = flush_executor
+        self.acquire_rows = acquire_rows
         self.write_batch_opening = write_batch_opening
         # The injected Write Planner (`m-unit-work`'s single finalization
         # authority) — constructed once per accepted Metamodel by the
@@ -1014,7 +1026,37 @@ class UnitOfWork:
             targets.store_pending_insert(key)
         return BufferOutcome.BUFFERED
 
-    def buffer_target(self, prepared: PreparedTargetWrite, *, acquire: TargetAcquisition) -> None:
+    def buffer_predicate(self, prepared: PreparedPredicateWrite) -> None:
+        """Buffer a prepared predicate-selected write, readless or materialized.
+
+        An unversioned Non-Temporal target settles as one statement
+        (`m-batch-write` "Predicate-selected readless forms"), after refusing a
+        document-resident ``many`` assignment no readless statement can
+        express. Every other target materializes (`m-opt-lock`, ADR 0014):
+        pending writes flush through :meth:`read`, its selection is read
+        through ``acquire_rows``, and every selected row that is not a no-op
+        becomes the evidence of one Materialized Write Group buffered at the
+        call position. A selection leaving no row buffers nothing, and a
+        stored-data refusal while reading leaves nothing buffered.
+        """
+        entity = prepared.selection.target
+        version = self._planner.version_attribute(entity.identity)
+        shape = temporal_read.view(self.meta).shape(entity.identity)
+        if version is None and isinstance(shape, NonTemporal):
+            self.buffer(readless_write(prepared))
+            return
+        view = self._family(entity)
+        selection = view.member_selection
+        request = SelectionReadRequest(
+            prepared,
+            key_position=selection.position(view.primary_key.identity),
+            version_position=None if version is None else selection.position(version),
+        )
+        evidence = self.read(lambda: self.acquire_rows(request, consume_selection))
+        if evidence is not None:
+            self.buffer(MaterializedWriteGroup(mutation=prepared, evidence=evidence))
+
+    def buffer_target(self, prepared: PreparedTargetWrite) -> None:
         """Admit a caller-addressed write and buffer it — all of it, or nothing.
 
         A patch that assigns no member is the empty write: it is dropped here,
@@ -1037,9 +1079,12 @@ class UnitOfWork:
         Under Locking, the participation the write needs is taken from a write
         of the same state already pending — over exactly its window, for a
         temporal object — else from a live read of exactly that state this
-        attempt holds, else by ``acquire`` — which reads the stored row under
-        the shared lock and executes nothing pending. The Optimistic
-        strategy reads nothing: the caller's revision becomes the write's gate.
+        attempt holds, else by reading the stored row under the shared lock
+        through ``acquire_rows``, executing nothing pending. That read's root
+        count decides first: more than one stored row is Cardinality
+        Corruption, whatever those rows hold, and none means no row stands.
+        The Optimistic strategy reads nothing: the caller's revision becomes
+        the write's gate.
         A temporal target names its state by its stated Transaction-Time start
         and, on a Bitemporal object, by the coverage at its ``valid_from``.
         """
@@ -1073,9 +1118,9 @@ class UnitOfWork:
         if policy.effective_strategy(self.settings.concurrency) == "locking":
             if temporal:
                 assert isinstance(expectation, ExpectedTxStart)  # a temporal target's revision
-                self._acquire_temporal(item, key, expectation, acquire)
+                self._acquire_temporal(item, key, expectation)
             elif not (self._pending.holds_scope(scope) or self._participates(scope)):
-                stored = acquire(target, key, None)
+                stored = self._stored_target(target, key, None)
                 if isinstance(expectation, ExpectedVersion) and (
                     stored is None or stored.version != expectation.version
                 ):
@@ -1085,11 +1130,7 @@ class UnitOfWork:
         self._pending.add(item, key)
 
     def _acquire_temporal(
-        self,
-        item: TargetKeyedWrite,
-        key: ObjectKey,
-        expectation: ExpectedTxStart,
-        acquire: TargetAcquisition,
+        self, item: TargetKeyedWrite, key: ObjectKey, expectation: ExpectedTxStart
     ) -> None:
         """Prove a Locking caller-addressed write of a temporal object starts
         from the state its caller stated, or refuse it.
@@ -1098,7 +1139,7 @@ class UnitOfWork:
         that state: admission required it to start from exactly this one. A
         write over a disjoint window starts elsewhere and proves nothing here.
         Otherwise a live read of the state this attempt holds does, else
-        ``acquire`` reads it.
+        it is read.
         """
         window = item.instruction.valid_time_window
         if self._pending.states_window(key, window):
@@ -1109,11 +1150,45 @@ class UnitOfWork:
         ):
             return
         target = item.instruction.target
-        stored = acquire(target, key, valid_from)
+        stored = self._stored_target(target, key, valid_from)
         if stored is None or stored.tx_start != expectation.instant:
             raise WritePreconditionError(
                 target.identity, dict(key.primary_key), expectation.instant
             )
+
+    def _stored_target(
+        self, target: EntityMetadata, key: ObjectKey, valid_from: dt.datetime | None
+    ) -> StoredTarget | None:
+        """The stored revision of the row ``key`` names, read under the shared
+        lock, or ``None`` where no row stands — judged once the read is over,
+        from its root count first and the unique row's revision cell after."""
+        count, row = self.acquire_rows(TargetReadRequest(target, key, valid_from), consume_target)
+        view = self._family(target)
+        if count > 1:
+            ((_name, value),) = key.primary_key
+            raise CardinalityCorruptionError(
+                target.identity,
+                KeyTarget(key_attributes=(view.primary_key.identity,), key_values=((value,),)),
+                1,
+                count,
+            )
+        if row is None:
+            return None
+        selection = view.member_selection
+        shape = temporal_read.view(self.meta).shape(target.identity)
+        if isinstance(shape, TransactionTimeOnly | Bitemporal):
+            start = row[selection.position(shape.transaction_time.start_attribute)]
+            return StoredTarget(tx_start=normalize_instant(cast("dt.datetime", start)))
+        version = self._planner.version_attribute(target.identity)
+        if version is None:
+            return StoredTarget()
+        return StoredTarget(cast("int", row[selection.position(version)]))
+
+    def _family(self, entity: EntityMetadata) -> InheritanceEntityView:
+        view = inheritance.view(self.meta).entity(entity.identity)
+        if view is None:  # pragma: no cover - the facet covers every accepted Entity
+            raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
+        return view
 
     def _participates(self, scope: ObservedStateKey | ObjectKey) -> bool:
         """Whether a live read of exactly ``scope`` this attempt holds — under
@@ -1453,13 +1528,13 @@ class UnitOfWork:
             self.flush(trigger="read_dependency")
         return read_fn()
 
-    def flush(self, *, trigger: WriteBatchTrigger) -> None:
+    def flush(self, *, trigger: WriteBatchReason) -> None:
         """Plan and execute the buffered writes (the injected executor lowers them).
 
         ``trigger`` names which of the two flush reasons this call is, and every
         caller already knows its own: :meth:`read` serves a read dependency and
         :meth:`run_outermost` runs the boundary's pre-commit batch. The whole
-        flush runs inside the injected :class:`WriteBatchOpening`'s scope, so a
+        flush runs inside the injected :class:`OpenWriteBatch`'s scope, so a
         planning refusal is inside the batch rather than beside it and a batch
         planning reduces to no DML at all still ends the way it began.
 
@@ -1491,8 +1566,8 @@ class UnitOfWork:
         with opening(trigger):
             self._flush_buffer(trigger)
 
-    def _flush_buffer(self, trigger: WriteBatchTrigger) -> None:
-        request = PlanningRequest(
+    def _flush_buffer(self, trigger: WriteBatchReason) -> None:
+        request = WritePlanningRequest(
             actor_identity=self._actor_identity,
             transaction_instant=self._transaction_instant,
             concurrency=self.settings.concurrency,
@@ -1500,18 +1575,18 @@ class UnitOfWork:
             ownership=self._targets,
             counts_unchanged_rows=self.settings.counts_unchanged_rows,
         )
-        finalized = self._planner.finalize(request)
+        plan = self._planner.finalize(request)
         sources = self._pending.sources()
         removed = self._pending.removals()
         self._pending.clear()
         self._claims.clear()
         self._targets.end_flush(removed)
-        units = finalized.plan.units
+        units = plan.units
         self._reporting = units
         self._reported = 0
         try:
             self.flush_executor(
-                finalized.plan,
+                plan,
                 trigger=trigger,
                 bind_deferred=self._bind_deferred,
                 completed=self._report,
@@ -1527,15 +1602,14 @@ class UnitOfWork:
             self._reporting = ()
             self._targets.release_continuity()
 
-    def _bind_deferred(
-        self, description: DeferredRange, rows: PredecessorRows | None, /
-    ) -> BoundRange:
+    def _bind_deferred(self, description: DeferredRange, /) -> BoundRange:
         """Bind a deferred range of the running flush under this attempt's
         current ownership and continuity proofs — those every earlier unit
         published — and its configured provenance decoration."""
-        return self._planner.bind_deferred(
+        return bind_deferred_range(
             description,
-            rows,
+            acquire_rows=self.acquire_rows,
+            planner=self._planner,
             ownership=self._targets,
             actor_identity=self._actor_identity,
             transaction_instant=self._transaction_instant,
@@ -1687,6 +1761,38 @@ class UnitOfWork:
             raise
 
 
+def bind_deferred_range(
+    description: DeferredRange,
+    /,
+    *,
+    acquire_rows: AcquireRows,
+    planner: WritePlanner,
+    ownership: TemporalWriteOwnership,
+    actor_identity: ActorIdentity,
+    transaction_instant: TransactionInstant,
+) -> BoundRange:
+    """``description`` read and bound: its coverage read through
+    ``acquire_rows`` and sealed as Predecessor Rows while the read's resources
+    are live, then bound by the ``planner`` that finalized it under
+    ``ownership``, its steps decorated with the configured provenance.
+
+    The one interpreter of a deferred description: a description ``planner``
+    did not finalize is refused before anything is read.
+    """
+    if not isinstance(description, DeferredTemporalRange):
+        raise TypeError(
+            f"a deferred range this planner did not finalize cannot be bound: {description!r}"
+        )
+    rows = acquire_rows(description.coverage, consume_coverage)
+    return planner.bind_deferred(
+        description,
+        rows,
+        ownership=ownership,
+        actor_identity=actor_identity,
+        transaction_instant=transaction_instant,
+    )
+
+
 def _already_claimed(target: EntityMetadata, key: ObjectKey) -> WriteEvidenceError:
     return WriteEvidenceError(
         code="write-evidence-already-claimed",
@@ -1731,19 +1837,20 @@ def run_unit_of_work[T](
     settings: TransactionSettings,
     clock: Clock,
     meta: Metamodel,
-    flush_executor: FlushExecutor,
+    flush_executor: ExecuteFlush,
+    acquire_rows: AcquireRows,
     planner: WritePlanner,
     actor_identity: ActorIdentity,
     evidence_policy_for: EvidencePolicyLookup,
-    write_batch_opening: WriteBatchOpening | None = None,
+    write_batch_opening: OpenWriteBatch | None = None,
 ) -> T:
     """Run ``body`` in a unit of work — joining the active one or opening a new frame.
 
     A call while a transaction is active on the current thread **joins** it: the
     body receives the same unit of work and its return value is returned
     immediately (commit and abort belong to the outermost frame), and the passed
-    ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` /
-    ``write_batch_opening`` / ``planner`` / ``actor_identity`` /
+    ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` / ``acquire_rows``
+    / ``write_batch_opening`` / ``planner`` / ``actor_identity`` /
     ``evidence_policy_for`` are ignored in favor of the active transaction's
     (``db.transact`` performs the option-conflict check before calling).
     Otherwise a new outermost frame is opened, and its value is returned only
@@ -1761,6 +1868,7 @@ def run_unit_of_work[T](
         clock=clock,
         meta=meta,
         flush_executor=flush_executor,
+        acquire_rows=acquire_rows,
         planner=planner,
         actor_identity=actor_identity,
         evidence_policy_for=evidence_policy_for,

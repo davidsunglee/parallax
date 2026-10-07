@@ -26,8 +26,7 @@ from parallax.conformance._lanes import scenario
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution._planning import build_write_planner
 from parallax.core.execution._write_lowering import stream_lowered
-from parallax.core.unit_work import PlanningRequest, WritePlanner
-from parallax.core.unit_work.write_settlement import WritePlanningResult
+from parallax.core.unit_work import WritePlanner, WritePlanningRequest
 from parallax.core.write_plan import WritePlan
 from parallax.snapshot import handle
 from parallax.snapshot.handle import Transaction
@@ -68,9 +67,9 @@ def test_the_compile_lane_emits_exactly_one_plans_own_lowering(
     planned: list[WritePlan] = []
     original_finalize = WritePlanner.finalize
 
-    def finalize(self: WritePlanner, request: PlanningRequest) -> WritePlanningResult:
+    def finalize(self: WritePlanner, request: WritePlanningRequest) -> WritePlan:
         result = original_finalize(self, request)
-        planned.append(result.plan)
+        planned.append(result)
         return result
 
     monkeypatch.setattr(WritePlanner, "finalize", finalize)

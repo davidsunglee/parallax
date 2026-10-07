@@ -11,7 +11,7 @@ from parallax.core.execution_lifecycle._diagnostics import (
     DatabaseFailureDiagnostic,
 )
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import Concurrency, WriteBatchTrigger
+from parallax.core.unit_work import Concurrency, WriteBatchReason
 
 type RootExecutionKind = Literal["read", "transaction_invocation", "stream"]
 """Which outermost Handle operation a Root Execution describes."""
@@ -200,7 +200,7 @@ class WriteBatchStarted(_Event):
     affected-row enforcement. An empty buffer produces no activity at all.
     """
 
-    trigger: WriteBatchTrigger
+    trigger: WriteBatchReason
 
 
 @dataclass(frozen=True, slots=True)
