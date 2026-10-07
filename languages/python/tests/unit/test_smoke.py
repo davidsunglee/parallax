@@ -45,15 +45,9 @@ def test_top_package_public_surfaces() -> None:
         "Snapshot",
         "CheckedSnapshot",
         "SnapshotStream",
-        "SnapshotStreamContinuationError",
-        "SnapshotStreamStateError",
-        "InvalidData",
-        "InvalidDataError",
         "InvalidPrincipalError",
-        "MISSING_STORED_VALUE",
         "ObjectKey",
         "Principal",
-        "StoredDataIssue",
         "DeferredFeatureError",
         "KEYED_WRITE_VALUE_CODES",
         "KeyedWriteValueError",
@@ -65,7 +59,6 @@ def test_top_package_public_surfaces() -> None:
         "QueryTargetError",
         "ScopedDatabase",
         "SnapshotConnectionError",
-        "SnapshotDecodingError",
         "SnapshotInspectionError",
         "SnapshotMaterializationError",
         "SnapshotConsistencyError",
@@ -73,7 +66,6 @@ def test_top_package_public_surfaces() -> None:
         "TransactionAuthorityError",
         "TransactionOwnershipError",
         "UnloadedRelationshipError",
-        "RowsResult",
         "WireEntity",
         "WireValue",
         "WireDatabaseView",
@@ -145,16 +137,18 @@ def test_every_scope_submodule_imports() -> None:
     [
         "parallax.snapshot",
         "parallax.snapshot.handle",
-        "parallax.snapshot.handle._materialization",
+        "parallax.snapshot.materialize",
+        "parallax.core.read_delivery._page",
     ],
 )
 def test_snapshot_imports_cold_in_a_fresh_interpreter(module: str) -> None:
     # The in-process checks above cannot see an import cycle: by the time they
     # run, pytest collection has already imported `parallax.snapshot`, so a
-    # partially-initialized-module failure is masked. `handle._materialization` imports
-    # `parallax.snapshot.materialize` back through the parent package — the shape
-    # that breaks only on a cold import, and only for some entry points, so each
-    # entry point gets its own probe.
+    # partially-initialized-module failure is masked. The Snapshot publication
+    # package and the Page child it reads each import through a parent package
+    # whose own interface imports back into them — the shape that breaks only on
+    # a cold import, and only for some entry points, so each entry point gets
+    # its own probe.
     result = subprocess.run(
         [sys.executable, "-c", f"import {module}"], capture_output=True, text=True
     )

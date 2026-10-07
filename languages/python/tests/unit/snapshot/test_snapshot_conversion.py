@@ -8,7 +8,7 @@ that contradicts its declared type), scalar provenance, Page identity claims
     row with its documents decoded.
 
 Every row is a result-keyed driver row of a real compiled read, bound as a find
-binds it and converted through ``PreparedRead.convert_row``. A converted row is
+binds it and converted through ``ReadRowConverter.convert_row``. A converted row is
 POSITIONAL: every applicable member occupies its declared position and ``ABSENT``
 stands where the read carried nothing, so what the suite asserts of a member is
 what the row holds at that member's own position.
@@ -61,6 +61,18 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.read_delivery import MISSING_STORED_VALUE
+from parallax.core.read_delivery._page import (
+    ABSENT,
+    ROOT_LEVEL,
+    ChildSlot,
+    LogicalKey,
+    PageBuilder,
+    StoredDataIssueInput,
+    ViewSchema,
+    page_rows,
+)
+from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.descriptor._records import (
@@ -74,11 +86,8 @@ from parallax.descriptor._records import (
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle._concurrency import CONCURRENCY
-from parallax.snapshot.materialize import MISSING_STORED_VALUE, PageBuilder, RootView
-from parallax.snapshot.materialize._page import ABSENT, LogicalKey, StoredDataIssueInput, page_rows
-from parallax.snapshot.materialize._prepared import PreparedRead, bind
+from parallax.snapshot.materialize import RootView
 from parallax.snapshot.materialize._typed import typed_root
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ChildSlot, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, target
@@ -159,7 +168,7 @@ def _converted(model: Metamodel, entity: str, row: Mapping[str, object]) -> _Pro
 
 
 def _converted_by(
-    compiled: CompiledRead, prepared: PreparedRead, row: Mapping[str, object]
+    compiled: CompiledRead, prepared: ReadRowConverter, row: Mapping[str, object]
 ) -> _Projection:
     builder = PageBuilder(ViewSchema.of())
     index, _resolved, _document, _variant = prepared.convert_row(

@@ -26,7 +26,7 @@ from parallax.core.document_codec import MISSING, NULL, UNAVAILABLE
 from parallax.core.entity._construction_input import ABSENT, UNLOADED
 from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.object_query import LATEST
-from parallax.snapshot import MISSING_STORED_VALUE
+from parallax.core.read_delivery import MISSING_STORED_VALUE
 
 _SENTINELS: list[tuple[str, object]] = [
     ("LATEST", LATEST),

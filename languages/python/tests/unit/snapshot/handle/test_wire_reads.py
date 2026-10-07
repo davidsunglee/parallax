@@ -62,23 +62,19 @@ from parallax.core.metamodel import (
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.predicate import All
+from parallax.core.read_delivery import InvalidData
+from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, PageBuilder, ViewSchema
+from parallax.core.read_delivery._row_converter import bind
 from parallax.core.temporal_read import Pin
-from parallax.snapshot import InvalidData, WireEntity, connect, handle
+from parallax.snapshot import WireEntity, connect, handle
 from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._read import wire_publication
 from parallax.snapshot.handle._read_scope import wire_query_node
 from parallax.snapshot.handle._wire import WireDatabaseView
-from parallax.snapshot.materialize import (
-    PageBuilder,
-    RootView,
-    wire_roots,
-)
+from parallax.snapshot.materialize import RootView, wire_roots
 from parallax.snapshot.materialize import (
     _wire as wire_materialize,
 )
-from parallax.snapshot.materialize._page import ABSENT
-from parallax.snapshot.materialize._prepared import bind
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from parallax.snapshot.materialize._wire import (
     _SharedWireEncoder,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
     _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test

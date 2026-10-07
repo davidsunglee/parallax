@@ -1,6 +1,6 @@
-"""Write-observation retention unit tests (`parallax.snapshot.handle._retention`).
+"""Write-observation retention unit tests (`parallax.core.execution._retention`).
 
-Drives :class:`ObservedRows` and :func:`deferred_read_sources` directly, off
+Drives :class:`RecordedProjections` and :func:`deferred_read_origins` directly, off
 hand-written rows admitted as judged positional Entity State rather than through
 a `Transaction.find`: which of the two mutually exclusive branches a row takes (a
 versioned row's observed version, a temporal row's whole predecessor milestone),
@@ -30,8 +30,17 @@ from parallax.conformance import models
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core.base import INFINITY
+from parallax.core.execution._page_origins import ObservedPageProjections
+from parallax.core.execution._retention import RecordedProjections, deferred_read_origins
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.read_delivery._page import (
+    ROOT_LEVEL,
+    PageBuilder,
+    ViewSchema,
+    page_rows,
+    state_for,
+)
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     BufferItem,
@@ -55,11 +64,6 @@ from parallax.core.write_plan import (
 )
 from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
 from parallax.snapshot.handle import build_write_planner
-from parallax.snapshot.handle._materialization import Materializer
-from parallax.snapshot.handle._retention import ObservedRows, deferred_read_sources
-from parallax.snapshot.materialize import PageBuilder, RootView
-from parallax.snapshot.materialize._page import page_rows
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._judged_evidence_support import judged_evidence
@@ -167,9 +171,9 @@ def test_a_collector_that_observed_nothing_retains_no_sources() -> None:
 def test_deferred_sources_release_callbacks_after_resolving_every_origin() -> None:
     model = _accepted("orders")
     entity = corpus_entity("Order")
-    observations = ObservedRows()
-    observations.observe_occurrence(0, entity, None)
-    sources = deferred_read_sources(
+    observations = RecordedProjections()
+    observations.observe_projection(0, entity, None)
+    sources = deferred_read_origins(
         model,
         observations,
         lambda _node: None,
@@ -189,9 +193,9 @@ def test_deferred_sources_release_callbacks_after_resolving_every_origin() -> No
 def test_deferred_sources_report_a_reached_projection_with_no_admissible_state_as_absent() -> None:
     model = _accepted("orders")
     unknown = EntityIdentity("parallax.compatibility", "Unknown")
-    observations = ObservedRows()
-    observations.observe_occurrence(0, unknown, None)
-    sources = deferred_read_sources(
+    observations = RecordedProjections()
+    observations.observe_projection(0, unknown, None)
+    sources = deferred_read_origins(
         model,
         observations,
         lambda _node: None,
@@ -297,7 +301,7 @@ def test_resolving_and_materializing_evidence_again_repeats_no_derivation(
         derived.append(observed_state_key(*args))
         return derived[-1]
 
-    monkeypatch.setattr("parallax.snapshot.handle._retention.observed_state_key", counted)
+    monkeypatch.setattr("parallax.core.execution._retention.observed_state_key", counted)
     sources = judged_evidence(
         _accepted("rate"), corpus_entity("DepositRate"), _deposit_rate_columns()
     )
@@ -631,16 +635,14 @@ def test_a_root_retains_evidence_from_its_own_judged_state_beside_an_equal_sibli
     page = builder.finish((bond, stock), Pin())
     assert page_rows(page).logical_ids[bond] == page_rows(page).logical_ids[stock]
     assert page_rows(page).witnesses[bond] == page_rows(page).witnesses[stock]
-    RootView(page, 0)
-    RootView(page, 1)
-    observations = ObservedRows()
-    observations.observe_occurrence(bond, corpus_entity("Bond"), None)
-    observations.observe_occurrence(stock, corpus_entity("Stock"), None)
+    state_for(page_rows(page), bond)
+    state_for(page_rows(page), stock)
+    observations = ObservedPageProjections(model, ledger=None, scanned=False)
+    observations.observe_projection(bond, corpus_entity("Bond"), None)
+    observations.observe_projection(stock, corpus_entity("Stock"), None)
     # Page judgment and Read Origin retention meet only inside the read that
-    # owns both, so its retention step is called directly.
-    sources = Materializer._retained(  # pyright: ignore[reportPrivateUsage]
-        model, (), observations, page=page, ledger=None, pin=Pin()
-    )
+    # owns both, so the collector's origin step is called directly.
+    sources = observations.origins_for(page)
 
     for projection, price in ((bond, bond_price), (stock, stock_price)):
         observation = sources[projection].observation

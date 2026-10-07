@@ -47,6 +47,7 @@ from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
 from parallax.core.entity._model import model_of
+from parallax.core.execution._page_origins import ObservedPageProjections
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -57,38 +58,41 @@ from parallax.core.metamodel import (
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.read_delivery import InvalidData, InvalidDataError, PublishedRow, StoredDataIssue
+from parallax.core.read_delivery._delivery import find, find_history
+from parallax.core.read_delivery._fetch import slot_table
+from parallax.core.read_delivery._page import (
+    ABSENT,
+    ChildSlot,
+    InvalidRootInput,
+    Page,
+    PageRows,
+    page_edges,
+    page_rows,
+)
+from parallax.core.read_delivery._page_reader import EagerPageResult, HistoryPageResult
+from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanCache, ReadPlanner
+from parallax.core.read_delivery._row_lane import find_rows
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin, TemporalReadError, valid_time_coverage
+from parallax.core.unit_work import ReadOrigin
 from parallax.descriptor._records import Attribute as DescriptorAttribute
 from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot import (
     DeferredFeatureError,
-    InvalidData,
-    InvalidDataError,
     ObjectKey,
     QueryTargetError,
     ServingModel,
     SnapshotMaterializationError,
-    StoredDataIssue,
     handle,
     prepare_model,
 )
-from parallax.snapshot._read_result import FindResult, HistoryFindResult
-from parallax.snapshot.handle import _read, _read_scope
+from parallax.snapshot.handle import _database, _read
 from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._preflight import preflight
-from parallax.snapshot.handle._read_plan import UNCACHED_READ_PLANNER, ReadPlanCache, ReadPlanner
-from parallax.snapshot.materialize import (
-    ClassifiedRoot,
-    Page,
-    RootView,
-    classify_roots,
-    page_edges,
-)
-from parallax.snapshot.materialize._page import ABSENT, InvalidRootInput, PageRows, page_rows
-from parallax.snapshot.materialize._views import ChildSlot
+from parallax.snapshot.materialize import ClassifiedRoot, RootView, classify_roots
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -179,7 +183,7 @@ def _rows(page: Page) -> PageRows:
     return page_rows(page)
 
 
-def _root(result: FindResult) -> int:
+def _root(result: EagerPageResult[ReadOrigin]) -> int:
     return _valid_root(_rows(result.page))
 
 
@@ -224,14 +228,21 @@ def _cataloged(model: Metamodel) -> CatalogedModel:
     return CatalogedModel(model)
 
 
-def _find(query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection) -> FindResult:
-    return handle.find(preflight(query, model=model, form="graph"), _cataloged(model), port)
+def _find(
+    query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection
+) -> EagerPageResult[ReadOrigin]:
+    return find(
+        preflight(query, model=model, form="graph"),
+        _cataloged(model),
+        port,
+        origins=ObservedPageProjections(model, ledger=None, scanned=False),
+    )
 
 
 def _find_history(
     query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection
-) -> HistoryFindResult:
-    return _read.find_history(preflight(query, model=model, form="graph"), _cataloged(model), port)
+) -> HistoryPageResult:
+    return find_history(preflight(query, model=model, form="graph"), _cataloged(model), port)
 
 
 class QueuePort(ConnectsAsItself):
@@ -284,7 +295,7 @@ def _states_decoded(observer: RecordingObserver) -> int:
 def test_a_later_root_document_is_not_classified_before_its_root_view() -> None:
     meta = model_of(_PROFILE_OWNER_MODEL)
     observer = RecordingObserver()
-    result = handle.find(
+    result = find(
         preflight(
             deserialize_query({"target": "ProfileOwner", "predicate": {"all": {}}}),
             model=meta,
@@ -299,6 +310,7 @@ def test_a_later_root_document_is_not_classified_before_its_root_view() -> None:
                 ]
             ]
         ),
+        origins=ObservedPageProjections(meta, ledger=None, scanned=False),
         observer=observer,
     )
 
@@ -834,7 +846,7 @@ _RATE_FROM = dt.datetime(2024, 1, 1, tzinfo=_UTC)
 _RATE_UNTIL = dt.datetime(2024, 6, 1, tzinfo=_UTC)
 
 
-def _deposit_rate_history() -> HistoryFindResult:
+def _deposit_rate_history() -> HistoryPageResult:
     """Two Transaction-Time milestones of one `DepositRate`, the first bounded
     on Valid Time and the second open."""
     port = QueuePort(
@@ -1029,7 +1041,7 @@ def test_every_execution_reads_the_querys_own_canonical_node(
         nodes.append(node)
         return node
 
-    monkeypatch.setattr(_read_scope, "object_query_node", recording)
+    monkeypatch.setattr(_database, "object_query_node", recording)
     query = mm.Person.where(mm.Person.id == 1)
     db = own_root(handle.Database.connect(QueuePort([[], []]), PERSON)).using_database_login()
     db.find(query)
@@ -1132,15 +1144,16 @@ def _row_form(
     *,
     cataloged: CatalogedModel | None = None,
     planner: ReadPlanner = UNCACHED_READ_PLANNER,
-) -> tuple[_read.PublishedRow, ...]:
+) -> tuple[PublishedRow, ...]:
     query = preflight(
         deserialize_query({"target": target, "predicate": {"all": {}}}), model=model, form="rows"
     )
-    return _read.find_rows(
+    return find_rows(
         query,
         cataloged or _cataloged(model),
         QueuePort([stored]),
         edition="",
+        versions=CONCURRENCY,
         planner=planner,
     ).rows
 
@@ -1661,7 +1674,7 @@ def _slot_table(model: Metamodel, document: dict[str, object]) -> tuple[tuple[Ch
     entity = entity_by_name(model, cast("str", document["target"]))
     assert entity is not None
     validated = preflight(query, model=model, form="graph")
-    return _read.slot_table(
+    return slot_table(
         deep_fetch.plan(validated, model, projection=deep_fetch.ReadProjectionRequest("all", True))
     )
 

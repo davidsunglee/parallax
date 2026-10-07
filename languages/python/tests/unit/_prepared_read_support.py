@@ -1,7 +1,7 @@
 """Real compiled reads, bound as a read plan binds them, for unit suites that
 convert driver rows without a database.
 
-Conversion is graded through the same ``bind`` plus ``PreparedRead.convert_row``
+Conversion is graded through the same ``bind`` plus ``ReadRowConverter.convert_row``
 boundary every production read crosses. These helpers only compile and bind;
 witness extraction and stored-value judgment stay in production code.
 
@@ -18,10 +18,10 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel, entity_by_name
 from parallax.core.object_query import AsOf, TemporalSelection
 from parallax.core.object_query._nodes import TemporalDimension
+from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
 from parallax.core.temporal_read import view as temporal_view
-from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from tests._support.sql import compile_read
 
 __all__ = ["bound_read", "compiled_read"]
@@ -69,7 +69,7 @@ def compiled_read(model: Metamodel, entity: str | EntityIdentity) -> CompiledRea
 
 _BOUND: dict[
     tuple[int, str | EntityIdentity, tuple[AttributeIdentity, ...]],
-    tuple[Metamodel, PreparedRead],
+    tuple[Metamodel, ReadRowConverter],
 ] = {}
 
 
@@ -78,7 +78,7 @@ def bound_read(
     entity: str | EntityIdentity,
     *,
     correlation_members: tuple[AttributeIdentity, ...] = (),
-) -> PreparedRead:
+) -> ReadRowConverter:
     """:func:`compiled_read` bound against ``model`` routing by
     ``correlation_members``, once per model, Entity, and selection, as a read
     plan's cache keeps one bound read per statement shape."""

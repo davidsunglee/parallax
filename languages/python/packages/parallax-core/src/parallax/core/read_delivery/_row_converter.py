@@ -21,23 +21,22 @@ from parallax.core.metamodel import (
     Occurrence,
     ValueObjectMetadata,
 )
-from parallax.core.wire import encode_wire
-from parallax.core.write_plan.observe import occurrence_value
-from parallax.snapshot.materialize._convert import (
+from parallax.core.read_delivery._convert import (
     AttributeReadContract,
-    BoundLevel,
+    EntityReadMapping,
     build_positional_many,
     build_positional_object,
     register_reduced_row,
 )
-from parallax.snapshot.materialize._page import ABSENT, LogicalKey, PageBuilder
-from parallax.snapshot.materialize._views import SourceLevel
+from parallax.core.read_delivery._page import ABSENT, LogicalKey, PageBuilder, SourceLevel
+from parallax.core.wire import encode_wire
+from parallax.core.write_plan.observe import occurrence_value
 
-__all__ = ["PreparedRead", "RowPublisher", "bind"]
+__all__ = ["ReadRowConverter", "RowPublisher", "bind"]
 
 
 class _CompiledRead(Protocol):
-    """What a prepared read reads off the compiled read it is bound to."""
+    """What a row converter reads off the compiled read it is bound to."""
 
     @property
     def resolvable(self) -> tuple[EntityIdentity, ...]: ...
@@ -76,22 +75,22 @@ class _CompiledRead(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class PreparedRead:
-    """One compiled read together with the levels its rows convert under.
+class ReadRowConverter:
+    """One compiled read together with the entity mappings its rows convert under.
 
     The whole of what a read lane needs to turn driver rows into projections:
-    convert a raw provider row and observe it, with no level, contract,
+    convert a raw provider row and observe it, with no mapping, contract,
     classified-member set, or finding crossing the call. A lane that named any
     of those would be coordinating a shape it does not own, and would be the
-    second place the pairing of a row with its own level could go wrong.
+    second place the pairing of a row with its own mapping could go wrong.
 
-    Both halves it is built from are private for that reason: the level table is
-    reachable only through conversion, so nothing outside can read a level,
-    replace one, or hold the compiled read apart from the levels bound with it.
+    Both halves it is built from are private for that reason: the mapping table
+    is reachable only through conversion, so nothing outside can read a mapping,
+    replace one, or hold the compiled read apart from the mappings bound with it.
     """
 
     _compiled: _CompiledRead
-    _levels: Mapping[EntityIdentity, BoundLevel]
+    _mappings_by_entity: Mapping[EntityIdentity, EntityReadMapping]
 
     def convert_row(
         self,
@@ -104,27 +103,27 @@ class PreparedRead:
         index, the Entity it resolved to, its shared document, and its
         `familyVariant` spelling.
 
-        A row whose level needs no state reduction registers its witness as its
+        A row whose mapping needs no state reduction registers its witness as its
         member row. Any other row is claimed now, with its identity and
         correlation values judged for page assembly, and the rest of its
-        payload judged when a Root View first needs its state.
+        payload judged when its Page-owned state is first needed.
         """
         resolved, variant, unknown, document = self._compiled.row_identity(row)
-        level = self._levels[resolved]
-        if isinstance(row, tuple) and level.direct_row is not None:
-            selected = level.direct_row(row)
+        mapping = self._mappings_by_entity[resolved]
+        if isinstance(row, tuple) and mapping.direct_row is not None:
+            selected = mapping.direct_row(row)
             witness = (
                 cast("tuple[object, ...]", selected)
-                if len(level.result_ordinals) != 1
+                if len(mapping.result_ordinals) != 1
                 else (selected,)
             )
-            classifiable = level.every_member_present
+            classifiable = mapping.every_member_present
         else:
             classifiable = 0
-            layout = level.layout
-            keys = level.result_keys
-            ordinals = level.result_ordinals
-            document_members = level.document_member_names
+            layout = mapping.layout
+            keys = mapping.result_keys
+            ordinals = mapping.result_ordinals
+            document_members = mapping.document_member_names
             witness_values: list[object] = [ABSENT] * len(layout.members)
             for position in range(layout.attribute_count):
                 document_member = document_members[position]
@@ -145,7 +144,7 @@ class PreparedRead:
                 if present:
                     classifiable |= 1 << position
             for position, projected in enumerate(
-                level.projected_by_position, start=layout.attribute_count
+                mapping.projected_by_position, start=layout.attribute_count
             ):
                 if not projected:
                     continue
@@ -167,19 +166,19 @@ class PreparedRead:
                 if present:
                     classifiable |= 1 << position
             witness = tuple(witness_values)
-        if not level.requires_state_reduction and unknown is None:
-            layout = level.layout
+        if not mapping.requires_state_reduction and unknown is None:
+            layout = mapping.layout
             primary_key = witness[layout.primary_key[0]]
             key = (
                 None
                 if primary_key is ABSENT
-                else LogicalKey(layout.family, primary_key, level.temporal_start_values(witness))
+                else LogicalKey(layout.family, primary_key, mapping.temporal_start_values(witness))
             )
             ref = builder.add_claim(source, layout, key, witness, witness, (), witness)
         else:
             ref = register_reduced_row(
                 witness,
-                level,
+                mapping,
                 builder,
                 source=source,
                 classifiable=classifiable,
@@ -205,20 +204,22 @@ class PreparedRead:
 
     def row_publisher(self) -> RowPublisher:
         """Open one Page's flat-row publisher; what it derives dies with it."""
-        return RowPublisher(self._compiled, self._levels)
+        return RowPublisher(self._compiled, self._mappings_by_entity)
 
 
 class RowPublisher:
     """Publishes one Page's flat rows, deriving one operation per concrete
     Entity and `familyVariant` pair on first sight of that pair."""
 
-    __slots__ = ("_compiled", "_levels", "_operations")
+    __slots__ = ("_compiled", "_mappings_by_entity", "_operations")
 
     def __init__(
-        self, compiled: _CompiledRead, levels: Mapping[EntityIdentity, BoundLevel]
+        self,
+        compiled: _CompiledRead,
+        mappings_by_entity: Mapping[EntityIdentity, EntityReadMapping],
     ) -> None:
         self._compiled = compiled
-        self._levels = levels
+        self._mappings_by_entity = mappings_by_entity
         self._operations: dict[tuple[EntityIdentity, str | None], _RowOperation] = {}
 
     def publish(
@@ -229,7 +230,9 @@ class RowPublisher:
         operation = self._operations.get(pair)
         if operation is None:
             operation = self._operations[pair] = _row_operation(
-                self._levels[concrete], self._compiled.publication_keys(concrete, variant), variant
+                self._mappings_by_entity[concrete],
+                self._compiled.publication_keys(concrete, variant),
+                variant,
             )
         return operation(row)
 
@@ -258,13 +261,15 @@ class _RowOperation:
         return values
 
 
-def _row_operation(level: BoundLevel, keys: tuple[str, ...], variant: str | None) -> _RowOperation:
+def _row_operation(
+    mapping: EntityReadMapping, keys: tuple[str, ...], variant: str | None
+) -> _RowOperation:
     # Key order is observable: kept members in layout order, then renamed
     # Attributes, then publication-key padding, then `familyVariant`. An
     # Attribute's own result key wins over its storage key, which may be another
     # Attribute's result key.
-    layout = level.layout
-    reads = level.attribute_reads
+    layout = mapping.layout
+    reads = mapping.attribute_reads
     published = frozenset(keys)
     kept: list[tuple[int, str, NeutralType | None, Occurrence | None]] = []
     renamed: list[tuple[int, str, NeutralType | None, Occurrence | None]] = []
@@ -292,8 +297,8 @@ def bind(
     compiled: _CompiledRead,
     *,
     correlation_members: tuple[AttributeIdentity, ...] = (),
-) -> PreparedRead:
-    """Prepare ``compiled`` against ``model``: one level per Entity it can resolve.
+) -> ReadRowConverter:
+    """Bind ``compiled`` to ``model``: one mapping per Entity it can resolve.
 
     Paid once per compiled read, which is where the state belongs — the member
     layouts are the model's and the projected documents and Attribute contracts
@@ -301,23 +306,23 @@ def bind(
     ``correlation_members`` are the members this read's rows route by; a read
     routed by a different selection is bound separately.
     """
-    return PreparedRead(
+    return ReadRowConverter(
         compiled,
         MappingProxyType(
             {
-                identity: _bound_level(model, compiled, identity, correlation_members)
+                identity: _entity_read_mapping(model, compiled, identity, correlation_members)
                 for identity in compiled.resolvable
             }
         ),
     )
 
 
-def _bound_level(
+def _entity_read_mapping(
     model: CatalogedModel,
     compiled: _CompiledRead,
     identity: EntityIdentity,
     correlation_members: tuple[AttributeIdentity, ...],
-) -> BoundLevel:
+) -> EntityReadMapping:
     layout = model.layouts.entity(identity)
     reads = compiled.attribute_reads(identity)
     keys = tuple(
@@ -325,7 +330,7 @@ def _bound_level(
         for position, attribute in enumerate(layout.attributes)
     ) + tuple(occurrence.storage.name for occurrence in layout.occurrences)
     classified = compiled.classified_members(identity)
-    return BoundLevel(
+    return EntityReadMapping(
         layout,
         compiled.projected_documents,
         reads,

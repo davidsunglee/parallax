@@ -32,7 +32,7 @@ from parallax.postgres._connection import initialize_connection
 from tests.unit import _time_interval_runtime_support as support
 
 _SOURCE_KEYED = "flow/source-keyed/typed/columns/preparation-inclusive"
-_READ_PLAN = importlib.import_module("parallax.snapshot.handle._read_plan")
+_READ_PLAN = importlib.import_module("parallax.core.read_delivery._read_plan")
 
 
 # --------------------------------------------------------------------------- #

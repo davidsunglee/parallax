@@ -2,7 +2,7 @@
 
 The production seam a read lane crosses: a compiled read and a cataloged model
 bind into a prepared read, and every row of that statement is converted through
-``PreparedRead.convert_row`` and observed through it. What a row carries into
+``ReadRowConverter.convert_row`` and observed through it. What a row carries into
 conversion — the concrete it resolved, the findings the transform raised, the
 members it already classified — is the compiled read's own provenance, so
 normally compiled payload cases drive a real ``compile_read``. Encoded UUID
@@ -54,6 +54,18 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
+from parallax.core.read_delivery import _convert
+from parallax.core.read_delivery._page import (
+    ABSENT,
+    ROOT_LEVEL,
+    Page,
+    PageBuilder,
+    StoredDataIssueInput,
+    ViewSchema,
+    page_rows,
+    release_page_rows,
+)
+from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import (
     Bitemporal,
@@ -75,17 +87,8 @@ from parallax.descriptor._records import (
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.descriptor._records import ValueObject as DescriptorValueObject
-from parallax.snapshot.materialize import PageBuilder, RootView, _convert
-from parallax.snapshot.materialize._page import (
-    ABSENT,
-    Page,
-    StoredDataIssueInput,
-    page_rows,
-    release_page_rows,
-)
-from parallax.snapshot.materialize._prepared import PreparedRead, bind
-from parallax.snapshot.materialize._publication import publication_issue
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from parallax.snapshot.materialize import RootView
+from parallax.snapshot.materialize._publication import publication_issue, publish_roots
 from tests._support.sql import compile_read
 from tests.unit import _predicate_acquisition_support as acquisition
 from tests.unit._corpus_model_support import formed, target
@@ -240,7 +243,7 @@ def _compiled(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -
     )
 
 
-def _prepared(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -> PreparedRead:
+def _prepared(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -> ReadRowConverter:
     """The read of ``name``, compiled and bound as a find binds it."""
     return bind(CatalogedModel(model), _compiled(model, name, narrow_to=narrow_to))
 
@@ -260,7 +263,7 @@ class _Converted:
     issues: tuple[StoredDataIssueInput, ...]
 
 
-def _converted(prepared: PreparedRead, stored: Mapping[str, object]) -> _Converted:
+def _converted(prepared: ReadRowConverter, stored: Mapping[str, object]) -> _Converted:
     """One stored row through the whole prepared seam: convert and seal."""
     builder = PageBuilder(ViewSchema.of())
     index, _resolved, _document, _variant = prepared.convert_row(stored, builder, source=ROOT_LEVEL)
@@ -273,7 +276,7 @@ def _converted(prepared: PreparedRead, stored: Mapping[str, object]) -> _Convert
     return _Converted(layout.concrete, rendered_members(layout, values), issues)
 
 
-def _observed(prepared: PreparedRead, stored: Mapping[str, object]) -> dict[str, object]:
+def _observed(prepared: ReadRowConverter, stored: Mapping[str, object]) -> dict[str, object]:
     """One stored row's shared Entity State viewed under physical storage keys."""
     builder = PageBuilder(ViewSchema.of())
     index, _resolved, _document, _variant = prepared.convert_row(stored, builder, source=ROOT_LEVEL)
@@ -1049,7 +1052,7 @@ _CUSTODIAN = AttributeIdentity(_HOLDING, "custodianId")
 _TERMS_LABEL = ValueObjectAttributeIdentity(ValueObjectIdentity(_HOLDING, ("terms",)), "label")
 
 
-def _holdings() -> PreparedRead:
+def _holdings() -> ReadRowConverter:
     """The holding level bound with its correlations named in reverse attribute
     order, as a plan may select them."""
     return bound_read(HOLDINGS, "CorrelatedHolding", correlation_members=(_CUSTODIAN, _HOLDER))
@@ -1175,8 +1178,6 @@ def test_a_keyless_holding_keeps_its_payload_finding_for_every_holder_reaching_i
 ) -> None:
     # A holding read without its key claims no logical node, so every holder
     # reaching it judges its payload again, after the first holder's release.
-    from parallax.snapshot.handle._materialization import Materializer
-
     holdings = RelationshipViewKey(
         RelationshipIdentity(EntityIdentity(_NAMESPACE, "CorrelatedHolder"), "holdings")
     )
@@ -1199,7 +1200,7 @@ def test_a_keyless_holding_keeps_its_payload_finding_for_every_holder_reaching_i
             [(issue.code, issue.member, issue.stored_value) for issue in root.issues(node)],
         )
 
-    published = list(Materializer().roots(page, publish, atomic=atomic, model=HOLDINGS))
+    published = list(publish_roots(page, publish, atomic=atomic, model=HOLDINGS))
 
     assert published == [
         (
@@ -1221,7 +1222,7 @@ not already classify. Each one's work is fixed by the occurrence's declaration,
 so reaching any of them once per row is declaration-fixed work scaling with
 rows."""
 
-_COUNTED: Final = (*_DECLARATION_FIXED, "admits_stored_scalar")
+_COUNTED: Final = (*_DECLARATION_FIXED, "check_stored_scalar")
 
 
 def _conversion_calls(layout: Layout, owners: int) -> dict[str, int]:
@@ -1316,5 +1317,5 @@ def test_the_conforming_path_checks_only_host_checked_payload_positions(
     twice = _conversion_calls(layout, OWNERS * 2)
     assert [one[site] for site in _DECLARATION_FIXED] == [0, 0]
     assert [twice[site] for site in _DECLARATION_FIXED] == [0, 0]
-    assert one["admits_stored_scalar"] == _host_checked_payload_cells(layout, OWNERS)
-    assert twice["admits_stored_scalar"] == _host_checked_payload_cells(layout, OWNERS * 2)
+    assert one["check_stored_scalar"] == _host_checked_payload_cells(layout, OWNERS)
+    assert twice["check_stored_scalar"] == _host_checked_payload_cells(layout, OWNERS * 2)

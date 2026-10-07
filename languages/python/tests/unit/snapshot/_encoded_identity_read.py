@@ -18,11 +18,10 @@ from parallax.core.document_codec import DocumentFinding, MemberShape
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, ValueObjectMetadata
+from parallax.core.read_delivery._page import ROOT_LEVEL, Page, PageBuilder, ViewSchema
+from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import AttributeReadContract, CompiledRead
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import Page, PageBuilder
-from parallax.snapshot.materialize._prepared import PreparedRead, bind
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests.unit._prepared_read_support import compiled_read
 
 
@@ -99,7 +98,7 @@ class EncodedIdentityRead:
         )
 
 
-def encoded_identity_read() -> PreparedRead:
+def encoded_identity_read() -> ReadRowConverter:
     return bind(
         CatalogedModel(ENCODED_IDENTITY),
         EncodedIdentityRead(compiled_read(ENCODED_IDENTITY, "EncodedIdentity")),

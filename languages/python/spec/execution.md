@@ -118,7 +118,7 @@ is `ExecutionFailure`, carrying the adopted edition and original `cause`.
 Transactional operations raise their own errors inside the callback; the outer
 boundary contextualizes a failure once. Entered standalone stream advances use
 the stream edition, while stream-state misuse remains
-`SnapshotStreamStateError`. Failures rejected before model adoption remain
+`StreamStateError`. Failures rejected before model adoption remain
 unstamped. Interpreter control-flow exceptions keep their
 ordinary behavior.
 

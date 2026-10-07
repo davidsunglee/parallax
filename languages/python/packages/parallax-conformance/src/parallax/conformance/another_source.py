@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, cast
 
 from parallax.core.db_port import DatabaseConnection
@@ -11,19 +12,39 @@ from parallax.core.entity import (
     NodeHandle,
     lifecycle_state_of,
 )
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.read_delivery._delivery import find as execute_read
+from parallax.core.read_delivery._page import Page
 from parallax.snapshot.handle import ModelSelection
-from parallax.snapshot.handle import find as execute_read
-from parallax.snapshot.handle._materialization import Materializer
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import read_projection
 from parallax.snapshot.materialize import (
-    Page,
     RootView,
     require_publishable,
 )
+from parallax.snapshot.materialize._publication import publish_roots
 
 __all__ = ["AnotherSource"]
+
+
+class _NoOrigins:
+    """Observes nothing and answers no origin: this source publishes no write
+    evidence, so the Pages it reads need none."""
+
+    __slots__ = ()
+
+    def observe_projection(
+        self, node: int, entity: EntityIdentity, document: object | None
+    ) -> None:
+        del node, entity, document
+
+    def origins_for(self, page: Page, /) -> Mapping[int, object]:
+        del page
+        return MappingProxyType({})
+
+
+_NO_ORIGINS = _NoOrigins()
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +101,7 @@ class AnotherSource:
                 "a relationship level"
             )
         validated = preflight(node, model=self._model.meta, form="graph")
-        result = execute_read(validated, self._model, self._port)
+        result = execute_read(validated, self._model, self._port, origins=_NO_ORIGINS)
         return cast("tuple[S, ...]", self._materialize(result.page))
 
     def produced(self, value: object) -> bool:
@@ -113,4 +134,4 @@ class AnotherSource:
                 build, state_factory=lambda _view, _handle: _AnotherSourceState(self)
             )
 
-        return tuple(Materializer().roots(page, publish))
+        return tuple(publish_roots(page, publish))

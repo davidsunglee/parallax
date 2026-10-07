@@ -13,7 +13,7 @@ from parallax.core.execution_lifecycle._diagnostics import (
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import Concurrency, WriteBatchTrigger
 
-type RootExecutionKind = Literal["read", "transaction_invocation", "snapshot_stream"]
+type RootExecutionKind = Literal["read", "transaction_invocation", "stream"]
 """Which outermost Handle operation a Root Execution describes."""
 
 type ReadInterface = Literal["typed", "wire", "rows"]
@@ -430,12 +430,12 @@ class StreamFailed:
     failure: ActivityFailure
 
 
-type SnapshotStreamOutcome = StreamExhausted | StreamClosedEarly | StreamFailed
-"""How a Snapshot Stream ended, a closed union of exactly one member."""
+type StreamOutcome = StreamExhausted | StreamClosedEarly | StreamFailed
+"""How a Stream ended, a closed union of exactly one member."""
 
 
 @dataclass(frozen=True, slots=True)
-class SnapshotStreamStarted(_Event):
+class StreamStarted(_Event):
     """A stream over ``target`` opened and is about to be iterated.
 
     Constructing a stream emits nothing: this is delivered only once context
@@ -453,10 +453,10 @@ class SnapshotStreamStarted(_Event):
 
 
 @dataclass(frozen=True, slots=True)
-class SnapshotStreamFinished(_Event):
+class StreamFinished(_Event):
     """The stream reached its terminal outcome."""
 
-    outcome: SnapshotStreamOutcome
+    outcome: StreamOutcome
 
 
 @dataclass(frozen=True, slots=True)
@@ -594,7 +594,7 @@ type ActivityStarted = (
     | DatabaseCallStarted
     | TransactionInvocationStarted
     | TransactionAttemptStarted
-    | SnapshotStreamStarted
+    | StreamStarted
     | StreamBatchStarted
     | AcquisitionStarted
     | ReleaseStarted
@@ -607,7 +607,7 @@ type ActivityFinished = (
     | DatabaseCallFinished
     | TransactionInvocationFinished
     | TransactionAttemptFinished
-    | SnapshotStreamFinished
+    | StreamFinished
     | StreamBatchFinished
     | AcquisitionFinished
     | ReleaseFinished

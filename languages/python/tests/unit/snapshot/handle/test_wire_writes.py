@@ -36,8 +36,9 @@ from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import InstantError, PresentDocument
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
+from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import WriteRejectedError, instructions
-from parallax.snapshot import InvalidData, Snapshot, connect
+from parallax.snapshot import Snapshot, connect
 from parallax.snapshot.handle import (
     Database,
     KeyedWriteValueError,

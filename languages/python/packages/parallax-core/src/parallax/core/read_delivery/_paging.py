@@ -8,14 +8,16 @@ from parallax.core.object_query._validated import ContinuationCoordinate
 
 __all__ = [
     "At",
-    "PagePlan",
+    "PageVerdict",
+    "PagingParameters",
+    "PagingPlan",
     "TieFound",
     "page_decision",
 ]
 
 
 @dataclass(frozen=True, slots=True)
-class PageRequest:
+class PagingParameters:
     """How many roots one page asks for, and how its answer is to be read.
 
     ``lookahead`` is the whole difference between the two kinds of page. With
@@ -66,12 +68,12 @@ class PageVerdict:
 
 
 @dataclass(frozen=True, slots=True)
-class PagePlan:
+class PagingPlan:
     """How one delivery pages: its page nodes and the two counts bounding them.
 
     All three are fixed for a delivery's whole life and mean nothing apart —
     ``batch_size`` is how many roots a page may DELIVER — what its statement
-    asks for is :meth:`page_request`'s answer — ``limit`` is the authored
+    asks for is :meth:`parameters_for`'s answer — ``limit`` is the authored
     cap the delivery may never read past, and ``plan`` is what turns either into
     a node. Carrying them as one value is what leaves the stream holding a
     position and nothing else.
@@ -81,7 +83,7 @@ class PagePlan:
     batch_size: int
     limit: int | None
 
-    def page_request(self, emitted: int) -> PageRequest:
+    def parameters_for(self, emitted: int) -> PagingParameters:
         """What the page after ``emitted`` asks the database for.
 
         A page reads one root PAST its batch, which is what proves exhaustion
@@ -96,8 +98,8 @@ class PagePlan:
         that could skip it.
         """
         if self.limit is None or self.limit - emitted > self.batch_size:
-            return PageRequest(size=self.batch_size + 1, lookahead=True, emitted=emitted)
-        return PageRequest(size=self.limit - emitted, lookahead=False, emitted=emitted)
+            return PagingParameters(size=self.batch_size + 1, lookahead=True, emitted=emitted)
+        return PagingParameters(size=self.limit - emitted, lookahead=False, emitted=emitted)
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +116,7 @@ class At:
 
 
 def page_decision(
-    request: PageRequest,
+    request: PagingParameters,
     terms: tuple[AttributeIdentity, ...],
     coordinates: tuple[ContinuationCoordinate, ...],
 ) -> PageVerdict:

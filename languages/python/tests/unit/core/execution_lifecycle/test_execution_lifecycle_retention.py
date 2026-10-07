@@ -107,7 +107,7 @@ are read as TOTALS of what one activity holds, never as the difference between
 two arms — a difference cancels whatever the two arms share, which is precisely
 the ancestor-derived state a depth claim is about. They are taken over the
 CORRELATION chains, enumerated from the activity Protocols rather than listed by
-hand, so an algebra that grows a level — the Snapshot Stream and Stream Batch
+hand, so an algebra that grows a level — the Stream and Stream Batch
 kinds the specification names and this runtime does not yet implement would make
 it five — fails that enumeration and forces those readings to be taken again.
 What the enumeration cannot see is the joining recursion above, which reaches
@@ -205,13 +205,13 @@ from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
     JoinedInvocationActivity,
     ReadActivity,
-    SnapshotStreamActivity,
+    StreamActivity,
     StreamBatchActivity,
     TransactionAttemptActivity,
     TransactionInvocationActivity,
     WriteBatchActivity,
     open_read_root,
-    open_snapshot_stream_root,
+    open_stream_root,
     open_transaction_root,
 )
 from parallax.snapshot import connect
@@ -768,13 +768,13 @@ def _participating_read_chain(
 
 
 def _stream_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
-    """A Snapshot Stream root, one page of it, and that page's Database Call.
+    """A Stream root, one page of it, and that page's Database Call.
 
     The second shape whose root is not a transaction, and the one that puts a
     Database Call three levels down rather than two.
     """
     stream = stack.enter_context(
-        open_snapshot_stream_root(
+        open_stream_root(
             installed, target=TARGET, interface="typed", batch_size=PAGE, edition=EDITION
         )
     )
@@ -795,7 +795,7 @@ def _participating_stream_chain(
     the per-depth reading below say anything about them.
     """
     invocation, attempt = _begun_attempt(stack, installed)
-    stream = stack.enter_context(attempt.snapshot_stream(TARGET, "typed", PAGE))
+    stream = stack.enter_context(attempt.stream(TARGET, "typed", PAGE))
     batch = stack.enter_context(stream.batch())
     call = stack.enter_context(batch.database_call(STATEMENT, "read", TARGET))
     call.read_completed(SMALL)
@@ -841,13 +841,13 @@ _SHAPES: Final = (
         _joined_invocation_chain,
         (TransactionInvocationActivity, TransactionAttemptActivity, JoinedInvocationActivity),
     ),
-    (_stream_chain, (SnapshotStreamActivity, StreamBatchActivity, DatabaseCallActivity)),
+    (_stream_chain, (StreamActivity, StreamBatchActivity, DatabaseCallActivity)),
     (
         _participating_stream_chain,
         (
             TransactionInvocationActivity,
             TransactionAttemptActivity,
-            SnapshotStreamActivity,
+            StreamActivity,
             StreamBatchActivity,
             DatabaseCallActivity,
         ),
@@ -868,7 +868,7 @@ _ACTIVITY_KINDS: Final = (
     DatabaseCallActivity,
     JoinedInvocationActivity,
     ReadActivity,
-    SnapshotStreamActivity,
+    StreamActivity,
     StreamBatchActivity,
     TransactionAttemptActivity,
     TransactionInvocationActivity,
@@ -927,7 +927,7 @@ def _admitted_chains() -> frozenset[tuple[type, ...]]:
     """Every correlation chain a root can parent, from the three root openers."""
     roots = tuple(
         opened
-        for opener in (open_read_root, open_snapshot_stream_root, open_transaction_root)
+        for opener in (open_read_root, open_stream_root, open_transaction_root)
         for opened in (get_type_hints(opener).get("return"),)
         if isinstance(opened, type)
     )
@@ -1705,7 +1705,7 @@ def test_no_live_activity_holds_any_of_its_tree_but_its_own_parent() -> None:
 def test_an_activity_holds_the_same_at_every_depth_it_can_open_at() -> None:
     # The other half of the depth claim: a level costs what it costs wherever it
     # sits. Four of the kinds open at more than one depth — a Read directly under
-    # a Handle and two levels down under an attempt, a Snapshot Stream as a root
+    # a Handle and two levels down under an attempt, a Stream as a root
     # and under an attempt, a Stream Batch under either of those, and a Database
     # Call under all of them — and each is read as the total ITS OWN structure
     # holds rather than as a difference between two chains, so nothing an
@@ -1721,7 +1721,7 @@ def test_an_activity_holds_the_same_at_every_depth_it_can_open_at() -> None:
     assert {kind for kind, at in depths.items() if len(at) > 1} == {
         ReadActivity,
         DatabaseCallActivity,
-        SnapshotStreamActivity,
+        StreamActivity,
         StreamBatchActivity,
     }
     disagreeing = {

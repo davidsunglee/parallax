@@ -1,4 +1,4 @@
-"""The execution-owned view schema: interning, guard splitting, and translation.
+"""The read-delivery view schema: interning, guard splitting, and translation.
 
 Three claims. **Interning** is what keeps the schema's cost a function of the
 plan rather than of the Page: two concretes no guard splits are answered one
@@ -19,11 +19,7 @@ import pytest
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
 from parallax.core.metamodel import EntityIdentity, Metamodel, RelationshipIdentity
-from parallax.snapshot.materialize._views import (
-    ROOT_LEVEL,
-    ChildSlot,
-    ViewSchema,
-)
+from parallax.core.read_delivery._page import ROOT_LEVEL, ChildSlot, ViewSchema
 from tests.unit._corpus_model_support import model as corpus_model
 
 _NAMESPACE = "parallax.compatibility"

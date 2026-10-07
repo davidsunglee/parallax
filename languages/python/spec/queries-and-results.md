@@ -135,19 +135,19 @@ its selection across all pages; a transactional one inherits the transaction's.
 Exactly one default or checked iterator may be selected. Entering twice,
 selecting another view, repeating iteration, advancing after scope exit, or
 reading `pin` / `edition` outside the entered scope raises
-`SnapshotStreamStateError`. The default iterator raises at invalid roots;
+`StreamStateError`. The default iterator raises at invalid roots;
 the checked iterator returns their records. There are no arity accessors or
 whole-stream projection.
 
 `batch_size` defaults to 1000 and requires a positive exact built-in integer;
 it counts root positions. It is a per-call option only. Core determines page
 stability and continuation ordering. A non-total continuation raises
-`SnapshotStreamContinuationError` with code
+`StreamContinuationError` with code
 `snapshot-stream-continuation-order-not-total`; its coordinate is diagnostic
 data excluded from default messages and logging.
 
 Typed stream `wire(value, at=...)` is available only while delivery is paused
 at a yielded root, including the final yielded root before the next advance.
 Before the first yield, during advance, after exhaustion or failure, and after
-scope exit it raises `SnapshotStreamStateError`. It neither advances nor reads.
+scope exit it raises `StreamStateError`. It neither advances nor reads.
 Its input and requested-position rules are the eager projection rules.

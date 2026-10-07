@@ -70,8 +70,6 @@ from parallax.core.execution_lifecycle import (
     ReleaseStarted,
     RetryPolicy,
     RootExecution,
-    SnapshotStreamFinished,
-    SnapshotStreamStarted,
     StreamBatchCompleted,
     StreamBatchFailed,
     StreamBatchFinished,
@@ -79,6 +77,8 @@ from parallax.core.execution_lifecycle import (
     StreamClosedEarly,
     StreamExhausted,
     StreamFailed,
+    StreamFinished,
+    StreamStarted,
     TransactionAttemptFinished,
     TransactionAttemptStarted,
     TransactionInvocationFinished,
@@ -153,15 +153,15 @@ def test_a_root_states_its_kind_and_its_first_observation_index() -> None:
         TransactionInvocationStarted(_EXECUTION, 1, 1, None, JoinedInvocation()),
     )
     stream = _root(
-        "snapshot_stream",
-        SnapshotStreamStarted(_EXECUTION, 1, 1, None, "Account", "wire", 100, "account"),
+        "stream",
+        StreamStarted(_EXECUTION, 1, 1, None, "Account", "wire", 100, "account"),
     )
     roots = _roots(execution_lifecycle_observation([read, invocation, stream], []))
     assert [root["execution"] for root in roots] == [1, 2, 3]
     assert [root["kind"] for root in roots] == [
         "read",
         "transaction-invocation",
-        "snapshot-stream",
+        "stream",
     ]
 
 
@@ -354,9 +354,9 @@ def test_an_attempt_states_its_phase_and_the_classifier_verdict() -> None:
 
 
 def test_a_stream_states_the_page_size_that_makes_its_batches_countable() -> None:
-    started = SnapshotStreamStarted(_EXECUTION, 1, 1, None, "Account", "rows", 500, "account")
+    started = StreamStarted(_EXECUTION, 1, 1, None, "Account", "rows", 500, "account")
     assert _transition(started) == {
-        "snapshotStreamStarted": {
+        "streamStarted": {
             "target": "Account",
             "interface": "rows",
             "batchSize": 500,
@@ -371,8 +371,8 @@ def test_a_stream_states_the_page_size_that_makes_its_batches_countable() -> Non
             {"outcome": "failed", "attribution": "direct"},
         ),
     ):
-        assert _transition(SnapshotStreamFinished(_EXECUTION, 2, 1, None, outcome)) == {
-            "snapshotStreamFinished": expected
+        assert _transition(StreamFinished(_EXECUTION, 2, 1, None, outcome)) == {
+            "streamFinished": expected
         }
 
 

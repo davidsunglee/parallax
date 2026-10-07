@@ -55,8 +55,6 @@ from parallax.core.execution_lifecycle import (
     ReleaseFinished,
     ReleaseStarted,
     RootExecutionKind,
-    SnapshotStreamFinished,
-    SnapshotStreamStarted,
     StreamBatchCompleted,
     StreamBatchFailed,
     StreamBatchFinished,
@@ -64,6 +62,8 @@ from parallax.core.execution_lifecycle import (
     StreamClosedEarly,
     StreamExhausted,
     StreamFailed,
+    StreamFinished,
+    StreamStarted,
     TransactionAttemptFinished,
     TransactionAttemptStarted,
     TransactionInvocationFinished,
@@ -120,7 +120,7 @@ _CALL_KIND: Final[dict[DatabaseCallKind, Literal["read", "write"]]] = {
 _ROOT_KIND: Final[dict[RootExecutionKind, str]] = {
     "read": "read",
     "transaction_invocation": "transaction-invocation",
-    "snapshot_stream": "snapshot-stream",
+    "stream": "stream",
 }
 
 _READ_INTERFACE: Final[dict[ReadInterface, str]] = {
@@ -475,7 +475,7 @@ def _transition(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, 
             | DatabaseCallStarted()
             | TransactionInvocationStarted()
             | TransactionAttemptStarted()
-            | SnapshotStreamStarted()
+            | StreamStarted()
             | StreamBatchStarted()
             | AcquisitionStarted()
             | ReleaseStarted()
@@ -509,11 +509,11 @@ def _started(event: ActivityStarted, indexer: _StatementIndexer) -> dict[str, ob
             return {"transactionInvocationStarted": _invocation(invocation)}
         case TransactionAttemptStarted(edition=edition):
             return {"transactionAttemptStarted": {"edition": edition}}
-        case SnapshotStreamStarted(
+        case StreamStarted(
             target=target, interface=interface, batch_size=batch_size, edition=edition
         ):
             return {
-                "snapshotStreamStarted": {
+                "streamStarted": {
                     "target": target,
                     "interface": _READ_INTERFACE[interface],
                     "batchSize": batch_size,
@@ -546,8 +546,8 @@ def _finished(event: ActivityFinished) -> dict[str, object]:
             return {"transactionInvocationFinished": _invocation_outcome(outcome)}
         case TransactionAttemptFinished(outcome=outcome):
             return {"transactionAttemptFinished": _attempt_outcome(outcome)}
-        case SnapshotStreamFinished(outcome=outcome):
-            return {"snapshotStreamFinished": _stream_outcome(outcome)}
+        case StreamFinished(outcome=outcome):
+            return {"streamFinished": _stream_outcome(outcome)}
         case StreamBatchFinished(outcome=outcome):
             return {"streamBatchFinished": _stream_batch_outcome(outcome)}
         case AcquisitionFinished(outcome=outcome):

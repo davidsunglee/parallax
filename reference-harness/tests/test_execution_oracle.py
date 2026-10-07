@@ -861,13 +861,13 @@ def _read_root(*children: dict[str, Any]) -> dict[str, Any]:
 
 
 def _stream_root(finish: dict[str, Any], *children: dict[str, Any]) -> dict[str, Any]:
-    """One standalone Snapshot Stream root reaching *finish*."""
+    """One standalone Stream root reaching *finish*."""
     events = [
         _event(
             1,
             1,
             None,
-            snapshotStreamStarted={
+            streamStarted={
                 "target": "Account",
                 "interface": "typed",
                 "batchSize": 2,
@@ -875,11 +875,11 @@ def _stream_root(finish: dict[str, Any], *children: dict[str, Any]) -> dict[str,
             },
         ),
         *children,
-        _event(1, 1, None, snapshotStreamFinished=finish),
+        _event(1, 1, None, streamFinished=finish),
     ]
     for position, event in enumerate(events):
         event["sequence"] = position + 1
-    return _root("snapshot-stream", events)
+    return _root("stream", events)
 
 
 def _stream_batch(finish: dict[str, Any], *children: dict[str, Any]) -> list[dict[str, Any]]:

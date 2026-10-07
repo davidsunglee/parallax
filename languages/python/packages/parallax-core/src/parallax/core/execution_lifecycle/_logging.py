@@ -46,8 +46,6 @@ from parallax.core.execution_lifecycle._events import (
     ReleaseFinished,
     ReleaseStarted,
     RootExecution,
-    SnapshotStreamFinished,
-    SnapshotStreamStarted,
     StreamBatchCompleted,
     StreamBatchFailed,
     StreamBatchFinished,
@@ -55,6 +53,8 @@ from parallax.core.execution_lifecycle._events import (
     StreamClosedEarly,
     StreamExhausted,
     StreamFailed,
+    StreamFinished,
+    StreamStarted,
     TransactionAttemptFinished,
     TransactionAttemptStarted,
     TransactionInvocationFinished,
@@ -303,9 +303,7 @@ def _attempt_started_fields(
     return {"edition": event.edition}
 
 
-def _stream_started_fields(
-    event: SnapshotStreamStarted, _detail: LifecycleLogDetail
-) -> dict[str, object]:
+def _stream_started_fields(event: StreamStarted, _detail: LifecycleLogDetail) -> dict[str, object]:
     fields: dict[str, object] = {
         "target": event.target,
         "interface": event.interface,
@@ -604,7 +602,7 @@ def _attempt_projection(event: TransactionAttemptFinished, transition: str) -> _
             assert_never(unreachable)
 
 
-def _stream_projection(event: SnapshotStreamFinished, transition: str) -> _Projected[Any]:
+def _stream_projection(event: StreamFinished, transition: str) -> _Projected[Any]:
     match event.outcome:
         case StreamExhausted() as outcome:
             projected = _Projected(
@@ -682,7 +680,7 @@ def _projected(event: ExecutionEvent) -> _Projected[Any]:
             | DatabaseCallStarted()
             | TransactionInvocationStarted()
             | TransactionAttemptStarted()
-            | SnapshotStreamStarted()
+            | StreamStarted()
             | StreamBatchStarted()
             | AcquisitionStarted()
             | ReleaseStarted()
@@ -721,9 +719,9 @@ def _started_projection(event: ActivityStarted) -> _Projected[Any]:
                 logging.DEBUG, "transactionAttemptStarted", False, event, _attempt_started_fields
             )
             return projected
-        case SnapshotStreamStarted():
+        case StreamStarted():
             projected = _Projected(
-                logging.DEBUG, "snapshotStreamStarted", False, event, _stream_started_fields
+                logging.DEBUG, "streamStarted", False, event, _stream_started_fields
             )
             return projected
         case StreamBatchStarted():
@@ -751,8 +749,8 @@ def _finished_projection(event: ActivityFinished) -> _Projected[Any]:
             return _invocation_projection(event, "transactionInvocationFinished")
         case TransactionAttemptFinished():
             return _attempt_projection(event, "transactionAttemptFinished")
-        case SnapshotStreamFinished():
-            return _stream_projection(event, "snapshotStreamFinished")
+        case StreamFinished():
+            return _stream_projection(event, "streamFinished")
         case StreamBatchFinished():
             return _stream_batch_projection(event, "streamBatchFinished")
         case AcquisitionFinished():

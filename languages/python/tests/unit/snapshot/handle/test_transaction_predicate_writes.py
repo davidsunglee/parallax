@@ -74,6 +74,8 @@ from parallax.core.execution_lifecycle import (
     ReadFinished,
 )
 from parallax.core.predicate import ModelRejectedError
+from parallax.core.read_delivery import StoredDataDecodingError
+from parallax.core.read_delivery._page import Page
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.unit_work import (
     BufferItem,
@@ -94,12 +96,11 @@ from parallax.core.write_plan import (
     PredecessorRowsBuilder,
 )
 from parallax.core.write_plan.columns import ColumnSlice
-from parallax.snapshot import QueryTargetError, Snapshot, SnapshotDecodingError, connect
+from parallax.snapshot import QueryTargetError, Snapshot, connect
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 from parallax.snapshot.handle import _predicate_writes as predicate_writes
 from parallax.snapshot.handle._family import comparison_shape
-from parallax.snapshot.handle._materialization import Materializer
-from parallax.snapshot.materialize import Page, RootView
+from parallax.snapshot.materialize import RootView
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -2610,13 +2611,13 @@ def _traversals(
     """Every Page-root traversal from now on, each as the event names its
     transaction had delivered when the traversal began."""
     traversals: list[list[str]] = []
-    roots = Materializer.roots
+    roots = vars(predicate_writes)["publish_roots"]
 
-    def counting(self: Materializer, page: Any, publish: Any, **options: Any) -> Any:
+    def counting(page: Any, publish: Any, **options: Any) -> Any:
         traversals.append([] if recorder is None else _names(recorder.roots[-1].events))
-        return roots(self, page, publish, **options)
+        return roots(page, publish, **options)
 
-    monkeypatch.setattr(Materializer, "roots", counting)
+    monkeypatch.setattr(predicate_writes, "publish_roots", counting)
     return traversals
 
 
@@ -2700,7 +2701,7 @@ def test_a_root_refused_later_in_the_traversal_leaves_the_unit_of_work_untouched
         )
 
     def fn(tx: Transaction) -> None:
-        with pytest.raises(SnapshotDecodingError):
+        with pytest.raises(StoredDataDecodingError):
             assign(tx)
         assign(tx)
 
@@ -2713,7 +2714,7 @@ def test_a_root_refused_later_in_the_traversal_leaves_the_unit_of_work_untouched
     finished = next(event for event in recorder.roots[-1].events if isinstance(event, ReadFinished))
     assert isinstance(finished.outcome, ReadFailed)
     assert isinstance(finished.outcome.failure, DirectFailure)
-    assert finished.outcome.failure.diagnostic.qualified_type.endswith(".SnapshotDecodingError")
+    assert finished.outcome.failure.diagnostic.qualified_type.endswith(".StoredDataDecodingError")
     assert [type(op) for op in port.calls] == [BeginCall, ReadCall, ReadCall, WriteCall, CommitCall]
 
 

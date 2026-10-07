@@ -20,7 +20,7 @@ A **Root Execution** is one outermost modeled operation and everything it causal
 contains. Its immutable descriptor carries exactly:
 
 - `id` — a random UUIDv4 whose equality and canonical text are meaningful;
-- `kind` — `read`, `transaction-invocation`, or `snapshot-stream`.
+- `kind` — `read`, `transaction-invocation`, or `stream`.
 
 Concurrent outermost operations are distinct roots. One outer transaction root
 contains every retry, joined invocation, read, write batch, database call, and
@@ -62,7 +62,7 @@ defined by its kind. The nine kinds are:
 - Database Call;
 - Transaction Invocation;
 - Transaction Attempt;
-- Snapshot Stream;
+- Stream;
 - Stream Batch;
 - Acquisition;
 - Release.
@@ -89,7 +89,7 @@ WriteBatchStarted                 WriteBatchFinished
 DatabaseCallStarted               DatabaseCallFinished
 TransactionInvocationStarted      TransactionInvocationFinished
 TransactionAttemptStarted         TransactionAttemptFinished
-SnapshotStreamStarted             SnapshotStreamFinished
+StreamStarted                     StreamFinished
 StreamBatchStarted                StreamBatchFinished
 AcquisitionStarted                AcquisitionFinished
 ReleaseStarted                    ReleaseFinished
@@ -366,15 +366,15 @@ retained provenance. A transaction invocation returns the callback's value
 directly only after outer commit; a joined invocation returns the nested
 callback's value inside the still-active outer transaction.
 
-## Snapshot-stream events
+## Stream events
 
-A standalone Snapshot Stream is a root; a transactional stream is a child of
+A standalone Stream is a root; a transactional stream is a child of
 the current Transaction Attempt. Construction alone emits nothing. The stream
 starts only after successful context entry and finishes exactly once as:
 
 ```text
-SnapshotStreamStarted(target, interface, batchSize, edition)
-SnapshotStreamFinished(
+StreamStarted(target, interface, batchSize, edition)
+StreamFinished(
     StreamExhausted
   | StreamClosedEarly
   | StreamFailed(failure))
@@ -407,10 +407,10 @@ direct children, and its Release is the last child. A participating stream inher
 the attempt's connection and emits neither resource child. The batch spans conversion and completes once the
 page's converted result — the one shared input every root of that page is
 published from — is ready, including a page that returned no root at all. Materializing and
-publishing those roots runs one root at a time under the parent Snapshot Stream,
+publishing those roots runs one root at a time under the parent Stream,
 outside every batch, so a per-root materialization or invalid-data failure
 reaches a batch that already finished Completed and is attributed to the
-Snapshot Stream directly rather than to that batch. Caller processing happens
+Stream directly rather than to that batch. Caller processing happens
 after batch completion. A failed batch finishes before the stream fails and is
 the stream failure's cause. Stream Batch is the page-read activity; it never
 nests a duplicate Read activity.
@@ -420,7 +420,7 @@ nests a duplicate Read activity.
 An operation reaches the database through a connection it holds for the bounded
 work that needs it, and how long it held one is observable. Three activity kinds own
 one: a standalone Read, a Transaction Attempt, and each Stream Batch of a standalone
-Snapshot Stream. A stream still adopts one Model Edition for its whole delivery, but
+Stream. A stream still adopts one Model Edition for its whole delivery, but
 each page owns its own connection lease (`m-db-port`). Each owner opens at most one
 **Acquisition** and at most one **Release**, both as its own direct children:
 
@@ -652,13 +652,13 @@ This module owns ten cases:
 | retry then commit | one invocation contains a rolled-back attempt and a later committed attempt, each acquiring and releasing its own connection, and the first releases before the second acquires; zero-row enforcement is attributed to the completed call |
 | retry exhaustion | every failed call, batch, and attempt finishes before the next attempt; classifier truth remains retry-eligible when the budget ends |
 | joined invocation | the joined activity has no attempt of its own and no Acquisition, and its buffered write reaches the outer attempt's pre-commit batch |
-| streamed delivery | a Snapshot Stream root brackets one Stream Batch per page; every standalone batch acquires before its Database Calls and releases after conversion, while a participating batch emits neither resource child and uses its attempt's connection |
+| streamed delivery | a Stream root brackets one Stream Batch per page; every standalone batch acquires before its Database Calls and releases after conversion, while a participating batch emits neither resource child and uses its attempt's connection |
 | isolation setup failure | the attempt that adopted its edition starts before the boundary is asked to begin, acquires a connection, finishes `beginFailed` `direct` with no callback and no retry, and releases what it took; the invocation finishes failed caused by it |
 | acquisition failure | the attempt's Acquisition grants nothing, carries the partial cleanup it ran and is followed by no Release, and the attempt finishes `beginFailed` caused by it |
 | cleanup after commit | a Release reporting an unconfirmed release leaves the attempt committed and the invocation committed |
 
 Every Started transition of an adoption-owning activity in those cases — a
-standalone Read, a standalone Snapshot Stream, and every Transaction Attempt —
+standalone Read, a standalone Stream, and every Transaction Attempt —
 asserts the literal edition the conformance adapter prepared the case's model
 under (`m-conformance-adapter`); a Read or stream under an attempt asserts none.
 

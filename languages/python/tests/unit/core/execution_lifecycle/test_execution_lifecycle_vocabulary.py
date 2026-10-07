@@ -39,7 +39,7 @@ from parallax.core.sql_gen import LoweredStatement
 _RUNTIME_SPELLING: Final = re.compile(r"[a-z]+(?:_[a-z]+)*\Z")
 
 _FAMILIES: Final[dict[str, tuple[Any, tuple[str, ...]]]] = {
-    "RootExecutionKind": (RootExecutionKind, ("read", "transaction_invocation", "snapshot_stream")),
+    "RootExecutionKind": (RootExecutionKind, ("read", "transaction_invocation", "stream")),
     "ReadInterface": (ReadInterface, ("typed", "wire", "rows")),
     "DatabaseCallKind": (DatabaseCallKind, ("read", "write")),
     "AttemptPhase": (AttemptPhase, ("callback", "pre_commit", "commit")),
@@ -100,7 +100,7 @@ def test_the_projection_answers_every_root_kind_with_the_token_the_corpus_author
             for kind in _members("RootExecutionKind")
         )
     )
-    assert [root["kind"] for root in roots] == ["read", "transaction-invocation", "snapshot-stream"]
+    assert [root["kind"] for root in roots] == ["read", "transaction-invocation", "stream"]
 
 
 def test_the_projection_answers_every_read_interface() -> None:

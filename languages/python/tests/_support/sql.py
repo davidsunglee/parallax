@@ -18,13 +18,13 @@ from parallax.core.object_query import (
 from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.predicate import PredicateNode, validate_predicate
+from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER
 from parallax.core.sql_gen._compile import CompiledPredicate, CompiledRead
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._compile import (
     compile_write_predicate as compile_validated_write_predicate,
 )
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot.handle._read_plan import UNCACHED_READ_PLANNER
 
 
 def compile_read(

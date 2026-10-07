@@ -2222,7 +2222,7 @@ renegotiates none of them. It is stated once, above every Transaction Attempt,
 because every attempt of one invocation opens at the same requested level.
 
 An operation's connection is observable as two more activities. A standalone
-Read, a Transaction Attempt, and a standalone Snapshot Stream each carry an
+Read, a Transaction Attempt, and a standalone Stream each carry an
 `acquisitionStarted`/`acquisitionFinished` pair as their FIRST child and — where
 that acquisition granted a connection — a `releaseStarted`/`releaseFinished`
 pair as their LAST. They are siblings of the execution activities between them

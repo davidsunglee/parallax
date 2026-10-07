@@ -35,9 +35,9 @@ from parallax.conformance.workloads import plan_levels
 from parallax.core.base import detach_json_container
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import MemberShape
-from parallax.snapshot.handle._read_plan import DEFAULT_READ_PLAN_CACHE_CAPACITY, ReadPlanCache
-from parallax.snapshot.materialize import _prepared as prepared_reads
-from parallax.snapshot.materialize._convert import build_positional_object
+from parallax.core.read_delivery import _row_converter as prepared_reads
+from parallax.core.read_delivery._convert import build_positional_object
+from parallax.core.read_delivery._read_plan import DEFAULT_READ_PLAN_CACHE_CAPACITY, ReadPlanCache
 from snapshot_delivery_reading import (
     PLAN_EDITION,
     ColdPlan,

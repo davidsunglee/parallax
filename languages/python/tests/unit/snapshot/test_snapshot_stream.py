@@ -47,16 +47,19 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.object_query._fluent import ObjectQuery
+from parallax.core.read_delivery import (
+    InvalidData,
+    StreamContinuationError,
+    StreamStateError,
+    _read_plan,
+)
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.wire import encode_wire
 from parallax.snapshot import (
     DeferredFeatureError,
-    InvalidData,
     QueryTargetError,
     ServingModel,
     SnapshotInspectionError,
-    SnapshotStreamContinuationError,
-    SnapshotStreamStateError,
     WireEntity,
     edge_of,
     pin_of,
@@ -67,7 +70,6 @@ from parallax.snapshot.handle import (
     Database,
     ScopedDatabase,
     Transaction,
-    _read_plan,
 )
 from parallax.snapshot.handle import _stream as stream_module
 from parallax.snapshot.materialize import _wire as wire_materialize
@@ -147,11 +149,11 @@ def test_a_created_stream_answers_nothing_and_reaches_no_port() -> None:
         .using_database_login()
         .stream(_all_orders())
     )
-    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+    with pytest.raises(StreamStateError, match="inside its own scope"):
         _ = stream.pin
-    with pytest.raises(SnapshotStreamStateError, match="single-pass"):
+    with pytest.raises(StreamStateError, match="single-pass"):
         iter(stream)
-    with pytest.raises(SnapshotStreamStateError, match="single-pass"):
+    with pytest.raises(StreamStateError, match="single-pass"):
         stream.checked()
 
 
@@ -159,7 +161,7 @@ def test_entering_twice_is_refused() -> None:
     port = ScriptedAdapter()
     with (
         _orders(port).stream(_all_orders()) as stream,
-        pytest.raises(SnapshotStreamStateError, match="entered exactly once"),
+        pytest.raises(StreamStateError, match="entered exactly once"),
     ):
         stream.__enter__()
 
@@ -169,7 +171,7 @@ def test_entering_while_draining_is_refused() -> None:
     with _orders(port).stream(_all_orders()) as stream:
         roots = iter(stream)
         next(roots)
-        with pytest.raises(SnapshotStreamStateError, match="entered exactly once"):
+        with pytest.raises(StreamStateError, match="entered exactly once"):
             stream.__enter__()
 
 
@@ -179,17 +181,17 @@ def test_a_second_view_of_either_kind_is_refused() -> None:
     port = ScriptedAdapter(Read(rows=[_order_row(1)]))
     with _orders(port).stream(_all_orders()) as stream:
         list(stream)
-        with pytest.raises(SnapshotStreamStateError, match="single-pass"):
+        with pytest.raises(StreamStateError, match="single-pass"):
             iter(stream)
-        with pytest.raises(SnapshotStreamStateError, match="single-pass"):
+        with pytest.raises(StreamStateError, match="single-pass"):
             stream.checked()
 
     port = ScriptedAdapter(Read(rows=[_order_row(1)]))
     with _orders(port).stream(_all_orders()) as stream:
         list(stream.checked())
-        with pytest.raises(SnapshotStreamStateError, match="single-pass"):
+        with pytest.raises(StreamStateError, match="single-pass"):
             stream.checked()
-        with pytest.raises(SnapshotStreamStateError, match="single-pass"):
+        with pytest.raises(StreamStateError, match="single-pass"):
             iter(stream)
 
 
@@ -197,9 +199,9 @@ def test_an_exhausted_stream_answers_nothing_further() -> None:
     port = ScriptedAdapter(Read(rows=[_order_row(1)]))
     with _orders(port).stream(_all_orders()) as stream:
         assert _ids(iter(stream)) == [1]
-        with pytest.raises(SnapshotStreamStateError, match="single-pass"):
+        with pytest.raises(StreamStateError, match="single-pass"):
             iter(stream)
-        with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+        with pytest.raises(StreamStateError, match="inside its own scope"):
             _ = stream.pin
 
 
@@ -208,11 +210,11 @@ def test_a_closed_stream_answers_nothing_at_all() -> None:
     stream = _orders(port).stream(_all_orders())
     with stream:
         pass
-    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+    with pytest.raises(StreamStateError, match="inside its own scope"):
         _ = stream.pin
-    with pytest.raises(SnapshotStreamStateError, match="single-pass"):
+    with pytest.raises(StreamStateError, match="single-pass"):
         iter(stream)
-    with pytest.raises(SnapshotStreamStateError, match="entered exactly once"):
+    with pytest.raises(StreamStateError, match="entered exactly once"):
         stream.__enter__()
 
 
@@ -226,7 +228,7 @@ def test_an_iterator_retained_past_the_scope_reads_nothing_and_yields_nothing() 
     with stream:
         roots = iter(stream)
     assert _reads(port) == []
-    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+    with pytest.raises(StreamStateError, match="inside its own scope"):
         next(roots)
     assert _reads(port) == []
     assert repr(stream).endswith("state='closed')")
@@ -242,7 +244,7 @@ def test_a_partly_drained_stream_does_not_resume_past_its_scope() -> None:
         roots = iter(stream)
         assert next(roots).id == 1
     drained = len(_reads(port))
-    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+    with pytest.raises(StreamStateError, match="inside its own scope"):
         next(roots)
     assert len(_reads(port)) == drained
 
@@ -257,7 +259,7 @@ def test_every_advance_past_the_scope_refuses_again_rather_than_ending(view: str
     with stream:
         roots = iter(stream) if view == "default" else stream.checked()
     for _ in range(3):
-        with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+        with pytest.raises(StreamStateError, match="inside its own scope"):
             next(roots)
     assert _reads(port) == []
     assert repr(stream).endswith("state='closed')")
@@ -275,7 +277,7 @@ def test_an_exhausted_view_ends_inside_its_scope_and_refuses_outside_it() -> Non
         with pytest.raises(StopIteration):
             next(roots)
         assert repr(stream).endswith("state='exhausted')")
-    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+    with pytest.raises(StreamStateError, match="inside its own scope"):
         next(roots)
 
 
@@ -415,11 +417,11 @@ def test_typed_projection_is_available_only_while_paused_at_a_delivered_root() -
     port = ScriptedAdapter(Read(rows=[_order_row(1)]))
     stream = _orders(port).stream(_all_orders(), batch_size=2)
 
-    with pytest.raises(SnapshotStreamStateError, match="paused at a root"):
+    with pytest.raises(StreamStateError, match="paused at a root"):
         stream.wire(cast("Any", object()))
 
     with stream:
-        with pytest.raises(SnapshotStreamStateError, match="paused at a root"):
+        with pytest.raises(StreamStateError, match="paused at a root"):
             stream.wire(cast("Any", object()))
         roots = iter(stream)
         order = next(roots)
@@ -443,10 +445,10 @@ def test_typed_projection_is_available_only_while_paused_at_a_delivered_root() -
 
         with pytest.raises(StopIteration):
             next(roots)
-        with pytest.raises(SnapshotStreamStateError, match="paused at a root"):
+        with pytest.raises(StreamStateError, match="paused at a root"):
             stream.wire(order)
 
-    with pytest.raises(SnapshotStreamStateError, match="paused at a root"):
+    with pytest.raises(StreamStateError, match="paused at a root"):
         stream.wire(order)
 
 
@@ -555,7 +557,7 @@ def test_projection_identity_resets_at_an_actual_page_transition() -> None:
 def test_a_wire_stream_is_not_a_projection_receiver() -> None:
     port = ScriptedAdapter(Read(rows=[_order_row(1)]))
     stream = _orders(port).wire.stream(_all_orders(), batch_size=2)
-    with pytest.raises(SnapshotStreamStateError, match="paused at a root"):
+    with pytest.raises(StreamStateError, match="paused at a root"):
         cast("Any", stream).wire(cast("Any", object()))
 
     with stream:
@@ -1253,7 +1255,7 @@ def test_a_tie_publishes_the_prefix_before_it_and_then_refuses() -> None:
     delivered: list[object] = []
     with (
         _orders(port).stream(_all_orders(), batch_size=2) as stream,
-        raises_contextualized(SnapshotStreamContinuationError) as refusal,
+        raises_contextualized(StreamContinuationError) as refusal,
     ):
         delivered.extend(stream.checked())
     assert _ids(iter(delivered)) == [1]
@@ -1270,7 +1272,7 @@ def test_a_tie_ends_the_throwing_view_the_same_way() -> None:
     # converted, or classified by either.
     with (
         _orders(_tied_pages()).stream(_all_orders(), batch_size=2) as stream,
-        raises_contextualized(SnapshotStreamContinuationError, match="not total"),
+        raises_contextualized(StreamContinuationError, match="not total"),
     ):
         assert _ids(iter(stream)) == [1]
 
@@ -1285,7 +1287,7 @@ def test_a_tie_found_on_a_later_page_keeps_every_root_before_it() -> None:
     delivered: list[object] = []
     with (
         _orders(port).stream(_all_orders(), batch_size=2) as stream,
-        raises_contextualized(SnapshotStreamContinuationError) as refusal,
+        raises_contextualized(StreamContinuationError) as refusal,
     ):
         delivered.extend(stream)
     assert _ids(iter(delivered)) == [1, 2, 3]
@@ -1295,9 +1297,9 @@ def test_a_tie_found_on_a_later_page_keeps_every_root_before_it() -> None:
 
 def test_a_stream_that_ended_at_a_tie_answers_nothing_further() -> None:
     with _orders(_tied_pages()).stream(_all_orders(), batch_size=2) as stream:
-        with raises_contextualized(SnapshotStreamContinuationError):
+        with raises_contextualized(StreamContinuationError):
             list(stream)
-        with pytest.raises(SnapshotStreamStateError, match="single-pass"):
+        with pytest.raises(StreamStateError, match="single-pass"):
             stream.checked()
 
 
@@ -1307,7 +1309,7 @@ def test_the_refusal_is_frozen_and_keeps_its_coordinate_out_of_what_it_reports()
     # and on a refusal nothing may rewrite.
     with (
         _orders(_tied_pages()).stream(_all_orders(), batch_size=2) as stream,
-        raises_contextualized(SnapshotStreamContinuationError) as raised,
+        raises_contextualized(StreamContinuationError) as raised,
     ):
         list(stream)
     refusal = raised.value
@@ -1333,7 +1335,7 @@ def test_every_name_the_refusal_carries_refuses_assignment_and_deletion() -> Non
     # they reach past `dataclass(frozen=True)`, and are outside the contract.
     with (
         _orders(_tied_pages()).stream(_all_orders(), batch_size=2) as stream,
-        raises_contextualized(SnapshotStreamContinuationError) as raised,
+        raises_contextualized(StreamContinuationError) as raised,
     ):
         list(stream)
     refusal = raised.value
@@ -1408,14 +1410,14 @@ def test_an_entered_stream_reports_its_edition_and_an_unentered_one_has_none() -
         .using_database_login()
         .stream(_all_orders())
     )
-    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+    with pytest.raises(StreamStateError, match="inside its own scope"):
         _ = stream.edition
     with stream:
         assert stream.edition == "orders-a" == a.edition
         assert _ids(iter(stream)) == [1]
-        with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+        with pytest.raises(StreamStateError, match="inside its own scope"):
             _ = stream.edition
-    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+    with pytest.raises(StreamStateError, match="inside its own scope"):
         _ = stream.edition
 
 

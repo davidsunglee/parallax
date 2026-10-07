@@ -30,7 +30,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import pytest
 
@@ -38,6 +38,7 @@ from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.execution._retention import ObservationLedger
 from parallax.core.execution_lifecycle import ExecutionLifecycleReentryError, ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -45,25 +46,34 @@ from parallax.core.execution_lifecycle._activity import (
     DatabaseCallScope,
     InstalledLifecycle,
     ReadActivity,
-    SnapshotStreamActivity,
+    StreamActivity,
     StreamBatchActivity,
     installed_lifecycle,
 )
+from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.object_query.serde import ObjectQueryError
+from parallax.core.read_delivery import RowsResult
+from parallax.core.read_delivery import _delivery as delivery
+from parallax.core.read_delivery import _row_lane as row_lane
+from parallax.core.read_delivery._page import VersionAttributes
+from parallax.core.read_delivery._page_reader import (
+    EagerPageRequest,
+    PageReader,
+    StreamPageRequest,
+)
+from parallax.core.read_delivery._publication import Publication
+from parallax.core.read_delivery._read_plan import ReadPlanCache, ReadPlanner
 from parallax.core.unit_work import Concurrency, ParticipationToken, RetainedObservation
-from parallax.snapshot import QueryTargetError, SnapshotConnectionError
-from parallax.snapshot._read_result import FindResult, HistoryFindResult, RowsResult
-from parallax.snapshot.handle import _read as handle_read
+from parallax.snapshot import QueryTargetError, Snapshot, SnapshotConnectionError
 from parallax.snapshot.handle import _read_scope as read_scope_module
-from parallax.snapshot.handle._materialization import Materializer, StreamPageRead
 from parallax.snapshot.handle._publication import SelectedReadModel
-from parallax.snapshot.handle._read_plan import ReadPlanCache, ReadPlanner
-from parallax.snapshot.handle._read_scope import ReadInputs, ReadScope
-from parallax.snapshot.handle._retention import ObservationLedger
+from parallax.snapshot.handle._read import typed_publication_for, wire_publication_for
+from parallax.snapshot.handle._read_scope import ReadInputs, ReadScope, WireQuery, wire_query_node
+from parallax.snapshot.handle._stream import SnapshotStream
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ReadCall, RefusingAdapter, ScriptedAdapter
 from tests._support.model_capabilities import cataloged_for, graph_construction_for
@@ -170,6 +180,14 @@ class _Recording:
     def selected(self) -> SelectedReadModel:
         return self._selected
 
+    @property
+    def meta(self) -> Metamodel:
+        return self._selected.model.meta
+
+    @property
+    def edition(self) -> str:
+        return self._selected.edition
+
     def advance[T](self, body: Callable[[], T], /) -> T:
         self.advances += 1
         return body()
@@ -187,7 +205,7 @@ class _Recording:
 
     def open_stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
-    ) -> SnapshotStreamActivity:
+    ) -> StreamActivity:
         self.calls.append("open_stream")
         self.stream_calls.append((target, interface, batch_size))
         return INERT
@@ -223,53 +241,48 @@ class _Executed:
     ledger: ObservationLedger | None
 
 
-def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
-    """Which executor each body dispatched to, and the three inputs it threaded.
+def _ledger_of(origins: object) -> ObservationLedger | None:
+    """The ledger an execution-owned projection collector was built over."""
+    return cast("Any", origins)._ledger
 
-    Spelled with each executor's full signature rather than ``*args``, so a
+
+def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
+    """Which delivery each body dispatched to, and the three inputs it threaded.
+
+    Spelled with each delivery's full signature rather than ``*args``, so a
     rename or a move to a positional parameter fails here rather than silently
     recording ``None`` forever.
     """
     executed: list[_Executed] = []
+    deliver_find = delivery.deliver_find
+    deliver_history = delivery.deliver_history
+    find_rows = row_lane.find_rows
 
-    def recording_find(
-        query: ValidatedObjectQuery,
-        model: CatalogedModel,
-        port: DatabaseConnection,
-        *,
-        preference: Concurrency | None = None,
-        ledger: ObservationLedger | None = None,
-        calls: DatabaseCallScope = INERT,
-        edition: str = "",
-        planner: ReadPlanner,
-    ) -> FindResult:
-        executed.append(_Executed("find", port, preference, ledger))
-        return handle_read.find(
-            query,
-            model,
-            port,
-            preference=preference,
-            ledger=ledger,
-            calls=calls,
-            edition=edition,
-            planner=planner,
+    def recording_deliver_find(
+        request: EagerPageRequest[Any], publication: Publication[Any, Any]
+    ) -> Any:
+        executed.append(
+            _Executed("find", request.port, request.preference, _ledger_of(request.origins))
         )
+        return deliver_find(request, publication)
 
-    def recording_find_history(
+    def recording_deliver_history(
         query: ValidatedObjectQuery,
         model: CatalogedModel,
         port: DatabaseConnection,
         *,
-        read: ReadActivity = INERT,
-        edition: str = "",
-        preference: Concurrency | None = None,
+        publication: Publication[Any, Any],
+        read: ReadActivity,
+        edition: str,
+        preference: Concurrency | None,
         planner: ReadPlanner,
-    ) -> HistoryFindResult:
+    ) -> Any:
         executed.append(_Executed("find_history", port, None, None))
-        return handle_read.find_history(
+        return deliver_history(
             query,
             model,
             port,
+            publication=publication,
             read=read,
             edition=edition,
             preference=preference,
@@ -282,23 +295,25 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
         port: DatabaseConnection,
         *,
         edition: str,
+        versions: VersionAttributes,
         preference: Concurrency | None = None,
         read: ReadActivity = INERT,
         planner: ReadPlanner,
     ) -> RowsResult:
         executed.append(_Executed("find_rows", port, preference, None))
-        return handle_read.find_rows(
+        return find_rows(
             query,
             model,
             port,
             edition=edition,
+            versions=versions,
             preference=preference,
             read=read,
             planner=planner,
         )
 
-    patch.setattr(read_scope_module, "find", recording_find)
-    patch.setattr(read_scope_module, "find_history", recording_find_history)
+    patch.setattr(read_scope_module, "deliver_find", recording_deliver_find)
+    patch.setattr(read_scope_module, "deliver_history", recording_deliver_history)
     patch.setattr(read_scope_module, "find_rows", recording_find_rows)
     return executed
 
@@ -319,17 +334,48 @@ def _recorded_pages(patch: pytest.MonkeyPatch) -> list[_PageRead]:
     reason."""
     page_reads: list[_PageRead] = []
 
-    read_page = Materializer.read_page
+    read_page = PageReader.read_page
 
-    def recording_read_page(materializer: Materializer, request: Any) -> Any:
-        assert isinstance(request, StreamPageRead)
+    def recording_read_page(reader: PageReader, request: Any) -> Any:
+        assert isinstance(request, StreamPageRequest)
+        page = cast("StreamPageRequest[Any]", request)
         page_reads.append(
-            _PageRead(request.model, request.port, request.preference, request.ledger)
+            _PageRead(page.model, page.port, page.preference, _ledger_of(page.origins))
         )
-        return read_page(materializer, request)
+        return read_page(reader, page)
 
-    patch.setattr(Materializer, "read_page", recording_read_page)
+    patch.setattr(PageReader, "read_page", recording_read_page)
     return page_reads
+
+
+def _find(scope: ReadScope, query: Any) -> Snapshot[Any]:
+    return scope.read(
+        query, convert_query=object_query_node, build_publication=typed_publication_for
+    )
+
+
+def _wire_find(scope: ReadScope, query: WireQuery) -> Snapshot[Any]:
+    return scope.read(query, convert_query=wire_query_node, build_publication=wire_publication_for)
+
+
+def _stream(scope: ReadScope, query: Any, batch_size: int) -> SnapshotStream[Any]:
+    return SnapshotStream(
+        scope,
+        query,
+        batch_size,
+        convert_query=object_query_node,
+        build_publication=typed_publication_for,
+    )
+
+
+def _wire_stream(scope: ReadScope, query: WireQuery, batch_size: int) -> SnapshotStream[Any]:
+    return SnapshotStream(
+        scope,
+        query,
+        batch_size,
+        convert_query=wire_query_node,
+        build_publication=wire_publication_for,
+    )
 
 
 def _delivering() -> InstalledLifecycle:
@@ -364,11 +410,11 @@ def test_every_verb_refuses_re_entry_before_it_asks_its_policy_for_anything() ->
     scope, execution = _scope(port, lifecycle=_delivering())
 
     for verb in (
-        lambda: scope.find(_typed_query()),
-        lambda: scope.stream(_typed_query(), _VALID_BATCH_SIZE),
+        lambda: _find(scope, _typed_query()),
+        lambda: _stream(scope, _typed_query(), _VALID_BATCH_SIZE),
         lambda: scope.read_rows(_rows_node()),
-        lambda: scope.wire_find(_wire_node()),
-        lambda: scope.wire_stream(_wire_node(), _VALID_BATCH_SIZE),
+        lambda: _wire_find(scope, _wire_node()),
+        lambda: _wire_stream(scope, _wire_node(), _VALID_BATCH_SIZE),
     ):
         with pytest.raises(ExecutionLifecycleReentryError):
             verb()
@@ -388,14 +434,14 @@ def test_a_wire_verb_refuses_re_entry_before_it_lowers_what_it_was_handed() -> N
     quiet, lowering = _scope(RefusingAdapter())
 
     for refused in (
-        lambda: delivering.wire_find(malformed),
-        lambda: delivering.wire_stream(malformed, _VALID_BATCH_SIZE),
+        lambda: _wire_find(delivering, malformed),
+        lambda: _wire_stream(delivering, malformed, _VALID_BATCH_SIZE),
     ):
         with pytest.raises(ExecutionLifecycleReentryError):
             refused()
     for complaining in (
-        lambda: quiet.wire_find(malformed),
-        lambda: quiet.wire_stream(malformed, _VALID_BATCH_SIZE),
+        lambda: _wire_find(quiet, malformed),
+        lambda: _wire_stream(quiet, malformed, _VALID_BATCH_SIZE),
     ):
         with pytest.raises(ObjectQueryError, match="missing required clause"):
             complaining()
@@ -418,16 +464,14 @@ def test_find_selects_its_model_before_it_refuses_a_classless_one() -> None:
     scope, execution = _scope(port, selected=_selection(materializing=False))
 
     with pytest.raises(SnapshotConnectionError) as caught:
-        scope.find(_typed_query())
+        _find(scope, _typed_query())
 
     assert caught.value.code == "snapshot-class-backed-model-required"
     assert execution.calls == ["begin"]
     assert port.calls == []
 
 
-def test_find_refuses_a_classless_model_before_it_lowers_its_query(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_find_refuses_a_classless_model_before_it_lowers_its_query() -> None:
     # The connection's capability is judged before this call's own arguments
     # are, so a lowering that refuses everything it is handed never runs under a
     # classless selection — and DOES run under a class-backed one, which is what
@@ -438,15 +482,22 @@ def test_find_refuses_a_classless_model_before_it_lowers_its_query(
         lowered.append(query)
         raise _LoweringReached
 
-    monkeypatch.setattr(read_scope_module, "object_query_node", refusing_lowering)
     port = RefusingAdapter()
     classless, execution = _scope(port, selected=_selection(materializing=False))
     class_backed, _ = _scope(port)
 
     with pytest.raises(SnapshotConnectionError) as refused:
-        classless.find(_typed_query())
+        classless.read(
+            _typed_query(),
+            convert_query=refusing_lowering,
+            build_publication=typed_publication_for,
+        )
     with pytest.raises(_LoweringReached):
-        class_backed.find(_typed_query())
+        class_backed.read(
+            _typed_query(),
+            convert_query=refusing_lowering,
+            build_publication=typed_publication_for,
+        )
 
     assert refused.value.code == "snapshot-class-backed-model-required"
     assert execution.calls == ["begin"]
@@ -460,7 +511,7 @@ def test_the_wire_and_row_form_verbs_cross_no_classless_refusal() -> None:
     port = ScriptedAdapter(Read(rows=list(_ACCOUNT_ROWS)), Read(rows=list(_ACCOUNT_ROWS)))
     scope, execution = _scope(port, selected=_selection(materializing=False))
 
-    published = scope.wire_find(_wire_node()).result()
+    published = _wire_find(scope, _wire_node()).result()
     rows = scope.read_rows(_rows_node())
 
     assert published == {"id": 7, "owner": "Newton", "balance": "5.00", "version": 1}
@@ -483,9 +534,9 @@ def test_a_query_the_gate_refuses_reaches_no_execution_capability(verb_name: str
     port = RefusingAdapter()
     scope, execution = _scope(port)
     verbs: dict[str, Callable[[], object]] = {
-        "find": lambda: scope.find(mm.Balance.where(mm.Balance.id == 1)),
+        "find": lambda: _find(scope, mm.Balance.where(mm.Balance.id == 1)),
         "read_rows": lambda: scope.read_rows(unknown),
-        "wire_find": lambda: scope.wire_find(unknown),
+        "wire_find": lambda: _wire_find(scope, unknown),
     }
 
     with pytest.raises(QueryTargetError) as caught:
@@ -505,8 +556,8 @@ def test_one_scope_chooses_its_publication_per_call() -> None:
     port = ScriptedAdapter(*[Read(rows=list(_ACCOUNT_ROWS)) for _ in range(3)])
     scope, execution = _scope(port)
 
-    scope.find(_typed_query()).result()
-    scope.wire_find(_wire_node()).result()
+    _find(scope, _typed_query()).result()
+    _wire_find(scope, _wire_node()).result()
     scope.read_rows(_rows_node())
 
     assert execution.interfaces == ["typed", "wire", "rows"]
@@ -517,17 +568,14 @@ def test_the_two_graph_publications_carry_the_selections_edition_and_the_values_
 ):
     # A publication is the one place the stamp is applied, so both graph
     # interfaces take it from the selection they were built over. The values
-    # lane publishes no graph at all: asking it for a publication is a caller
-    # error rather than a third format, and the row form stamps its own result
-    # instead.
+    # lane publishes no graph at all: it has no publication builder, and the row
+    # form stamps its own result instead.
     selected = _selection()
-    typed = read_scope_module.publication_for(selected, "typed")
-    wire = read_scope_module.publication_for(selected, "wire")
+    typed = typed_publication_for(selected)
+    wire = wire_publication_for(selected)
 
     assert (typed.interface, typed.edition) == ("typed", "test")
     assert (wire.interface, wire.edition) == ("wire", "test")
-    with pytest.raises(ValueError, match="the values lane publishes no graph"):
-        read_scope_module.publication_for(selected, "rows")
 
 
 # --------------------------------------------------------------------------- #
@@ -545,10 +593,10 @@ def test_the_graph_tail_dispatches_the_milestone_set_read_for_both_interfaces(
     scope, _ = _scope(port, selected=_selection(BALANCE))
     executed = _recorded(monkeypatch)
 
-    scope.find(mm.Balance.where(mm.Balance.id == 1).as_of(tx_time=LATEST)).result()
-    scope.find(mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)).result()
-    scope.wire_find(_balance_node({"transaction-time": {"asOf": "latest"}})).result()
-    scope.wire_find(_balance_node({"transaction-time": {"history": {}}})).result()
+    _find(scope, mm.Balance.where(mm.Balance.id == 1).as_of(tx_time=LATEST)).result()
+    _find(scope, mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)).result()
+    _wire_find(scope, _balance_node({"transaction-time": {"asOf": "latest"}})).result()
+    _wire_find(scope, _balance_node({"transaction-time": {"history": {}}})).result()
 
     assert [call.executor for call in executed] == [
         "find",
@@ -574,8 +622,8 @@ def test_every_body_threads_the_port_preference_and_ledger_it_was_handed(
     participating, _ = _scope(participating_port, preference="locking", ledger=ledger)
     executed = _recorded(monkeypatch)
 
-    standalone.find(_typed_query()).result()
-    participating.find(_typed_query()).result()
+    _find(standalone, _typed_query()).result()
+    _find(participating, _typed_query()).result()
 
     first, second = executed
     assert (first.port, first.preference, first.ledger) == (standalone_port, None, None)
@@ -615,9 +663,9 @@ def test_a_stream_judges_its_page_size_at_the_call_and_begins_no_read_there() ->
     class_backed, class_backed_execution = _scope(port)
 
     with pytest.raises(ValueError, match="batch_size requires a positive built-in int"):
-        classless.stream(_typed_query(), 0)
+        _stream(classless, _typed_query(), 0)
     with pytest.raises(ValueError, match="batch_size requires a positive built-in int"):
-        class_backed.stream(_typed_query(), 0)
+        _stream(class_backed, _typed_query(), 0)
 
     assert execution.calls == []
     assert class_backed_execution.calls == []
@@ -629,7 +677,7 @@ def test_a_typed_stream_refuses_a_classless_selection_at_entry_before_the_gate()
     # and before the query is gated, so nothing that executes is reached.
     port = RefusingAdapter()
     scope, execution = _scope(port, selected=_selection(materializing=False))
-    stream = scope.stream(_typed_query(), _VALID_BATCH_SIZE)
+    stream = _stream(scope, _typed_query(), _VALID_BATCH_SIZE)
     assert execution.calls == []
 
     with pytest.raises(SnapshotConnectionError) as refused:
@@ -646,7 +694,7 @@ def test_the_wire_stream_verb_crosses_no_classless_refusal_at_entry() -> None:
     port = ScriptedAdapter(Read(rows=[_account_row(1)]))
     scope, execution = _scope(port, selected=_selection(materializing=False))
 
-    with scope.wire_stream(_wire_node(), _VALID_BATCH_SIZE) as stream:
+    with _wire_stream(scope, _wire_node(), _VALID_BATCH_SIZE) as stream:
         assert execution.calls == ["begin", "open_stream"]
         assert [root["id"] for root in stream] == [1]
 
@@ -670,8 +718,8 @@ def test_constructing_a_stream_opens_no_activity_and_entering_it_opens_one(
     port = ScriptedAdapter(Read(rows=[_account_row(1)]))
     scope, execution = _scope(port)
     verbs: dict[str, Callable[[], Any]] = {
-        "stream": lambda: scope.stream(_typed_query(), _VALID_BATCH_SIZE),
-        "wire_stream": lambda: scope.wire_stream(_wire_node(), _VALID_BATCH_SIZE),
+        "stream": lambda: _stream(scope, _typed_query(), _VALID_BATCH_SIZE),
+        "wire_stream": lambda: _wire_stream(scope, _wire_node(), _VALID_BATCH_SIZE),
     }
 
     stream = verbs[verb_name]()
@@ -708,7 +756,7 @@ def test_every_page_of_a_delivery_is_read_under_the_one_selection_it_opened_with
     scope, execution = _scope(port, selected=selected)
     page_reads = _recorded_pages(monkeypatch)
 
-    with scope.stream(_typed_query(), 1) as stream:
+    with _stream(scope, _typed_query(), 1) as stream:
         delivered = [root.id for root in stream]
 
     assert delivered == [1, 2, 3]
@@ -738,7 +786,7 @@ def test_every_page_threads_the_port_preference_and_ledger_it_was_handed(
         (standalone, standalone_port),
         (participating, participating_port),
     ):
-        with scope.stream(_typed_query(), _VALID_BATCH_SIZE) as stream:
+        with _stream(scope, _typed_query(), _VALID_BATCH_SIZE) as stream:
             assert list(stream) != []
         assert page_reads[-1].port is expected_port
 

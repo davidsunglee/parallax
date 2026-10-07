@@ -1,4 +1,4 @@
-"""The Snapshot Stream Root Execution end to end (m-execution-lifecycle, Docker-free).
+"""The Stream Root Execution end to end (m-execution-lifecycle, Docker-free).
 
 The seventh activity kind, observed where it is produced rather than where it is
 consumed: every event here comes out of `_activity.py` through a Provider
@@ -40,8 +40,6 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleHandlerError,
     ReleaseStarted,
     RootExecution,
-    SnapshotStreamFinished,
-    SnapshotStreamStarted,
     StreamBatchCompleted,
     StreamBatchFailed,
     StreamBatchFinished,
@@ -49,6 +47,8 @@ from parallax.core.execution_lifecycle import (
     StreamClosedEarly,
     StreamExhausted,
     StreamFailed,
+    StreamFinished,
+    StreamStarted,
     WriteBatchFinished,
     WriteBatchStarted,
 )
@@ -175,9 +175,9 @@ def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> N
         assert [root.id for root in stream] == [1, 2, 3]
 
     (root,) = recorder.roots
-    assert root.execution.kind == "snapshot_stream"
+    assert root.execution.kind == "stream"
     assert _transitions(root) == [
-        "SnapshotStreamStarted",
+        "StreamStarted",
         "StreamBatchStarted",
         "AcquisitionStarted",
         "AcquisitionFinished",
@@ -194,11 +194,11 @@ def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> N
         "ReleaseStarted",
         "ReleaseFinished",
         "StreamBatchFinished",
-        "SnapshotStreamFinished",
+        "StreamFinished",
     ]
     # The stream is the root activity — its parent is null and no other event's
     # is — each page is its child, and each page's call is the page's own. A
-    # Database Call under a Snapshot Stream directly would mean the batch was not
+    # Database Call under a Stream directly would mean the batch was not
     # the page-read activity, which is exactly what the batch exists to be.
     #
     # Each page owns one connection lease: Acquisition and Release are children
@@ -224,13 +224,13 @@ def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> N
         (17, 6, 1),
         (18, 1, None),
     ]
-    (started,) = _of(root, SnapshotStreamStarted)
+    (started,) = _of(root, StreamStarted)
     assert (started.target, started.interface, started.batch_size) == (
         "parallax.compatibility.Order",
         "typed",
         2,
     )
-    (finished,) = _of(root, SnapshotStreamFinished)
+    (finished,) = _of(root, StreamFinished)
     assert finished.outcome == StreamExhausted()
 
 
@@ -241,7 +241,7 @@ def test_a_wire_stream_reports_its_own_interface() -> None:
         assert len(list(stream)) == 1
 
     (root,) = recorder.roots
-    (started,) = _of(root, SnapshotStreamStarted)
+    (started,) = _of(root, StreamStarted)
     assert started.interface == "wire"
 
 
@@ -259,7 +259,7 @@ def test_a_page_filled_exactly_is_the_last_batch_and_the_stream_still_exhausts()
     assert [outcome.outcome for outcome in _of(root, StreamBatchFinished)] == [
         StreamBatchCompleted()
     ]
-    (finished,) = _of(root, SnapshotStreamFinished)
+    (finished,) = _of(root, StreamFinished)
     assert finished.outcome == StreamExhausted()
 
 
@@ -276,7 +276,7 @@ def test_a_delivery_that_reaches_no_root_is_still_a_batch_of_its_own() -> None:
     assert [outcome.outcome for outcome in _of(root, StreamBatchFinished)] == [
         StreamBatchCompleted()
     ]
-    (finished,) = _of(root, SnapshotStreamFinished)
+    (finished,) = _of(root, StreamFinished)
     assert finished.outcome == StreamExhausted()
 
 
@@ -333,7 +333,7 @@ def test_breaking_out_of_the_loop_finishes_closed_early() -> None:
     # One page was read and no second one was asked for, which is the whole
     # observable difference between stopping early and running out.
     assert _transitions(root).count("StreamBatchStarted") == 1
-    (finished,) = _of(root, SnapshotStreamFinished)
+    (finished,) = _of(root, StreamFinished)
     assert finished.outcome == StreamClosedEarly()
 
 
@@ -354,7 +354,7 @@ def test_a_caller_exception_inside_the_scope_is_closed_early_and_still_propagate
     assert raised.value is stop
 
     (root,) = recorder.roots
-    (finished,) = _of(root, SnapshotStreamFinished)
+    (finished,) = _of(root, StreamFinished)
     assert finished.outcome == StreamClosedEarly()
 
 
@@ -368,7 +368,7 @@ def test_exhaustion_finishes_the_stream_where_it_was_discovered() -> None:
     with _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream:
         assert len(list(stream)) == 1
         (root,) = recorder.roots
-        (finished,) = _of(root, SnapshotStreamFinished)
+        (finished,) = _of(root, StreamFinished)
         assert finished.outcome == StreamExhausted()
         assert finished is root.events[-1]
 
@@ -388,7 +388,7 @@ def test_once_exhausted_a_later_caller_error_cannot_rewrite_the_outcome() -> Non
         raise RuntimeError("after the delivery ran out")
 
     (root,) = recorder.roots
-    (finished,) = _of(root, SnapshotStreamFinished)
+    (finished,) = _of(root, StreamFinished)
     assert finished.outcome == StreamExhausted()
     assert finished is root.events[-1]
 
@@ -410,7 +410,7 @@ def test_a_page_read_failure_fails_its_batch_first_and_causes_the_stream_failure
 
     (root,) = recorder.roots
     batches = _of(root, StreamBatchFinished)
-    (stream_finished,) = _of(root, SnapshotStreamFinished)
+    (stream_finished,) = _of(root, StreamFinished)
     completed, failed = batches
     assert completed.outcome == StreamBatchCompleted()
     assert isinstance(failed.outcome, StreamBatchFailed)
@@ -446,7 +446,7 @@ def test_a_transactional_stream_is_a_child_of_the_attempt() -> None:
         "TransactionAttemptStarted",
         "AcquisitionStarted",
         "AcquisitionFinished",
-        "SnapshotStreamStarted",
+        "StreamStarted",
         "StreamBatchStarted",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
@@ -455,13 +455,13 @@ def test_a_transactional_stream_is_a_child_of_the_attempt() -> None:
         "DatabaseCallStarted",
         "DatabaseCallFinished",
         "StreamBatchFinished",
-        "SnapshotStreamFinished",
+        "StreamFinished",
         "ReleaseStarted",
         "ReleaseFinished",
         "TransactionAttemptFinished",
         "TransactionInvocationFinished",
     ]
-    (started,) = _of(root, SnapshotStreamStarted)
+    (started,) = _of(root, StreamStarted)
     attempt = root.events[1]
     assert started.parent_activity_id == attempt.activity_id
     # A participating stream inherits the attempt's edition and states none of
@@ -511,7 +511,7 @@ def test_a_pages_dependency_write_batch_is_that_pages_ordered_sibling() -> None:
         "TransactionAttemptStarted",
         "AcquisitionStarted",
         "AcquisitionFinished",
-        "SnapshotStreamStarted",
+        "StreamStarted",
         "StreamBatchStarted",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
@@ -524,13 +524,13 @@ def test_a_pages_dependency_write_batch_is_that_pages_ordered_sibling() -> None:
         "DatabaseCallStarted",
         "DatabaseCallFinished",
         "StreamBatchFinished",
-        "SnapshotStreamFinished",
+        "StreamFinished",
         "ReleaseStarted",
         "ReleaseFinished",
         "TransactionAttemptFinished",
         "TransactionInvocationFinished",
     ]
-    (stream_started,) = _of(root, SnapshotStreamStarted)
+    (stream_started,) = _of(root, StreamStarted)
     (write_started,) = _of(root, WriteBatchStarted)
     # Siblings: the flush's batch names the ATTEMPT the stream itself names, so
     # it is beside the page rather than under it.
@@ -556,7 +556,7 @@ def test_a_participating_stream_that_the_callback_left_early_is_closed_early() -
     assert _accounts(port, recorder).transact(fn) == 1
 
     (root,) = recorder.roots
-    (finished,) = _of(root, SnapshotStreamFinished)
+    (finished,) = _of(root, StreamFinished)
     assert finished.outcome == StreamClosedEarly()
 
 
@@ -568,7 +568,7 @@ def test_a_declined_stream_root_costs_its_opening_and_delivers_unchanged() -> No
     port = ScriptedAdapter(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
     with _connected(port, ORDERS_MODEL, provider).stream(_active_orders(), batch_size=2) as stream:
         assert [root.id for root in stream] == [1, 2, 3]
-    assert [execution.kind for execution in provider.opened] == ["snapshot_stream"]
+    assert [execution.kind for execution in provider.opened] == ["stream"]
     assert [type(op) for op in port.calls] == [ReadCall, ReadCall]
 
 
@@ -584,7 +584,7 @@ def test_a_handler_quarantined_mid_delivery_stops_its_events_and_not_the_deliver
         assert [root.id for root in stream] == [1, 2, 3]
 
     assert [type(event).__name__ for event in handler.seen] == [
-        "SnapshotStreamStarted",
+        "StreamStarted",
         "StreamBatchStarted",
     ]
     assert [type(op) for op in port.calls] == [ReadCall, ReadCall]
@@ -634,6 +634,6 @@ def test_a_standalone_streams_started_event_carries_the_edition_it_adopted_at_en
         assert [root.id for root in stream] == [1, 2, 3]
 
     (root,) = recorder.roots
-    (started,) = _of(root, SnapshotStreamStarted)
+    (started,) = _of(root, StreamStarted)
     assert started.parent_activity_id is None
     assert started.edition == "orders-a"

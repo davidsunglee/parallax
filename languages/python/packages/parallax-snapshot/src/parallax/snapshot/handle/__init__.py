@@ -32,16 +32,10 @@ from parallax.snapshot.handle._publication import (
 from parallax.snapshot.handle._read import (
     CheckedSnapshot,
     NoResultFound,
-    PublishedRow,
     Snapshot,
     TooManyResultsFound,
-    find,
 )
-from parallax.snapshot.handle._stream import (
-    SnapshotStream,
-    SnapshotStreamContinuationError,
-    SnapshotStreamStateError,
-)
+from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._transaction_runner import (
     TransactionAuthorityError,
@@ -51,10 +45,7 @@ from parallax.snapshot.handle._transaction_runner import (
 )
 from parallax.snapshot.handle._write_lowering import stream_lowered
 from parallax.snapshot.materialize import (
-    InvalidData,
-    InvalidDataError,
     SnapshotConsistencyError,
-    StoredDataIssue,
     WireEntity,
     WireValue,
 )
@@ -67,8 +58,6 @@ __all__ = [
     "DatabaseOptions",
     "DeferredFeatureError",
     "ExecutionFailure",
-    "InvalidData",
-    "InvalidDataError",
     "InvalidPrincipalError",
     "KeyedWriteValueError",
     "ModelSelection",
@@ -76,7 +65,6 @@ __all__ = [
     "ObjectKey",
     "Principal",
     "PublicationConflictError",
-    "PublishedRow",
     "QueryTargetError",
     "ScopedDatabase",
     "ServingModel",
@@ -85,9 +73,6 @@ __all__ = [
     "SnapshotConsistencyError",
     "SnapshotMaterializationError",
     "SnapshotStream",
-    "SnapshotStreamContinuationError",
-    "SnapshotStreamStateError",
-    "StoredDataIssue",
     "TooManyResultsFound",
     "Transaction",
     "TransactionAuthorityError",
@@ -102,7 +87,6 @@ __all__ = [
     "WriteInstructionError",
     "build_write_planner",
     "connect",
-    "find",
     "prepare_model",
     "stream_lowered",
     "validate_source_pin",

@@ -14,6 +14,7 @@ from parallax.core.entity import (
     ResolutionView,
 )
 from parallax.core.metamodel import EntityIdentity, Metamodel, RelationshipIdentity
+from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
 from parallax.core.temporal_read import Edge, NonTemporal, TemporalFacet, milestone_edge
 from parallax.core.unit_work import ReadOrigin
 from parallax.snapshot._inspection import SnapshotNodeState
@@ -21,11 +22,8 @@ from parallax.snapshot.materialize._classify import (
     ClassifiedRoot,
     ConformingRoot,
     RootClassifications,
-    VersionAttributes,
     classify_roots,
 )
-from parallax.snapshot.materialize._invalid import InvalidData
-from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._root import RootView
 
 __all__ = ["typed_root"]
@@ -49,7 +47,7 @@ def typed_root(
     ``versions`` names the explicit version Attribute a classified record
     publishes. ``ordinal_offset`` is where this Root View's roots start in the
     ordered result the caller publishes, including a later root or streamed Page. ``sources`` is
-    the Read Origin the executor retained per projection,
+    the Read Origin the read retained per projection,
     which each node's own Snapshot state carries so a later keyed write reads its
     evidence off the value it was handed.
     """

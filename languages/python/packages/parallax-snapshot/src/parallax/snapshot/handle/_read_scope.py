@@ -4,69 +4,67 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from parallax.core import deep_fetch
 from parallax.core.db_port import DatabaseConnection
-from parallax.core.entity import EntityGraphConstruction
+from parallax.core.execution._page_origins import ObservedPageProjections
+from parallax.core.execution._retention import ObservationLedger
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     ActivityTarget,
     DatabaseCallScope,
     InstalledLifecycle,
     ReadActivity,
-    SnapshotStreamActivity,
+    StreamActivity,
     StreamBatchActivity,
     TransactionAttemptActivity,
     open_read_root,
-    open_snapshot_stream_root,
+    open_stream_root,
     refuse_reentry,
 )
+from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode, deserialize
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.read_delivery import RowsResult
+from parallax.core.read_delivery._delivery import deliver_find, deliver_history
+from parallax.core.read_delivery._page_reader import (
+    EagerPageRequest,
+    PageReader,
+    StreamPageRequest,
+    StreamPageResult,
+)
+from parallax.core.read_delivery._paging import At, PagingPlan
+from parallax.core.read_delivery._publication import Publication
+from parallax.core.read_delivery._read_plan import ReadPlanner
+from parallax.core.read_delivery._row_lane import find_rows
+from parallax.core.read_delivery._stream import StreamDelivery, StreamRead, check_batch_size
 from parallax.core.temporal_read import scans_validated_axis
-from parallax.core.unit_work import Concurrency, UnitOfWork
+from parallax.core.unit_work import Concurrency, ReadOrigin, UnitOfWork
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores.
 from parallax.snapshot.handle._adoption import AdoptedExecution
+from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._connection_lifecycle import (
     enter_connection,
     exit_connection,
 )
-from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._execution_authority import ExecutionCapture
-from parallax.snapshot.handle._materialization import (
-    DeliveryPage,
-    DeliveryPlan,
-    Materializer,
-    StreamPageRead,
-)
-from parallax.snapshot.handle._paging import At
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import (
     SelectedReadModel,
     ServingModel,
     read_projection,
 )
-from parallax.snapshot.handle._read import (
-    ResultPublication,
-    RowsResult,
-    Snapshot,
-    find,
-    find_history,
-    find_rows,
-    typed_publication,
-    wire_publication,
-)
-from parallax.snapshot.handle._read_plan import ReadPlanner
-from parallax.snapshot.handle._retention import ObservationLedger
-from parallax.snapshot.handle._stream import SnapshotStream, StreamRead, check_batch_size
 
 __all__ = [
     "ReadScope",
     "WireQuery",
     "participating_read_scope",
     "standalone_read_scope",
+    "wire_query_node",
 ]
 
 type WireQuery = ObjectQuery[Any, Any] | ObjectQueryNode | Mapping[str, object]
@@ -83,9 +81,9 @@ def wire_query_node(query: WireQuery) -> ObjectQueryNode:
     validates the query — the shared read gate does, after this resolution and
     before any I/O — so all three spellings meet the same refusals.
 
-    It lives beside the verbs rather than beside the view because lowering IS an
-    argument of the call: a Wire read refuses re-entry before it looks at what it
-    was handed, so a mapping no deserializer could accept is refused as re-entry
+    It is a stable converter a read is handed rather than a step the read
+    performs first: a Wire read refuses re-entry before it looks at what it was
+    handed, so a mapping no deserializer could accept is refused as re-entry
     when it arrives from inside a lifecycle context, exactly as an unusable Typed
     query is.
     """
@@ -94,41 +92,6 @@ def wire_query_node(query: WireQuery) -> ObjectQueryNode:
     if isinstance(query, Mapping):
         return deserialize(query)
     return object_query_node(query)
-
-
-def materializing(selected: SelectedReadModel, /) -> EntityGraphConstruction:
-    """The graph construction a modeled read needs, or refuse before any I/O.
-
-    Absent exactly for a descriptor-backed Domain Model, which composes no
-    Entity Class and therefore serves the Wire and write lanes while
-    materializing nothing. The refusal lands before the shared gate and
-    therefore before a participating read's force-flush, so a Handle that
-    cannot materialize a Snapshot at all answers that before it answers
-    anything about the query. It is a function here rather than a method of the
-    record because the record's sealed scope may not name the refusal.
-    """
-    if selected.construction is None:
-        raise SnapshotConnectionError(
-            "this read is served under a model that composed no Entity Class, so it "
-            "cannot materialize a Snapshot (snapshot-class-backed-model-required)"
-        )
-    return selected.construction
-
-
-def publication_for(selected: SelectedReadModel, interface: ReadInterface, /) -> ResultPublication:
-    """The publication one read through ``interface`` publishes under ``selected``.
-
-    A Typed publication needs the graph construction, so this is where a
-    selection that can materialize no Snapshot at all refuses a Typed read —
-    before the query is judged and before any I/O — while a Wire publication
-    crosses no such rung. Either carries the selection's edition, so every
-    envelope it publishes is stamped with what the read was served under.
-    """
-    if interface == "typed":
-        return typed_publication(selected.model, materializing(selected), selected.edition)
-    if interface == "wire":
-        return wire_publication(selected.model, selected.edition)
-    raise ValueError(f"the values lane publishes no graph, so {interface!r} names no publication")
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,7 +112,7 @@ class ReadInputs:
     ledger: ObservationLedger | None
 
 
-class _BegunRead(StreamRead, Protocol):
+class _BegunRead(StreamRead[SelectedReadModel], Protocol):
     """One operation's read, begun: the selection it is served under, and the
     bracket everything done under that selection runs inside.
 
@@ -162,11 +125,6 @@ class _BegunRead(StreamRead, Protocol):
     it began with, by construction rather than by threading a parameter.
     """
 
-    @property
-    def selected(self) -> SelectedReadModel:
-        """The model this operation is served under."""
-        ...
-
     def eager[T](
         self,
         target: ActivityTarget,
@@ -177,26 +135,11 @@ class _BegunRead(StreamRead, Protocol):
         """Run one whole-result read's ``body`` inside this lane's bracket."""
         ...
 
-    def open_stream(
-        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
-    ) -> SnapshotStreamActivity:
-        """This lane's own Snapshot Stream activity, unentered."""
-        ...
-
     def page[T](
         self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T], /
     ) -> T:
         """Run one page's ``body`` inside this lane's bracket and inside
         ``batch``, which this opens rather than the loop above."""
-        ...
-
-    def release(self, failure: BaseException | None, /) -> None:
-        """Settle lane-owned resources, or do nothing where pages own them."""
-        ...
-
-    def advance[T](self, body: Callable[[], T], /) -> T:
-        """Run one advance of a delivery's view inside this lane's failure
-        bracket, after the delivery has settled what the advance did."""
         ...
 
 
@@ -216,23 +159,23 @@ class _ReadExecution(Protocol):
 
 
 class ReadScope:
-    """One Handle's read composition: the whole-result, streamed, and row-form
-    verbs its Typed surface and its Wire view both delegate to.
+    """One Handle's read policy: the whole-result, streamed, and row-form reads
+    every lifecycle facade delegates to.
 
-    Every verb owns its refusal ladder from its own first line, so a read that
-    arrives here refuses re-entry in one module rather than at one call site per
-    public door. Below the ladder the shared gate, the milestone-set dispatch,
-    and the executor entry are written once for both interfaces and both lanes;
-    which materializer publishes a result is chosen per call and is never scope
-    state.
+    Every operation owns its refusal ladder from its own first line, so a read
+    that arrives here refuses re-entry in one module rather than at one call
+    site per public door. A lifecycle supplies two stable functions per call:
+    the converter that lowers its query spelling to the canonical node, and the
+    builder of the Publication its result is stated through. Below the ladder
+    the shared gate, the milestone-set dispatch, and the delivery entry are
+    written once for every representation and both lanes.
 
-    A stream retains this object for its whole delivery, which is what
-    :meth:`begin`, :meth:`publication`, and :meth:`page` are for: they are the
-    scope from the delivery's side, and they answer it from the same execution
-    policy every eager read runs under. The scope itself holds no model and no
-    page, so a delivery hands back the ONE read it was begun as for each of
-    its pages, and no page and no root reaches a second scope or a second
-    policy.
+    A stream retains this object for its whole delivery as its scope:
+    :meth:`begin`, :meth:`validated`, and :meth:`page` answer it from the same
+    execution policy every eager read runs under. The scope itself holds no
+    model and no page, so a delivery hands back the ONE read it was begun as for
+    each of its pages, and no page and no root reaches a second scope or a
+    second policy.
     """
 
     __slots__ = ("_execution", "_lifecycle", "_planner")
@@ -247,27 +190,60 @@ class ReadScope:
         self._execution = execution
         self._planner = planner
 
-    def find(self, query: ObjectQuery[Any, Any]) -> Snapshot[Any]:
-        """One Typed whole-result read, published as Entity Class instances."""
-        # Re-entry is refused first of all: a call that arrived from inside one
-        # of this Handle's own lifecycle contexts is refused before the model it
-        # would be served under, this query's shape, or anything downstream of
-        # them is even consulted (`m-execution-lifecycle`).
+    def read[Q, Eager](
+        self,
+        query: Q,
+        /,
+        *,
+        convert_query: Callable[[Q], ObjectQueryNode],
+        build_publication: Callable[[SelectedReadModel], Publication[ReadOrigin, Eager]],
+    ) -> Eager:
+        """One whole-result read, published through ``build_publication``.
+
+        Re-entry is refused first of all: a call that arrived from inside one of
+        this Handle's own lifecycle contexts is refused before the model it
+        would be served under, this query's shape, or anything downstream of
+        them is even consulted (`m-execution-lifecycle`). The read is then
+        begun and its publication built, which is where a selection that cannot
+        publish the requested representation refuses — before the query is
+        lowered, before the gate, and before a participating read's
+        force-flush.
+        """
         refuse_reentry(self._lifecycle)
         read = self._execution.begin()
-        publication = publication_for(read.selected, "typed")
-        return self._graph(read, object_query_node(query), publication)
+        publication = build_publication(read.selected)
+        return self._graph(read, convert_query(query), publication)
 
-    def stream(self, query: ObjectQuery[Any, Any], batch_size: int) -> SnapshotStream[Any]:
-        """One Typed streamed read, delivered as Entity Class instances.
+    def stream[Q, P: Publication[ReadOrigin, Any]](
+        self,
+        query: Q,
+        batch_size: int,
+        /,
+        *,
+        convert_query: Callable[[Q], ObjectQueryNode],
+        build_publication: Callable[[SelectedReadModel], P],
+        on_page_start: Callable[[deep_fetch.IncludeTree], None],
+        on_release: Callable[[], None],
+    ) -> StreamDelivery[_BegunRead, P]:
+        """One streamed delivery, constructed and not yet entered.
 
         Re-entry is refused, then this call's own arguments are judged — the
         query lowered, then the page size it was named with — and nothing
         model-dependent is: the delivery begins its read at entry, which is
-        where a selection that can materialize no Snapshot at all refuses it.
+        where its publication is built. Constructing a delivery begins no read,
+        opens no activity, and reaches no executor.
         """
         refuse_reentry(self._lifecycle)
-        return self._streamed(object_query_node(query), "typed", batch_size)
+        node = convert_query(query)
+        check_batch_size(batch_size)
+        return StreamDelivery(
+            node,
+            self,
+            build_publication,
+            batch_size=batch_size,
+            on_page_start=on_page_start,
+            on_release=on_release,
+        )
 
     def read_rows(self, node: ObjectQueryNode) -> RowsResult:
         """One row-form read, published as transformed rows and no graph.
@@ -289,6 +265,7 @@ class ReadScope:
                 selected.model,
                 inputs.connection,
                 edition=selected.edition,
+                versions=CONCURRENCY,
                 preference=inputs.preference,
                 read=activity,
                 planner=self._planner,
@@ -296,62 +273,46 @@ class ReadScope:
 
         return read.eager(node.target, "rows", published)
 
-    def wire_find(self, query: WireQuery) -> Snapshot[Any]:
-        """One Wire whole-result read, published as frozen Wire nodes.
-
-        The refusal order is :meth:`find`'s without its classless rung — no Wire
-        node is an Entity Class instance, so none needs a materializer: re-entry,
-        then the read begun, then this call's own argument, which for a Wire
-        entry is the spelling it was handed lowered to the canonical node.
-        """
-        refuse_reentry(self._lifecycle)
-        read = self._execution.begin()
-        publication = publication_for(read.selected, "wire")
-        return self._graph(read, wire_query_node(query), publication)
-
-    def wire_stream(self, query: WireQuery, batch_size: int) -> SnapshotStream[Any]:
-        """One Wire streamed read, delivered as frozen Wire nodes.
-
-        :meth:`stream`'s ladder over a Wire spelling: re-entry, then the query
-        lowered, then the page size judged, and the read begun at entry.
-        """
-        refuse_reentry(self._lifecycle)
-        return self._streamed(wire_query_node(query), "wire", batch_size)
-
     def begin(self) -> _BegunRead:
         """The read one delivery is begun as, when its scope is entered and
         before anything that scope can refuse."""
         return self._execution.begin()
 
-    def publication(
-        self, selected: SelectedReadModel, interface: ReadInterface, /
-    ) -> ResultPublication:
-        """How one delivery publishes its roots under the read it was begun
-        as, chosen at entry exactly as an eager read chooses it at the call."""
-        return publication_for(selected, interface)
+    def validated(self, read: _BegunRead, node: ObjectQueryNode, /) -> ValidatedObjectQuery:
+        """``node`` through the shared read gate, under the model ``read`` serves."""
+        return preflight(node, model=read.meta, form="graph")
 
     def page(
-        self, read: _BegunRead, page_plan: DeliveryPlan, at: At, batch: StreamBatchActivity
-    ) -> DeliveryPage:
+        self,
+        read: _BegunRead,
+        paging: PagingPlan,
+        at: At,
+        batch: StreamBatchActivity,
+        /,
+        *,
+        scanned: bool,
+    ) -> StreamPageResult[ReadOrigin]:
         """One page of a delivery, read inside its begun read's own bracket.
 
         A page IS an eager read of a bounded root query, so it threads the same
         connection, Concurrency Preference, and observation ledger an eager graph
         read here does — and takes its model from the read the delivery was begun
         as, which holds the one selection it was opened under. A standalone page
-        leases its own connection; a participating page uses the attempt's.
+        leases its own connection; a participating page uses the attempt's. The
+        page's projection observer is created inside that bracket, after any
+        read gate.
         """
         model = read.selected.model
 
-        def body(calls: DatabaseCallScope, inputs: ReadInputs) -> DeliveryPage:
-            return Materializer().read_page(
-                StreamPageRead(
-                    page_plan,
+        def body(calls: DatabaseCallScope, inputs: ReadInputs) -> StreamPageResult[ReadOrigin]:
+            return PageReader().read_page(
+                StreamPageRequest(
+                    paging,
                     at,
                     model,
                     inputs.connection,
                     inputs.preference,
-                    inputs.ledger,
+                    ObservedPageProjections(model.meta, ledger=inputs.ledger, scanned=scanned),
                     calls,
                     self._planner,
                     read.selected.edition,
@@ -360,61 +321,48 @@ class ReadScope:
 
         return read.page(batch, body)
 
-    def _streamed(
-        self, node: ObjectQueryNode, interface: ReadInterface, batch_size: int
-    ) -> SnapshotStream[Any]:
-        """The stream-construction tail both read interfaces run.
-
-        Constructing a delivery begins no read, opens no activity, and reaches
-        no executor: the selection, the gate, the page plan, and every statement
-        belong to the entered scope, so a stream nobody enters adopts nothing,
-        observes nothing, and reads nothing. What is settled here is what this
-        call named — the lowered query, the interface, and the page size, the
-        last refused before any plan and any I/O.
-        """
-        check_batch_size(batch_size)
-        return SnapshotStream(node, interface, self, batch_size=batch_size)
-
-    def _graph(
+    def _graph[Eager](
         self,
         read: _BegunRead,
         node: ObjectQueryNode,
-        publication: ResultPublication,
-    ) -> Snapshot[Any]:
-        """The eager graph-form tail both read interfaces run.
+        publication: Publication[ReadOrigin, Eager],
+    ) -> Eager:
+        """The eager graph-form tail every representation runs.
 
-        The gate, the milestone-set dispatch, and the executor entry are the
+        The gate, the milestone-set dispatch, and the delivery entry are the
         read; the publication decides only how its result is stated. A
-        milestone-set read runs :func:`find_history`, which retains no evidence
-        at all, so its roots stand at coordinates no keyed write may address.
+        milestone-set read retains no evidence at all, so its roots stand at
+        coordinates no keyed write may address.
         """
         selected = read.selected
         validated = preflight(node, model=selected.model.meta, form="graph")
 
-        def published(activity: ReadActivity, inputs: ReadInputs) -> Snapshot[Any]:
+        def published(activity: ReadActivity, inputs: ReadInputs) -> Eager:
             if scans_validated_axis(validated.temporal):
-                return publication.from_history(
-                    find_history(
-                        validated,
-                        selected.model,
-                        inputs.connection,
-                        read=activity,
-                        edition=selected.edition,
-                        preference=inputs.preference,
-                        planner=self._planner,
-                    )
-                )
-            return publication.from_find(
-                find(
+                return deliver_history(
                     validated,
                     selected.model,
                     inputs.connection,
-                    preference=inputs.preference,
-                    ledger=inputs.ledger,
-                    calls=activity,
+                    publication=publication,
+                    read=activity,
                     edition=selected.edition,
+                    preference=inputs.preference,
                     planner=self._planner,
                 )
+            return deliver_find(
+                EagerPageRequest(
+                    validated,
+                    selected.model,
+                    inputs.connection,
+                    inputs.preference,
+                    ObservedPageProjections(
+                        selected.model.meta, ledger=inputs.ledger, scanned=False
+                    ),
+                    activity,
+                    self._planner,
+                    selected.edition,
+                ),
+                publication,
             )
 
         return read.eager(node.target, publication.interface, published)
@@ -488,10 +436,18 @@ class _StandaloneRead:
 
         return self.adopted.contextualized(inside)
 
+    @property
+    def meta(self) -> Metamodel:
+        return self.selected.model.meta
+
+    @property
+    def edition(self) -> str:
+        return self.selected.edition
+
     def open_stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
-    ) -> SnapshotStreamActivity:
-        return open_snapshot_stream_root(
+    ) -> StreamActivity:
+        return open_stream_root(
             self.lifecycle,
             target=target,
             interface=interface,
@@ -572,6 +528,14 @@ class _ParticipatingExecution:
     def begin(self) -> _ParticipatingExecution:
         return self
 
+    @property
+    def meta(self) -> Metamodel:
+        return self.selected.model.meta
+
+    @property
+    def edition(self) -> str:
+        return self.selected.edition
+
     def release(self, failure: BaseException | None, /) -> None:
         """Nothing: participating work never checked anything out.
 
@@ -604,8 +568,8 @@ class _ParticipatingExecution:
 
     def open_stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
-    ) -> SnapshotStreamActivity:
-        return self.attempt.snapshot_stream(target, interface, batch_size)
+    ) -> StreamActivity:
+        return self.attempt.stream(target, interface, batch_size)
 
     def page[T](
         self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T], /

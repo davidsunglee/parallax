@@ -41,6 +41,12 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
+from parallax.core.read_delivery import (
+    MISSING_STORED_VALUE,
+    InvalidData,
+    InvalidDataError,
+    StoredDataIssue,
+)
 from parallax.core.temporal_read import (
     Bitemporal,
     Edge,
@@ -48,14 +54,7 @@ from parallax.core.temporal_read import (
     valid_time_coverage,
 )
 from parallax.core.temporal_read import view as temporal_view
-from parallax.snapshot import (
-    MISSING_STORED_VALUE,
-    InvalidData,
-    InvalidDataError,
-    ObjectKey,
-    StoredDataIssue,
-    connect,
-)
+from parallax.snapshot import ObjectKey, connect
 from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.materialize import ClassifiedRoot, RootView, classify_roots
 from parallax.snapshot.materialize._classify import (

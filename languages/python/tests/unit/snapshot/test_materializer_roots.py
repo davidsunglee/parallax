@@ -12,10 +12,16 @@ from parallax.core.base import SQL_NULL
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import RelationshipIdentity
+from parallax.core.read_delivery._page import (
+    ROOT_LEVEL,
+    PageBuilder,
+    ViewSchema,
+    page_rows,
+    root_last_uses,
+)
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import PageBuilder, RootView
-from parallax.snapshot.materialize._page import page_rows, root_last_uses
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from parallax.snapshot.materialize import RootView
+from parallax.snapshot.materialize._publication import publish_roots
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import bound_read
 from tests.unit.snapshot._encoded_identity_read import encoded_identity_page
@@ -159,13 +165,11 @@ def test_releasing_a_root_view_twice_is_idempotent() -> None:
     root.release_finished_page_rows(0, root_last_uses(cast("Any", page)))
 
 
-def publish_roots(page: Any, observer: RecordingObserver) -> Iterator[object]:
-    from parallax.snapshot.handle._materialization import Materializer
-
+def _published_positions(page: Any) -> Iterator[object]:
     def publish(_root: RootView, position: int) -> Iterator[object]:
         yield position
 
-    yield from Materializer(observer).roots(page, publish)
+    yield from publish_roots(page, publish)
 
 
 def test_root_zero_publishes_before_root_one_state_is_decoded() -> None:
@@ -174,7 +178,7 @@ def test_root_zero_publishes_before_root_one_state_is_decoded() -> None:
         ((ROOT_LEVEL, _encoded_order("01")), (ROOT_LEVEL, _encoded_order("02"))), observer
     )
 
-    assert list(publish_roots(page, observer)) == [0, 1]
+    assert list(_published_positions(page)) == [0, 1]
     relevant = [
         name for name, _value in observer.events if name in {"states_decoded", "root_published"}
     ]
@@ -228,8 +232,6 @@ def test_a_keyless_occurrence_is_judged_again_for_every_root_reaching_it(
 ) -> None:
     # A keyless claim shares no judged state, so each root reaching it judges its
     # payload anew, after earlier roots released what they alone reached.
-    from parallax.snapshot.handle._materialization import Materializer
-
     page = _shared_keyless_animal(owners, animal_row)
 
     def publish(root: RootView, _position: int) -> Iterator[tuple[object, ...]]:
@@ -239,10 +241,6 @@ def test_a_keyless_occurrence_is_judged_again_for_every_root_reaching_it(
             [(issue.code, issue.stored_value) for issue in root.issues(node)],
         )
 
-    published = list(
-        Materializer(RecordingObserver()).roots(
-            cast("Any", page), publish, atomic=atomic, model=_ANIMAL
-        )
-    )
+    published = list(publish_roots(cast("Any", page), publish, atomic=atomic, model=_ANIMAL))
 
     assert published == [expected] * len(owners)
