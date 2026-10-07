@@ -20,6 +20,7 @@ from types import TracebackType
 import pytest
 
 from parallax.conformance import models
+from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, attr, opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
@@ -35,7 +36,6 @@ from parallax.core.unit_work import (
     KeyedMutation,
     KeyedWrite,
     MaterializedWriteGroup,
-    PlanningRequest,
     PredicateSelection,
     PredicateWrite,
     RetainedObservation,
@@ -47,13 +47,15 @@ from parallax.core.unit_work import (
     UnitOfWorkError,
     VersionedEvidenceBuilder,
     WriteAssignment,
-    WriteBatchTrigger,
+    WriteBatchReason,
     WriteEvidenceError,
+    WritePlanningRequest,
     WritePreconditionError,
     active_unit_of_work,
     buffered_write,
     run_unit_of_work,
 )
+from parallax.core.unit_work.acquisition import AcquireRows, CoverageReadRequest
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
@@ -62,15 +64,19 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core.unit_work.materialized import InsertionKeyedWrite, ObservedKeyedWrite
+from parallax.core.unit_work.materialized import (
+    InsertionKeyedWrite,
+    ObservedKeyedWrite,
+    readless_write,
+)
 from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.unit_work.uow import (
     NO_INSERTION_AUTHORITY,
-    DeferredBinder,
+    BindDeferredRange,
     EscapedTransactionError,
-    FlushExecutor,
-    UnitReport,
-    WriteBatchOpening,
+    ExecuteFlush,
+    OpenWriteBatch,
+    ReportUnitCompletion,
     _TargetWriteState,  # pyright: ignore[reportPrivateUsage] - the owner of the removal window and lineage it is tested at
 )
 from parallax.core.unit_work.write_planner import PendingWrites, compose_writes
@@ -102,8 +108,12 @@ from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._temporal_group_support import temporal_group
-from tests.unit._transact_support import PERSON, WherePosition
-from tests.unit.core.unit_work._acquired_rows_support import acquired
+from tests.unit._where_position_model import (
+    WherePosition,
+)
+from tests.unit.core.unit_work._acquired_rows_support import HeldRows
+
+PERSON = CLASS_MODELS["person"]
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
@@ -114,27 +124,27 @@ _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 class _Recorder:
     """Records each Write Plan the shell hands the executor, with the flush
-    trigger it travelled under, binding each deferred range to coverage that
-    holds no row beyond what the range already observed."""
+    trigger it travelled under, binding each deferred range through the unit
+    of work to whatever coverage its row acquisition holds."""
 
     def __init__(self) -> None:
         self.plans: list[WritePlan] = []
-        self.triggers: list[WriteBatchTrigger] = []
+        self.triggers: list[WriteBatchReason] = []
         self.bound: list[BoundRange] = []
 
     def __call__(
         self,
         plan: WritePlan,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         self.plans.append(plan)
         self.triggers.append(trigger)
         for unit in plan.units:
             deferred = unit.deferred
-            bound = None if deferred is None else bind_deferred(deferred, None)
+            bound = None if deferred is None else bind_deferred(deferred)
             if bound is not None:
                 self.bound.append(bound)
             completed(unit, bound)
@@ -143,8 +153,8 @@ class _Recorder:
 def _noop(
     plan: WritePlan,
     *,
-    trigger: WriteBatchTrigger,
-    bind_deferred: DeferredBinder,
+    trigger: WriteBatchReason,
+    bind_deferred: BindDeferredRange,
     completed: Callable[[ExecutionUnit, BoundRange | None], None],
 ) -> None:
     return None
@@ -154,11 +164,14 @@ def _run[T](
     body: Callable[[UnitOfWork], T],
     *,
     clock: Clock | None = None,
-    executor: FlushExecutor | None = None,
+    executor: ExecuteFlush | None = None,
     settings: TransactionSettings | None = None,
     meta: Metamodel | None = None,
-    opening: WriteBatchOpening | None = None,
+    opening: OpenWriteBatch | None = None,
+    rows: AcquireRows | None = None,
 ) -> T:
+    """Run ``body`` in a unit of work whose row reads answer ``rows``, or find
+    no row at all."""
     resolved_meta = meta or _ACCOUNT
     return run_unit_of_work(
         body,
@@ -166,6 +179,7 @@ def _run[T](
         clock=clock or FixedClock(_FIXED),
         meta=resolved_meta,
         flush_executor=executor or _noop,
+        acquire_rows=rows or HeldRows(resolved_meta),
         planner=build_write_planner(resolved_meta),
         actor_identity=TEST_ACTOR_IDENTITY,
         evidence_policy_for=opt_lock.view(resolved_meta).required_key,
@@ -285,8 +299,8 @@ def test_read_force_flushes_pending_writes_first() -> None:
     def executor(
         plan: WritePlan,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         order.append("flush")
@@ -441,18 +455,6 @@ def test_an_insertion_authority_licenses_no_insert_and_no_multi_row_write() -> N
         )
 
 
-def test_an_insertion_authority_licenses_keyed_writes_alone() -> None:
-    selection = PredicateSelection("Account", predicate_algebra.All())
-    predicate = prepare_typed_write(PredicateWrite("delete", selection, ()), _ACCOUNT)
-    assert isinstance(predicate, PreparedPredicateWrite)
-    with pytest.raises(TypeError, match="licenses keyed writes alone"):
-        buffered_write(
-            predicate,
-            None,
-            authority=InsertionIdentity(corpus_object_key("Account", ("id", 1))),
-        )
-
-
 def test_a_write_carrying_an_authority_no_standing_insertion_granted_is_refused() -> None:
     # The verb asks whether an insertion still stands before it builds the
     # write; buffering asks again, so an authority this unit of work never
@@ -512,31 +514,17 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
         for balance in (Decimal("125.00"), Decimal("150.00"))
     ]
     finalized = build_write_planner(_ACCOUNT).finalize(
-        PlanningRequest(
+        WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(FixedClock(_FIXED)),
             concurrency="locking",
             buffered_writes=compose_writes(_ACCOUNT, carriers),
         )
     )
-    (step,) = finalized.plan.steps
+    (step,) = finalized.steps
     assert isinstance(step, PlannedUpdate)
     assert _member_value(step.assignments.attributes, "balance") == Decimal("150.00")
-    assert [unit.claim for unit in finalized.plan.units] == [retained]
-
-
-def test_a_predicate_write_cannot_be_buffered_with_one_observation() -> None:
-    # A predicate-selected write settles per RESOLVED row, against a Materialized
-    # Write Group's own aligned observation columns. There is no single
-    # observation for the set it selects, so offering this seam one is a caller
-    # wiring defect rather than a shape it should quietly wrap.
-    predicate = PredicateWrite(
-        "delete", PredicateSelection("Account", predicate_algebra.Comparison("eq", "Account.id", 1))
-    )
-    prepared = prepare_typed_write(predicate, _ACCOUNT)
-    assert isinstance(prepared, PreparedPredicateWrite)
-    with pytest.raises(TypeError, match="only a keyed write settles against evidence of its own"):
-        buffered_write(prepared, VersionObservation(observed_version=1))
+    assert [unit.claim for unit in finalized.units] == [retained]
 
 
 def test_a_fully_empty_transaction_never_touches_the_clock() -> None:
@@ -669,7 +657,7 @@ def test_reentry_into_a_rollback_only_transaction_is_refused() -> None:
 class _Scope:
     """One opened batch scope, recording each transition it makes."""
 
-    def __init__(self, order: list[str], trigger: WriteBatchTrigger) -> None:
+    def __init__(self, order: list[str], trigger: WriteBatchReason) -> None:
         self._order = order
         self._trigger = trigger
 
@@ -687,7 +675,7 @@ class _Scope:
         self._order.append(f"{'left' if exc is None else 'failed'}:{self._trigger}")
 
 
-def _opener(order: list[str]) -> WriteBatchOpening:
+def _opener(order: list[str]) -> OpenWriteBatch:
     return lambda trigger: _Scope(order, trigger)
 
 
@@ -697,8 +685,8 @@ def test_each_batch_is_a_scope_around_its_own_planning_and_execution() -> None:
     def executor(
         plan: WritePlan,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         order.append(f"executed:{trigger}")
@@ -1076,7 +1064,7 @@ def test_every_other_accepted_item_reports_plain_buffering() -> None:
         assert uow.buffer(_account_write("delete", 3, 7, retained=False)) is (
             BufferOutcome.BUFFERED
         )
-        assert uow.buffer(predicate) is BufferOutcome.BUFFERED
+        assert uow.buffer(readless_write(predicate)) is BufferOutcome.BUFFERED
         assert uow.buffer(_account_group((4, 7))) is BufferOutcome.BUFFERED
         raise _Abandoned
 
@@ -1208,8 +1196,8 @@ def test_each_unit_spends_its_evidence_before_the_next_unit_executes() -> None:
     def executor(
         plan: WritePlan,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         for unit in plan.units:
@@ -1229,8 +1217,8 @@ def test_a_unit_reported_out_of_order_dooms_the_attempt() -> None:
     def executor(
         plan: WritePlan,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         completed(plan.units[1], None)
@@ -1249,8 +1237,8 @@ def test_a_bound_range_reported_for_a_planned_unit_dooms_the_attempt() -> None:
     def executor(
         plan: WritePlan,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         completed(plan.units[0], BoundRange(steps=()))
@@ -1268,9 +1256,9 @@ def test_a_unit_reported_with_keys_it_never_allocated_dooms_the_attempt() -> Non
     def executor(
         plan: WritePlan,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
-        completed: UnitReport,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
+        completed: ReportUnitCompletion,
     ) -> None:
         completed(plan.units[0], None, allocated=(8,))
 
@@ -1291,8 +1279,8 @@ def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
     def executor(
         plan: WritePlan,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         raise failure
@@ -1473,8 +1461,8 @@ def test_a_unit_names_its_sources_state_and_a_failed_unit_publishes_nothing() ->
     def executor(
         plan: WritePlan,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         named.extend(tuple(unit.changed) for unit in plan.units)
@@ -1589,8 +1577,8 @@ def test_a_row_a_unit_removes_and_reopens_at_one_address_stays_owned() -> None:
     def executor(
         plan: WritePlan,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         (unit,) = plan.units
@@ -1658,13 +1646,15 @@ def _position_row(start: dt.datetime, tx_start: dt.datetime) -> PredecessorRow:
     )
 
 
-def _bind(bind_deferred: DeferredBinder, unit: ExecutionUnit, start: dt.datetime) -> BoundRange:
-    """``unit``'s deferred range bound through the flush's own binder to the one
-    current row its coverage read finds, starting at ``start``."""
+def _bind(
+    bind_deferred: BindDeferredRange, held: HeldRows, unit: ExecutionUnit, start: dt.datetime
+) -> BoundRange:
+    """``unit``'s deferred range bound through the flush's own binder, its
+    coverage read finding the one current row starting at ``start``."""
     deferred = unit.deferred
     assert deferred is not None
-    rows = acquired(_BARRIERED, deferred.acquisition, [_position_row(start, _FIXED)])
-    return bind_deferred(deferred, rows)
+    held.rows = [_position_row(start, _FIXED)]
+    return bind_deferred(deferred)
 
 
 def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetWrite:
@@ -1695,15 +1685,15 @@ def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_pro
     def executor(
         plan: WritePlan,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         if len(plan.units) == 1:
             (unit,) = plan.units
             assert unit.deferred is not None
             # A later flush carries no proof: the original's token is stale.
-            _bind(bind_deferred, unit, _AUG)
+            _bind(bind_deferred, coverage, unit, _AUG)
             return
         first, barrier, later = plan.units
         assert first.derived and not barrier.derived
@@ -1712,7 +1702,7 @@ def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_pro
         (claim,) = held
         seen.append((claim.consumed, claim.invalidated))
         assert later.deferred is not None
-        bound = _bind(bind_deferred, later, _APR)
+        bound = _bind(bind_deferred, coverage, later, _APR)
         assert not any(isinstance(step, PlannedClose) for step in bound.steps)
         completed(later, bound)
 
@@ -1742,16 +1732,18 @@ def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_pro
             _BARRIERED,
         )
         assert isinstance(barrier, PreparedPredicateWrite)
-        uow.buffer(barrier)
-        uow.buffer_target(_position_target(_JUN, _AUG), acquire=_never_acquired)
+        uow.buffer_predicate(barrier)
+        uow.buffer_target(_position_target(_JUN, _AUG))
         uow.read(lambda: None)
-        uow.buffer_target(_position_target(_SEP, _OCT), acquire=_never_acquired)
+        uow.buffer_target(_position_target(_SEP, _OCT))
 
+    coverage = HeldRows(_BARRIERED)
     with pytest.raises(WritePreconditionError):
-        _run(body, meta=_BARRIERED, executor=executor)
+        _run(body, meta=_BARRIERED, executor=executor, rows=coverage)
     # The earlier unit spent the shared source and invalidated its state
     # before the later one bound.
     assert seen == [(True, True)]
+    _assert_optimistic_targets_read_nothing(coverage)
 
 
 def test_an_objects_proofs_end_when_its_last_following_unit_completes() -> None:
@@ -1764,26 +1756,26 @@ def test_an_objects_proofs_end_when_its_last_following_unit_completes() -> None:
     def executor(
         plan: WritePlan,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
         completed: Callable[[ExecutionUnit, BoundRange | None], None],
     ) -> None:
         first, barrier, middle, again, last = plan.units
         completed(first, None)
         completed(barrier, None)
         assert middle.deferred is not None and last.deferred is not None
-        bound = _bind(bind_deferred, middle, _APR)
+        bound = _bind(bind_deferred, held, middle, _APR)
         assert bound.concludes is None  # a later region still follows it
         completed(middle, bound)
         completed(again, None)
-        bound = _bind(bind_deferred, last, _AUG)
+        bound = _bind(bind_deferred, held, last, _AUG)
         assert bound.concludes == key
         assert not any(isinstance(step, PlannedClose) for step in bound.steps)
         completed(last, bound)
         # Nothing the earlier units proved survives the last consumer, even
         # before the flush ends.
         with pytest.raises(WritePreconditionError):
-            _bind(bind_deferred, last, _AUG)
+            _bind(bind_deferred, held, last, _AUG)
 
     def body(uow: UnitOfWork) -> None:
         claim = uow.retain(RetainedObservation(state, original, uow.participation))
@@ -1811,15 +1803,20 @@ def test_an_objects_proofs_end_when_its_last_following_unit_completes() -> None:
                 _BARRIERED,
             )
             assert isinstance(barrier, PreparedPredicateWrite)
-            uow.buffer(barrier)
-            uow.buffer_target(_position_target(*window), acquire=_never_acquired)
+            uow.buffer_predicate(barrier)
+            uow.buffer_target(_position_target(*window))
         uow.read(lambda: None)
 
-    _run(body, meta=_BARRIERED, executor=executor)
+    held = HeldRows(_BARRIERED)
+    _run(body, meta=_BARRIERED, executor=executor, rows=held)
+    _assert_optimistic_targets_read_nothing(held)
 
 
-def _never_acquired(*_arguments: object) -> None:
-    raise AssertionError("an Optimistic caller-addressed write reads nothing at its call")
+def _assert_optimistic_targets_read_nothing(held: HeldRows) -> None:
+    """An Optimistic caller-addressed write reads nothing at its call: every
+    read the unit of work asked for was a deferred range's coverage."""
+    assert held.requests
+    assert all(isinstance(request, CoverageReadRequest) for request in held.requests)
 
 
 def _position_destroy(start: dt.datetime, until: dt.datetime) -> ObservedKeyedWrite:
@@ -1856,7 +1853,7 @@ def test_pending_destruction_is_merged_into_start_order_across_authored_barrier_
     later = _position_destroy(_JUN, _AUG)
     pending.add(later, key)
     pending.add(_position_destroy(_SEP, _OCT), key)
-    pending.add(_shell_barrier())
+    pending.add(readless_write(_shell_barrier()))
     earlier = _position_destroy(_FEB, _APR)
     pending.add(earlier, key)
     destroyed = list(pending.destroyed_coverage(key))
@@ -1880,7 +1877,7 @@ def test_pending_destruction_after_an_opening_leaves_out_what_precedes_the_inser
     pending = PendingWrites(_BARRIERED)
     pending.add(_position_destroy(_JUN, _AUG), key)
     pending.add(insert, key)
-    pending.add(_shell_barrier())
+    pending.add(readless_write(_shell_barrier()))
     pending.add(_position_destroy(_FEB, _APR), key)
     assert list(pending.destroyed_coverage(key, after_opening=True)) == [_window(_FEB, _APR)]
     assert list(pending.destroyed_coverage(key)) == [_window(_FEB, _APR), _window(_JUN, _AUG)]

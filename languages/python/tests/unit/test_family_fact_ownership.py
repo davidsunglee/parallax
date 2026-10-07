@@ -54,7 +54,6 @@ from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
     MaterializedWriteGroup,
-    PlanningRequest,
     PredicateSelection,
     PredicateWrite,
     RetainedObservation,
@@ -62,7 +61,8 @@ from parallax.core.unit_work import (
     UnitOfWork,
     VersionedEvidenceBuilder,
     WriteAssignment,
-    WriteBatchTrigger,
+    WriteBatchReason,
+    WritePlanningRequest,
     object_key,
     run_unit_of_work,
 )
@@ -105,7 +105,7 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests._support.model_capabilities import graph_construction_for
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
+from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY, observed_buffer
 from tests._support.root_ownership import own_root
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._judged_evidence_support import judged_rows, retained_sources
@@ -263,13 +263,13 @@ def test_planning_and_lowering_prepared_writes_take_the_version_from_its_owner(
     callers = _trace_declarations(monkeypatch, _MODEL)
 
     plan = planner.finalize(
-        PlanningRequest(
+        WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
             concurrency=concurrency,
             buffered_writes=prepared,
         )
-    ).plan
+    )
     lowered: list[tuple[PlannedWrite, LoweredStatement]] = list(
         stream_lowered(plan, _MODEL, POSTGRES)
     )
@@ -354,13 +354,13 @@ def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_fami
     callers = _trace_declarations(monkeypatch, _TEMPORAL_MODEL)
 
     plan = planner.finalize(
-        PlanningRequest(
+        WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
             concurrency=concurrency,
             buffered_writes=_temporal_writes(),
         )
-    ).plan
+    )
     steps = list(plan.steps)
     assert list(plan.steps) == steps
     lowered = list(stream_lowered(plan, _TEMPORAL_MODEL, POSTGRES))
@@ -559,7 +559,7 @@ def test_materializing_an_inherited_milestone_page_reads_axes_from_the_family_sh
 
 
 def _no_flush(
-    _plan: WritePlan, *, trigger: WriteBatchTrigger, bind_deferred: object, completed: object
+    _plan: WritePlan, *, trigger: WriteBatchReason, bind_deferred: object, completed: object
 ) -> None:
     return None
 
@@ -603,6 +603,7 @@ def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
             clock=FixedClock(_OPENED),
             meta=meta,
             flush_executor=_no_flush,
+            acquire_rows=NO_ROW_READS,
             planner=planner,
             actor_identity=TEST_ACTOR_IDENTITY,
             evidence_policy_for=opt_lock.view(meta).required_key,

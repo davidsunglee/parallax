@@ -7,7 +7,7 @@ from operator import attrgetter, itemgetter
 from typing import Final, cast
 
 from parallax.core import inheritance, relationship, temporal_read
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
 from parallax.core.temporal_write.coverage import NO_TRANSFORM
 from parallax.core.unit_work.claims import (
@@ -24,7 +24,6 @@ from parallax.core.unit_work.instructions import (
     UPDATE_MUTATIONS,
     ExpectedVersion,
     PreparedKeyedWrite,
-    PreparedPredicateWrite,
     PreparedWrite,
     derive_keyed_write,
 )
@@ -41,6 +40,7 @@ from parallax.core.unit_work.materialized import (
     ObjectClaimedWrite,
     ObservedKeyedWrite,
     PendingOpening,
+    ReadlessPredicateWrite,
     TargetKeyedWrite,
     TemporalContribution,
     TemporalKeyedWrite,
@@ -49,7 +49,7 @@ from parallax.core.unit_work.materialized import (
     composed_temporal_write,
     temporal_contribution,
 )
-from parallax.core.unit_work.ranges import Decoration, DeferredTemporalRange, bind_deferred
+from parallax.core.unit_work.ranges import AuditDecoration, DeferredTemporalRange, bind_deferred
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
     ActorIdentity,
@@ -58,27 +58,23 @@ from parallax.core.unit_work.strategy import (
     Concurrency,
     ConcurrencyStrategy,
 )
-from parallax.core.unit_work.write_settlement import (
-    OrderedWrite,
-    WritePlanningResult,
-    WriteSettlement,
-)
+from parallax.core.unit_work.write_settlement import OrderedWrite, WritePlanCompiler
 from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, VersionedStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import TemporalObservation
 from parallax.core.write_plan.plan import (
-    NO_OWNERSHIP,
+    NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
-    Completion,
-    DeferredRange,
-    Ownership,
+    SourceAuthority,
+    TemporalWriteOwnership,
+    WritePlan,
 )
 
 __all__ = [
     "BufferedWrite",
     "PendingWrites",
-    "PlanningRequest",
     "WritePlanner",
+    "WritePlanningRequest",
     "compose_writes",
 ]
 
@@ -90,7 +86,7 @@ type BufferedWrites = Sequence[BufferedWrite]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class PlanningRequest:
+class WritePlanningRequest:
     """One flush's complete planning input.
 
     Keyword-only and Actor Identity first: planning occurs under already
@@ -111,7 +107,7 @@ class PlanningRequest:
     transaction_instant: TransactionInstant
     concurrency: Concurrency
     buffered_writes: BufferedWrites
-    ownership: Ownership = NO_OWNERSHIP
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP
     counts_unchanged_rows: bool = False
 
 
@@ -120,26 +116,26 @@ class WritePlanner:
 
     Constructed once per accepted Metamodel with its strategy adapters already
     wired; :meth:`finalize` plans a flush, and :meth:`bind_deferred` binds a
-    deferred range of a plan it finalized once that range's coverage is read. A
-    caller with no evidence to spend reads ``finalize(request).plan``. No caller
-    sequences coalescing, batching, ordering, temporal expansion, observation
-    validation, instant acquisition, or provenance decoration by hand.
+    deferred range of a plan it finalized once that range's coverage is read.
+    No caller sequences coalescing, batching, ordering, temporal expansion,
+    observation validation, instant acquisition, or provenance decoration by
+    hand.
 
-    The settlement module it constructs here is its own, built over the same
-    model and compiled facets and living exactly as long: a prepared Model
-    Selection carries a mutually consistent model, codec, planner, and
-    settlement module, and publication replaces the whole selection rather than
-    rebinding any of them.
+    The compiler it constructs here is its own, built over the same model and
+    compiled facets and living exactly as long: a prepared Model Selection
+    carries a mutually consistent model, codec, planner, and compiler, and
+    publication replaces the whole selection rather than rebinding any of
+    them.
     """
 
     __slots__ = (
         "_audit",
         "_batching",
+        "_compiler",
         "_concurrency",
         "_families",
         "_model",
         "_relationships",
-        "_settlement",
         "_temporal_facet",
     )
 
@@ -158,7 +154,7 @@ class WritePlanner:
         self._batching = batching
         self._concurrency = concurrency
         self._audit = audit
-        self._settlement = WriteSettlement(
+        self._compiler = WritePlanCompiler(
             model,
             self._families,
             self._temporal_facet,
@@ -166,9 +162,9 @@ class WritePlanner:
             audit=audit,
         )
 
-    def finalize(self, request: PlanningRequest) -> WritePlanningResult:
+    def finalize(self, request: WritePlanningRequest) -> WritePlan:
         """Plan one flush: eliminate no-ops, batch, order, and hand the whole
-        ordered sequence to settlement — answering the plan, whose execution
+        ordered sequence to the compiler — answering the plan, whose execution
         units carry the claims the settled writes held. Admission already
         composed the buffer (:class:`PendingWrites`), so finalization indexes
         nothing again.
@@ -184,8 +180,8 @@ class WritePlanner:
         Insert's own same-members rule without a canonicalizing pass here.
 
         The three stages here REWRITE the sequence — drop, split, reorder.
-        The Write Planning Result
-        :meth:`~parallax.core.unit_work.write_settlement.WriteSettlement.settle`
+        The Write Plan
+        :meth:`~parallax.core.unit_work.write_settlement.WritePlanCompiler.compile`
         answers is returned unchanged, because packing, provenance, and each
         unit's claim are decided there and nothing is left for the planner to add.
         """
@@ -198,7 +194,7 @@ class WritePlanner:
             if item is not None
         ]
         batched = self._form_batches(survivors)
-        return self._settlement.settle(
+        return self._compiler.compile(
             self._order(batched),
             concurrency=request.concurrency,
             actor_identity=request.actor_identity,
@@ -209,16 +205,16 @@ class WritePlanner:
 
     def bind_deferred(
         self,
-        description: DeferredRange,
+        description: DeferredTemporalRange,
         rows: PredecessorRows | None,
         /,
         *,
-        ownership: Ownership,
+        ownership: TemporalWriteOwnership,
         actor_identity: ActorIdentity,
         transaction_instant: TransactionInstant,
     ) -> BoundRange:
-        """Bind a deferred range this planner finalized to the coverage its
-        acquisition read, ``None`` where the read found no row.
+        """Bind a deferred range this planner finalized to the coverage read
+        for it, ``None`` where the read found no row.
 
         Its temporal meaning, concurrency, and gates were fixed when the plan
         was made; binding reads ``ownership`` as the running flush's earlier
@@ -227,16 +223,17 @@ class WritePlanner:
         ``actor_identity`` and ``transaction_instant``, changing no topology
         and classifying no gate.
         """
-        if not isinstance(description, DeferredTemporalRange):
-            raise TypeError(
-                f"a deferred range this planner did not finalize cannot be bound: {description!r}"
-            )
         return bind_deferred(
             description,
             rows,
             ownership=ownership,
-            decorate=Decoration(self._audit, actor_identity, transaction_instant),
+            decorate=AuditDecoration(self._audit, actor_identity, transaction_instant),
         )
+
+    def version_attribute(self, entity: EntityIdentity) -> AttributeIdentity | None:
+        """The Attribute carrying ``entity``'s optimistic version, or ``None``
+        for an unversioned Entity."""
+        return self._concurrency.version_attribute(self._model, entity)
 
     def inserted_version(self, entity: EntityIdentity, advanced_from: int | None) -> int | None:
         """The version a row of ``entity`` the planning attempt inserted holds,
@@ -246,7 +243,7 @@ class WritePlanner:
         The attempt wrote every revision of such a row, so the arithmetic that
         stamped them answers its version without reading it.
         """
-        if self._concurrency.version_attribute(self._model, entity) is None:
+        if self.version_attribute(entity) is None:
             return None
         arithmetic = self._concurrency.version_arithmetic()
         return arithmetic.initial if advanced_from is None else arithmetic.advance(advanced_from)
@@ -329,7 +326,7 @@ class WritePlanner:
             deletes.clear()
 
         for item in items:
-            if isinstance(item, PreparedPredicateWrite):
+            if isinstance(item, ReadlessPredicateWrite):
                 close_region()
                 ordered.append(item)
                 continue
@@ -466,7 +463,7 @@ class PendingWrites:
         # writes of them interleave freely.
         self._claims: dict[Hashable, int] = {}
         self._temporal: dict[ObjectKey, int] = {}
-        self._sources: list[Completion] = []
+        self._sources: list[SourceAuthority] = []
         # Objects a pending write removes whole, and the positions of inserts
         # that must follow a removal of an earlier insertion — each allocated by
         # the first write it records, since most buffers hold neither.
@@ -776,7 +773,7 @@ class PendingWrites:
         if key is None:
             key = resolve_object_key(instruction, self._families)
         if not isinstance(instruction, PreparedKeyedWrite) or key is None:
-            if isinstance(item, PreparedPredicateWrite):
+            if isinstance(item, ReadlessPredicateWrite):
                 self._seal()
             items.append(item)
             return False
@@ -1030,7 +1027,7 @@ class PendingWrites:
                 written.extend(inserts)
         return tuple(written)
 
-    def sources(self) -> tuple[Completion, ...]:
+    def sources(self) -> tuple[SourceAuthority, ...]:
         """Every observation-free source authority a pending write was admitted
         through, which the flush spends on success however the writes composed.
 

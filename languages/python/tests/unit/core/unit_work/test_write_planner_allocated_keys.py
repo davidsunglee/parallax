@@ -9,7 +9,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.execution._planning import build_write_planner
 from parallax.core.execution._write_lowering import stream_lowered
-from parallax.core.unit_work import KeyedWrite, PlanningRequest
+from parallax.core.unit_work import KeyedWrite, WritePlanningRequest
 from parallax.core.unit_work.instructions import PreparedTargetWrite, prepare_typed_write
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import (
@@ -63,17 +63,13 @@ def _plan(
         _META,
     )
     assert not isinstance(prepared, PreparedTargetWrite)
-    return (
-        build_write_planner(_META)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),
-                concurrency="optimistic",
-                buffered_writes=[prepared],
-            )
+    return build_write_planner(_META).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),
+            concurrency="optimistic",
+            buffered_writes=[prepared],
         )
-        .plan
     )
 
 

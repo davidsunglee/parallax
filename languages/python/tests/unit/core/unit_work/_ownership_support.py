@@ -1,4 +1,4 @@
-"""An attempt's Ownership fixed to an explicit set of opened rows."""
+"""An attempt's Temporal Write Ownership fixed to an explicit set of opened rows."""
 
 from __future__ import annotations
 

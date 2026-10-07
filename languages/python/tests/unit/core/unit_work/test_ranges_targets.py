@@ -19,11 +19,13 @@ from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     OptimisticLockConflictError,
-    PlanningRequest,
     RetainedObservation,
     StaleWriteError,
+    TransactionInstant,
+    WritePlanningRequest,
     WritePreconditionError,
 )
+from parallax.core.unit_work.acquisition import CoverageReadRequest
 from parallax.core.unit_work.materialized import (
     BufferItem,
     ComposedTemporalWrite,
@@ -38,14 +40,14 @@ from parallax.core.write_plan import (
     PredecessorRow,
 )
 from parallax.core.write_plan.plan import (
-    NO_OWNERSHIP,
+    NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
     Derivation,
     Descent,
     ExecutionUnit,
     OwnedEndpoint,
-    Ownership,
+    TemporalWriteOwnership,
 )
 from parallax.core.write_plan.steps import (
     FAILED_PRECONDITION,
@@ -56,7 +58,7 @@ from parallax.core.write_plan.steps import (
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
-from tests.unit.core.unit_work._acquired_rows_support import acquired
+from tests.unit.core.unit_work._acquired_rows_support import bind_held, coverage_read
 from tests.unit.core.unit_work._ownership_support import OpenedRows
 from tests.unit.core.unit_work._temporal_targets_support import (
     APR,
@@ -89,17 +91,13 @@ from tests.unit.core.unit_work._temporal_targets_support import (
 # Binding: the caller's start, replacement extent, and destruction.            #
 # --------------------------------------------------------------------------- #
 def _deferred_unit(*writes: BufferItem, concurrency: str = "optimistic") -> ExecutionUnit:
-    plan = (
-        build_write_planner(POSITION)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
-                concurrency=concurrency,  # type: ignore[arg-type]
-                buffered_writes=compose_writes(POSITION, list(writes)),
-            )
+    plan = build_write_planner(POSITION).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
+            concurrency=concurrency,  # type: ignore[arg-type]
+            buffered_writes=compose_writes(POSITION, list(writes)),
         )
-        .plan
     )
     (unit,) = plan.units
     assert unit.deferred is not None
@@ -107,19 +105,23 @@ def _deferred_unit(*writes: BufferItem, concurrency: str = "optimistic") -> Exec
 
 
 def _bound(
-    unit: ExecutionUnit, rows: Sequence[PredecessorRow], *, ownership: Ownership = NO_OWNERSHIP
+    unit: ExecutionUnit,
+    rows: Sequence[PredecessorRow],
+    *,
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> BoundRange:
     """``unit``'s deferred range bound, as the unit of work binds it at
     execution, to a coverage read finding ``rows`` under ``ownership``."""
-    deferred = unit.deferred
-    assert deferred is not None
-    return build_write_planner(POSITION).bind_deferred(
-        deferred,
-        acquired(POSITION, deferred.acquisition, rows),
-        ownership=ownership,
-        actor_identity=TEST_ACTOR_IDENTITY,
-        transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
-    )
+    return bind_held(POSITION, unit, rows, transaction_instant=_instant(), ownership=ownership)
+
+
+def _coverage(unit: ExecutionUnit) -> CoverageReadRequest:
+    """The coverage read ``unit``'s deferred range asks for."""
+    return coverage_read(POSITION, unit, transaction_instant=_instant())
+
+
+def _instant() -> TransactionInstant:
+    return instant_at("2024-10-01T00:00:00+00:00")
 
 
 def _windows(bound: BoundRange) -> list[tuple[object, object, object]]:
@@ -142,7 +144,7 @@ def test_a_range_its_observations_leave_uncovered_reads_only_the_uncovered_suffi
     )
     unit = _deferred_unit(observed)
     assert unit.deferred is not None
-    window = unit.deferred.acquisition.valid_time_window
+    window = _coverage(unit).valid_time_window
     assert window == TimeInterval(JUN, SEP)
     prepared = observed.instruction.valid_time_window
     assert prepared is not None and window is not None
@@ -153,13 +155,13 @@ def test_a_lone_target_range_reads_through_the_very_window_its_caller_prepared()
     target = addressed_write(value="150.00")
     unit = _deferred_unit(target)
     assert unit.deferred is not None
-    assert unit.deferred.acquisition.valid_time_window is target.instruction.valid_time_window
+    assert _coverage(unit).valid_time_window is target.instruction.valid_time_window
 
 
 def test_a_target_range_reads_its_window_and_gates_its_start_on_the_callers_revision() -> None:
     unit = _deferred_unit(addressed_write(value="150.00"))
     assert unit.deferred is not None
-    acquisition = unit.deferred.acquisition
+    acquisition = _coverage(unit)
     assert (acquisition.valid_time_window, acquisition.locking) == (TimeInterval(MAR, SEP), False)
     bound = _bound(unit, [START.evidence.predecessor, LATER.evidence.predecessor])  # type: ignore[union-attr]
     first, second = (step for step in bound.steps if isinstance(step, PlannedClose))
@@ -244,7 +246,7 @@ def test_a_patch_after_a_replacement_keeps_its_extent_and_overlays_its_gaps() ->
 def test_a_locking_target_range_reads_its_coverage_under_the_shared_lock_ungated() -> None:
     unit = _deferred_unit(addressed_write(value="150.00"), concurrency="locking")
     assert unit.deferred is not None
-    assert unit.deferred.acquisition.locking
+    assert _coverage(unit).locking
     bound = _bound(unit, [START.evidence.predecessor])  # type: ignore[union-attr]
     close = next(step for step in bound.steps if isinstance(step, PlannedClose))
     assert close.concurrency == UNGATED
@@ -259,7 +261,7 @@ def test_disjoint_targets_over_one_original_transform_it_once_under_one_guard() 
         addressed_write(valid_from=JUN, until=AUG, value="175.00"),
     )
     assert unit.deferred is not None
-    assert unit.deferred.acquisition.valid_time_window == TimeInterval(FEB, AUG)
+    assert _coverage(unit).valid_time_window == TimeInterval(FEB, AUG)
     bound = _bound(unit, [WHOLE.evidence.predecessor])  # type: ignore[union-attr]
     (close,) = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert close.affected_rows.on_shortfall == FAILED_PRECONDITION
@@ -335,17 +337,13 @@ def _chained_unit(
 ) -> ExecutionUnit:
     (composed,) = compose_writes(POSITION, list(writes))
     assert isinstance(composed, ComposedTemporalWrite | TargetKeyedWrite | ObservedKeyedWrite)
-    plan = (
-        build_write_planner(POSITION)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
-                concurrency=concurrency,  # type: ignore[arg-type]
-                buffered_writes=(chained(composed, "id", leads=leads, follows=follows),),
-            )
+    plan = build_write_planner(POSITION).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
+            concurrency=concurrency,  # type: ignore[arg-type]
+            buffered_writes=(chained(composed, "id", leads=leads, follows=follows),),
         )
-        .plan
     )
     (unit,) = plan.units
     return unit
@@ -383,7 +381,7 @@ def _opened(start: dt.datetime, value: str = "100.00", **cells: object) -> Prede
 def test_a_following_range_reads_its_whole_window_and_discharges_a_proven_start() -> None:
     unit = _chained_unit(addressed_write(valid_from=JUN, until=AUG, value="175.00"))
     assert unit.deferred is not None
-    assert unit.deferred.acquisition.valid_time_window == TimeInterval(JUN, AUG)
+    assert _coverage(unit).valid_time_window == TimeInterval(JUN, AUG)
     bound = _bound(unit, [_opened(APR)], ownership=_proven())
     # The start now stands at the row the earlier unit derived from the
     # original the caller stated; that row is the attempt's own, so it is

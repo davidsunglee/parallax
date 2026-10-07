@@ -62,7 +62,7 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
-    WriteBatchTrigger,
+    WriteBatchReason,
     WritePlanner,
     run_unit_of_work,
 )
@@ -81,7 +81,7 @@ from tests._support.db_port import (
     Write,
     body_outcome,
 )
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests.unit.core.execution._execution_support import (
     ACCOUNT,
     FIXED,
@@ -462,7 +462,7 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
     db = scope(port)
 
     def executor(  # pragma: no cover - never flushed
-        _plan: WritePlan, *, trigger: WriteBatchTrigger, bind_deferred: object, completed: object
+        _plan: WritePlan, *, trigger: WriteBatchReason, bind_deferred: object, completed: object
     ) -> None:
         raise AssertionError("no flush expected")
 
@@ -477,6 +477,7 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
         clock=FixedClock(FIXED),
         meta=model,
         flush_executor=executor,
+        acquire_rows=NO_ROW_READS,
         planner=build_write_planner(model),
         actor_identity=TEST_ACTOR_IDENTITY,
         evidence_policy_for=opt_lock.view(model).required_key,

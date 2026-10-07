@@ -1,12 +1,12 @@
 """``WritePlanner.finalize`` — the primary neutral seam (m-unit-work, Docker-free).
 
-``WritePlanner.finalize(PlanningRequest) -> WritePlanningResult`` is the entire
+``WritePlanner.finalize(WritePlanningRequest) -> WritePlan`` is the entire
 caller-visible planning surface: no caller sequences coalescing, batching,
 ordering, temporal expansion, observation validation, instant acquisition, or
 provenance decoration by hand. A caller does resolve the observation a write
 settles against, at the verb that holds the value, and buffers it on the write.
 These tests drive it directly — through the
-SAME production wiring ``parallax.snapshot.handle.build_write_planner``
+SAME production wiring ``parallax.core.execution._planning.build_write_planner``
 builds — asserting complete ``PlannedWrite`` shapes and plan-wide ordering,
 never a private stage function: same-transaction coalescing (insert-then-update
 in place per temporal flavor; insert-then-delete cancellation), dependency
@@ -18,7 +18,6 @@ in-place adjacency.
 
 from __future__ import annotations
 
-import copy
 import dataclasses
 import datetime as dt
 from collections.abc import Mapping, Sequence
@@ -54,7 +53,6 @@ from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
     MaterializedWriteGroup,
-    PlanningRequest,
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
@@ -62,6 +60,7 @@ from parallax.core.unit_work import (
     TransactionInstant,
     VersionedEvidenceBuilder,
     WriteAssignment,
+    WritePlanningRequest,
     buffered_write,
     object_key,
 )
@@ -147,17 +146,13 @@ def _plan(
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
 ) -> WritePlan:
-    return (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
-                concurrency=concurrency,
-                buffered_writes=observed_buffer(buffer, model, observations),
-            )
+    return build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
+            concurrency=concurrency,
+            buffered_writes=observed_buffer(buffer, model, observations),
         )
-        .plan
     )
 
 
@@ -709,14 +704,14 @@ def test_ordering_reads_each_ranked_writes_compiled_rank_once_and_derives_none(
         KeyedWrite("delete", "OrderStatus", ({"id": 100},)),
         KeyedWrite("insert", "OrderTag", ({"id": 7, "orderId": 1, "label": "x", "priority": 1},)),
     ]
-    request = PlanningRequest(
+    request = WritePlanningRequest(
         actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=_INSTANT,
         concurrency="locking",
         buffered_writes=observed_buffer(buffer, _ORDERS, None),
     )
-    first = planner.finalize(request).plan
-    second = planner.finalize(request).plan
+    first = planner.finalize(request)
+    second = planner.finalize(request)
     assert asked == ["OrderItem", "OrderStatus", "OrderTag"] * 2
     assert (
         _shape(first)
@@ -1598,17 +1593,13 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
     # Key derivation's binding is the one a flush could reach the model's
     # spelling rule through.
     monkeypatch.setattr(keys_module, "entity_by_name", refuse)
-    plan = (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
-                concurrency="optimistic",
-                buffered_writes=prepared,
-            )
+    plan = build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+            concurrency="optimistic",
+            buffered_writes=prepared,
         )
-        .plan
     )
     kinds = [_step_mutation(step) for step in plan.steps]
     assert kinds.count("insert") >= 2  # the Wallet insert, plus the bitemporal successors
@@ -1710,13 +1701,13 @@ def test_settlement_reads_each_temporal_mutations_family_shape_once(
 
     monkeypatch.setattr(type(facet), "shape", counting)
     plan = planner.finalize(
-        PlanningRequest(
+        WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
             concurrency="optimistic",
             buffered_writes=buffered,
         )
-    ).plan
+    )
     assert reads == ["SpotQuote", "DepositRate", "Balance"]
     _ = list(plan.steps)
     _ = plan.steps[len(plan.steps) - 1]
@@ -1802,17 +1793,13 @@ def test_provenance_reaches_every_eager_step_once_and_no_materialized_row(
     audit = _CountingAudit([], [])
     monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
     model = _wallet_and_account()
-    plan = (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=_INSTANT,
-                concurrency="locking",
-                buffered_writes=observed_buffer(_eager_group_eager(model), model, None),
-            )
+    plan = build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=_INSTANT,
+            concurrency="locking",
+            buffered_writes=observed_buffer(_eager_group_eager(model), model, None),
         )
-        .plan
     )
     assert len(plan.steps) == 3
     assert len(audit.decorated) == 2
@@ -1881,15 +1868,15 @@ def test_only_surviving_writes_carry_claims_into_execution_units() -> None:
         ),
     ]
     finalized = build_write_planner(_ACCOUNT).finalize(
-        PlanningRequest(
+        WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
             concurrency="locking",
             buffered_writes=buffer,
         )
     )
-    assert [_step_mutation(step) for step in finalized.plan.steps] == ["update", "delete"]
-    assert [unit.claim for unit in finalized.plan.units] == [shared, shared]
+    assert [_step_mutation(step) for step in finalized.steps] == ["update", "delete"]
+    assert [unit.claim for unit in finalized.units] == [shared, shared]
 
 
 # --------------------------------------------------------------------------- #
@@ -1912,23 +1899,6 @@ def test_a_row_naming_a_member_outside_the_family_is_refused_at_settlement() -> 
     )
     with pytest.raises(WritePlanningError, match="names 'nickname', which is not a member"):
         _plan([stray], _WALLET)
-
-
-def test_a_readless_predicate_write_naming_a_milestone_is_refused_at_settlement() -> None:
-    # Preparation admits no `terminate` of a target without a milestone axis, so
-    # one reaching settlement is a caller wiring defect settlement refuses again.
-    prepared = prepare_typed_write(
-        PredicateWrite(
-            "delete",
-            PredicateSelection("Wallet", predicate_algebra.Comparison("eq", "Wallet.id", 2)),
-        ),
-        _WALLET,
-    )
-    assert isinstance(prepared, PreparedPredicateWrite)
-    milestone = copy.copy(prepared)
-    object.__setattr__(milestone, "mutation", "terminate")
-    with pytest.raises(WritePlanningError, match="names a milestone"):
-        _plan([milestone], _WALLET)
 
 
 def test_a_many_keyed_mapping_cell_is_an_ordinary_literal_not_a_computed_marker() -> None:

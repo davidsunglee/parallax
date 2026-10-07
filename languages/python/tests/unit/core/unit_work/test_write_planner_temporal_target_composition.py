@@ -23,7 +23,6 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.instructions import (
     ExpectedTxStart,
     PreparedKeyedWrite,
-    PreparedPredicateWrite,
     prepare_wire_write,
 )
 from parallax.core.unit_work.materialized import (
@@ -31,6 +30,8 @@ from parallax.core.unit_work.materialized import (
     ChainedTemporalWrite,
     ComposedTemporalWrite,
     InsertionKeyedWrite,
+    ReadlessPredicateWrite,
+    readless_write,
 )
 from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.unit_work.write_planner import PendingWrites
@@ -322,7 +323,7 @@ def test_a_shared_token_names_whatever_rectangle_holds_each_start() -> None:
 _WALLET = formed(corpus_records()["wallet"])
 
 
-def _barrier() -> PreparedPredicateWrite:
+def _barrier() -> ReadlessPredicateWrite:
     prepared = prepare_wire_write(
         PredicateWrite(
             "update",
@@ -331,8 +332,7 @@ def _barrier() -> PreparedPredicateWrite:
         ),
         _WALLET,
     )
-    assert isinstance(prepared, PreparedPredicateWrite)
-    return prepared
+    return readless_write(prepared)
 
 
 def test_a_readless_predicate_write_separates_an_objects_writes_into_chained_compositions() -> None:

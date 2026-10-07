@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from array import array
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
@@ -197,7 +197,7 @@ def _published_rows(
     return tuple(published)
 
 
-def publishable_member_rows(page: Page) -> Iterator[tuple[object, ...]]:
+def publishable_member_rows(page: Page) -> Generator[tuple[object, ...]]:
     """Each flat root's judged positional member row, by reference and in result
     order, refusing the first root that holds invalid stored data.
 

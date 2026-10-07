@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
-from parallax.core import deep_fetch
+from parallax.core import deep_fetch, inheritance
+from parallax.core.base import ManagedValue
 from parallax.core.db_port import DatabaseConnection
+from parallax.core.deep_fetch import ValidatedEntityQuery
+from parallax.core.dialect import LockMode
 from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.execution._family import entity_layout
 from parallax.core.execution._keyed_writes import (
     KeyedInsertSource,
     KeyedWriteSource,
@@ -16,11 +20,6 @@ from parallax.core.execution._keyed_writes import (
     keyed_write,
 )
 from parallax.core.execution._options import DatabaseOptions
-from parallax.core.execution._predicate_writes import (
-    acquire_coverage,
-    buffer_predicate_instruction,
-    buffer_target_instruction,
-)
 from parallax.core.execution._publication import SelectedReadModel, SelectedWriteModel
 from parallax.core.execution._read_policy import (
     ReadInputs,
@@ -46,28 +45,41 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.object_query._validated import ValidatedObjectQuery, latest_temporal_selections
 from parallax.core.read_delivery import RowsResult
-from parallax.core.read_delivery._page_reader import StreamPageResult
+from parallax.core.read_delivery._fetch import entity_read_lock, execute_read
+from parallax.core.read_delivery._page import ABSENT, release_page_rows
+from parallax.core.read_delivery._page_reader import FlatPageRequest, PageReader, StreamPageResult
 from parallax.core.read_delivery._paging import At, PagingPlan
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.read_delivery._read_plan import ReadPlanner
+from parallax.core.read_delivery._row_lane import publishable_member_rows
 from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
 from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen._compile import CompiledRead, compile_read
+from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     Clock,
+    Concurrency,
     KeyedMutation,
     ReadOrigin,
     TransactionSettings,
     UnitOfWork,
-    WriteBatchTrigger,
+    WriteBatchReason,
     allocated_keys,
     enforce_affected_rows,
     returns_rows,
 )
+from parallax.core.unit_work.acquisition import (
+    CoverageReadRequest,
+    RowConsumer,
+    RowReadRequest,
+    SelectionReadRequest,
+    TargetReadRequest,
+)
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, PreparedTargetWrite
 from parallax.core.unit_work.strategy import ActorIdentity
-from parallax.core.unit_work.uow import DeferredBinder, UnitReport
+from parallax.core.unit_work.uow import BindDeferredRange, ReportUnitCompletion
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import ExecutionUnit
 from parallax.core.write_plan.steps import PlannedInsert
@@ -83,8 +95,9 @@ class Attempt:
 
     Constructed inside the port's transaction callback, after the attempt
     adopted and opened: every execution field is set before the unit of work is
-    constructed over this attempt's own flush methods, so neither a lifecycle
-    factory nor a callback can observe a partially wired attempt. A retry
+    constructed over this attempt's own flush and row-acquisition methods, so
+    neither a lifecycle factory nor a callback can observe a partially wired
+    attempt. A retry
     constructs a fresh one; a joining call reuses the active attempt and never
     constructs another.
 
@@ -146,6 +159,7 @@ class Attempt:
             meta=write.model.meta,
             flush_executor=self._execute_flush,
             write_batch_opening=self._open_write_batch,
+            acquire_rows=self._acquire_rows,
             # The adopted selection's Write Planner: retained by this unit of
             # work for its life, and reused by every join into it rather than
             # re-adopted.
@@ -365,20 +379,147 @@ class Attempt:
     def predicate_write(self, prepared: PreparedPredicateWrite, /) -> None:
         """Buffer a prepared predicate-selected write, readless or
         materializing through a Read of its own under this attempt."""
-        buffer_predicate_instruction(
-            self._write.model, self._uow, self._connection, self._activity, prepared
-        )
+        self._uow.buffer_predicate(prepared)
 
     def target_write(self, prepared: PreparedTargetWrite, /) -> None:
         """Buffer a prepared caller-addressed write, reading the state it starts
         from where its Effective Concurrency Strategy needs participation."""
-        buffer_target_instruction(
-            self._write.model, self._uow, self._connection, self._activity, prepared
+        self._uow.buffer_target(prepared)
+
+    # Row acquisition.
+
+    def _acquire_rows[Request: RowReadRequest, Result](
+        self, request: Request, consumer: RowConsumer[Request, Result], /
+    ) -> Result:
+        """Read the rows ``request`` names on this attempt's connection and hand
+        them to ``consumer``, executing no pending write and publishing nothing.
+
+        A selection or target read is a Read of its own under this attempt
+        (`m-execution-lifecycle`: every statement-reaching operation belongs to
+        exactly one Read, Write Batch, or Stream Batch), spanning its planning,
+        lowering, and the consumer, so a compile refusal or a root holding
+        invalid stored data is a FAILED Read rather than work outside every
+        activity. Its lock suffix derives from the target Entity's Effective
+        Concurrency Strategy through the same seam a participating find takes.
+        A coverage read runs while a flush is reaching a deferred range, so it
+        is a read call of the Write Batch that flush runs inside, under the
+        shared row lock where its range protects every affected row with one.
+
+        Every read is row-form, over the target's own member selection: the
+        identity under ``Columns`` layout and the document fan-out under
+        Relational Document Layout, each raw Structured Column retained beside
+        its row so evidence can carry the document the row actually held.
+        """
+        if isinstance(request, CoverageReadRequest):
+            return self._consume(self._coverage_read(request), self._batch, request, consumer)
+        with self._activity.read(request.entity.identity, "rows") as read:
+            compiled = (
+                self._selection_read(request)
+                if isinstance(request, SelectionReadRequest)
+                else self._target_read(request)
+            )
+            return self._consume(compiled, read, request, consumer)
+
+    def _consume[Request: RowReadRequest, Result](
+        self,
+        compiled: CompiledRead,
+        calls: DatabaseCallScope,
+        request: Request,
+        consumer: RowConsumer[Request, Result],
+    ) -> Result:
+        """Execute ``compiled`` as one flat Page and run ``consumer`` over its
+        judged member rows, releasing the Page however the consumer left it —
+        before starting the rows, part way through them, or by raising."""
+        model = self._write.model
+        connection = self._connection
+        layout = entity_layout(model.meta, request.entity)
+        if layout is None:  # pragma: no cover - a write target always owns rows
+            raise ValueError(f"{request.entity.identity.canonical}: write target has no Table")
+        stage = PageReader().read_page(
+            FlatPageRequest(
+                model, compiled, lambda: execute_read(connection, compiled, calls), Pin()
+            )
         )
+        page = stage.page
+        rows = publishable_member_rows(page)
+        try:
+            return consumer(
+                request,
+                layout.member_selection,
+                rows,
+                ABSENT,
+                stage.documents if compiled.structured_column is not None else None,
+                page.root_count,
+            )
+        finally:
+            rows.close()
+            release_page_rows(page)
+
+    def _selection_read(self, request: SelectionReadRequest) -> CompiledRead:
+        """The predicate's resolving read, at Latest on every declared temporal
+        axis: a mutation-compatible Object Query carries no as-of term, so the
+        internal authoring boundary adds one per dimension and routes the read
+        through the same root canonicalization every other read takes, rather
+        than matching every historical milestone too.
+
+        Its projection follows the evidence it becomes: a temporal target's
+        rows are complete Predecessor Rows, so every declared document is
+        projected whatever the verb does with it; a versioned target's are its
+        key and version, so only the assigned documents its no-op elimination
+        compares are."""
+        meta = self._write.model.meta
+        entity = request.entity
+        predecessors = request.predecessors
+        query = deep_fetch.plan_mutation_read(
+            request.write,
+            model=meta,
+            temporal=latest_temporal_selections(
+                inheritance.root_metadata(inheritance.view(meta), meta, entity.identity)
+            ),
+            projection=deep_fetch.ReadProjectionRequest(
+                "all" if predecessors else "none", predecessors
+            ),
+        )
+        return self._row_read(query, entity_read_lock(meta, entity.identity, self._preference))
+
+    def _target_read(self, request: TargetReadRequest) -> CompiledRead:
+        """The point read of the row a caller-addressed write starts from: the
+        current row at ``valid_from`` of a Bitemporal object, the current one of
+        any other."""
+        meta = self._write.model.meta
+        entity = request.entity
+        ((name, value),) = request.key.primary_key
+        query = deep_fetch.plan_target_read(
+            entity,
+            model=meta,
+            key=name,
+            key_value=cast("ManagedValue", value),
+            valid_from=request.valid_from,
+        )
+        return self._row_read(query, entity_read_lock(meta, entity.identity, self._preference))
+
+    def _coverage_read(self, request: CoverageReadRequest) -> CompiledRead:
+        query = deep_fetch.plan_coverage_read(
+            request.entity,
+            model=self._write.model.meta,
+            key=request.key_attribute.name,
+            key_value=request.key_value,
+            valid_time_window=request.valid_time_window,
+        )
+        return self._row_read(query, "locking" if request.locking else None)
+
+    def _row_read(self, query: ValidatedEntityQuery, lock: LockMode | None) -> CompiledRead:
+        return compile_read(
+            query, self._write.model.meta, self._connection.dialect, result_form="row", lock=lock
+        )
+
+    @property
+    def _preference(self) -> Concurrency:
+        return self._uow.settings.concurrency
 
     # Flush execution.
 
-    def _open_write_batch(self, trigger: WriteBatchTrigger, /) -> WriteBatchActivity:
+    def _open_write_batch(self, trigger: WriteBatchReason, /) -> WriteBatchActivity:
         """The scope one flush of this attempt's buffer runs inside.
 
         The unit of work enters it before planning and leaves it when the flush
@@ -395,9 +536,9 @@ class Attempt:
         plan: WritePlan,
         /,
         *,
-        trigger: WriteBatchTrigger,
-        bind_deferred: DeferredBinder,
-        completed: UnitReport,
+        trigger: WriteBatchReason,
+        bind_deferred: BindDeferredRange,
+        completed: ReportUnitCompletion,
     ) -> None:
         """Lower each planned step, execute every statement in order, hand each
         result back to the unit of work to interpret, and report each execution
@@ -412,11 +553,11 @@ class Attempt:
         step of the next one runs, so what it changed is published before later
         work proceeds.
 
-        A unit with a deferred range reaches its turn with no planned step: its
-        coverage is read first (:func:`acquire_coverage`), the unit of work
-        binds the range to it (``bind_deferred``), and the bound steps execute
-        and are enforced exactly as planned ones are before the unit is
-        reported with what it bound.
+        A unit with a deferred range reaches its turn with no planned step: the
+        unit of work reads its coverage and binds the range
+        (``bind_deferred``), and the bound steps execute and are enforced
+        exactly as planned ones are before the unit is reported with what it
+        bound.
 
         This performs NO classification of its own: the adopted Write Planner
         already spent the concurrency mode while settling each step, and this
@@ -461,18 +602,16 @@ class Attempt:
     def _complete(
         self,
         unit: ExecutionUnit,
-        bind_deferred: DeferredBinder,
-        completed: UnitReport,
+        bind_deferred: BindDeferredRange,
+        completed: ReportUnitCompletion,
         allocated: tuple[object, ...],
     ) -> None:
         deferred = unit.deferred
         if deferred is None:
             completed(unit, None, allocated=allocated)
             return
-        model = self._write.model
-        rows = acquire_coverage(model, self._connection, self._batch, deferred.acquisition)
-        bound = bind_deferred(deferred, rows)
-        meta = model.meta
+        bound = bind_deferred(deferred)
+        meta = self._write.model.meta
         dialect = self._connection.dialect
         for step in bound.steps:
             self._run(step, lowered(step, meta, dialect))

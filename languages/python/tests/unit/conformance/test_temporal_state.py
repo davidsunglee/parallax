@@ -31,18 +31,19 @@ from parallax.core.execution._planning import build_write_planner
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
-    PlanningRequest,
     SubjectActor,
     TransactionInstant,
+    WritePlanningRequest,
     buffered_write,
     instructions,
 )
-from parallax.core.unit_work.instructions import KeyedWrite, PreparedWrite
+from parallax.core.unit_work.acquisition import CoverageReadRequest
+from parallax.core.unit_work.instructions import KeyedWrite, PreparedKeyedWrite
 from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.write_plan import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.keys import ObjectKey, VersionedStateKey
-from parallax.core.write_plan.plan import PlannedSteps, RangeAcquisition
-from tests.unit.conformance._coverage_rows_support import coverage_members
+from parallax.core.write_plan.plan import PlannedSteps
+from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 
 POSITION = models.load_models()["position"]
 _POSITION_ENTITY = POSITION.entity(EntityIdentity("parallax.compatibility", "Position"))
@@ -169,14 +170,14 @@ def _planned(
     return (
         build_write_planner(POSITION)
         .finalize(
-            PlanningRequest(
+            WritePlanningRequest(
                 actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(FixedClock(dt.datetime.fromisoformat(at))),
                 concurrency="locking",
                 buffered_writes=[prepared],
             )
         )
-        .plan.steps
+        .steps
     )
 
 
@@ -219,7 +220,7 @@ def test_a_milestone_no_step_closes_is_tracked_again_after_its_write_resolved(
     steps = (
         build_write_planner(POSITION)
         .finalize(
-            PlanningRequest(
+            WritePlanningRequest(
                 actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(
                     FixedClock(dt.datetime(2024, 9, 1, tzinfo=dt.UTC))
@@ -228,7 +229,7 @@ def test_a_milestone_no_step_closes_is_tracked_again_after_its_write_resolved(
                 buffered_writes=compose_writes(POSITION, [buffered_write(prepared, observed)]),
             )
         )
-        .plan.steps
+        .steps
     )
     shadow.keep_unchanged(POSITION, steps, [(POSITION_ENTITY, observed)])
     assert (shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1}) is observed) is kept
@@ -296,19 +297,15 @@ def test_track_opened_ignores_a_non_temporal_plan() -> None:
     assert isinstance(instruction, KeyedWrite)  # a `rows` document is a keyed write
     account = models.load_models()["account"]
     prepared = instructions.prepare_wire_write(instruction, account)
-    plan = (
-        build_write_planner(account)
-        .finalize(
-            PlanningRequest(
-                actor_identity=SubjectActor("unattributed"),
-                transaction_instant=TransactionInstant(
-                    FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
-                ),
-                concurrency="locking",
-                buffered_writes=[prepared],
-            )
+    plan = build_write_planner(account).finalize(
+        WritePlanningRequest(
+            actor_identity=SubjectActor("unattributed"),
+            transaction_instant=TransactionInstant(
+                FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
+            ),
+            concurrency="locking",
+            buffered_writes=[prepared],
         )
-        .plan
     )
     shadow.track_opened(account, plan.steps)
     entity = account.entity(EntityIdentity("parallax.compatibility", "Account"))
@@ -330,7 +327,7 @@ def _rectangles(
     *spans: tuple[int, str, str | None, str],
 ) -> PlannedSteps:
     """The plan opening one rectangle per ``(id, validFrom, until, value)``."""
-    entries: list[PreparedWrite] = []
+    entries: list[PreparedKeyedWrite] = []
     for key, valid_from, until, value in spans:
         document: dict[str, object] = {
             "mutation": "insert" if until is None else "insertUntil",
@@ -346,7 +343,7 @@ def _rectangles(
     return (
         build_write_planner(POSITION)
         .finalize(
-            PlanningRequest(
+            WritePlanningRequest(
                 actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(
                     FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
@@ -355,13 +352,13 @@ def _rectangles(
                 buffered_writes=entries,
             )
         )
-        .plan.steps
+        .steps
     )
 
 
-def _acquisition(valid_from: dt.datetime, until: dt.datetime | None) -> RangeAcquisition:
+def _acquisition(valid_from: dt.datetime, until: dt.datetime | None) -> CoverageReadRequest:
     key = AttributeIdentity(POSITION_ENTITY.identity, "id")
-    return RangeAcquisition(
+    return CoverageReadRequest(
         entity=POSITION_ENTITY,
         key_attribute=key,
         key_value=1,
@@ -381,7 +378,8 @@ def test_coverage_answers_the_tracked_rectangles_of_one_object_inside_the_window
             (2, "2024-01-01T00:00:00Z", None, "9.00"),
         ),
     )
-    covered = shadow.coverage(
+    covered = read_coverage(
+        shadow,
         POSITION,
         _acquisition(
             dt.datetime(2024, 4, 1, tzinfo=dt.UTC), dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -399,7 +397,9 @@ def test_coverage_reaches_a_tracked_opening_whose_end_is_the_open_bound() -> Non
             (1, "2024-03-01T00:00:00Z", None, "2.00"),
         ),
     )
-    covered = shadow.coverage(POSITION, _acquisition(dt.datetime(2024, 4, 1, tzinfo=dt.UTC), None))
+    covered = read_coverage(
+        shadow, POSITION, _acquisition(dt.datetime(2024, 4, 1, tzinfo=dt.UTC), None)
+    )
     assert [(row["value"], row["validEnd"]) for row in coverage_members(covered)] == [
         (decimal.Decimal("2.00"), INFINITY)
     ]
@@ -424,7 +424,8 @@ def test_coverage_reaches_a_fixture_row_decoded_at_case_ingress() -> None:
         POSITION_ENTITY,
         [_case_ingress.decode_case_row(fixture, POSITION, POSITION_ENTITY)],
     )
-    covered = shadow.coverage(
+    covered = read_coverage(
+        shadow,
         POSITION,
         _acquisition(
             dt.datetime(2024, 9, 1, tzinfo=dt.UTC), dt.datetime(2024, 10, 1, tzinfo=dt.UTC)
@@ -441,7 +442,9 @@ def test_coverage_reaches_a_database_observation_kept_unchanged() -> None:
     observed = TemporalObservation(predecessor=PredecessorRow(members=_TAIL))
     shadow = TemporalShadow()
     shadow.keep_unchanged(POSITION, (), [(POSITION_ENTITY, observed)])
-    covered = shadow.coverage(POSITION, _acquisition(dt.datetime(2024, 7, 1, tzinfo=dt.UTC), None))
+    covered = read_coverage(
+        shadow, POSITION, _acquisition(dt.datetime(2024, 7, 1, tzinfo=dt.UTC), None)
+    )
     assert [dict(row) for row in coverage_members(covered)] == [dict(observed.predecessor.members)]
 
 
@@ -472,9 +475,10 @@ def test_coverage_answers_a_tracked_milestones_value_objects_positionally() -> N
     shadow.keep_unchanged(
         model, (), [(entity, TemporalObservation(predecessor=PredecessorRow(members)))]
     )
-    covered = shadow.coverage(
+    covered = read_coverage(
+        shadow,
         model,
-        RangeAcquisition(
+        CoverageReadRequest(
             entity=entity,
             key_attribute=AttributeIdentity(entity.identity, "id"),
             key_value=7,
@@ -491,8 +495,8 @@ def test_coverage_answers_a_tracked_milestones_value_objects_positionally() -> N
 
 def test_coverage_of_an_object_it_tracks_no_milestone_of_is_no_evidence() -> None:
     assert (
-        TemporalShadow().coverage(
-            POSITION, _acquisition(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), None)
+        read_coverage(
+            TemporalShadow(), POSITION, _acquisition(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), None)
         )
         is None
     )

@@ -61,10 +61,12 @@ from tests.unit._transact_support import (
     FIXED,
     INFINITY_INSTANT,
     PERSON,
-    WHERE_POSITION_META,
-    WherePosition,
     db_for,
     deadlock,
+)
+from tests.unit._where_position_model import (
+    WHERE_POSITION_META,
+    WherePosition,
 )
 
 _JAN, _MAR, _MAY, _JUN, _AUG, _SEP, _DEC = (

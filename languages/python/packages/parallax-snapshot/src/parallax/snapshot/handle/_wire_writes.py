@@ -30,7 +30,6 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
-    PreparedPredicateWrite,
 )
 from parallax.core.unit_work.retain import InsertionIdentity
 from parallax.core.write_plan import ObjectKey
@@ -198,7 +197,6 @@ def wire_predicate_write(
         until,
     )
     prepared = instructions.prepare_wire_write(instruction, attempt.model.meta)
-    assert isinstance(prepared, PreparedPredicateWrite)
     attempt.predicate_write(prepared)
 
 
@@ -307,7 +305,6 @@ def _prepared_wire_write(
         meta,
         authored_members=authored,
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
     return prepared
 
 

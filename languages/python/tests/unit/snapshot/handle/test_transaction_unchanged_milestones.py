@@ -19,10 +19,12 @@ from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, Write
 from tests.unit._transact_support import (
     BALANCE,
     INFINITY_INSTANT,
-    WHERE_POSITION_META,
-    WherePosition,
     balance_row,
     db_for,
+)
+from tests.unit._where_position_model import (
+    WHERE_POSITION_META,
+    WherePosition,
 )
 
 type _Representation = Literal["typed", "wire"]

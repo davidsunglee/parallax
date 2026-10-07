@@ -103,7 +103,6 @@ from parallax.core.unit_work import (
     KeyedWrite,
     MissingTargetError,
     OptimisticLockConflictError,
-    PlanningRequest,
     PredicateWrite,
     RetainedObservation,
     SettledEvidence,
@@ -111,6 +110,7 @@ from parallax.core.unit_work import (
     SubjectActor,
     TransactionInstant,
     WriteEffectError,
+    WritePlanningRequest,
     WritePreconditionError,
     buffered_write,
     instructions,
@@ -126,7 +126,8 @@ from parallax.core.unit_work.instructions import (
     TargetWrite,
     WriteInstruction,
 )
-from parallax.core.unit_work.materialized import target_write
+from parallax.core.unit_work.materialized import readless_write, target_write
+from parallax.core.unit_work.uow import bind_deferred_range
 from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.write_plan import (
     ObjectKey,
@@ -137,7 +138,7 @@ from parallax.core.write_plan import (
     WritePlan,
     WritePlanningError,
 )
-from parallax.core.write_plan.plan import NO_OWNERSHIP
+from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP
 from parallax.core.write_plan.steps import KeyTarget, PlannedWrite
 from parallax.snapshot import handle
 from parallax.snapshot.materialize._wire import authoring_of, read_origin_of
@@ -192,7 +193,7 @@ __all__ = [
 # through the PUBLIC ``tx.wire`` verb each mutation names against the value the
 # unit's own read published (never the typed instance verbs, which this engine's
 # case-driven metamodel has no compiled classes for). The COMPILE lane still
-# lowers PURELY (no database, ``build_write_planner(...).finalize(...).plan`` /
+# lowers PURELY (no database, ``build_write_planner(...).finalize(...)`` /
 # ``stream_lowered``) — that pure lowering is ALSO what the RUN lane's
 # emissions/round-trips observation grades against,
 # since both are the SAME deterministic computation over the SAME
@@ -1272,21 +1273,24 @@ def _plan_and_lower(
 
     The buffer is composed first, as a unit of work composes each write it
     admits. A range whose requested window reaches coverage its observations do
-    not hold is bound to the case state ``coverage`` tracks — the rows the
-    execution's own coverage read returns — so its statements stand where the
-    execution runs them; a lane tracking no case state has none to bind to.
+    not hold is read and bound through the unit of work's own acquisition and
+    binding, its coverage read from the case state ``coverage`` tracks — the
+    rows the execution's own coverage read returns — so its statements stand
+    where the execution runs them; a lane tracking no case state has none to
+    bind to.
     """
     planner = build_write_planner(model)
     instant = _pinned_instant(tx_instant)
     plan = planner.finalize(
-        PlanningRequest(
+        WritePlanningRequest(
             actor_identity=_PLANNING_ACTOR,
             transaction_instant=instant,
             concurrency=concurrency,
             buffered_writes=compose_writes(model, buffered_writes),
             counts_unchanged_rows=dialect.counts_unchanged_rows,
         )
-    ).plan
+    )
+    acquire_rows = None if coverage is None else coverage.acquisition(model)
     executed = ExecutedPlan(plan)
     statements: list[LoweredStatement] = []
     units = iter(plan.units)
@@ -1298,15 +1302,16 @@ def _plan_and_lower(
         while unit is not None and unit.end == position:
             deferred = unit.deferred
             if deferred is not None:
-                if coverage is None:
+                if acquire_rows is None:
                     raise EngineError(
                         "a range write reached coverage no observation of its unit holds, and "
                         "this lane tracks no case state to bind it to"
                     )
-                bound = planner.bind_deferred(
+                bound = bind_deferred_range(
                     deferred,
-                    coverage.coverage(model, deferred.acquisition),
-                    ownership=NO_OWNERSHIP,
+                    acquire_rows=acquire_rows,
+                    planner=planner,
+                    ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
                     actor_identity=_PLANNING_ACTOR,
                     transaction_instant=instant,
                 )
@@ -1383,14 +1388,12 @@ def _lower_predicate_write_step(
     A MATERIALIZING predicate write never reaches here: its case carries
     ``compileEligibility: run-only``, which short-circuits at
     :func:`~parallax.conformance._mechanism.case_document.eligibility` before
-    the compile lane ever calls this — reaching this seam with one is therefore
-    always a caller wiring defect, surfaced as planning's own defensive
-    :class:`~parallax.core.write_plan.WritePlanningError`.
+    the compile lane ever calls this.
     """
     # A readless predicate write declares no Transaction-Time boundary, so the
     # inert instant it carries is never captured (ADR 0010).
     _plan, statements = _plan_and_lower(
-        model, dialect, concurrency, INERT_CLOCK_INSTANT, [prepared]
+        model, dialect, concurrency, INERT_CLOCK_INSTANT, [readless_write(prepared)]
     )
     assert len(statements) == 1  # a readless predicate write is always exactly one statement
     return statements[0]

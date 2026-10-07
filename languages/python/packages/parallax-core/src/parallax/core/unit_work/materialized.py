@@ -5,7 +5,15 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from parallax.core import inheritance, temporal_read
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import (
+    AttributeMetadata,
+    Document,
+    EntityIdentity,
+    EntityMetadata,
+    Metamodel,
+    Multiplicity,
+    OccurrenceMetadata,
+)
 from parallax.core.temporal_read import TemporalShape, TimeInterval, milestone_edge
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform, Successor
 from parallax.core.unit_work.claims import SettledEvidence, WriteIntent, keyed_intent
@@ -24,6 +32,7 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.keys import resolve_object_key
 from parallax.core.unit_work.retain import InsertionIdentity, RetainedObservation
+from parallax.core.unit_work.write_validate import WriteRejectedError
 from parallax.core.write_plan.columns import ChunkedColumnBuilder, ColumnSlice, whole
 from parallax.core.write_plan.keys import (
     ObjectKey,
@@ -33,7 +42,7 @@ from parallax.core.write_plan.keys import (
 )
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import WriteObservation
-from parallax.core.write_plan.plan import Completion
+from parallax.core.write_plan.plan import SourceAuthority
 
 __all__ = [
     "AfterRemoval",
@@ -48,6 +57,7 @@ __all__ = [
     "ObjectClaimedWrite",
     "ObservedKeyedWrite",
     "PendingOpening",
+    "ReadlessPredicateWrite",
     "TargetKeyedWrite",
     "TemporalContribution",
     "TemporalKeyedWrite",
@@ -58,6 +68,8 @@ __all__ = [
     "chained",
     "composed_temporal_write",
     "group_state_keys",
+    "readless_write",
+    "reject_readless_document_many",
     "singleton_transform",
     "target_write",
     "temporal_contribution",
@@ -109,6 +121,72 @@ class MaterializedWriteGroup:
 
     def __len__(self) -> int:
         return len(self.evidence)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ReadlessPredicateWrite:
+    """A predicate-selected write routed readless (`m-batch-write`
+    "Predicate-selected readless forms"): it settles as one statement over its
+    unversioned Non-Temporal target, with no read, no evidence, and no
+    equality-elimination pass, and stands in the buffer as an ordering barrier.
+
+    Only :func:`readless_write` constructs one, so holding one means the
+    routing decision was made and the readless refusals were applied.
+    """
+
+    instruction: PreparedPredicateWrite
+
+
+def readless_write(instruction: PreparedPredicateWrite) -> ReadlessPredicateWrite:
+    """``instruction`` routed readless, after refusing a document-resident
+    ``many`` assignment no readless statement can express."""
+    reject_readless_document_many(instruction.selection.target, instruction)
+    carrier = object.__new__(ReadlessPredicateWrite)
+    object.__setattr__(carrier, "instruction", instruction)
+    return carrier
+
+
+def reject_readless_document_many(
+    entity: EntityMetadata, instruction: PreparedPredicateWrite
+) -> None:
+    """Refuse the readless document-array assignment shape before planning."""
+    if not isinstance(entity.declared_layout, Document):
+        return
+    occurrences = {
+        occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
+    }
+    for assignment in instruction.managed_assignments:
+        if isinstance(assignment.member, AttributeMetadata):
+            continue
+        member = assignment.member.identity.path[-1]
+        occurrence = occurrences.get(member)
+        if occurrence is None:  # pragma: no cover - preparation resolves every assignment
+            continue
+        nested_many = assigned_many_path(occurrence, assignment.value)
+        if occurrence.multiplicity is Multiplicity.MANY or nested_many is not None:
+            path = member if nested_many is None else ".".join((member, *nested_many))
+            raise WriteRejectedError(
+                "predicate-write-readless-document-many-unsupported",
+                f"{entity.identity.canonical}.{path}: a readless predicate write cannot "
+                "assign a document-resident `many` occurrence",
+            )
+
+
+def assigned_many_path(occurrence: OccurrenceMetadata, authored: object) -> tuple[str, ...] | None:
+    """Return the first authored nested ``many`` path in declaration order."""
+    if not isinstance(authored, Mapping):
+        return None
+    authored_members = cast("Mapping[object, object]", authored)
+    for nested in occurrence.value_objects:
+        name = nested.identity.path[-1]
+        if name not in authored_members:
+            continue
+        if nested.multiplicity is Multiplicity.MANY:
+            return (name,)
+        path = assigned_many_path(nested, authored_members[name])
+        if path is not None:
+            return (name, *path)
+    return None
 
 
 class VersionedEvidenceBuilder:
@@ -222,7 +300,7 @@ class ObjectClaimedWrite:
     """
 
     instruction: PreparedKeyedWrite
-    source: Completion | None = None
+    source: SourceAuthority | None = None
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS:
@@ -332,12 +410,12 @@ and differ only in the grain their claims are taken at."""
 
 
 def buffered_write(
-    instruction: PreparedWrite,
+    instruction: PreparedKeyedWrite,
     evidence: SettledEvidence | None,
     *,
-    source: Completion | None = None,
+    source: SourceAuthority | None = None,
     authority: InsertionIdentity | None = None,
-) -> PreparedWrite | ClaimedKeyedWrite | InsertionKeyedWrite:
+) -> PreparedKeyedWrite | ClaimedKeyedWrite | InsertionKeyedWrite:
     """``instruction`` as the buffer item that settles against ``evidence``.
 
     Retained observations travel with the write so settlement can spend them,
@@ -349,15 +427,8 @@ def buffered_write(
     """
     if evidence is None:
         if authority is not None:
-            if not isinstance(instruction, PreparedKeyedWrite):
-                raise TypeError("an insertion's authority licenses keyed writes alone")
             return InsertionKeyedWrite(instruction=instruction, identity=authority)
         return instruction
-    if not isinstance(instruction, PreparedKeyedWrite):
-        raise TypeError(
-            "only a keyed write settles against evidence of its own; a predicate-selected write "
-            "materializes to a Materialized Write Group with its own aligned evidence"
-        )
     if isinstance(evidence, ObjectKey):
         return ObjectClaimedWrite(instruction=instruction, source=source)
     if isinstance(evidence, RetainedObservation):
@@ -617,7 +688,8 @@ class FollowingKeyedWrite:
 
 
 BufferItem = (
-    PreparedWrite
+    PreparedKeyedWrite
+    | ReadlessPredicateWrite
     | ClaimedKeyedWrite
     | InsertionKeyedWrite
     | TargetKeyedWrite
@@ -634,7 +706,12 @@ def buffered_instruction(item: BufferItem) -> PreparedWrite:
     if isinstance(item, MaterializedWriteGroup):
         return item.mutation
     if isinstance(
-        item, ObservedKeyedWrite | ObjectClaimedWrite | InsertionKeyedWrite | TargetKeyedWrite
+        item,
+        ObservedKeyedWrite
+        | ObjectClaimedWrite
+        | InsertionKeyedWrite
+        | TargetKeyedWrite
+        | ReadlessPredicateWrite,
     ):
         return item.instruction
     return item

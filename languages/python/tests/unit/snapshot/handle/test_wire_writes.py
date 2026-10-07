@@ -71,9 +71,11 @@ from tests.unit._transact_support import (
     PAYMENT,
     PERSON,
     RATE,
-    WHERE_POSITION_META,
     balance_row,
     db_for,
+)
+from tests.unit._where_position_model import (
+    WHERE_POSITION_META,
 )
 
 _ACCOUNT_ROW: MappingRow = {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 4}

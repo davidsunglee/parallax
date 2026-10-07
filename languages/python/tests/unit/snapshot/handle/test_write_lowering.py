@@ -69,10 +69,10 @@ from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
-    PlanningRequest,
     PredicateSelection,
     PredicateWrite,
     WriteAssignment,
+    WritePlanningRequest,
 )
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.core.write_plan import (
@@ -146,17 +146,13 @@ def _flush_and_lower(
     observations: Mapping[ObjectKey, WriteObservation] | None = None,
 ) -> list[LoweredStatement]:
     instant = inert_instant()
-    plan = (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant,
-                concurrency=concurrency,
-                buffered_writes=observed_buffer(buffer, model, observations),
-            )
+    plan = build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant,
+            concurrency=concurrency,
+            buffered_writes=observed_buffer(buffer, model, observations),
         )
-        .plan
     )
     return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]
 
@@ -742,19 +738,6 @@ def test_insert_then_delete_cancels_to_no_dml() -> None:
 # --------------------------------------------------------------------------- #
 # Forward-error posture — every not-yet-lowered form refused loudly.           #
 # --------------------------------------------------------------------------- #
-def test_materializing_predicate_write_reaching_finalization_is_refused() -> None:
-    # A predicate write on a VERSIONED (or temporal) target never reaches
-    # finalization directly in production — materialization decomposes it to
-    # per-row keyed writes at BUFFER time (`parallax.snapshot.handle`'s
-    # `buffer_predicate_instruction`, which both representations' `_where`
-    # verbs reach; ADR 0014),
-    # before it is ever planned. Reaching here with one is a caller wiring
-    # defect this seam still refuses loudly, never mis-emits.
-    predicate = PredicateWrite("delete", PredicateSelection("Account", oa.All()))
-    with pytest.raises(WritePlanningError, match="materialize to keyed writes"):
-        _lower(predicate, ACCOUNT)
-
-
 @pytest.mark.parametrize(
     "predicate",
     [
@@ -778,7 +761,7 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # `subtype-write-set-based-unsupported` classification (m-inheritance-089)".
     #
     # The buffer-time seams (`_typed_writes.typed_predicate_write` /
-    # `_predicate_writes.buffer_predicate_instruction`) guard the developer `_where` verbs and the
+    # `UnitOfWork.buffer_predicate`) guard the developer `_where` verbs and the
     # engine's buffering translation — but they are NOT on every road here.
     # `stream_lowered` is EXPORTED (`parallax.snapshot.handle.__all__`,
     # `tests/api/public_api.json`), and the conformance engine's readless

@@ -5,31 +5,29 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Protocol
 
-from parallax.core.base import ManagedValue
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey
 from parallax.core.write_plan.steps import INFINITY, PlannedWrite, TemporalUpperBound
 
 __all__ = [
     "NO_OPENINGS",
-    "NO_OWNERSHIP",
+    "NO_TEMPORAL_WRITE_OWNERSHIP",
     "OPEN_BITEMPORAL_ENDS",
     "TRANSACTION_TIME_ENDS",
     "AllocatedOpening",
     "BoundRange",
-    "Completion",
-    "Completions",
+    "CombinedSourceAuthority",
     "DeferredRange",
     "Derivation",
     "Descent",
     "ExecutionUnit",
     "Openings",
     "OwnedEndpoint",
-    "Ownership",
     "PlannedSteps",
-    "RangeAcquisition",
+    "SourceAuthority",
     "StepSegment",
+    "TemporalWriteOwnership",
     "UnitEffects",
     "WritePlan",
     "eager_segment",
@@ -172,12 +170,13 @@ class Descent:
     original: ObservedStateKey
 
 
-class Ownership(Protocol):
-    """Read-only access to the rows the planning attempt opened successfully.
+class TemporalWriteOwnership(Protocol):
+    """Read-only access to the temporal rows the planning attempt opened
+    successfully, and to what the running flush's earlier units proved.
 
-    Ownership is the attempt's own record of executed openings, never an
+    It reads the attempt's own record of executed openings, never an
     inference from a row's Transaction-Time start equalling the attempt's
-    instant.
+    instant, and is neither a copy of that record nor source authority.
     """
 
     def owns(self, endpoint: OwnedEndpoint, /) -> bool: ...
@@ -212,7 +211,7 @@ class Ownership(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class _NoOwnership:
+class _NoTemporalWriteOwnership:
     def owns(self, endpoint: OwnedEndpoint, /) -> bool:
         del endpoint
         return False
@@ -240,40 +239,26 @@ class _NoOwnership:
         return None
 
 
-NO_OWNERSHIP: Final[Ownership] = _NoOwnership()
+NO_TEMPORAL_WRITE_OWNERSHIP: Final[TemporalWriteOwnership] = _NoTemporalWriteOwnership()
 """The ownership of an attempt that has opened nothing."""
 
 
-class Completion(Protocol):
-    """Source authority a successful execution unit spends."""
+class SourceAuthority(Protocol):
+    """Source authority admission already accepted, which a successful
+    execution unit spends."""
 
     def consume(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
-class Completions:
+class CombinedSourceAuthority:
     """Several distinct source authorities one unit spends together."""
 
-    members: tuple[Completion, ...]
+    members: tuple[SourceAuthority, ...]
 
     def consume(self) -> None:
         for member in self.members:
             member.consume()
-
-
-@dataclass(frozen=True, slots=True)
-class RangeAcquisition:
-    """The current coverage a deferred range must read before it binds: one
-    object's current rows overlapping ``valid_time_window``, read under the
-    shared row lock when ``locking``. A Transaction-Time-Only object has no
-    Valid Time, so its window is ``None`` and its one current row is the
-    coverage."""
-
-    entity: EntityMetadata
-    key_attribute: AttributeIdentity
-    key_value: ManagedValue
-    valid_time_window: TimeInterval | None
-    locking: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,13 +315,13 @@ class BoundRange(UnitEffects):
     steps: tuple[PlannedWrite, ...]
 
 
-class DeferredRange(Protocol):
+class DeferredRange:
     """A finalized range whose physical steps depend on coverage no planning
-    input knew: the executor performs ``acquisition``, and the unit of work
-    binds the rows it read."""
+    input knew, which the unit of work that planned it binds at its unit's
+    turn. Field-free here: what binding reads belongs to its unit-of-work
+    subclass."""
 
-    @property
-    def acquisition(self) -> RangeAcquisition: ...
+    __slots__ = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -352,11 +337,11 @@ class ExecutionUnit(UnitEffects):
     unit opened continues it.
 
     A unit with a ``deferred`` range has no planned step of its own: its steps
-    and effects come from binding the coverage the executor acquires for it.
+    and effects come from binding that range at the unit's turn.
     """
 
     end: int
-    claim: Completion | None = None
+    claim: SourceAuthority | None = None
     deferred: DeferredRange | None = None
 
 

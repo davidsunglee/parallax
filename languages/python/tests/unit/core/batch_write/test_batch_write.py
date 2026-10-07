@@ -7,7 +7,7 @@ Write Planner's own batching-stage adjacency logic (pinned in
 ``test_write_planner.py``) and the rendered SQL (pinned in
 ``test_write_lowering.py`` / ``test_engine.py``). The final section composes
 the two: it plans through the SAME production wiring
-(``parallax.snapshot.handle.build_write_planner``) and lowers the resulting
+(``parallax.core.execution._planning.build_write_planner``) and lowers the resulting
 plan, pinning that a run only ever collapses rows whose filtered Table Layout
 slot selections match (`m-sql` "Physical DML ordering").
 """
@@ -26,7 +26,7 @@ from parallax.core.execution._planning import build_write_planner
 from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import BufferItem, KeyedWrite, PlanningRequest, WriteRejectedError
+from parallax.core.unit_work import BufferItem, KeyedWrite, WritePlanningRequest, WriteRejectedError
 from parallax.descriptor import _records
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
@@ -90,17 +90,13 @@ def _flush_and_lower(
 ) -> list[LoweredStatement]:
     """Plan ``buffer`` with the production wiring, then lower the plan."""
     instant = inert_instant()
-    plan = (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant,
-                concurrency="locking",
-                buffered_writes=observed_buffer(buffer, model, None),
-            )
+    plan = build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant,
+            concurrency="locking",
+            buffered_writes=observed_buffer(buffer, model, None),
         )
-        .plan
     )
     return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]
 

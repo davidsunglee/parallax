@@ -68,7 +68,7 @@ from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import model_of
 from parallax.core.execution import QueryTargetError
-from parallax.core.execution import _predicate_writes as predicate_writes
+from parallax.core.execution import _attempt as attempt_module
 from parallax.core.execution._family import comparison_shape
 from parallax.core.execution_lifecycle import (
     DirectFailure,
@@ -90,7 +90,8 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     instructions,
 )
-from parallax.core.unit_work.write_settlement import assigned_many_path
+from parallax.core.unit_work import acquisition as acquisition_module
+from parallax.core.unit_work.materialized import assigned_many_path
 from parallax.core.write_plan import (
     ChunkedColumnBuilder,
     EntityStateRow,
@@ -133,10 +134,12 @@ from tests.unit._transact_support import (
     PAYMENT,
     PERSON,
     RATE,
-    WHERE_POSITION_META,
-    WherePosition,
     WriteDocumentBinds,
     account_db,
+)
+from tests.unit._where_position_model import (
+    WHERE_POSITION_META,
+    WherePosition,
 )
 
 
@@ -2615,13 +2618,13 @@ def _traversals(
     """Every Page-root traversal from now on, each as the event names its
     transaction had delivered when the traversal began."""
     traversals: list[list[str]] = []
-    roots = vars(predicate_writes)["publishable_member_rows"]
+    roots = vars(attempt_module)["publishable_member_rows"]
 
     def counting(page: Any) -> Any:
         traversals.append([] if recorder is None else _names(recorder.roots[-1].events))
         return roots(page)
 
-    monkeypatch.setattr(predicate_writes, "publishable_member_rows", counting)
+    monkeypatch.setattr(attempt_module, "publishable_member_rows", counting)
     return traversals
 
 
@@ -2752,7 +2755,7 @@ def test_a_verb_carrying_no_assignments_prepares_no_comparison(
         del args, kwargs
         raise AssertionError("a destructive verb prepared an effective-change comparison")
 
-    monkeypatch.setattr(predicate_writes, "prepare_effective_change", forbidden)
+    monkeypatch.setattr(acquisition_module, "prepare_effective_change", forbidden)
     deleting = ScriptedAdapter(Transact(Read(rows=_account_rows("Ada", "Grace")), Write(times=2)))
     account_db(deleting).transact(
         lambda tx: tx.delete_where(mm.Account.where(mm.Account.balance < 200)),

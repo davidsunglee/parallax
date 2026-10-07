@@ -50,7 +50,7 @@ from parallax.core.unit_work import (
     RetainedObservation,
     TransactionSettings,
     UnitOfWork,
-    WriteBatchTrigger,
+    WriteBatchReason,
     buffered_write,
     run_unit_of_work,
 )
@@ -64,7 +64,7 @@ from parallax.core.write_plan import (
     observed_state_key,
 )
 from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._judged_evidence_support import judged_evidence
 from tests.unit._prepared_read_support import bound_read
@@ -83,7 +83,7 @@ _INFINITY = INFINITY
 
 
 def _no_flush(
-    _plan: WritePlan, *, trigger: WriteBatchTrigger, bind_deferred: object, completed: object
+    _plan: WritePlan, *, trigger: WriteBatchReason, bind_deferred: object, completed: object
 ) -> None:
     """A flush sink for a test that never flushes."""
     return None
@@ -152,6 +152,7 @@ def _in_transaction[T](model: AcceptedMetamodel, body: Callable[[UnitOfWork], T]
         clock=FixedClock(_FIXED),
         meta=model,
         flush_executor=_no_flush,
+        acquire_rows=NO_ROW_READS,
         planner=build_write_planner(model),
         actor_identity=TEST_ACTOR_IDENTITY,
         evidence_policy_for=opt_lock.view(model).required_key,

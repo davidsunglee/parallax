@@ -83,13 +83,15 @@ from tests.unit._transact_support import (
     PAYMENT,
     PERSON,
     RATE,
-    WHERE_POSITION_META,
-    WherePosition,
     account_db,
     balance_row,
     db_for,
     grace,
     new_account,
+)
+from tests.unit._where_position_model import (
+    WHERE_POSITION_META,
+    WherePosition,
 )
 from tests.unit.snapshot.handle import _mixed_strategy_model as mx
 

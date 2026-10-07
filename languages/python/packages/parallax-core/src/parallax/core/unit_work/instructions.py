@@ -853,8 +853,12 @@ def prepare_typed_write(
 ) -> PreparedTargetWrite: ...
 @overload
 def prepare_typed_write(
-    instruction: KeyedWrite | PredicateWrite, model: AcceptedMetamodel
-) -> PreparedWrite: ...
+    instruction: KeyedWrite, model: AcceptedMetamodel
+) -> PreparedKeyedWrite: ...
+@overload
+def prepare_typed_write(
+    instruction: PredicateWrite, model: AcceptedMetamodel
+) -> PreparedPredicateWrite: ...
 @overload
 def prepare_typed_write(
     instruction: WriteInstruction, model: AcceptedMetamodel
@@ -881,11 +885,18 @@ def prepare_wire_write(
 ) -> PreparedTargetWrite: ...
 @overload
 def prepare_wire_write(
-    instruction: KeyedWrite | PredicateWrite,
+    instruction: KeyedWrite,
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
-) -> PreparedWrite: ...
+) -> PreparedKeyedWrite: ...
+@overload
+def prepare_wire_write(
+    instruction: PredicateWrite,
+    model: AcceptedMetamodel,
+    *,
+    authored_members: Set[str] | None = None,
+) -> PreparedPredicateWrite: ...
 @overload
 def prepare_wire_write(
     instruction: WriteInstruction,

@@ -24,13 +24,14 @@ from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     KeyedMutation,
     KeyedWrite,
-    PlanningRequest,
     RetainedObservation,
     TargetWrite,
     TransactionInstant,
+    WritePlanningRequest,
     WritePreconditionError,
     buffered_write,
 )
+from parallax.core.unit_work.acquisition import CoverageReadRequest
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedTargetWrite,
@@ -44,6 +45,7 @@ from parallax.core.unit_work.materialized import (
     target_write,
 )
 from parallax.core.unit_work.strategy import ActorIdentity
+from parallax.core.unit_work.uow import bind_deferred_range
 from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.write_plan import (
     ObjectKey,
@@ -54,14 +56,14 @@ from parallax.core.write_plan import (
 )
 from parallax.core.write_plan.keys import TemporalStateKey
 from parallax.core.write_plan.plan import (
-    NO_OWNERSHIP,
+    NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
-    Completions,
+    CombinedSourceAuthority,
+    DeferredRange,
     ExecutionUnit,
     Openings,
     OwnedEndpoint,
-    Ownership,
-    RangeAcquisition,
+    TemporalWriteOwnership,
     WritePlan,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
@@ -77,7 +79,11 @@ from parallax.core.write_plan.steps import (
 from tests._support.clock_probes import CountingClock, instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model
-from tests.unit.core.unit_work._acquired_rows_support import acquired
+from tests.unit.core.unit_work._acquired_rows_support import (
+    HeldRows,
+    bind_held,
+    coverage_read,
+)
 from tests.unit.core.unit_work._ownership_support import OpenedRows
 
 _SPANS = model("buffered-sequence-layout-twin-columns")
@@ -149,43 +155,41 @@ def _target(valid_from: dt.datetime, until: dt.datetime) -> BufferItem:
 def _plan(
     *writes: BufferItem,
     instant: TransactionInstant | None = None,
-    ownership: Ownership = NO_OWNERSHIP,
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> WritePlan:
-    return (
-        build_write_planner(_SPANS)
-        .finalize(
-            PlanningRequest(
-                actor_identity=TEST_ACTOR_IDENTITY,
-                transaction_instant=instant or instant_at(_PLANNED_AT.isoformat()),
-                concurrency="optimistic",
-                buffered_writes=compose_writes(_SPANS, list(writes)),
-                ownership=ownership,
-            )
+    return build_write_planner(_SPANS).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant or instant_at(_PLANNED_AT.isoformat()),
+            concurrency="optimistic",
+            buffered_writes=compose_writes(_SPANS, list(writes)),
+            ownership=ownership,
         )
-        .plan
     )
 
 
-def _deferred(plan: WritePlan) -> tuple[ExecutionUnit, RangeAcquisition]:
+def _deferred(plan: WritePlan) -> tuple[ExecutionUnit, CoverageReadRequest]:
+    """``plan``'s one deferred unit, and the coverage read the unit of work asks
+    for when it binds that unit's range."""
     (unit,) = plan.units
     assert unit.deferred is not None
-    return unit, unit.deferred.acquisition
+    return unit, coverage_read(
+        _SPANS, unit, transaction_instant=instant_at(_PLANNED_AT.isoformat())
+    )
 
 
 def _bind(
     unit: ExecutionUnit,
     rows: Sequence[PredecessorRow],
     *,
-    ownership: Ownership = NO_OWNERSHIP,
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
     transaction_instant: TransactionInstant | None = None,
 ) -> BoundRange:
-    deferred = unit.deferred
-    assert deferred is not None
-    return build_write_planner(_SPANS).bind_deferred(
-        deferred,
-        acquired(_SPANS, deferred.acquisition, rows),
+    return bind_held(
+        _SPANS,
+        unit,
+        rows,
         ownership=ownership,
-        actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=transaction_instant or instant_at(_PLANNED_AT.isoformat()),
     )
 
@@ -316,26 +320,27 @@ def test_every_bound_step_is_decorated_once_whether_the_range_bound_now_or_later
     assert sorted(map(id, audit.decorated)) == sorted(map(id, bound.steps))
 
 
-def test_a_planner_binds_only_a_deferred_range_it_finalized() -> None:
-    @dataclass(frozen=True, slots=True)
-    class _Foreign:
-        acquisition: RangeAcquisition
+def test_a_deferred_range_its_planner_did_not_finalize_is_refused_before_any_read() -> None:
+    class _Foreign(DeferredRange):
+        __slots__ = ()
 
-    _unit, acquisition = _deferred(_plan(_target(_MAR, _SEP)))
+    held = HeldRows(_SPANS)
     with pytest.raises(TypeError, match="did not finalize"):
-        build_write_planner(_SPANS).bind_deferred(
-            _Foreign(acquisition),
-            None,
-            ownership=NO_OWNERSHIP,
+        bind_deferred_range(
+            _Foreign(),
+            acquire_rows=held,
+            planner=build_write_planner(_SPANS),
+            ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at(_PLANNED_AT.isoformat()),
         )
+    assert held.requests == []
 
 
 @pytest.mark.parametrize(
     ("ownership", "retired"),
     [
-        (NO_OWNERSHIP, PlannedClose),
+        (NO_TEMPORAL_WRITE_OWNERSHIP, PlannedClose),
         (
             OpenedRows(frozenset({OwnedEndpoint(_SPAN, (1,), (Finite(instant=_JUN), OPEN_END))})),
             PlannedTemporalRemoval,
@@ -344,7 +349,7 @@ def test_a_planner_binds_only_a_deferred_range_it_finalized() -> None:
     ids=["stored", "opened-by-the-attempt"],
 )
 def test_an_overlapped_observation_is_retired_by_whoever_owns_its_row(
-    ownership: Ownership, retired: type[PlannedWrite]
+    ownership: TemporalWriteOwnership, retired: type[PlannedWrite]
 ) -> None:
     earlier = _retained(_span(_JAN, _JUN, 100))
     later = _retained(_span(_MAR, INFINITY, 200, tx_start=_T1))
@@ -455,4 +460,4 @@ def test_a_lone_observed_write_spends_every_twinned_observation_of_its_state() -
     (buffered,) = compose_writes(_SPANS, [_update(claim, _MAR, _APR)])
     assert isinstance(buffered, ObservedKeyedWrite)
     (unit,) = _plan(dataclasses.replace(buffered, twins=(twin, claim))).units
-    assert unit.claim == Completions((claim, twin))
+    assert unit.claim == CombinedSourceAuthority((claim, twin))
