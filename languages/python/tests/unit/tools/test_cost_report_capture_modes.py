@@ -13,6 +13,7 @@ import snapshot_delivery_overhead as snapshot_report
 from cost_report import Collection, MemberResult
 from durations import Spans
 from interpreter_matrix import RuntimeIdentity, RuntimeUnavailable, authority_minor
+from parallax.conformance import cost_envelope
 from parallax.conformance.budget import BudgetContract, MemoryGates, derive_memory_gates
 from parallax.conformance.cost_envelope import Provenance, classify_authority
 from tests.unit.tools._cost_report_support import (
@@ -23,9 +24,33 @@ from tests.unit.tools._cost_report_support import (
 )
 
 
+@pytest.fixture(params=("native", "ci"))
+def capture_host(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    if request.param == "native":
+        return
+    fingerprint = {
+        "hw.model": "x86_64",
+        "machdep.cpu.brand_string": "x86_64",
+        "hw.physicalcpu": "4",
+        "hw.memsize": str(16 * 1024**3),
+    }
+    monkeypatch.setattr(cost_envelope, "_sysctl", fingerprint.get)
+
+
+def _on_authority_host(provenance: Provenance, contract: BudgetContract) -> Provenance:
+    return Provenance.from_document(
+        {
+            **provenance.document(),
+            **contract.authority,
+            "dirty": False,
+            "postgres": provenance.postgres,
+        }
+    )
+
+
 def _preflight(monkeypatch: pytest.MonkeyPatch) -> tuple[BudgetContract, Provenance]:
     contract = BudgetContract.load()
-    provenance = replace(canary_provenance(contract), dirty=False)
+    provenance = _on_authority_host(canary_provenance(contract), contract)
     monkeypatch.setattr(cost_report, "committed_contract", lambda: contract)
 
     def probe(_runtime: str, _namespace: str) -> RuntimeIdentity:
@@ -112,6 +137,7 @@ def test_preflight_probes_real_authority_child(
     assert calls == [(authority_minor(contract.authority), snapshot_report.ENVIRONMENT_NAMESPACE)]
 
 
+@pytest.mark.usefixtures("capture_host")
 def test_preflight_accepts_matching_facts(monkeypatch: pytest.MonkeyPatch) -> None:
     _preflight(monkeypatch)
     cost_report.preflight()
@@ -172,11 +198,7 @@ def _capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Bud
     envelopes = member_envelopes(old)
     envelopes[cost_report.INSTANCE_STATE_SUBJECT] = complete_instance_state(old)
     for envelope in envelopes.values():
-        provenance = replace(
-            Provenance.from_document(envelope["provenance"]),
-            dirty=False,
-            cpython=str(current.authority["cpython"]),
-        )
+        provenance = _on_authority_host(Provenance.from_document(envelope["provenance"]), current)
         envelope["provenance"] = provenance.document()
         envelope["authority"] = classify_authority(provenance, old)
     collection = Collection(
@@ -193,6 +215,7 @@ def _files(root: Path) -> dict[str, bytes]:
     return {path.name: path.read_bytes() for path in root.iterdir()}
 
 
+@pytest.mark.usefixtures("capture_host")
 def test_reclassify_command_preserves_measurements_and_discloses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
