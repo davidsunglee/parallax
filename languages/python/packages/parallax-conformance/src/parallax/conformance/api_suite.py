@@ -1331,7 +1331,8 @@ _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON: Final[str] = (
 )
 
 # The root-configured boundary witnesses (m-case-format *Root configuration*):
-# what each proves is what the loop DOES under a configured root — a zero root
+# what each proves is what the loop DOES under a configured root — an
+# invocation naming no option resolving all four from the root, a zero root
 # bound, a root level over every attempt, a root opt-in (over a versioned row,
 # `m-opt-lock-024`, and over a Transaction-Time-Only milestone,
 # `m-temporal-read-011`), and each one's explicit override, plus the four-field
@@ -1341,6 +1342,7 @@ _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON: Final[str] = (
 # above (`m-unit-work-041`).
 _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON: Final[str] = (
     "a Database Root's configured transaction default reaching the loop it governs — "
+    "an invocation naming no option resolving all four from the root, "
     "a zero root bound disabling the loop, a root level requested on every attempt, a "
     "root opt-in retrying a conflict, each one's explicit per-call override, and a "
     "joining call held to the outer call's resolved values rather than the root's — "
@@ -1531,6 +1533,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-035": _ISOLATION_BOUNDARY_RUNNER_REASON,
     "m-unit-work-036": _ISOLATION_BOUNDARY_RUNNER_REASON,
     # -- the root-configured boundary witnesses (m-unit-work-041 is the story) - #
+    "m-execution-001": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-auto-retry-007": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-auto-retry-008": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-auto-retry-009": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,

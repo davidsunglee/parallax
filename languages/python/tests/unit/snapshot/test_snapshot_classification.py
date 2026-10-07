@@ -55,13 +55,16 @@ from parallax.core.temporal_read import (
     valid_time_coverage,
 )
 from parallax.core.temporal_read import view as temporal_view
-from parallax.snapshot import ObjectKey, connect
-from parallax.snapshot.materialize import ClassifiedRoot, RootView, classify_roots
+from parallax.core.write_plan import ObjectKey
+from parallax.snapshot import connect
 from parallax.snapshot.materialize._classify import (
+    ClassifiedRoot,
     ConformingRoot,
     RootClassification,
     RootClassifications,
+    classify_roots,
 )
+from parallax.snapshot.materialize._root import RootView
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,

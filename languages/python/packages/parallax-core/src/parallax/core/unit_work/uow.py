@@ -887,7 +887,7 @@ class UnitOfWork:
         # receives its own new `UnitOfWork` and therefore its own copy.
         self._actor_identity = actor_identity
         # The connected model's write-evidence policy, bound once per accepted
-        # model by the composition root, which alone may reach `m-opt-lock`.
+        # model by model preparation, which alone may reach `m-opt-lock`.
         self._evidence_policy_for = evidence_policy_for
         # An opaque demarcation-layer companion (the `db.transact` transaction
         # facade), published for the scope's duration so a joining call recovers

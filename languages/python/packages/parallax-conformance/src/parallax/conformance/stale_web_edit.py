@@ -8,8 +8,7 @@ from parallax.conformance.read_models import Balance
 from parallax.conformance.vo_models import Branch
 from parallax.core import LATEST, Edge
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot import edge_of
-from parallax.snapshot.handle import ScopedDatabase, Transaction
+from parallax.snapshot import ScopedDatabase, Transaction, edge_of
 
 __all__ = [
     "StaleMilestoneError",

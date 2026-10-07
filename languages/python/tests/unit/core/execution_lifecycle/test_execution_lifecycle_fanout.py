@@ -32,8 +32,7 @@ from parallax.core.execution_lifecycle import (
     ReadStarted,
     RootExecution,
 )
-from parallax.snapshot import connect
-from parallax.snapshot.handle import ScopedDatabase
+from parallax.snapshot import ScopedDatabase, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     Read,

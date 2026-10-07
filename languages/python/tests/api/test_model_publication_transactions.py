@@ -21,8 +21,7 @@ from parallax.core.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Transaction, connect
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
 

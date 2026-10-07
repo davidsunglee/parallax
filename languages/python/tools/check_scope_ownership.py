@@ -170,13 +170,6 @@ EXEMPTIONS: Mapping[str, str] = {
         "`parallax.evolution.model_evolution` and `parallax.evolution.schema_delta` "
         "scopes, so no single scope owns it"
     ),
-    "parallax-snapshot/src/parallax/snapshot/__init__.py": (
-        "distribution package interface: re-exports the §8 `parallax.snapshot` surface "
-        "(`connect`, `Snapshot`, the node-inspection surface, the arity errors) from "
-        "`parallax.snapshot.handle`, `parallax.snapshot.materialize`, "
-        "`parallax.snapshot._inspection` and `parallax.core.entity` (the "
-        "closed-world `UnloadedRelationshipError`), so no single scope owns it"
-    ),
 }
 
 

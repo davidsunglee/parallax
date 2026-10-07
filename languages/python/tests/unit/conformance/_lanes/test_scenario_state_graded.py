@@ -12,9 +12,8 @@ from parallax.conformance import case_format, models
 from parallax.conformance._lanes import scenario
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
-from parallax.core.unit_work import OptimisticLockConflictError
+from parallax.core.unit_work import OptimisticLockConflictError, WriteEvidenceError
 from parallax.core.write_plan.steps import INFINITY, MilestoneTarget
-from parallax.snapshot.handle import WriteEvidenceError
 from tests._support.repo import REPO_ROOT
 from tests.unit.conformance._recording_ports import FakeWritePort
 

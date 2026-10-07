@@ -48,11 +48,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution import DatabaseOptions, TransactionOptionConflictError
-from parallax.snapshot.handle import (
-    Database,
-    ScopedDatabase,
-    Transaction,
-)
+from parallax.snapshot import Database, ScopedDatabase, Transaction
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import ConnectsAsItself, body_outcome
 from tests._support.root_ownership import own_root
@@ -651,6 +647,7 @@ _ROOT_WITNESS_ATTEMPTS: dict[str, tuple[int, bool, str, str, int]] = {
     "m-auto-retry-009": (10, False, "optimistic", "repeatable_read", 2),
     "m-auto-retry-010": (10, False, "optimistic", "repeatable_read", 2),
     "m-auto-retry-011": (10, False, "optimistic", "read_committed", 2),
+    "m-execution-001": (2, True, "locking", "repeatable_read", 1),
     "m-opt-lock-024": (10, True, "optimistic", "read_committed", 2),
     "m-opt-lock-025": (10, False, "optimistic", "read_committed", 1),
     "m-unit-work-037": (2, True, "locking", "repeatable_read", 1),

@@ -38,8 +38,7 @@ from parallax.core.metamodel import (
     WriteAssignmentError,
     judge_assignment,
 )
-from parallax.snapshot import SnapshotConnectionError
-from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, SnapshotConnectionError, Transaction
 from tests._support.db_port import (
     BeginCall,
     CommitCall,

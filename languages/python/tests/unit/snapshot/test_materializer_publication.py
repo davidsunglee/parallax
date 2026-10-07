@@ -71,11 +71,20 @@ from parallax.core.read_delivery._row_lane import (
 )
 from parallax.core.temporal_read import Pin
 from parallax.core.write_plan import ObjectKey
-from parallax.snapshot import SnapshotInspectionError, edge_of, is_view_loaded, pin_of, view
-from parallax.snapshot.handle import SnapshotMaterializationError
-from parallax.snapshot.materialize import RootView, SnapshotConsistencyError
+from parallax.snapshot import (
+    SnapshotConsistencyError,
+    SnapshotInspectionError,
+    SnapshotMaterializationError,
+    edge_of,
+    is_view_loaded,
+    pin_of,
+    view,
+)
 from parallax.snapshot.materialize._publication import publication_issue, require_publishable
-from parallax.snapshot.materialize._root import _member_order  # pyright: ignore[reportPrivateUsage]
+from parallax.snapshot.materialize._root import (
+    RootView,
+    _member_order,  # pyright: ignore[reportPrivateUsage]
+)
 from parallax.snapshot.materialize._wire import EntityReader
 from tests._support import snapshot_models as sm
 from tests._support.model_capabilities import graph_construction_for

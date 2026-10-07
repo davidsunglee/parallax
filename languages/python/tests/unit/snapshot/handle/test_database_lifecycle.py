@@ -37,11 +37,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.execution import DatabaseOptions, ExecutionFailure
-from parallax.snapshot import connect
-from parallax.snapshot.handle import (
-    Database,
-    Transaction,
-)
+from parallax.snapshot import Database, Transaction, connect
 from tests._support.db_port import (
     BeginCall,
     CommitCall,

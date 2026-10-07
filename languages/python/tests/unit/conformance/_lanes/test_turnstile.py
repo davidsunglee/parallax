@@ -16,7 +16,7 @@ from parallax.conformance._database_control import TerminationReport
 from parallax.conformance._lanes.turnstile import Turnstile, await_workers
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.snapshot import handle
+from parallax.snapshot import ScopedDatabase
 
 
 class _BlockingExecution:
@@ -54,7 +54,7 @@ class _BlockingExecution:
     @property
     def database(
         self,
-    ) -> handle.ScopedDatabase:  # pragma: no cover - never reached; see the docstring
+    ) -> ScopedDatabase:  # pragma: no cover - never reached; see the docstring
         raise AssertionError("these pins never run a group through this execution")
 
     @property

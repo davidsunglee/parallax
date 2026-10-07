@@ -17,8 +17,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, Float32, Int32, ValueObject, attr
 from parallax.core.base import PresentDocument
 from parallax.core.db_port import JsonDocument
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Transaction, connect
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
 from tests._support.root_ownership import own_root
 

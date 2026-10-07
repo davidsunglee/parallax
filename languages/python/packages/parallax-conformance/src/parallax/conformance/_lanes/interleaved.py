@@ -37,7 +37,7 @@ from parallax.conformance._mechanism.transaction_control import transact
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.base import normalize_instant
 from parallax.core.unit_work import OptimisticLockConflictError
-from parallax.snapshot import handle
+from parallax.snapshot import Transaction
 
 __all__ = ["run_interleaved_scenario_case"]
 
@@ -139,7 +139,7 @@ def _run_interleaved_group(
     state = GroupState()
     running: list[int] = []
 
-    def body(tx: handle.Transaction) -> None:
+    def body(tx: Transaction) -> None:
         for position, index in enumerate(indices):
             turnstile.wait_for(index)
             running.append(index)

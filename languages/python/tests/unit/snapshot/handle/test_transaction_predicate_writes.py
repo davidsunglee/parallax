@@ -87,6 +87,7 @@ from parallax.core.unit_work import (
     PredicateWrite,
     StaleWriteError,
     UnitOfWork,
+    WriteEvidenceError,
     WriteRejectedError,
     instructions,
 )
@@ -101,11 +102,12 @@ from parallax.core.write_plan import (
 )
 from parallax.core.write_plan.columns import ColumnSlice
 from parallax.snapshot import (
+    Database,
     Snapshot,
+    Transaction,
     connect,
 )
-from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
-from parallax.snapshot.materialize import RootView
+from parallax.snapshot.materialize._root import RootView
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized

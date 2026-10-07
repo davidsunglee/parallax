@@ -34,7 +34,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import Dialect
-from parallax.snapshot.handle import ScopedDatabase, Transaction
+from parallax.snapshot import ScopedDatabase, Transaction
 
 __all__ = [
     "TARGET_ID",

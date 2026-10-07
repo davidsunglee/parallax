@@ -813,7 +813,7 @@ and never a second eager read's.
 
 An issue names its `code`, `entity`, `member`, and `objectKey` and deliberately
 states **no rejected value and no occurrence path**. Both are part of the public
-diagnosis (`m-snapshot-read` *Evidence a public issue carries*), and neither is
+diagnosis (`m-read-delivery` *Evidence a public issue carries*), and neither is
 statable here as one comparison: a rejected structured value is a detached
 read-only mapping whose equality is object-key-order-insensitive and whose
 absent-member marker is a language singleton, and a path addresses array
@@ -1680,13 +1680,10 @@ rollback.
 A case MAY carry **`given.databaseOptions`**, the transaction option defaults the
 Database Root its units of work run through is configured with at connect (ADR
 0065). It spells the same four fields as `when.uow` under the same definitions,
-and it is configuration rather than a request: an outer invocation resolves each
-option as its own explicit `when.uow` value, else the root's, else the built-in
-(`maxRetries` 10, `concurrency` `optimistic`, `retryOptimisticConflicts` false,
-`isolation` `read-committed`), and a joining call inherits or compares against
-the **active transaction's** resolved values — the root's own record never enters
-a join comparison on its own, so under an outer call that overrode the root, a
-join naming the root's value is refused. A field the case omits from either
+and it is configuration rather than a request: how an outer invocation and a
+joining call resolve each option against it, and the built-in record an
+unconfigured root carries, are `m-execution`'s (*Option resolution*). A field
+the case omits from either
 placement is omitted, never authored as `null`, and a runner MUST carry each
 placement to its own seam: the root record to the connect that composes the
 case's Database, and only the fields `when.uow` authors to the transaction it

@@ -14,8 +14,7 @@ from typing import Any
 
 from parallax.core.entity._model import model_of
 from parallax.core.object_query import deserialize
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Transaction, connect
 from tests._support import mirrored_models as mm
 from tests._support.root_ownership import own_root
 

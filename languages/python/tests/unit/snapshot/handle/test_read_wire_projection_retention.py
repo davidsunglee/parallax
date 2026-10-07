@@ -11,8 +11,7 @@ from typing import Any, cast
 
 from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.temporal_read import Pin
-from parallax.snapshot import Snapshot
-from parallax.snapshot.materialize import WireEntity
+from parallax.snapshot import Snapshot, WireEntity
 from parallax.snapshot.materialize import _wire as wire_materialize
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._instance_state_support import COMPACT, SCENARIOS, Scenario

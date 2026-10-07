@@ -27,6 +27,7 @@ from parallax.core.unit_work import (
     CardinalityCorruptionError,
     OptimisticLockConflictError,
     RollbackOnlyError,
+    WriteEvidenceError,
     WriteInstructionError,
     WritePreconditionError,
     WriteRejectedError,
@@ -35,7 +36,7 @@ from parallax.core.unit_work.ranges import DeferredTemporalRange
 from parallax.core.unit_work.write_planner import WritePlanner
 from parallax.core.write_plan import PredecessorRows
 from parallax.core.write_plan.plan import BoundRange
-from parallax.snapshot.handle import ScopedDatabase, Transaction, WriteEvidenceError
+from parallax.snapshot import ScopedDatabase, Transaction
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

@@ -25,10 +25,7 @@ from parallax.conformance.vo_models import (
 from parallax.core.entity import Entity
 from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import Clock
-from parallax.snapshot.handle import (
-    ScopedDatabase,
-    Transaction,
-)
+from parallax.snapshot import ScopedDatabase, Transaction
 
 __all__ = ["WRITE_STORIES", "WriteStory", "story_snippet"]
 

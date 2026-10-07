@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from parallax.core.execution import DatabaseOptions, ServingModel
     from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
     from parallax.core.unit_work import Clock
-    from parallax.snapshot import handle
+    from parallax.snapshot import ScopedDatabase
 
 __all__ = [
     "CaseDatabase",
@@ -100,7 +100,7 @@ class ModeledExecution(Protocol):
     """
 
     @property
-    def database(self) -> handle.ScopedDatabase: ...
+    def database(self) -> ScopedDatabase: ...
 
     @property
     def dialect(self) -> Dialect: ...

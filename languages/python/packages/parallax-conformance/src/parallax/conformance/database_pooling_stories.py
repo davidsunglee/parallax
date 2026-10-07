@@ -26,8 +26,7 @@ from parallax.core.execution_lifecycle import (
     RootExecution,
 )
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
-from parallax.snapshot import connect
-from parallax.snapshot.handle import ScopedDatabase
+from parallax.snapshot import ScopedDatabase, connect
 
 __all__ = [
     "ClosedBothWays",

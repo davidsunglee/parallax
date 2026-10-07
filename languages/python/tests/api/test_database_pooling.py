@@ -28,8 +28,7 @@ from parallax.core.execution import (
     prepare_model,
 )
 from parallax.postgres import OnDemandOptions, PoolOptions
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Transaction, connect
 
 _ACCOUNT = MODELS["account"]
 

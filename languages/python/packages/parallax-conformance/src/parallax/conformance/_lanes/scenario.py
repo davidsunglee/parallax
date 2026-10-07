@@ -110,6 +110,7 @@ from parallax.core.unit_work import (
     SubjectActor,
     TransactionInstant,
     WriteEffectError,
+    WriteEvidenceError,
     WritePlanningRequest,
     WritePreconditionError,
     buffered_write,
@@ -140,7 +141,7 @@ from parallax.core.write_plan import (
 )
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP
 from parallax.core.write_plan.steps import KeyTarget, PlannedWrite
-from parallax.snapshot import handle
+from parallax.snapshot import Database, ScopedDatabase, Snapshot, Transaction, WireEntity
 from parallax.snapshot.materialize._wire import authoring_of, read_origin_of
 
 __all__ = [
@@ -325,7 +326,7 @@ class _ResolvedWrite:
 
     instruction: PreparedWrite | PreparedTargetWrite
     oracle_observation: WriteObservation | None
-    source_node: handle.WireEntity | None = None
+    source_node: WireEntity | None = None
 
 
 def _versioned_non_temporal_version_attribute(
@@ -518,7 +519,7 @@ class TemporalEvidence(Protocol):
         key: ObjectKey | None,
         row: Mapping[str, object],
         valid_from: dt.datetime | None,
-    ) -> tuple[TemporalObservation | None, handle.WireEntity | None]: ...
+    ) -> tuple[TemporalObservation | None, WireEntity | None]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -547,7 +548,7 @@ class CaseStateEvidence:
         key: ObjectKey | None,
         row: Mapping[str, object],
         valid_from: dt.datetime | None,
-    ) -> tuple[TemporalObservation | None, handle.WireEntity | None]:
+    ) -> tuple[TemporalObservation | None, WireEntity | None]:
         observation: TemporalObservation | None
         if self.named is None:
             _refuse_materialized_case_state(self.model, entity, row, self.shadow)
@@ -580,7 +581,7 @@ class GroupEvidence:
     """
 
     state: GroupState
-    named: Sequence[handle.WireEntity] | None
+    named: Sequence[WireEntity] | None
 
     def settle(
         self,
@@ -588,7 +589,7 @@ class GroupEvidence:
         key: ObjectKey | None,
         row: Mapping[str, object],
         valid_from: dt.datetime | None,
-    ) -> tuple[TemporalObservation | None, handle.WireEntity | None]:
+    ) -> tuple[TemporalObservation | None, WireEntity | None]:
         name = entity.identity.canonical
         if key is not None and key in self.state.settled:
             raise EngineError(
@@ -665,7 +666,7 @@ def _build_temporal_instruction(
     is_insert = mutation in _TEMPORAL_INSERT_MUTATIONS
     is_coalescing_candidate = not is_insert and pk_key is not None and pk_key in unit_inserted
     observation: TemporalObservation | None = None
-    source_node: handle.WireEntity | None = None
+    source_node: WireEntity | None = None
     if not is_insert and not is_coalescing_candidate:
         window = prepared.valid_time_window
         observation, source_node = evidence.settle(
@@ -1400,7 +1401,7 @@ def _lower_predicate_write_step(
 
 
 def _buffer_wire_predicate_write(
-    tx: handle.Transaction,
+    tx: Transaction,
     model: AcceptedMetamodel,
     raw_write: Mapping[str, object],
     prepared: PreparedPredicateWrite,
@@ -1482,7 +1483,7 @@ def run_standalone_find(
     context: CaseContext,
     step: Mapping[str, object],
     lifecycle: LifecycleRun,
-) -> tuple[handle.Snapshot[handle.WireEntity], LifecycleObservation]:
+) -> tuple[Snapshot[WireEntity], LifecycleObservation]:
     """Run one UNGROUPED scenario find step through the production Wire read.
 
     A step runs inside a real ``db.transact`` under exactly the options its
@@ -1495,7 +1496,7 @@ def run_standalone_find(
     """
     query = step_query(step, context.model)
     observed = lifecycle.observation()
-    with handle.Database.connect(
+    with Database.connect(
         port, context.serving, options=context.options, lifecycle_provider=observed.provider
     ) as _root_db:
         db = _root_db.using_database_login()
@@ -1870,7 +1871,7 @@ def read_step_graph(
     index: int,
     step: Mapping[str, object],
     query: ObjectQueryNode,
-    snapshot: handle.Snapshot[handle.WireEntity],
+    snapshot: Snapshot[WireEntity],
 ) -> dict[str, object] | None:
     """One find step's own graph observation, or ``None`` when it asserts none.
 
@@ -2211,7 +2212,7 @@ def _execute_write_unit(
         return tuple(statements), _execute_framework_write_unit(port, statements, rollback=rollback)
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
-    with handle.Database.connect(
+    with Database.connect(
         write_adapter(port, rollback=rollback),
         serving,
         options=options,
@@ -2220,7 +2221,7 @@ def _execute_write_unit(
     ) as _root_database:
         database = _root_database.using_database_login()
 
-        def body(tx: handle.Transaction) -> None:
+        def body(tx: Transaction) -> None:
             state = GroupState()
             with observed.resolving_reads():
                 for query in _unit_source_reads(model, resolved):
@@ -2318,7 +2319,7 @@ def _run_readless_predicate_write(
     """
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
-    with handle.Database.connect(
+    with Database.connect(
         write_adapter(port, rollback=rollback),
         context.serving,
         options=context.options,
@@ -2327,7 +2328,7 @@ def _run_readless_predicate_write(
     ) as _root_database:
         database = _root_database.using_database_login()
 
-        def body(tx: handle.Transaction) -> None:
+        def body(tx: Transaction) -> None:
             _buffer_wire_predicate_write(tx, context.model, raw_write, instruction)
 
         with absorbing_rollback():
@@ -2451,7 +2452,7 @@ def _run_materializing_pair(
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     rollback = write_step.get("rollback") is True
     observed = lifecycle.observation()
-    with handle.Database.connect(
+    with Database.connect(
         write_adapter(port, rollback=rollback),
         context.serving,
         options=context.options,
@@ -2460,7 +2461,7 @@ def _run_materializing_pair(
     ) as _root_database:
         database = _root_database.using_database_login()
 
-        def body(tx: handle.Transaction) -> None:
+        def body(tx: Transaction) -> None:
             _buffer_wire_predicate_write(
                 tx,
                 model,
@@ -2631,15 +2632,15 @@ class CaseContext:
         return self.shadow
 
 
-def _empty_published() -> list[handle.WireEntity]:
+def _empty_published() -> list[WireEntity]:
     return []
 
 
-def _empty_group_finds() -> dict[int, tuple[handle.WireEntity, ...]]:
+def _empty_group_finds() -> dict[int, tuple[WireEntity, ...]]:
     return {}
 
 
-def _empty_opened() -> dict[ObjectKey, handle.WireEntity]:
+def _empty_opened() -> dict[ObjectKey, WireEntity]:
     return {}
 
 
@@ -2664,13 +2665,13 @@ class GroupState:
     scenario-wide store, so no value crosses a transaction boundary.
     """
 
-    published: list[handle.WireEntity] = field(default_factory=_empty_published)
-    finds: dict[int, tuple[handle.WireEntity, ...]] = field(default_factory=_empty_group_finds)
-    opened: dict[ObjectKey, handle.WireEntity] = field(default_factory=_empty_opened)
+    published: list[WireEntity] = field(default_factory=_empty_published)
+    finds: dict[int, tuple[WireEntity, ...]] = field(default_factory=_empty_group_finds)
+    opened: dict[ObjectKey, WireEntity] = field(default_factory=_empty_opened)
     settled: set[ObjectKey] = field(default_factory=_empty_settled)
 
 
-def _published_nodes(snapshot: handle.Snapshot[handle.WireEntity]) -> tuple[handle.WireEntity, ...]:
+def _published_nodes(snapshot: Snapshot[WireEntity]) -> tuple[WireEntity, ...]:
     """Every Entity node ``snapshot`` published, each once, in walk order.
 
     The roots come from the CHECKED view, because invalid stored data is a fact
@@ -2679,7 +2680,7 @@ def _published_nodes(snapshot: handle.Snapshot[handle.WireEntity]) -> tuple[hand
     return _published_from(snapshot.checked().results())
 
 
-def _published_from(roots: Iterable[object]) -> tuple[handle.WireEntity, ...]:
+def _published_from(roots: Iterable[object]) -> tuple[WireEntity, ...]:
     """Every Entity node ``roots`` carry, each once, in walk order.
 
     Publication is what settles ownership: a value a caller was handed is the one
@@ -2698,7 +2699,7 @@ def _published_from(roots: Iterable[object]) -> tuple[handle.WireEntity, ...]:
     carries no value to publish and contributes none — which is what leaves the
     wrapper itself unwritable.
     """
-    nodes: list[handle.WireEntity] = []
+    nodes: list[WireEntity] = []
     visited: set[int] = set()
     frontier: list[object] = [
         cast("read_delivery.InvalidData[object]", root).data
@@ -2713,7 +2714,7 @@ def _published_from(roots: Iterable[object]) -> tuple[handle.WireEntity, ...]:
         if isinstance(value, list):
             frontier.extend(cast("list[object]", value))
             continue
-        if not isinstance(value, handle.WireEntity) or id(value) in visited:
+        if not isinstance(value, WireEntity) or id(value) in visited:
             continue
         visited.add(id(value))
         nodes.append(value)
@@ -2721,7 +2722,7 @@ def _published_from(roots: Iterable[object]) -> tuple[handle.WireEntity, ...]:
     return tuple(nodes)
 
 
-def _published_claims(nodes: Sequence[handle.WireEntity]) -> GroupObservations:
+def _published_claims(nodes: Sequence[WireEntity]) -> GroupObservations:
     """The retained claims ``nodes`` carry, in order — what the PURE re-lowering
     oracle plans with, derived from the same values the real write settles
     against so the two can never name different states."""
@@ -2733,7 +2734,7 @@ def _published_claims(nodes: Sequence[handle.WireEntity]) -> GroupObservations:
     return claims
 
 
-def _node_object_key(node: handle.WireEntity) -> ObjectKey:
+def _node_object_key(node: WireEntity) -> ObjectKey:
     """The object ``node`` names: the one its read observed, or the one the
     insert that answered it opened."""
     hint = read_origin_of(node)
@@ -2744,7 +2745,7 @@ def _node_object_key(node: handle.WireEntity) -> ObjectKey:
     return authority.object_key
 
 
-def _writable_source(node: handle.WireEntity) -> bool:
+def _writable_source(node: WireEntity) -> bool:
     """Whether a keyed write may be addressed by ``node`` at all.
 
     A group may publish SEVERAL milestones of one key — an audit read of the
@@ -2767,9 +2768,9 @@ def _group_source_node(
     entity_name: str,
     key: ObjectKey | None,
     state: GroupState,
-    named: Sequence[handle.WireEntity] | None,
+    named: Sequence[WireEntity] | None,
     valid_from: dt.datetime | None = None,
-) -> handle.WireEntity:
+) -> WireEntity:
     """The published value one keyed write is addressed by, from what its own
     choreography unit produced.
 
@@ -2828,7 +2829,7 @@ def _group_source_node(
     )
 
 
-def _pinned_at(node: handle.WireEntity, valid_from: dt.datetime | None) -> bool:
+def _pinned_at(node: WireEntity, valid_from: dt.datetime | None) -> bool:
     """Whether ``node`` was read at the Valid-Time instant a write starting at
     ``valid_from`` takes from its source; a write with no Valid-Time start
     takes none."""
@@ -2843,8 +2844,8 @@ def _pinned_at(node: handle.WireEntity, valid_from: dt.datetime | None) -> bool:
 def _source_find_nodes(
     entry: Mapping[str, object],
     index: int,
-    group_finds: Mapping[int, tuple[handle.WireEntity, ...]],
-) -> tuple[handle.WireEntity, ...] | None:
+    group_finds: Mapping[int, tuple[WireEntity, ...]],
+) -> tuple[WireEntity, ...] | None:
     """What the find step a submission of the WRITE step at ``index`` names with
     ``on`` published (`m-case-format` *Settling against a grouped find*) —
     ``None`` when it names no find, which is every submission but one settling
@@ -2875,13 +2876,13 @@ def _source_find_nodes(
 
 
 def _buffer_wire_write(
-    tx: handle.Transaction,
+    tx: Transaction,
     model: AcceptedMetamodel,
     state: GroupState,
     write: _ResolvedWrite,
-    named: Sequence[handle.WireEntity] | None,
-    source: handle.WireEntity | None = None,
-) -> handle.WireEntity | None:
+    named: Sequence[WireEntity] | None,
+    source: WireEntity | None = None,
+) -> WireEntity | None:
     """Buffer ONE resolved keyed write through the public ``tx.wire`` verb its
     mutation names.
 
@@ -2951,7 +2952,7 @@ def _buffer_wire_write(
 
 
 def _buffer_wire_target(
-    tx: handle.Transaction, model: AcceptedMetamodel, instruction: PreparedTargetWrite
+    tx: Transaction, model: AcceptedMetamodel, instruction: PreparedTargetWrite
 ) -> None:
     """Buffer ONE caller-addressed write through the public ``tx.wire`` verb
     its mutation names, with the caller's own revision beside its document."""
@@ -3027,7 +3028,7 @@ class _StepRead:
     """
 
     roots: tuple[object, ...]
-    graph: handle.Snapshot[handle.WireEntity] | None
+    graph: Snapshot[WireEntity] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -3060,8 +3061,8 @@ class GroupSession:
     """
 
     adapter: DatabaseAdapter
-    root: handle.Database[object]
-    database: handle.ScopedDatabase
+    root: Database[object]
+    database: ScopedDatabase
 
     def __init__(
         self,
@@ -3071,7 +3072,7 @@ class GroupSession:
         observation: LifecycleObservation,
     ) -> None:
         object.__setattr__(self, "adapter", adapter)
-        root = handle.Database.connect(
+        root = Database.connect(
             adapter,
             context.serving,
             options=context.options,
@@ -3091,7 +3092,7 @@ class GroupSession:
 
 
 def run_group_step(
-    tx: handle.Transaction,
+    tx: Transaction,
     session: ModeledExecution,
     context: CaseContext,
     state: GroupState,
@@ -3164,7 +3165,7 @@ def run_group_step(
         entries = write_entries(step["write"])
         published = _published_claims(state.published)
         resolved: list[_ResolvedWrite] = []
-        sources: list[Sequence[handle.WireEntity] | None] = []
+        sources: list[Sequence[WireEntity] | None] = []
         unit_inserted: set[ObjectKey] = set()
         for entry in entries:
             named = _source_find_nodes(entry, index, state.finds)
@@ -3200,7 +3201,7 @@ def run_group_step(
 
 
 def _group_read(
-    tx: handle.Transaction,
+    tx: Transaction,
     context: CaseContext,
     state: GroupState,
     step: Mapping[str, object],
@@ -3269,7 +3270,7 @@ def _run_uow_group(
         rows_observed: list[dict[str, object]] = []
         step_graphs: list[dict[str, object]] = []
 
-        def body(tx: handle.Transaction) -> None:
+        def body(tx: Transaction) -> None:
             for index in range(start, end + 1):
                 step, read = run_group_step(
                     tx, session, context, state, steps[index], index, tx_instant, observation
@@ -3311,7 +3312,7 @@ def _run_uow_group(
 # --------------------------------------------------------------------------- #
 
 
-def _empty_answered() -> dict[str, handle.WireEntity]:
+def _empty_answered() -> dict[str, WireEntity]:
     return {}
 
 
@@ -3325,7 +3326,7 @@ class _Submitted:
     the value each accepted insert answered, by its pointer, and the refusal
     each refused submission raised."""
 
-    opened: dict[str, handle.WireEntity] = field(default_factory=_empty_answered)
+    opened: dict[str, WireEntity] = field(default_factory=_empty_answered)
     refusals: list[dict[str, object]] = field(default_factory=_empty_refusals)
 
 
@@ -3352,7 +3353,7 @@ def _submission_writes(
 
 
 def _submit(
-    tx: handle.Transaction,
+    tx: Transaction,
     model: AcceptedMetamodel,
     state: GroupState,
     submitted: _Submitted,
@@ -3381,7 +3382,7 @@ def _submit(
                 opened = _buffer_wire_write(tx, model, state, write, named, source)
                 if opened is not None:
                     submitted.opened[pointer] = opened
-    except handle.WriteEvidenceError as exc:
+    except WriteEvidenceError as exc:
         if exc.code != refusal:
             raise
         submitted.refusals.append({"at": pointer, "errorClass": exc.code})
@@ -3466,7 +3467,7 @@ def _run_state_graded_group(
     rows_observed: list[dict[str, object]] = []
     running: list[int] = []
 
-    def body(tx: handle.Transaction) -> None:
+    def body(tx: Transaction) -> None:
         for index in range(start, end + 1):
             running.append(index)
             step = steps[index]
@@ -3974,10 +3975,10 @@ def refuse_a_conflict_retry_opt_in(
 
 
 def _conflict_attempt_affected(
-    database: handle.ScopedDatabase,
+    database: ScopedDatabase,
     requests: case_format.TransactionKeywords,
     implied: type[WriteEffectError],
-    body: Callable[[handle.Transaction], int],
+    body: Callable[[Transaction], int],
 ) -> int:
     """One conflict attempt's affected-row observation: what ``body`` reports when
     the write lands, or the ``actual`` count carried by the ONE Write Effect Error
@@ -4039,7 +4040,7 @@ def _conflict_source_nodes(
     target: str,
     resolved: Sequence[_ConflictWrite],
     lifecycle: LifecycleRun,
-) -> tuple[dict[ObjectKey, handle.WireEntity], int]:
+) -> tuple[dict[ObjectKey, WireEntity], int]:
     """The published rows one NON-TEMPORAL conflict attempt's keyed writes are
     addressed and licensed by, read through a real ``db.wire.find``, beside the
     round trips that read cost.
@@ -4068,7 +4069,7 @@ def _conflict_source_nodes(
     """
     instant = normalize_instant(dt.datetime.fromisoformat(INERT_CLOCK_INSTANT))
     observed = lifecycle.observation()
-    with handle.Database.connect(
+    with Database.connect(
         port,
         serving,
         options=options,
@@ -4076,7 +4077,7 @@ def _conflict_source_nodes(
         lifecycle_provider=observed.provider,
     ) as _root_database:
         database = _root_database.using_database_login()
-        nodes: dict[ObjectKey, handle.WireEntity] = {}
+        nodes: dict[ObjectKey, WireEntity] = {}
         with observed.resolving_reads():
             snapshot = database.wire.find(
                 {"target": target, "predicate": _conflict_key_predicate(model, target, resolved)}
@@ -4089,8 +4090,8 @@ def _conflict_source_nodes(
 
 
 def _conflict_source_node(
-    target: str, write: _ConflictWrite, nodes: Mapping[ObjectKey, handle.WireEntity]
-) -> handle.WireEntity:
+    target: str, write: _ConflictWrite, nodes: Mapping[ObjectKey, WireEntity]
+) -> WireEntity:
     """The published node ``write`` settles against, or the authoring refusal.
 
     A conflict case describes a write a caller could actually issue, so the row
@@ -4111,7 +4112,7 @@ def _conflict_source_node(
 
 
 def _refuse_unobserved_conflict_version(
-    target: str, write: _ConflictWrite, node: handle.WireEntity
+    target: str, write: _ConflictWrite, node: WireEntity
 ) -> None:
     """Refuse an attempt whose declared ``observedVersion`` is not the version its
     own source read observed.
@@ -4144,7 +4145,7 @@ def _run_conflict_write(
     requests: case_format.TransactionKeywords,
     write_rows: Sequence[Mapping[str, object]],
     mutation: Literal["update", "delete"],
-    nodes: Mapping[ObjectKey, handle.WireEntity],
+    nodes: Mapping[ObjectKey, WireEntity],
     lifecycle: LifecycleRun,
 ) -> tuple[tuple[LoweredStatement, ...], int, int]:
     """Lower and execute one NON-TEMPORAL conflict attempt's write through
@@ -4176,7 +4177,7 @@ def _run_conflict_write(
     statements = _lower_conflict_write(model, port.dialect, concurrency, resolved)
     instant = normalize_instant(dt.datetime.fromisoformat(INERT_CLOCK_INSTANT))
     observed = lifecycle.observation()
-    with handle.Database.connect(
+    with Database.connect(
         port,
         serving,
         options=options,
@@ -4189,7 +4190,7 @@ def _run_conflict_write(
         for write, node in zip(resolved, sources, strict=True):
             _refuse_unobserved_conflict_version(target, write, node)
 
-        def body(tx: handle.Transaction) -> int:
+        def body(tx: Transaction) -> int:
             for write, node in zip(resolved, sources, strict=True):
                 if mutation == "delete":
                     tx.wire.delete(node)
@@ -4287,7 +4288,7 @@ def run_conflict_case(
             else [("/when/write", when)]
         )
 
-        def sources_for(attempt: Mapping[str, object]) -> dict[ObjectKey, handle.WireEntity]:
+        def sources_for(attempt: Mapping[str, object]) -> dict[ObjectKey, WireEntity]:
             nonlocal round_trips
             nodes, source_trips = _conflict_source_nodes(
                 port,
@@ -4303,7 +4304,7 @@ def run_conflict_case(
 
         # Taken before the concurrent writer commits, and spent by the first
         # attempt; every later attempt reads again, after the one before it ran.
-        sources: dict[ObjectKey, handle.WireEntity] | None = sources_for(attempts[0][1])
+        sources: dict[ObjectKey, WireEntity] | None = sources_for(attempts[0][1])
         apply_given_apply(case, port, None)
         for pointer, attempt in attempts:
             statements, affected, attempt_trips = _run_conflict_write(

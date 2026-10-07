@@ -215,11 +215,7 @@ from parallax.core.execution_lifecycle._activity import (
     open_stream_root,
     open_transaction_root,
 )
-from parallax.snapshot import connect
-from parallax.snapshot.handle import (
-    ScopedDatabase,
-    Transaction,
-)
+from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     ConnectsAsItself,

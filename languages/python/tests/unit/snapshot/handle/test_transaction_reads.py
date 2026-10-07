@@ -56,13 +56,8 @@ from parallax.core.unit_work import (
     StaleWriteError,
 )
 from parallax.core.write_plan import TemporalObservation
+from parallax.snapshot import Database, ScopedDatabase, Transaction, WireEntity
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import (
-    Database,
-    ScopedDatabase,
-    Transaction,
-)
-from parallax.snapshot.materialize import WireEntity
 from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm

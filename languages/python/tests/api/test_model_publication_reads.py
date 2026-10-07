@@ -26,8 +26,7 @@ from parallax.core.execution import (
 )
 from parallax.core.object_query import deserialize
 from parallax.core.read_delivery import InvalidDataError
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Transaction, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root

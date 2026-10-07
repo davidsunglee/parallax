@@ -36,8 +36,7 @@ from parallax.conformance.vo_models import (
     CustomerPoint,
 )
 from parallax.core.entity._model import model_of
-from parallax.snapshot import connect
-from parallax.snapshot.handle import ScopedDatabase, Transaction
+from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.root_ownership import own_root
 
 _CUSTOMER = MODELS["customer"]

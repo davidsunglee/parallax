@@ -69,13 +69,7 @@ from parallax.core.execution._options import (
     Omitted,
 )
 from parallax.core.unit_work import Clock, Concurrency
-from parallax.snapshot import is_view_loaded
-from parallax.snapshot.handle import (
-    Database,
-    ScopedDatabase,
-    Snapshot,
-    Transaction,
-)
+from parallax.snapshot import Database, ScopedDatabase, Snapshot, Transaction, is_view_loaded
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import (
     CollectionKinds,

@@ -44,7 +44,7 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.unit_work import Clock
-from parallax.snapshot.handle import ScopedDatabase, Snapshot, Transaction
+from parallax.snapshot import ScopedDatabase, Snapshot, Transaction
 
 __all__ = ["GRAPH_STORIES", "GraphStory", "graph_story_snippet"]
 

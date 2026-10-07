@@ -28,11 +28,7 @@ from parallax.core import LATEST
 from parallax.core.entity._model import model_of
 from parallax.core.execution import TransactionTimePinReadOnlyError
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot import connect
-from parallax.snapshot.handle import (
-    ScopedDatabase,
-    Transaction,
-)
+from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.root_ownership import own_root
 

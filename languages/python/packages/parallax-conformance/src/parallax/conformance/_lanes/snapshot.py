@@ -62,8 +62,8 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import instructions
-from parallax.snapshot import handle
-from parallax.snapshot.materialize import FAMILY_VARIANT_KEY
+from parallax.snapshot import Database, Snapshot, WireEntity
+from parallax.snapshot.materialize._wire import FAMILY_VARIANT_KEY
 
 __all__ = ["compile_scenario", "run_scenario"]
 
@@ -302,7 +302,7 @@ def run_scenario(
     seed_shadow_from_fixtures(case, model, shadow)
     apply_given_apply(case, port, shadow)
     observation = lifecycle.observation()
-    with handle.Database.connect(
+    with Database.connect(
         port, serving, options=context.options, lifecycle_provider=observation.provider
     ) as _root_db:
         db = _root_db.using_database_login()
@@ -372,7 +372,7 @@ def run_scenario(
 
 
 def _root_members(
-    snapshot: handle.Snapshot[handle.WireEntity],
+    snapshot: Snapshot[WireEntity],
 ) -> tuple[dict[str, object], ...]:
     """Each root the step materialized, as its own detached member state.
 

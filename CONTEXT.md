@@ -16,10 +16,13 @@ contract owners; this index does not add requirements.
 | Value Object | A structured value embedded in an entity | [Value objects](core/spec/m-value-object.md) |
 | Predicate | The portable selection algebra | [Predicates](core/spec/m-predicate.md) |
 | Object Query | An authored read, including its result and traversal choices | [Queries](core/spec/m-object-query.md) |
-| Database Root | Resource owner from which execution scopes are derived | [Execution authority](core/spec/m-execution-authority.md) |
+| Execution Runtime | The lifecycle-neutral root, scopes, and attempts that run reads and writes | [Execution](core/spec/m-execution.md) |
+| Database Root | Resource owner from which execution scopes are derived, configured with option defaults | [Execution](core/spec/m-execution.md) |
 | Execution Scope | Authority-selected view through which modeled work is invoked | [Execution authority](core/spec/m-execution-authority.md) |
+| Attempt | The execution state of one physical transaction attempt, wired before any callback sees it | [Execution](core/spec/m-execution.md) |
 | Principal / Execution Actor | Application input versus captured execution authority | [Execution authority](core/spec/m-execution-authority.md) |
 | Unit of Work | Transactional buffering and settlement boundary | [Unit of work](core/spec/m-unit-work.md) |
+| Row Acquisition | A write's read of the existing rows it needs, described by the unit of work and executed by the runtime | [Unit of work](core/spec/m-unit-work.md) |
 | Observed / Insertion-Authoring Write | A write authorized by genuine read provenance versus one authorized by an admitted insertion's own source | [Unit of work](core/spec/m-unit-work.md) |
 | Target Write | A caller-addressed patch or replacement, conditioned by the revision its caller states rather than by any source | [Unit of work](core/spec/m-unit-work.md) |
 | Planned Write | One finalized semantic execution step, distinct from the SQL that lowers it | [Write plan](core/spec/m-write-plan.md) |
@@ -32,9 +35,12 @@ contract owners; this index does not add requirements.
 | Unchanged Milestone / Guard | A milestone a write leaves exactly as it was and keeps, versus the write that proves it still stands as observed | [Temporal writes](core/spec/m-temporal-write.md) |
 | Concurrency Preference / Strategy | Requested policy versus the strategy resolved for an entity | [Read locks](core/spec/m-read-lock.md) |
 | Transaction Time / Valid Time | Audit history versus effective-world history | [Temporal reads](core/spec/m-temporal-read.md) |
+| Read Delivery | Turning a validated read into a judged Page, delivered whole or streamed | [Read delivery](core/spec/m-read-delivery.md) |
+| Page / Entity State | One read's bounded occurrence table, and the judged member row it holds for one logical object | [Read delivery](core/spec/m-read-delivery.md) |
+| Publication | The lifecycle behavior delivery invokes to turn Page states into values | [Read delivery](core/spec/m-read-delivery.md) |
 | Snapshot | A published value graph with explicit loading state | [Snapshot reads](core/spec/m-snapshot-read.md) |
 | Execution Activity | An observable unit of execution work | [Execution lifecycle](core/spec/m-execution-lifecycle.md) |
-| Model Edition / Serving Model | Model evolution identity and the published model holder | [Model evolution](core/spec/m-model-evolution.md) |
+| Model Edition / Serving Model | Model evolution identity and the published model holder | [Execution](core/spec/m-execution.md) |
 | Conformance Slice | An exact corpus claim, not a package or implementation layer | [Slices](core/spec/slices.md) |
 | Behavioral Module / Enforcement Scope / Artifact | Portable behavior, checked source boundary, and shipped package | [Modules](core/spec/modules.md) |
 

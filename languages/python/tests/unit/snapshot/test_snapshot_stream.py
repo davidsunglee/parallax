@@ -62,17 +62,15 @@ from parallax.core.read_delivery import (
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.wire import encode_wire
 from parallax.snapshot import (
+    Database,
+    ScopedDatabase,
     SnapshotInspectionError,
+    Transaction,
     WireEntity,
     edge_of,
     pin_of,
 )
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import (
-    Database,
-    ScopedDatabase,
-    Transaction,
-)
 from parallax.snapshot.handle import _stream as stream_module
 from parallax.snapshot.materialize import _wire as wire_materialize
 from parallax.snapshot.materialize._wire import read_origin_of

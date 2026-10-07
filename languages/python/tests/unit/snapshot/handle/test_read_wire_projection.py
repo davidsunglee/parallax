@@ -48,11 +48,12 @@ from parallax.core.object_query import IncludeSegment
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.read_delivery import InvalidData
 from parallax.snapshot import (
+    Database,
+    ScopedDatabase,
     Snapshot,
     SnapshotInspectionError,
     SnapshotStream,
     WireEntity,
-    handle,
     view,
 )
 from parallax.snapshot._inspection import snapshot_state_of
@@ -182,10 +183,10 @@ def _customer_row(*, valid: bool = True) -> dict[str, object]:
 
 def _database(
     *reads: Read,
-) -> tuple[handle.Database[Any], handle.ScopedDatabase]:
+) -> tuple[Database[Any], ScopedDatabase]:
     root = cast(
-        "handle.Database[Any]",
-        handle.Database.connect(ScriptedAdapter(*reads), vo.CUSTOMER_MODEL),
+        "Database[Any]",
+        Database.connect(ScriptedAdapter(*reads), vo.CUSTOMER_MODEL),
     )
     return root, root.using_database_login()
 
@@ -249,10 +250,8 @@ def test_projection_does_not_serialize_or_reclassify(
 def test_projection_ignores_pydantic_extensions_and_is_directly_json_serializable() -> None:
     row = {"entity_id": 1, "label_col": "Ada"}
     root = cast(
-        "handle.Database[Any]",
-        handle.Database.connect(
-            ScriptedAdapter(Read(rows=[row]), Read(rows=[row])), _EXTENDED_MODEL
-        ),
+        "Database[Any]",
+        Database.connect(ScriptedAdapter(Read(rows=[row]), Read(rows=[row])), _EXTENDED_MODEL),
     )
     db = root.using_database_login()
     query = _ExtendedEntity.where(_ExtendedEntity.id == 1)
@@ -348,8 +347,8 @@ def test_element_projection_refuses_a_mismatched_published_layout_before_positio
     root, db = _database(Read(rows=[]))
     snapshot = db.find(vo.Customer.where(vo.Customer.id == 99))
     foreign_root = cast(
-        "handle.Database[Any]",
-        handle.Database.connect(
+        "Database[Any]",
+        Database.connect(
             ScriptedAdapter(Read(rows=[{"id": 1, "name": "Ada", "loyalty": 4}])),
             _FOREIGN_CUSTOMER_MODEL,
         ),
@@ -419,8 +418,8 @@ def test_invalid_narrowed_view_projects_only_its_position_evidence() -> None:
         "right_value": 9,
     }
     root = cast(
-        "handle.Database[Any]",
-        handle.Database.connect(
+        "Database[Any]",
+        Database.connect(
             ScriptedAdapter(
                 Read(rows=[invalid_left]),
                 Read(rows=[invalid_left]),
@@ -514,8 +513,8 @@ def test_projection_uses_the_retained_model_for_equivalent_positions() -> None:
     current = prepare_model(_EXPANDED_ANIMAL_MODEL, edition="current")
     serving = ServingModel(old)
     root = cast(
-        "handle.Database[Any]",
-        handle.Database.connect(
+        "Database[Any]",
+        Database.connect(
             ScriptedAdapter(
                 Read(rows=[{"id": 10, "name": "Alice"}]),
                 Read(
@@ -577,8 +576,8 @@ def test_history_projection_preserves_canonical_scalars() -> None:
     ]
     query = Balance.where(Balance.id == 1).history(TX_TIME)
     root = cast(
-        "handle.Database[Any]",
-        handle.Database.connect(
+        "Database[Any]",
+        Database.connect(
             ScriptedAdapter(Read(rows=rows), Read(rows=rows)),
             BALANCE_MODEL,
         ),

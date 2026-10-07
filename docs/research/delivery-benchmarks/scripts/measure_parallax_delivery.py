@@ -40,8 +40,7 @@ from parallax.core.db_port import (  # noqa: E402
 )
 from parallax.core.dialect import POSTGRES, Dialect  # noqa: E402
 from parallax.core.entity._model import model_of  # noqa: E402
-from parallax.snapshot import connect  # noqa: E402
-from parallax.snapshot.handle import Database, ScopedDatabase  # noqa: E402
+from parallax.snapshot import Database, ScopedDatabase, connect  # noqa: E402
 from tests._support.db_port import projected_row  # noqa: E402
 from tests._support.mirrored_models import (  # noqa: E402
     DOCUMENT_LAYOUT_MODEL,

@@ -86,7 +86,7 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
-from parallax.snapshot.materialize import RootView
+from parallax.snapshot.materialize._root import RootView
 from parallax.snapshot.materialize._typed import typed_root
 from tests._support.model_capabilities import graph_construction_for
 from tests._support.sql import compile_read

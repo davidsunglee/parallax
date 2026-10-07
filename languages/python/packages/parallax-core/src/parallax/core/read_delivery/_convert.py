@@ -623,7 +623,7 @@ _STORED_ISSUE_CODES: Final[Mapping[DocumentFindingCode, StoredDataIssueCode]] = 
     "many-wrong-kind": "stored-data-many-wrong-kind",
     "leaf-undecodable": "stored-data-leaf-undecodable",
 }
-"""The `m-snapshot-read` issue code each codec-local finding is published as.
+"""The `m-read-delivery` issue code each codec-local finding is published as.
 
 Both spellings are stated because only the right-hand side is core-authored:
 composing one from the other would make the codec's own vocabulary load-bearing

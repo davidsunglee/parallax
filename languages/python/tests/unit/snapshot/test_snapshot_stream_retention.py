@@ -96,9 +96,8 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.read_delivery._page import Page, PageRows
-from parallax.snapshot import SnapshotStream
-from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
-from parallax.snapshot.materialize import RootView
+from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, Transaction
+from parallax.snapshot.materialize._root import RootView
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests.unit.memory_instruments import (
     Seam,

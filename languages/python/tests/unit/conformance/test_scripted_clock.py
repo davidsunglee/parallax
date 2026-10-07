@@ -22,7 +22,7 @@ from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import ClockExhaustedError, FixedClock, ScriptedClock
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot import Database, Transaction
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,

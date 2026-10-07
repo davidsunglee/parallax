@@ -16,8 +16,7 @@ from parallax.core.execution_lifecycle import (
     TransactionAttemptStarted,
     TransactionInvocationStarted,
 )
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Transaction, connect
 
 __all__ = [
     "JoinedShape",

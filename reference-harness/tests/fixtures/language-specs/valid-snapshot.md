@@ -25,6 +25,7 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
 | `m-dialect` | `dialect` |
 | `m-document-codec` | `document-codec` |
 | `m-edit` | `edit` |
+| `m-execution` | `execution` |
 | `m-execution-authority` | `execution-authority` |
 | `m-execution-lifecycle` | `execution-lifecycle` |
 | `m-inheritance` | `inheritance` |
@@ -39,6 +40,7 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
 | `m-opt-lock` | `opt-lock` |
 | `m-pk-gen` | `pk-gen` |
 | `m-read-lock` | `read-lock` |
+| `m-read-delivery` | `read-delivery` |
 | `m-snapshot-read` | `snapshot` |
 | `m-sql` | `sql` |
 | `m-relationship` | `relationship` |

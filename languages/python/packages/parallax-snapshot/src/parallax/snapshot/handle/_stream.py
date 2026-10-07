@@ -17,9 +17,8 @@ from parallax.snapshot.handle._read import (
     projection_concrete,
     wire_position,
 )
-from parallax.snapshot.materialize import WireEntity
 from parallax.snapshot.materialize import _wire as wire_materialize
-from parallax.snapshot.materialize._wire import EntityReader, WireWalk
+from parallax.snapshot.materialize._wire import EntityReader, WireEntity, WireWalk
 from parallax.snapshot.materialize._wire_memo import WeakIdentityMemo
 
 __all__ = ["SnapshotStream", "StreamExecution"]

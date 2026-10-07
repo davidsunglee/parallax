@@ -504,7 +504,7 @@ exposes and reports:
   prefix; the roots a delivery publishes are the roots the eager read of the same
   Object Query classifies, so the two observations agree position for position.
   The refusing surface's own fail-fast is a language-surface divergence
-  (`m-snapshot-read` *Divergence between the two views*) and is graded by each
+  (`m-read-delivery` *Where a stream diverges from a whole-result read*) and is graded by each
   language's API Conformance Suite rather than here, where a result form has no
   place to state a delivery that raised.
 - **`observations.roundTrips`** — every database call the delivery made.

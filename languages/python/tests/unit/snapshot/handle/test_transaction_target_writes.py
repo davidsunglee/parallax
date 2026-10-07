@@ -28,11 +28,12 @@ from parallax.core.entity import DomainModel
 from parallax.core.unit_work import (
     MissingTargetError,
     RollbackOnlyError,
+    WriteEvidenceError,
     WriteInstructionError,
     WritePreconditionError,
     WriteRejectedError,
 )
-from parallax.snapshot.handle import Transaction, WriteEvidenceError
+from parallax.snapshot import Transaction
 from parallax.snapshot.handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized

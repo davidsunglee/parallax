@@ -22,8 +22,7 @@ from parallax.core.entity import _graph_construction as graph_construction_modul
 from parallax.core.entity import _layout as layout_module
 from parallax.core.entity import _row_codec as row_codec_module
 from parallax.core.metamodel import UnresolvedEntityDeclaration
-from parallax.snapshot import SnapshotConnectionError, connect
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot import Database, SnapshotConnectionError, Transaction, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests._support.root_ownership import own_root

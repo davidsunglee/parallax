@@ -14,7 +14,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.snapshot.handle import Database, ScopedDatabase
+from parallax.snapshot import Database, ScopedDatabase
 from tests._support.db_port import ScriptedAdapter
 from tests.unit._transact_support import ACCOUNT, FIXED
 

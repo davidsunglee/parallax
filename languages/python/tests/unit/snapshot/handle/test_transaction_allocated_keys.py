@@ -21,7 +21,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.unit_work import KeyedWrite, WriteResultError
 from parallax.core.unit_work.instructions import prepare_typed_write
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Transaction
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,

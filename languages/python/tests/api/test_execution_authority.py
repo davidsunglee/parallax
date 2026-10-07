@@ -16,8 +16,7 @@ from parallax.conformance.story_models import Account
 from parallax.core.execution import DatabaseOptions
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.object_query import deserialize
-from parallax.snapshot import connect
-from parallax.snapshot.handle import ScopedDatabase, Transaction
+from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.corpus import case_fixtures
 
 type _AuthorityMode = Literal["database-login", "principal"]

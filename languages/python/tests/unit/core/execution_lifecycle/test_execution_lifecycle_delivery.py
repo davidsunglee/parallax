@@ -47,8 +47,7 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.sql_gen import LoweredStatement
-from parallax.snapshot import connect
-from parallax.snapshot.handle import ScopedDatabase
+from parallax.snapshot import ScopedDatabase, connect
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

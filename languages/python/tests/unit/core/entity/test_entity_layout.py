@@ -58,7 +58,7 @@ from parallax.core.metamodel import (
 from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema, page_rows
 from parallax.core.relationship import view as relationship_view
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import RootView
+from parallax.snapshot.materialize._root import RootView
 from tests.unit._corpus_model_support import corpus, formed, target
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import bound_read, compiled_read

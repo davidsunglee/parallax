@@ -15,9 +15,9 @@ The unit-of-work boundary **MUST** offer **bounded automatic retry**. On a
    the retry re-reads, it does not replay a stale in-memory shadow;
 3. **re-execute the closure** against that fresh state, inside a new atomic scope.
 
-The bound is **configurable** per boundary; an omitted bound resolves to the
-invoking Execution Scope's effective value, whose root-built-in value is **10**
-re-executions (ADR 0065). A bound of **`0` disables** the loop, so even a
+The bound is **configurable** per boundary; an omitted bound resolves as
+`m-execution` *Option resolution* states, and a root's built-in bound is **10**
+re-executions. A bound of **`0` disables** the loop, so even a
 retriable failure surfaces to the caller after the first attempt. A retry that
 **exhausts** the bound surfaces the failure to the caller (diagnosably — the
 surfaced error carries the attempt count). This mirrors Reladomo's
@@ -84,8 +84,9 @@ injected transient auto-retried away, `maxRetries: 0`, bound exhaustion, the cal
 value withheld on abort) need injected faults a single-connection harness cannot
 provoke, so they are authored as **boundary** cases on the `api-conformance` lane
 and satisfied by each language's API Conformance Suite (`m-api-conformance`).
-The root-owned defaults are proven the same way, through what the loop does
-under a configured root (`m-case-format` *Root configuration*): a zero bound on
+The root-owned defaults (`m-execution` *Options a root is configured with*) are
+proven the same way, through what the loop does under a configured root
+(`m-case-format` *Root configuration*): a zero bound on
 the root disables the loop for an invocation naming none and an explicit bound
 overrides it; a root level stands over every attempt and an explicit level
 overrides it; and an explicit opt-out under an opted-in root still retries a

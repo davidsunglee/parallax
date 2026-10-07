@@ -42,7 +42,7 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import Clock
-from parallax.snapshot import handle
+from parallax.snapshot import Database, Snapshot, WireEntity
 
 __all__ = [
     "case_database",
@@ -61,7 +61,7 @@ def case_database(
     lifecycle: ExecutionLifecycleProvider,
     *,
     clock: Clock | None = None,
-) -> handle.Database[object]:
+) -> Database[object]:
     """A Handle connected from ``port`` serving ``case``'s model under its edition,
     configured with the case's own root record
     (:func:`~parallax.conformance.case_format.database_options`).
@@ -72,7 +72,7 @@ def case_database(
     transactions a lane opens through it; a standalone read or stream stays the
     standalone operation it is under any root.
     """
-    return handle.Database.connect(
+    return Database.connect(
         port,
         case_serving_model(case),
         options=case_format.database_options(case),
@@ -246,7 +246,7 @@ def _wire_read(
     model: AcceptedMetamodel,
     port: CaseDatabase,
     lifecycle: LifecycleRun,
-) -> tuple[handle.Snapshot[handle.WireEntity], LifecycleObservation]:
+) -> tuple[Snapshot[WireEntity], LifecycleObservation]:
     """One graph-form Wire read of the case's own Object Query, and what it ran.
 
     The whole lane is ``db.wire.find``: target resolution, validation, deep-fetch
@@ -599,7 +599,7 @@ def _stored_data_record(
 def _stored_data_issue(
     issue: read_delivery.StoredDataIssue, model: AcceptedMetamodel
 ) -> dict[str, object]:
-    """One diagnosis as its cross-language record (`m-snapshot-read`).
+    """One diagnosis as its cross-language record (`m-read-delivery`).
 
     ``member`` is absent for an unresolved family tag alone — its discriminator
     names no declared member — and ``objectKey`` is absent wherever the affected

@@ -10,9 +10,9 @@ Write algebra it produces and the Write Observations it carries, on
 `m-temporal-write` for the temporal expansion it drives, and on `m-edit`, which distinguishes authored assignments from state carried by
 derivation, but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
-set-based forms) is produced by
-`m-sql` and run through the `m-db-port` execution seam at the composition root,
-so `m-unit-work` takes no direct edge to SQL generation. (`m-op-list` and
+set-based forms) is produced by `m-sql` and run by the execution runtime
+(`m-execution`) through the flush, write-batch, and row-acquisition ports this
+module declares, so `m-unit-work` takes no direct edge to SQL generation. (`m-op-list` and
 `m-navigate` in turn depend on `m-unit-work`, because a list is an
 query-backed view resolved within a unit of work.)
 
@@ -27,7 +27,8 @@ the authoritative affected-row enforcer; and the Write Effect Error family that
 enforcer raises (ADR 0041, ADR 0048). Sibling policy modules
 (`m-batch-write`, `m-opt-lock`, `m-read-lock`) keep their own policies and
 reach planning and write admission only through strategy ports this module
-declares, which the composition root injects once per accepted model.
+declares, which model preparation (`m-execution`) wires in once per accepted
+model.
 
 ## The unit of work
 
@@ -492,6 +493,16 @@ Submission follows the target Entity's Effective Concurrency Strategy:
   always stands in, while one over a disjoint window starts elsewhere and does
   not.
 
+  The acquisition's cardinality is decided before any row it returned is
+  judged. Once its read has executed and its rows are assembled, more than one
+  row is Cardinality Corruption naming the exact count, raised after the read
+  completes and without judging any of those rows' stored data, so an invalid
+  row among them is never what the caller observes instead. No row needs no
+  judgement either. Only a unique row is judged — invalid stored data in it is
+  refused as any read refuses it (`m-read-delivery` *Invalid stored data*) —
+  and its stored revision then decides the precondition. A failure executing the
+  read or assembling its rows still precedes the count.
+
 A failed precondition is the caller's: re-running the transaction re-states the
 same revision, so it is **never retried**, whatever the retry option, and no
 diagnostic read distinguishes a deleted row from a revised one. A failure at
@@ -506,6 +517,29 @@ attempt opened*). An object the attempt only rewrote is no
 insertion, and a later transaction addresses a committed insertion like any
 other row.
 
+### Row acquisition
+
+A write that must read existing rows before it can be settled reads them through
+one **row acquisition** port this module declares and the unit of work is
+constructed with; the execution runtime implements it (`m-execution` *Row
+acquisition*). A request describes what to read and performs no read:
+
+| Request | What it reads | When |
+|---|---|---|
+| **Selection** | the rows a predicate-selected write on a versioned or temporal target will change | when the write is buffered, after pending writes are flushed through the read gate |
+| **Target** | the one row a Locking caller-addressed write addresses, at `validFrom` for a Bitemporal target, when no pending write or live read already proves it | when the write is buffered, with no force-flush |
+| **Coverage** | an object's current milestones across a deferred range unit's window | when the flush reaches that unit, inside its write batch |
+
+The unit of work hands each request a consumer of its own and receives the
+consumer's result. The consumer reads the judged rows, and their aligned raw
+documents, while the acquisition still holds them, adopts the row and document
+references it keeps into canonical evidence (`m-write-plan`), and retains
+nothing of the read itself; acquisition settles its resources however the
+consumer ends. Where a write reads nothing, it requests nothing: whether a
+predicate write is readless — an unversioned Non-Temporal target — is decided
+once, when it is buffered, and a readless write reaches settlement already
+marked so, without a second routing decision there.
+
 ## Write finalization
 
 ### The Write Planner
@@ -517,14 +551,14 @@ wired, and it exposes exactly **one** planning operation:
 
 ```text
 finalize(
-    PlanningRequest(
+    WritePlanningRequest(
         actor_identity:       ActorIdentity,
         transaction_instant:  TransactionInstant,
         concurrency_preference: ConcurrencyPreference,
         buffered_writes:      BufferedWrites,
         ownership:            AttemptOwnership,
     )
-) -> WritePlanningResult(plan: WritePlan)
+) -> WritePlan
 ```
 
 **Attempt Ownership** is a read-only view of the current temporal rows the
@@ -532,8 +566,8 @@ attempt's own successful execution units opened (*Rows the attempt opened*,
 below). Planning reads it to decide what a temporal mutation does to its
 predecessor; it never changes it.
 
-A **Write Planning Result** carries the execution-ordered Write Plan, whose
-execution units name the source authority of **every** write admitted against
+The returned **Write Plan** is execution-ordered, and its execution units name
+the source authority of **every** write admitted against
 existing state — a write coalesced into another, superseded, or overwritten by a
 later composed assignment included (*Observed-State Coalescing*). A write keeps
 its source condition whatever happens to its values, so a unit whose surviving
@@ -670,10 +704,11 @@ semantics already decided.
   together with the one coverage read that range needs. Such a unit carries no
   planned step, and its meaning is data: it retains no binder, Attempt
   Ownership, clock, strategy, or Actor Identity. When the executor reaches it,
-  it reads the object's current rows over the range not already covered, inside
-  the write batch and under `m-read-lock`'s shared lock when the effective
-  strategy is Locking, and the unit of work binds those rows — or the absence of
-  any — with the observed ones into the unit's physical steps before they run.
+  the unit of work acquires the object's current rows over the range not
+  already covered (*Row acquisition*) — inside the write batch and under
+  `m-read-lock`'s shared lock when the effective strategy is Locking — and binds
+  those rows, or the absence of any, with the observed ones into the unit's
+  physical steps before they run.
   Temporal meaning, concurrency, and gates are fixed when planning returns, and
   binding never recaptures the instant or consults the model: only the physical
   enumeration waits, for the rows read and for the Attempt Ownership and
@@ -1132,7 +1167,8 @@ template) cannot be planned from buffered data alone. Its resolving read happens
 **before** the pure planning call, in Unit Work's write-input preparation, which:
 
 1. force-flushes preceding writes when the read needs read-your-own-writes;
-2. performs the resolving database read;
+2. performs the resolving read through its row acquisition port (*Row
+   acquisition*);
 3. acquires the selected physical row locks when the Entity's Effective
    Concurrency Strategy is Locking (`m-read-lock`);
 4. compares assigned members with their persisted values, using this module's
@@ -1305,10 +1341,8 @@ attribution of a shortfall to the step that caused it.
 ## Strategy selection — one preference, an effective strategy per Entity
 
 An outer unit of work resolves one **Concurrency Preference**, `locking` or
-`optimistic`, from its boundary options. Omission resolves to the invoking
-Execution Scope's effective value, whose root-built-in value is
-**`optimistic`** (ADRs 0065 and 0066).
-A joining boundary inherits that resolved preference and may not renegotiate it.
+`optimistic`, from its boundary options; an omitted preference, and a joining
+boundary's, resolve as `m-execution` *Option resolution* states.
 The preference is not itself the correctness mechanism: the Unit Work combines it
 with the target Entity's Optimistic Lock Facet to derive an **Effective
 Concurrency Strategy** for each participating Entity:
@@ -1381,18 +1415,11 @@ to a statement. A read taking the shared lock is no exception: the lock and the
 level compose, so a Locking read inside a Repeatable Read boundary both holds its
 lock and reads at the level.
 
-Omission resolves to the invoking Execution Scope's effective value, whose
-root-built-in value is **Read Committed** — a concrete request the boundary makes on every
-attempt, not a fallback to the adapter's own default (ADRs 0065 and 0066, `m-db-port`
-*Mapping obligations*). A joining boundary inherits the resolved level and may
-not renegotiate it, on the same terms as the Concurrency Preference: omitting
-inherits, naming the resolved level is accepted, and naming a different one is
-refused before the joined callback runs. Scope defaults never enter that
-comparison on their own: under an outer boundary that named a level, a join
-naming its scope's default conflicts, because an isolation is a property of a
-boundary only at the moment it opens. Levels are exact options rather than an
-ordered substitution rule: a join naming Read Committed under a Serializable
-boundary is a conflict, not a weakening the boundary already satisfies.
+An omitted level, and a joining boundary's, resolve as `m-execution` *Option
+resolution* states: the boundary requests a concrete level on every attempt
+rather than falling back to the adapter's own default (`m-db-port` *Mapping
+obligations*), and a join never renegotiates the level its boundary opened at,
+because an isolation is a property of a boundary only at the moment it opens.
 
 ## What the suite pins down
 

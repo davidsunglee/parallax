@@ -19,11 +19,8 @@ from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.read_delivery._delivery import find as execute_read
 from parallax.core.read_delivery._page import Page
-from parallax.snapshot.materialize import (
-    RootView,
-    require_publishable,
-)
-from parallax.snapshot.materialize._publication import publish_roots
+from parallax.snapshot.materialize._publication import publish_roots, require_publishable
+from parallax.snapshot.materialize._root import RootView
 
 __all__ = ["AnotherSource"]
 

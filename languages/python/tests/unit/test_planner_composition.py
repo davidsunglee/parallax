@@ -73,7 +73,7 @@ from parallax.core.unit_work.strategy import (
 )
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.steps import PlannedWrite
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Transaction
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     Read,

@@ -57,6 +57,7 @@ from parallax.core.unit_work import (
     RetainedObservation,
     StaleWriteError,
     WriteEffectError,
+    WriteEvidenceError,
     WriteRejectedError,
     instructions,
 )
@@ -68,7 +69,6 @@ from parallax.core.write_plan import (
     VersionObservation,
 )
 from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
-from parallax.snapshot.handle import WriteEvidenceError
 from tests.unit._transact_support import PERSON
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._recording_ports import FakeWritePort

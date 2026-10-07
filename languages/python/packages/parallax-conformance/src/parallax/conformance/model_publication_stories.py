@@ -30,8 +30,7 @@ from parallax.evolution import (
     evolve,
     schema_delta,
 )
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot import Transaction, connect
 
 __all__ = [
     "PublishedUpdate",

@@ -38,8 +38,7 @@ from parallax.core.inheritance import InheritanceError
 from parallax.core.inheritance._facet import _InheritanceFacet
 from parallax.core.metamodel import EntityIdentity, TablePerConcreteSubtype
 from parallax.core.storage_layout._facet import _StorageLayoutFacet
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
+from parallax.snapshot import Database, ScopedDatabase, Transaction, connect
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "position.reuse"

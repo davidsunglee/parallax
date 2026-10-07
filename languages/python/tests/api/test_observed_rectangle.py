@@ -51,13 +51,8 @@ from parallax.core import (
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
-from parallax.core.unit_work import RollbackOnlyError
-from parallax.snapshot import (
-    WriteEvidenceError,
-    WriteInstructionError,
-    connect,
-)
-from parallax.snapshot.handle import ScopedDatabase, Transaction
+from parallax.core.unit_work import RollbackOnlyError, WriteEvidenceError, WriteInstructionError
+from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.root_ownership import own_root
 
 _POSITION = MODELS["position"]

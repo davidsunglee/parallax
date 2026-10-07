@@ -39,8 +39,7 @@ from parallax.core.execution import (
 )
 from parallax.core.metamodel import EntityIdentity, IndexIdentity, Table
 from parallax.evolution import CreatedIndex, SchemaDelta, evolve
-from parallax.snapshot import connect
-from parallax.snapshot.handle import Database
+from parallax.snapshot import Database, connect
 from tests._support.db_port import ConnectsAsItself, body_outcome
 
 _ALTER = "alter table account add column nickname varchar(64)"
