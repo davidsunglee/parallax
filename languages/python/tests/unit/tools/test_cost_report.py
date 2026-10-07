@@ -370,6 +370,7 @@ class _Clocks:
 
 
 def _sidecar_path(arguments: Sequence[str]) -> Path:
+    arguments = [argument for argument in arguments if argument != "--authority-preflight"]
     assert list(arguments[:1]) == [DURATIONS_OPTION]
     assert list(arguments[2:3]) == [METADATA_OPTION]
     assert len(arguments) == 4
@@ -467,6 +468,7 @@ def test_written_output_keeps_the_legacy_portfolio_beside_the_durations_sidecar(
         return (0, json.dumps(document), "")
 
     monkeypatch.setattr(cost_report, "run_member", run)
+    monkeypatch.setattr(cost_report, "preflight", lambda: None)
     out = tmp_path / "reports"
     assert cost_report.main(["--out", str(out)]) == 0
     assert sorted(path.name for path in out.iterdir()) == sorted(
@@ -505,6 +507,7 @@ def test_a_failed_required_member_still_leaves_every_output_and_its_attribution(
         return (0, json.dumps(_optional_document(member)), "")
 
     monkeypatch.setattr(cost_report, "run_member", run)
+    monkeypatch.setattr(cost_report, "preflight", lambda: None)
     out = tmp_path / "reports"
     assert cost_report.main(["--out", str(out)]) == 1
     durations = Spans.load(out / DURATIONS_FILE)
@@ -1706,7 +1709,7 @@ def test_collection_writes_the_conditions_it_recorded_beside_the_portfolio(
         sidecar.write_text(_member_sidecar(), encoding="utf-8")
         if member.subject == "snapshot-delivery":
             write_metadata(
-                Path(arguments[3]),
+                Path(arguments[arguments.index(METADATA_OPTION) + 1]),
                 member.subject,
                 {
                     minor: RuntimeIdentity("CPython", f"{minor}.9", "/p")
@@ -1723,6 +1726,7 @@ def test_collection_writes_the_conditions_it_recorded_beside_the_portfolio(
         return (0, json.dumps(document), "")
 
     monkeypatch.setattr(cost_report, "run_member", run)
+    monkeypatch.setattr(cost_report, "preflight", lambda: None)
     out = tmp_path / "reports"
     assert cost_report.main(["--out", str(out)]) == 0
     capsys.readouterr()

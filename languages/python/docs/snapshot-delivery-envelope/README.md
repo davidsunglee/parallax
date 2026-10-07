@@ -56,3 +56,50 @@ memory medians are 1199.525390625 and 1237.318359375 KiB, giving 37.79296875 KiB
 growth against 16 KiB. The previous duplicate-include provider-free eager timing
 miss now reads 14.175832970067859 ms and is within its ceiling.
 The archived capture above remains the evidence for the old contract.
+
+## Capture protocol
+
+Run a canonical capture from a clean checkout whose committed
+[Budget Contract](../../spec/budget-contract.yaml) authority matches the host
+and interpreter. From `languages/python`, use
+`uv run python tools/cost_report.py --out /path/to/capture`.
+The collector checks known authority facts before starting a member, then checks
+PostgreSQL immediately after provisioning and before measuring a workload.
+A refusal identifies the mismatch: update the contract's authority first, or use
+`--diagnostic` for readings that are not canonical evidence.
+
+For a retained portfolio needing an authority-only contract update, use
+`uv run python tools/cost_report.py --reclassify /path/to/capture/portfolio.json`.
+Reclassification requires the same authority CPython minor, unchanged readings
+and comparisons, and no previous adjustment. It updates the embedded contracts,
+recomputes authority, regenerates the summary, and records the adjustment in
+`conditions.json`; verification and comparison disclose that adjustment.
+This contract-only remedy does not require another capture.
+
+### Live timing and interpreter patches
+
+On 2026-10-07, one sequential diagnostic pair used uv-managed CPython 3.14.7 and
+3.14.8 on the same clean tree, `c4a0533f2`, with identical frozen dependencies,
+psycopg 3.3.6/libpq 18.6, and the pinned PostgreSQL 18.6 image. Each interpreter
+completed 40 live and first-result cells over the five live workloads, using the
+contract's 200-root arm, three warmups, and nine measured samples.
+
+The table shows the range of changes in median full-delivery milliseconds from
+3.14.7 to 3.14.8 across eager, page-32, and page-128 delivery; positive means
+slower.
+
+| Workload | Change in median full-delivery time |
+|---|---|
+| conventional-fanout | −8.2% to +0.7% |
+| duplicate-include | −7.9% to +5.3% |
+| document-heavy | −2.5% to +4.3% |
+| versioned-document | +0.5% to +6.5% |
+| bitemporal-current | +10.6% to +28.8% |
+
+Across the 15 full-delivery cells, the median change was +0.7%. First-result
+cells ranged from −27.3% to +14.6%. This pair does not establish a general
+interpreter-patch effect or explain the earlier 15–89% live slowdown. The runs
+were sequential and the workstation had background application activity, so
+host state remains a confounder. Live comparisons need matched host conditions
+and a quiet measurement window. The recovered capture's exclusion as a live
+timing baseline remains in force; this diagnostic pair does not replace it.

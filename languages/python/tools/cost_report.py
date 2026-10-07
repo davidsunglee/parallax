@@ -70,6 +70,7 @@ import tempfile
 import uuid
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Final, cast
@@ -85,14 +86,17 @@ from interpreter_matrix import (
     RuntimeUnavailable,
     authority_minor,
     load_metadata,
+    probe_runtime,
     runtime_status,
     supported_minors,
 )
+from parallax.conformance import case_format
 from parallax.conformance.budget import BudgetContract, MemoryGates, reading_bytes
-from parallax.conformance.cost_envelope import Provenance, Reading, validate
+from parallax.conformance.cost_envelope import Provenance, Reading, classify_authority, validate
 from parallax.conformance.workloads import workload_digest
 from snapshot_delivery_overhead import (
     CONTROL_GROUP,
+    ENVIRONMENT_NAMESPACE,
     GEOMETRY_GROUP,
     LEAF_GROUP,
     PLAN_GROUP,
@@ -604,9 +608,88 @@ def validate_instance_state_matrix(
         _match_comparison(f"{workload}.{cell}", comparison_document, fields)
 
 
-def collect(runner: Runner = run_member, spans: Spans | None = None) -> Collection:
-    """Attempt every member in order and fail only after required envelope
-    validation. Each member runs inside its own span and is asked for a
+class _ExpectedPostgres:
+    def __init__(self, version: str) -> None:
+        self.version = version
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[object] = (),
+    ) -> Sequence[Mapping[str, object]]:
+        return ({"server_version": self.version},)
+
+
+def committed_contract() -> BudgetContract:
+    """HEAD's authored Budget Contract, independent of working-tree edits."""
+    path = WORKSPACE / "spec/budget-contract.yaml"
+    completed = subprocess.run(
+        ["git", "show", "HEAD:languages/python/spec/budget-contract.yaml"],
+        cwd=WORKSPACE,
+        capture_output=True,
+        check=True,
+    )
+    return BudgetContract.from_bytes(path, completed.stdout)
+
+
+def preflight() -> None:
+    """Refuse canonical collection when facts known before reading fail authority."""
+    contract = BudgetContract.load()
+    provenance = Provenance.capture(
+        contract,
+        workload_digest="",
+        postgres=_ExpectedPostgres(str(contract.authority.get("postgres", ""))),
+    )
+    mismatches: list[str] = []
+    fields = {
+        "machine": provenance.machine,
+        "cpu": provenance.cpu,
+        "cores": provenance.cores,
+        "ramGiB": provenance.ram_gib,
+        "cpython": provenance.cpython,
+    }
+    for field, actual in fields.items():
+        expected = contract.authority.get(field)
+        if actual != expected:
+            mismatches.append(f"{field}: observed {actual!r}, authority requires {expected!r}")
+    if provenance.dirty:
+        mismatches.append("dirty: the producing tree must be clean")
+    if not provenance.commit:
+        mismatches.append("commit: the producing commit is absent")
+    committed = committed_contract()
+    if contract.digest != committed.digest:
+        mismatches.append(
+            f"budgetContractDigest: loaded {contract.digest}, committed {committed.digest}"
+        )
+    runtime = authority_minor(contract.authority)
+    identity = probe_runtime(runtime, ENVIRONMENT_NAMESPACE)
+    if isinstance(identity, RuntimeUnavailable):
+        mismatches.append(f"authority runtime CPython {runtime}: {identity.reason}")
+    elif identity.implementation != "CPython" or identity.version != contract.authority["cpython"]:
+        mismatches.append(
+            f"authority runtime CPython {runtime}: observed {identity.implementation} "
+            f"{identity.version}, authority requires CPython {contract.authority['cpython']}"
+        )
+    if classify_authority(provenance, contract) != "authoritative" and not mismatches:
+        mismatches.append("provenance does not classify as authoritative")
+    if mismatches:
+        raise ValueError(
+            "authority preflight refused:\n- "
+            + "\n- ".join(mismatches)
+            + "\nChange the contract's authority block first, or run --diagnostic."
+        )
+
+
+def collect(
+    runner: Runner = run_member,
+    spans: Spans | None = None,
+    *,
+    canonical: bool = False,
+) -> Collection:
+    """Attempt every member unless canonical authority preflight refuses.
+
+    Each member runs inside its own span and is asked for a
     durations sidecar of its own, folded into ``spans`` when it arrives."""
     recorder = spans if spans is not None else Spans()
     results: list[MemberResult] = []
@@ -616,7 +699,14 @@ def collect(runner: Runner = run_member, spans: Spans | None = None) -> Collecti
         recorder.span("collection", COLLECTION_SPAN),
     ):
         for member in MEMBERS:
-            result, identities = _attempt(member, (), Path(scratch), recorder, runner)
+            arguments = (
+                ("--authority-preflight",)
+                if canonical and member.subject == SNAPSHOT_SUBJECT
+                else ()
+            )
+            result, identities = _attempt(member, arguments, Path(scratch), recorder, runner)
+            if canonical and result.failure and "authority preflight refused" in result.failure:
+                raise ValueError(result.failure)
             results.append(result)
             runtimes[member.subject] = identities
     return Collection(tuple(results), recorder, runtimes)
@@ -1497,6 +1587,109 @@ def conditions_beside(portfolio: Path) -> Conditions | None:
 ADJUSTMENT_FIELD: Final = "adjustment"
 """Where a capture's conditions record readings changed after the run, or its
 envelopes re-classified under a later Budget Contract."""
+
+
+def _authority_only_change(old: BudgetContract, new: BudgetContract) -> None:
+    before = dict(
+        _object(case_format.safe_load_yaml(old.authored.decode("utf-8")), "embedded contract")
+    )
+    after = dict(
+        _object(case_format.safe_load_yaml(new.authored.decode("utf-8")), "committed contract")
+    )
+    if before.get("authority") == after.get("authority"):
+        raise ValueError("the committed contract has no authority change")
+    before.pop("authority")
+    after.pop("authority")
+    if before != after:
+        raise ValueError(
+            "the committed contract differs beyond authority; readings or comparisons could change"
+        )
+    if authority_minor(old.authority) != authority_minor(new.authority):
+        raise ValueError("the authority minor changed; comparisons would change")
+
+
+def _reclassified_member(member: Document, contract: BudgetContract) -> Document:
+    validate(member)
+    subject = str(member["subject"])
+    provenance = Provenance.from_document(cast("Document", member["provenance"]))
+    old = provenance.contract()
+    _authority_only_change(old, contract)
+    validate_matrix(member, subject, old)
+    validate_matrix(member, subject, contract)
+    changed = replace(
+        provenance,
+        budget_contract=contract.authored.decode("utf-8"),
+        budget_contract_digest=contract.digest,
+    )
+    result = {
+        **member,
+        "provenance": changed.document(),
+        "authority": classify_authority(changed, contract),
+    }
+    validate(result)
+    return result
+
+
+def _reclassification_inputs(portfolio: Path) -> tuple[Document, Document, Spans | None]:
+    document = _object(_load(portfolio), "portfolio")
+    if document.get("schemaVersion") != PORTFOLIO_VERSION:
+        raise ValueError("the input is not a portfolio")
+    members = cast("Sequence[Document]", document.get("members", ()))
+    subjects = [str(member["subject"]) for member in members]
+    if not subjects or len(set(subjects)) != len(subjects):
+        raise ValueError("the portfolio must contain distinct member envelopes")
+    if not set(subjects) <= {member.subject for member in MEMBERS}:
+        raise ValueError("the portfolio contains an unknown member subject")
+    conditions_path = portfolio.parent / CONDITIONS_FILE
+    conditions = _object(_load(conditions_path), "conditions")
+    if ADJUSTMENT_FIELD in conditions:
+        raise ValueError("conditions.json already records an adjustment")
+    loaded = load_conditions(conditions_path)
+    if not set(subjects) <= set(loaded):
+        raise ValueError("conditions.json does not cover the portfolio members")
+    digests: set[str] = set()
+    for member in members:
+        subject = str(member["subject"])
+        if _load(portfolio.parent / f"{subject}.json") != member:
+            raise ValueError(f"{subject}.json disagrees with its portfolio member")
+        digests.add(str(cast("Document", member["provenance"])["budgetContractDigest"]))
+    if len(digests) != 1:
+        raise ValueError("the members embedded different contracts")
+    durations_path = portfolio.parent / DURATIONS_FILE
+    durations = Spans.load(durations_path) if durations_path.exists() else None
+    return document, conditions, durations
+
+
+def reclassify(portfolio: Path) -> None:
+    """Reclassify a capture under HEAD's authority-only contract change.
+
+    Validate the portfolio and every sidecar before writing any replacement;
+    readings, comparisons, producing provenance, and measurement conditions stay
+    as captured. An existing adjustment is never overwritten.
+    """
+    document, conditions, durations = _reclassification_inputs(portfolio)
+    contract = committed_contract()
+    members = cast("Sequence[Document]", document["members"])
+    changed = [_reclassified_member(member, contract) for member in members]
+    updated = {**document, "members": changed}
+    old_digest = cast("Document", members[0]["provenance"])["budgetContractDigest"]
+    updated_conditions = {
+        **conditions,
+        ADJUSTMENT_FIELD: {
+            "schemaVersion": 1,
+            "date": datetime.now(UTC).date().isoformat(),
+            "reclassified": {
+                "contractDigest": {"atCapture": old_digest, "reclassifiedUnder": contract.digest},
+                "unchanged": "every reading, sample, comparison, and measurement condition",
+            },
+        },
+    }
+    summary = _summary(updated, durations)
+    for member in changed:
+        _write_json(portfolio.parent / f"{member['subject']}.json", member)
+    _write_json(portfolio, updated)
+    (portfolio.parent / "summary.md").write_text(summary, encoding="utf-8")
+    _write_json(portfolio.parent / CONDITIONS_FILE, updated_conditions)
 
 
 def amendment_beside(portfolio: Path) -> str | None:
@@ -3256,6 +3449,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--verify", type=Path)
+    parser.add_argument("--reclassify", type=Path, metavar="PORTFOLIO")
     parser.add_argument("--freshness-only", type=Path, metavar="PORTFOLIO")
     parser.add_argument("--lock-file", type=Path, help="lock inspected by --freshness-only")
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("BASE", "HEAD"))
@@ -3303,6 +3497,7 @@ def _refuse_misplaced_options(parser: argparse.ArgumentParser, args: argparse.Na
             ("--freshness-only", args.freshness_only is not None),
             ("--verify", args.verify is not None),
             ("--compare", args.compare is not None),
+            ("--reclassify", args.reclassify is not None),
         )
         if chosen
     ]
@@ -3310,6 +3505,10 @@ def _refuse_misplaced_options(parser: argparse.ArgumentParser, args: argparse.Na
         parser.error(f"{' and '.join(modes)} are separate modes")
     unknown_members = sorted(set(args.require_member) - set(REQUIRABLE_MEMBERS))
     refusals = (
+        (
+            args.reclassify is not None and args.out is not None,
+            "--reclassify rewrites its input; --out is not accepted",
+        ),
         (
             args.lock_file is not None and args.freshness_only is None,
             "--lock-file requires --freshness-only",
@@ -3447,10 +3646,38 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_verify(args)
     if args.compare is not None:
         return _run_compare(parser, args)
+    if args.reclassify is not None:
+        return _run_reclassification(args.reclassify)
     if args.out is None:
         parser.error("--out is required when collecting")
-    collection = collect(run_member)
-    write_portfolio(collection, args.out)
+    return _run_collection(args.out)
+
+
+def _run_reclassification(portfolio: Path) -> int:
+    try:
+        reclassify(portfolio)
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        OSError,
+        ValidationError,
+        subprocess.CalledProcessError,
+    ) as error:
+        print(f"reclassification refused: {error}", file=sys.stderr)
+        return 1
+    print(f"reclassified {portfolio} under the committed Budget Contract")
+    return 0
+
+
+def _run_collection(out: Path) -> int:
+    try:
+        preflight()
+        collection = collect(run_member, canonical=True)
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    write_portfolio(collection, out)
     print(_summary(portfolio_document(collection.results), collection.durations), end="")
     return 1 if collection.failed_required else 0
 
