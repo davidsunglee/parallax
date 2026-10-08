@@ -5,11 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from parallax.core.execution._attempt import Attempt
-from parallax.core.execution._keyed_writes import (
-    stated_valid_from,
-    target_condition,
-    window_mutation,
-)
+from parallax.core.execution._keyed_writes import target_condition, window_mutation
 from parallax.core.execution._options import OMITTED, Omitted
 from parallax.core.execution._scope import ExecutionScope
 from parallax.core.object_query import ObjectQueryNode, deserialize
@@ -195,7 +191,7 @@ class WireTransactionView(WireDatabaseView):
             entity_name,
             data,
             mutation=mutation,
-            valid_from=stated_valid_from(valid_from),
+            valid_from=valid_from,
             until=bound,
         )
 
@@ -249,7 +245,6 @@ class WireTransactionView(WireDatabaseView):
         gaps and coverage after a scheduled termination absent.
         """
         mutation, bound = window_mutation("amend", "amendUntil", until)
-        start = stated_valid_from(valid_from)
         condition = target_condition(version=version, tx_start=tx_start, unversioned=unversioned)
         wire_target_write(
             self._attempt,
@@ -257,7 +252,7 @@ class WireTransactionView(WireDatabaseView):
             entity_name,
             changes,
             condition,
-            valid_from=start,
+            valid_from=valid_from,
             until=bound,
         )
 
@@ -309,7 +304,6 @@ class WireTransactionView(WireDatabaseView):
         in for the condition, and its provenance licenses nothing.
         """
         mutation, bound = window_mutation("replace", "replaceUntil", until)
-        start = stated_valid_from(valid_from)
         condition = target_condition(version=version, tx_start=tx_start, unversioned=unversioned)
         wire_target_write(
             self._attempt,
@@ -317,7 +311,7 @@ class WireTransactionView(WireDatabaseView):
             target,
             data,
             condition,
-            valid_from=start,
+            valid_from=valid_from,
             until=bound,
         )
 
@@ -336,7 +330,7 @@ class WireTransactionView(WireDatabaseView):
         holds. Nothing is queried, completed, generated, or recovered beyond
         what ``source`` published.
         """
-        return editable_wire_data(self._attempt.model.meta, source)
+        return editable_wire_data(self._attempt, source)
 
     def delete(self, observed: WireEntity) -> None:
         """Buffer a Wire ``delete`` of the row ``observed`` came from, keyed off
@@ -384,7 +378,7 @@ class WireTransactionView(WireDatabaseView):
             mutation,
             target,
             changes,
-            valid_from=stated_valid_from(valid_from),
+            valid_from=valid_from,
             until=bound,
         )
 
@@ -412,6 +406,6 @@ class WireTransactionView(WireDatabaseView):
             self._attempt,
             mutation,
             target,
-            valid_from=stated_valid_from(valid_from),
+            valid_from=valid_from,
             until=bound,
         )

@@ -29,7 +29,7 @@ from parallax.core.entity._model import model_of
 from parallax.core.unit_work import TargetWrite, WriteInstructionError, WriteRejectedError
 from parallax.core.unit_work.instructions import deserialize, prepare_typed_write
 from parallax.core.write_plan.steps import UNVERSIONED
-from parallax.snapshot import Transaction
+from parallax.snapshot import Transaction, WireEntity
 from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
@@ -262,12 +262,20 @@ def test_an_inherited_assignment_applies_to_a_concrete_target() -> None:
 
 def test_a_sibling_member_and_an_abstract_target_are_refused() -> None:
     port = ScriptedAdapter(Transact())
+    ancestor = Payment.amount.set(Decimal(1)).attr.entity
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(WriteInstructionError, match="declares or inherits"):
             tx.amend_if(
                 CardPayment,
                 cast("Any", CashPayment.tendered.set(Decimal(1))),
+                key=4,
+                unversioned=True,
+            )
+        with pytest.raises(WriteInstructionError, match="declares or inherits"):
+            tx.amend_if(
+                CardPayment,
+                AttributeAssignment(AttributeRef(ancestor, "cardNetwork"), "amex"),
                 key=4,
                 unversioned=True,
             )
@@ -436,6 +444,55 @@ def test_a_wire_source_key_that_is_no_key_value_is_refused() -> None:
 
     account_db(port).transact(fn)
     assert _calls(port) == [ReadCall(FIND_SQL_UNLOCKED, (1,))]
+
+
+# --------------------------------------------------------------------------- #
+# A payload is judged only after the window and the condition admit the write. #
+# --------------------------------------------------------------------------- #
+_DUPLICATED = (mm.Account.owner.set("Bo"), mm.Account.owner.set("Cy"))
+_CONDITIONAL_PAYLOADS: dict[str, tuple[Callable[[Transaction], object], str]] = {
+    "missing-condition": (
+        lambda tx: tx.amend_if(mm.Account, *_DUPLICATED, key=1),
+        "requires version",
+    ),
+    "inadmissible-window": (
+        lambda tx: tx.amend_if(mm.Account, *_DUPLICATED, key=1, until=FIXED),
+        "takes no until",
+    ),
+    "mapping-key": (
+        lambda tx: tx.amend_if(mm.Account, mm.Account.owner.set("Bo"), key={"id": 1}),
+        "requires version",
+    ),
+}
+
+
+@pytest.mark.parametrize("payload", list(_CONDITIONAL_PAYLOADS))
+def test_a_conditional_payload_is_judged_after_its_window_and_condition(payload: str) -> None:
+    call, match = _CONDITIONAL_PAYLOADS[payload]
+    _refused(call, match)
+
+
+_SOURCE_PAYLOADS: dict[str, Callable[[Transaction, WireEntity, mm.Account], object]] = {
+    "wire-mismatching-key": lambda tx, node, found: tx.wire.amend(node, {"id": 2}, until=FIXED),
+    "typed-undeclared-assignment": lambda tx, node, found: tx.amend(
+        found, _raw("nickname", "x"), until=FIXED
+    ),
+}
+
+
+@pytest.mark.parametrize("payload", list(_SOURCE_PAYLOADS))
+def test_a_source_payload_is_judged_after_its_window(payload: str) -> None:
+    write = _SOURCE_PAYLOADS[payload]
+    port = ScriptedAdapter(Transact(Read(rows=[_row()]), Read(rows=[_row()])))
+
+    def fn(tx: Transaction) -> None:
+        node = tx.wire.find({"target": "Account", "predicate": _ONE}).result()
+        found = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        with pytest.raises(WriteInstructionError, match="takes no until"):
+            write(tx, node, found)
+
+    account_db(port).transact(fn)
+    assert [type(call) for call in _calls(port)] == [ReadCall, ReadCall]
 
 
 # --------------------------------------------------------------------------- #

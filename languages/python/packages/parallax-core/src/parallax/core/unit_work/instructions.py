@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 from collections.abc import Callable, Mapping, Sequence, Set
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Final, Literal, cast, overload
 
@@ -862,6 +862,7 @@ def prepare_typed_write(
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
+    members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedTargetWrite: ...
 @overload
 def prepare_typed_write(
@@ -869,6 +870,7 @@ def prepare_typed_write(
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
+    members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedKeyedWrite: ...
 @overload
 def prepare_typed_write(
@@ -876,6 +878,7 @@ def prepare_typed_write(
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
+    members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedPredicateWrite: ...
 @overload
 def prepare_typed_write(
@@ -883,17 +886,23 @@ def prepare_typed_write(
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
+    members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedWrite | PreparedTargetWrite: ...
 def prepare_typed_write(
     instruction: WriteInstruction,
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
+    members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedWrite | PreparedTargetWrite:
     """Coerce developer values once, then judge and freeze the write.
 
     ``authored_members`` names the members a caller assigned explicitly rather
     than through an edit chain that already judged them, so each is judged as
+    an assignment. ``members`` produces explicit assignments a keyed or
+    caller-addressed write adds to its one row: it is asked only once the
+    target, the window, and any condition admit the write, so a fault in what
+    it judges is heard after theirs, and each member it answers is judged as
     an assignment."""
     return _prepare_write(
         instruction,
@@ -901,6 +910,7 @@ def prepare_typed_write(
         converter=_coerce_typed_leaf,
         source_access=BORROWED_SOURCE_ACCESS,
         authored_members=authored_members,
+        members=members,
     )
 
 
@@ -910,6 +920,7 @@ def prepare_wire_write(
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
+    members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedTargetWrite: ...
 @overload
 def prepare_wire_write(
@@ -917,6 +928,7 @@ def prepare_wire_write(
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
+    members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedKeyedWrite: ...
 @overload
 def prepare_wire_write(
@@ -924,6 +936,7 @@ def prepare_wire_write(
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
+    members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedPredicateWrite: ...
 @overload
 def prepare_wire_write(
@@ -931,12 +944,14 @@ def prepare_wire_write(
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
+    members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedWrite | PreparedTargetWrite: ...
 def prepare_wire_write(
     instruction: WriteInstruction,
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
+    members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedWrite | PreparedTargetWrite:
     """Decode one serialized instruction, then judge and freeze the write.
 
@@ -944,7 +959,8 @@ def prepare_wire_write(
     an insert's payload keys, judged as insert authoring, or an update's change
     keys, judged as assignments. A neutral instruction omits it, and its row is
     judged as row content alone. A caller-addressed write judges every member
-    its row states beside the key as an assignment either way.
+    its row states beside the key as an assignment either way. ``members``
+    follows :func:`prepare_typed_write`'s rule.
     """
     return _prepare_write(
         instruction,
@@ -952,6 +968,7 @@ def prepare_wire_write(
         converter=_decode_wire_leaf,
         source_access=MAPPING_SOURCE_ACCESS,
         authored_members=authored_members,
+        members=members,
     )
 
 
@@ -962,6 +979,7 @@ def _prepare_write(
     converter: _LeafConverter,
     source_access: SourceAccess,
     authored_members: Set[str] | None,
+    members: Callable[[], Mapping[str, object]] | None,
 ) -> PreparedWrite | PreparedTargetWrite:
     """The sole admissibility judgment of a write: its target first, then its
     payload.
@@ -980,10 +998,17 @@ def _prepare_write(
             converter=converter,
             source_access=source_access,
             authored_members=authored_members,
+            members=members,
         )
     keyed = isinstance(instruction, KeyedWrite)
     entity = resolve_target(model, instruction.entity if keyed else instruction.target.entity)
     window = _judge_target(model, entity, instruction)
+    if members is not None:
+        assert isinstance(instruction, KeyedWrite)  # a predicate write states its assignments
+        assigned = members()
+        (row,) = instruction.rows
+        instruction = replace(instruction, rows=({**row, **assigned},))
+        authored_members = assigned.keys()
     selection = _member_selection(model, entity)
     if isinstance(instruction, KeyedWrite):
         return _prepare_keyed_payload(
@@ -1124,6 +1149,7 @@ def _prepare_target_write(
     converter: _LeafConverter,
     source_access: SourceAccess,
     authored_members: Set[str] | None,
+    members: Callable[[], Mapping[str, object]] | None,
 ) -> PreparedTargetWrite:
     """Judge a caller-addressed write: its target and window, then its revision
     arguments, then its payload.
@@ -1141,6 +1167,8 @@ def _prepare_target_write(
     )
     position = _family_position(model, entity)
     expectation = _judge_expectation(root, shape, position, instruction)
+    if members is not None:
+        instruction = replace(instruction, row={**instruction.row, **members()})
     row, assigns = _prepare_target_payload(
         instruction,
         model,
@@ -1661,24 +1689,27 @@ def assigned_members(
     name, each reference judged before any of them is flattened into a row.
 
     A reference names the member through its owner: the owner must be
-    ``entity`` or one of its ancestors, and the member applicable to
-    ``entity``, so an inherited member assigned through its declaring ancestor
-    applies to a concrete descendant while a sibling's or a stranger's member
-    is refused rather than having its qualifier discarded. Each member is
+    ``entity`` or one of its ancestors, and must itself declare or inherit the
+    member, so an inherited member assigned through its declaring ancestor
+    applies to a concrete descendant while a descendant's, a sibling's, or a
+    stranger's member is refused rather than having its qualifier discarded. Each member is
     assigned at most once; a second assignment of it is refused rather than
     silently overwriting the first. The values are judged as assignments when
     the row they form is prepared.
     """
     position = _family_position(model, entity)
     ancestry = frozenset(position.ancestry)
-    selection = position.member_selection
     key = position.primary_key.identity.name
     row: dict[str, object] = {}
     for assignment in assignments:
         attr = assignment.attr
         owner_spelling, _, name = attr.rpartition(".")
         owner = entity_by_name(model, owner_spelling) if _ASSIGNMENT_REF.match(attr) else None
-        if owner is None or owner.identity not in ancestry or selection.binding(name) is None:
+        if (
+            owner is None
+            or owner.identity not in ancestry
+            or _member_selection(model, owner).binding(name) is None
+        ):
             raise WriteInstructionError(
                 f"{entity.identity.name}: assignment {attr!r} does not name a member "
                 f"{entity.identity.canonical} declares or inherits"

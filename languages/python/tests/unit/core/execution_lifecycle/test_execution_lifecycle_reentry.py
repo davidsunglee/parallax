@@ -60,6 +60,11 @@ something.
 """
 
 
+NO_START: Any = None
+"""A stated ``valid_from`` of ``None``, which every verb taking a start refuses
+as no start."""
+
+
 def _db(adapter: DatabaseAdapter, provider: Any) -> ScopedDatabase:
     return own_root(
         connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
@@ -293,7 +298,9 @@ def _transaction_entry_points(tx: Transaction) -> dict[str, _Work]:
     their Typed peers: each verb is its own entry even where the two
     representations share one write operation, because the refusal is that
     shared operation's first line and a verb reaching it some other way would
-    acquire or prepare its input first.
+    acquire or prepare its input first. Every verb taking a start states
+    ``valid_from=NO_START``, which each of them refuses as no start, so the refusal
+    must precede even the judgment of its own keywords.
     """
     return {
         "find": lambda: tx.find(UNUSED),
@@ -301,23 +308,32 @@ def _transaction_entry_points(tx: Transaction) -> dict[str, _Work]:
         "wire.find": lambda: tx.wire.find(UNUSED),
         "wire.stream": lambda: tx.wire.stream(UNUSED),
         "read_rows": lambda: tx.read_rows(UNUSED),
-        "insert": lambda: tx.insert(UNUSED, valid_from=FIXED, until=FIXED),
+        "insert": lambda: tx.insert(UNUSED, valid_from=NO_START, until=FIXED),
         "amend": lambda: tx.amend(UNUSED, until=FIXED),
+        "amend_if": lambda: tx.amend_if(
+            UNUSED, UNUSED, key=UNUSED, valid_from=NO_START, until=FIXED
+        ),
+        "replace": lambda: tx.replace(UNUSED, until=FIXED),
+        "replace_if": lambda: tx.replace_if(UNUSED, valid_from=NO_START, until=FIXED),
         "delete": lambda: tx.delete(UNUSED),
         "terminate": lambda: tx.terminate(UNUSED, until=FIXED),
-        "update_where": lambda: tx.amend_where(UNUSED, UNUSED, valid_from=FIXED, until=FIXED),
+        "amend_where": lambda: tx.amend_where(UNUSED, UNUSED, valid_from=NO_START, until=FIXED),
         "delete_where": lambda: tx.delete_where(UNUSED),
-        "terminate_where": lambda: tx.terminate_where(UNUSED, valid_from=FIXED, until=FIXED),
-        "wire.insert": lambda: tx.wire.insert(UNUSED, UNUSED, valid_from=FIXED, until=FIXED),
-        "wire.update": lambda: tx.wire.amend_if(UNUSED, UNUSED, until=FIXED),
+        "terminate_where": lambda: tx.terminate_where(UNUSED, valid_from=NO_START, until=FIXED),
+        "wire.insert": lambda: tx.wire.insert(UNUSED, UNUSED, valid_from=NO_START, until=FIXED),
+        "wire.amend": lambda: tx.wire.amend(UNUSED, UNUSED, until=FIXED),
+        "wire.amend_if": lambda: tx.wire.amend_if(UNUSED, UNUSED, valid_from=NO_START, until=FIXED),
+        "wire.replace": lambda: tx.wire.replace(UNUSED, UNUSED, until=FIXED),
+        "wire.replace_if": lambda: tx.wire.replace_if(UNUSED, valid_from=NO_START, until=FIXED),
+        "wire.editable_data": lambda: tx.wire.editable_data(UNUSED),
         "wire.delete": lambda: tx.wire.delete(UNUSED),
         "wire.terminate": lambda: tx.wire.terminate(UNUSED, until=FIXED),
-        "wire.update_where": lambda: tx.wire.amend_where(
-            UNUSED, UNUSED, valid_from=FIXED, until=FIXED
+        "wire.amend_where": lambda: tx.wire.amend_where(
+            UNUSED, UNUSED, valid_from=NO_START, until=FIXED
         ),
         "wire.delete_where": lambda: tx.wire.delete_where(UNUSED),
         "wire.terminate_where": lambda: tx.wire.terminate_where(
-            UNUSED, valid_from=FIXED, until=FIXED
+            UNUSED, valid_from=NO_START, until=FIXED
         ),
     }
 

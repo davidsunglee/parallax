@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence, Set
+from collections.abc import Callable, Mapping, Sequence, Set
 from dataclasses import dataclass
 from typing import cast
 
@@ -15,8 +15,9 @@ from parallax.core.execution._keyed_writes import (
     TargetCondition,
     keyed_instruction,
     retained,
+    stated_valid_from,
 )
-from parallax.core.execution._options import Omitted
+from parallax.core.execution._options import OMITTED, Omitted
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.unit_work import (
@@ -85,7 +86,7 @@ def wire_insert(
     data: Mapping[str, object],
     *,
     mutation: KeyedMutation,
-    valid_from: dt.datetime | None = None,
+    valid_from: dt.datetime | Omitted = OMITTED,
     until: dt.datetime | None = None,
 ) -> WireEntity:
     """Buffer a Wire ``insert`` / ``insertUntil`` of ``data`` under
@@ -172,7 +173,7 @@ def wire_predicate_write(
     target: WirePredicateTarget,
     changes: WireChanges | None = None,
     *,
-    valid_from: dt.datetime | None = None,
+    valid_from: dt.datetime | Omitted = OMITTED,
     until: dt.datetime | None = None,
 ) -> None:
     """Buffer a Wire predicate-selected write over ``target``.
@@ -194,6 +195,7 @@ def wire_predicate_write(
     target, the window, the predicate, and each assignment in authored order.
     """
     refuse_reentry(attempt.lifecycle)
+    start = stated_valid_from(valid_from)
     selection = _selection_shape(
         _authored_document(target, "a predicate-selected write's canonical target")
     )
@@ -205,7 +207,7 @@ def wire_predicate_write(
             WriteAssignment(f"{selection.entity}.{member}", value)
             for member, value in authored.items()
         ),
-        valid_from,
+        start,
         until,
     )
     prepared = instructions.prepare_wire_write(instruction, attempt.model.meta)
@@ -219,7 +221,7 @@ def wire_target_write(
     document: object,
     condition: TargetCondition,
     *,
-    valid_from: dt.datetime | None,
+    valid_from: dt.datetime | Omitted,
     until: dt.datetime | None,
 ) -> None:
     """Buffer a Wire caller-conditioned write of the object ``document``
@@ -236,6 +238,7 @@ def wire_target_write(
     or ``target`` carries, and no read's evidence, stands in for it.
     """
     refuse_reentry(attempt.lifecycle)
+    start = stated_valid_from(valid_from)
     meta = attempt.model.meta
     if isinstance(target, str):
         if isinstance(document, Omitted):
@@ -268,7 +271,7 @@ def wire_target_write(
         row,
         condition.if_version,
         condition.if_tx_start,
-        valid_from,
+        start,
         until,
         condition.unversioned,
         condition.stated,
@@ -278,7 +281,7 @@ def wire_target_write(
     )
 
 
-def editable_wire_data(meta: Metamodel, source: object) -> dict[str, object]:
+def editable_wire_data(attempt: Attempt, source: object) -> dict[str, object]:
     """Independently mutable authoring data copied from a node Parallax
     published: its primary key and every writable member it published, in
     their Wire spellings, recursively copied into fresh mappings and lists.
@@ -289,6 +292,8 @@ def editable_wire_data(meta: Metamodel, source: object) -> dict[str, object]:
     stored content. A member the node did not publish stays absent. Copying
     transfers no authority; the source remains the keyed carrier.
     """
+    refuse_reentry(attempt.lifecycle)
+    meta = attempt.model.meta
     entity = published_entity(meta, source, "`editable_data`")
     assert isinstance(source, WireEntity)  # published_entity accepts nothing else
     return _published_writable(meta, entity, source, copy=True)
@@ -395,23 +400,26 @@ def _prepared_wire_write(
     mutation: KeyedMutation,
     entity: EntityMetadata,
     row: Mapping[str, object],
-    authored: Set[str],
+    authored: Set[str] | None,
     *,
     valid_from: dt.datetime | None,
     until: dt.datetime | None,
+    members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedKeyedWrite:
     """One authored single-row keyed instruction, decoded and judged by Unit
     Work's sole Wire judgment.
 
     ``authored`` names the members the caller explicitly wrote — an opening
     payload's keys, judged as insert authoring, or a change document's keys,
-    judged as assignments — never the source identity an update's row carries
-    beside them.
+    judged as assignments — never the source identity an amendment's row
+    carries beside them; or ``members`` produces those assignments once the
+    target and window admit the write.
     """
     prepared = instructions.prepare_wire_write(
         keyed_instruction(mutation, entity.identity, row, valid_from=valid_from, until=until),
         meta,
         authored_members=authored,
+        members=members,
     )
     return prepared
 
@@ -487,18 +495,34 @@ class WireKeyedWriteSource:
         authored = self._authored
         if authored is None:
             authored = _published_writable(meta, entity, source.node, copy=False)
-        members = instructions.addressed_members(
-            meta, entity, source.object_key.primary_key, authored
-        )
-        assigned = members.keys()
-        row = {**_published_identity(source), **members}
-        instruction = _prepared_wire_write(
-            meta, mutation, entity, row, assigned, valid_from=valid_from, until=until
-        )
+        address = source.object_key.primary_key
+        identity = _published_identity(source)
+        if not any(name in authored for name, _value in address):
+            instruction = _prepared_wire_write(
+                meta,
+                mutation,
+                entity,
+                {**identity, **authored},
+                authored.keys(),
+                valid_from=valid_from,
+                until=until,
+            )
+            assigned = frozenset(authored)
+        else:
+            stated = authored
+            instruction = _prepared_wire_write(
+                meta,
+                mutation,
+                entity,
+                identity,
+                None,
+                valid_from=valid_from,
+                until=until,
+                members=lambda: instructions.addressed_members(meta, entity, address, stated),
+            )
+            assigned = frozenset(name for name in authored if name not in identity)
         return PreparedSourceWrite(
-            instruction=instruction,
-            object_key=source.object_key,
-            assigned=frozenset(assigned),
+            instruction=instruction, object_key=source.object_key, assigned=assigned
         )
 
     def _retained(self) -> tuple[Metamodel, KeyedMutation, _WireKeyedSource]:

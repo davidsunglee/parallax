@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
 from parallax.core.entity import (
@@ -21,7 +21,9 @@ from parallax.core.execution._keyed_writes import (
     TargetCondition,
     keyed_instruction,
     retained,
+    stated_valid_from,
 )
+from parallax.core.execution._options import OMITTED, Omitted
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
@@ -162,11 +164,11 @@ def prepared_typed_write(
     *,
     valid_from: dt.datetime | None,
     until: dt.datetime | None,
-    authored_members: frozenset[str] | None = None,
+    members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedKeyedWrite:
     """One authored single-row keyed instruction, judged by Unit Work's sole
     typed preparation — target and window, then member names, values, and
-    assignment legality, each of ``authored_members`` judged as an assignment.
+    assignment legality, each of ``members`` judged as an assignment.
 
     The bounds ride the instruction's dimension-explicit fields rather than the
     row (ADR 0010/0013): an As-Of Axis endpoint is framework-owned, so a
@@ -175,7 +177,7 @@ def prepared_typed_write(
     prepared = instructions.prepare_typed_write(
         keyed_instruction(mutation, entity.identity, row, valid_from=valid_from, until=until),
         meta,
-        authored_members=authored_members,
+        members=members,
     )
     return prepared
 
@@ -278,7 +280,7 @@ class TypedKeyedWriteSource:
             row,
             valid_from=valid_from,
             until=until,
-            authored_members=assigned if explicit else None,
+            members=explicit,
         )
         return PreparedSourceWrite(
             instruction=instruction,
@@ -292,25 +294,28 @@ class TypedKeyedWriteSource:
 
     def _authored(
         self, meta: Metamodel, mutation: KeyedMutation, entity: EntityMetadata
-    ) -> tuple[Mapping[str, object], frozenset[str], bool]:
-        """The row this value authors, the members it assigns, and whether
-        they are explicit assignments preparation has yet to judge."""
+    ) -> tuple[Mapping[str, object], frozenset[str], Callable[[], Mapping[str, object]] | None]:
+        """The row this value authors, the members it assigns, and the explicit
+        assignments preparation judges into that row once the target and
+        window admit the write."""
         value, codec = self._value, self._codec
         if mutation in REPLACE_MUTATIONS:
             row = codec.writable_row(value)
             key = family_view(meta, entity).primary_key.identity.name
-            return row, frozenset(name for name in row if name != key), False
+            return row, frozenset(name for name in row if name != key), None
         if mutation not in ASSIGNMENT_MUTATIONS:
-            return codec.identity_row(value), frozenset(), False
+            return codec.identity_row(value), frozenset(), None
         if self._assignments:
-            members = instructions.assigned_members(
-                meta, entity, write_assignments(self._assignments)
+            assignments = write_assignments(self._assignments)
+            return (
+                codec.identity_row(value),
+                frozenset(assignment.attr.attribute for assignment in self._assignments),
+                lambda: instructions.assigned_members(meta, entity, assignments),
             )
-            return {**codec.identity_row(value), **members}, frozenset(members), True
         authored = codec.authored_row(value)
         if authored is None:
-            return codec.identity_row(value), frozenset(), False
-        return authored.row, frozenset(authored.originals), False
+            return codec.identity_row(value), frozenset(), None
+        return authored.row, frozenset(authored.originals), None
 
     def _retained(self) -> tuple[Metamodel, KeyedMutation]:
         return retained(self._meta), retained(self._mutation)
@@ -372,7 +377,7 @@ def typed_predicate_write(
     query: ObjectQuery[Any, Any],
     assignments: Sequence[AttributeAssignment[Any]],
     *,
-    valid_from: dt.datetime | None,
+    valid_from: dt.datetime | Omitted = OMITTED,
     until: dt.datetime | None = None,
 ) -> None:
     """The Typed entry to the predicate-write lane: a mutation-compatible
@@ -390,12 +395,13 @@ def typed_predicate_write(
     the attempt dispatches the prepared product.
     """
     refuse_reentry(attempt.lifecycle)
+    start = stated_valid_from(valid_from)
     selection = mutation_selection(query)
     instruction = PredicateWrite(
         mutation,
         PredicateSelection(selection.target.canonical, selection.predicate),
         write_assignments(assignments),
-        valid_from,
+        start,
         until,
     )
     prepared = instructions.prepare_typed_write(instruction, attempt.model.meta)
@@ -409,7 +415,7 @@ def typed_target_write(
     codec: EntityRowCodec,
     condition: TargetCondition,
     *,
-    valid_from: dt.datetime | None,
+    valid_from: dt.datetime | Omitted,
     until: dt.datetime | None,
 ) -> None:
     """The Typed entry to caller-conditioned replacement: ``instance``'s every
@@ -423,6 +429,7 @@ def typed_target_write(
     which is what lets a historical observation supply a replacement's state.
     """
     refuse_reentry(attempt.lifecycle)
+    start = stated_valid_from(valid_from)
     meta = attempt.model.meta
     entity = metadata_of_instance(meta, instance)
     instruction = TargetWrite(
@@ -431,7 +438,7 @@ def typed_target_write(
         codec.writable_row(instance),
         condition.if_version,
         condition.if_tx_start,
-        valid_from,
+        start,
         until,
         condition.unversioned,
         condition.stated,
@@ -447,7 +454,7 @@ def typed_conditional_amend(
     key: object,
     condition: TargetCondition,
     *,
-    valid_from: dt.datetime | None,
+    valid_from: dt.datetime | Omitted,
     until: dt.datetime | None,
 ) -> None:
     """The Typed entry to caller-conditioned amendment: ``assignments`` of the
@@ -455,34 +462,39 @@ def typed_conditional_amend(
     caller's own condition, with no instance, read, or source consulted.
 
     ``key`` addresses the family's one primary-key Attribute whatever its
-    declared name; a mapping or tuple is no key here. Each assignment's
-    reference is judged against the class's own ancestry before any is
-    flattened into the row, so an inherited member applies and a foreign one is
-    refused.
+    declared name; a mapping or tuple is no key here. The key and assignments
+    are the write's payload, judged only once its window and condition admit
+    it. Each assignment's reference is judged against the class's own ancestry
+    before any is flattened into the row, so an inherited member applies and a
+    foreign one is refused.
     """
     refuse_reentry(attempt.lifecycle)
+    start = stated_valid_from(valid_from)
     meta = attempt.model.meta
     entity = metadata_of_class(meta, entity_class)
-    if isinstance(key, Mapping | tuple | list | set | frozenset):
-        kind = type(cast("object", key)).__name__
-        raise instructions.WriteInstructionError(
-            f"{entity.identity.name}: key is the object's one scalar primary-key value, and "
-            f"a {kind} is no such value"
-        )
-    members = instructions.assigned_members(meta, entity, write_assignments(assignments))
+
+    def members() -> Mapping[str, object]:
+        if isinstance(key, Mapping | tuple | list | set | frozenset):
+            kind = type(cast("object", key)).__name__
+            raise instructions.WriteInstructionError(
+                f"{entity.identity.name}: key is the object's one scalar primary-key value, and "
+                f"a {kind} is no such value"
+            )
+        return instructions.assigned_members(meta, entity, write_assignments(assignments))
+
     key_name = family_view(meta, entity).primary_key.identity.name
     instruction = TargetWrite(
         mutation,
         entity.identity.canonical,
-        {key_name: key, **members},
+        {key_name: key},
         condition.if_version,
         condition.if_tx_start,
-        valid_from,
+        start,
         until,
         condition.unversioned,
         condition.stated,
     )
-    attempt.target_write(instructions.prepare_typed_write(instruction, meta))
+    attempt.target_write(instructions.prepare_typed_write(instruction, meta, members=members))
 
 
 def metadata_of_class(meta: Metamodel, entity_class: object) -> EntityMetadata:

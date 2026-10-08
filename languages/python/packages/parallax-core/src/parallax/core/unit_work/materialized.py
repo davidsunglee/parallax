@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Literal, cast
 
 from parallax.core import inheritance, temporal_read
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.metamodel import (
     AttributeMetadata,
     Document,
@@ -590,16 +591,17 @@ def _contributed(
     but the key, which addresses the object rather than changing it, and a
     replacement's window becomes a replacement's extent whatever authorized
     it; any other write destroys."""
-    assigned = (
-        {name: value for name, value in instruction.rows[0].items() if name != key_name}
-        if instruction.mutation in ASSIGNMENT_MUTATIONS
-        else None
-    )
     return transform.followed_by(
         instruction.valid_time_window,
-        assigned,
+        _assigned(instruction, key_name),
         replaces=instruction.mutation in REPLACE_MUTATIONS,
     )
+
+
+def _assigned(instruction: PreparedKeyedWrite, key_name: str) -> Mapping[str, object] | None:
+    if instruction.mutation not in ASSIGNMENT_MUTATIONS:
+        return None
+    return {name: value for name, value in instruction.rows[0].items() if name != key_name}
 
 
 @dataclass(frozen=True, slots=True)
@@ -611,10 +613,11 @@ class PendingOpening:
     range's transform applies to stored coverage: assigned members replace the
     opening's values inside each write's window, and destruction removes
     coverage there. Settlement opens each part that survives as a new lineage
-    seeded with the insert's own state. An amendment creates nothing outside
-    the opening; a replacement reaching past it establishes its complete state
-    over that reach too (:attr:`beyond`). ``intents`` keeps each composed
-    write's window so admission can judge the next one.
+    seeded with the insert's own state. A replacement reaching past the
+    opening establishes its complete state over that reach too
+    (:attr:`beyond`), and every other write reaches no further than the
+    opening and its replacements do. ``intents`` keeps each composed write's
+    window so admission can judge the next one.
     """
 
     insert: PreparedKeyedWrite
@@ -622,39 +625,57 @@ class PendingOpening:
     intents: tuple[WriteIntent, ...]
 
     def then(self, instruction: PreparedKeyedWrite, key_name: str) -> PendingOpening:
-        """This opening with ``instruction`` composed after its earlier writes."""
+        """This opening with ``instruction`` composed after its earlier writes,
+        an amendment's or a destruction's window clipped to the coverage the
+        opening and its replacements establish."""
         intent = keyed_intent(instruction)
         assert intent is not None  # an opening's own writes are no inserts
+        window = instruction.valid_time_window
+        assert window is not None  # a Bitemporal write states its window
+        replaces = instruction.mutation in REPLACE_MUTATIONS
+        if not replaces:
+            end = self._covered_end()
+            clipped = window.clipped(end=None if end is INFINITY else end)
+            # Every write an insertion authorized starts at its anchor, inside
+            # the opening.
+            assert clipped is not None
+            window = clipped
         return PendingOpening(
             insert=self.insert,
-            transform=_contributed(self.transform, instruction, key_name),
+            transform=self.transform.followed_by(
+                window, _assigned(instruction, key_name), replaces=replaces
+            ),
             intents=(*self.intents, intent),
         )
 
     @property
     def beyond(self) -> TimeInterval | None:
         """The stretch past the opening's window that a composed replacement
-        reaches — through the end of everything composed, since the stored
-        coverage there takes the whole transform — or ``None`` where no
-        replacement reaches past it."""
+        reached — every write composed after it reaching there too, so the
+        stored coverage there takes the whole transform — or ``None`` where no
+        replacement reached past it."""
         window = self.insert.valid_time_window
         assert window is not None  # a Bitemporal opening states its window
         end = window.end
-        if end is INFINITY or not any(
-            segment.replaces
-            and segment.valid_time_window is not None
-            and segment.valid_time_window.ends_after(end)
-            for segment in self.transform.segments
-        ):
+        if end is INFINITY or not self.transform.segments:
             return None
         reach = self.transform.valid_time_window
         assert reach is not None  # every segment of a Valid-Time transform has an extent
-        return TimeInterval(end, reach.end)
+        return TimeInterval(end, reach.end) if reach.ends_after(end) else None
 
     @property
     def survives(self) -> bool:
         """Whether any of the opened coverage survives its composed writes."""
         return bool(self._surviving())
+
+    def _covered_end(self) -> dt.datetime | Literal[TemporalBound.INFINITY]:
+        """Where the coverage the opening and its replacements establish ends."""
+        beyond = self.beyond
+        if beyond is not None:
+            return beyond.end
+        window = self.insert.valid_time_window
+        assert window is not None  # a Bitemporal opening states its window
+        return window.end
 
     def _surviving(self) -> tuple[Successor, ...]:
         window = self.insert.valid_time_window
