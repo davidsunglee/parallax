@@ -818,7 +818,9 @@ semantics already decided.
   (*Retained starting rows*): one still current at the unit's turn is completed
   and reused as coverage, a stale one is discarded unjudged, and only the parts
   of the window neither those rows nor the observed originals hold are read; a
-  part that read finds nothing in is a gap, read once. A composition
+  part that read finds nothing in is a gap, read once, and a rectangle created
+  concurrently inside a held row's interval is not reached (`m-temporal-write`
+  *Concurrent creation in gaps is not coordinated*). A composition
   an ordering barrier kept after earlier writes of its object reads its whole
   window when its turn comes — less what its reused retained rows hold — and
   binds to the current rows alone: each observed

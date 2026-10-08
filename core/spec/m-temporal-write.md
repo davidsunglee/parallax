@@ -261,7 +261,9 @@ attempt authored, that insertion's `validFrom`, its anchor (`m-unit-work`
 *Insertion authority*). A source read at Valid-Time `latest` names no instant
 and is refused, as is a source neither anchors. Its **requested extent** is
 `[validFrom, until)`, through infinity when unbounded, and the write applies to
-every current-on-Transaction-Time rectangle of the object that overlaps it:
+every current-on-Transaction-Time rectangle of the object that overlaps it and
+that the write holds or reads (*Concurrent creation in gaps is not
+coordinated*):
 
 - each overlapping rectangle is inactivated once, and its nonempty pieces are
   opened in Valid-Time order: a part outside the extent carries the
@@ -331,8 +333,8 @@ changed since the caller's query, and each is inactivated under its own `in_z`.
 
 | Mutation | Inside its requested extent |
 |---|---|
-| Amendment | Each overlapping rectangle takes the assigned members over its own unassigned values, exactly as an observed write's does; a gap and the coverage after a scheduled termination stay absent. |
-| Replacement | Each overlapping rectangle takes the complete stated state, and every part of the extent no current rectangle covers — a gap, or the coverage after a scheduled termination — is opened with that state too, once. |
+| Amendment | Each overlapping rectangle the write holds or reads takes the assigned members over its own unassigned values, exactly as an observed write's does; a gap and the coverage after a scheduled termination stay absent. |
+| Replacement | Each overlapping rectangle the write holds or reads takes the complete stated state, and every part of the extent no current rectangle covers — a gap, or the coverage after a scheduled termination — is opened with that state too, once. |
 
 A rectangle the write leaves unchanged is kept rather than inactivated
 (*Unchanged milestones*), the starting rectangle included: each rectangle is
@@ -391,7 +393,14 @@ attempt adds no history of its own.
 shared locks above protect rows that exist when the flush reads them. A
 concurrent transaction may still open coverage inside a gap a replacement fills,
 or a gap an amendment passes over, and both commits can leave overlapping current
-coverage; no isolation level is raised to prevent it.
+coverage; no isolation level is raised to prevent it. A write binds to the rows
+it already holds — the rectangles it observed, unless an ordering barrier
+follows earlier writes of its object; the starting rectangles a Locking
+acquisition retained that are still current; and a pending insertion's own
+window — and reads only the coverage of its extent those leave. A rectangle
+created concurrently inside a held row's Valid-Time interval is therefore not
+reached: the write neither reads nor inactivates it, and it stays current
+beside the write's own pieces.
 
 **Untracked same-token changes are a configuration constraint.** A supported
 deployment introduces no trigger or cascade that replaces or changes a tracked
