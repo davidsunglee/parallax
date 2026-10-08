@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Container, Mapping, Sequence
 from dataclasses import dataclass
 
 from parallax.core.inheritance import InheritanceFacet
@@ -159,6 +159,7 @@ class WritePlanCompiler:
         "_concurrency",
         "_families",
         "_model",
+        "_settled",
         "_temporal_facet",
     )
 
@@ -170,12 +171,14 @@ class WritePlanCompiler:
         *,
         concurrency: ConcurrencyStrategy,
         audit: AuditStrategy,
+        settled: Container[object],
     ) -> None:
         self._model = model
         self._families = families
         self._temporal_facet = temporal_facet
         self._concurrency = concurrency
         self._audit = audit
+        self._settled = settled
 
     def compile(
         self,
@@ -239,7 +242,7 @@ class WritePlanCompiler:
         pending: list[PlannedStep] = []
         units: list[ExecutionUnit] = []
         count = 0
-        audit = AuditDecoration(self._audit, actor_identity, transaction_instant)
+        audit = AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled)
 
         def flush_pending() -> None:
             if pending:

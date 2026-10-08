@@ -106,6 +106,22 @@ def _account_update() -> PlannedUpdate:
     )
 
 
+def _account_close() -> PlannedClose:
+    account = entity_of(corpus_model("account"), "Account").identity
+    key = AttributeIdentity(account, "id")
+    owner = AttributeIdentity(account, "owner")
+    return PlannedClose(
+        entity=account,
+        target=MilestoneTarget(
+            key_attributes=(key,), key_values=(1,), end_attributes=(owner,), end_values=(INFINITY,)
+        ),
+        assignments=PlannedAssignments(attributes={owner: "x"}),
+        cause=SUPERSEDED,
+        concurrency=UNGATED,
+        affected_rows=ExactCount(expected=1, on_shortfall=STALE_WRITE),
+    )
+
+
 def test_the_neutral_audit_answers_every_input_itself_and_reads_no_clock() -> None:
     # The audit hooks exist as a seam from the start, so provenance becomes a
     # change of injected adapter rather than of interface. The default hands
@@ -114,7 +130,7 @@ def test_the_neutral_audit_answers_every_input_itself_and_reads_no_clock() -> No
     write_row, _key, _owner = _account_row()
     update = _account_update()
     clock = CountingClock([])
-    neutral = AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, TransactionInstant(clock))
+    neutral = AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, TransactionInstant(clock), ())
 
     assert neutral.neutral
     assert neutral.finalize_row(write_row) is write_row
@@ -126,7 +142,7 @@ def test_the_neutral_audit_answers_every_input_itself_and_reads_no_clock() -> No
 def test_a_finalized_row_states_every_value_it_adds_as_an_executed_assignment() -> None:
     write_row, _key, owner = _account_row()
     audit = RecordingAudit(stamps={owner: "audited"})
-    bound = AuditDecoration(audit, TEST_ACTOR_IDENTITY, inert_instant())
+    bound = AuditDecoration(audit, TEST_ACTOR_IDENTITY, inert_instant(), ())
 
     finalized = bound.finalize_row(write_row)
 
@@ -154,7 +170,7 @@ def test_an_audit_answer_that_breaks_its_contract_is_refused(breach: str) -> Non
             return answers[breach]
 
     audited = stated if breach == "dropped" else write_row
-    bound = AuditDecoration(cast("Any", _Breaking()), TEST_ACTOR_IDENTITY, inert_instant())
+    bound = AuditDecoration(cast("Any", _Breaking()), TEST_ACTOR_IDENTITY, inert_instant(), ())
     with pytest.raises(WritePlanningError, match="must state every value it adds or changes"):
         bound.finalize_row(audited)
 
@@ -172,27 +188,13 @@ def test_an_update_decoration_may_not_move_what_the_update_addresses() -> None:
                 given, target=KeyTarget(key_attributes=target.key_attributes, key_values=((2,),))
             )
 
-    bound = AuditDecoration(cast("Any", _Retargeting()), TEST_ACTOR_IDENTITY, inert_instant())
+    bound = AuditDecoration(cast("Any", _Retargeting()), TEST_ACTOR_IDENTITY, inert_instant(), ())
     with pytest.raises(WritePlanningError, match="an update's decoration"):
         bound.decorate_update(update)
 
 
 def test_a_close_decoration_may_not_change_why_the_milestone_closed() -> None:
-    account = entity_of(corpus_model("account"), "Account").identity
-    key = AttributeIdentity(account, "id")
-    close = PlannedClose(
-        entity=account,
-        target=MilestoneTarget(
-            key_attributes=(key,),
-            key_values=(1,),
-            end_attributes=(AttributeIdentity(account, "owner"),),
-            end_values=(INFINITY,),
-        ),
-        assignments=PlannedAssignments(attributes={AttributeIdentity(account, "owner"): "x"}),
-        cause=SUPERSEDED,
-        concurrency=UNGATED,
-        affected_rows=ExactCount(expected=1, on_shortfall=STALE_WRITE),
-    )
+    close = _account_close()
 
     class _Recausing:
         def decorate_close(
@@ -201,8 +203,25 @@ def test_a_close_decoration_may_not_change_why_the_milestone_closed() -> None:
             del actor_identity, transaction_instant
             return replace(given, cause=TERMINATED)
 
-    neutral = AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, inert_instant())
+    neutral = AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, inert_instant(), ())
     assert neutral.decorate_close(close) is close
-    bound = AuditDecoration(cast("Any", _Recausing()), TEST_ACTOR_IDENTITY, inert_instant())
+    bound = AuditDecoration(cast("Any", _Recausing()), TEST_ACTOR_IDENTITY, inert_instant(), ())
     with pytest.raises(WritePlanningError, match="a close's decoration"):
         bound.decorate_close(close)
+
+
+def test_no_hook_may_state_an_attribute_settlement_decides() -> None:
+    # A primary key, temporal bound, or optimistic version places the row a step
+    # writes; an audit stating one would move it where completion never looks.
+    write_row, key, _owner = _account_row()
+    audit = RecordingAudit(stamps={key: 999})
+    bound = AuditDecoration(audit, TEST_ACTOR_IDENTITY, inert_instant(), frozenset({key}))
+    unsettled = AuditDecoration(audit, TEST_ACTOR_IDENTITY, inert_instant(), ())
+
+    assert unsettled.finalize_row(write_row).row.attributes[key] == 999
+    with pytest.raises(WritePlanningError, match="a row's finalization"):
+        bound.finalize_row(write_row)
+    with pytest.raises(WritePlanningError, match="an update's decoration"):
+        bound.decorate_update(_account_update())
+    with pytest.raises(WritePlanningError, match="a close's decoration"):
+        bound.decorate_close(_account_close())

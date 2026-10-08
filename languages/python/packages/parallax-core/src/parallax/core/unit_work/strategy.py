@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Container, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
@@ -235,7 +235,8 @@ class AuditStrategy(Protocol):
     :meth:`decorate_update` stamps a Non-Temporal update, keyed or readless,
     without a complete row, and :meth:`decorate_close` stamps a closed
     predecessor. Each adds ordinary planned values and changes no topology,
-    target, gate, cause, or affected-row policy, and emits no SQL. A guard, a
+    target, gate, cause, or affected-row policy, and emits no SQL: none states
+    a primary key, temporal bound, or optimistic version. A guard, a
     removal, a delete, and a milestone kept unchanged store no represented
     value and meet none of them.
 
@@ -317,7 +318,9 @@ class AuditDecoration:
 
     Each hook's answer is held to its contract before settlement uses it, so a
     strategy cannot move what a step addresses or change a value without
-    stating it as an executed assignment. ``neutral`` says the strategy is the
+    stating it as an executed assignment. ``settled`` holds the Attributes
+    settlement alone decides — every primary key, temporal bound, and optimistic
+    version — which no answer may state. ``neutral`` says the strategy is the
     audit-neutral default, which answers every input unchanged: a settlement
     holding rows only as compact backing then builds none merely to ask, and
     keeps what any other strategy adds (``assignments_added``) rather than the
@@ -327,6 +330,7 @@ class AuditDecoration:
     audit: AuditStrategy
     actor_identity: ActorIdentity
     transaction_instant: TransactionInstant
+    settled: Container[object]
 
     @property
     def neutral(self) -> bool:
@@ -339,7 +343,7 @@ class AuditDecoration:
             transaction_instant=self.transaction_instant,
         )
         if finalized is not write_row:
-            _require_finalized(write_row, finalized)
+            _require_finalized(write_row, finalized, self.settled)
         return finalized
 
     def decorate_update(self, update: PlannedUpdate) -> PlannedUpdate:
@@ -353,7 +357,7 @@ class AuditDecoration:
             or decorated.target != update.target
             or decorated.concurrency != update.concurrency
             or decorated.affected_rows != update.affected_rows
-            or not _extends(update.assignments, decorated.assignments)
+            or not _extends(update.assignments, decorated.assignments, self.settled)
         ):
             raise _audit_refused("an update's decoration")
         return decorated
@@ -370,19 +374,23 @@ class AuditDecoration:
             or decorated.cause != close.cause
             or decorated.concurrency != close.concurrency
             or decorated.affected_rows != close.affected_rows
-            or not _extends(close.assignments, decorated.assignments)
+            or not _extends(close.assignments, decorated.assignments, self.settled)
         ):
             raise _audit_refused("a close's decoration")
         return decorated
 
 
-def _require_finalized(write_row: WriteRow, finalized: WriteRow) -> None:
+def _require_finalized(
+    write_row: WriteRow, finalized: WriteRow, settled: Container[object]
+) -> None:
     """Refuse a finalized row that changed its origin, dropped an executed
-    member, or changed a member it does not state as executed."""
+    member, changed a member it does not state as executed, or states a
+    ``settled`` one."""
     executed = finalized.executed
     if (
         finalized.origin is not write_row.origin
         or any(member not in executed for member in write_row.executed)
+        or any(member in settled for member in executed if member not in write_row.executed)
         or not _keeps(write_row.row.attributes, finalized.row.attributes, executed)
         or not _keeps(write_row.row.value_objects, finalized.row.value_objects, executed)
     ):
@@ -400,19 +408,30 @@ def _keeps[K](
     ) and all(member in members or member in stated for member in final)
 
 
-def _extends(stated: PlannedAssignments, final: PlannedAssignments) -> bool:
-    """Whether ``final`` keeps every assignment ``stated`` makes, as stated."""
-    return all(
-        identity in final.attributes and final.attributes[identity] is value
-        for identity, value in stated.attributes.items()
-    ) and all(
-        identity in final.value_objects and final.value_objects[identity] is value
-        for identity, value in stated.value_objects.items()
+def _extends(
+    stated: PlannedAssignments, final: PlannedAssignments, settled: Container[object]
+) -> bool:
+    """Whether ``final`` keeps every assignment ``stated`` makes, as stated,
+    and adds none to a ``settled`` Attribute."""
+    return (
+        all(
+            identity in final.attributes and final.attributes[identity] is value
+            for identity, value in stated.attributes.items()
+        )
+        and all(
+            identity in final.value_objects and final.value_objects[identity] is value
+            for identity, value in stated.value_objects.items()
+        )
+        and not any(
+            identity in settled and identity not in stated.attributes
+            for identity in final.attributes
+        )
     )
 
 
 def _audit_refused(what: str) -> WritePlanningError:
     return WritePlanningError(
-        f"{what} must state every value it adds or changes as an assignment and keep the "
-        "origin, address, gate, and affected-row policy it was given (m-unit-work)"
+        f"{what} must state every value it adds or changes as an assignment, state no "
+        "primary key, temporal bound, or optimistic version, and keep the origin, address, "
+        "gate, and affected-row policy it was given (m-unit-work)"
     )

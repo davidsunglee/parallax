@@ -283,6 +283,37 @@ def test_one_temporal_row_settles_identically_addressed_and_materialized() -> No
     assert list(materialized.steps) == list(eager.steps)
 
 
+def test_an_audit_replacing_an_authored_value_reaches_the_rebuilt_group_successor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = AttributeIdentity(corpus_entity("Balance"), "value")
+    monkeypatch.setattr(
+        planning_composition, "NO_AUDIT", RecordingAudit(stamps={value: Decimal("77.00")})
+    )
+    addressed = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("9.00")},))
+    key_ = object_key(addressed, _BALANCE)
+    assert key_ is not None
+    eager = _plan(
+        [addressed],
+        _BALANCE,
+        observations={
+            key_: TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
+        },
+        concurrency="optimistic",
+        tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    )
+    materialized = _plan(
+        [_one_row_temporal_group(Decimal("9.00"))],
+        _BALANCE,
+        concurrency="optimistic",
+        tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    )
+
+    successor = cast("PlannedInsert", list(materialized.steps)[-1]).entries[0]
+    assert successor.row.attributes[value] == Decimal("77.00")
+    assert list(materialized.steps) == list(eager.steps)
+
+
 def test_one_versioned_row_settles_identically_addressed_and_materialized() -> None:
     # The non-temporal counterpart. The same observed row, the same authored
     # value, and the same concurrency mode, reaching settlement through its two

@@ -407,7 +407,7 @@ WritePayloadPreparer
   proven_unequal_non_interval(entity, WriteRow, WriteRow) -> Boolean
   equal_non_interval(RowPayload, RowPayload)              -> Boolean
 
-RowPayload(entity, row: PlannedRow, cells: [PayloadCell])
+RowPayload(entity, source: WriteRow, cells: [PayloadCell])
 AssignmentPayload(entity, assignments: PlannedAssignments, cells: [PayloadCell])
 PayloadCell(contributor, value)
 ```
@@ -424,8 +424,9 @@ by model identity — a member, the Table's shared Structured Column, or the
 table-per-hierarchy discriminator — never a physical column. A value is a
 planned scalar or generated-value expression, a complete encoded document, the
 discriminator's tag, or, for a revising step's shared Structured Column, the
-ordered prepared patches it applies. A payload holds the semantic row or
-assignment set it was prepared from by identity, which is the whole of its
-binding: a consumer handed a payload prepared from other inputs refuses it
-without comparing documents. No SQL, dialect object, driver value, or executable
+ordered prepared patches it applies. A Row Payload holds the Write Row it was
+prepared from, and an Assignment Payload its assignment set, by identity, which
+is the whole of its binding: a consumer handed a payload prepared from other
+inputs — another row, origin, executed selection, or assignment set — refuses
+it without comparing documents. No SQL, dialect object, driver value, or executable
 recipe enters a payload or a plan.

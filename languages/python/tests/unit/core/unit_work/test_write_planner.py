@@ -1871,6 +1871,37 @@ def test_audit_states_what_it_adds_to_carried_and_changed_rows_as_executed_assig
     assert all(entry.row.attributes[stamp] == "audited" for entry in entries)
 
 
+@pytest.mark.parametrize("member", ["id", "validStart", "validEnd", "txStart", "txEnd"])
+def test_audit_may_not_state_a_temporal_rows_key_or_bounds(
+    monkeypatch: pytest.MonkeyPatch, member: str
+) -> None:
+    stamp = AttributeIdentity(corpus_entity("Position"), member)
+    monkeypatch.setattr(planning_composition, "NO_AUDIT", RecordingAudit(stamps={stamp: 999}))
+    update = KeyedWrite(
+        "update",
+        "Position",
+        ({"id": 5, "value": Decimal("42.0")},),
+        valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+    )
+    key_ = object_key(update, _POSITION)
+    assert key_ is not None
+    with pytest.raises(WritePlanningError, match="state no primary key, temporal bound"):
+        _plan(
+            [update],
+            _POSITION,
+            observations={key_: _bitemporal_observation()},
+            tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
+        )
+
+
+def test_audit_may_not_state_an_updated_rows_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    stamp = AttributeIdentity(corpus_entity("Account"), "id")
+    monkeypatch.setattr(planning_composition, "NO_AUDIT", RecordingAudit(stamps={stamp: 999}))
+    model = _wallet_and_account()
+    with pytest.raises(WritePlanningError, match="an update's decoration"):
+        _plan(_eager_group_eager(model), model)
+
+
 def test_only_surviving_writes_carry_claims_into_execution_units() -> None:
     # Two surviving writes settle against one observed state — a destruction and
     # an assignment of one state are a pair no verb admitted as combinable, so

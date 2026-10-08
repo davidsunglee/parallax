@@ -223,6 +223,8 @@ class WriteRow:
 
     def __post_init__(self) -> None:
         row = self.row
+        if not self.executed and isinstance(self.origin, ChangedFrom):
+            raise ValueError("a changed Write Row names the members it executes")
         for member in self.executed:
             if member not in (
                 row.attributes if isinstance(member, AttributeIdentity) else row.value_objects
@@ -231,8 +233,8 @@ class WriteRow:
 
     def with_prepared(self, prepared: RowPayload) -> WriteRow:
         """This row carrying ``prepared``, which a preparer derived from it."""
-        if prepared.row is not self.row:
-            raise ValueError("a Write Row carries only the payload prepared from its own row")
+        if not prepared.prepared_from(self):
+            raise ValueError("a Write Row carries only the payload prepared from it")
         return replace(self, prepared=prepared)
 
 

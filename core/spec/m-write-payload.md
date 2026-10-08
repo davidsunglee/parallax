@@ -34,9 +34,8 @@ A **Row Payload** holds one Write Row's persisted cells in Table Layout slot
 order, and an **Assignment Payload** the values one revising step writes, in the
 same order. Each cell names its contributor by model identity — a member, the
 Table's shared Structured Column, or the table-per-hierarchy discriminator —
-never by physical column. Each payload holds the semantic row or assignment set
-it was prepared from by identity, so a consumer refuses a payload prepared from
-other inputs without comparing documents.
+never by physical column. Each payload is bound to the inputs it was prepared
+from (`m-write-plan` *Write payloads*).
 
 ## Row assembly
 

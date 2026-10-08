@@ -153,7 +153,7 @@ def _row_payloads(step: PlannedInsert, payload: StepPayload) -> tuple[RowPayload
             f"{step.entity.canonical}: an insert stores one prepared Row Payload per entry"
         )
     for entry, prepared in zip(step.entries, payload, strict=True):
-        if prepared.row is not entry.row or prepared.entity != step.entity:
+        if not prepared.prepared_from(entry) or prepared.entity != step.entity:
             raise SqlGenError(
                 f"{step.entity.canonical}: a prepared Row Payload belongs to another entry"
             )

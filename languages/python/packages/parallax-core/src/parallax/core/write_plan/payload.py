@@ -6,7 +6,7 @@ from typing import Protocol
 
 from parallax.core.document_codec import PreparedPatch
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.write_plan.steps import PlannedAssignments, PlannedRow, WriteRow
+from parallax.core.write_plan.steps import PlannedAssignments, WriteRow
 
 __all__ = [
     "AssignmentPayload",
@@ -33,19 +33,29 @@ class RowPayload:
     Structured Column or the table-per-hierarchy discriminator, never a physical
     column. A value is a planned scalar or generated-value expression, a
     complete encoded document (``None`` for JSON null), or the discriminator's
-    tag. ``row`` is the semantic row the cells were prepared from, held by
+    tag. ``source`` is the Write Row the cells were prepared from, held by
     identity so a consumer can refuse a payload prepared from other inputs
     without comparing documents.
     """
 
     entity: EntityIdentity
-    row: PlannedRow
+    source: WriteRow
     contributors: tuple[Hashable, ...]
     values: tuple[object, ...]
 
     def __post_init__(self) -> None:
         if len(self.contributors) != len(self.values):
             raise ValueError("a payload aligns one value with each contributor")
+
+    def prepared_from(self, write_row: WriteRow) -> bool:
+        """Whether these cells were prepared from ``write_row``'s own row,
+        origin, and executed members, whichever carrier holds them."""
+        source = self.source
+        return (
+            source.row is write_row.row
+            and source.origin is write_row.origin
+            and source.executed is write_row.executed
+        )
 
 
 @dataclass(frozen=True, slots=True)

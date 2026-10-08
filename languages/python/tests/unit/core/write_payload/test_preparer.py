@@ -120,7 +120,7 @@ def test_a_row_stores_each_member_at_its_slot_in_table_layout_order() -> None:
 
     payload = preparer.row(_EXPEDITION, write_row)
 
-    assert payload.row is write_row.row
+    assert payload.source is write_row
     assert list(payload.contributors) == [
         _ID,
         _IN,
@@ -162,10 +162,14 @@ def test_an_executed_equal_occurrence_replaces_its_stored_subtree() -> None:
     }
 
 
-def test_a_row_stating_nothing_stores_its_predecessors_document_itself() -> None:
+def test_a_carried_row_stores_its_predecessors_document_itself() -> None:
     preparer = LayoutPayloadPreparer(_EXPEDITIONS)
-    for origin in (CarriedFrom(_predecessor()), ChangedFrom(_predecessor())):
-        assert _document(preparer.row(_EXPEDITION, _successor(origin))) is _STORED
+    assert _document(preparer.row(_EXPEDITION, _successor(CarriedFrom(_predecessor())))) is _STORED
+
+
+def test_a_changed_row_executing_nothing_is_refused() -> None:
+    with pytest.raises(ValueError, match="a changed Write Row names the members it executes"):
+        _successor(ChangedFrom(_predecessor()), title="Changed")
 
 
 def test_an_assignment_set_patches_only_its_paths_with_prepared_values() -> None:
@@ -349,13 +353,13 @@ def test_rows_of_two_entities_or_misaligned_cells_are_never_equal() -> None:
     payload = preparer.row(_EXPEDITION, _successor(NEW_LINEAGE))
     elsewhere = RowPayload(
         entity=EntityIdentity("parallax.compatibility", "Nowhere"),
-        row=payload.row,
+        source=payload.source,
         contributors=payload.contributors,
         values=payload.values,
     )
     swapped = RowPayload(
         entity=_EXPEDITION,
-        row=payload.row,
+        source=payload.source,
         contributors=(payload.contributors[1], payload.contributors[0], *payload.contributors[2:]),
         values=(payload.values[1], payload.values[0], *payload.values[2:]),
     )

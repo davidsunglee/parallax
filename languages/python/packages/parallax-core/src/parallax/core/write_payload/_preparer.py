@@ -69,9 +69,7 @@ class LayoutPayloadPreparer:
     def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
         view = self._view(entity)
         contributors, values = _row_cells(view, self._residence(entity, view), write_row)
-        return RowPayload(
-            entity=entity, row=write_row.row, contributors=contributors, values=values
-        )
+        return RowPayload(entity=entity, source=write_row, contributors=contributors, values=values)
 
     def assignments(
         self, entity: EntityIdentity, assignments: PlannedAssignments

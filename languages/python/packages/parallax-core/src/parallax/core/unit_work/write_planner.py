@@ -58,6 +58,7 @@ from parallax.core.unit_work.strategy import (
     BatchingStrategy,
     Concurrency,
     ConcurrencyStrategy,
+    UndecoratedAudit,
 )
 from parallax.core.unit_work.write_settlement import OrderedWrite, WritePlanCompiler
 from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, VersionedStateKey
@@ -139,6 +140,7 @@ class WritePlanner:
         "_model",
         "_payloads",
         "_relationships",
+        "_settled",
         "_temporal_facet",
     )
 
@@ -159,12 +161,18 @@ class WritePlanner:
         self._concurrency = concurrency
         self._audit = audit
         self._payloads = payloads
+        self._settled = (
+            frozenset[AttributeIdentity]()
+            if isinstance(audit, UndecoratedAudit)
+            else _settled_attributes(model, self._families, self._temporal_facet, concurrency)
+        )
         self._compiler = WritePlanCompiler(
             model,
             self._families,
             self._temporal_facet,
             concurrency=concurrency,
             audit=audit,
+            settled=self._settled,
         )
 
     @property
@@ -238,7 +246,7 @@ class WritePlanner:
             description,
             rows,
             ownership=ownership,
-            audit=AuditDecoration(self._audit, actor_identity, transaction_instant),
+            audit=AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled),
         )
 
     def version_attribute(self, entity: EntityIdentity) -> AttributeIdentity | None:
@@ -1384,3 +1392,33 @@ def _without_noop_rows(
     if len(kept) == len(instruction.rows):
         return item
     return derive_keyed_write(instruction, kept)
+
+
+def _settled_attributes(
+    model: Metamodel,
+    families: inheritance.InheritanceFacet,
+    temporal_facet: temporal_read.TemporalFacet,
+    concurrency: ConcurrencyStrategy,
+) -> frozenset[AttributeIdentity]:
+    """Every Attribute of ``model`` whose value settlement alone decides — each
+    Entity's primary key, temporal bounds, and optimistic version — which no
+    audit answer may state."""
+    settled: set[AttributeIdentity] = set()
+    for entity in model.entities:
+        position = families.entity(entity.identity)
+        if position is None:  # pragma: no cover - the facet covers every accepted Entity
+            raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
+        settled.add(position.primary_key.identity)
+        version = concurrency.version_attribute(model, entity.identity)
+        if version is not None:
+            settled.add(version)
+        shape = temporal_facet.shape(entity.identity)
+        if isinstance(shape, temporal_read.Bitemporal):
+            axes = (shape.valid_time, shape.transaction_time)
+        elif isinstance(shape, temporal_read.TransactionTimeOnly):
+            axes = (shape.transaction_time,)
+        else:
+            axes = ()
+        for axis in axes:
+            settled.update((axis.start_attribute, axis.end_attribute))
+    return frozenset(settled)

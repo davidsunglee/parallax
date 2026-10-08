@@ -457,16 +457,11 @@ def test_a_carried_successor_binds_the_retained_document_itself() -> None:
     assert _successor({}, document=retained, origin=CarriedFrom) is retained
 
 
-def test_a_changed_successor_executing_nothing_binds_the_retained_document() -> None:
-    retained = retain_document_value(_STORED)
-    assert _successor({}, document=retained, origin=ChangedFrom) is retained
-
-
 def test_a_successor_whose_observation_retained_no_document_composes_from_members() -> None:
     # Without a retained document there is nothing to preserve, so the row's own
     # complete member set composes the document exactly as a new lineage's does.
-    assert _successor({}, document=None, origin=ChangedFrom) == _successor(
-        {}, document=None, origin=None
+    assert _successor({"score": 8}, document=None, origin=ChangedFrom) == _successor(
+        {"score": 8}, document=None, origin=None
     )
 
 
@@ -528,7 +523,8 @@ def _assert_patches_follow_execution(changes: Mapping[str, object]) -> None:
         ),
     ):
         attributes, value_objects, executed = _successor_maps(predecessor, changes)
-        opened = _opened(attributes, value_objects, ChangedFrom(predecessor), executed)
+        origin = ChangedFrom(predecessor) if executed else CarriedFrom(predecessor)
+        opened = _opened(attributes, value_objects, origin, executed)
         assert persisted_document_equal(opened, expected), changes
 
 

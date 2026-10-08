@@ -129,7 +129,7 @@ def _expansion(
         addressed=addressed,
         derives=derives,
         ownership=ownership,
-        audit=AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, inert_instant()),
+        audit=AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, inert_instant(), ()),
     )
 
 

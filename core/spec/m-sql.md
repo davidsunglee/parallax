@@ -42,8 +42,9 @@ stores no represented value.
 
 The write compiler places, renders, and binds prepared values; it never
 assembles, encodes, or patches a payload itself. A missing payload, or one
-prepared from other inputs than the step's own — another entry's row, another
-assignment set, or misaligned entries — is a broken caller contract that the
+prepared from other inputs than the step's own — another Write Row's row,
+origin, or executed members, another assignment set, or misaligned entries — is
+a broken caller contract that the
 compiler refuses rather than a request to prepare one. Every caller lowers
 through one shared prepare-then-compile path, which prepares only the statement
 it is about to lower.
