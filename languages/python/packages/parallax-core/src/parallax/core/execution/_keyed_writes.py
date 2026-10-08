@@ -288,7 +288,7 @@ def refuse_repeated_insert(
     earlier and does not, so both representations hear pin, provenance, and
     preparation ahead of this. ``None`` is the whole "not held" answer, so
     the refusal and the spelling of the way out come from one reading: the
-    advice names the update verb over the carrier the OPENING interface produced
+    advice names the amend verb over the carrier the OPENING interface produced
     (:data:`_REPEATED_INSERT_ADVICE`), which is the only carrier that exists,
     and the refusing call's own interface never decides it. The answer is about
     an insertion that still STANDS: once everything it opened has been removed,
@@ -375,7 +375,7 @@ class ResolvedKeyedInsert:
 
     ``representation`` is which interface stated the insert, for the same reason
     its peer carries one: the value naming a row already held is refused by
-    naming the update verb the caller reaches for, and each interface spells that
+    naming the amend verb the caller reaches for, and each interface spells that
     verb its own way.
     """
 
@@ -730,7 +730,7 @@ def keyed_insert(
 
     The insertion this admits is labelled with the representation that opened
     it, which is what a later repeat's refusal names the way out in: the caller
-    is sent to the update verb over the carrier THIS call produced, which the
+    is sent to the amend verb over the carrier THIS call produced, which the
     opposite interface has no spelling for. The answer carries the authority the
     admission granted, which the caller's interface binds to that carrier, and
     names the row so a caller holding no Entity Class can revise it.
