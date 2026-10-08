@@ -37,6 +37,7 @@ from parallax.core.write_plan.steps import (
     ExactCount,
     Finite,
     PlannedTemporalGuard,
+    PlannedTemporalRevision,
     TemporalGate,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
@@ -51,6 +52,7 @@ from tests.unit.core.unit_work._unchanged_milestones_support import (
     JUN,
     MAR,
     MAY,
+    NOW,
     OCT,
     SPAN,
     SPANS,
@@ -264,9 +266,8 @@ def test_a_window_a_caller_addressed_keeps_a_milestone_it_leaves_unchanged() -> 
 
 
 def test_an_owned_original_a_range_leaves_unchanged_is_neither_split_nor_revised() -> None:
-    instant = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
     owned_row = PredecessorRow(
-        members={**dict(span_row(JAN, JUN, 100, "a").members), "txStart": instant}
+        members={**dict(span_row(JAN, JUN, 100, "a").members), "txStart": NOW}
     )
     later = span_row(JUN, INFINITY, 100, "b")
     owned = OpenedRows(frozenset({OwnedEndpoint(SPAN, (1,), (Finite(instant=JUN), OPEN_END))}))
@@ -338,14 +339,53 @@ def test_under_locking_the_held_lock_proves_an_unchanged_milestone_without_a_sta
     assert (unit.claim, tuple(unit.changed)) == (_RESTATED, ())
 
 
+_REOPENED = OpenedRows(frozenset({OwnedEndpoint(BALANCE, (1,), TRANSACTION_TIME_ENDS)}))
+
+
 def test_a_milestone_the_attempt_opened_needs_no_statement_to_stay_unchanged() -> None:
-    owned = OpenedRows(frozenset({OwnedEndpoint(BALANCE, (1,), TRANSACTION_TIME_ENDS)}))
+    opened = retained_state(BALANCES, BALANCE, balance_row("100.00", NOW))
+    plan = planned(
+        BALANCES,
+        observed_write(BALANCES, "Balance", "update", opened, value="100.00"),
+        ownership=_REOPENED,
+    )
+    assert len(plan.steps) == 0
+
+
+def test_an_earlier_milestone_at_an_address_the_attempt_reopened_is_not_proven_by_ownership() -> (
+    None
+):
     plan = planned(
         BALANCES,
         observed_write(BALANCES, "Balance", "update", _RESTATED, value="100.00"),
-        ownership=owned,
+        ownership=_REOPENED,
     )
-    assert len(plan.steps) == 0
+    (revision,) = plan.steps
+    assert isinstance(revision, PlannedTemporalRevision)
+    assert isinstance(revision.concurrency, TemporalGate)
+    assert revision.concurrency.observed_start == T0
+    assert revision.affected_rows == ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT)
+
+
+def test_a_stale_start_at_an_address_the_attempt_reopened_is_its_callers_precondition() -> None:
+    target = target_write(
+        prepare_wire_write(
+            TargetWrite("update", "Balance", {"id": 1, "value": "100.00"}, if_tx_start=T0),
+            BALANCES,
+        ),
+        inheritance.view(BALANCES),
+    )
+    plan = planned(
+        BALANCES,
+        observed_write(BALANCES, "Balance", "update", _RESTATED, value="100.00"),
+        target,
+        ownership=_REOPENED,
+    )
+    (revision,) = plan.steps
+    assert isinstance(revision, PlannedTemporalRevision)
+    assert isinstance(revision.concurrency, TemporalGate)
+    assert revision.concurrency.observed_start == T0
+    assert revision.affected_rows == ExactCount(expected=1, on_shortfall=FAILED_PRECONDITION)
 
 
 def test_owning_another_row_lends_no_proof_to_an_unchanged_milestone_the_attempt_did_not_open() -> (

@@ -616,6 +616,21 @@ def test_the_prepared_comparison_answers_the_keyed_rule_over_generated_positiona
     assert restored > 1000 and effective > 1000
 
 
+def test_the_prepared_comparison_answers_the_keyed_rule_over_generated_named_rows() -> None:
+    generated = _Generated(20261008)
+    restored = effective = 0
+    for _ in range(3000):
+        shape = generated.shape()
+        stored = generated.stored(shape)
+        assigned = generated.assigned(shape, stored)
+        expected = bool(classify_effective_change(shape, assigned, stored).effective)
+        change = prepare_effective_change(shape, assigned, absent=_ABSENT)
+        assert change.any_effective_in(stored) is expected, (shape, assigned, stored)
+        effective += expected
+        restored += not expected
+    assert restored > 500 and effective > 500
+
+
 def test_a_top_level_absent_position_is_a_change_never_the_observed_null() -> None:
     # A row a read materialized holds every position; one the read left absent
     # holds the marker as a value, so even a null assignment changes it.
@@ -666,6 +681,7 @@ def test_the_prepared_comparison_reads_only_assigned_positions_and_stops_at_the_
     assert len(canonicalized) == 3
     for _ in range(5):
         prepared.any_effective(_row(_SHAPE, {"origin": {"city": "Oslo"}}))
+        prepared.any_effective_in({"origin": {"city": "Oslo"}})
     assert len(canonicalized) == 3
 
 

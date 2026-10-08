@@ -82,13 +82,14 @@ class _Assigned(NamedTuple):
 
 
 class PreparedEffectiveChange:
-    """:func:`classify_effective_change`'s rule, prepared once for positional rows.
+    """:func:`classify_effective_change`'s rule, prepared once for many rows.
 
     A row is positional over the prepared shape: one cell per member, a ``one``
     occurrence a tuple positional over its own shape, a ``many`` a tuple of
     those, and the prepared absence marker at every position the row does not
     hold. Only the assigned positions are read, and a row is compared in place
-    rather than through a view, copy, or member set.
+    rather than through a view, copy, or member set. :meth:`any_effective_in`
+    reads a row held by member name instead.
     """
 
     __slots__ = ("_absent", "_assigned")
@@ -102,6 +103,19 @@ class PreparedEffectiveChange:
         absent = self._absent
         for position, member, value in self._assigned:
             if not _restores(member, value, row[position], absent):
+                return True
+        return False
+
+    def any_effective_in(self, originals: Mapping[str, object]) -> bool:
+        """Whether any assignment changes the member of ``originals`` it names,
+        read as :func:`classify_effective_change` reads them: a name
+        ``originals`` does not carry is the observed null. The prepared
+        absence marker takes no part."""
+        for _position, member, value in self._assigned:
+            original = originals.get(member.name)
+            if not (
+                value == original or _structurally_equal(value, _canonical_member(member, original))
+            ):
                 return True
         return False
 
