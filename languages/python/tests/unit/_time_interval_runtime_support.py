@@ -5,11 +5,11 @@ provider-free ports.
 A *flow cell* names one public operation, its Typed or Wire interface, its
 Columns or document layout, and a preparation mode:
 
-* ``source-keyed`` — one bounded Bitemporal update of a node the transaction
+* ``source-keyed`` — one bounded Bitemporal amendment of a node the transaction
   read, producing a close and a head, middle, and tail successor;
-* ``predicate`` — one bounded Bitemporal ``update_where`` resolving and
+* ``predicate`` — one bounded Bitemporal ``amend_where`` resolving and
   revising 32 targets;
-* ``target-patch`` — one caller-addressed bounded Wire patch;
+* ``target-patch`` — one caller-addressed bounded Wire amendment;
 * ``target-replace`` — one caller-addressed bounded replacement across three
   stored intervals and the two gaps between them;
 * ``read-eager`` — one fully delivered 128-root Latest/Latest Bitemporal find;
@@ -322,22 +322,22 @@ _SETUP: Final = (
 )
 _FLOW_STAGES: Final[Mapping[Flow, str]] = {
     "source-keyed": (
-        "a bounded Bitemporal tx.update or tx.wire.update over a node read before the window: "
+        "a bounded Bitemporal tx.amend or tx.wire.amend over a node read before the window: "
         "verb, preparation, buffering, pre-commit flush (planning, settlement, SQL lowering), "
         "bind adaptation and dump of the close and three successors, and transact's return"
     ),
     "predicate": (
-        "a bounded Bitemporal tx.update_where or tx.wire.update_where: verb, preparation, the "
+        "a bounded Bitemporal tx.amend_where or tx.wire.amend_where: verb, preparation, the "
         "resolving read over 32 rows, materialization and buffering, the pre-commit flush of "
         "32 closes and 96 successors, bind adaptation and dump, and transact's return"
     ),
     "target-patch": (
-        "a caller-addressed bounded tx.wire.update stating if_tx_start: verb, preparation, "
+        "a caller-addressed bounded tx.wire.amend_if stating tx_start: verb, preparation, "
         "buffering, the flush's coverage read and starting-revision check, settlement, SQL "
         "lowering, bind adaptation and dump, and transact's return"
     ),
     "target-replace": (
-        "a caller-addressed bounded tx.replace or tx.wire.replace stating if_tx_start over "
+        "a caller-addressed bounded tx.replace_if or tx.wire.replace_if stating tx_start over "
         "three stored intervals and two gaps: verb, preparation, the flush's coverage read and "
         "starting-revision check, settlement with gap filling, SQL lowering, bind adaptation "
         "and dump, and transact's return"
@@ -363,7 +363,7 @@ _MODE_SETUP: Final[Mapping[Mode, str]] = {
 }
 _ALGORITHM_STAGES: Final[Mapping[Algorithm, str]] = {
     "replacement-gaps": (
-        "size adjacent caller-addressed tx.replace calls stating if_tx_start, then the flush's "
+        "size adjacent caller-addressed tx.replace_if calls stating tx_start, then the flush's "
         "coverage read over size/2 stored intervals with gaps, composition, gap filling, SQL "
         "lowering, bind adaptation and dump, and transact's return"
     ),
@@ -696,9 +696,9 @@ def _predicate_driver(cell: FlowCell) -> Generator[Driver]:
                 "until": acquisition_support.INTERIOR_UNTIL,
             }
             if cell.interface == "wire":
-                tx.wire.update_where(case.target, case.changes, **window)
+                tx.wire.amend_where(case.target, case.changes, **window)
             else:
-                tx.update_where(
+                tx.amend_where(
                     entity.where(entity.id >= 1),
                     entity.title.set(acquisition_support.ASSIGNED_TITLE),
                     **window,
@@ -822,11 +822,11 @@ def _replacement_driver(size: int) -> Generator[Driver]:
         def body(tx: Transaction, stopwatch: Stopwatch) -> None:
             stopwatch.start()
             for index, instance in enumerate(replacements):
-                tx.replace(
+                tx.replace_if(
                     instance,
                     valid_from=_day(2 * index),
                     until=_day(2 * index + 2),
-                    if_tx_start=lowering_support.TX_START,
+                    tx_start=lowering_support.TX_START,
                 )
 
         def run(stopwatch: Stopwatch) -> Outcome:
@@ -882,7 +882,7 @@ class _Insertion:
         sources = [self._observed(inserted, _day(2 * index)) for index in range(size // 2)]
         for index, source in enumerate(sources):
             row = 2 * index
-            tx.update(cast("Any", source).edit(title=f"title-{row}"), until=_day(row + 1))
+            tx.amend(cast("Any", source).edit(title=f"title-{row}"), until=_day(row + 1))
         self.rows = tuple(
             {
                 **inserted,
@@ -923,7 +923,7 @@ def _barrier(tx: Transaction, index: int) -> None:
     """A readless predicate write, which keeps the writes after it in a later
     barrier region."""
     entity = cast("Any", lowering_support.PlainColumns)
-    tx.update_where(entity.where(entity.id == 1), entity.title.set(f"barrier-{index}"))
+    tx.amend_where(entity.where(entity.id == 1), entity.title.set(f"barrier-{index}"))
 
 
 def _destruction(insertion: _Insertion, stopwatch: Stopwatch) -> Outcome:

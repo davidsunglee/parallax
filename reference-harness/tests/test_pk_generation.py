@@ -91,7 +91,7 @@ def _pass_case() -> SimpleNamespace:
     return SimpleNamespace(
         model=model,
         write_sequence=[
-            {"mutation": "update", "entity": "parallax.compatibility.PkSequence"},
+            {"mutation": "amend", "entity": "parallax.compatibility.PkSequence"},
             {"mutation": "insert", "entity": "parallax.compatibility.Pass"},
         ],
         path=Path("m-pk-gen-008-unit.yaml"),

@@ -21,7 +21,7 @@ when:
       note: the outer body observes the row it will write
     - action: join
       note: a joining call naming nothing inherits every value the transaction resolved
-    - action: update
+    - action: amend
       note: the joined body buffers a write onto the shared unit of work
     - action: join
       concurrency: optimistic

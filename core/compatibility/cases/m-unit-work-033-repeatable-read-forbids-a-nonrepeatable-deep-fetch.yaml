@@ -45,7 +45,7 @@ when:
             order: { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, orderedOn: 2024-01-05 }
     - uow: writer
       write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.Order
           rows:
             - { id: 1, name: Rewritten }

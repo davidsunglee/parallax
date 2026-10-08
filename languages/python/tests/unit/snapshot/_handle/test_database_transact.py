@@ -121,7 +121,7 @@ def test_each_attempt_settles_write_evidence_under_its_adopted_selection() -> No
 
 def _observe_and_update(tx: Transaction) -> None:
     current = tx.find(mm.Account.where(mm.Account.id == 3)).result()
-    tx.update(current.edit(balance=Decimal("20.00")))
+    tx.amend(current.edit(balance=Decimal("20.00")))
 
 
 def test_optimistic_conflict_surfaces_after_one_attempt_without_the_opt_in() -> None:
@@ -206,7 +206,7 @@ def test_stale_write_is_never_retried_even_with_the_opt_in() -> None:
 
 def _rename_person(tx: Transaction) -> None:
     fetched = tx.find(mm.Person.where(mm.Person.id == 1)).result()
-    tx.update(fetched.edit(name="Grace"))
+    tx.amend(fetched.edit(name="Grace"))
 
 
 def test_missing_target_is_never_retried_even_with_the_opt_in() -> None:
@@ -240,7 +240,7 @@ def test_cardinality_corruption_is_never_retried_even_with_the_opt_in() -> None:
 
 def _observe_update_then_force_flush(tx: Transaction) -> None:
     current = tx.find(mm.Account.where(mm.Account.id == 3)).result()
-    tx.update(current.edit(balance=Decimal("20.00")))
+    tx.amend(current.edit(balance=Decimal("20.00")))
     tx.find(mm.Account.where(mm.Account.id == 3))  # forces the flush inside THIS (joined) scope
 
 
@@ -332,7 +332,7 @@ def test_a_failed_unit_stops_the_flush_before_any_later_unit_executes() -> None:
 
     def callback(tx: Transaction) -> None:
         for current in tx.find(mm.Account.where(mm.Account.id >= 3)).results():
-            tx.update(current.edit(balance=Decimal("30.00")))
+            tx.amend(current.edit(balance=Decimal("30.00")))
 
     with raises_contextualized(OptimisticLockConflictError):
         account_db(port).transact(callback, concurrency="optimistic")

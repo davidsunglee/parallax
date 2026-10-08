@@ -70,8 +70,8 @@ def test_two_updates_of_one_state_with_disjoint_assignments_merge_into_one_write
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit(balance=Decimal("125.00")))
-        tx.update(node.edit(owner="Grace"))
+        tx.amend(node.edit(balance=Decimal("125.00")))
+        tx.amend(node.edit(owner="Grace"))
 
     account_db(port).transact(fn)
     assert _writes(port) == [
@@ -90,8 +90,8 @@ def test_a_repeated_assignment_member_takes_the_later_authored_value() -> None:
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit(balance=Decimal("125.00")))
-        tx.update(node.edit(balance=Decimal("150.00")))
+        tx.amend(node.edit(balance=Decimal("125.00")))
+        tx.amend(node.edit(balance=Decimal("150.00")))
 
     account_db(port).transact(fn)
     assert _writes(port)[0].binds == (Decimal("150.00"), 5, 1, 4)
@@ -107,8 +107,8 @@ def test_a_net_equal_chain_across_two_verbs_writes_its_last_value() -> None:
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         edited = node.edit(balance=Decimal("125.00"))
-        tx.update(edited)
-        tx.update(edited.edit(balance=Decimal("100.00")))
+        tx.amend(edited)
+        tx.amend(edited.edit(balance=Decimal("100.00")))
 
     account_db(port).transact(fn)
     assert _writes(port) == [
@@ -128,7 +128,7 @@ def test_a_net_zero_edit_chain_still_writes_the_member_it_touched() -> None:
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit(balance=Decimal("125.00")).edit(balance=Decimal("100.00")))
+        tx.amend(node.edit(balance=Decimal("125.00")).edit(balance=Decimal("100.00")))
 
     account_db(port).transact(fn)
     assert [write.binds for write in _writes(port)] == [(Decimal("100.00"), 5, 1, 4)]
@@ -141,7 +141,7 @@ def test_a_net_zero_edit_of_an_unversioned_source_still_writes() -> None:
 
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
-        tx.update(node.edit(name="Grace").edit(name="Ada"))
+        tx.amend(node.edit(name="Grace").edit(name="Ada"))
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == [
@@ -155,8 +155,8 @@ def test_a_later_edit_restating_one_member_writes_both_it_and_its_new_one() -> N
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         edited = node.edit(balance=Decimal("125.00"))
-        tx.update(edited)
-        tx.update(edited.edit(balance=Decimal("100.00"), owner="Grace"))
+        tx.amend(edited)
+        tx.amend(edited.edit(balance=Decimal("100.00"), owner="Grace"))
 
     account_db(port).transact(fn)
     assert _writes(port) == [
@@ -175,7 +175,7 @@ def test_an_update_then_a_delete_of_one_state_is_one_delete() -> None:
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit(balance=Decimal("125.00")))
+        tx.amend(node.edit(balance=Decimal("125.00")))
         tx.delete(node)
 
     account_db(port).transact(fn)
@@ -206,7 +206,7 @@ def test_an_assignment_after_a_destructive_intent_is_refused() -> None:
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.delete(node)
-        tx.update(node.edit(balance=Decimal("125.00")))
+        tx.amend(node.edit(balance=Decimal("125.00")))
 
     with raises_contextualized(WriteEvidenceError) as refusal:
         account_db(port).transact(fn)
@@ -219,7 +219,7 @@ def test_a_temporal_update_and_terminate_over_one_region_is_one_terminate() -> N
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
-        tx.update(node.edit(value=Decimal("9.00")))
+        tx.amend(node.edit(value=Decimal("9.00")))
         tx.terminate(node)
 
     db_for(BALANCE, port).transact(fn)
@@ -246,8 +246,8 @@ def test_temporal_assignments_over_different_windows_compose_in_authored_order()
     def fn(tx: Transaction) -> None:
         early = _position_at(tx, _VALID_FROM)
         late = _position_at(tx, _OTHER_FROM)
-        tx.update(early.edit(value=Decimal("9.00")), until=_UNTIL)
-        tx.update(late.edit(value=Decimal("8.00")), until=_UNTIL)
+        tx.amend(early.edit(value=Decimal("9.00")), until=_UNTIL)
+        tx.amend(late.edit(value=Decimal("8.00")), until=_UNTIL)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -271,7 +271,7 @@ def test_a_destruction_over_another_window_of_the_same_state_is_refused() -> Non
     def fn(tx: Transaction) -> None:
         early = _position_at(tx, _VALID_FROM)
         late = _position_at(tx, _OTHER_FROM)
-        tx.update(early.edit(value=Decimal("9.00")), until=_UNTIL)
+        tx.amend(early.edit(value=Decimal("9.00")), until=_UNTIL)
         tx.terminate(late, until=_UNTIL)
 
     with raises_contextualized(WriteEvidenceError) as refusal:
@@ -289,7 +289,7 @@ def test_a_refused_composition_leaves_the_earlier_write_pending_and_executable()
     def fn(tx: Transaction) -> None:
         early = _position_at(tx, _VALID_FROM)
         late = _position_at(tx, _OTHER_FROM)
-        tx.update(early.edit(value=Decimal("9.00")), until=_UNTIL)
+        tx.amend(early.edit(value=Decimal("9.00")), until=_UNTIL)
         with pytest.raises(WriteEvidenceError) as refusal:
             tx.terminate(late)
         assert refusal.value.code == "write-evidence-already-claimed"
@@ -313,8 +313,8 @@ def test_temporal_updates_over_one_region_merge_into_one_rectangle_split() -> No
 
     def fn(tx: Transaction) -> None:
         node = _position_at(tx, _VALID_FROM)
-        tx.update(node.edit(value=Decimal("9.00")), until=_UNTIL)
-        tx.update(node.edit(acct_num="B"), until=_UNTIL)
+        tx.amend(node.edit(value=Decimal("9.00")), until=_UNTIL)
+        tx.amend(node.edit(acct_num="B"), until=_UNTIL)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -343,7 +343,7 @@ def test_a_participating_read_flushes_the_first_intent_and_frees_the_state() -> 
         first = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.delete(first)
         second = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(second.edit(balance=Decimal("125.00")))
+        tx.amend(second.edit(balance=Decimal("125.00")))
 
     account_db(port).transact(fn)
     assert [type(op) for op in port.calls] == [
@@ -364,7 +364,7 @@ def test_an_unversioned_update_then_delete_of_one_object_is_one_delete() -> None
 
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
-        tx.update(node.edit(name="Grace"))
+        tx.amend(node.edit(name="Grace"))
         tx.delete(node)
 
     db_for(PERSON, port).transact(fn)
@@ -394,7 +394,7 @@ def test_an_unversioned_assignment_after_a_destructive_intent_is_refused() -> No
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
         tx.delete(node)
-        tx.update(node.edit(name="Grace"))
+        tx.amend(node.edit(name="Grace"))
 
     with raises_contextualized(WriteEvidenceError) as refusal:
         db_for(PERSON, port).transact(fn)
@@ -407,8 +407,8 @@ def test_two_unversioned_updates_of_one_object_merge_into_one_write() -> None:
 
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
-        tx.update(node.edit(name="Grace"))
-        tx.update(node.edit(name="Hopper"))
+        tx.amend(node.edit(name="Grace"))
+        tx.amend(node.edit(name="Hopper"))
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == [
@@ -425,8 +425,8 @@ def test_a_net_equal_chain_of_an_unversioned_object_writes_its_last_value() -> N
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
         edited = node.edit(name="Grace")
-        tx.update(edited)
-        tx.update(edited.edit(name="Ada"))
+        tx.amend(edited)
+        tx.amend(edited.edit(name="Ada"))
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == [
@@ -466,7 +466,7 @@ def test_a_restoring_edit_of_a_value_this_transaction_inserted_cancels_nothing()
     def fn(tx: Transaction) -> None:
         fresh = Person(id=9, name="Ada")
         tx.insert(fresh)
-        tx.update(fresh.edit(name="Grace").edit(name="Ada"))
+        tx.amend(fresh.edit(name="Grace").edit(name="Ada"))
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == [
@@ -486,8 +486,8 @@ def test_a_predicate_group_claims_every_state_it_selected() -> None:
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Grace"))
-        tx.update(node.edit(balance=Decimal("125.00")))
+        tx.amend_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Grace"))
+        tx.amend(node.edit(balance=Decimal("125.00")))
 
     with raises_contextualized(WriteEvidenceError) as refusal:
         account_db(port).transact(fn)
@@ -505,8 +505,8 @@ def test_a_keyed_write_of_a_state_the_group_did_not_select_stays_independent() -
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update_where(mm.Account.where(mm.Account.id == 2), mm.Account.owner.set("Grace"))
-        tx.update(node.edit(balance=Decimal("125.00")))
+        tx.amend_where(mm.Account.where(mm.Account.id == 2), mm.Account.owner.set("Grace"))
+        tx.amend(node.edit(balance=Decimal("125.00")))
 
     account_db(port).transact(fn)
     assert len(_writes(port)) == 2
@@ -520,8 +520,8 @@ def test_a_keyed_intent_before_an_overlapping_predicate_write_force_flushes_firs
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit(balance=Decimal("125.00")))
-        tx.update_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Grace"))
+        tx.amend(node.edit(balance=Decimal("125.00")))
+        tx.amend_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Grace"))
 
     account_db(port).transact(fn)
     assert [type(op) for op in port.calls] == [
@@ -541,8 +541,8 @@ def test_the_locked_read_is_what_a_locking_preference_still_licenses() -> None:
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit(balance=Decimal("125.00")))
-        tx.update(node.edit(owner="Grace"))
+        tx.amend(node.edit(balance=Decimal("125.00")))
+        tx.amend(node.edit(owner="Grace"))
 
     account_db(port).transact(fn, concurrency="locking")
     assert [op.sql for op in port.calls if isinstance(op, ReadCall)] == [FIND_SQL_LOCKED]
@@ -554,7 +554,7 @@ def test_the_default_preference_leaves_the_versioned_read_unlocked() -> None:
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit(balance=Decimal("125.00")))
+        tx.amend(node.edit(balance=Decimal("125.00")))
 
     account_db(port).transact(fn)
     assert [op.sql for op in port.calls if isinstance(op, ReadCall)] == [FIND_SQL_UNLOCKED]

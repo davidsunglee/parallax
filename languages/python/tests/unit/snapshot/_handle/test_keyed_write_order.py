@@ -20,7 +20,7 @@ fixture.
 A shape only one representation can express carries one assertion instead of two,
 beside the row that proves the other representation cannot express it. A
 malformed change document, an undeclared member, and an illegal assignment are
-Wire-only because ``edit()`` judges a Typed assignment before ``tx.update()``
+Wire-only because ``edit()`` judges a Typed assignment before ``tx.amend()``
 receives a value, and the Typed rows here assert that pre-emption over each
 provenance rather than leaving it unstated.
 """
@@ -71,7 +71,7 @@ from tests.unit.snapshot._handle._keyed_write_drivers import (
 )
 
 _SOURCE_VERBS: tuple[Verb, ...] = (
-    "update",
+    "amend",
     "bounded_update",
     "delete",
     "terminate",
@@ -79,14 +79,14 @@ _SOURCE_VERBS: tuple[Verb, ...] = (
 )
 _INSERT_VERBS: tuple[Verb, ...] = ("insert", "bounded_insert")
 _BOUNDED_VERBS: tuple[Verb, ...] = ("bounded_insert", "bounded_update", "bounded_terminate")
-_UPDATE_VERBS: frozenset[str] = frozenset({"update", "bounded_update"})
+_UPDATE_VERBS: frozenset[str] = frozenset({"amend", "bounded_update"})
 _ALL_TARGETS: tuple[Target, ...] = TARGETS + DOCUMENT_TARGETS
 
 _MUTATIONS: Final[Mapping[Verb, str]] = {
     "insert": "insert",
     "bounded_insert": "insertUntil",
-    "update": "update",
-    "bounded_update": "updateUntil",
+    "amend": "amend",
+    "bounded_update": "amendUntil",
     "delete": "delete",
     "terminate": "terminate",
     "bounded_terminate": "terminateUntil",
@@ -96,14 +96,14 @@ rules spell the mutation, and the two applicability ones spell the method."""
 
 _STATEMENTS: Final[Mapping[tuple[Profile, Verb], int]] = {
     ("non_temporal", "insert"): 1,
-    ("non_temporal", "update"): 1,
+    ("non_temporal", "amend"): 1,
     ("non_temporal", "delete"): 1,
     ("transaction_time", "insert"): 1,
-    ("transaction_time", "update"): 2,
+    ("transaction_time", "amend"): 2,
     ("transaction_time", "terminate"): 1,
     ("bitemporal", "insert"): 1,
     ("bitemporal", "bounded_insert"): 1,
-    ("bitemporal", "update"): 3,
+    ("bitemporal", "amend"): 3,
     ("bitemporal", "bounded_update"): 4,
     ("bitemporal", "terminate"): 2,
     ("bitemporal", "bounded_terminate"): 3,
@@ -255,7 +255,7 @@ def test_one_verb_over_a_participating_source_answers_its_target(scenario: Scena
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "scenario",
-    _grid(targets=_ALL_TARGETS, verbs=("update", "bounded_update"), change="untouched"),
+    _grid(targets=_ALL_TARGETS, verbs=("amend", "bounded_update"), change="untouched"),
     ids=str,
 )
 def test_an_update_expressing_no_member_buffers_nothing(scenario: Scenario) -> None:
@@ -264,7 +264,7 @@ def test_an_update_expressing_no_member_buffers_nothing(scenario: Scenario) -> N
 
 @pytest.mark.parametrize(
     "scenario",
-    _grid(targets=_ALL_TARGETS, verbs=("update", "bounded_update"), change="net_zero"),
+    _grid(targets=_ALL_TARGETS, verbs=("amend", "bounded_update"), change="net_zero"),
     ids=str,
 )
 def test_a_net_zero_chain_writes_its_member_and_keeps_a_milestone_that_holds_it(
@@ -414,11 +414,11 @@ def test_a_same_transaction_insert_licenses_the_write_whoever_opened_it(
 # history — or, for a net-zero chain over a temporal row, leaves it alone.     #
 # --------------------------------------------------------------------------- #
 _OWN_ROW_STATEMENTS: Final[Mapping[tuple[Profile, Verb], int]] = {
-    ("non_temporal", "update"): 1,
+    ("non_temporal", "amend"): 1,
     ("non_temporal", "delete"): 1,
-    ("transaction_time", "update"): 1,
+    ("transaction_time", "amend"): 1,
     ("transaction_time", "terminate"): 1,
-    ("bitemporal", "update"): 1,
+    ("bitemporal", "amend"): 1,
     ("bitemporal", "bounded_update"): 2,
     ("bitemporal", "terminate"): 1,
     ("bitemporal", "bounded_terminate"): 1,
@@ -433,7 +433,7 @@ def _over_a_reread_insert(scenario: Scenario) -> Answer:
     if (
         scenario.change == "net_zero"
         and profile != "non_temporal"
-        and scenario.verb in ("update", "bounded_update")
+        and scenario.verb in ("amend", "bounded_update")
     ):
         return _wrote(1)
     return _wrote(1 + _OWN_ROW_STATEMENTS[profile, scenario.verb])
@@ -468,11 +468,11 @@ def test_a_write_over_a_reread_insert_settles_against_the_read_whoever_opened_it
 # --------------------------------------------------------------------------- #
 _REPEATED_INSERT_ADVICE: Final[Mapping[Representation, str]] = {
     "typed": (
-        "write the change with `tx.update(inserted.edit(...))`, where `inserted` is the value "
+        "write the change with `tx.amend(inserted.edit(...))`, where `inserted` is the value "
         "the first insert took"
     ),
     "wire": (
-        "write the change with `tx.wire.update(opened, {...})`, where `opened` is the node "
+        "write the change with `tx.wire.amend(opened, {...})`, where `opened` is the node "
         "the first insert answered"
     ),
 }
@@ -571,7 +571,7 @@ def test_a_pinned_source_beats_the_window_it_stated() -> None:
     (
         Scenario(
             target=ACCOUNT_TARGET,
-            verb="update",
+            verb="amend",
             source="standalone",
             concurrency="locking",
             change="untouched",
@@ -579,7 +579,7 @@ def test_a_pinned_source_beats_the_window_it_stated() -> None:
         ),
         Scenario(
             target=CONTACT_TARGET,
-            verb="update",
+            verb="amend",
             source="standalone",
             concurrency="locking",
             change="untouched",
@@ -600,7 +600,7 @@ def test_an_empty_set_is_dropped_before_evidence_is_asked_for(scenario: Scenario
     tuple(
         Scenario(
             target=target,
-            verb="update",
+            verb="amend",
             source="standalone",
             concurrency="locking",
             change="net_zero",
@@ -696,7 +696,7 @@ def test_the_window_is_judged_over_an_inserted_source_too(
         (
             Scenario(
                 target=ACCOUNT_TARGET,
-                verb="update",
+                verb="amend",
                 change="net_zero",
                 label="a-net-zero-write-of-an-inserted-row",
             ),
@@ -705,7 +705,7 @@ def test_the_window_is_judged_over_an_inserted_source_too(
         (
             Scenario(
                 target=ACCOUNT_TARGET,
-                verb="update",
+                verb="amend",
                 change="net_zero",
                 source="reread",
                 label="a-net-zero-write-of-a-reread-inserted-row",
@@ -754,7 +754,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
     (
         Scenario(
             target=ACCOUNT_TARGET,
-            verb="update",
+            verb="amend",
             opened_by="wire",
             wire_changes={"nope": 1},
             label="an-undeclared-member-beats-the-insert-exemption",
@@ -774,7 +774,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
     (
         Scenario(
             target=ACCOUNT_TARGET,
-            verb="update",
+            verb="amend",
             source="standalone",
             concurrency="locking",
             wire_changes={"version": 9},
@@ -785,7 +785,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
     (
         Scenario(
             target=ACCOUNT_TARGET,
-            verb="update",
+            verb="amend",
             source="standalone",
             concurrency="locking",
             wire_changes={"nope": 1},
@@ -796,7 +796,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
     (
         Scenario(
             target=ACCOUNT_TARGET,
-            verb="update",
+            verb="amend",
             source="standalone",
             concurrency="locking",
             wire_changes=cast("Mapping[str, object]", {1: "x"}),
@@ -807,7 +807,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
     (
         Scenario(
             target=ACCOUNT_TARGET,
-            verb="update",
+            verb="amend",
             source="standalone",
             lost_provenance=True,
             wire_changes=cast("Mapping[str, object]", {1: "x"}),
@@ -818,7 +818,7 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
     (
         Scenario(
             target=ACCOUNT_TARGET,
-            verb="update",
+            verb="amend",
             source="standalone",
             lost_provenance=True,
             wire_changes={"nope": 1},
@@ -843,7 +843,7 @@ def test_malformed_wire_input_earns_a_static_refusal(scenario: Scenario, expecte
 # The Typed half of those same three authorings, over the provenances the Wire #
 # rows above cross: a source a read published, and a source this unit of work  #
 # opened through either representation. `edit()` refuses each before           #
-# `tx.update()` receives a value, so the write reaches none of the stages the  #
+# `tx.amend()` receives a value, so the write reaches none of the stages the  #
 # Wire lane refuses at and the transaction leaves nothing to undo.             #
 # --------------------------------------------------------------------------- #
 _TYPED_AUTHORINGS: tuple[tuple[Mapping[str, object], str], ...] = (
@@ -853,9 +853,9 @@ _TYPED_AUTHORINGS: tuple[tuple[Mapping[str, object], str], ...] = (
 )
 
 _TYPED_AUTHORING_SOURCES: tuple[Scenario, ...] = (
-    Scenario(target=ACCOUNT_TARGET, verb="update", label="over-a-read-source"),
+    Scenario(target=ACCOUNT_TARGET, verb="amend", label="over-a-read-source"),
     Scenario(
-        target=ACCOUNT_TARGET, verb="update", opened_by="typed", label="over-a-typed-insert-source"
+        target=ACCOUNT_TARGET, verb="amend", opened_by="typed", label="over-a-typed-insert-source"
     ),
 )
 
@@ -942,7 +942,7 @@ def test_a_temporal_target_refuses_delete_at_the_verb(scenario: Scenario) -> Non
 # The one crossing no caller can spell, and the read that makes it spellable.  #
 # --------------------------------------------------------------------------- #
 def test_a_wire_verb_cannot_write_a_row_a_typed_insert_still_holds_buffered() -> None:
-    scenario = Scenario(target=ACCOUNT_TARGET, verb="update", opened_by="typed")
+    scenario = Scenario(target=ACCOUNT_TARGET, verb="amend", opened_by="typed")
     assert reachable(scenario, "typed")
     assert not reachable(scenario, "wire")
     assert reachable(replace(scenario, source="reread"), "wire")
@@ -952,7 +952,7 @@ def test_a_wire_verb_cannot_write_a_row_a_typed_insert_still_holds_buffered() ->
 
 def test_a_wire_read_of_a_typed_insert_flushes_it_before_the_write() -> None:
     scenario = Scenario(
-        target=BLANK_CONTACT_TARGET, verb="update", source="reread", opened_by="typed"
+        target=BLANK_CONTACT_TARGET, verb="amend", source="reread", opened_by="typed"
     )
     emitted = outcome(scenario, "wire")
     assert isinstance(emitted, Completed)

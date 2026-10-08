@@ -26,7 +26,7 @@ when:
         - { id: 1, owner: Ada, balance: "100.00", version: 1 }
     - uow: doomed-update
       write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "999.00" }

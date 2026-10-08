@@ -521,7 +521,7 @@ def _writing(total: int, *, batch_size: int, at: int, writes: bool) -> Seam:
                 with tx.stream(Account.where(Account.id >= 1), batch_size=batch_size) as stream:
                     for position, account in enumerate(stream):
                         if writes:
-                            tx.update(account.edit(balance=Decimal("125.00")))
+                            tx.amend(account.edit(balance=Decimal("125.00")))
                         if position == at:
                             sample()
                             return

@@ -726,7 +726,7 @@ def test_a_foreign_assignment_never_targets_the_queried_position() -> None:
     # against the target the selection names.
     assignment: AttributeAssignment[SnapOrder] = SnapOrderStatus.code.set("X-1")  # pyright: ignore[reportAssignmentType]
     write = PredicateWrite(
-        mutation="update",
+        mutation="amend",
         target=PredicateSelection(entity="SnapOrder", predicate=All()),
         assignments=(WriteAssignment(attr=str(assignment.attr), value=assignment.value),),
     )

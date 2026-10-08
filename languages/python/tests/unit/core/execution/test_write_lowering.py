@@ -248,7 +248,7 @@ def test_update_sets_non_pk_columns_in_column_order_keyed_by_pk() -> None:
     # m-unit-work-005 step 1: the version advances from this unit of work's own
     # recorded observation (`m-opt-lock`), never a row-carried value.
     statement = _lower(
-        KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("175.00")},)),
+        KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},)),
         ACCOUNT,
         observation=VersionObservation(observed_version=1),
     )[0]
@@ -370,7 +370,7 @@ def test_update_sets_every_layout_slot_the_row_names_except_the_model_key() -> N
     # column, even though it precedes both domain slots in the shared table.
     statement = _lower(
         KeyedWrite(
-            "update",
+            "amend",
             "CardPayment",
             ({"id": 1, "amount": Decimal("130.00"), "cardNetwork": "Visa"},),
         ),
@@ -409,7 +409,7 @@ def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None
 # m-opt-lock: the version gate / advance / conflict policy.                    #
 # --------------------------------------------------------------------------- #
 def test_versioned_update_without_a_row_carried_version_requires_observation() -> None:
-    update = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("50.00")},))
+    update = KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("50.00")},))
     with pytest.raises(
         opt_lock.UnobservedVersionError, match="requires the version its source value observed"
     ):
@@ -418,7 +418,7 @@ def test_versioned_update_without_a_row_carried_version_requires_observation() -
 
 def test_versioned_update_derives_the_advance_from_the_observation_locking_mode() -> None:
     # locking mode: version = observed + 1 in the SET, no gate.
-    update = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("50.00")},))
+    update = KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("50.00")},))
     statement = _lower(
         update, ACCOUNT, observation=VersionObservation(observed_version=3), concurrency="locking"
     )[0]
@@ -429,7 +429,7 @@ def test_versioned_update_derives_the_advance_from_the_observation_locking_mode(
 def test_versioned_update_gates_on_the_observed_version_optimistic_mode() -> None:
     # optimistic mode: SAME advance, plus `and version = ?` binding the observed
     # value LAST.
-    update = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("50.00")},))
+    update = KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("50.00")},))
     statement = _lower(
         update,
         ACCOUNT,
@@ -448,7 +448,7 @@ def test_versioned_update_carrying_a_literal_version_is_refused() -> None:
     # field is never caller data, so it is never silently double-assigned
     # against the derived advance, EVEN when an observation is also available.
     update = KeyedWrite(
-        "update", "Account", ({"id": 1, "balance": Decimal("175.00"), "version": 2},)
+        "amend", "Account", ({"id": 1, "balance": Decimal("175.00"), "version": 2},)
     )
     with pytest.raises(opt_lock.CallerAuthoredVersionError, match="framework-owned"):
         _lower(
@@ -557,7 +557,7 @@ def test_tph_insert_derives_the_tag_at_its_columnorder_position() -> None:
 
 def test_tph_update_of_a_root_declared_attribute_is_tag_guarded() -> None:
     # m-inheritance-008.
-    update = KeyedWrite("update", "CardPayment", ({"id": 1, "amount": Decimal("130.00")},))
+    update = KeyedWrite("amend", "CardPayment", ({"id": 1, "amount": Decimal("130.00")},))
     statement = _lower(update, PAYMENT)[0]
     assert statement.sql == "update payment set amount = ? where id = ? and kind = ?"
     assert statement.binds == (130.00, 1, "card")
@@ -596,7 +596,7 @@ def test_tpcs_delete_targets_the_concretes_own_table_no_tag() -> None:
 def test_tph_optlock_composition_tag_rides_identity_gate_binds_last() -> None:
     # m-inheritance-084: the bind order end to end — pk, tag guard,
     # THEN the version gate (no inheritance exception to "the gate binds last").
-    update = KeyedWrite("update", "Car", ({"id": 1, "name": "Coupe"},))
+    update = KeyedWrite("amend", "Car", ({"id": 1, "name": "Coupe"},))
     statement = _lower(
         update,
         VEHICLE,
@@ -611,7 +611,7 @@ def test_tph_optlock_composition_tag_rides_identity_gate_binds_last() -> None:
 
 def test_tpcs_optlock_composition_no_tag_guard_gate_binds_last() -> None:
     # m-inheritance-104: the TPCS analogue — no shared table, no tag, own table.
-    update = KeyedWrite("update", "Fridge", ({"id": 1, "name": "Chill"},))
+    update = KeyedWrite("amend", "Fridge", ({"id": 1, "name": "Chill"},))
     statement = _lower(
         update,
         APPLIANCE,
@@ -638,7 +638,7 @@ def test_pk_gen_max_folds_into_an_insert_select() -> None:
 
 def test_pk_gen_increment_marker_self_references_the_column() -> None:
     update = KeyedWrite(
-        "update", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 1}},)
+        "amend", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 1}},)
     )
     statement = _lower(update, PK_SEQUENCE)[0]
     assert statement.sql == "update pk_sequence set next_val = next_val + ? where name = ?"
@@ -654,7 +654,7 @@ def test_increment_marker_reaching_an_insert_is_refused() -> None:
 
 
 def test_computed_marker_reaching_an_update_is_refused() -> None:
-    update = KeyedWrite("update", "Attendee", ({"id": 1, "name": {"computed": "maxPlusOne"}},))
+    update = KeyedWrite("amend", "Attendee", ({"id": 1, "name": {"computed": "maxPlusOne"}},))
     with pytest.raises(WritePlanningError, match=r"unsupported DB-computed marker.*'computed'"):
         _lower(update, PK_MAX)
 
@@ -669,7 +669,7 @@ def test_unrecognized_computed_strategy_is_refused() -> None:
 
 def test_a_mapping_outside_the_marker_shape_is_not_a_string_literal() -> None:
     update = KeyedWrite(
-        "update", "Attendee", ({"id": 1, "name": {"computed": "maxPlusOne", "extra": True}},)
+        "amend", "Attendee", ({"id": 1, "name": {"computed": "maxPlusOne", "extra": True}},)
     )
     with pytest.raises(ValueError, match="does not match the declared type"):
         _lower(update, PK_MAX)
@@ -687,7 +687,7 @@ def test_insert_then_update_coalesces_to_one_final_value_insert() -> None:
                 "Account",
                 ({"id": 8, "owner": "Turing", "balance": Decimal("1.00"), "version": 1},),
             ),
-            KeyedWrite("update", "Account", ({"id": 8, "balance": Decimal("99.00")},)),
+            KeyedWrite("amend", "Account", ({"id": 8, "balance": Decimal("99.00")},)),
         ],
         ACCOUNT,
     )
@@ -712,7 +712,7 @@ def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
                 "Account",
                 ({"id": 9, "owner": "Noether", "balance": Decimal("5.00"), "version": 1},),
             ),
-            KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("20.00")},)),
+            KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("20.00")},)),
             KeyedWrite("delete", "Account", ({"id": 3},)),
         ],
         ACCOUNT,
@@ -869,7 +869,7 @@ def test_batched_update_collapses_to_one_in_list_statement() -> None:
     # m-batch-write-001's own update entry: a UNIFORM-value multi-row UPDATE
     # collapses to one `set ... where id in (...)` statement.
     update = KeyedWrite(
-        "update",
+        "amend",
         "Wallet",
         ({"id": 10, "balance": Decimal("500.00")}, {"id": 11, "balance": Decimal("500.00")}),
     )
@@ -887,7 +887,7 @@ def test_a_preformed_multi_row_update_still_faces_the_collapse_decision() -> Non
     # key the statement addresses and the later rows' values would never be
     # written at all.
     update = KeyedWrite(
-        "update",
+        "amend",
         "Wallet",
         ({"id": 10, "balance": Decimal("111.00")}, {"id": 11, "balance": Decimal("222.00")}),
     )
@@ -920,7 +920,7 @@ def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard
     assert statement.binds == (1, 2, "card")
 
     update = KeyedWrite(
-        "update",
+        "amend",
         "CardPayment",
         ({"id": 1, "amount": Decimal("5.00")}, {"id": 2, "amount": Decimal("5.00")}),
     )
@@ -999,7 +999,7 @@ def test_readless_predicate_update_follows_the_entity_layout_order() -> None:
     # still emit the Entity Layout's slot order (owner then balance) —
     # assignment binds in emitted column order, predicate binds after.
     predicate = PredicateWrite(
-        "update",
+        "amend",
         PredicateSelection(
             "Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value="200.00")
         ),
@@ -1202,7 +1202,7 @@ def test_finalization_settles_an_addressed_update_into_target_gate_and_policy() 
     # mode chose, the advance that rides the assignments, and how a shortfall
     # against its expected effect classifies.
     steps = _finalize(
-        KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("175.00")},)),
+        KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},)),
         ACCOUNT,
         observation=VersionObservation(observed_version=3),
         concurrency="optimistic",
@@ -1297,7 +1297,7 @@ def test_finalization_classifies_a_registry_advance_into_a_generated_value() -> 
     # database computes the new value from the row being written, so the settled
     # assignment names the allocation rather than a literal to bind.
     steps = _finalize(
-        KeyedWrite("update", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 3}},)),
+        KeyedWrite("amend", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 3}},)),
         PK_SEQUENCE,
     )
     assert steps is not None

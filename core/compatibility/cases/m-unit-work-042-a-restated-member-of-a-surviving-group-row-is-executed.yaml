@@ -34,7 +34,7 @@ when:
       expectRows:
         - { id: 7, title: Coastal Run, route: { name: Coastal, stops: [{ port: Oslo }] }, in_z: "2026-01-01T00:00:00.000000Z", out_z: infinity }
     - write:
-        mutation: update
+        mutation: amend
         target:
           entity: parallax.compatibility.Expedition
           predicate:

@@ -149,12 +149,12 @@ def test_a_pending_opening_takes_each_edit_over_only_the_coverage_it_opens(
         if representation == "typed":
             opened = _position()
             tx.insert(opened, valid_from=_JAN, **bounds)
-            tx.update(opened.edit(value=Decimal("150.00")), **edit)
+            tx.amend(opened.edit(value=Decimal("150.00")), **edit)
             return
         node = tx.wire.insert(
             "WherePosition", {"id": 1, "acctNum": "A", "value": "100.00"}, valid_from=_JAN, **bounds
         )
-        tx.wire.update(node, {"value": "150.00"}, **edit)
+        tx.wire.amend(node, {"value": "150.00"}, **edit)
 
     _transact(port, fn)
     assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == ["insert"] * len(expected)
@@ -172,8 +172,8 @@ def test_an_edit_bounded_at_or_before_the_anchor_is_refused_and_leaves_the_openi
         tx.insert(opened, valid_from=_MAR, until=_SEP)
         for bound in (_JAN, _MAR):
             with pytest.raises(WriteInstructionError):
-                tx.update(opened.edit(value=Decimal("150.00")), until=bound)
-        tx.update(opened.edit(value=Decimal("175.00")), until=_JUN)
+                tx.amend(opened.edit(value=Decimal("150.00")), until=bound)
+        tx.amend(opened.edit(value=Decimal("175.00")), until=_JUN)
 
     _transact(port, fn)
     assert _opened(port) == [
@@ -188,8 +188,8 @@ def test_repeated_bounded_edits_start_at_the_anchor_rather_than_at_a_split() -> 
     def fn(tx: Transaction) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN, until=_DEC)
-        tx.update(opened.edit(value=Decimal("150.00")), until=_MAY)
-        tx.update(opened.edit(value=Decimal("175.00")), until=_AUG)
+        tx.amend(opened.edit(value=Decimal("150.00")), until=_MAY)
+        tx.amend(opened.edit(value=Decimal("175.00")), until=_AUG)
 
     _transact(port, fn)
     assert _opened(port) == [
@@ -204,8 +204,8 @@ def test_a_literal_reset_of_a_pending_opening_writes_the_reset_value() -> None:
     def fn(tx: Transaction) -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN)
-        tx.update(opened.edit(value=Decimal("150.00")))
-        tx.update(opened.edit(value=Decimal("100.00")))
+        tx.amend(opened.edit(value=Decimal("150.00")))
+        tx.amend(opened.edit(value=Decimal("100.00")))
 
     _transact(port, fn)
     assert _opened(port) == [(Decimal("100.00"), _JAN, INFINITY_INSTANT)]
@@ -221,9 +221,9 @@ def test_a_resubmitted_draft_reasserts_its_whole_touched_set() -> None:
         opened = _position()
         tx.insert(opened, valid_from=_JAN)
         draft = opened.edit(value=Decimal("150.00"))
-        tx.update(draft)
-        tx.update(opened.edit(value=Decimal("200.00")))
-        tx.update(draft.edit(acct_num="B"))
+        tx.amend(draft)
+        tx.amend(opened.edit(value=Decimal("200.00")))
+        tx.amend(draft.edit(acct_num="B"))
 
     _transact(port, fn)
     (insert,) = _writes(port)
@@ -241,7 +241,7 @@ def test_an_edit_over_coverage_a_pending_destruction_removed_is_refused() -> Non
         tx.insert(opened, valid_from=_JAN)
         tx.terminate(opened, until=_MAY)
         with pytest.raises(WriteEvidenceError) as refused:
-            tx.update(opened.edit(value=Decimal("150.00")))
+            tx.amend(opened.edit(value=Decimal("150.00")))
         assert refused.value.code == "write-evidence-already-claimed"
 
     _transact(port, fn)
@@ -264,8 +264,8 @@ def test_a_draft_derived_before_the_insertion_carries_no_authority() -> None:
         opened = mm.Person(id=9, name="Newton")
         earlier = opened.edit(name="Hooke")
         tx.insert(opened)
-        _refused_as_not_stored(lambda: tx.update(earlier))
-        tx.update(opened.edit(name="Grace"))
+        _refused_as_not_stored(lambda: tx.amend(earlier))
+        tx.amend(opened.edit(name="Grace"))
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == [
@@ -278,7 +278,7 @@ def test_an_independently_built_value_of_the_inserted_key_carries_no_authority()
 
     def fn(tx: Transaction) -> None:
         tx.insert(mm.Person(id=9, name="Newton"))
-        _refused_as_not_stored(lambda: tx.update(mm.Person(id=9, name="Newton").edit(name="X")))
+        _refused_as_not_stored(lambda: tx.amend(mm.Person(id=9, name="Newton").edit(name="X")))
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == [
@@ -293,7 +293,7 @@ def test_a_refused_insertion_grants_nothing() -> None:
         refused = _position()
         with pytest.raises(WriteInstructionError):
             tx.insert(refused, valid_from=_SEP, until=_JAN)
-        _refused_as_not_stored(lambda: tx.update(refused.edit(value=Decimal("1.00"))))
+        _refused_as_not_stored(lambda: tx.amend(refused.edit(value=Decimal("1.00"))))
 
     _transact(port, fn)
     assert _writes(port) == []
@@ -318,7 +318,7 @@ def test_an_insertion_authority_ends_with_its_attempt(ending: str) -> None:
     later = opened.edit(name="Grace")
 
     def edit(tx: Transaction) -> None:
-        _refused_as_not_stored(lambda: tx.update(later))
+        _refused_as_not_stored(lambda: tx.amend(later))
 
     db.transact(edit)
     assert len(_writes(port)) == (1 if ending == "commit" else 0)
@@ -336,8 +336,8 @@ def test_a_reinsertion_rebinds_only_the_instance_it_takes() -> None:
         draft = opened.edit(value=Decimal("5.00"))
         tx.terminate(opened)
         tx.insert(opened)
-        _refused_as_not_stored(lambda: tx.update(draft))
-        tx.update(opened.edit(value=Decimal("2.00")))
+        _refused_as_not_stored(lambda: tx.amend(draft))
+        tx.amend(opened.edit(value=Decimal("2.00")))
 
     db_for(BALANCE, port).transact(fn)
     (insert,) = _writes(port)
@@ -355,8 +355,8 @@ def test_converting_a_wire_insertion_node_loses_its_authority() -> None:
         for converted in (dict(node), pickle.loads(pickle.dumps(node))):
             assert converted == node
             with pytest.raises(WriteInstructionError):
-                tx.wire.update(cast("Any", converted), {"name": "Grace"})
-        tx.wire.update(node, {"name": "Grace"})
+                tx.wire.amend(cast("Any", converted), {"name": "Grace"})
+        tx.wire.amend(node, {"name": "Grace"})
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == [
@@ -372,7 +372,7 @@ def test_an_inserted_instance_pickles_as_domain_data_without_its_authority() -> 
         tx.insert(opened)
         copied = pickle.loads(pickle.dumps(opened))
         assert copied == opened
-        _refused_as_not_stored(lambda: tx.update(copied.edit(name="Grace")))
+        _refused_as_not_stored(lambda: tx.amend(copied.edit(name="Grace")))
 
     db_for(PERSON, port).transact(fn)
     assert len(_writes(port)) == 1
@@ -398,7 +398,7 @@ def test_an_insertion_source_edits_its_stored_bitemporal_coverage_after_a_helper
         opened = _position()
         tx.insert(opened, valid_from=_JAN)
         _read_at(tx, _MAR)
-        tx.update(opened.edit(value=Decimal("150.00")), until=_JUN)
+        tx.amend(opened.edit(value=Decimal("150.00")), until=_JUN)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -432,7 +432,7 @@ def test_an_insertion_source_revises_its_stored_transaction_time_row_after_a_hel
         opened = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(opened)
         tx.find(mm.Balance.where(mm.Balance.id == 9)).result()
-        tx.update(opened.edit(value=Decimal("2.00")))
+        tx.amend(opened.edit(value=Decimal("2.00")))
 
     db_for(BALANCE, port).transact(fn)
     coverage = [call for call in port.calls if isinstance(call, ReadCall)][1]
@@ -460,9 +460,9 @@ def test_an_insertion_source_advances_its_stored_version_after_each_flush() -> N
         opened = mm.Account(id=7, owner="Newton", balance=Decimal("5.00"))
         tx.insert(opened)
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
-        tx.update(opened.edit(balance=Decimal("6.00")))
+        tx.amend(opened.edit(balance=Decimal("6.00")))
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
-        tx.update(opened.edit(balance=Decimal("7.00")))
+        tx.amend(opened.edit(balance=Decimal("7.00")))
 
     db_for(ACCOUNT, port).transact(fn)
     assert _writes(port)[1:] == [
@@ -488,8 +488,8 @@ def test_an_insertion_source_and_a_read_of_the_same_version_compose_into_one_upd
         tx.insert(opened)
         read = tx.find(mm.Account.where(mm.Account.id == 7)).result()
         writes = [
-            lambda: tx.update(opened.edit(balance=Decimal("6.00"))),
-            lambda: tx.update(read.edit(owner="Hooke")),
+            lambda: tx.amend(opened.edit(balance=Decimal("6.00"))),
+            lambda: tx.amend(read.edit(owner="Hooke")),
         ]
         for write in writes if insertion_first else reversed(writes):
             write()
@@ -519,8 +519,8 @@ def test_insertion_and_observed_assignments_compose_over_unequal_windows_after_a
         tx.insert(opened, valid_from=_MAR, until=_SEP)
         observed = _read_at(tx, _MAY)
         writes = [
-            lambda: tx.update(opened.edit(value=Decimal("150.00")), until=_JUN),
-            lambda: tx.update(observed.edit(value=Decimal("175.00")), until=_AUG),
+            lambda: tx.amend(opened.edit(value=Decimal("150.00")), until=_JUN),
+            lambda: tx.amend(observed.edit(value=Decimal("175.00")), until=_AUG),
         ]
         for write in writes if insertion_first else reversed(writes):
             write()
@@ -559,7 +559,7 @@ def test_an_insertion_source_whose_anchor_was_removed_fails_its_flush() -> None:
         tx.insert(opened, valid_from=_JAN)
         tx.terminate(_read_at(tx, _JAN), until=_MAR)
         _read_at(tx, _MAR)
-        tx.update(opened.edit(value=Decimal("150.00")))
+        tx.amend(opened.edit(value=Decimal("150.00")))
 
     with raises_contextualized(MissingTargetError):
         _transact(port, fn)
@@ -584,7 +584,7 @@ def test_a_reinsertion_after_a_complete_stored_removal_executes_after_it() -> No
         tx.terminate(first)
         second = _position("200.00")
         tx.insert(second, valid_from=_JAN)
-        _refused_as_not_stored(lambda: tx.update(draft))
+        _refused_as_not_stored(lambda: tx.amend(draft))
 
     _transact(port, fn)
     removal, insert = _writes(port)[1:]
@@ -611,7 +611,7 @@ def test_a_reinsertion_at_identical_coordinates_never_revives_the_first() -> Non
         second = _position()
         tx.insert(second, valid_from=_JAN)
         _read_at(tx, _MAR)
-        _refused_as_not_stored(lambda: tx.update(first.edit(value=Decimal("1.00"))))
+        _refused_as_not_stored(lambda: tx.amend(first.edit(value=Decimal("1.00"))))
 
     _transact(port, fn)
     assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == ["insert", "delete", "insert"]
@@ -662,7 +662,7 @@ _BARRIER_MODEL = DomainModel(WherePosition, Wallet)
 
 
 def _barrier(tx: Transaction) -> None:
-    tx.update_where(Wallet.where(Wallet.balance < Decimal("2.00")), Wallet.owner.set("Low"))
+    tx.amend_where(Wallet.where(Wallet.balance < Decimal("2.00")), Wallet.owner.set("Low"))
 
 
 def _refused_as_a_repeat(write: Callable[[], object]) -> None:
@@ -691,7 +691,7 @@ def test_an_opening_a_barrier_kept_back_and_removed_whole_admits_a_reinsertion(
         _barrier(tx)
         tx.terminate(first)
         tx.insert(_position("200.00"), valid_from=_JAN)
-        _refused_as_not_stored(lambda: tx.update(first.edit(value=Decimal("1.00"))))
+        _refused_as_not_stored(lambda: tx.amend(first.edit(value=Decimal("1.00"))))
 
     db_for(_BARRIER_MODEL, port).transact(fn)
     assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == [
@@ -766,7 +766,7 @@ def test_an_assignment_an_owned_row_already_holds_revises_nothing() -> None:
         opened = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(opened)
         tx.find(mm.Balance.where(mm.Balance.id == 9)).result()
-        tx.update(opened.edit(acct_num="Z"))
+        tx.amend(opened.edit(acct_num="Z"))
 
     db_for(BALANCE, port).transact(fn)
     assert len(_writes(port)) == 1
@@ -826,7 +826,7 @@ def test_a_cancelled_reinsertion_leaves_the_next_one_depending_on_the_same_remov
         second = mm.Balance(id=9, acct_num="Z", value=Decimal("2.00"))
         tx.insert(second)
         tx.terminate(second)
-        _refused_as_not_stored(lambda: tx.update(second.edit(value=Decimal("4.00"))))
+        _refused_as_not_stored(lambda: tx.amend(second.edit(value=Decimal("4.00"))))
         tx.insert(mm.Balance(id=9, acct_num="Z", value=Decimal("3.00")))
 
     db_for(BALANCE, port).transact(fn)
@@ -843,7 +843,7 @@ def test_a_pending_assignment_alone_leaves_a_stored_insertion_standing() -> None
         first = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(first)
         tx.find(mm.Balance.where(mm.Balance.id == 9)).result()
-        tx.update(first.edit(value=Decimal("2.00")))
+        tx.amend(first.edit(value=Decimal("2.00")))
         with pytest.raises(KeyedWriteValueError) as refused:
             tx.insert(mm.Balance(id=9, acct_num="Z", value=Decimal("3.00")))
         assert refused.value.code == "write-value-already-stored"
@@ -919,9 +919,9 @@ def test_removing_a_row_no_insertion_opened_leaves_the_insertions_standing() -> 
         opened = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(opened)
         other = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
-        tx.update(other.edit(value=Decimal("6.00")))
+        tx.amend(other.edit(value=Decimal("6.00")))
         tx.terminate(tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
-        tx.update(opened.edit(value=Decimal("2.00")))
+        tx.amend(opened.edit(value=Decimal("2.00")))
 
     db_for(BALANCE, port).transact(fn)
     assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == [
@@ -968,7 +968,7 @@ def test_an_inserted_value_keeps_the_node_state_a_classified_read_gave_it() -> N
         assert insertion_of(value) is not None
         with pytest.raises(pickle.PicklingError):
             pickle.dumps(value)
-        tx.update(value.edit(name="Grace"))
+        tx.amend(value.edit(name="Grace"))
 
     db_for(CONTACT_MODEL, port).transact(fn)
     (insert,) = _writes(port)
@@ -982,7 +982,7 @@ def test_a_retry_admits_the_insertion_afresh_and_expires_the_first_attempts_draf
 
     def fn(tx: Transaction) -> None:
         if drafts:
-            _refused_as_not_stored(lambda: tx.update(drafts[0]))
+            _refused_as_not_stored(lambda: tx.amend(drafts[0]))
         tx.insert(opened)
         drafts.append(opened.edit(name="Hooke"))
 
@@ -1007,13 +1007,13 @@ def test_composition_spends_the_observed_source_and_not_the_insertions_authority
         opened = _position()
         tx.insert(opened, valid_from=_MAR, until=_SEP)
         observed = _read_at(tx, _MAY)
-        tx.update(opened.edit(value=Decimal("150.00")), until=_JUN)
-        tx.update(observed.edit(value=Decimal("175.00")), until=_AUG)
+        tx.amend(opened.edit(value=Decimal("150.00")), until=_JUN)
+        tx.amend(observed.edit(value=Decimal("175.00")), until=_AUG)
         _read_at(tx, _MAR)
         with pytest.raises(WriteEvidenceError) as refused:
-            tx.update(observed.edit(value=Decimal("1.00")), until=_AUG)
+            tx.amend(observed.edit(value=Decimal("1.00")), until=_AUG)
         assert refused.value.code == "write-evidence-consumed"
-        tx.update(opened.edit(value=Decimal("125.00")), until=_MAY)
+        tx.amend(opened.edit(value=Decimal("125.00")), until=_MAY)
 
     _transact(port, fn)
     last = _writes(port)[-1]
@@ -1045,9 +1045,9 @@ def test_a_reinsertion_at_identical_coordinates_revives_no_earlier_observation()
         tx.insert(_position("200.00"), valid_from=_JAN)
         fresh = _read_at(tx, _MAR)
         with pytest.raises(WriteEvidenceError) as refused:
-            tx.update(earlier.edit(value=Decimal("1.00")))
+            tx.amend(earlier.edit(value=Decimal("1.00")))
         assert refused.value.code == "write-evidence-consumed"
-        tx.update(fresh.edit(value=Decimal("250.00")))
+        tx.amend(fresh.edit(value=Decimal("250.00")))
 
     _transact(port, fn)
     assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == [
@@ -1067,7 +1067,7 @@ def test_a_pending_assignment_alone_leaves_a_stored_bitemporal_insertion_standin
         first = _position()
         tx.insert(first, valid_from=_JAN)
         _read_at(tx, _MAR)
-        tx.update(first.edit(value=Decimal("150.00")))
+        tx.amend(first.edit(value=Decimal("150.00")))
         with pytest.raises(KeyedWriteValueError) as refused:
             tx.insert(_position("200.00"), valid_from=_JAN)
         assert refused.value.code == "write-value-already-stored"
@@ -1095,7 +1095,7 @@ def test_removing_a_bitemporal_row_no_insertion_opened_leaves_the_insertions_sta
 
     def fn(tx: Transaction) -> None:
         tx.insert(WherePosition(id=9, acct_num="B", value=Decimal("5.00")), valid_from=_JAN)
-        tx.update(_read_at(tx, _MAR).edit(value=Decimal("150.00")))
+        tx.amend(_read_at(tx, _MAR).edit(value=Decimal("150.00")))
         tx.terminate(_read_at(tx, _MAR))
         with pytest.raises(KeyedWriteValueError) as refused:
             tx.insert(WherePosition(id=9, acct_num="B", value=Decimal("6.00")), valid_from=_JAN)
@@ -1109,3 +1109,117 @@ def test_removing_a_bitemporal_row_no_insertion_opened_leaves_the_insertions_sta
         "insert",
         "delete",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# A replacement an insertion authorizes establishes its whole window, even     #
+# while the insertion is pending: the opening settles with the stored coverage #
+# its replacement reaches, at the normal flush and without an intermediate     #
+# insertion of the state it replaces.                                          #
+# --------------------------------------------------------------------------- #
+_T0 = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
+
+
+def _stored(start: dt.datetime, end: object, value: str = "200.00") -> MappingRow:
+    """A current row of WherePosition 1 committed before the attempt."""
+    return {**_rectangle(start, end, value), "in_z": _T0}
+
+
+def _replace_opening(tx: Transaction, representation: str, until: dt.datetime) -> None:
+    if representation == "typed":
+        opened = _position()
+        tx.insert(opened, valid_from=_JAN, until=_MAR)
+        tx.replace(opened.edit(value=Decimal("300.00")), until=until)
+        return
+    node = tx.wire.insert(
+        "WherePosition", {"id": 1, "acctNum": "A", "value": "100.00"}, valid_from=_JAN, until=_MAR
+    )
+    tx.wire.replace(node, {"acctNum": "A", "value": "300.00"}, until=until)
+
+
+@pytest.mark.parametrize("representation", ["typed", "wire"])
+def test_a_pending_replacement_reaching_past_its_opening_fills_the_gap_it_finds(
+    representation: str,
+) -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[]), Write(times=2)))
+    _transact(port, lambda tx: _replace_opening(tx, representation, _JUN))
+    (coverage,) = [call for call in port.calls if isinstance(call, ReadCall)]
+    assert coverage.binds == (1, _MAR, _JUN, INFINITY_INSTANT)
+    assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == ["insert", "insert"]
+    assert _opened(port) == [
+        (Decimal("300.00"), _JAN, _MAR),
+        (Decimal("300.00"), _MAR, _JUN),
+    ]
+
+
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_a_pending_replacement_transforms_the_stored_coverage_it_reaches(
+    concurrency: str,
+) -> None:
+    stored = _stored(_MAY, _AUG)
+    port = ScriptedAdapter(Transact(Read(rows=[stored]), Write(times=5)))
+    own_root(
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+    ).using_database_login().transact(
+        lambda tx: _replace_opening(tx, "typed", _JUN), concurrency=cast("Any", concurrency)
+    )
+    (coverage,) = [call for call in port.calls if isinstance(call, ReadCall)]
+    lock = " for share of t0" if concurrency == "locking" else ""
+    assert coverage.sql.endswith(
+        "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s" + lock
+    )
+    close, *openings = _writes(port)
+    gate = " and in_z = %s" if concurrency == "optimistic" else ""
+    assert close.sql == (
+        "update where_position set out_z = %s where id = %s and thru_z = %s and out_z = %s" + gate
+    )
+    assert [call.sql.split(" ", 1)[0] for call in openings] == ["insert"] * 4
+    assert _opened(port) == [
+        (Decimal("300.00"), _JAN, _MAR),
+        (Decimal("300.00"), _MAY, _JUN),
+        (Decimal("200.00"), _JUN, _AUG),
+        (Decimal("300.00"), _MAR, _MAY),
+    ]
+
+
+def test_a_pending_replacement_inside_its_opening_reads_nothing() -> None:
+    port = ScriptedAdapter(Transact(Write(times=2)))
+
+    def fn(tx: Transaction) -> None:
+        opened = _position()
+        tx.insert(opened, valid_from=_JAN, until=_SEP)
+        tx.replace(opened.edit(value=Decimal("300.00")), until=_JUN)
+
+    _transact(port, fn)
+    assert not any(isinstance(call, ReadCall) for call in port.calls)
+    assert _opened(port) == [
+        (Decimal("300.00"), _JAN, _JUN),
+        (Decimal("100.00"), _JUN, _SEP),
+    ]
+
+
+def test_a_destruction_of_a_pending_replacements_window_cancels_it_whole() -> None:
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: Transaction) -> None:
+        opened = _position()
+        tx.insert(opened, valid_from=_JAN, until=_MAR)
+        tx.replace(opened.edit(value=Decimal("300.00")), until=_JUN)
+        tx.terminate(opened, until=_JUN)
+
+    _transact(port, fn)
+    assert not any(isinstance(call, ReadCall | WriteCall) for call in port.calls)
+
+
+def test_a_replacement_over_coverage_a_pending_destruction_removed_is_refused() -> None:
+    port = ScriptedAdapter(Transact(Write()))
+
+    def fn(tx: Transaction) -> None:
+        opened = _position()
+        tx.insert(opened, valid_from=_JAN, until=_MAY)
+        tx.terminate(opened, until=_MAR)
+        with pytest.raises(WriteEvidenceError):
+            tx.replace(opened.edit(value=Decimal("300.00")), until=_AUG)
+
+    _transact(port, fn)
+    assert _opened(port) == [(Decimal("100.00"), _MAR, _MAY)]

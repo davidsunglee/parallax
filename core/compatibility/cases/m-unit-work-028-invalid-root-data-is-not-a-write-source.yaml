@@ -10,7 +10,7 @@ tags: [m-unit-work, m-snapshot-read, m-value-object, write-value, provenance, in
 shape: scenario
 when:
   scenario:
-    - action: update
+    - action: amend
       value: invalidRoot
       roundTrips: 0
       expectError: write-value-not-stored

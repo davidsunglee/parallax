@@ -120,7 +120,7 @@ def test_a_non_temporal_insert_is_actor_neutral() -> None:
 
 
 def test_a_versioned_update_with_an_observation_is_actor_neutral() -> None:
-    update = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("175.00")},))
+    update = KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},))
     key = object_key(update, _ACCOUNT)
     assert key is not None
     _assert_neutral(
@@ -155,7 +155,7 @@ def test_a_batched_insert_run_is_actor_neutral() -> None:
 
 def test_a_temporal_close_and_chain_is_actor_neutral() -> None:
     update = KeyedWrite(
-        "update", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("175.00")},)
+        "amend", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("175.00")},)
     )
     key = object_key(update, _BALANCE)
     assert key is not None

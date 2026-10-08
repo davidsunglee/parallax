@@ -11,7 +11,7 @@ when:
   uow:
     concurrency: locking
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.WriteTwinLog
       statements: 2
       note: restate the unchanged members and assign `spec` naming one leaf — the successor drops the nested `origin` the closed milestone held

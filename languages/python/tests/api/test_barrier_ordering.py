@@ -124,7 +124,7 @@ def _db(profile_run: Any, *instants: dt.datetime) -> ScopedDatabase:
 
 def _low(tx: Transaction, stock: type[Any]) -> None:
     """The barrier: label every stock row whose quantity is below two."""
-    tx.update_where(stock.where(stock.quantity < 2), stock.label.set("low"))
+    tx.amend_where(stock.where(stock.quantity < 2), stock.label.set("low"))
 
 
 _DOCUMENT = (DocumentStock, DocumentLedger, DocumentSpan, DocumentLog)
@@ -167,14 +167,14 @@ def test_a_predicate_observes_the_write_of_a_state_buffered_before_it(
     def fn(tx: Transaction) -> None:
         if representation == "typed":
             source = tx.find(stock.where(stock.id == 1)).result()
-            tx.update(source.edit(quantity=1))
+            tx.amend(source.edit(quantity=1))
             _low(tx, stock)
-            tx.update(source.edit(quantity=7))
+            tx.amend(source.edit(quantity=7))
         else:
             (node,) = tx.wire.find(stock.where(stock.id == 1)).results()
-            tx.wire.update(node, {"quantity": 1})
+            tx.wire.amend(node, {"quantity": 1})
             _low(tx, stock)
-            tx.wire.update(node, {"quantity": 7})
+            tx.wire.amend(node, {"quantity": 7})
 
     db.transact(fn)
     # The barrier saw quantity 1 and labelled the row; the later write then ran.
@@ -191,7 +191,7 @@ def test_a_predicate_observes_an_insert_buffered_before_it_and_not_the_edit_afte
         inserted = stock(id=9, quantity=1, label="new")
         tx.insert(inserted)
         _low(tx, stock)
-        tx.update(inserted.edit(quantity=7))
+        tx.amend(inserted.edit(quantity=7))
 
     db.transact(fn)
     assert _stock_rows(profile_run, stock) == [(9, 7, "low")]
@@ -226,9 +226,9 @@ def test_a_versioned_write_after_a_barrier_advances_the_version_the_earlier_one_
 
     def fn(tx: Transaction) -> None:
         source = tx.find(ledger.where(ledger.id == 1)).result()
-        tx.update(source.edit(balance=20))
+        tx.amend(source.edit(balance=20))
         _low(tx, ColumnsStock)
-        tx.update(source.edit(spec=Spec(title="after")))
+        tx.amend(source.edit(spec=Spec(title="after")))
 
     db.transact(fn, concurrency=concurrency)
     assert _ledger_rows(profile_run, ledger) == [(1, 20, {"title": "after"}, 3)]
@@ -244,7 +244,7 @@ def test_a_versioned_insert_is_revised_after_a_barrier_from_the_version_it_opene
         inserted = ledger(id=1, balance=10)
         tx.insert(inserted)
         _low(tx, ColumnsStock)
-        tx.update(inserted.edit(balance=30))
+        tx.amend(inserted.edit(balance=30))
 
     db.transact(fn)
     assert _ledger_rows(profile_run, ledger) == [(1, 30, None, 2)]
@@ -279,8 +279,8 @@ def test_an_opening_edited_after_a_barrier_is_revised_at_one_instant(
     def fn(tx: Transaction) -> None:
         inserted = span(id=1, amount=100)
         tx.insert(inserted, valid_from=_JAN)
-        tx.update_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
-        tx.update(inserted.edit(amount=150), until=_APR)
+        tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
+        tx.amend(inserted.edit(amount=150), until=_APR)
 
     db.transact(fn, concurrency=concurrency)
     # When the barrier ran the opening stood alone; the edit then split it.
@@ -322,11 +322,11 @@ def test_an_opening_removed_whole_after_a_barrier_admits_its_reinsertion(
             tx.insert(first, valid_from=_JAN, until=_APR)
         else:
             tx.insert(first, valid_from=_JAN)
-        tx.update_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
+        tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
         tx.terminate(first)
         tx.insert(span(id=1, amount=200), valid_from=_JAN)
         with pytest.raises(KeyedWriteValueError) as refused:
-            tx.update(first.edit(amount=1))
+            tx.amend(first.edit(amount=1))
         assert refused.value.code == "write-value-not-stored"
 
     db.transact(fn, concurrency=concurrency)
@@ -345,7 +345,7 @@ def test_an_opening_removed_in_part_after_a_barrier_still_refuses_a_reinsertion(
     def fn(tx: Transaction) -> None:
         first = span(id=1, amount=100)
         tx.insert(first, valid_from=_JAN)
-        tx.update_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
+        tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
         tx.terminate(first, until=_APR)
         with pytest.raises(KeyedWriteValueError) as refused:
             tx.insert(span(id=1, amount=200), valid_from=_JAN)
@@ -365,8 +365,8 @@ def test_a_transaction_time_insert_edited_after_a_barrier_is_revised_in_place(
     def fn(tx: Transaction) -> None:
         inserted = log(id=1, label="seed")
         tx.insert(inserted)
-        tx.update_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
-        tx.update(inserted.edit(label="after"))
+        tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
+        tx.amend(inserted.edit(label="after"))
 
     db.transact(fn, concurrency=concurrency)
     rows = profile_run.port.execute(
@@ -386,7 +386,7 @@ def test_a_transaction_time_insert_removed_after_a_barrier_admits_its_reinsertio
     def fn(tx: Transaction) -> None:
         inserted = log(id=1, label="seed")
         tx.insert(inserted)
-        tx.update_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
+        tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
         tx.terminate(inserted)
         tx.insert(log(id=1, label="again"))
 

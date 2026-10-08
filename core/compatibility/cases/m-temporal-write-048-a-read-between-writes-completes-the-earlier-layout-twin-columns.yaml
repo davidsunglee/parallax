@@ -14,7 +14,7 @@ when:
   scenario:
     - uow: target-first
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 1, amount: 150 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
@@ -38,7 +38,7 @@ when:
           out_z: infinity
     - uow: target-first
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 1
           entity: parallax.compatibility.SequenceSpan
           rows:
@@ -64,7 +64,7 @@ when:
           out_z: infinity
     - uow: observed-first
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 3
           entity: parallax.compatibility.SequenceSpan
           rows:
@@ -89,7 +89,7 @@ when:
           out_z: infinity
     - uow: observed-first
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 2, amount: 160 }
           ifTxStart: "2024-11-02T00:00:00.000000Z"
@@ -99,7 +99,7 @@ when:
       note: "a target stating the attempt's own milestone"
     - uow: stale
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 4, amount: 150 }
           ifTxStart: "2023-12-15T00:00:00.000000Z"
@@ -123,7 +123,7 @@ when:
           out_z: infinity
     - uow: stale
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 4, amount: 250 }
           ifTxStart: "2023-12-15T00:00:00.000000Z"

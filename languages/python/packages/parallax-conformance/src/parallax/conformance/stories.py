@@ -87,7 +87,7 @@ def aborted_update_is_discarded(db: ScopedDatabase) -> list[Entity]:
     edited = fetched.edit(balance=Decimal("999.00"))
 
     def doomed(tx: Transaction) -> None:
-        tx.update(edited)
+        tx.amend(edited)
         raise RuntimeError("changed my mind")
 
     with contextlib.suppress(ExecutionFailure):
@@ -116,17 +116,17 @@ def fk_ordered_inserts(db: ScopedDatabase) -> None:
 def callback_value_withheld_on_abort(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()
-        tx.update(current.edit(balance=Decimal("175.00")))
+        tx.amend(current.edit(balance=Decimal("175.00")))
         tx.find(Account.where(Account.id == 1))
         raise RuntimeError("abort")
 
     return db.transact(fn)
 
 
-def keyed_update_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
+def keyed_amendment_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()
-        tx.update(current.edit(balance=Decimal("175.00")))
+        tx.amend(current.edit(balance=Decimal("175.00")))
         return list(tx.find(Account.where(Account.id == 1)).results())
 
     return db.transact(fn)
@@ -169,7 +169,7 @@ def one_flush_combined_mixed_verb_order(db: ScopedDatabase) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()
         deleted = tx.find(Account.where(Account.id == 3)).result()
         tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00")))
-        tx.update(current.edit(balance=Decimal("20.00")))
+        tx.amend(current.edit(balance=Decimal("20.00")))
         tx.delete(deleted)
         return list(tx.find(Account.where(Account.balance < Decimal("50.00"))).results())
 
@@ -223,7 +223,7 @@ def transaction_time_only_chain_update_via_a_sparse_copy(db: ScopedDatabase) -> 
 
     def update(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()
-        tx.update(current.edit(value=Decimal("150.00")))
+        tx.amend(current.edit(value=Decimal("150.00")))
 
     db.transact(insert)
     db.transact(update)
@@ -235,7 +235,7 @@ def transaction_time_only_chain_update_carries_every_new_attribute(db: ScopedDat
 
     def update(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()
-        tx.update(current.edit(acct_num="B", value=Decimal("250.00")))
+        tx.amend(current.edit(acct_num="B", value=Decimal("250.00")))
 
     db.transact(insert)
     db.transact(update)
@@ -244,21 +244,21 @@ def transaction_time_only_chain_update_carries_every_new_attribute(db: ScopedDat
 def transaction_time_only_chain_update_from_existing_history(db: ScopedDatabase) -> None:
     def update(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()
-        tx.update(current.edit(value=Decimal("175.00")))
+        tx.amend(current.edit(value=Decimal("175.00")))
 
     db.transact(update)
 
 
-def transaction_time_only_target_replacement_gates_on_the_callers_milestone(
+def transaction_time_only_conditional_replacement_gates_on_the_callers_milestone(
     db: ScopedDatabase,
 ) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
     def replace(tx: Transaction) -> None:
-        tx.replace(
+        tx.replace_if(
             Balance(id=1, acct_num="B", value=Decimal("150.00")),
-            if_tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
     db.transact(insert)
@@ -268,21 +268,21 @@ def transaction_time_only_target_replacement_gates_on_the_callers_milestone(
 def versioned_update_advances_the_version_ungated_in_locking_mode(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         current = tx.find(Account.where(Account.id == 2)).result()
-        tx.update(current.edit(balance=Decimal("500.00")))
+        tx.amend(current.edit(balance=Decimal("500.00")))
 
     db.transact(fn, concurrency="locking")
 
 
-def target_patch_gates_on_the_callers_version(db: ScopedDatabase) -> None:
+def conditional_amendment_gates_on_the_callers_version(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
-        tx.wire.update("Account", {"id": 2, "balance": "250.00"}, if_version=1)
+        tx.amend_if(Account, Account.balance.set(Decimal("250.00")), key=2, version=1)
 
     db.transact(fn)
 
 
-def target_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
+def conditional_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
-        tx.replace(Account(id=3, owner="Hopper", balance=Decimal("12.00")), if_version=1)
+        tx.replace_if(Account(id=3, owner="Hopper", balance=Decimal("12.00")), version=1)
 
     db.transact(fn)
 
@@ -319,7 +319,7 @@ def bitemporal_plain_update_splits_head_and_new_tail(db: ScopedDatabase) -> None
                 valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(current.edit(value=Decimal("200.00")))
+        tx.amend(current.edit(value=Decimal("200.00")))
 
     db.transact(insert)
     db.transact(correct)
@@ -335,7 +335,7 @@ def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: ScopedDatabase) 
     db.transact(fn)
 
 
-def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
+def bitemporal_amend_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -348,7 +348,7 @@ def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
                 valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(
+        tx.amend(
             current.edit(value=Decimal("200.00")),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
@@ -357,7 +357,7 @@ def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
     db.transact(split)
 
 
-def bitemporal_target_patch_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
+def bitemporal_conditional_amendment_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -365,19 +365,19 @@ def bitemporal_target_patch_gates_on_the_callers_milestone(db: ScopedDatabase) -
         )
 
     def patch(tx: Transaction) -> None:
-        tx.wire.update(
+        tx.wire.amend_if(
             "Position",
             {"id": 1, "value": "200.00"},
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
-            if_tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
     db.transact(insert)
     db.transact(patch)
 
 
-def bitemporal_target_replacement_acquires_its_start_under_locking(db: ScopedDatabase) -> None:
+def bitemporal_conditional_replacement_acquires_its_start_under_locking(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -385,10 +385,10 @@ def bitemporal_target_replacement_acquires_its_start_under_locking(db: ScopedDat
         )
 
     def replace(tx: Transaction) -> None:
-        tx.replace(
+        tx.replace_if(
             Position(id=1, acct_num="B", value=Decimal("300.00")),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-            if_tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
     db.transact(insert)
@@ -407,7 +407,7 @@ def a_close_settles_against_the_milestone_its_own_find_observed(db: ScopedDataba
                 valid_time=dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(head.edit(value=Decimal("150.00")))
+        tx.amend(head.edit(value=Decimal("150.00")))
 
     db.transact(fn, concurrency="optimistic")
 
@@ -429,7 +429,7 @@ def supplier_transaction_time_only_chain_update_carries_the_document(db: ScopedD
 
     def update(tx: Transaction) -> None:
         current = tx.find(Supplier.where(Supplier.id == 1)).result()
-        tx.update(
+        tx.amend(
             current.edit(
                 address=Address(
                     street="2 New Avenue",
@@ -467,7 +467,7 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: ScopedDatabase) -
         current = tx.find(
             Branch.where(Branch.id == 1).as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC))
         ).result()
-        tx.update(
+        tx.amend(
             current.edit(
                 address=Address(
                     street="30 New Road",
@@ -524,7 +524,7 @@ def customer_update_replaces_the_whole_address_document(db: ScopedDatabase) -> N
 
     def replace(tx: Transaction) -> None:
         current = tx.find(Customer.where(Customer.id == 200)).result()
-        tx.update(
+        tx.amend(
             current.edit(
                 address=CustomerAddress(
                     street="9 New Way",
@@ -552,7 +552,7 @@ def customer_update_nulls_the_address_document_out(db: ScopedDatabase) -> None:
 
     def null_out(tx: Transaction) -> None:
         current = tx.find(Customer.where(Customer.id == 300)).result()
-        tx.update(current.edit(address=None))
+        tx.amend(current.edit(address=None))
 
     db.transact(insert)
     db.transact(null_out)
@@ -645,10 +645,10 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
     ),
     WriteStory(
         "m-unit-work-005",
-        "Keyed update, observed in-transaction",
+        "Keyed amendment, observed in-transaction",
         "commit",
         "account",
-        keyed_update_observed_in_transaction,
+        keyed_amendment_observed_in_transaction,
     ),
     WriteStory(
         "m-unit-work-006",
@@ -730,7 +730,7 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "A Transaction-Time-Only target replacement gates on its caller's milestone",
         "commit",
         "balance",
-        transaction_time_only_target_replacement_gates_on_the_callers_milestone,
+        transaction_time_only_conditional_replacement_gates_on_the_callers_milestone,
         clock=_temporal_write_002_clock,
     ),
     WriteStory(
@@ -742,17 +742,17 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
     ),
     WriteStory(
         "m-opt-lock-027",
-        "A target patch states its key and the version its caller last observed",
+        "A conditional amendment states its key and the version its caller last observed",
         "commit",
         "account",
-        target_patch_gates_on_the_callers_version,
+        conditional_amendment_gates_on_the_callers_version,
     ),
     WriteStory(
         "m-opt-lock-028",
-        "A target replacement states the object's whole writable state",
+        "A conditional replacement states the object's whole writable state",
         "commit",
         "account",
-        target_replacement_states_every_writable_member,
+        conditional_replacement_states_every_writable_member,
     ),
     WriteStory(
         "m-batch-write-005",
@@ -763,18 +763,18 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
     ),
     WriteStory(
         "m-temporal-write-017",
-        "Bitemporal update-until splits head/middle/tail",
+        "Bitemporal amend-until splits head/middle/tail",
         "commit",
         "position",
-        bitemporal_update_until_splits_head_middle_tail,
+        bitemporal_amend_until_splits_head_middle_tail,
         clock=_temporal_write_017_clock,
     ),
     WriteStory(
         "m-temporal-write-042",
-        "A bitemporal target patch states its window and its caller's milestone",
+        "A bitemporal conditional amendment states its window and its caller's milestone",
         "commit",
         "position",
-        bitemporal_target_patch_gates_on_the_callers_milestone,
+        bitemporal_conditional_amendment_gates_on_the_callers_milestone,
         clock=_temporal_write_017_clock,
     ),
     WriteStory(
@@ -782,7 +782,7 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "A Locking bitemporal target replacement reads its start under the shared lock",
         "commit",
         "position",
-        bitemporal_target_replacement_acquires_its_start_under_locking,
+        bitemporal_conditional_replacement_acquires_its_start_under_locking,
         clock=_temporal_write_002_clock,
     ),
     WriteStory(

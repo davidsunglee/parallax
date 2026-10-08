@@ -334,7 +334,7 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
                         "uow": "x",
                         "write": [
                             {
-                                "mutation": "update",
+                                "mutation": "amend",
                                 "entity": "Account",
                                 "rows": [{"id": 2, "balance": "260.00"}],
                             }
@@ -351,7 +351,7 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
                         "uow": "y",
                         "write": [
                             {
-                                "mutation": "update",
+                                "mutation": "amend",
                                 "entity": "Account",
                                 "rows": [{"id": 2, "balance": "270.00"}],
                             }
@@ -413,7 +413,7 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
                         "uow": "x",
                         "write": [
                             {
-                                "mutation": "update",
+                                "mutation": "amend",
                                 "entity": "Account",
                                 "rows": [{"id": 2, "balance": "260.00"}],
                             }
@@ -878,7 +878,7 @@ def test_a_second_temporal_write_of_a_key_its_group_settled_is_refused() -> None
         [
             _find_balance(2),
             _balance_write("terminate", {"id": 2}, on=0),
-            _balance_write("update", {"id": 2, "value": "5.00"}, on=0),
+            _balance_write("amend", {"id": 2, "value": "5.00"}, on=0),
         ],
         [_find_balance(1)],
     )

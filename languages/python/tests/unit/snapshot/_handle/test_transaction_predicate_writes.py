@@ -344,7 +344,7 @@ def test_readless_update_where_buffers_one_statement_no_read() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
+        tx.amend_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
 
     own_root(
         Database.connect(port, PERSON, clock=FixedClock(FIXED))
@@ -360,7 +360,7 @@ def test_readless_document_many_assignment_is_refused_before_write_sql() -> None
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             mm.Traveler.where(mm.Traveler.id == 1),
             mm.Traveler.tags.set((mm.TravelerTag(label="founder"),)),
         )
@@ -377,7 +377,7 @@ def test_readless_nested_document_many_assignment_is_refused_before_write_sql() 
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             NestedReadlessVoyage.where(NestedReadlessVoyage.id == 1),
             NestedReadlessVoyage.route.set(
                 NestedReadlessRoute(
@@ -414,7 +414,7 @@ def test_readless_document_scalar_assignment_still_reaches_planning() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             NestedReadlessVoyage.where(NestedReadlessVoyage.id == 1),
             NestedReadlessVoyage.title.set("Coastal"),
         )
@@ -453,7 +453,7 @@ def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> No
     forward_port = ScriptedAdapter(Transact(Write()))
 
     def forward(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             Order.where(Order.id == 100),
             Order.name.set("Hopper"),
             Order.price.set(Decimal("9.99")),
@@ -466,7 +466,7 @@ def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> No
     reordered_port = ScriptedAdapter(Transact(Write()))
 
     def reordered(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             Order.where(Order.id == 100),
             Order.price.set(Decimal("9.99")),
             Order.name.set("Hopper"),
@@ -509,7 +509,7 @@ def test_where_verb_rejects_an_inheritance_family_target() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             im.CardPayment.where(im.CardPayment.id == 1), im.CardPayment.card_network.set("visa")
         )
 
@@ -530,7 +530,7 @@ def test_the_family_refusal_precedes_an_assignment_addressing_another_entity() -
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             im.CardPayment.where(im.CardPayment.id == 1), im.Payment.amount.set(Decimal("1.00"))
         )
 
@@ -549,7 +549,7 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(mm.Ticket.where(mm.Ticket.id == 1), mm.Badge.holder.set("Ada"))
+        tx.amend_where(mm.Ticket.where(mm.Ticket.id == 1), mm.Badge.holder.set("Ada"))
 
     with raises_contextualized(
         instructions.WriteInstructionError,
@@ -566,7 +566,7 @@ def test_an_assignment_bearing_verb_requires_an_assignment() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(mm.Person.where(mm.Person.id == 1))
+        tx.amend_where(mm.Person.where(mm.Person.id == 1))
 
     with raises_contextualized(
         instructions.WriteInstructionError, match="requires at least one assignment"
@@ -581,7 +581,7 @@ def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             mm.Person.where(mm.Person.id == 1),
             mm.Person.name.set("Ada"),
             mm.Person.name.set("Grace"),
@@ -598,7 +598,7 @@ def test_bitemporal_where_verb_requires_valid_from() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WherePosition.where(WherePosition.id == 1), WherePosition.value.set(Decimal("1.00"))
         )
 
@@ -624,7 +624,7 @@ def test_non_temporal_where_verb_forbids_valid_from() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"), valid_from=FIXED
         )
 
@@ -658,7 +658,7 @@ def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest(
     )
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             mm.Account.where(mm.Account.balance < 200), mm.Account.balance.set(Decimal("100.00"))
         )
 
@@ -688,7 +688,7 @@ def test_a_materializing_write_derives_no_row_publication(
     )
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             mm.Account.where(mm.Account.balance < 200), mm.Account.balance.set(Decimal("100.00"))
         )
 
@@ -914,7 +914,7 @@ def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
     )
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             mm.Balance.where(mm.Balance.value < 200), mm.Balance.value.set(Decimal("175.00"))
         )
 
@@ -957,7 +957,7 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
     )
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WhereLedger.where(WhereLedger.id == 1), WhereLedger.name.set("Baltic Traders")
         )
 
@@ -1004,7 +1004,7 @@ def test_materializing_update_where_carries_an_encoded_scalar_in_the_predecessor
     )
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WhereBinaryLedger.where(WhereBinaryLedger.id == 1),
             WhereBinaryLedger.name.set("new"),
         )
@@ -1046,7 +1046,7 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
     )
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WhereVoyage.where(WhereVoyage.id == 1), WhereVoyage.title.set("Coastal Return")
         )
 
@@ -1146,7 +1146,7 @@ def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=valid_from,
@@ -1179,7 +1179,7 @@ def test_materializing_bounded_update_where_over_a_bitemporal_target() -> None:
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=valid_from,
@@ -1263,7 +1263,7 @@ def test_materializing_bitemporal_update_where_carries_the_unassigned_value_obje
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WhereRectangle.where(WhereRectangle.id == 1),
             WhereRectangle.value.set(Decimal("300.00")),
             valid_from=valid_from,
@@ -1294,7 +1294,7 @@ def test_materializing_bounded_update_where_bitemporal_carries_the_value_object_
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WhereRectangle.where(WhereRectangle.id == 1),
             WhereRectangle.value.set(Decimal("300.00")),
             valid_from=valid_from,
@@ -1426,7 +1426,7 @@ def test_materializing_versioned_update_where_eliminates_a_no_op_value_object_ro
     )
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WhereSubscriber.where(WhereSubscriber.id == 1),
             WhereSubscriber.address.set(WhereSubscriberAddress(city="Bergen")),
         )
@@ -1452,7 +1452,7 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
     typed_port = ScriptedAdapter(Transact(Read(rows=rows())))
 
     def typed(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WhereRoster.where(WhereRoster.id == 1),
             WhereRoster.address.set(WhereRosterAddress(city="Bergen")),
         )
@@ -1468,7 +1468,7 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
     document_port = ScriptedAdapter(Transact(Read(rows=rows())))
 
     def document(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WhereRoster.where(WhereRoster.id == 1),
             WhereRoster.address.set(cast("Any", {"city": "Bergen"})),
         )
@@ -1521,7 +1521,7 @@ def test_an_encoded_occurrence_assignment_is_decoded_at_ingress_before_it_is_wei
         port = ScriptedAdapter(Transact(Read(rows=[row]), Write()))
 
         def fn(tx: Transaction) -> None:
-            tx.wire.update_where(
+            tx.wire.amend_where(
                 {
                     "entity": "parallax.compatibility.WhereManagedSubscriber",
                     "predicate": {
@@ -1601,7 +1601,7 @@ def test_materializing_versioned_update_where_eliminates_an_encoded_scalar_no_op
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "version": 1, "payload_hex": "0a1b"}])))
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WhereBinary.where(WhereBinary.id == 1),
             WhereBinary.payload.set(b"\x0a\x1b"),
         )
@@ -1621,7 +1621,7 @@ def test_materializing_versioned_update_where_gates_a_changed_value_object_row()
     )
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WhereSubscriber.where(WhereSubscriber.id == 1),
             WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
         )
@@ -1649,7 +1649,7 @@ def test_materializing_versioned_update_where_projects_only_the_assigned_value_o
     )
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WhereSubscriber.where(WhereSubscriber.id == 1),
             WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
         )
@@ -1671,7 +1671,7 @@ def test_materializing_bounded_update_where_rejects_an_equal_window_bound() -> N
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=valid_from,
@@ -1713,7 +1713,7 @@ def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
@@ -1736,7 +1736,7 @@ def test_a_where_bounded_verb_states_its_window_as_a_pair() -> None:
     position = ScriptedAdapter(Transact())
 
     def absent_valid_from(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
@@ -1773,7 +1773,7 @@ def test_update_where_rejects_an_ordered_query_end_to_end() -> None:
     query = mm.Person.where(mm.Person.id == 1).order_by(mm.Person.id.asc())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(query, mm.Person.name.set("Ada"))
+        tx.amend_where(query, mm.Person.name.set("Ada"))
 
     with raises_contextualized(QueryDefinitionError) as caught:
         own_root(
@@ -1821,7 +1821,7 @@ def test_update_where_refuses_a_target_the_connected_model_does_not_declare() ->
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
+        tx.amend_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
 
     with raises_contextualized(
         instructions.WriteInstructionError,
@@ -1855,7 +1855,7 @@ def test_a_read_of_a_target_the_connected_model_does_not_declare_keeps_its_refus
 # --------------------------------------------------------------------------- #
 def test_update_where_refuses_an_inverted_between_window_before_any_sql() -> None:
     def fn(tx: Transaction) -> None:
-        tx.update_where(mm.Person.where(mm.Person.id.between(10, 1)), mm.Person.name.set("Ada"))
+        tx.amend_where(mm.Person.where(mm.Person.id.between(10, 1)), mm.Person.name.set("Ada"))
 
     with raises_contextualized(ModelRejectedError) as caught:
         own_root(
@@ -2035,7 +2035,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
     idle = ScriptedAdapter(Transact())
 
     def unrenderable(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=_EXTREME_OFFSET,
@@ -2051,7 +2051,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
     typed_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def typed(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=_NON_UTC_VALID_FROM,
@@ -2065,7 +2065,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
     seam_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def wire(tx: Transaction) -> None:
-        tx.wire.update_where(
+        tx.wire.amend_where(
             {
                 "entity": "WherePosition",
                 "predicate": {"eq": {"attr": "WherePosition.id", "value": 1}},
@@ -2091,9 +2091,9 @@ def _bounded_write(
 ) -> None:
     assignment = WherePosition.value.set(Decimal("300.00"))
     if until is None:
-        tx.update_where(query, assignment, valid_from=valid_from)
+        tx.amend_where(query, assignment, valid_from=valid_from)
     else:
-        tx.update_where(query, assignment, valid_from=valid_from, until=until)
+        tx.amend_where(query, assignment, valid_from=valid_from, until=until)
 
 
 # --------------------------------------------------------------------------- #
@@ -2239,7 +2239,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
-        ("updateUntil", "takes no until"),
+        ("amendUntil", "takes no until"),
         ("terminate", "do not support 'terminate_where'"),
         ("terminateUntil", "takes no until"),
     ],
@@ -2260,8 +2260,8 @@ def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_t
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match=message):
             match mutation:
-                case "updateUntil":
-                    tx.wire.update_where(target, {"balance": Decimal("5.00")}, **window)
+                case "amendUntil":
+                    tx.wire.amend_where(target, {"balance": Decimal("5.00")}, **window)
                 case "terminate":
                     tx.wire.terminate_where(target)
                 case _:
@@ -2305,7 +2305,7 @@ def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
     def fn(tx: Transaction) -> None:
         tx.insert(WherePosition(id=9, acct_num="A", value=Decimal("1.00")), valid_from=valid_from)
         with pytest.raises(ModelRejectedError):
-            tx.update_where(
+            tx.amend_where(
                 WherePosition.where(WherePosition.id.between(10, 1)),
                 WherePosition.value.set(Decimal("300.00")),
                 valid_from=valid_from,
@@ -2345,7 +2345,7 @@ def test_query_not_mutation_compatible_precedes_every_adapter_call() -> None:
 
 def test_an_assignment_addressing_another_entity_precedes_every_adapter_call() -> None:
     def fn(tx: Transaction) -> None:
-        tx.update_where(mm.Ticket.where(mm.Ticket.id == 1), mm.Badge.holder.set("Ada"))
+        tx.amend_where(mm.Ticket.where(mm.Ticket.id == 1), mm.Badge.holder.set("Ada"))
 
     with raises_contextualized(instructions.WriteInstructionError, match="declared member"):
         own_root(
@@ -2364,7 +2364,7 @@ def test_an_assignment_addressing_another_entity_precedes_every_adapter_call() -
 # materialization would still open a second transaction and still commit.     #
 # --------------------------------------------------------------------------- #
 def _update_balance_where(tx: Transaction) -> None:
-    tx.update_where(
+    tx.amend_where(
         mm.Account.where(mm.Account.balance < 200), mm.Account.balance.set(Decimal("175.00"))
     )
 
@@ -2448,11 +2448,11 @@ def test_a_group_refuses_a_later_keyed_write_of_a_state_it_selected() -> None:
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 3)).result()
-        tx.update_where(
+        tx.amend_where(
             mm.Account.where(mm.Account.balance < Decimal("200.00")),
             mm.Account.owner.set("Ada"),
         )
-        tx.update(node.edit(balance=Decimal("125.00")))
+        tx.amend(node.edit(balance=Decimal("125.00")))
 
     with raises_contextualized(WriteEvidenceError) as refusal:
         account_db(port).transact(fn)
@@ -2471,11 +2471,11 @@ def test_a_group_leaves_a_keyed_write_of_an_unselected_state_alone() -> None:
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update_where(
+        tx.amend_where(
             mm.Account.where(mm.Account.balance < Decimal("50.00")),
             mm.Account.owner.set("Ada"),
         )
-        tx.update(node.edit(balance=Decimal("125.00")))
+        tx.amend(node.edit(balance=Decimal("125.00")))
 
     account_db(port).transact(fn)
     assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2
@@ -2644,7 +2644,7 @@ def _recorded_account_db(port: ScriptedAdapter, recorder: RecordingLifecycleProv
 
 
 def _assign_owner(tx: Transaction) -> None:
-    tx.update_where(
+    tx.amend_where(
         mm.Account.where(mm.Account.balance < Decimal("200.00")), mm.Account.owner.set("Ada")
     )
 
@@ -2704,7 +2704,7 @@ def test_a_root_refused_later_in_the_traversal_leaves_the_unit_of_work_untouched
     )
 
     def assign(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WhereSubscriber.where(WhereSubscriber.id < 10),
             WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
         )

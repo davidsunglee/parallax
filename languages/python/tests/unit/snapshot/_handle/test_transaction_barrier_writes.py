@@ -51,7 +51,7 @@ def _calls(port: ScriptedAdapter) -> list[PortCall]:
 
 
 def _barrier(tx: Transaction) -> None:
-    tx.update_where(Wallet.where(Wallet.balance < Decimal("2.00")), Wallet.owner.set("Low"))
+    tx.amend_where(Wallet.where(Wallet.balance < Decimal("2.00")), Wallet.owner.set("Low"))
 
 
 _WALLET = {"id": 1, "owner": "Ada", "balance": Decimal("5.00")}
@@ -63,9 +63,9 @@ def test_a_write_of_one_state_on_each_side_of_a_barrier_executes_on_its_own_side
 
     def fn(tx: Transaction) -> None:
         wallet = tx.find(Wallet.where(Wallet.id == 1)).result()
-        tx.update(wallet.edit(balance=Decimal("1.00")))
+        tx.amend(wallet.edit(balance=Decimal("1.00")))
         _barrier(tx)
-        tx.update(wallet.edit(balance=Decimal("7.00")))
+        tx.amend(wallet.edit(balance=Decimal("7.00")))
 
     db_for(_MODEL, port).transact(fn)
     assert _calls(port) == [
@@ -82,8 +82,8 @@ def test_writes_of_one_state_on_one_side_of_a_barrier_still_coalesce() -> None:
     def fn(tx: Transaction) -> None:
         wallet = tx.find(Wallet.where(Wallet.id == 1)).result()
         _barrier(tx)
-        tx.update(wallet.edit(balance=Decimal("1.00")))
-        tx.update(wallet.edit(owner="Bo"))
+        tx.amend(wallet.edit(balance=Decimal("1.00")))
+        tx.amend(wallet.edit(owner="Bo"))
 
     db_for(_MODEL, port).transact(fn)
     assert _calls(port) == [
@@ -107,9 +107,9 @@ def test_a_versioned_write_after_a_barrier_starts_from_the_version_the_earlier_o
 
     def fn(tx: Transaction) -> None:
         account = tx.find(Account.where(Account.id == 1)).result()
-        tx.update(account.edit(balance=Decimal("1.00")))
+        tx.amend(account.edit(balance=Decimal("1.00")))
         _barrier(tx)
-        tx.update(account.edit(owner="Bo"))
+        tx.amend(account.edit(owner="Bo"))
 
     db_for(_MODEL, port).transact(fn, concurrency=concurrency)
     assert _calls(port) == [
@@ -130,7 +130,7 @@ def test_a_destruction_after_a_barrier_removes_the_version_the_earlier_write_lef
 
     def fn(tx: Transaction) -> None:
         account = tx.find(Account.where(Account.id == 1)).result()
-        tx.update(account.edit(balance=Decimal("1.00")))
+        tx.amend(account.edit(balance=Decimal("1.00")))
         _barrier(tx)
         tx.delete(account)
 
@@ -149,11 +149,11 @@ def test_a_chain_across_two_barriers_advances_once_per_side() -> None:
 
     def fn(tx: Transaction) -> None:
         account = tx.find(Account.where(Account.id == 1)).result()
-        tx.update(account.edit(balance=Decimal("1.00")))
+        tx.amend(account.edit(balance=Decimal("1.00")))
         _barrier(tx)
-        tx.update(account.edit(owner="Bo"))
+        tx.amend(account.edit(owner="Bo"))
         _barrier(tx)
-        tx.update(account.edit(owner="Cy"))
+        tx.amend(account.edit(owner="Cy"))
 
     db_for(_MODEL, port).transact(fn)
     writes = [call for call in _calls(port) if isinstance(call, WriteCall)]
@@ -175,11 +175,11 @@ def test_a_write_of_a_pending_insert_after_a_barrier_revises_the_row_it_opened(
             wallet = Wallet(id=9, owner="Eve", balance=Decimal("1.00"))
             tx.insert(wallet)
             _barrier(tx)
-            tx.update(wallet.edit(balance=Decimal("7.00")))
+            tx.amend(wallet.edit(balance=Decimal("7.00")))
         else:
             node = tx.wire.insert("Wallet", {"id": 9, "owner": "Eve", "balance": "1.00"})
             _barrier(tx)
-            tx.wire.update(node, {"balance": "7.00"})
+            tx.wire.amend(node, {"balance": "7.00"})
 
     db_for(_MODEL, port).transact(fn)
     assert _calls(port) == [
@@ -197,9 +197,9 @@ def test_a_versioned_pending_insert_is_revised_after_a_barrier_from_its_first_ve
         tx.insert(account)
         _barrier(tx)
         edited = account.edit(balance=Decimal("7.00"))
-        tx.update(edited)
+        tx.amend(edited)
         _barrier(tx)
-        tx.update(edited.edit(owner="Fay"))
+        tx.amend(edited.edit(owner="Fay"))
 
     db_for(_MODEL, port).transact(fn)
     assert _calls(port) == [
@@ -253,9 +253,9 @@ def test_a_target_write_after_a_barrier_states_the_version_the_earlier_one_left(
     port = ScriptedAdapter(Transact(Write(times=3)))
 
     def fn(tx: Transaction) -> None:
-        tx.wire.update("Account", {"id": 1, "balance": "1.00"}, if_version=3)
+        tx.wire.amend_if("Account", {"id": 1, "balance": "1.00"}, version=3)
         _barrier(tx)
-        tx.wire.update("Account", {"id": 1, "owner": "Bo"}, if_version=3)
+        tx.wire.amend_if("Account", {"id": 1, "owner": "Bo"}, version=3)
 
     db_for(_MODEL, port).transact(fn)
     assert _calls(port) == [

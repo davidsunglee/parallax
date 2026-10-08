@@ -178,7 +178,7 @@ def _trace_declarations(monkeypatch: pytest.MonkeyPatch, model: Metamodel) -> li
 def _version_group() -> MaterializedWriteGroup:
     prepared = prepare_typed_write(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection(
                 "Account",
                 predicate_algebra.Comparison("lessThan", "Account.balance", "1000000.00"),
@@ -201,7 +201,7 @@ def _prepared_writes() -> list[OrderedWrite]:
     observed updates and deletes of a standalone Entity and of an inherited
     position, a collapsing unversioned run, a readless predicate write, and a
     Materialized Write Group."""
-    fridge_update = KeyedWrite("update", "Fridge", ({"id": 1, "name": "Chill"},))
+    fridge_update = KeyedWrite("amend", "Fridge", ({"id": 1, "name": "Chill"},))
     account_delete = KeyedWrite("delete", "Account", ({"id": 3},))
     fridge_key = object_key(fridge_update, _MODEL)
     account_key = object_key(account_delete, _MODEL)
@@ -216,8 +216,8 @@ def _prepared_writes() -> list[OrderedWrite]:
                 ),
                 fridge_update,
                 account_delete,
-                KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("2.00")},)),
-                KeyedWrite("update", "Wallet", ({"id": 2, "balance": Decimal("2.00")},)),
+                KeyedWrite("amend", "Wallet", ({"id": 1, "balance": Decimal("2.00")},)),
+                KeyedWrite("amend", "Wallet", ({"id": 2, "balance": Decimal("2.00")},)),
                 PredicateWrite(
                     "delete",
                     PredicateSelection(
@@ -292,7 +292,7 @@ _VALID_FROM: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 
 def _value_update(entity: str, *, valid_from: dt.datetime | None = None) -> PredicateWrite:
     return PredicateWrite(
-        "update",
+        "amend",
         PredicateSelection(
             entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", "1000000.00")
         ),
@@ -305,9 +305,9 @@ def _temporal_writes() -> list[OrderedWrite]:
     """Observed updates of an inherited position in a Transaction-Time-Only and
     a Bitemporal family, an observed standalone terminate, and a packed
     Materialized Write Group of each temporal shape."""
-    quote_update = KeyedWrite("update", "SpotQuote", ({"id": 1, "price": Decimal("2.00")},))
+    quote_update = KeyedWrite("amend", "SpotQuote", ({"id": 1, "price": Decimal("2.00")},))
     rate_update = KeyedWrite(
-        "update", "DepositRate", ({"id": 2, "amount": Decimal("3.00")},), valid_from=_VALID_FROM
+        "amend", "DepositRate", ({"id": 2, "amount": Decimal("3.00")},), valid_from=_VALID_FROM
     )
     balance_terminate = KeyedWrite("terminate", "Balance", ({"id": 3},))
     predecessors: list[tuple[KeyedWrite, Mapping[str, object]]] = [
@@ -432,7 +432,7 @@ def test_keyed_temporal_writes_settle_standalone_evidence_from_the_family_shape(
     updated, terminated = pinned(1), pinned(2)
 
     def write(tx: Transaction) -> None:
-        tx.update(updated.edit(amount=Decimal("2.00")))
+        tx.amend(updated.edit(amount=Decimal("2.00")))
         tx.terminate(terminated)
 
     database.transact(write)
@@ -675,9 +675,7 @@ def _streamed_rate_history(database: ScopedDatabase) -> None:
 
 def _materialized_policy_update(database: ScopedDatabase) -> None:
     def update(tx: Transaction) -> None:
-        tx.update_where(
-            Policy.where(Policy.id == 1), Policy.name.set("P-2"), valid_from=_VALID_FROM
-        )
+        tx.amend_where(Policy.where(Policy.id == 1), Policy.name.set("P-2"), valid_from=_VALID_FROM)
 
     database.transact(update)
 

@@ -113,8 +113,8 @@ def test_an_insert_intends_nothing_against_an_observed_state() -> None:
 @pytest.mark.parametrize(
     ("mutation", "kind"),
     [
-        ("update", "assignment"),
-        ("updateUntil", "assignment"),
+        ("amend", "assignment"),
+        ("amendUntil", "assignment"),
         ("delete", "destructive"),
         ("terminate", "destructive"),
         ("terminateUntil", "destructive"),
@@ -312,10 +312,10 @@ def test_a_temporal_objects_observed_writes_compose_unless_they_resurrect_or_hal
         (UNVERSIONED, "insert", None),
         (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "insert", None),
         (opt_lock.TransactionTimeDerived(_START_ATTRIBUTE), "insertUntil", None),
-        (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "update", _RETAINED),
+        (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "amend", _RETAINED),
         (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "delete", _RETAINED),
         (opt_lock.TransactionTimeDerived(_START_ATTRIBUTE), "terminate", _RETAINED),
-        (UNVERSIONED, "update", _OBJECT),
+        (UNVERSIONED, "amend", _OBJECT),
         (UNVERSIONED, "delete", _OBJECT),
     ],
 )
@@ -345,7 +345,7 @@ def test_a_state_keyed_target_handed_no_observation_claims_nothing() -> None:
     assert (
         opt_lock.settled_evidence(
             opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE),
-            "update",
+            "amend",
             object_key=_OBJECT,
             observation=None,
         )

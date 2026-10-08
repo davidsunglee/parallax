@@ -12,7 +12,7 @@ when:
         - { id: 10, owner: Mira, balance: "100.00" }
         - { id: 11, owner: Omar, balance: "20.00" }
         - { id: 12, owner: Nell, balance: "30.00" }
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Wallet
       statements: 1
       note: a batched UPDATE over two keys in a single statement

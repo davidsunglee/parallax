@@ -22,7 +22,7 @@ from __future__ import annotations
 import datetime as dt
 import threading
 import time
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -37,7 +37,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
+from parallax.core.execution import ExecutionFailure, KeyedWriteValueError
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
     WriteEvidenceError,
@@ -192,16 +192,16 @@ def _span_patch(
     **changes: object,
 ) -> None:
     if until is None:
-        tx.wire.update(
-            _name(entity), {"id": 1, **changes}, valid_from=valid_from, if_tx_start=tx_start
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, **changes}, valid_from=valid_from, tx_start=tx_start
         )
     else:
-        tx.wire.update(
+        tx.wire.amend_if(
             _name(entity),
             {"id": 1, **changes},
             valid_from=valid_from,
             until=until,
-            if_tx_start=tx_start,
+            tx_start=tx_start,
         )
 
 
@@ -216,13 +216,13 @@ def _span_replace(
     amount: int = 300,
     label: str = "r",
 ) -> None:
-    bounds: dict[str, Any] = {"valid_from": valid_from, "if_tx_start": tx_start}
+    bounds: dict[str, Any] = {"valid_from": valid_from, "tx_start": tx_start}
     if until is not None:
         bounds["until"] = until
     if representation == "typed":
-        tx.replace(entity(id=1, amount=amount, label=label), **bounds)
+        tx.replace_if(entity(id=1, amount=amount, label=label), **bounds)
     else:
-        tx.wire.replace(_name(entity), {"id": 1, "amount": amount, "label": label}, **bounds)
+        tx.wire.replace_if(_name(entity), {"id": 1, "amount": amount, "label": label}, **bounds)
 
 
 def _span_find(tx: Transaction, entity: type[Any], at: dt.datetime) -> Any:
@@ -350,12 +350,12 @@ def _equal_replacement(
     tx: Transaction, entity: type[Any], representation: _Representation, **bounds: Any
 ) -> None:
     if representation == "typed":
-        tx.replace(
+        tx.replace_if(
             entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=(Mark(code="m"),)),
             **bounds,
         )
     else:
-        tx.wire.replace(
+        tx.wire.replace_if(
             _name(entity),
             {"id": 1, "amount": 100, "label": "a", "spec": _S1, "marks": _M},
             **bounds,
@@ -374,7 +374,7 @@ def test_a_replacement_stating_what_its_rectangle_holds_keeps_it(
     db = _seeded_spans(profile_run, entity, _TA)
     db.transact(
         lambda tx: _equal_replacement(
-            tx, entity, representation, valid_from=_FEB, until=_APR, if_tx_start=_T0
+            tx, entity, representation, valid_from=_FEB, until=_APR, tx_start=_T0
         ),
         concurrency=concurrency,
     )
@@ -390,7 +390,7 @@ def test_an_equal_replacement_of_a_stale_milestone_still_fails_its_precondition(
     with pytest.raises(ExecutionFailure) as failed:
         db.transact(
             lambda tx: _equal_replacement(
-                tx, entity, representation, valid_from=_FEB, until=_APR, if_tx_start=_T1
+                tx, entity, representation, valid_from=_FEB, until=_APR, tx_start=_T1
             ),
             retry_optimistic_conflicts=True,
         )
@@ -415,12 +415,12 @@ def test_an_unchanged_replacement_keeps_stored_content_no_member_declares(
     finally:
         control.close()
     db.transact(
-        lambda tx: tx.wire.replace(
+        lambda tx: tx.wire.replace_if(
             _name(DocumentSpan),
             {"id": 1, "amount": 100, "label": label, "spec": _S1, "marks": _M},
             valid_from=_FEB,
             until=_APR,
-            if_tx_start=_T0,
+            tx_start=_T0,
         )
     )
     specs = profile_run.port.execute(
@@ -483,7 +483,7 @@ def test_a_transaction_time_target_chains_one_milestone_from_its_callers(
     db = _db(profile_run, _T0, _T1, _TA, _TB)
     db.transact(lambda tx: tx.insert(entity(id=1, label="seed", spec=Spec(title="s1"))))
     db.transact(
-        lambda tx: tx.wire.update(_name(entity), {"id": 1, "label": "patched"}, if_tx_start=_T0),
+        lambda tx: tx.wire.amend_if(_name(entity), {"id": 1, "label": "patched"}, tx_start=_T0),
         concurrency=concurrency,
     )
     assert _log_rows(profile_run, entity) == [
@@ -493,12 +493,12 @@ def test_a_transaction_time_target_chains_one_milestone_from_its_callers(
 
     def replace(tx: Transaction) -> None:
         if representation == "typed":
-            tx.replace(entity(id=1, label="replaced", marks=(Mark(code="r"),)), if_tx_start=_T1)
+            tx.replace_if(entity(id=1, label="replaced", marks=(Mark(code="r"),)), tx_start=_T1)
         else:
-            tx.wire.replace(
+            tx.wire.replace_if(
                 _name(entity),
                 {"id": 1, "label": "replaced", "marks": [{"code": "r"}]},
-                if_tx_start=_T1,
+                tx_start=_T1,
             )
 
     db.transact(replace, concurrency=concurrency)
@@ -509,7 +509,7 @@ def test_a_transaction_time_target_chains_one_milestone_from_its_callers(
     ]
     with pytest.raises(ExecutionFailure) as failed:
         db.transact(
-            lambda tx: tx.wire.update(_name(entity), {"id": 1, "label": "x"}, if_tx_start=_T1),
+            lambda tx: tx.wire.amend_if(_name(entity), {"id": 1, "label": "x"}, tx_start=_T1),
             concurrency=concurrency,
         )
     assert isinstance(failed.value.cause, WritePreconditionError)
@@ -566,11 +566,11 @@ def test_target_and_observed_writes_of_one_window_compose_into_one_range(
                 source = source.edit(
                     **({"amount": 175} if source.amount != 175 else {"label": "o"})
                 )
-                tx.update(source, until=_SEP)
+                tx.amend(source, until=_SEP)
         # A dependent read flushes the range, which spends the observed source.
         _span_find(tx, entity, _JAN)
         with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-            tx.update(source.edit(label="again"), until=_SEP)
+            tx.amend(source.edit(label="again"), until=_SEP)
 
     db.transact(fn, concurrency=concurrency)
     middle = _SEQUENCES[sequence]
@@ -590,11 +590,11 @@ def test_a_stale_observed_source_composed_with_a_replacement_fails_as_its_precon
 ) -> None:
     db = _single(profile_run, entity, _T1, _TA)
     stale = db.find(entity.where(entity.id == 1).as_of(valid_time=_MAR)).result()
-    db.transact(lambda tx: tx.update(_span_find(tx, entity, _FEB).edit(label="peer"), until=_APR))
+    db.transact(lambda tx: tx.amend(_span_find(tx, entity, _FEB).edit(label="peer"), until=_APR))
     before = _span_rows(profile_run, entity)
 
     def fn(tx: Transaction) -> None:
-        tx.update(stale.edit(amount=1), until=_SEP)
+        tx.amend(stale.edit(amount=1), until=_SEP)
         _span_replace(tx, entity, "wire", until=_SEP)
 
     with pytest.raises(ExecutionFailure) as failed:
@@ -621,8 +621,8 @@ def test_a_target_then_a_read_then_an_observed_write_each_stand_on_their_own(
         # The read taken before the target's flush describes a state that flush
         # replaced; the fresh one writes, and keeps the patched amount.
         with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-            tx.update(before.edit(label="stale"))
-        tx.update(fresh.edit(label="fresh"))
+            tx.amend(before.edit(label="stale"))
+        tx.amend(fresh.edit(label="fresh"))
 
     db.transact(fn, concurrency=concurrency)
     seed = (100, "a", _S1, _M)
@@ -642,7 +642,7 @@ def test_a_target_after_this_attempts_own_flush_states_the_milestone_it_left(
     db = _single(profile_run, entity, _TA, _TB)
 
     def fn(tx: Transaction) -> None:
-        tx.update(_span_find(tx, entity, _MAR).edit(amount=150))
+        tx.amend(_span_find(tx, entity, _MAR).edit(amount=150))
         rewritten = _span_find(tx, entity, _APR)
         assert rewritten.amount == 150
         _span_patch(tx, entity, valid_from=_APR, tx_start=_TA, amount=175)
@@ -659,7 +659,7 @@ def test_a_target_after_this_attempts_own_flush_states_the_milestone_it_left(
     ]
 
     def outdated(tx: Transaction) -> None:
-        tx.update(_span_find(tx, entity, _MAR).edit(amount=1))
+        tx.amend(_span_find(tx, entity, _MAR).edit(amount=1))
         _span_find(tx, entity, _JAN)
         _span_patch(tx, entity, valid_from=_APR, tx_start=_TA, amount=2)
 
@@ -689,9 +689,9 @@ def test_a_temporal_target_of_an_object_this_attempt_inserted_is_refused_until_c
 
     def target(tx: Transaction, **changes: object) -> None:
         if representation == "typed" and changes:
-            tx.replace(entity(id=1, **{**seed, **changes}), if_tx_start=_TA, **bounds)
+            tx.replace_if(entity(id=1, **{**seed, **changes}), tx_start=_TA, **bounds)
         else:
-            tx.wire.update(_name(entity), {"id": 1, **changes}, if_tx_start=_TA, **bounds)
+            tx.wire.amend_if(_name(entity), {"id": 1, **changes}, tx_start=_TA, **bounds)
 
     member = "amount" if bitemporal else "label"
     changed: object = 150 if bitemporal else "target"
@@ -709,7 +709,7 @@ def test_a_temporal_target_of_an_object_this_attempt_inserted_is_refused_until_c
             with pytest.raises(WriteEvidenceError, match="write-evidence-inserted"):
                 target(tx, **{member: changed})
             target(tx)
-        tx.wire.update(inserted, {member: 175 if bitemporal else "authored"})
+        tx.wire.amend(inserted, {member: 175 if bitemporal else "authored"})
 
     db.transact(fn, concurrency=concurrency)
     db.transact(lambda tx: target(tx, **{member: changed}), concurrency=concurrency)
@@ -765,17 +765,17 @@ def test_a_row_another_session_revises_after_the_flush_read_it_fails_by_whose_it
         if lost == "start-by-overlapping-replacement":
             # Another caller's replacement shares the coverage from April on.
             peer_db.transact(
-                lambda tx: tx.wire.replace(
+                lambda tx: tx.wire.replace_if(
                     _name(entity),
                     {"id": 1, "amount": 900, "label": "peer"},
                     valid_from=_APR,
-                    if_tx_start=_T0,
+                    tx_start=_T0,
                 )
             )
             return
         at, until = (_JUL, _SEP) if lost == "later" else (_FEB, _APR)
         peer_db.transact(
-            lambda tx: tx.update(_span_find(tx, entity, at).edit(label="peer"), until=until)
+            lambda tx: tx.amend(_span_find(tx, entity, at).edit(label="peer"), until=until)
         )
 
     interleaving = AfterCoverageRead(_TABLES[entity], peer)
@@ -832,12 +832,12 @@ def test_a_peers_equal_patch_of_the_start_leaves_the_stated_milestone_standing(
         # The peer's patch assigns the label the start already holds, so its
         # guard keeps that milestone, and its Transaction-Time start with it.
         peer_db.transact(
-            lambda tx: tx.wire.update(
+            lambda tx: tx.wire.amend_if(
                 _name(entity),
                 {"id": 1, "label": "a"},
                 valid_from=_FEB,
                 until=_APR,
-                if_tx_start=_T0,
+                tx_start=_T0,
             )
         )
 
@@ -867,7 +867,7 @@ def test_a_later_row_lost_after_the_flush_read_rolls_back_without_retries(
 
     def peer() -> None:
         peer_db.transact(
-            lambda tx: tx.update(_span_find(tx, entity, _JUL).edit(label="peer"), until=_SEP)
+            lambda tx: tx.amend(_span_find(tx, entity, _JUL).edit(label="peer"), until=_SEP)
         )
 
     interleaving = AfterCoverageRead(_TABLES[entity], peer)
@@ -894,7 +894,7 @@ def test_a_locking_target_holds_its_start_until_commit_against_another_session(
     def peer() -> None:
         try:
             peer_db.transact(
-                lambda tx: tx.update(_span_find(tx, entity, _FEB).edit(label="peer"), until=_APR)
+                lambda tx: tx.amend(_span_find(tx, entity, _FEB).edit(label="peer"), until=_APR)
             )
         except BaseException as failure:
             peer_failures.append(failure)
@@ -929,4 +929,243 @@ def test_a_locking_target_holds_its_start_until_commit_against_another_session(
         (_TA, None, _JAN, _MAR, 100, "a"),
         (_TA, None, _MAR, _JUN, 150, "a"),
         (_TA, None, _JUN, None, 150, "b"),
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# A source-authorized replacement establishes the same window a caller's does: #
+# its source supplies the authority and the start, and the complete state it  #
+# states fills every gap its window reaches.                                  #
+# --------------------------------------------------------------------------- #
+def _source_replace(tx: Transaction, entity: type[Any], representation: _Representation) -> None:
+    if representation == "typed":
+        found = _span_find(tx, entity, _MAR)
+        tx.replace(found.edit(amount=300, label="r"), until=_SEP)
+        return
+    node = tx.wire.find(_wire_span_query(entity, _MAR)).result()
+    data = tx.wire.editable_data(node)
+    data["amount"] = 300
+    data["label"] = "r"
+    tx.wire.replace(node, data, until=_SEP)
+
+
+def _instant(at: dt.datetime) -> str:
+    return at.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _wire_span_query(entity: type[Any], at: dt.datetime) -> dict[str, object]:
+    return {
+        "target": _name(entity),
+        "predicate": {"eq": {"attr": f"{_name(entity)}.id", "value": 1}},
+        "temporal": {
+            "transaction-time": {"asOf": "latest"},
+            "valid-time": {"asOf": _instant(at)},
+        },
+    }
+
+
+@_SPAN_AXES
+@_STRATEGIES
+@_REPRESENTATIONS
+def test_a_source_replacement_establishes_its_window_across_gaps(
+    profile_run: Any,
+    entity: type[Any],
+    concurrency: _Concurrency,
+    representation: _Representation,
+) -> None:
+    db = _seeded_spans(profile_run, entity, _TA)
+    db.transact(lambda tx: _source_replace(tx, entity, representation), concurrency=concurrency)
+    replaced: _SpanRow = (300, "r", _S1, _M)
+    assert _span_rows(profile_run, entity) == [
+        *_SEED_HISTORY,
+        (_TA, None, _JAN, _MAR, 100, "a", _S1, _M),
+        (_TA, None, _MAR, _APR, *replaced),
+        (_TA, None, _APR, _JUN, *replaced),
+        (_TA, None, _JUN, _AUG, *replaced),
+        (_TA, None, _AUG, _SEP, *replaced),
+    ]
+
+
+@_SPAN_AXES
+@_REPRESENTATIONS
+def test_a_source_amendment_of_the_same_window_leaves_its_gaps(
+    profile_run: Any, entity: type[Any], representation: _Representation
+) -> None:
+    db = _seeded_spans(profile_run, entity, _TA)
+
+    def amend(tx: Transaction) -> None:
+        if representation == "typed":
+            tx.amend(_span_find(tx, entity, _MAR).edit(amount=300), until=_SEP)
+        else:
+            node = tx.wire.find(_wire_span_query(entity, _MAR)).result()
+            tx.wire.amend(node, {"amount": 300}, until=_SEP)
+
+    db.transact(amend)
+    assert _span_rows(profile_run, entity) == [
+        *_SEED_HISTORY,
+        (_TA, None, _JAN, _MAR, 100, "a", _S1, _M),
+        (_TA, None, _MAR, _APR, 300, "a", _S1, _M),
+        (_TA, None, _JUN, _AUG, 300, "b", _S2, []),
+    ]
+
+
+@_SPAN_AXES
+def test_a_source_replacement_whose_evidence_fails_opens_nothing(
+    profile_run: Any, entity: type[Any]
+) -> None:
+    db = _seeded_spans(profile_run, entity, _TP, _TA)
+    found = db.find(entity.where(entity.id == 1).as_of(valid_time=_MAR)).result()
+    db.transact(lambda peer: peer.amend(_span_find(peer, entity, _MAR).edit(label="p")))
+    with pytest.raises(ExecutionFailure) as failed:
+        db.transact(lambda tx: tx.replace(found.edit(amount=300), until=_SEP))
+    assert isinstance(failed.value.cause, OptimisticLockConflictError)
+    rows = _span_rows(profile_run, entity)
+    assert all(row[4] != 300 for row in rows)
+    assert not any(row[2] == _APR for row in rows)
+
+
+# --------------------------------------------------------------------------- #
+# A replacement an insertion authorizes establishes the same state whether the #
+# insertion is still pending or has already executed.                          #
+# --------------------------------------------------------------------------- #
+def _seeded_later(profile_run: Any, entity: type[Any], *instants: dt.datetime) -> ScopedDatabase:
+    """Span 1 stored over [May, July) only."""
+    profile_run.reset(model_of(_MODEL), {})
+    db = _db(profile_run, _T0, *instants)
+    db.transact(
+        lambda tx: tx.insert(
+            entity(id=1, amount=200, label="b", spec=Spec(title="s2"), marks=()),
+            valid_from=_MAY,
+            until=_JUL,
+        )
+    )
+    return db
+
+
+@_SPAN_AXES
+@_STRATEGIES
+@pytest.mark.parametrize("flushed", [False, True], ids=["pending", "flushed"])
+def test_an_insertion_replacement_reaches_later_coverage_whether_or_not_it_flushed(
+    profile_run: Any, entity: type[Any], concurrency: _Concurrency, flushed: bool
+) -> None:
+    db = _seeded_later(profile_run, entity, _TA)
+
+    def fn(tx: Transaction) -> None:
+        opened = entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=())
+        tx.insert(opened, valid_from=_JAN, until=_APR)
+        if flushed:
+            _span_find(tx, entity, _FEB)
+        tx.replace(opened.edit(amount=300, label="r"), until=_JUN)
+
+    db.transact(fn, concurrency=concurrency)
+    replaced: _SpanRow = (300, "r", _S1, [])
+    assert _span_rows(profile_run, entity) == [
+        (_T0, _TA, _MAY, _JUL, 200, "b", _S2, []),
+        (_TA, None, _JAN, _APR, *replaced),
+        (_TA, None, _APR, _MAY, *replaced),
+        (_TA, None, _MAY, _JUN, *replaced),
+        (_TA, None, _JUN, _JUL, 200, "b", _S2, []),
+    ]
+
+
+@_SPAN_AXES
+def test_an_ended_insertion_authorizes_no_replacement(profile_run: Any, entity: type[Any]) -> None:
+    db = _seeded_later(profile_run, entity, _TA)
+
+    def fn(tx: Transaction) -> None:
+        opened = entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=())
+        tx.insert(opened, valid_from=_JAN, until=_APR)
+        tx.terminate(opened, until=_APR)
+        with pytest.raises(KeyedWriteValueError, match="write-value-not-stored"):
+            tx.replace(opened.edit(amount=300), until=_JUN)
+
+    db.transact(fn)
+    assert _span_rows(profile_run, entity) == [(_T0, None, _MAY, _JUL, 200, "b", _S2, [])]
+
+
+@_SPAN_AXES
+def test_a_rolled_back_insertion_replacement_leaves_nothing(
+    profile_run: Any, entity: type[Any]
+) -> None:
+    db = _seeded_later(profile_run, entity, _TA)
+
+    class _Abandoned(Exception):
+        pass
+
+    def fn(tx: Transaction) -> None:
+        opened = entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=())
+        tx.insert(opened, valid_from=_JAN, until=_APR)
+        tx.replace(opened.edit(amount=300), until=_JUN)
+        _span_find(tx, entity, _MAY)
+        raise _Abandoned
+
+    with pytest.raises(ExecutionFailure) as failed:
+        db.transact(fn)
+    assert isinstance(failed.value.cause, _Abandoned)
+    assert _span_rows(profile_run, entity) == [(_T0, None, _MAY, _JUL, 200, "b", _S2, [])]
+
+
+# --------------------------------------------------------------------------- #
+# A historical observation can state a conditional replacement under a current #
+# condition and new bounds, without being copied first.                        #
+# --------------------------------------------------------------------------- #
+@_SPAN_AXES
+@_REPRESENTATIONS
+def test_a_historical_observation_restores_its_state_under_a_current_condition(
+    profile_run: Any, entity: type[Any], representation: _Representation
+) -> None:
+    db = _seeded_spans(profile_run, entity, _TA, _TB)
+    db.transact(lambda tx: tx.amend(_span_find(tx, entity, _FEB).edit(amount=150, label="c")))
+
+    def restore(tx: Transaction) -> None:
+        if representation == "typed":
+            historical = tx.find(
+                entity.where(entity.id == 1).as_of(valid_time=_FEB, tx_time=_T1)
+            ).result()
+            tx.replace_if(historical, tx_start=_TA, valid_from=_FEB, until=_APR)
+            return
+        query = _wire_span_query(entity, _FEB)
+        temporal = cast("dict[str, object]", query["temporal"])
+        temporal["transaction-time"] = {"asOf": _instant(_T1)}
+        historical_node = tx.wire.find(query).result()
+        tx.wire.replace_if(historical_node, tx_start=_TA, valid_from=_FEB, until=_APR)
+
+    db.transact(restore)
+    current = [row for row in _span_rows(profile_run, entity) if row[1] is None]
+    assert current == [
+        (_TA, None, _JAN, _FEB, 100, "a", _S1, _M),
+        (_TA, None, _JUN, _AUG, 150, "c", _S2, []),
+        (_TB, None, _FEB, _APR, 100, "a", _S1, _M),
+    ]
+
+
+@_LOG_AXES
+@_REPRESENTATIONS
+def test_a_transaction_time_source_replacement_chains_its_complete_state(
+    profile_run: Any, entity: type[Any], representation: _Representation
+) -> None:
+    profile_run.reset(model_of(_MODEL), {})
+    db = _db(profile_run, _T0, _TA)
+    db.transact(lambda tx: tx.insert(entity(id=1, label="a", spec=Spec(title="s1"), marks=())))
+
+    def replace(tx: Transaction) -> None:
+        if representation == "typed":
+            found = tx.find(entity.where(entity.id == 1)).result()
+            tx.replace(found.edit(label="r"))
+            return
+        node = tx.wire.find(
+            {
+                "target": _name(entity),
+                "predicate": {"eq": {"attr": f"{_name(entity)}.id", "value": 1}},
+                "temporal": {"transaction-time": {"asOf": "latest"}},
+            }
+        ).result()
+        tx.wire.replace(node, {"label": "r", "marks": [{"code": "m"}]})
+
+    db.transact(replace)
+    spec = _S1 if representation == "typed" else None
+    marks = [] if representation == "typed" else _M
+    assert _log_rows(profile_run, entity) == [
+        (_T0, _TA, "a", _S1, []),
+        (_TA, None, "r", spec, marks),
     ]

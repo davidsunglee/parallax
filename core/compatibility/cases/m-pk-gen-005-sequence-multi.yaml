@@ -10,7 +10,7 @@ given:
   fixtures: true
 when:
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.PkSequence
       statements: 1
       note: "reserve block, base 1"
@@ -22,7 +22,7 @@ when:
       note: id 1
       rows:
         - { id: 1, holder: Bo }
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.PkSequence
       statements: 1
       note: "reserve block, base 2"
@@ -34,7 +34,7 @@ when:
       note: id 2
       rows:
         - { id: 2, holder: Cy }
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.PkSequence
       statements: 1
       note: "reserve block, base 3"

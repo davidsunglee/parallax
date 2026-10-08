@@ -15,7 +15,7 @@ when:
   boundary:
     - action: read
       note: observe the row — the body names no Isolation Level of its own
-    - action: update
+    - action: amend
       note: the write commits on an engine whose default meets the floor
 then:
   outcome:

@@ -173,7 +173,7 @@ def test_a_case_mixing_a_keyed_write_step_with_another_step_is_loud() -> None:
     # the keyed step cannot drop out of the graded set silently on the way to
     # the executor that is the case's only one.
     steps: list[dict[str, Any]] = [
-        {"action": "update", "value": "unmanaged", "roundTrips": 0},
+        {"action": "amend", "value": "unmanaged", "roundTrips": 0},
         {"objectQuery": {"target": "parallax.compatibility.Account"}, "roundTrips": 1},
     ]
     mixed = case_format.Case(
@@ -200,7 +200,7 @@ def test_a_case_whose_total_disagrees_with_its_steps_is_loud() -> None:
         tags=("m-unit-work",),
         model="models/account.yaml",
         document={
-            "when": {"scenario": [{"action": "update", "value": "unmanaged", "roundTrips": 0}]},
+            "when": {"scenario": [{"action": "amend", "value": "unmanaged", "roundTrips": 0}]},
             "then": {"roundTrips": 1},
         },
     )
@@ -235,11 +235,11 @@ def test_invalid_root_provenance_requires_its_adapter_arranger() -> None:
     ("step", "message"),
     [
         (
-            write_value_runner.WriteValueStep("update", "unmanaged", "write-value-already-stored"),
+            write_value_runner.WriteValueStep("amend", "unmanaged", "write-value-already-stored"),
             "but the step declares expectError",
         ),
         (
-            write_value_runner.WriteValueStep("update", "thisSource", "write-value-not-stored"),
+            write_value_runner.WriteValueStep("amend", "thisSource", "write-value-not-stored"),
             "verb accepted the value",
         ),
     ],

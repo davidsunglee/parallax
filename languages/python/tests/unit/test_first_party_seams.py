@@ -182,7 +182,7 @@ def test_a_participating_row_read_force_flushes_a_pending_write_first() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write(), Read(rows=[ACCOUNT_ROW])))
 
     def fn(tx: Transaction) -> None:
-        tx.wire.update(_node(tx), {"balance": "11.00"})
+        tx.wire.amend(_node(tx), {"balance": "11.00"})
         tx.read_rows(_account_query())
 
     _run(port, fn)
@@ -204,8 +204,8 @@ def test_a_baseline_equal_update_writes_literally_and_spends_its_claim() -> None
         snapshot = tx.wire.find(_account_query())
         claim = published_claims(snapshot)[0]
         node = snapshot.result()
-        tx.wire.update(node, {"balance": "125.00"})
-        tx.wire.update(node, {"balance": node["balance"]})
+        tx.wire.amend(node, {"balance": "125.00"})
+        tx.wire.amend(node, {"balance": node["balance"]})
         tx.wire.insert(
             "parallax.compatibility.Account", {"id": 7, "owner": "Newton", "balance": "5.00"}
         )
@@ -229,7 +229,7 @@ def test_a_surviving_write_spends_its_own_claim() -> None:
     def fn(tx: Transaction) -> RetainedObservation:
         snapshot = tx.wire.find(_account_query())
         claim = published_claims(snapshot)[0]
-        tx.wire.update(snapshot.result(), {"balance": "11.00"})
+        tx.wire.amend(snapshot.result(), {"balance": "11.00"})
         return claim
 
     assert _run(port, fn).consumed is True
@@ -265,9 +265,9 @@ def _read_person(tx: Transaction, representation: str) -> mm.Person | WireEntity
 
 def _rename(tx: Transaction, source: mm.Person | WireEntity, name: str) -> None:
     if isinstance(source, WireEntity):
-        tx.wire.update(source, {"name": name})
+        tx.wire.amend(source, {"name": name})
     else:
-        tx.update(source.edit(name=name))
+        tx.amend(source.edit(name=name))
 
 
 def _refused_as_spent(write: Callable[[], None]) -> None:
@@ -315,11 +315,11 @@ def test_every_copy_derived_from_an_unversioned_source_shares_its_completion() -
     def fn(tx: Transaction) -> None:
         source = tx.find(mm.Person.where(mm.Person.id == 1)).result()
         early = source.edit(name="Grace")
-        tx.update(source.edit(name="Hopper"))
-        tx.update(early)
+        tx.amend(source.edit(name="Hopper"))
+        tx.amend(early)
         tx.find(mm.Person.where(mm.Person.id == 1))
-        _refused_as_spent(lambda: tx.update(source.edit(name="Lovelace")))
-        _refused_as_spent(lambda: tx.update(early.edit(name="Lovelace")))
+        _refused_as_spent(lambda: tx.amend(source.edit(name="Lovelace")))
+        _refused_as_spent(lambda: tx.amend(early.edit(name="Lovelace")))
 
     db_for(PERSON, port).transact(fn)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
@@ -331,9 +331,9 @@ def test_an_empty_unversioned_update_neither_writes_nor_spends_its_source() -> N
 
     def fn(tx: Transaction) -> None:
         source = tx.wire.find(_person_query()).result()
-        tx.wire.update(source, {})
+        tx.wire.amend(source, {})
         tx.wire.find(_person_query())
-        tx.wire.update(source, {"name": "Grace"})
+        tx.wire.amend(source, {"name": "Grace"})
 
     db_for(PERSON, port).transact(fn)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
@@ -349,7 +349,7 @@ def test_a_failed_unversioned_write_leaves_its_source_unspent() -> None:
     def fn(tx: Transaction) -> None:
         source = tx.find(mm.Person.where(mm.Person.id == 1)).result()
         sources.append(source)
-        tx.update(source.edit(name="Grace"))
+        tx.amend(source.edit(name="Grace"))
 
     with raises_contextualized(MissingTargetError):
         db_for(PERSON, port).transact(fn)
@@ -383,7 +383,7 @@ def test_an_insert_payload_reaches_the_model_aware_validator_the_typed_verbs_do(
 
 def test_a_predicate_write_buffers_through_the_shared_predicate_seam() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write()))
-    _run(port, lambda tx: tx.wire.update_where(_predicate_target(), {"balance": "11.00"}))
+    _run(port, lambda tx: tx.wire.amend_where(_predicate_target(), {"balance": "11.00"}))
     # A versioned target materializes: the resolving read, then one keyed write
     # per resolved row (`m-opt-lock`, ADR 0014) — the readless template is not
     # available and the Wire ingress does not invent one.

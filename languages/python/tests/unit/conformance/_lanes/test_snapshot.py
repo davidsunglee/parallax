@@ -1070,7 +1070,7 @@ def _write_between_find_and_access(write: object) -> case_format.Case:
 
 _ORDER_NAME_UPDATE: list[dict[str, object]] = [
     {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "parallax.compatibility.Order",
         "rows": [{"id": 1, "name": "Rewritten"}],
     }
@@ -1115,7 +1115,7 @@ _LEDGER_2_ROW: dict[str, object] = {
 
 _LEDGER_VALUE_UPDATE: list[dict[str, object]] = [
     {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "parallax.compatibility.Ledger",
         "rows": [{"id": 2, "value": decimal.Decimal("300.00")}],
         "at": "2024-05-01T00:00:00+00:00",
@@ -1166,7 +1166,7 @@ def test_run_scenario_case_names_the_case_when_a_snapshot_lane_write_will_not_lo
     # posture the unit-of-work lane takes for its own ungrouped write step.
     mis_authored = [
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "parallax.compatibility.Order",
             "rows": [{"id": 1, "nope": 3}],
         }
@@ -1213,7 +1213,7 @@ def test_run_scenario_case_refuses_a_materializing_predicate_write_on_the_snapsh
     # never the readless diagnosis below.
     value = "parallax.compatibility.Ledger.value"
     write = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {
             "entity": "parallax.compatibility.Ledger",
             "predicate": {"lessThan": {"attr": value, "value": "500.00"}},
@@ -1325,7 +1325,7 @@ def test_a_snapshot_scenarios_write_step_opens_at_the_cases_root_level() -> None
             {
                 "write": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Order",
                         "rows": [{"id": 1, "name": "Rewritten"}],
                     }

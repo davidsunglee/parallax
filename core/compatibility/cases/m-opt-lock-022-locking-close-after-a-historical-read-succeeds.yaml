@@ -50,7 +50,7 @@ when:
         - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
     - uow: audit-then-close
       write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.Balance
           rows:
             - { id: 1, acctNum: A, value: "175.00" }

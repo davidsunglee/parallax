@@ -154,13 +154,13 @@ def _predicate(
 
 def _account_patch(*, version: int = 3) -> PreparedTargetWrite:
     return prepare_wire_write(
-        TargetWrite("update", "Account", {"id": 1, "balance": "9.00"}, if_version=version),
+        TargetWrite("amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version),
         _ACCOUNT,
     )
 
 
 def _person_patch() -> PreparedTargetWrite:
-    return prepare_wire_write(TargetWrite("update", "Person", {"id": 1, "name": "Zed"}), _PERSON)
+    return prepare_wire_write(TargetWrite("amend", "Person", {"id": 1, "name": "Zed"}), _PERSON)
 
 
 # --------------------------------------------------------------------------- #
@@ -221,7 +221,7 @@ def _balance_rows(*values: str) -> list[tuple[object, ...]]:
 
 def _balance_selection_request() -> SelectionReadRequest:
     write = _predicate(
-        _BALANCE, "Balance", "update", (WriteAssignment("Balance.value", Decimal("5.00")),)
+        _BALANCE, "Balance", "amend", (WriteAssignment("Balance.value", Decimal("5.00")),)
     )
     selection = _selection(_BALANCE, "Balance")
     key = selection.shape.position("id")

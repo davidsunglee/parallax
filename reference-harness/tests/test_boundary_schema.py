@@ -48,7 +48,7 @@ def _valid_boundary_case() -> dict:
         "when": {
             "boundary": [
                 {"action": "read", "note": "observe the row"},
-                {"action": "update", "note": "buffer/flush a write"},
+                {"action": "amend", "note": "buffer/flush a write"},
             ],
         },
         "then": {"outcome": "aborted"},
@@ -255,7 +255,7 @@ def test_schema_rejects_a_null_join_option() -> None:
 
 def test_schema_rejects_every_option_on_an_action_that_opens_no_boundary() -> None:
     """Only a `join` opens a boundary, so only a `join` may name an option for one."""
-    for action in ("read", "create", "update", "terminate", "delete"):
+    for action in ("read", "create", "amend", "terminate", "delete"):
         for field in _OPTION_FIELDS:
             case = _valid_boundary_case()
             case["when"]["boundary"] = [{"action": action, field: _A_VALUE[field]}]
@@ -317,7 +317,7 @@ def test_schema_rejects_incomplete_or_malformed_authority_selectors() -> None:
 
 
 def test_schema_rejects_authority_selectors_on_non_join_actions() -> None:
-    for action in ("read", "create", "update", "terminate", "delete"):
+    for action in ("read", "create", "amend", "terminate", "delete"):
         case = _valid_boundary_case()
         case["when"]["boundary"] = [
             {

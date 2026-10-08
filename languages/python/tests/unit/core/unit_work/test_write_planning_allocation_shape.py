@@ -243,7 +243,7 @@ def _version_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
     assert sealed is not None
     prepared = prepare_typed_write(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection("Entity0", Comparison("lessThan", "Entity0.value", 1_000_000)),
             assignments=(WriteAssignment("Entity0.value", 1),),
         ),
@@ -255,7 +255,7 @@ def _version_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
 
 def _prepared_writes(model: Metamodel, count: int) -> Sequence[OrderedWrite]:
     return observed_buffer(
-        [KeyedWrite("update", "Entity0", ({"id": row + 1, "value": row},)) for row in range(count)],
+        [KeyedWrite("amend", "Entity0", ({"id": row + 1, "value": row},)) for row in range(count)],
         model,
         None,
     )
@@ -294,7 +294,7 @@ def _key_derivation_over(entities: int, *, prepared: bool) -> Seam:
     index over the model to answer with.
     """
     model = _model(entities)
-    raw = KeyedWrite("update", "Entity0", ({"id": 1, "value": 2},))
+    raw = KeyedWrite("amend", "Entity0", ({"id": 1, "value": 2},))
     instruction = prepare_typed_write(raw, model) if prepared else raw
 
     def run(sample: Callable[[], None]) -> None:

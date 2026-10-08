@@ -26,7 +26,7 @@ when:
   boundary:
     - action: read
       note: observe the current milestone (records its Transaction-Time start)
-    - action: update
+    - action: amend
       note: the gated close conflicts once before its chained insert runs, then the root's opt-in re-reads, closes, and chains
 then:
   outcome: committed

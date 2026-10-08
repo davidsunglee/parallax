@@ -44,14 +44,14 @@ when:
           out_z: infinity
     - uow: unequal
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 1, amount: 150 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
           validFrom: "2024-03-01T00:00:00.000000Z"
           until: "2024-05-01T00:00:00.000000Z"
           at: "2024-11-01T00:00:00.000000Z"
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 0
           entity: parallax.compatibility.SequenceSpan
           rows:
@@ -59,7 +59,7 @@ when:
           validFrom: "2024-03-01T00:00:00.000000Z"
           until: "2024-05-01T00:00:00.000000Z"
           at: "2024-11-01T00:00:00.000000Z"
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 1
           entity: parallax.compatibility.SequenceSpan
           rows:
@@ -71,21 +71,21 @@ when:
       note: "the third write overlaps the target's window without stating it"
     - uow: third
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 2, amount: 120 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
           validFrom: "2024-03-01T00:00:00.000000Z"
           until: "2024-04-01T00:00:00.000000Z"
           at: "2024-11-02T00:00:00.000000Z"
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 2, amount: 130 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
           validFrom: "2024-09-01T00:00:00.000000Z"
           until: "2024-10-01T00:00:00.000000Z"
           at: "2024-11-02T00:00:00.000000Z"
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 2, amount: 140 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
@@ -111,7 +111,7 @@ when:
           out_z: infinity
     - uow: resurrect
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 3, amount: 500 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
@@ -126,7 +126,7 @@ when:
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-04-01T00:00:00.000000Z"
           at: "2024-11-03T00:00:00.000000Z"
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 4
           entity: parallax.compatibility.SequenceSpan
           rows:
@@ -144,7 +144,7 @@ when:
             - { id: 9, amount: 1, label: "n", memo: { note: new } }
           validFrom: "2024-01-01T00:00:00.000000Z"
           at: "2024-11-04T00:00:00.000000Z"
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.SequenceSpan
           row: { id: 9, amount: 2 }
           ifTxStart: "2024-11-04T00:00:00.000000Z"

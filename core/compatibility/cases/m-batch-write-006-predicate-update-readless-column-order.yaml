@@ -6,7 +6,7 @@ shape: scenario
 when:
   scenario:
     - write:
-        mutation: update
+        mutation: amend
         target:
           entity: parallax.compatibility.Wallet
           predicate:

@@ -37,7 +37,9 @@ could join.
 # The keyed mutations that write member values against a surviving row. The
 # complement among non-insert mutations is destructive: `delete` removes the
 # row outright, and `terminate` / `terminateUntil` close the milestone.
-_ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
+_ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset(
+    {"amend", "amendUntil", "replace", "replaceUntil"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,7 +151,7 @@ type ClaimVerdict = Literal["admit", "coalesce", "supersede", "deduplicate", "in
 
 ``admit`` — nothing claimed this scope yet. ``coalesce`` — the two assignments
 merge in authored order into one surviving write. ``supersede`` — a destructive
-intent replaces the assignments buffered before it, so an update followed by a
+intent replaces the assignments buffered before it, so an amendment followed by a
 delete at one scope emits one delete. ``deduplicate`` — an identical destructive
 intent is already buffered and the second adds nothing. ``incompatible`` — the
 two cannot be combined, and the arriving verb refuses.

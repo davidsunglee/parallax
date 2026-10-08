@@ -222,7 +222,10 @@ with it before the write is admitted, and the write is ungated. Either way the
 new version is still the framework's own (`stated + 1`), and nothing in the
 payload, a read's evidence, or the stored row ever stands in for the statement.
 A versioned caller-addressed write that states no version is refused before any
-database access, as is a version stated for an unversioned or temporal target.
+database access, as is a version stated for an unversioned or temporal target,
+and as is a caller's assertion that a versioned or temporal target has no
+revision: that assertion belongs to an unversioned Non-Temporal target alone,
+and it never disables the effective Locking strategy that protects one.
 A temporal caller-addressed write states the Transaction-Time start of the
 milestone it starts from instead (`ifTxStart`): the starting inactivation's gate
 binds it under Optimistic, and under Locking the locked read's `in_z` is compared
@@ -233,13 +236,13 @@ their requested extent*).
 ### Empty updates issue no DML
 
 The version advances on every `UPDATE` statement an implementation *issues*, but
-an update that assigns **no** attribute **MUST** issue **no DML** at all (zero
-round trips). A keyed update's assignments are literal sets (`m-unit-work`), so
-a keyed update assigning an attribute the value its source observed is not
+an amendment that assigns **no** attribute **MUST** issue **no DML** at all (zero
+round trips). A keyed amendment's assignments are literal sets (`m-unit-work`), so
+a keyed amendment assigning an attribute the value its source observed is not
 empty: it issues its `UPDATE`, gated as any other, and advances the version. A
 temporal one keeps a milestone it leaves unchanged, proven by a guard under
 Optimistic (*Temporal entities derive the version from Transaction Time*, below).
-A predicate-selected update instead compares each resolved row, below. Neither
+A predicate-selected amendment instead compares each resolved row, below. Neither
 empty write needs to bump the version — the concurrent editor that races it
 advances the version itself, so nothing slips through.
 
@@ -300,7 +303,7 @@ The one exception is an **unversioned, non-temporal** target. It remains readles
 unless it assigns a document-resident `many`, which is refused before SQL as
 `predicate-write-readless-document-many-unsupported` until that narrow shape can
 materialize without changing the scalar and `one` route:
-`update` emits exactly one `update <table> set <column> = ?, … where <predicate>`
+`amend` emits exactly one `update <table> set <column> = ?, … where <predicate>`
 and `delete` exactly one `delete from <table> where <predicate>`. The readless
 update has no equality-elimination pass. Its `set` columns follow `m-sql`'s
 target Entity Layout filtering, never authored assignment order; binds are

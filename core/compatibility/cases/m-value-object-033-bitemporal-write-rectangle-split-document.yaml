@@ -22,7 +22,7 @@ when:
               - { type: main, number: '555-1000' }
       validFrom: "2024-01-01T00:00:00.000000Z"
       at: "2024-01-01T00:00:00.000000Z"
-    - mutation: updateUntil
+    - mutation: amendUntil
       entity: parallax.compatibility.Branch
       statements: 4
       note: inactivate the original on the Transaction-Time dimension, then chain head / middle / tail carrying D1 / D2 / D1

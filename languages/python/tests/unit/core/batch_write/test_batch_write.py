@@ -228,7 +228,7 @@ def test_a_descendant_collapses_as_its_family_root_decides(
 def test_collapses_dispatches_by_mutation() -> None:
     rows = [{"id": 1, "balance": Decimal("5.00")}, {"id": 2, "balance": Decimal("5.00")}]
     assert batch_write.collapses(*WALLET, "insert", rows) is True
-    assert batch_write.collapses(*WALLET, "update", rows) is True
+    assert batch_write.collapses(*WALLET, "amend", rows) is True
     assert batch_write.collapses(*WALLET, "delete", rows) is True
     assert batch_write.collapses(*ACCOUNT, "delete", rows) is False
 
@@ -286,7 +286,7 @@ def test_grouping_an_unmappable_row_answers_one_undifferentiated_group() -> None
     assert collapse_group_key(payment_model, payment, "insert", {"id": 1}) is None
     wallet_model, wallet = WALLET
     row = {"id": 1, "balance": Decimal("5.00"), "observedVersion": 1}
-    assert collapse_group_key(wallet_model, wallet, "update", row) is None
+    assert collapse_group_key(wallet_model, wallet, "amend", row) is None
 
 
 def test_delete_grouping_ignores_members_the_statement_never_uses() -> None:
@@ -311,10 +311,10 @@ def test_update_grouping_still_splits_on_a_differing_set_clause() -> None:
     # each side then collapses on its own uniform values.
     model, _ = WALLET
     buffer: list[BufferItem | KeyedWrite] = [
-        KeyedWrite("update", "Wallet", ({"id": 10, "balance": Decimal("5.00")},)),
-        KeyedWrite("update", "Wallet", ({"id": 11, "balance": Decimal("5.00")},)),
-        KeyedWrite("update", "Wallet", ({"id": 12, "owner": "Omar"},)),
-        KeyedWrite("update", "Wallet", ({"id": 13, "owner": "Omar"},)),
+        KeyedWrite("amend", "Wallet", ({"id": 10, "balance": Decimal("5.00")},)),
+        KeyedWrite("amend", "Wallet", ({"id": 11, "balance": Decimal("5.00")},)),
+        KeyedWrite("amend", "Wallet", ({"id": 12, "owner": "Omar"},)),
+        KeyedWrite("amend", "Wallet", ({"id": 13, "owner": "Omar"},)),
     ]
     statements = _flush_and_lower(buffer, model)
     assert [statement.sql for statement in statements] == [

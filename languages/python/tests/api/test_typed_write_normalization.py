@@ -105,7 +105,7 @@ def test_a_typed_update_where_binds_negative_float_zero_as_positive_zero(
     ratio: float, measure: float
 ) -> None:
     calls = _write_calls(
-        lambda tx: tx.update_where(
+        lambda tx: tx.amend_where(
             Reading.where(Reading.id == 1),
             Reading.ratio.set(ratio),
             Reading.measure.set(measure),
@@ -129,7 +129,7 @@ def test_a_materializing_typed_update_where_binds_negative_float_zero_as_positiv
         "point": PresentDocument({"ratio": 1.5, "measure": 2.5}),
     }
     calls = _write_calls(
-        lambda tx: tx.update_where(
+        lambda tx: tx.amend_where(
             VersionedReading.where(VersionedReading.id >= 0),
             VersionedReading.ratio.set(ratio),
             VersionedReading.measure.set(measure),

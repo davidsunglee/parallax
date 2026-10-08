@@ -88,7 +88,7 @@ def test_a_postgres_locking_stream_continues_and_retains_write_authority(
             with tx.stream(query, batch_size=2) as stream:
                 roots = list(stream.checked())
             typed = cast("list[Order]", roots)
-            tx.update(typed[0].edit(name="Locked Ada"))
+            tx.amend(typed[0].edit(name="Locked Ada"))
             return [root.id for root in typed]
 
         delivered = db.transact(deliver_and_update, concurrency="locking")

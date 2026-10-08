@@ -260,7 +260,7 @@ def test_a_destruction_terminates_the_rectangle_and_carries_only_what_survives()
 @pytest.mark.parametrize(
     ("assigned", "cause", "successors"),
     [({"value": Decimal("9.00")}, SUPERSEDED, 1), (None, TERMINATED, 0)],
-    ids=["update", "terminate"],
+    ids=["amend", "terminate"],
 )
 def test_a_transaction_time_only_milestone_closes_and_chains_without_valid_time(
     assigned: Mapping[str, object] | None, cause: object, successors: int

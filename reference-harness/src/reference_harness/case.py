@@ -925,7 +925,7 @@ class Case:
         if "ifVersion" in step:
             stated["observedVersion"] = step["ifVersion"]
         keyed = {name: value for name, value in step.items() if name not in ("row", "ifVersion")}
-        keyed["mutation"] = "update" if mutation in ("update", "replace") else "updateUntil"
+        keyed["mutation"] = "amend" if mutation in ("amend", "replace") else "amendUntil"
         keyed["rows"] = [stated]
         keyed["target"] = True
         return keyed
@@ -1012,10 +1012,10 @@ class Case:
     def conflict_mutation(self) -> str:
         """The keyed verb a conflict case writes (``when.mutation``).
 
-        ``update`` by default; ``delete`` selects the versioned keyed DELETE,
+        ``amend`` by default; ``delete`` selects the versioned keyed DELETE,
         whose golden carries no ``set`` clause.
         """
-        return self.when.get("mutation", "update")
+        return self.when.get("mutation", "amend")
 
     @property
     def expected_affected_rows(self) -> int | None:

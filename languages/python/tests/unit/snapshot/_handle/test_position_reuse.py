@@ -353,9 +353,9 @@ def test_a_materializing_predicate_update_resolves_one_storage_position(
 
     def update(tx: Transaction) -> None:
         if representation == "typed":
-            tx.update_where(Ledger.where(Ledger.id == 1), Ledger.balance.set(25))
+            tx.amend_where(Ledger.where(Ledger.id == 1), Ledger.balance.set(25))
         else:
-            tx.wire.update_where(
+            tx.wire.amend_where(
                 {
                     "entity": f"{_NAMESPACE}.Ledger",
                     "predicate": {"eq": {"attr": f"{_NAMESPACE}.Ledger.id", "value": 1}},
@@ -375,13 +375,13 @@ _FAMILY_TARGETS: dict[
     str, tuple[Callable[[Transaction], None], str, dict[str, object], dict[str, object]]
 ] = {
     "tph-concrete": (
-        lambda tx: tx.update_where(Bird.where(Bird.id == 1), Bird.wingspan.set(30)),
+        lambda tx: tx.amend_where(Bird.where(Bird.id == 1), Bird.wingspan.set(30)),
         "Bird",
         {"wingspan": 30},
         {"wingspan": 20},
     ),
     "tpcs-concrete": (
-        lambda tx: tx.update_where(Car.where(Car.id == 1), Car.doors.set(4)),
+        lambda tx: tx.amend_where(Car.where(Car.id == 1), Car.doors.set(4)),
         "Car",
         {"doors": 4},
         {"doors": 2},
@@ -409,7 +409,7 @@ def test_a_family_predicate_update_is_refused_before_any_position_is_resolved(
             if representation == "typed":
                 typed(tx)
             else:
-                tx.wire.update_where(selection, changes)
+                tx.wire.amend_where(selection, changes)
         refusals.append(caught.value)
 
     db.transact(update)

@@ -98,7 +98,7 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
                 valid_time=dt.datetime(2024, 2, 15, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(current.edit(value=Decimal("150.00")))
+        tx.amend(current.edit(value=Decimal("150.00")))
 
     db_for(WHERE_POSITION_META, port).transact(fn, concurrency=concurrency)
 

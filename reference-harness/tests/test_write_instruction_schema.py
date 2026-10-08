@@ -47,7 +47,7 @@ def test_keyed_plain_insert_is_valid() -> None:
 def test_keyed_plain_temporal_carries_valid_from_only() -> None:
     assert _valid(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Balance",
             "rows": [{"id": 1, "value": 150.0}],
             "validFrom": "2024-06-01T00:00:00+00:00",
@@ -59,7 +59,7 @@ def test_keyed_until_requires_both_valid_time_bounds() -> None:
     # Every bounded `*Until` operation is over `[validFrom, until)`
     # (m-temporal-write), so BOTH bounds are required — dropping either rejects it.
     doc = {
-        "mutation": "updateUntil",
+        "mutation": "amendUntil",
         "entity": "Position",
         "rows": [{"id": 1, "value": 9}],
         "validFrom": "2024-01-01T00:00:00+00:00",
@@ -91,7 +91,7 @@ def test_keyed_instruction_row_rejects_observed_version() -> None:
     # never carried on the durable instruction, so it cannot ride in a keyed write row.
     assert not _valid(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Balance",
             "rows": [{"id": 1, "value": 150.0, "observedVersion": 3}],
         }
@@ -118,7 +118,7 @@ def test_observation_cannot_round_trip_as_instruction_state() -> None:
     implementation cannot serialize an observation-bearing row, round-trip it, and have
     it validate back as a durable instruction — the observation has no home here.
     """
-    clean = {"mutation": "update", "entity": "Balance", "rows": [{"id": 1, "value": 150.0}]}
+    clean = {"mutation": "amend", "entity": "Balance", "rows": [{"id": 1, "value": 150.0}]}
     assert _valid(clean)
     # Round-trip fidelity holds for the clean instruction (write-side serde contract).
     assert serde.roundtrip(clean, serde.JSON) == clean
@@ -127,7 +127,7 @@ def test_observation_cannot_round_trip_as_instruction_state() -> None:
     # still fails to validate after a lossless serde round-trip — the observation cannot
     # round-trip INTO instruction state on either axis.
     smuggled_version = {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "Balance",
         "rows": [{"id": 1, "value": 150.0, "observedVersion": 3}],
     }
@@ -157,7 +157,7 @@ def test_keyed_value_object_document_and_pk_marker_rows() -> None:
 
 def test_predicate_update_requires_assignments() -> None:
     doc = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {
             "entity": "Account",
             "predicate": {"lessThan": {"attr": "Account.balance", "value": 200}},
@@ -200,12 +200,12 @@ def test_predicate_until_requires_both_valid_time_bounds() -> None:
 
 
 def test_target_patch_and_replacement_carry_one_row_and_their_callers_revision() -> None:
-    patch = {"mutation": "update", "entity": "Account", "row": {"id": 1}, "ifVersion": 3}
+    patch = {"mutation": "amend", "entity": "Account", "row": {"id": 1}, "ifVersion": 3}
     assert _valid(patch)
     assert _valid({**patch, "mutation": "replace"})
     assert _valid(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Balance",
             "row": {"id": 1, "value": 150.0},
             "ifTxStart": "2024-01-01T00:00:00+00:00",

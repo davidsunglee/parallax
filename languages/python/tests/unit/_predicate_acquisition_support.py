@@ -1,6 +1,6 @@
 """The predicate-acquisition companion workloads: one Bitemporal Wire
 ``updateUntil`` predicate resolved against provider-free rows, under both
-storage layouts, through the public ``tx.wire.update_where`` verb bounded by ``until``.
+storage layouts, through the public ``tx.wire.amend_where`` verb bounded by ``until``.
 
 The acquisition family resolves rows of a small categorical Entity at every
 acquisition level. The leaf-type family resolves rows of each Bitemporal Entity
@@ -161,7 +161,7 @@ resolved row's, since rows are keyed from one, so every row genuinely changes.""
 
 def _target(cls: type[Entity]) -> Mapping[str, object]:
     """The canonical ``{entity, predicate}`` selection of every row, in the Wire
-    spelling a caller hands ``update_where`` (`m-predicate` "Equality and
+    spelling a caller hands ``amend_where`` (`m-predicate` "Equality and
     range")."""
     entity = cls.identity.canonical
     return {
@@ -322,7 +322,7 @@ def acquire(
     def body(transaction: Transaction) -> None:
         if opened is not None:
             opened()
-        transaction.wire.update_where(
+        transaction.wire.amend_where(
             case.target, case.changes, valid_from=INTERIOR_FROM, until=INTERIOR_UNTIL
         )
         if closed is not None:

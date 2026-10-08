@@ -14,7 +14,7 @@ when:
   scenario:
     - uow: shared
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 1, amount: 150 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
@@ -79,14 +79,14 @@ when:
           out_z: infinity
     - uow: distinct
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 3, amount: 110 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-03-01T00:00:00.000000Z"
           at: "2024-11-03T00:00:00.000000Z"
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 3
           entity: parallax.compatibility.SequenceSpan
           rows:
@@ -94,7 +94,7 @@ when:
           validFrom: "2024-07-01T00:00:00.000000Z"
           until: "2024-08-01T00:00:00.000000Z"
           at: "2024-11-03T00:00:00.000000Z"
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 3, amount: 120 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"

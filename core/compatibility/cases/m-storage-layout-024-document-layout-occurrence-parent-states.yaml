@@ -25,7 +25,7 @@ given:
         - { displayName: scalar, address: 7 }
 when:
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Traveler
       statements: 3
       note: different assigned cities keep the batch in per-key form

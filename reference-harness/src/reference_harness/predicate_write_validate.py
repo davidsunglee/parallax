@@ -60,7 +60,7 @@ def validate_predicate_write(entity: Entity, instruction: dict[str, Any]) -> Non
 
     mutation = instruction.get("mutation")
     _assert_temporal_shape(entity, mutation, instruction)
-    if mutation in ("update", "updateUntil"):
+    if mutation in ("amend", "amendUntil"):
         _assert_assignments(entity, instruction.get("assignments"))
 
 
@@ -216,7 +216,7 @@ def _materialization_columns(entity: Entity, instruction: dict[str, Any]) -> set
         required_columns.update(temporal_columns)
 
     mutation = instruction.get("mutation")
-    if mutation in ("update", "updateUntil"):
+    if mutation in ("amend", "amendUntil"):
         required_columns.update(_assigned_columns(entity, instruction.get("assignments")))
 
     if _temporal_write_carries_payload(entity, mutation):
@@ -265,7 +265,7 @@ def _temporal_write_carries_payload(entity: Entity, mutation: Any) -> bool:
     """
     if not entity.is_temporal:
         return False
-    if mutation in ("update", "updateUntil"):
+    if mutation in ("amend", "amendUntil"):
         return True
     return any(axis.get("dimension") == "valid-time" for axis in entity.temporal_runtime_axes)
 
@@ -416,7 +416,7 @@ def _assert_temporal_shape(entity: Entity, mutation: Any, instruction: dict[str,
             raise PredicateWriteValidationError(
                 "non-temporal predicate write carries temporal bounds"
             )
-        if mutation not in ("update", "delete"):
+        if mutation not in ("amend", "delete"):
             raise PredicateWriteValidationError(
                 f"non-temporal target does not support predicate mutation {mutation!r}"
             )
@@ -437,5 +437,5 @@ def _assert_temporal_shape(entity: Entity, mutation: Any, instruction: dict[str,
         raise PredicateWriteValidationError(
             "target has no Valid-Time dimension, so validFrom is invalid"
         )
-    if mutation in ("updateUntil", "terminateUntil") and not has_valid_time:
+    if mutation in ("amendUntil", "terminateUntil") and not has_valid_time:
         raise PredicateWriteValidationError(f"{mutation} requires a Valid-Time target")

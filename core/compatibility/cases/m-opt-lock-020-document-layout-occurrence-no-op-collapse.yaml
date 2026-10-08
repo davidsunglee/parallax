@@ -33,7 +33,7 @@ when:
       expectRows:
         - { id: 200, version: 1, label: null, balance: "40.00", details: { code: settled } }
     - write:
-        mutation: update
+        mutation: amend
         target:
           entity: parallax.compatibility.Ledger
           predicate:

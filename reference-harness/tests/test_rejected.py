@@ -629,7 +629,7 @@ def _rejected_keyed_doc(instruction: dict[str, Any], rule: str) -> Case:
 
 def test_keyed_write_rejects_plural_rows_on_a_temporal_target() -> None:
     instruction = {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "Lease",
         "rows": [{"id": 1, "term": "annual"}, {"id": 2, "term": "monthly"}],
     }
@@ -643,7 +643,7 @@ def test_keyed_write_accepts_plural_rows_on_a_non_temporal_target() -> None:
     # a non-temporal entity of the same model is the set-based flush m-batch-write
     # collapses, not a refusal.
     instruction = {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "LeaseNote",
         "rows": [{"id": 1, "text": "first"}, {"id": 2, "text": "second"}],
     }
@@ -651,7 +651,7 @@ def test_keyed_write_accepts_plural_rows_on_a_non_temporal_target() -> None:
 
 
 def test_keyed_write_accepts_a_single_row_on_a_temporal_target() -> None:
-    instruction = {"mutation": "update", "entity": "Lease", "rows": [{"id": 1, "term": "annual"}]}
+    instruction = {"mutation": "amend", "entity": "Lease", "rows": [{"id": 1, "term": "annual"}]}
     validate_keyed_write(_lease_model().entity("Lease"), instruction)
 
 
@@ -659,7 +659,7 @@ def test_runner_fails_when_a_keyed_instruction_is_accepted() -> None:
     # A single-row temporal instruction authored as rejected: the validator accepts
     # it, so the expected pre-SQL rejection never happens.
     case = _rejected_keyed_doc(
-        {"mutation": "update", "entity": "Lease", "rows": [{"id": 1, "term": "annual"}]},
+        {"mutation": "amend", "entity": "Lease", "rows": [{"id": 1, "term": "annual"}]},
         TEMPORAL_KEYED_WRITE_MULTI_ROW,
     )
     with pytest.raises(CaseFailure, match="did not match its pre-SQL refusal"):
@@ -671,7 +671,7 @@ def test_runner_fails_when_a_keyed_instruction_names_an_undeclared_entity() -> N
     # so an unknown handle is an authoring failure rather than a silent fallback to
     # the model's default write root.
     case = _rejected_keyed_doc(
-        {"mutation": "update", "entity": "Sublease", "rows": [{"id": 1}, {"id": 2}]},
+        {"mutation": "amend", "entity": "Sublease", "rows": [{"id": 1}, {"id": 2}]},
         TEMPORAL_KEYED_WRITE_MULTI_ROW,
     )
     with pytest.raises(CaseFailure, match="does not declare"):
@@ -687,7 +687,7 @@ def test_runner_fails_a_keyed_instruction_naming_an_undeclared_member() -> None:
     # schema-valid input with different verdicts.
     case = _rejected_keyed_doc(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Lease",
             "rows": [{"id": 1, "notAMember": 7}, {"id": 2, "notAMember": 8}],
         },

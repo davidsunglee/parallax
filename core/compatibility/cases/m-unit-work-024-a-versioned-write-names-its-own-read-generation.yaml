@@ -28,7 +28,7 @@ when:
         - { id: 1, owner: Ada, balance: "100.00", version: 1 }
     - uow: two-generations
       write:
-        - mutation: update
+        - mutation: amend
           "on": 0
           entity: parallax.compatibility.Account
           rows:
@@ -56,7 +56,7 @@ when:
         - { id: 1, owner: Ada, balance: "125.00", version: 2 }
     - uow: two-generations
       write:
-        - mutation: update
+        - mutation: amend
           "on": 2
           entity: parallax.compatibility.Account
           rows:

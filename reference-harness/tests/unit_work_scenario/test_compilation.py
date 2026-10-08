@@ -128,7 +128,7 @@ def test_read_your_own_writes_update_scenario_flushes_before_dependent_find(corp
     # account 1 (no row-carried version — the advance derives from the observing
     # find), its golden SQL unchanged.
     (instruction,) = write["write"]
-    assert instruction["mutation"] == "update"
+    assert instruction["mutation"] == "amend"
     assert instruction["entity"] == "parallax.compatibility.Account"
     assert instruction["rows"] == [{"id": 1, "balance": "175.00"}]
     assert write["statements"][0]["sql"]["postgres"].startswith("update account set")
@@ -169,7 +169,7 @@ def test_insert_update_combining_scenario_emits_exactly_one_insert(corpus_case) 
     assert "write" in write
     (statement,) = write["statements"]
     sql = statement["sql"]["postgres"]
-    assert sql.startswith("insert into account") and "update" not in sql
+    assert sql.startswith("insert into account") and "amend" not in sql
     # The single INSERT carries the FINAL (post-combine) balance, not the initial one.
     assert statement["binds"] == [8, "Turing", "99.00", 1]
     assert_judged(case)

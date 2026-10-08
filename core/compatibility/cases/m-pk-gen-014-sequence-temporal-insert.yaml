@@ -11,7 +11,7 @@ given:
   fixtures: true
 when:
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.AuditSeq
       statements: 1
       note: reserve a block of 1 (next_val += 1), base = 1

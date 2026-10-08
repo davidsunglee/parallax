@@ -145,8 +145,12 @@ def _wallets(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     return [tuple(row) for row in profile_run.port.execute(sql, [])]
 
 
+def _condition(version: int | None) -> dict[str, Any]:
+    return {"unversioned": True} if version is None else {"version": version}
+
+
 def _patch(tx: Transaction, entity: type[Any], version: int | None = 1, **changes: object) -> None:
-    tx.wire.update(_name(entity), {"id": 1, **changes}, if_version=version)
+    tx.wire.amend_if(_name(entity), {"id": 1, **changes}, **_condition(version))
 
 
 def _replace(
@@ -157,9 +161,9 @@ def _replace(
     **data: object,
 ) -> None:
     if representation == "typed":
-        tx.replace(entity(id=1, **data), if_version=version)
+        tx.replace_if(entity(id=1, **data), **_condition(version))
     else:
-        tx.wire.replace(_name(entity), {"id": 1, **data}, if_version=version)
+        tx.wire.replace_if(_name(entity), {"id": 1, **data}, **_condition(version))
 
 
 def _read(tx: Transaction, entity: type[Any]) -> Any:
@@ -230,7 +234,7 @@ def test_a_revision_that_no_longer_holds_fails_without_retry_and_changes_nothing
     def by_peer(tx: Transaction) -> None:
         source = _read(tx, entity)
         if peer == "revised":
-            tx.update(source.edit(label="peer"))
+            tx.amend(source.edit(label="peer"))
         else:
             tx.delete(source)
 
@@ -262,7 +266,7 @@ def test_an_unversioned_target_writes_under_the_locking_fallback_and_misses_as_a
     assert _wallets(profile_run, entity) == [(1, "replaced", None)]
 
     def missing(tx: Transaction) -> None:
-        tx.wire.update(_name(entity), {"id": 2, "label": "nobody"})
+        tx.wire.amend_if(_name(entity), {"id": 2, "label": "nobody"}, unversioned=True)
 
     with pytest.raises(ExecutionFailure) as failed:
         db.transact(missing)
@@ -308,10 +312,10 @@ def test_target_and_observed_writes_of_one_state_compose_into_one_effect(
                 source = source.edit(
                     **({"label": "observed"} if source.note == "observed" else {"note": "observed"})
                 )
-                tx.update(source)
+                tx.amend(source)
         _read_other(tx, entity)
         with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-            tx.update(source.edit(label="again"))
+            tx.amend(source.edit(label="again"))
 
     db.transact(fn, concurrency=concurrency)
     assert _accounts(profile_run, entity) == ([] if stored is None else [stored])
@@ -327,10 +331,10 @@ def test_a_stale_observed_source_a_replacement_overwrote_still_fails_the_write(
 ) -> None:
     db = _seeded(profile_run, entity)
     stale = db.find(entity.where(entity.id == 1)).result()
-    db.transact(lambda tx: tx.update(_read(tx, entity).edit(note="peer")))
+    db.transact(lambda tx: tx.amend(_read(tx, entity).edit(note="peer")))
 
     def fn(tx: Transaction) -> None:
-        tx.update(stale.edit(label="stale"))
+        tx.amend(stale.edit(label="stale"))
         _replace(tx, entity, "wire", label="replaced")
 
     with pytest.raises(ExecutionFailure) as failed:
@@ -364,10 +368,10 @@ def test_an_unversioned_target_and_observed_writes_of_one_object_compose(
             elif step == "D":
                 tx.delete(source)
             else:
-                tx.update(source.edit(note="observed"))
+                tx.amend(source.edit(note="observed"))
         _read_other(tx, entity)
         with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-            tx.update(source.edit(label="again"))
+            tx.amend(source.edit(label="again"))
 
     db.transact(fn)
     assert _wallets(profile_run, entity) == ([] if stored is None else [stored])
@@ -410,8 +414,8 @@ def test_a_target_write_of_an_object_this_attempt_inserted_is_refused_until_comm
                 else:
                     _patch(tx, entity, version=stated, label="target")
             _patch(tx, entity, version=stated)
-        tx.update(fresh.edit(note="observed"))
-        tx.wire.update(inserted, {"label": "authored"})
+        tx.amend(fresh.edit(note="observed"))
+        tx.wire.amend(inserted, {"label": "authored"})
 
     db.transact(fn, concurrency=concurrency)
     assert _stored(profile_run, entity)[0][1:3] == ("authored", "observed")
@@ -430,7 +434,7 @@ def test_a_committed_row_this_attempt_rewrote_takes_a_target_write_at_its_new_ve
     db = _seeded(profile_run, entity)
 
     def fn(tx: Transaction) -> None:
-        tx.update(_read(tx, entity).edit(note="observed"))
+        tx.amend(_read(tx, entity).edit(note="observed"))
         assert _read(tx, entity).version == 2
         _patch(tx, entity, version=2, label="patched")
 
@@ -447,7 +451,7 @@ def test_a_token_this_attempts_own_flush_outdated_fails_and_rolls_the_attempt_ba
     before = _accounts(profile_run, entity)
 
     def fn(tx: Transaction) -> None:
-        tx.update(_read(tx, entity).edit(note="observed"))
+        tx.amend(_read(tx, entity).edit(note="observed"))
         _read_other(tx, entity)
         _patch(tx, entity, version=1, label="patched")
 

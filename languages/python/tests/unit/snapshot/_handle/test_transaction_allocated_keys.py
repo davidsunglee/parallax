@@ -74,7 +74,7 @@ def test_an_allocated_temporal_key_is_answered_and_the_row_revised_in_place() ->
     def fn(tx: Transaction) -> None:
         _insert_allocated(tx, Ledger, 100)
         opened = tx.find(Ledger.where(Ledger.id == 8)).result()
-        tx.update(opened.edit(amount=150))
+        tx.amend(opened.edit(amount=150))
 
     db_for(_MODEL, port, lifecycle_provider=recorder).transact(fn)
     insert, _find, revision = (

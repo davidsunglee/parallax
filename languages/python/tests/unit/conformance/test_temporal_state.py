@@ -209,7 +209,7 @@ def test_a_milestone_no_step_closes_is_tracked_again_after_its_write_resolved(
     shadow.retire(POSITION, POSITION_ENTITY, observed)
     prepared = instructions.prepare_wire_write(
         KeyedWrite(
-            "updateUntil",
+            "amendUntil",
             "Position",
             ({"id": 1, "value": value},),
             dt.datetime(2024, 2, 1, tzinfo=dt.UTC),

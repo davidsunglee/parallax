@@ -34,7 +34,7 @@ when:
           binds: [12]
     - uow: barrier
       write:
-        mutation: update
+        mutation: amend
         target:
           entity: parallax.compatibility.OrderItem
           predicate:

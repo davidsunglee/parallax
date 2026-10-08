@@ -71,11 +71,11 @@ def _pending(*writes: BufferItem) -> PendingWrites:
 # Admission: one window, one starting state, no resurrection.                  #
 # --------------------------------------------------------------------------- #
 def test_a_target_and_observed_writes_of_its_starting_state_compose_over_one_window() -> None:
-    pending = _pending(observed_write("updateUntil", START, acctNum="B"))
+    pending = _pending(observed_write("amendUntil", START, acctNum="B"))
     target = addressed_write(value="150.00")
     assert pending.admits_temporal(target, OBJECT)
     pending.add(target, OBJECT)
-    observed = observed_write("updateUntil", START, value="175.00")
+    observed = observed_write("amendUntil", START, value="175.00")
     assert pending.admits_temporal(observed, OBJECT)
     pending.add(observed, OBJECT)
     (composed,) = pending.writes()
@@ -113,11 +113,11 @@ def test_a_restated_caller_condition_is_kept_once_however_often_it_is_overwritte
     "held",
     [
         pytest.param(
-            lambda: observed_write("updateUntil", RESTATED, value="1.00"), id="another-state"
+            lambda: observed_write("amendUntil", RESTATED, value="1.00"), id="another-state"
         ),
         pytest.param(lambda: addressed_write(tx_start=T1, value="1.00"), id="another-stated-start"),
         pytest.param(
-            lambda: observed_write("updateUntil", START, until=JUN, value="1.00"),
+            lambda: observed_write("amendUntil", START, until=JUN, value="1.00"),
             id="an-unequal-window",
         ),
         pytest.param(lambda: observed_write("terminateUntil", START), id="a-destruction"),
@@ -136,7 +136,7 @@ def test_a_destruction_of_a_targets_window_supersedes_it_and_nothing_follows() -
     destruction = observed_write("terminateUntil", START)
     assert pending.admits_temporal(destruction, OBJECT)
     pending.add(destruction, OBJECT)
-    assert not pending.admits_temporal(observed_write("updateUntil", START, value="2.00"), OBJECT)
+    assert not pending.admits_temporal(observed_write("amendUntil", START, value="2.00"), OBJECT)
     assert not pending.admits_temporal(addressed_write(value="2.00"), OBJECT)
     (composed,) = pending.writes()
     assert isinstance(composed, ComposedTemporalWrite)
@@ -145,7 +145,7 @@ def test_a_destruction_of_a_targets_window_supersedes_it_and_nothing_follows() -
 
 def test_a_target_never_joins_a_write_an_insertion_authorized() -> None:
     authored = prepare_wire_write(
-        KeyedWrite("updateUntil", "Position", ({"id": 1, "value": "1.00"},), MAR, SEP),
+        KeyedWrite("amendUntil", "Position", ({"id": 1, "value": "1.00"},), MAR, SEP),
         POSITION,
     )
     assert isinstance(authored, PreparedKeyedWrite)
@@ -156,27 +156,25 @@ def test_a_target_never_joins_a_write_an_insertion_authorized() -> None:
 def test_an_observed_write_after_a_target_must_state_its_window_and_start() -> None:
     pending = _pending(addressed_write(value="150.00"))
     assert not pending.admits_temporal(
-        observed_write("updateUntil", START, until=JUN, value="1.00"), OBJECT
+        observed_write("amendUntil", START, until=JUN, value="1.00"), OBJECT
     )
-    assert not pending.admits_temporal(
-        observed_write("updateUntil", RESTATED, value="1.00"), OBJECT
-    )
-    assert pending.admits_temporal(observed_write("updateUntil", START, value="1.00"), OBJECT)
+    assert not pending.admits_temporal(observed_write("amendUntil", RESTATED, value="1.00"), OBJECT)
+    assert pending.admits_temporal(observed_write("amendUntil", START, value="1.00"), OBJECT)
 
 
 def test_a_target_meeting_any_earlier_unequal_contribution_is_refused() -> None:
     # Pure observed writes compose over unequal windows; a target joining them
     # must agree with every one, not only the latest.
     earlier = _pending(
-        observed_write("update", START, valid_from=JAN, until=None, value="1.00"),
-        observed_write("updateUntil", START, value="2.00"),
+        observed_write("amend", START, valid_from=JAN, until=None, value="1.00"),
+        observed_write("amendUntil", START, value="2.00"),
     )
     assert not earlier.admits_temporal(addressed_write(value="3.00"), OBJECT)
     target_first = _pending(
-        addressed_write(value="3.00"), observed_write("updateUntil", START, value="2.00")
+        addressed_write(value="3.00"), observed_write("amendUntil", START, value="2.00")
     )
     assert not target_first.admits_temporal(
-        observed_write("update", START, valid_from=JAN, until=None, value="1.00"), OBJECT
+        observed_write("amend", START, valid_from=JAN, until=None, value="1.00"), OBJECT
     )
 
 
@@ -192,7 +190,7 @@ _KINDS: dict[str, _Write] = {
         replaces=True, valid_from=start, until=until, acctNum="Z", value="9.00"
     ),
     "O": lambda start, until: observed_write(
-        "updateUntil", WHOLE, valid_from=start, until=until, acctNum="O"
+        "amendUntil", WHOLE, valid_from=start, until=until, acctNum="O"
     ),
     "D": lambda start, until: observed_write(
         "terminateUntil", WHOLE, valid_from=start, until=until
@@ -266,13 +264,13 @@ def test_a_target_overlapping_another_write_unequally_is_refused(
 def test_an_unbounded_window_overlaps_every_window_after_its_start() -> None:
     unbounded = _pending(addressed_write(valid_from=MAR, until=None, value="150.00"))
     assert not unbounded.admits_temporal(
-        observed_write("updateUntil", WHOLE, valid_from=SEP, until=OCT, acctNum="O"), OBJECT
+        observed_write("amendUntil", WHOLE, valid_from=SEP, until=OCT, acctNum="O"), OBJECT
     )
     # A different stored rectangle at the later start does not make it disjoint.
     assert not unbounded.admits_temporal(
         addressed_write(valid_from=SEP, until=OCT, tx_start=T1, value="1.00"), OBJECT
     )
-    before = _pending(observed_write("updateUntil", WHOLE, valid_from=FEB, until=MAR, acctNum="O"))
+    before = _pending(observed_write("amendUntil", WHOLE, valid_from=FEB, until=MAR, acctNum="O"))
     assert before.admits_temporal(
         addressed_write(valid_from=MAR, until=None, value="150.00"), OBJECT
     )
@@ -282,8 +280,8 @@ def test_a_write_disjoint_from_the_latest_but_overlapping_an_earlier_one_is_refu
     # Two observed writes may overlap each other; a target disjoint from both
     # joins them, and a later target is judged against every one of them.
     pending = _pending(
-        observed_write("updateUntil", WHOLE, valid_from=MAR, until=JUN, acctNum="A1"),
-        observed_write("updateUntil", WHOLE, valid_from=APR, until=AUG, acctNum="A2"),
+        observed_write("amendUntil", WHOLE, valid_from=MAR, until=JUN, acctNum="A1"),
+        observed_write("amendUntil", WHOLE, valid_from=APR, until=AUG, acctNum="A2"),
     )
     disjoint = addressed_write(valid_from=SEP, until=OCT, value="150.00")
     assert pending.admits_temporal(disjoint, OBJECT)
@@ -300,7 +298,7 @@ def test_a_write_disjoint_from_the_latest_but_overlapping_an_earlier_one_is_refu
 def test_a_target_starting_inside_an_observed_rectangle_must_state_its_revision(
     order: str,
 ) -> None:
-    observed = observed_write("updateUntil", WHOLE, valid_from=FEB, until=APR, acctNum="O")
+    observed = observed_write("amendUntil", WHOLE, valid_from=FEB, until=APR, acctNum="O")
     for tx_start, admitted in ((T0, True), (T1, False)):
         target = addressed_write(valid_from=JUN, until=AUG, tx_start=tx_start, value="150.00")
         held, arriving = (observed, target) if order == "observed-first" else (target, observed)
@@ -310,7 +308,7 @@ def test_a_target_starting_inside_an_observed_rectangle_must_state_its_revision(
 def test_a_shared_token_names_whatever_rectangle_holds_each_start() -> None:
     # The source observed only [January, June); a caller stating the same
     # Transaction-Time start for September names whichever rectangle holds it.
-    pending = _pending(observed_write("updateUntil", START, valid_from=FEB, until=APR, acctNum="O"))
+    pending = _pending(observed_write("amendUntil", START, valid_from=FEB, until=APR, acctNum="O"))
     assert pending.admits_temporal(addressed_write(valid_from=SEP, until=OCT, value="1.00"), OBJECT)
     assert pending.admits_temporal(
         addressed_write(valid_from=SEP, until=OCT, tx_start=T1, value="1.00"), OBJECT
@@ -326,7 +324,7 @@ _WALLET = formed(corpus_records()["wallet"])
 def _barrier() -> ReadlessPredicateWrite:
     prepared = prepare_wire_write(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection("Wallet", predicate_algebra.Comparison("eq", "Wallet.id", 1)),
             assignments=(WriteAssignment("Wallet.owner", "Q"),),
         ),
@@ -340,7 +338,7 @@ def test_a_readless_predicate_write_separates_an_objects_writes_into_chained_com
         addressed_write(valid_from=FEB, until=APR, value="1.00"),
         _barrier(),
         addressed_write(valid_from=JUN, until=AUG, value="2.00"),
-        observed_write("updateUntil", WHOLE, valid_from=SEP, until=OCT, acctNum="O"),
+        observed_write("amendUntil", WHOLE, valid_from=SEP, until=OCT, acctNum="O"),
         _barrier(),
         observed_write("terminateUntil", WHOLE, valid_from=OCT, until=DEC),
     )
@@ -361,10 +359,10 @@ def test_admission_across_a_barrier_judges_every_write_of_the_object() -> None:
     pending = _pending(addressed_write(valid_from=FEB, until=APR, value="1.00"), _barrier())
     # Unequal overlap with the write before the barrier is refused there too.
     assert not pending.admits_temporal(
-        observed_write("updateUntil", WHOLE, valid_from=MAR, until=JUN, acctNum="O"), OBJECT
+        observed_write("amendUntil", WHOLE, valid_from=MAR, until=JUN, acctNum="O"), OBJECT
     )
     # One window and one start compose, though they execute as two units.
-    exact = observed_write("updateUntil", WHOLE, valid_from=FEB, until=APR, acctNum="O")
+    exact = observed_write("amendUntil", WHOLE, valid_from=FEB, until=APR, acctNum="O")
     assert pending.admits_temporal(exact, OBJECT)
     pending.add(exact, OBJECT)
     first, _barrier_write, second = pending.writes()
@@ -374,9 +372,9 @@ def test_admission_across_a_barrier_judges_every_write_of_the_object() -> None:
 
 def test_a_pure_observed_composition_after_a_barrier_follows_the_earlier_one() -> None:
     pending = _pending(
-        observed_write("updateUntil", WHOLE, valid_from=MAR, until=JUN, acctNum="A"),
+        observed_write("amendUntil", WHOLE, valid_from=MAR, until=JUN, acctNum="A"),
         _barrier(),
-        observed_write("updateUntil", WHOLE, valid_from=APR, until=AUG, acctNum="B"),
+        observed_write("amendUntil", WHOLE, valid_from=APR, until=AUG, acctNum="B"),
     )
     first, _barrier_write, second = pending.writes()
     assert isinstance(first, ChainedTemporalWrite) and (first.leads, first.follows) == (True, False)

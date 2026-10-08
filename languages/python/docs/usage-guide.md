@@ -85,15 +85,15 @@ def insert_then_read_your_own_write(db: ScopedDatabase) -> list[Entity]:
     return db.transact(fn)
 ```
 
-## Keyed update, observed in-transaction
+## Keyed amendment, observed in-transaction
 
 Corpus case: `m-unit-work-005`
 
 ```python
-def keyed_update_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
+def keyed_amendment_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()
-        tx.update(current.edit(balance=Decimal("175.00")))
+        tx.amend(current.edit(balance=Decimal("175.00")))
         return list(tx.find(Account.where(Account.id == 1)).results())
 
     return db.transact(fn)
@@ -113,36 +113,36 @@ def keyed_delete_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
     return db.transact(fn)
 ```
 
-## A target patch states its key and the version its caller last observed
+## A conditional amendment states its key and the version its caller last observed
 
 Corpus case: `m-opt-lock-027`
 
 ```python
-def target_patch_gates_on_the_callers_version(db: ScopedDatabase) -> None:
+def conditional_amendment_gates_on_the_callers_version(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
-        tx.wire.update("Account", {"id": 2, "balance": "250.00"}, if_version=1)
+        tx.amend_if(Account, Account.balance.set(Decimal("250.00")), key=2, version=1)
 
     db.transact(fn)
 ```
 
-## A target replacement states the object's whole writable state
+## A conditional replacement states the object's whole writable state
 
 Corpus case: `m-opt-lock-028`
 
 ```python
-def target_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
+def conditional_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
-        tx.replace(Account(id=3, owner="Hopper", balance=Decimal("12.00")), if_version=1)
+        tx.replace_if(Account(id=3, owner="Hopper", balance=Decimal("12.00")), version=1)
 
     db.transact(fn)
 ```
 
-## Bitemporal update-until splits head/middle/tail
+## Bitemporal amend-until splits head/middle/tail
 
 Corpus case: `m-temporal-write-017`
 
 ```python
-def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
+def bitemporal_amend_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -155,7 +155,7 @@ def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
                 valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(
+        tx.amend(
             current.edit(value=Decimal("200.00")),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
@@ -164,12 +164,12 @@ def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
     db.transact(split)
 ```
 
-## A bitemporal target patch states its window and its caller's milestone
+## A bitemporal conditional amendment states its window and its caller's milestone
 
 Corpus case: `m-temporal-write-042`
 
 ```python
-def bitemporal_target_patch_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
+def bitemporal_conditional_amendment_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -177,12 +177,12 @@ def bitemporal_target_patch_gates_on_the_callers_milestone(db: ScopedDatabase) -
         )
 
     def patch(tx: Transaction) -> None:
-        tx.wire.update(
+        tx.wire.amend_if(
             "Position",
             {"id": 1, "value": "200.00"},
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
-            if_tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
     db.transact(insert)

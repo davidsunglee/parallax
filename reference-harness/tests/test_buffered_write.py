@@ -90,7 +90,7 @@ _WITNESS_AUDIT = [
         "at": "2024-06-01T00:00:00+00:00",
     },
     {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "Balance",
         "rows": [{"id": 9, "value": 150.00}],
         "at": "2024-06-01T00:00:00+00:00",
@@ -106,7 +106,7 @@ _WITNESS_BITEMP = [
         "at": "2024-01-01T00:00:00+00:00",
     },
     {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "Position",
         "rows": [{"id": 9, "value": 150.00}],
         "at": "2024-01-01T00:00:00+00:00",
@@ -161,7 +161,7 @@ def test_mixed_multi_object_flush_is_accepted() -> None:
             "entity": "Account",
             "rows": [{"id": 9, "owner": "N", "balance": 5.0}],
         },
-        {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 20.0}]},
+        {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": 20.0}]},
         {"mutation": "delete", "entity": "Account", "rows": [{"id": 3}]},
     ]
     assert _accepted(probe, _ACCOUNT)
@@ -198,7 +198,7 @@ def test_buffer_over_different_primary_keys_is_accepted() -> None:
             "entity": "Account",
             "rows": [{"id": 9, "owner": "N", "balance": 5.0}],
         },
-        {"mutation": "update", "entity": "Account", "rows": [{"id": 2, "balance": 6.0}]},
+        {"mutation": "amend", "entity": "Account", "rows": [{"id": 2, "balance": 6.0}]},
     ]
     assert _accepted(probe, _ACCOUNT)
 
@@ -238,7 +238,7 @@ def _scenario_document(write: list[Any], **top: Any) -> dict[str, Any]:
 
 
 _BARRIER = {
-    "mutation": "update",
+    "mutation": "amend",
     "target": {
         "entity": "OrderItem",
         "predicate": {"lessThan": {"attr": "OrderItem.quantity", "value": 3}},
@@ -307,7 +307,7 @@ def _state_graded(steps: list[dict[str, Any]]) -> dict[str, Any]:
             id="a-keyed-submission-of-two-rows",
         ),
         pytest.param([{"uow": "g", "write": _BARRIER}], id="an-unbuffered-predicate-write"),
-        pytest.param([{"uow": "g", "write": "update"}], id="a-write-label"),
+        pytest.param([{"uow": "g", "write": "amend"}], id="a-write-label"),
         pytest.param([_STATE_FIND, {"action": "flush"}], id="an-action-step"),
         pytest.param([_STATE_GRAPH_FIND], id="a-graph-observable"),
         pytest.param([_STATE_FIND, {**_STATE_FIND, "sameObjectAs": 0}], id="an-identity-claim"),
@@ -338,18 +338,18 @@ def test_a_state_graded_case_states_only_what_its_run_reports(steps: list[dict[s
 
 _T0 = "2023-12-01T00:00:00.000000Z"
 _ACCOUNT_TARGET = {
-    "mutation": "update",
+    "mutation": "amend",
     "entity": "SequenceAccount",
     "row": {"id": 1, "balance": 5},
 }
-_TAG_TARGET = {"mutation": "update", "entity": "SequenceTag", "row": {"id": 1, "quantity": 2}}
+_TAG_TARGET = {"mutation": "amend", "entity": "SequenceTag", "row": {"id": 1, "quantity": 2}}
 _SPAN_TARGET = {
-    "mutation": "update",
+    "mutation": "amend",
     "entity": "SequenceSpan",
     "row": {"id": 1, "amount": 5},
     "validFrom": _T0,
 }
-_BALANCE_TARGET = {"mutation": "update", "entity": "Balance", "row": {"id": 1, "value": "5.00"}}
+_BALANCE_TARGET = {"mutation": "amend", "entity": "Balance", "row": {"id": 1, "value": "5.00"}}
 
 
 @pytest.mark.parametrize(
@@ -493,7 +493,7 @@ def test_a_plural_temporal_buffer_entry_is_rejected() -> None:
     # implementations read, rather than separately inside each.
     probe = [
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Balance",
             "rows": [{"id": 1, "value": 150.00}, {"id": 2, "value": 250.00}],
             "at": "2024-06-01T00:00:00+00:00",
@@ -511,7 +511,7 @@ def test_a_plural_non_temporal_buffer_entry_is_accepted() -> None:
     # milestone chain forbids it.
     probe = [
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Account",
             "rows": [{"id": 1, "balance": 5.0}, {"id": 2, "balance": 5.0}],
         }
@@ -533,7 +533,7 @@ def test_whole_tree_validation_rejects_a_plural_temporal_buffer_entry(tmp_path: 
 # --- a framework-marker entry is a choreography unit of its own -----------------
 
 _REGISTRY_ADVANCE = {
-    "mutation": "update",
+    "mutation": "amend",
     "entity": "PkSequence",
     "rows": [{"name": "badge_seq", "nextVal": {"increment": 1}}],
 }
@@ -587,7 +587,7 @@ def test_a_value_object_document_shaped_like_a_marker_is_not_framework_work() ->
     # may share its buffer.
     probe = [
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Customer",
             "rows": [{"id": 1, "address": {"increment": 1}}],
         },

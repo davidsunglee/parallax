@@ -141,7 +141,7 @@ def test_a_typed_value_read_under_a_licenses_a_keyed_write_validated_under_b(
     def body(tx: Transaction) -> str:
         # Validated under B's model, licensed by the observation A's read
         # retained on the value: no reread, no evidence upgrade, no refusal.
-        tx.update(account.edit(balance=account.balance + Decimal("1.00")))
+        tx.amend(account.edit(balance=account.balance + Decimal("1.00")))
         return tx.edition
 
     assert db.transact(body) == "2026-09-b"
@@ -158,7 +158,7 @@ def test_a_wire_value_read_under_a_licenses_a_keyed_write_validated_under_b(
     serving.publish(b, expected=a)
 
     def body(tx: Transaction) -> str:
-        tx.wire.update(node, {"balance": "260.00"})
+        tx.wire.amend(node, {"balance": "260.00"})
         return tx.edition
 
     assert db.transact(body) == "2026-09-b"

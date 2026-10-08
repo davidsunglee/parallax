@@ -30,7 +30,7 @@ when:
         - { id: 100, version: 1, label: opening, balance: "250.00", details: { code: opening } }
         - { id: 200, version: 1, label: null, balance: "40.00", details: { code: settled } }
     - write:
-        mutation: update
+        mutation: amend
         target:
           entity: parallax.compatibility.Ledger
           predicate:

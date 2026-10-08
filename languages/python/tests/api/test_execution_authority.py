@@ -94,7 +94,7 @@ def test_every_public_execution_path_runs_under_the_selected_authority(
         def update(tx: Transaction) -> Decimal:
             account = tx.find(query).result()
             changed = account.edit(balance=account.balance + Decimal("1.00"))
-            tx.update(changed)
+            tx.amend(changed)
             return changed.balance
 
         assert scoped.transact(update, max_retries=1) == Decimal("251.00")

@@ -77,7 +77,7 @@ def addressed_write(
     mutation: TargetMutation = (
         ("replace" if until is None else "replaceUntil")
         if replaces
-        else ("update" if until is None else "updateUntil")
+        else ("amend" if until is None else "amendUntil")
     )
     return target_write(
         prepare_wire_write(

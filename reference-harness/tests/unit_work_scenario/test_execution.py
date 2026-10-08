@@ -299,7 +299,7 @@ def test_a_flush_failure_is_graded_on_the_flush_that_failed(damaged_case) -> Non
         "uow": "ours",
         "write": [
             {
-                "mutation": "update",
+                "mutation": "amend",
                 "entity": "parallax.compatibility.Account",
                 "rows": [{"id": 9, "balance": "6.00"}],
             }
@@ -407,7 +407,7 @@ def _uncommitted_write_then_reference_sql_case() -> Case:
             "scenario": [
                 {
                     "uow": "g",
-                    "write": [{"mutation": "update", "entity": "Account", "rows": [{"id": 2}]}],
+                    "write": [{"mutation": "amend", "entity": "Account", "rows": [{"id": 2}]}],
                     "roundTrips": 1,
                     "statements": [
                         {

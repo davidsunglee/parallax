@@ -170,7 +170,7 @@ def test_a_write_buffered_mid_delivery_reaches_the_database_before_the_next_page
         with tx.stream(_accounts(), batch_size=1) as stream:
             for account in stream:
                 if account.id == 1:
-                    tx.update(account.edit(balance=Decimal("125.00")))
+                    tx.amend(account.edit(balance=Decimal("125.00")))
 
     account_db(port).transact(fn)
     assert _kinds(port) == [BeginCall, ReadCall, WriteCall, ReadCall, CommitCall]
@@ -197,11 +197,11 @@ def test_a_root_its_page_fetched_before_an_own_change_cannot_write_from_that_sta
             for account in stream:
                 if account.id == 1:
                     other = tx.find(mm.Account.where(mm.Account.id == 2)).result()
-                    tx.update(other.edit(balance=Decimal("150.00")))
+                    tx.amend(other.edit(balance=Decimal("150.00")))
                     tx.find(mm.Account.where(mm.Account.id == 2)).result()
                     continue
                 with pytest.raises(WriteEvidenceError) as refused:
-                    tx.update(account.edit(balance=Decimal("175.00")))
+                    tx.amend(account.edit(balance=Decimal("175.00")))
                 refusals.append(refused.value.code)
 
     account_db(port).transact(fn, concurrency="optimistic")
@@ -244,7 +244,7 @@ def test_a_writing_loop_never_holds_more_than_one_pages_writes(size: int) -> Non
     def fn(tx: Transaction) -> None:
         with tx.stream(_accounts(), batch_size=size) as stream:
             for account in stream:
-                tx.update(account.edit(balance=Decimal("125.00")))
+                tx.amend(account.edit(balance=Decimal("125.00")))
                 held.append(_pending_writes(tx))
 
     account_db(port).transact(fn)
@@ -336,7 +336,7 @@ def test_a_streamed_roots_own_observation_licenses_a_later_keyed_write() -> None
     def fn(tx: Transaction) -> None:
         with tx.stream(_accounts(), batch_size=1) as stream:
             accounts = list(stream)
-        tx.update(accounts[0].edit(balance=Decimal("125.00")))
+        tx.amend(accounts[0].edit(balance=Decimal("125.00")))
 
     account_db(port).transact(fn)
     assert port.calls[-2] == WriteCall(_UPDATE_SQL, (Decimal("125.00"), 2, 1, 1))
@@ -363,18 +363,18 @@ def _first_root(scope: Transaction | ScopedDatabase, representation: _Representa
 
 def _update(tx: Transaction, representation: _Representation, root: Any, balance: str) -> None:
     if representation == "typed":
-        tx.update(cast("mm.Account", root).edit(balance=Decimal(balance)))
+        tx.amend(cast("mm.Account", root).edit(balance=Decimal(balance)))
     else:
-        tx.wire.update(root, {"balance": balance})
+        tx.wire.amend(root, {"balance": balance})
 
 
 def _restore(tx: Transaction, representation: _Representation, root: Any) -> None:
     """A write whose authored change puts back the balance ``root`` observed."""
     if representation == "typed":
         account = cast("mm.Account", root)
-        tx.update(account.edit(balance=Decimal("1.00")).edit(balance=account.balance))
+        tx.amend(account.edit(balance=Decimal("1.00")).edit(balance=account.balance))
     else:
-        tx.wire.update(root, {"balance": "100.00"})
+        tx.wire.amend(root, {"balance": "100.00"})
 
 
 def _delete(tx: Transaction, representation: _Representation, root: Any) -> None:
@@ -574,14 +574,14 @@ def test_a_streamed_milestone_root_is_read_only_in_both_namespaces() -> None:
         with tx.stream(_milestone_query(), batch_size=2) as stream:
             root = next(iter(stream))
         with pytest.raises(KeyedWriteValueError, match="write-value-not-stored"):
-            tx.update(root.edit(value=Decimal("1.00")))
+            tx.amend(root.edit(value=Decimal("1.00")))
 
     def wire(tx: Transaction) -> None:
         with tx.wire.stream(_milestone_query(), batch_size=2) as stream:
             root = next(iter(stream))
         assert read_origin_of(root) is None
         with pytest.raises(instructions.WriteInstructionError, match="no such provenance"):
-            tx.wire.update(root, {"value": "1.00"})
+            tx.wire.amend(root, {"value": "1.00"})
 
     db_for(POSITION_MODEL, typed_port).transact(typed)
     db_for(POSITION_MODEL, wire_port).transact(wire)

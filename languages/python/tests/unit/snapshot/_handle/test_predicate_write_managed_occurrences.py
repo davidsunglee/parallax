@@ -31,6 +31,7 @@ from parallax.core import (
 from parallax.core.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.root_ownership import own_root
+from tests._support.write_bounds import stated_start
 
 _NAMESPACE = "managed.predicate"
 _OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
@@ -110,7 +111,7 @@ def _seed(db: ScopedDatabase, entity: type[Any]) -> None:
     point = Point(**_document(_EXACT[0]))
     valid_from = _OPENED if entity is RectangleGauge else None
     db.transact(
-        lambda tx: tx.insert(entity(id=1, point=point, trail=(point,)), valid_from=valid_from)
+        lambda tx: tx.insert(entity(id=1, point=point, trail=(point,)), **stated_start(valid_from))
     )
 
 
@@ -126,20 +127,20 @@ def _update_where(
 
     def update(tx: Transaction) -> None:
         if representation == "typed":
-            tx.update_where(
+            tx.amend_where(
                 entity.where(entity.id == 1),
                 entity.point.set(_typed_point(point)),
                 entity.trail.set(tuple(Point(**element) for element in trail)),
-                valid_from=valid_from,
+                **stated_start(valid_from),
             )
         else:
-            tx.wire.update_where(
+            tx.wire.amend_where(
                 {
                     "entity": f"{_NAMESPACE}.{entity.__name__}",
                     "predicate": {"eq": {"attr": f"{_NAMESPACE}.{entity.__name__}.id", "value": 1}},
                 },
                 {"point": point, "trail": list(trail)},
-                valid_from=valid_from,
+                **stated_start(valid_from),
             )
 
     return update
@@ -227,7 +228,7 @@ def test_a_keyed_write_stores_widened_float32_occurrences(
     def update(tx: Transaction) -> None:
         if representation == "typed":
             found = tx.find(VersionedGauge.where(VersionedGauge.id == 1)).result()
-            tx.update(found.edit(point=_typed_point(point), trail=(_typed_point(point),)))
+            tx.amend(found.edit(point=_typed_point(point), trail=(_typed_point(point),)))
         else:
             node = tx.wire.find(
                 {
@@ -235,7 +236,7 @@ def test_a_keyed_write_stores_widened_float32_occurrences(
                     "predicate": {"eq": {"attr": f"{_NAMESPACE}.VersionedGauge.id", "value": 1}},
                 }
             ).result()
-            tx.wire.update(node, {"point": point, "trail": [point]})
+            tx.wire.amend(node, {"point": point, "trail": [point]})
 
     db.transact(update)
 

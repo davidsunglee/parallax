@@ -575,7 +575,7 @@ def test_two_judged_projections_of_one_temporal_state_share_one_retained_observa
 def test_evidence_is_keyed_by_the_rows_own_entity_through_inherited_members() -> None:
     # `DepositRate` is a concrete subtype of the bitemporal root `Rate`, whose own
     # declaration owns the primary key and both axes. The key still names the
-    # subtype, because that is the class a developer's later `tx.update(copy)`
+    # subtype, because that is the class a developer's later `tx.amend(copy)`
     # carries (`m-unit-work` `KeyedWrite.entity`), and the declared-name view
     # resolves each inherited member at its canonical position (`from_z` /
     # `validStart`, `in_z` / `txStart`).
@@ -682,7 +682,7 @@ def test_a_participating_read_stamps_its_own_unit_of_works_participation() -> No
 # --------------------------------------------------------------------------- #
 def _balance_update(model: AcceptedMetamodel, hint: ReadOrigin) -> BufferItem:
     instruction = prepare_typed_write(
-        KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("6.00")},)), model
+        KeyedWrite("amend", "Balance", ({"id": 1, "value": Decimal("6.00")},)), model
     )
     assert hint.observation is not None
     return buffered_write(

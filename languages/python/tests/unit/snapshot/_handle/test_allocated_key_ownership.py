@@ -19,6 +19,7 @@ from parallax.core.unit_work import KeyedWrite
 from parallax.core.unit_work.instructions import prepare_typed_write
 from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.root_ownership import own_root
+from tests._support.write_bounds import stated_start
 
 _NAMESPACE = "allocated.key"
 
@@ -92,7 +93,7 @@ def _seed(profile_run: Any, entity: type[Any], key: int) -> None:
     profile_run.reset(model_of(_MODEL), {})
     valid_from = _JAN if issubclass(entity, Bitemporal) else None
     _db(profile_run, _T0).transact(
-        lambda tx: tx.insert(entity(id=key, amount=1), valid_from=valid_from)
+        lambda tx: tx.insert(entity(id=key, amount=1), **stated_start(valid_from))
     )
 
 
@@ -105,9 +106,9 @@ def test_a_transaction_time_row_whose_key_the_database_allocated_is_revised_in_p
     def fn(tx: Transaction) -> None:
         _insert_allocated(tx, entity, amount=100)
         opened = tx.find(entity.where(entity.id == 8)).result()
-        tx.update(opened.edit(amount=150))
+        tx.amend(opened.edit(amount=150))
         again = tx.find(entity.where(entity.id == 8)).result()
-        tx.update(again.edit(amount=175))
+        tx.amend(again.edit(amount=175))
 
     _db(profile_run, _T).transact(fn)
     rows = profile_run.port.execute(
@@ -127,7 +128,7 @@ def test_a_bitemporal_row_whose_key_the_database_allocated_is_split_in_place(
     def fn(tx: Transaction) -> None:
         _insert_allocated(tx, entity, _JAN, amount=100)
         opened = tx.find(entity.where(entity.id == 8).as_of(valid_time=_MAR)).result()
-        tx.update(opened.edit(amount=150), until=_JUN)
+        tx.amend(opened.edit(amount=150), until=_JUN)
 
     _db(profile_run, _T).transact(fn)
     rows = profile_run.port.execute(

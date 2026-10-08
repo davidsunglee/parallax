@@ -10,7 +10,7 @@ when:
       rows:
         - { id: 1, acctNum: A, value: "100.00" }
       at: "2024-01-01T00:00:00.000000Z"
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Balance
       statements: 1
       note: every assigned value equals the current one; a guard on the observed in_z keeps the milestone, so no history is written

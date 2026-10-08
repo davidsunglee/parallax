@@ -57,10 +57,12 @@ OPENING_MUTATIONS = ("insert", "insertUntil")
 # therefore resolves no source.
 _KEYED_MUTATIONS = (
     *OPENING_MUTATIONS,
-    "update",
+    "amend",
+    "replace",
     "delete",
     "terminate",
-    "updateUntil",
+    "amendUntil",
+    "replaceUntil",
     "terminateUntil",
 )
 

@@ -19,7 +19,7 @@ when:
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: "250.00", version: 1 }
-    - write: update
+    - write: amend
       roundTrips: 1
       note: COMMIT a new balance for account 2 (version advances 1 -> 2) — MUST invalidate the cached find
       statements:

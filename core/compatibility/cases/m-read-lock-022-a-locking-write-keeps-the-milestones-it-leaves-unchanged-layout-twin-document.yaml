@@ -29,7 +29,7 @@ when:
           out_z: infinity
     - uow: kept
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 0
           entity: parallax.compatibility.KeptSpan
           rows:
@@ -55,7 +55,7 @@ when:
           out_z: infinity
     - uow: kept
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 2
           entity: parallax.compatibility.KeptSpan
           rows:
@@ -63,7 +63,7 @@ when:
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-06-01T00:00:00.000000Z"
           at: "2024-11-01T00:00:00.000000Z"
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 2
           entity: parallax.compatibility.KeptSpan
           rows:
@@ -85,7 +85,7 @@ when:
           out_z: infinity
     - uow: kept
       write:
-        - mutation: update
+        - mutation: amend
           "on": 4
           entity: parallax.compatibility.KeptLog
           rows:
@@ -105,7 +105,7 @@ when:
           out_z: infinity
     - uow: kept
       write:
-        - mutation: update
+        - mutation: amend
           "on": 6
           entity: parallax.compatibility.KeptLog
           rows:
@@ -129,7 +129,7 @@ when:
           out_z: infinity
     - uow: changed
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 8
           entity: parallax.compatibility.KeptSpan
           rows:

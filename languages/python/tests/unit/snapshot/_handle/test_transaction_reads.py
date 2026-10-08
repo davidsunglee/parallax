@@ -426,7 +426,7 @@ def test_a_temporal_write_after_an_as_of_find_is_refused_in_either_mode(
                 tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(fetched.edit(value=Decimal("9.00")))
+        tx.amend(fetched.edit(value=Decimal("9.00")))
 
     with raises_contextualized(
         TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
@@ -471,7 +471,7 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
-        tx.update(fetched.edit(value=Decimal("150.00")))
+        tx.amend(fetched.edit(value=Decimal("150.00")))
 
     db.transact(fn)
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
@@ -517,7 +517,7 @@ def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> 
                 valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(fetched.edit(name="Renamed Branch"))
+        tx.amend(fetched.edit(name="Renamed Branch"))
 
     db.transact(fn)
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
@@ -558,7 +558,7 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
                 valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(fetched.edit(name="Renamed Branch"))
+        tx.amend(fetched.edit(name="Renamed Branch"))
 
     db.transact(fn)
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
@@ -735,10 +735,10 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     def write(tx: Transaction, node: Entity | WireEntity) -> None:
         if isinstance(node, Entity):
             assert _mutate_everything(node) + _mutate_everything(node.model_dump()) > 0
-            tx.update(node.edit(title="Southbound"))
+            tx.amend(node.edit(title="Southbound"))
         else:
             assert _mutate_everything(node) > 0
-            tx.wire.update(node, {"title": "Southbound"})
+            tx.wire.amend(node, {"title": "Southbound"})
 
     if standalone:
         node = find(db)
@@ -860,7 +860,7 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
         statement = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)
         milestones = tx.find(statement).results()
         assert [_retained_evidence(root) for root in milestones] == [None, None]
-        tx.update(milestones[-1].edit(value=Decimal("9.00")))
+        tx.amend(milestones[-1].edit(value=Decimal("9.00")))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
         db.transact(fn)
@@ -1197,7 +1197,7 @@ def test_an_included_versioned_nodes_own_observation_licenses_its_keyed_update()
 
     def fn(tx: Transaction) -> None:
         vault = tx.find(om.Vault.where(om.Vault.id == 1).include(om.Vault.slips)).result()
-        tx.update(vault.slips[0].edit(memo="after"))
+        tx.amend(vault.slips[0].edit(memo="after"))
 
     db_for(om.VAULT_MODEL, port).transact(fn, concurrency="optimistic")
     (write_op,) = [op for op in port.calls if isinstance(op, WriteCall)]

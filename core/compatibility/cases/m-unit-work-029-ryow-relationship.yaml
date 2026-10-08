@@ -47,7 +47,7 @@ when:
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 13, orderId: 1, sku: D-130, quantity: 6 }
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 11, sku: Rewritten }

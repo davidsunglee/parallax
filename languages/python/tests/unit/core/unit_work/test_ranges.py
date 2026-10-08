@@ -127,7 +127,7 @@ def _retained(row: PredecessorRow) -> RetainedObservation:
 def _update(
     evidence: RetainedObservation, valid_from: dt.datetime, until: dt.datetime
 ) -> BufferItem:
-    mutation: KeyedMutation = "updateUntil"
+    mutation: KeyedMutation = "amendUntil"
     prepared = prepare_wire_write(
         KeyedWrite(mutation, "SequenceSpan", ({"id": 1, "amount": 300},), valid_from, until),
         _SPANS,
@@ -138,7 +138,7 @@ def _update(
 def _target(valid_from: dt.datetime, until: dt.datetime) -> BufferItem:
     prepared = prepare_wire_write(
         TargetWrite(
-            "updateUntil",
+            "amendUntil",
             "SequenceSpan",
             {"id": 1, "amount": 300},
             if_tx_start=_T0,
@@ -439,7 +439,7 @@ def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_
     observation: VersionObservation | None,
 ) -> None:
     prepared = prepare_wire_write(
-        KeyedWrite("updateUntil", "SequenceSpan", ({"id": 1, "amount": 300},), _MAR, _APR),
+        KeyedWrite("amendUntil", "SequenceSpan", ({"id": 1, "amount": 300},), _MAR, _APR),
         _SPANS,
     )
     assert isinstance(prepared, PreparedKeyedWrite)

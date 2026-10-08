@@ -11,7 +11,7 @@ when:
       rows:
         - { id: 1, acctNum: A, value: "100.00" }
       at: "2024-01-01T00:00:00.000000Z"
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Balance
       statements: 2
       note: close the current row, then chain a new milestone carrying BOTH corrected attributes

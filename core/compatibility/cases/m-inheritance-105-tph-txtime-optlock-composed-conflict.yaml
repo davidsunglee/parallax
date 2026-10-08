@@ -58,7 +58,7 @@ when:
         - { id: 1, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
     - uow: concurrent
       write:
-        - mutation: update
+        - mutation: amend
           "on": 1
           entity: parallax.compatibility.MeterReading
           rows:

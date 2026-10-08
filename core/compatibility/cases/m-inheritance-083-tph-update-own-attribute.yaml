@@ -7,7 +7,7 @@ given:
   fixtures: true
 when:
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.CardPayment
       statements: 1
       note: correct CardPayment 1's own card_network; keyed by pk and tag-guarded on kind='card'

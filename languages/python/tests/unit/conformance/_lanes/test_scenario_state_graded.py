@@ -45,7 +45,7 @@ def _state_graded(steps: list[dict[str, Any]], units: dict[str, Any]) -> case_fo
 
 
 def _update(row: dict[str, Any], **entry: Any) -> dict[str, Any]:
-    return {"mutation": "update", "entity": "Account", "rows": [row], **entry}
+    return {"mutation": "amend", "entity": "Account", "rows": [row], **entry}
 
 
 def test_every_submission_reaches_its_own_verb_and_the_run_reports_what_it_left() -> None:
@@ -94,7 +94,7 @@ def test_a_refused_submission_is_reported_at_its_pointer_and_its_group_commits()
                         {"id": 1, "owner": "Cy"}, on=0, expectError="write-evidence-already-claimed"
                     ),
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Account",
                         "row": {"id": 1, "balance": "9.00"},
                         "ifVersion": 1,
@@ -115,6 +115,38 @@ def test_a_refused_submission_is_reported_at_its_pointer_and_its_group_commits()
     ]
     assert run.units == {"g": {"outcome": "committed"}}
     assert [sql for sql, _ in port.writes] == ["delete from account where id = %s and version = %s"]
+
+
+def test_a_keyed_replacement_reaches_the_source_replacement_verb() -> None:
+    case = _state_graded(
+        [
+            _FIND,
+            {
+                "uow": "g",
+                "write": [
+                    {
+                        "mutation": "replace",
+                        "entity": "Account",
+                        "rows": [{"id": 1, "owner": "Bo", "balance": "9.00"}],
+                        "on": 0,
+                    }
+                ],
+            },
+        ],
+        {"g": {"outcome": "committed"}},
+    )
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW])
+
+    run = scenario.run_scenario_case(case, port)
+
+    assert run.errors == []
+    assert port.writes == [
+        (
+            "update account set owner = %s, balance = %s, version = %s "
+            "where id = %s and version = %s",
+            ["Bo", decimal.Decimal("9.00"), 2, 1, 1],
+        )
+    ]
 
 
 def test_a_refusal_other_than_the_one_a_submission_declares_propagates() -> None:
@@ -144,7 +176,7 @@ def test_a_refusal_other_than_the_one_a_submission_declares_propagates() -> None
                     "uow": "g",
                     "write": [
                         {
-                            "mutation": "update",
+                            "mutation": "amend",
                             "entity": "Account",
                             "row": {"id": 1, "balance": "9.00"},
                             "ifVersion": 1,
@@ -161,7 +193,7 @@ def test_a_refusal_other_than_the_one_a_submission_declares_propagates() -> None
                     "uow": "g",
                     "write": [
                         {
-                            "mutation": "update",
+                            "mutation": "amend",
                             "entity": "Account",
                             "row": {"id": 1, "balance": "9.00"},
                             "ifVersion": 1,

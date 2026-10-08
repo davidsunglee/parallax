@@ -2,20 +2,24 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping
-from typing import Any, overload
+from typing import Any
 
 from parallax.core.execution._attempt import Attempt
-from parallax.core.execution._keyed_writes import window_mutation
+from parallax.core.execution._keyed_writes import (
+    stated_valid_from,
+    target_condition,
+    window_mutation,
+)
 from parallax.core.execution._options import OMITTED, Omitted
 from parallax.core.execution._scope import ExecutionScope
 from parallax.core.object_query import ObjectQueryNode, deserialize
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
-from parallax.core.unit_work import WriteInstructionError
 from parallax.snapshot._handle._read import Snapshot, wire_publication_for
 from parallax.snapshot._handle._stream import SnapshotStream
 from parallax.snapshot._handle._wire_writes import (
     WireChanges,
     WirePredicateTarget,
+    editable_wire_data,
     wire_insert,
     wire_keyed_write,
     wire_predicate_write,
@@ -128,17 +132,19 @@ class WireTransactionView(WireDatabaseView):
     object merge, deduplicate, and conflict by the one claim algebra rather than
     by an interface-specific rule.
 
-    Every keyed verb but the insert family takes a frozen Entity mapping this
-    store published — a Wire read's result, or the node an insert answered for
-    the row it opened — and infers the concrete Entity and the object the write
-    addresses from it privately, together with the exact state a read published
-    node observed and the Valid-Time instant it was read at, where a Bitemporal
-    write starts. The node an insert answered observed nothing, and the write
-    off it resolves no evidence at all: the buffered insert licenses it, and it
-    starts where that insert was authored to. There is
-    no explicit-Entity ordinary-mapping overload: a mapping a caller built
-    carries neither, and a verb that accepted one would be issuing a write
-    nothing proves anything about.
+    The method names the authority a write runs under. Every source-authorized
+    verb — :meth:`amend`, :meth:`replace`, :meth:`delete`, :meth:`terminate` —
+    takes a frozen Entity mapping this store published — a Wire read's result,
+    or the node an insert answered for the row it opened — and infers the
+    concrete Entity and the object the write addresses from it privately,
+    together with the exact state a read published node observed and the
+    Valid-Time instant it was read at, where a Bitemporal write starts. The node
+    an insert answered observed nothing, and the write off it resolves no
+    evidence at all: the buffered insert licenses it, and it starts where that
+    insert was authored to. A mapping a caller built carries neither, so it is
+    no source. The caller-conditioned verbs :meth:`amend_if` and
+    :meth:`replace_if` address an object by Entity spelling and key instead,
+    under the one condition their caller states.
     """
 
     __slots__ = ("_attempt",)
@@ -152,7 +158,7 @@ class WireTransactionView(WireDatabaseView):
         entity_name: str,
         data: Mapping[str, object],
         *,
-        valid_from: dt.datetime | None = None,
+        valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
     ) -> WireEntity:
         """Buffer a Wire insert of ``data`` as a fresh ``entity_name`` row, and
@@ -174,14 +180,14 @@ class WireTransactionView(WireDatabaseView):
         that authority: a plain copy of it, or another document of the same key,
         is no keyed source. A repeated insert of the object is refused while
         anything the insertion opened stands, whether the payload is stated again
-        or the returned node is handed back, since revising the row is the update
-        verb's job; once all of it has been removed, a fresh insertion is
-        admitted.
+        or the returned node is handed back, since revising the row is the amend
+        and replace verbs' job; once all of it has been removed, a fresh
+        insertion is admitted.
 
         ``valid_from`` and ``until`` bound a Bitemporal insert exactly as
         ``tx.insert`` does: omitting ``until`` opens ``[valid_from, infinity)``,
-        a stated one bounds the window whatever its value, and a target with no
-        Valid Time takes neither.
+        a stated bound is a bound whatever its value — ``None`` is refused — and
+        a target with no Valid Time takes neither.
         """
         mutation, bound = window_mutation("insert", "insertUntil", until)
         return wire_insert(
@@ -189,122 +195,148 @@ class WireTransactionView(WireDatabaseView):
             entity_name,
             data,
             mutation=mutation,
-            valid_from=valid_from,
+            valid_from=stated_valid_from(valid_from),
             until=bound,
         )
 
-    @overload
-    def update(
+    def amend(
         self,
-        observed: WireEntity,
-        /,
+        source: WireEntity,
         changes: WireChanges,
+        /,
         *,
         until: dt.datetime | Omitted = OMITTED,
-    ) -> None: ...
+    ) -> None:
+        """Buffer an amendment of the object ``source`` was read or inserted
+        as: the members ``changes`` names, every other member of each
+        predecessor kept.
 
-    @overload
-    def update(
+        ``changes`` names declared members; version, temporal-axis, computed,
+        read-only, and relationship members are refused statically, before the
+        target Entity's Effective Concurrency Strategy or its evidence is
+        consulted. Every member it names is assigned, including one whose value
+        equals what the node published; ``{}`` names none and issues no DML at
+        all. A primary-key entry is optional addressing data: it must name
+        ``source``'s own object and is never assigned, so a key-only document
+        assigns nothing. ``source`` supplies the write's authority and start
+        exactly as ``tx.amend``'s does, so the method takes no condition or
+        ``valid_from``; ``until`` follows :meth:`insert`'s rules.
+        """
+        mutation, bound = window_mutation("amend", "amendUntil", until)
+        wire_keyed_write(self._attempt, mutation, source, changes, until=bound)
+
+    def amend_if(
         self,
         entity_name: str,
-        /,
         changes: WireChanges,
-        *,
-        valid_from: dt.datetime | None = None,
-        until: dt.datetime | Omitted = OMITTED,
-        if_version: int | None = None,
-        if_tx_start: dt.datetime | None = None,
-    ) -> None: ...
-
-    def update(
-        self,
-        target: WireEntity | str,
         /,
-        changes: WireChanges,
         *,
-        valid_from: dt.datetime | None = None,
+        version: int | Omitted = OMITTED,
+        tx_start: dt.datetime | Omitted = OMITTED,
+        unversioned: bool | Omitted = OMITTED,
+        valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
-        if_version: int | None = None,
-        if_tx_start: dt.datetime | None = None,
     ) -> None:
-        """Buffer a Wire update: of the row an observed node came from, or a
-        sparse patch of the ``entity_name`` object its caller addresses.
+        """Buffer an amendment of the existing ``entity_name`` object
+        ``changes``'s primary-key entries name, under the one condition its
+        caller states, exactly as ``tx.amend_if`` does.
 
-        Handed a node a read published (or the node an insert answered),
-        ``changes`` names declared members only; identity, optimistic-version,
-        temporal-axis, computed, read-only, and relationship members are refused
-        statically, before the target Entity's Effective Concurrency Strategy or
-        its evidence is consulted. Every member it names is assigned, including
-        one whose value equals what the node published; ``{}`` names none and
-        issues no DML at all. A Bitemporal update starts where the node was read
-        and applies to current coverage from there, exactly as ``tx.update``
-        does; ``until`` follows :meth:`insert`'s rules. Such an update takes its
-        condition from its source, so it states no ``valid_from`` and no
-        revision argument.
-
-        Handed an Entity spelling instead, the update is a patch of the existing
-        object ``changes``'s primary-key entries name, and every other entry is
-        assigned, a value equal to the stored one included. The condition is
-        the caller's revision argument, and the window its own bounds, on the
-        terms ``tx.replace`` states. A Bitemporal patch assigns its members to
-        each existing interval of its window, every interval keeping what it
-        does not assign, and leaves gaps and coverage after a scheduled
-        termination absent. A change set naming nothing but the key is
-        validated and then dropped, with no database work at all — no existence
-        or revision check.
+        Every entry but the key is assigned, a value equal to the stored one
+        included; a change set naming nothing but the key is validated and then
+        dropped, with no database work at all — no existence or revision check.
+        A Bitemporal amendment assigns its members to each existing interval of
+        its window, every interval keeping what it does not assign, and leaves
+        gaps and coverage after a scheduled termination absent.
         """
-        if isinstance(target, str):
-            mutation, bound = window_mutation("update", "updateUntil", until)
-            wire_target_write(
-                self._attempt,
-                mutation,
-                target,
-                changes,
-                valid_from=valid_from,
-                until=bound,
-                if_version=if_version,
-                if_tx_start=if_tx_start,
-            )
-            return
-        if valid_from is not None or if_version is not None or if_tx_start is not None:
-            raise WriteInstructionError(
-                "an update of an observed node starts where the node was read and is conditioned "
-                "on what that read observed, so it takes no valid_from, if_version, or "
-                "if_tx_start; to address the object yourself, name its Entity instead of "
-                "passing the node"
-            )
-        mutation, bound = window_mutation("update", "updateUntil", until)
-        wire_keyed_write(self._attempt, mutation, target, changes, until=bound)
-
-    def replace(
-        self,
-        entity_name: str,
-        data: Mapping[str, object],
-        *,
-        valid_from: dt.datetime | None = None,
-        until: dt.datetime | Omitted = OMITTED,
-        if_version: int | None = None,
-        if_tx_start: dt.datetime | None = None,
-    ) -> None:
-        """Buffer a complete replacement of the existing ``entity_name`` object
-        ``data``'s primary-key entries name, exactly as ``tx.replace`` does.
-
-        ``data`` is the object's whole writable state in accepted wire
-        spellings: an omitted nullable member is written empty, an omitted
-        ``many`` the empty collection, an omitted required member is refused,
-        and a framework-owned member is refused rather than stored.
-        """
-        mutation, bound = window_mutation("replace", "replaceUntil", until)
+        mutation, bound = window_mutation("amend", "amendUntil", until)
+        start = stated_valid_from(valid_from)
+        condition = target_condition(version=version, tx_start=tx_start, unversioned=unversioned)
         wire_target_write(
             self._attempt,
             mutation,
             entity_name,
-            data,
-            valid_from=valid_from,
+            changes,
+            condition,
+            valid_from=start,
             until=bound,
-            if_version=if_version,
-            if_tx_start=if_tx_start,
         )
+
+    def replace(
+        self,
+        source: WireEntity,
+        data: Mapping[str, object] | Omitted = OMITTED,
+        /,
+        *,
+        until: dt.datetime | Omitted = OMITTED,
+    ) -> None:
+        """Buffer a complete replacement of the object ``source`` was read or
+        inserted as, exactly as ``tx.replace`` does.
+
+        ``data`` is the object's whole writable state in accepted wire
+        spellings and stands alone: an omitted nullable member is written
+        empty, an omitted ``many`` the empty collection, an omitted required
+        member is refused, a framework-owned member is refused rather than
+        stored, and nothing is filled from ``source`` — ``{}`` included. A
+        primary-key entry is optional addressing data naming ``source``'s own
+        object. Omitting ``data`` replaces with the writable state ``source``
+        published. ``source`` supplies the write's authority and start, so the
+        method takes no condition or ``valid_from``; ``until`` follows
+        :meth:`insert`'s rules.
+        """
+        mutation, bound = window_mutation("replace", "replaceUntil", until)
+        wire_keyed_write(self._attempt, mutation, source, data, until=bound)
+
+    def replace_if(
+        self,
+        target: str | WireEntity,
+        data: Mapping[str, object] | Omitted = OMITTED,
+        /,
+        *,
+        version: int | Omitted = OMITTED,
+        tx_start: dt.datetime | Omitted = OMITTED,
+        unversioned: bool | Omitted = OMITTED,
+        valid_from: dt.datetime | Omitted = OMITTED,
+        until: dt.datetime | Omitted = OMITTED,
+    ) -> None:
+        """Buffer a complete replacement of an existing object under the one
+        condition its caller states, exactly as ``tx.replace_if`` does.
+
+        Handed an Entity spelling, ``data`` is required and its primary-key
+        entries name the object; it is completed as :meth:`replace` completes
+        it. Handed a node Parallax published instead — current or historical —
+        the node's own Entity, key, and published writable state are the
+        replacement, and ``data`` is not taken. Nothing the node carries stands
+        in for the condition, and its provenance licenses nothing.
+        """
+        mutation, bound = window_mutation("replace", "replaceUntil", until)
+        start = stated_valid_from(valid_from)
+        condition = target_condition(version=version, tx_start=tx_start, unversioned=unversioned)
+        wire_target_write(
+            self._attempt,
+            mutation,
+            target,
+            data,
+            condition,
+            valid_from=start,
+            until=bound,
+        )
+
+    def editable_data(self, source: WireEntity) -> dict[str, object]:
+        """Independently mutable authoring data copied from ``source``, a node
+        Parallax published: its primary key and every writable member it
+        published, in their Wire spellings, in fresh mappings and lists.
+
+        Relationships, framework-owned revision and temporal members, derived
+        variant metadata, and read-only members other than the key are left
+        out. The result is ordinary data for any verb — edited and passed to
+        :meth:`replace` or :meth:`replace_if`, or given a new or removed key
+        and passed to :meth:`insert` — and carries no authority: ``source``
+        stays the keyed carrier, unconsumed and unrenewed. It records no edit
+        history, so passing all of it to :meth:`amend` assigns every member it
+        holds. Nothing is queried, completed, generated, or recovered beyond
+        what ``source`` published.
+        """
+        return editable_wire_data(self._attempt.model.meta, source)
 
     def delete(self, observed: WireEntity) -> None:
         """Buffer a Wire ``delete`` of the row ``observed`` came from, keyed off
@@ -326,29 +358,34 @@ class WireTransactionView(WireDatabaseView):
         mutation, bound = window_mutation("terminate", "terminateUntil", until)
         wire_keyed_write(self._attempt, mutation, observed, until=bound)
 
-    def update_where(
+    def amend_where(
         self,
         target: WirePredicateTarget,
         changes: WireChanges,
         *,
-        valid_from: dt.datetime | None = None,
+        valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
     ) -> None:
-        """A predicate-selected Wire update over ``target`` — the canonical
+        """A predicate-selected Wire amendment over ``target`` — the canonical
         ``{entity, predicate}`` selection, never an Object Query. Readless (one
         statement) for an unversioned Non-Temporal target; a versioned or temporal
         target materializes to one observation-backed per-row write. A Bitemporal
-        target requires ``valid_from``, and ``until`` follows :meth:`insert`'s
+        target requires ``valid_from``, and both bounds follow :meth:`insert`'s
         rules.
 
         ``changes`` names at least one member. It lowers to the same canonical
-        assignment algebra ``tx.update_where``'s ``.set(...)`` spelling does, and
+        assignment algebra ``tx.amend_where``'s ``.set(...)`` spelling does, and
         that algebra's list is non-empty, so ``{}`` is refused here rather than
-        being the no-op it is for a keyed update — which addresses one row a
+        being the no-op it is for a keyed amendment — which addresses one row a
         caller already holds, where a selection holds none."""
-        mutation, bound = window_mutation("update", "updateUntil", until)
+        mutation, bound = window_mutation("amend", "amendUntil", until)
         wire_predicate_write(
-            self._attempt, mutation, target, changes, valid_from=valid_from, until=bound
+            self._attempt,
+            mutation,
+            target,
+            changes,
+            valid_from=stated_valid_from(valid_from),
+            until=bound,
         )
 
     def delete_where(self, target: WirePredicateTarget) -> None:
@@ -364,11 +401,17 @@ class WireTransactionView(WireDatabaseView):
         self,
         target: WirePredicateTarget,
         *,
-        valid_from: dt.datetime | None = None,
+        valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
     ) -> None:
         """A predicate-selected Wire terminate over a TEMPORAL ``target``:
         Transaction-Time-Only takes no ``valid_from``; Bitemporal requires it, and
-        ``until`` follows :meth:`insert`'s rules."""
+        both bounds follow :meth:`insert`'s rules."""
         mutation, bound = window_mutation("terminate", "terminateUntil", until)
-        wire_predicate_write(self._attempt, mutation, target, valid_from=valid_from, until=bound)
+        wire_predicate_write(
+            self._attempt,
+            mutation,
+            target,
+            valid_from=stated_valid_from(valid_from),
+            until=bound,
+        )

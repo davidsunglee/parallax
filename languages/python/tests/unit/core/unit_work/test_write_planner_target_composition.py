@@ -29,16 +29,14 @@ _OBJECT = ObjectKey(EntityIdentity("parallax.compatibility", "Account"), (("id",
 def _target(version: int, **members: object) -> TargetKeyedWrite:
     return target_write(
         prepare_wire_write(
-            TargetWrite("update", "Account", {"id": 1, **members}, if_version=version), _ACCOUNT
+            TargetWrite("amend", "Account", {"id": 1, **members}, if_version=version), _ACCOUNT
         ),
         _FAMILIES,
     )
 
 
 def _update(**members: object) -> PreparedKeyedWrite:
-    prepared = prepare_wire_write(
-        KeyedWrite("update", "Account", ({"id": 1, **members},)), _ACCOUNT
-    )
+    prepared = prepare_wire_write(KeyedWrite("amend", "Account", ({"id": 1, **members},)), _ACCOUNT)
     assert isinstance(prepared, PreparedKeyedWrite)
     return prepared
 
@@ -86,7 +84,7 @@ def test_a_target_carrier_refuses_an_insert_and_a_write_of_several_objects() -> 
         KeyedWrite("insert", "Account", ({"id": 1, "owner": "Ada", "balance": "1.00"},)), _ACCOUNT
     )
     several = prepare_wire_write(
-        KeyedWrite("update", "Account", ({"id": 1, "owner": "Bo"}, {"id": 2, "owner": "Cy"})),
+        KeyedWrite("amend", "Account", ({"id": 1, "owner": "Bo"}, {"id": 2, "owner": "Cy"})),
         _ACCOUNT,
     )
     for instruction in (insert, several):

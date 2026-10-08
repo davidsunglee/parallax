@@ -13,7 +13,7 @@ when:
         - { id: 1, acctNum: A, value: "100.00" }
       validFrom: "2024-01-01T00:00:00.000000Z"
       at: "2024-01-01T00:00:00.000000Z"
-    - mutation: updateUntil
+    - mutation: amendUntil
       entity: parallax.compatibility.Position
       statements: 4
       note: the caller states the key, the assignment, its window, and the Transaction-Time start it last observed; the flush reads the coverage the window reaches, closes the rectangle at March gated on the caller's start, then chains head / middle / tail, each keeping the unassigned account

@@ -20,7 +20,7 @@ when:
   boundary:
     - action: read
       note: observe the versioned row (records the observed version)
-    - action: update
+    - action: amend
       note: the gated UPDATE conflicts once — the explicit opt-out leaves it unretried
 then:
   outcome: optimistic-lock-conflict

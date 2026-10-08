@@ -35,7 +35,7 @@ def _schema() -> Draft202012Validator:
 
 def _update_instruction() -> dict[str, object]:
     return {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {
             "entity": "Account",
             "predicate": {"lessThan": {"attr": "Account.balance", "value": "200.00"}},
@@ -136,7 +136,7 @@ def test_schema_accepts_object_and_array_predicate_write_literals(literal: objec
 @pytest.mark.parametrize(
     ("mutation", "edits"),
     [
-        ("update", {"assignments": []}),
+        ("amend", {"assignments": []}),
         ("delete", {"assignments": [{"attr": "Account.balance", "value": 0.00}]}),
         ("terminate", {"assignments": [{"attr": "Account.balance", "value": 0.00}]}),
         ("terminateUntil", {"until": None}),
@@ -321,7 +321,7 @@ def test_materialization_validator_rejects_missing_temporal_carried_payload() ->
 def test_materialization_validator_requires_transaction_temporal_update_payload() -> None:
     entity = _balance_entity()
     instruction = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {
             "entity": "Balance",
             "predicate": {"eq": {"attr": "Balance.id", "value": 1}},
@@ -388,7 +388,7 @@ def test_materialization_validator_requires_a_whole_value_object_for_noop_planni
     )
     entity = Entity(definition=definition)
     instruction = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {"entity": "Customer", "predicate": {"all": {}}},
         "assignments": [
             {
@@ -444,7 +444,7 @@ def test_materialization_validator_rejects_temporal_write_without_a_find() -> No
 def test_materialization_validator_allows_readless_unversioned_update_and_delete() -> None:
     entity = load_model(_COMPATIBILITY_ROOT, "models/wallet.yaml").root_entity
     update = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {
             "entity": "Wallet",
             "predicate": {"lessThan": {"attr": "Wallet.balance", "value": 200.00}},
@@ -508,7 +508,7 @@ def test_schema_validation_rejects_a_cache_hit_as_predicate_materialization(tmp_
 def test_model_validator_accepts_related_entity_predicate_scope(operator: str) -> None:
     model = _orders_model()
     instruction = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {
             "entity": "Order",
             "predicate": {
@@ -568,7 +568,7 @@ def test_model_validator_scopes_nested_exists_by_its_value_object_path(operator:
 def test_model_validator_accepts_atomic_top_level_value_object_assignment() -> None:
     entity = _customer_entity()
     instruction = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {"entity": "Customer", "predicate": {"all": {}}},
         "assignments": [
             {
@@ -584,7 +584,7 @@ def test_model_validator_accepts_atomic_top_level_value_object_assignment() -> N
 def test_model_validator_accepts_omitted_nested_many_assignment() -> None:
     entity = _customer_entity()
     instruction = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {"entity": "Customer", "predicate": {"all": {}}},
         "assignments": [
             {
@@ -600,7 +600,7 @@ def test_model_validator_accepts_omitted_nested_many_assignment() -> None:
 def test_model_validator_accepts_omitted_nullable_nested_one_assignment() -> None:
     entity = _customer_entity()
     instruction = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {"entity": "Customer", "predicate": {"all": {}}},
         "assignments": [
             {
@@ -618,7 +618,7 @@ def test_rejected_many_oracle_does_not_certify_assignment_missing_required_neste
     model.entity_defs[0]["layout"] = {"document": {"column": "payload"}}
     assert isinstance(model, Model)
     instruction = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {"entity": "Contact", "predicate": {"all": {}}},
         "assignments": [
             {
@@ -649,7 +649,7 @@ def test_model_validator_accepts_array_for_many_value_object_assignment() -> Non
     definition["valueObjects"][0]["multiplicity"] = "many"
     many_entity = Entity(definition=definition)
     instruction = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {"entity": "Customer", "predicate": {"all": {}}},
         "assignments": [
             {
@@ -665,7 +665,7 @@ def test_model_validator_accepts_array_for_many_value_object_assignment() -> Non
 def test_model_validator_rejects_non_document_value_object_assignment() -> None:
     entity = _customer_entity()
     instruction = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {"entity": "Customer", "predicate": {"all": {}}},
         "assignments": [{"attr": "Customer.address", "value": ["not a document"]}],
     }
@@ -679,7 +679,7 @@ def test_model_validator_rejects_non_document_value_object_assignment() -> None:
     [
         (
             {
-                "mutation": "update",
+                "mutation": "amend",
                 "target": {
                     "entity": "Account",
                     "predicate": {"lessThan": {"attr": "Wallet.balance", "value": "200.00"}},
@@ -690,7 +690,7 @@ def test_model_validator_rejects_non_document_value_object_assignment() -> None:
         ),
         (
             {
-                "mutation": "update",
+                "mutation": "amend",
                 "target": {
                     "entity": "Account",
                     "predicate": {"all": {}},
@@ -704,7 +704,7 @@ def test_model_validator_rejects_non_document_value_object_assignment() -> None:
         ),
         (
             {
-                "mutation": "update",
+                "mutation": "amend",
                 "target": {"entity": "Account", "predicate": {"all": {}}},
                 "assignments": [{"attr": "Account.version", "value": 2}],
             },

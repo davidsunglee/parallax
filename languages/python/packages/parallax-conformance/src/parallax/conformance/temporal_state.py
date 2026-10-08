@@ -248,7 +248,7 @@ class TemporalShadow:
         entity: EntityMetadata,
         row: Mapping[str, object],
     ) -> TemporalObservation | None:
-        """The tracked observation a temporal update/terminate/updateUntil/
+        """The tracked observation a temporal amend/terminate/amendUntil/
         terminateUntil instruction's close/chain consumes, or ``None`` for a
         milestone this tracker has never seen open (an insert, or a genuinely
         unobserved close the write itself will surface as a conflict/stale

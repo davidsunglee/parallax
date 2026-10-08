@@ -6,7 +6,7 @@ given:
   fixtures: true
 when:
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Wallet
       statements: 2
       note: two distinct keys take DIFFERENT new balances ⇒ one keyed UPDATE each

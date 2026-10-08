@@ -118,7 +118,7 @@ def test_case_write_adapter_accepts_canonical_predicate_operands_and_assignments
     instruction = instructions.deserialize(
         case_format.safe_load_yaml(
             """
-mutation: update
+mutation: amend
 target:
   entity: parallax.compatibility.Account
   predicate:
@@ -138,7 +138,7 @@ assignments:
 def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
     stated = dt.datetime(2024, 7, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
     instruction = instructions.KeyedWrite(
-        "update",
+        "amend",
         "parallax.compatibility.Position",
         ({"id": 1, "value": decimal.Decimal("5.00")},),
         valid_from=stated,
@@ -153,7 +153,7 @@ def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
 def test_case_write_adapter_carries_the_decoded_case_temporal_bounds() -> None:
     instruction = instructions.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "parallax.compatibility.Position",
             "rows": [{"id": 1, "value": "5.00"}],
             "validFrom": "2024-02-01T00:00:00.000000Z",

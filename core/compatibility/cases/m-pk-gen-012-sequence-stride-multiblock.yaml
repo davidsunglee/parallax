@@ -10,7 +10,7 @@ given:
   fixtures: true
 when:
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.PkSequence
       statements: 1
       note: reserve block 1 (base 100)
@@ -23,7 +23,7 @@ when:
       rows:
         - { id: 100, label: spring }
         - { id: 110, label: summer }
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.PkSequence
       statements: 1
       note: reserve block 2 (base 120)

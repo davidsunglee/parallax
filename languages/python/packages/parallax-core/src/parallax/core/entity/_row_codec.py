@@ -189,6 +189,17 @@ class EntityRowCodec:
             },
         )
 
+    def has_edit_history(self, value: object) -> bool:
+        """Whether ``value``'s edit chain touched any member at all.
+
+        Read off the Change Record alone, without a diff or any member's value:
+        a member set back to its original, or set to the value it already held,
+        is still history, while an empty ``edit()`` adds none. A malformed record
+        is refused rather than read as no history.
+        """
+        facts, _names = self._resolved(value)
+        return bool(_change_record(facts, value))
+
     def _touched(
         self, facts: _RowFacts, names: WireNames, value: object, operation: str
     ) -> tuple[Mapping[str, object], Mapping[str, str]]:

@@ -161,7 +161,7 @@ def _step_mutation(step: PlannedWrite) -> str:
     if isinstance(step, PlannedInsert):
         return "insert"
     if isinstance(step, PlannedUpdate):
-        return "update"
+        return "amend"
     if isinstance(step, PlannedClose):
         return "close"
     return "delete"
@@ -240,7 +240,7 @@ def _one_row_temporal_group(assigned: Decimal) -> MaterializedWriteGroup:
     :data:`_BALANCE_PREDECESSOR` describes, under the same update."""
     return temporal_group(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection(
                 "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "1000000.00")
             ),
@@ -262,7 +262,7 @@ def test_one_temporal_row_settles_identically_addressed_and_materialized() -> No
     # equal step for step. A drift between the arms is precisely what a
     # second derivation site would produce.
     assigned = Decimal("9.00")
-    addressed = KeyedWrite("update", "Balance", ({"id": 1, "value": assigned},))
+    addressed = KeyedWrite("amend", "Balance", ({"id": 1, "value": assigned},))
     key_ = object_key(addressed, _BALANCE)
     assert key_ is not None
     eager = _plan(
@@ -291,7 +291,7 @@ def test_an_audit_replacing_an_authored_value_reaches_the_rebuilt_group_successo
     monkeypatch.setattr(
         planning_composition, "NO_AUDIT", RecordingAudit(stamps={value: Decimal("77.00")})
     )
-    addressed = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("9.00")},))
+    addressed = KeyedWrite("amend", "Balance", ({"id": 1, "value": Decimal("9.00")},))
     key_ = object_key(addressed, _BALANCE)
     assert key_ is not None
     eager = _plan(
@@ -327,7 +327,7 @@ def test_one_versioned_row_settles_identically_addressed_and_materialized() -> N
     # exactly. Their CARDINALITY is the one thing they do not share, and it is
     # not in evidence here: both plans carry one step over one key.
     assigned = Decimal("5.00")
-    addressed = KeyedWrite("update", "Account", ({"id": 9, "balance": assigned},))
+    addressed = KeyedWrite("amend", "Account", ({"id": 9, "balance": assigned},))
     key_ = object_key(addressed, _ACCOUNT)
     assert key_ is not None
     eager = _plan(
@@ -339,7 +339,7 @@ def test_one_versioned_row_settles_identically_addressed_and_materialized() -> N
     materialized = _plan(
         [
             _version_group(
-                "Account", "update", "id", [(9, 1)], [WriteAssignment("Account.balance", assigned)]
+                "Account", "amend", "id", [(9, 1)], [WriteAssignment("Account.balance", assigned)]
             )
         ],
         _ACCOUNT,
@@ -375,7 +375,7 @@ def _temporal_topology_group(
                 entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", "100.00")
             ),
             (WriteAssignment(f"{entity}.value", Decimal("9.00")),)
-            if mutation.startswith("update")
+            if mutation.startswith("amend")
             else (),
             *bounds,
         ),
@@ -422,11 +422,11 @@ class _Constructions:
 @pytest.mark.parametrize(
     ("entity", "mutation", "steps_per_row"),
     [
-        ("Balance", "update", 2),
+        ("Balance", "amend", 2),
         ("Balance", "terminate", 1),
-        ("Position", "update", 3),
+        ("Position", "amend", 3),
         ("Position", "terminate", 2),
-        ("Position", "updateUntil", 4),
+        ("Position", "amendUntil", 4),
         ("Position", "terminateUntil", 3),
     ],
 )
@@ -460,7 +460,7 @@ def test_indexing_a_temporal_group_constructs_only_the_requested_step(
 def test_a_temporal_groups_marker_no_opened_row_expresses_is_refused_while_planning() -> None:
     group = temporal_group(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection(
                 "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "100.00")
             ),
@@ -524,7 +524,7 @@ def _refuse_member_comparison(monkeypatch: pytest.MonkeyPatch) -> None:
 def _position_update(*assignments: WriteAssignment, account: str) -> MaterializedWriteGroup:
     return temporal_group(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection(
                 "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
             ),
@@ -592,7 +592,7 @@ def test_a_literal_keyed_write_overlays_every_member_it_assigns(
 ) -> None:
     _refuse_member_comparison(monkeypatch)
     prepared = _prepared_keyed(
-        KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "B", "value": Decimal("9.00")},)),
+        KeyedWrite("amend", "Balance", ({"id": 1, "acctNum": "B", "value": Decimal("9.00")},)),
         _BALANCE,
     )
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
@@ -609,7 +609,7 @@ def _acquisition_update_until(model: Metamodel) -> PreparedPredicateWrite:
     entity = acquisition_support.case_named("acquisition.rows-8.document").entity.identity.canonical
     prepared = prepare_typed_write(
         PredicateWrite(
-            "updateUntil",
+            "amendUntil",
             PredicateSelection(
                 entity, predicate_algebra.Comparison("greaterThanEquals", f"{entity}.id", 1)
             ),
@@ -664,7 +664,7 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
     sealed = evidence.seal()
     assert sealed is not None
     keyed = KeyedWrite(
-        "updateUntil",
+        "amendUntil",
         target.identity.canonical,
         ({"id": 1, "title": acquisition_support.ASSIGNED_TITLE},),
         acquisition_support.INTERIOR_FROM,
@@ -745,7 +745,7 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
     )
     prepared = _prepared_keyed(
         KeyedWrite(
-            "updateUntil",
+            "amendUntil",
             target.identity.canonical,
             (
                 {
@@ -796,7 +796,7 @@ def test_a_surviving_row_executes_a_restored_leaf_beside_an_effective_value_obje
     }
     group = temporal_group(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
             (
                 WriteAssignment("Branch.name", "Central Branch"),
@@ -876,10 +876,10 @@ def _planned_group(
     ("entity", "mutation", "row_two"),
     [
         ("Balance", "terminate", ["PlannedTemporalRemoval"]),
-        ("Balance", "update", ["PlannedTemporalRevision"]),
-        ("Position", "update", ["PlannedTemporalRevision", "PlannedInsert"]),
+        ("Balance", "amend", ["PlannedTemporalRevision"]),
+        ("Position", "amend", ["PlannedTemporalRevision", "PlannedInsert"]),
         ("Position", "terminate", ["PlannedTemporalRemoval", "PlannedInsert"]),
-        ("Position", "updateUntil", ["PlannedTemporalRevision", "PlannedInsert", "PlannedInsert"]),
+        ("Position", "amendUntil", ["PlannedTemporalRevision", "PlannedInsert", "PlannedInsert"]),
         ("Position", "terminateUntil", ["PlannedTemporalRevision", "PlannedInsert"]),
     ],
 )
@@ -921,13 +921,13 @@ def test_a_group_continues_an_insertion_only_from_the_rows_that_insertion_opened
 
 
 def test_a_transaction_time_group_unit_opens_one_current_row_per_rewritten_row() -> None:
-    (unit,) = _planned_group("Balance", "update", owned=(2,)).units
+    (unit,) = _planned_group("Balance", "amend", owned=(2,)).units
     assert list(unit.removed) == []
     assert list(unit.opened.fresh) == [_endpoint("Balance", key, OPEN_END) for key in (1, 3)]
 
 
 def test_a_group_of_rows_the_attempt_never_opened_keeps_its_uniform_layout() -> None:
-    (unit,) = _planned_group("Position", "update").units
+    (unit,) = _planned_group("Position", "amend").units
     assert list(unit.removed) == []
     assert len(list(unit.opened.fresh)) == 6
 
@@ -936,7 +936,7 @@ def test_a_group_never_opens_a_successor_that_covers_no_valid_time() -> None:
     model = _POSITION
     group = temporal_group(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection(
                 "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
             ),
@@ -1007,7 +1007,7 @@ def _position_group(mutation: PredicateMutation, *starts: dt.datetime) -> Materi
                 "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
             ),
             (WriteAssignment("Position.value", Decimal("9.00")),)
-            if mutation.startswith("update")
+            if mutation.startswith("amend")
             else (),
             *((_WINDOW_FROM, _WINDOW_UNTIL) if bounded else (_WINDOW_FROM,)),
         ),
@@ -1050,7 +1050,7 @@ def test_each_selected_row_is_clipped_to_its_own_coverage() -> None:
     # starts where the row does, and one starting past the window's end is not
     # reached at all — no step, and no change to its state.
     plan = _finalized(
-        _POSITION, _position_group("updateUntil", _OPENED_AT, _WINDOW_FROM, _MAY, _OCT)
+        _POSITION, _position_group("amendUntil", _OPENED_AT, _WINDOW_FROM, _MAY, _OCT)
     )
     assert _windows(plan.steps) == [
         ("PlannedClose", None, None),
@@ -1087,7 +1087,7 @@ def test_a_selected_row_the_attempt_opened_is_clipped_to_its_own_coverage() -> N
     # from its own start, and the one starting at the window's end is not reached.
     plan = _finalized(
         _POSITION,
-        _position_group("updateUntil", _MAY, _WINDOW_UNTIL),
+        _position_group("amendUntil", _MAY, _WINDOW_UNTIL),
         ownership=OpenedRows(
             frozenset(_endpoint("Position", key, OPEN_END, OPEN_END) for key in (1, 2))
         ),
@@ -1109,8 +1109,8 @@ def test_a_selected_row_the_attempt_opened_is_clipped_to_its_own_coverage() -> N
 @pytest.mark.parametrize(
     ("group", "uniform"),
     [
-        (_position_group("updateUntil", _OPENED_AT, _OPENED_AT, _OPENED_AT), True),
-        (_position_group("updateUntil", _OPENED_AT, _WINDOW_FROM, _OPENED_AT), False),
+        (_position_group("amendUntil", _OPENED_AT, _OPENED_AT, _OPENED_AT), True),
+        (_position_group("amendUntil", _OPENED_AT, _WINDOW_FROM, _OPENED_AT), False),
     ],
     ids=["uniform", "clipped"],
 )
@@ -1143,7 +1143,7 @@ def test_an_owned_row_a_group_reaches_is_revised_with_what_it_already_holds() ->
     # closed and chained.
     group = temporal_group(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection(
                 "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "100.00")
             ),
@@ -1192,7 +1192,7 @@ def test_an_owned_row_a_group_reaches_is_revised_with_what_it_already_holds() ->
 
 
 def test_a_group_no_row_of_which_takes_a_step_adds_no_segment_but_still_completes() -> None:
-    plan = _finalized(_POSITION, _position_group("updateUntil", _OCT, _OCT))
+    plan = _finalized(_POSITION, _position_group("amendUntil", _OCT, _OCT))
     assert len(plan.steps) == 0
     assert plan.steps.segments == ()
     (unit,) = plan.units
@@ -1261,7 +1261,7 @@ def _effects(unit: ExecutionUnit) -> tuple[list[object], ...]:
     )
 
 
-@pytest.mark.parametrize("mutation", ["terminate", "updateUntil"])
+@pytest.mark.parametrize("mutation", ["terminate", "amendUntil"])
 def test_steps_and_effects_stay_as_settled_when_the_attempts_ownership_changes(
     mutation: PredicateMutation,
 ) -> None:
@@ -1299,10 +1299,10 @@ def test_steps_and_effects_stay_as_settled_when_the_attempts_ownership_changes(
     ("entity", "mutation", "start"),
     [
         ("Balance", "terminate", None),
-        ("Balance", "update", None),
+        ("Balance", "amend", None),
         ("Position", "terminate", _OPENED_AT),
-        ("Position", "updateUntil", _OPENED_AT),
-        ("Position", "update", _WINDOW_FROM),
+        ("Position", "amendUntil", _OPENED_AT),
+        ("Position", "amend", _WINDOW_FROM),
     ],
 )
 def test_an_owned_row_settles_identically_through_a_keyed_write_and_a_group(
@@ -1335,7 +1335,7 @@ def test_an_owned_row_settles_identically_through_a_keyed_write_and_a_group(
         if mutation.endswith("Until")
         else (_WINDOW_FROM,)
     )
-    assigned = {"value": Decimal("9.00")} if mutation.startswith("update") else {}
+    assigned = {"value": Decimal("9.00")} if mutation.startswith("amend") else {}
     keyed = KeyedWrite(mutation, entity, ({"id": 1, **assigned},), *bounds)
     key_ = object_key(keyed, model)
     assert key_ is not None
@@ -1429,8 +1429,8 @@ def test_settling_a_bitemporal_group_builds_none_of_its_steps(
     # neither builds an interval, a successor, an expansion result, a planned
     # row, or a predecessor to find out. The group's one window is the only
     # interval, whatever the row count; the steps arise when they are asked for.
-    small = _position_group("updateUntil", *(_OPENED_AT, _WINDOW_FROM) * 2)
-    large = _position_group("updateUntil", *(_OPENED_AT, _WINDOW_FROM) * 8)
+    small = _position_group("amendUntil", *(_OPENED_AT, _WINDOW_FROM) * 2)
+    large = _position_group("amendUntil", *(_OPENED_AT, _WINDOW_FROM) * 8)
     ownership = OpenedRows(
         frozenset(_endpoint("Position", key, OPEN_END, OPEN_END) for key in owned)
     )
@@ -1456,7 +1456,7 @@ def test_settling_a_bitemporal_group_builds_none_of_its_steps(
 def test_an_unowned_transaction_time_group_reads_no_row_while_it_settles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    group = _temporal_topology_group(_BALANCE, "Balance", "update", rows=5)
+    group = _temporal_topology_group(_BALANCE, "Balance", "amend", rows=5)
     reads: list[str] = []
     column: Any = ColumnSlice
     get, walk = column.__getitem__, column.__iter__
@@ -1595,7 +1595,7 @@ def test_an_owned_row_revised_by_a_multi_assignment_group_assigns_every_member(
     assigned[restored] = stored[restored]
     group = temporal_group(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection(
                 "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "100.00")
             ),
@@ -1624,7 +1624,7 @@ def test_an_owned_row_revised_by_a_group_assigns_the_occurrence_and_the_leaf_it_
     }
     group = temporal_group(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
             (
                 WriteAssignment("Branch.name", "Central Branch"),
@@ -1682,9 +1682,9 @@ def _stamped_like(audited: PlannedWrite, plain: PlannedWrite, stamp: AttributeId
     ("entity", "mutation"),
     [
         ("Balance", "terminate"),
-        ("Balance", "update"),
-        ("Position", "update"),
-        ("Position", "updateUntil"),
+        ("Balance", "amend"),
+        ("Position", "amend"),
+        ("Position", "amendUntil"),
         ("Position", "terminateUntil"),
     ],
 )
@@ -1713,7 +1713,7 @@ def test_a_row_the_window_never_reaches_is_not_audited(monkeypatch: pytest.Monke
     stamp = AttributeIdentity(corpus_entity("Position"), "acctNum")
     audit = RecordingAudit(stamps={stamp: "audited"})
     monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
-    plan = _finalized(_POSITION, _position_group("updateUntil", _OPENED_AT, _OCT))
+    plan = _finalized(_POSITION, _position_group("amendUntil", _OPENED_AT, _OCT))
 
     steps = list(plan.steps)
 

@@ -122,7 +122,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
     (
         "keyed-update-nontemporal-sparse",
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Account",
             "rows": [{"id": 1, "balance": 0.00}],
         },
@@ -173,7 +173,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
     (
         "keyed-updateUntil-bitemporal-bounded",
         {
-            "mutation": "updateUntil",
+            "mutation": "amendUntil",
             "entity": "Position",
             "rows": [{"id": 9, "value": 150.00}],
             "validFrom": _B1,
@@ -209,7 +209,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
     (
         "predicate-update-nontemporal",
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Account", "predicate": {"all": {}}},
             "assignments": [{"attr": "Account.balance", "value": 0.00}],
         },
@@ -234,7 +234,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
     (
         "predicate-update-bitemporal-plain",
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Position", "predicate": {"all": {}}},
             "assignments": [{"attr": "Position.value", "value": 150.00}],
             "validFrom": _B1,
@@ -243,7 +243,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
     (
         "predicate-updateUntil-bitemporal-bounded",
         {
-            "mutation": "updateUntil",
+            "mutation": "amendUntil",
             "target": {"entity": "Position", "predicate": {"all": {}}},
             "assignments": [{"attr": "Position.value", "value": 150.00}],
             "validFrom": _B1,
@@ -253,7 +253,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
     (
         "target-update-versioned",
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Account",
             "row": {"id": 1, "balance": 5.0},
             "ifVersion": 3,
@@ -270,12 +270,12 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
     ),
     (
         "target-update-unversioned",
-        {"mutation": "update", "entity": "Wallet", "row": {"id": 1, "balance": 5.0}},
+        {"mutation": "amend", "entity": "Wallet", "row": {"id": 1, "balance": 5.0}},
     ),
     (
         "target-update-audit",
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Balance",
             "row": {"id": 9, "value": 1.0},
             "ifTxStart": _B1,
@@ -369,7 +369,7 @@ def test_forbidden_observation_control_key_is_rejected(forbidden: str) -> None:
     with pytest.raises(wi.WriteInstructionError, match="forbidden observation control key"):
         wi.deserialize(
             {
-                "mutation": "update",
+                "mutation": "amend",
                 "entity": "Account",
                 "rows": [{"id": 1, "balance": 0.00, forbidden: 3}],
             }
@@ -378,7 +378,7 @@ def test_forbidden_observation_control_key_is_rejected(forbidden: str) -> None:
 
 def test_programmatic_keyed_write_rejects_observation_control_keys_too() -> None:
     with pytest.raises(wi.WriteInstructionError, match="forbidden observation control key"):
-        wi.KeyedWrite("update", "Account", ({"id": 1, "observedVersion": 2},))
+        wi.KeyedWrite("amend", "Account", ({"id": 1, "observedVersion": 2},))
 
 
 def test_ambiguous_and_shapeless_instructions_are_rejected() -> None:
@@ -440,7 +440,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
     "doc, match",
     [
         (
-            {"mutation": "update", "target": {"entity": "Account", "predicate": {"all": {}}}},
+            {"mutation": "amend", "target": {"entity": "Account", "predicate": {"all": {}}}},
             "MUST carry `assignments`",
         ),
         (
@@ -481,7 +481,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
         ),
         (
             {
-                "mutation": "update",
+                "mutation": "amend",
                 "target": {"entity": "Account", "predicate": {"all": {}}},
                 "assignments": [],
             },
@@ -489,7 +489,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
         ),
         (
             {
-                "mutation": "update",
+                "mutation": "amend",
                 "target": {"entity": "Account", "predicate": {"all": {}}},
                 "assignments": [["Account.balance", 0]],
             },
@@ -497,7 +497,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
         ),
         (
             {
-                "mutation": "update",
+                "mutation": "amend",
                 "target": {"entity": "Account", "predicate": {"all": {}}},
                 "assignments": [{"attr": "balance", "value": 0}],
             },
@@ -505,7 +505,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
         ),
         (
             {
-                "mutation": "updateUntil",
+                "mutation": "amendUntil",
                 "target": {"entity": "Position", "predicate": {"all": {}}},
                 "assignments": [{"attr": "Position.value", "value": 0}],
                 "validFrom": _B1,
@@ -522,22 +522,22 @@ def test_predicate_structural_rejections(doc: dict[str, Any], match: str) -> Non
 @pytest.mark.parametrize(
     "doc, match",
     [
-        ({"mutation": "update", "entity": "Account", "row": [1]}, "`row` must be a mapping"),
+        ({"mutation": "amend", "entity": "Account", "row": [1]}, "`row` must be a mapping"),
         (
             {"mutation": "insert", "entity": "Account", "row": {"id": 1}},
             "`mutation` must be one of",
         ),
         (
-            {"mutation": "update", "entity": "Account", "row": {"id": 1}, "ifVersion": "3"},
+            {"mutation": "amend", "entity": "Account", "row": {"id": 1}, "ifVersion": "3"},
             "`ifVersion` must be an integer",
         ),
         (
-            {"mutation": "update", "entity": "Account", "row": {"id": 1}, "ifVersion": True},
+            {"mutation": "amend", "entity": "Account", "row": {"id": 1}, "ifVersion": True},
             "`ifVersion` must be an integer",
         ),
         (
             {
-                "mutation": "update",
+                "mutation": "amend",
                 "entity": "Account",
                 "row": {"id": 1},
                 "ifVersion": 1,
@@ -554,19 +554,19 @@ def test_predicate_structural_rejections(doc: dict[str, Any], match: str) -> Non
             "MUST carry both",
         ),
         (
-            {"mutation": "update", "entity": "Account", "row": {"id": 1}, "ifTxStart": ""},
+            {"mutation": "amend", "entity": "Account", "row": {"id": 1}, "ifTxStart": ""},
             "non-empty instant string",
         ),
         (
-            {"mutation": "update", "entity": "Account", "row": {"id": 1}, "note": "x"},
+            {"mutation": "amend", "entity": "Account", "row": {"id": 1}, "note": "x"},
             "unexpected key",
         ),
         (
-            {"mutation": "update", "entity": "Account", "row": {"id": 1, "observedVersion": 2}},
+            {"mutation": "amend", "entity": "Account", "row": {"id": 1, "observedVersion": 2}},
             "forbidden observation control key",
         ),
         (
-            {"mutation": "update", "entity": "Account", "rows": [{"id": 1}], "row": {"id": 1}},
+            {"mutation": "amend", "entity": "Account", "rows": [{"id": 1}], "row": {"id": 1}},
             "ambiguous",
         ),
     ],
@@ -577,7 +577,7 @@ def test_target_structural_rejections(doc: dict[str, Any], match: str) -> None:
 
 
 def test_a_target_rows_members_are_a_frozen_view() -> None:
-    instruction = wi.TargetWrite("update", "Account", {"id": 1})
+    instruction = wi.TargetWrite("amend", "Account", {"id": 1})
     with pytest.raises(TypeError):
         cast("dict[str, object]", instruction.row)["id"] = 2
     assert wi.deserialize(wi.serialize(instruction)) == instruction
@@ -613,7 +613,7 @@ def test_a_target_patch_states_its_key_its_assignments_and_its_callers_version(
     prepare: Any,
 ) -> None:
     prepared = prepare(
-        _target("update", "Account", {"id": 1, "owner": "Bo"}, if_version=3), _ACCOUNT
+        _target("amend", "Account", {"id": 1, "owner": "Bo"}, if_version=3), _ACCOUNT
     )
     assert isinstance(prepared, wi.PreparedTargetWrite)
     assert (prepared.replaces, prepared.assigns) == (False, True)
@@ -621,7 +621,7 @@ def test_a_target_patch_states_its_key_its_assignments_and_its_callers_version(
     assert dict(prepared.row) == {"id": 1, "owner": "Bo"}
     keyed = wi.target_instruction(prepared)
     assert (keyed.mutation, keyed.target, keyed.rows) == (
-        "update",
+        "amend",
         prepared.target,
         (prepared.row,),
     )
@@ -629,7 +629,7 @@ def test_a_target_patch_states_its_key_its_assignments_and_its_callers_version(
 
 @_BOTH_PRODUCERS
 def test_an_identity_only_patch_is_prepared_as_the_empty_write(prepare: Any) -> None:
-    prepared = prepare(_target("update", "Account", {"id": 1}, if_version=3), _ACCOUNT)
+    prepared = prepare(_target("amend", "Account", {"id": 1}, if_version=3), _ACCOUNT)
     assert (prepared.replaces, prepared.assigns) == (False, False)
 
 
@@ -660,72 +660,72 @@ def test_a_replacement_refuses_an_omitted_required_member(prepare: Any) -> None:
     "instruction, match",
     [
         pytest.param(
-            _target("update", "Account", {"id": 1, "owner": "Bo"}, if_version=3, until=_I2),
+            _target("amend", "Account", {"id": 1, "owner": "Bo"}, if_version=3, until=_I2),
             "takes no until",
             id="non-temporal-until",
         ),
         pytest.param(
-            _target("update", "Account", {"id": 1, "owner": "Bo"}, if_version=3, valid_from=_I1),
+            _target("amend", "Account", {"id": 1, "owner": "Bo"}, if_version=3, valid_from=_I1),
             "takes no valid_from",
             id="non-temporal-valid-from",
         ),
         pytest.param(
-            _target("update", "Account", {"id": 1}, if_version=3, until=_I2),
+            _target("amend", "Account", {"id": 1}, if_version=3, until=_I2),
             "takes no until",
             id="non-temporal-until-on-an-empty-patch",
         ),
         pytest.param(
-            _target("update", "Account", {"id": 1, "owner": "Bo"}, if_version=1, if_tx_start=_I1),
-            "states both if_version and if_tx_start",
+            _target("amend", "Account", {"id": 1, "owner": "Bo"}, if_version=1, if_tx_start=_I1),
+            "and a target has one condition to state",
             id="both-revisions",
         ),
         pytest.param(
-            _target("update", "Account", {"id": 1, "owner": "Bo"}, if_tx_start=_I1),
-            "takes if_version, not if_tx_start",
+            _target("amend", "Account", {"id": 1, "owner": "Bo"}, if_tx_start=_I1),
+            "takes version, not tx_start",
             id="versioned-takes-a-version",
         ),
         pytest.param(
-            _target("update", "Account", {"id": 1, "owner": "Bo"}),
-            "requires if_version",
+            _target("amend", "Account", {"id": 1, "owner": "Bo"}),
+            "requires version",
             id="versioned-missing-version",
         ),
         pytest.param(
-            _target("update", "Account", {"id": 1, "owner": "Bo"}, if_version=cast("int", "3")),
-            "integer if_version",
+            _target("amend", "Account", {"id": 1, "owner": "Bo"}, if_version=cast("int", "3")),
+            "integer version",
             id="versioned-version-of-the-wrong-type",
         ),
         pytest.param(
-            _target("update", "Account", {"id": 1, "owner": "Bo"}, if_version=True),
-            "integer if_version",
+            _target("amend", "Account", {"id": 1, "owner": "Bo"}, if_version=True),
+            "integer version",
             id="versioned-boolean-version",
         ),
         pytest.param(
-            _target("update", "Balance", {"id": 1, "acctNum": "D"}, if_version=3),
-            "takes if_tx_start, not if_version",
+            _target("amend", "Balance", {"id": 1, "acctNum": "D"}, if_version=3),
+            "takes tx_start, not version",
             id="temporal-takes-a-start",
         ),
         pytest.param(
-            _target("update", "Balance", {"id": 1, "acctNum": "D"}),
-            "requires if_tx_start",
+            _target("amend", "Balance", {"id": 1, "acctNum": "D"}),
+            "requires tx_start",
             id="temporal-missing-start",
         ),
         pytest.param(
-            _target("update", "Wallet", {"id": 1, "owner": "Bo"}, if_version=1),
-            "takes no revision argument",
+            _target("amend", "Wallet", {"id": 1, "owner": "Bo"}, if_version=1),
+            "takes unversioned, not version",
             id="unversioned-version",
         ),
         pytest.param(
-            _target("update", "Wallet", {"id": 1, "owner": "Bo"}, if_tx_start=_I1),
-            "takes no revision argument",
+            _target("amend", "Wallet", {"id": 1, "owner": "Bo"}, if_tx_start=_I1),
+            "takes unversioned, not tx_start",
             id="unversioned-start",
         ),
         pytest.param(
-            _target("update", "Account", {"balance": 5}, if_version=3),
+            _target("amend", "Account", {"balance": 5}, if_version=3),
             "names the object it writes by its primary key",
             id="no-key",
         ),
         pytest.param(
-            _target("update", "Account", {"id": 1, "nope": 5}, if_version=3),
+            _target("amend", "Account", {"id": 1, "nope": 5}, if_version=3),
             "undeclared member",
             id="undeclared-member",
         ),
@@ -743,37 +743,37 @@ def test_target_preparation_refuses_the_first_fault_in_its_fixed_order(
 def test_a_missing_revision_outranks_an_undeclared_member_and_a_bad_window_both(
     prepare: Any,
 ) -> None:
-    with pytest.raises(wi.WriteInstructionError, match="requires if_version"):
-        prepare(_target("update", "Account", {"id": 1, "nope": 5}), _ACCOUNT)
+    with pytest.raises(wi.WriteInstructionError, match="requires version"):
+        prepare(_target("amend", "Account", {"id": 1, "nope": 5}), _ACCOUNT)
     with pytest.raises(wi.WriteInstructionError, match="takes no until"):
-        prepare(_target("update", "Account", {"id": 1, "nope": 5}, until=_I2), _ACCOUNT)
+        prepare(_target("amend", "Account", {"id": 1, "nope": 5}, until=_I2), _ACCOUNT)
 
 
 @_BOTH_PRODUCERS
 def test_a_target_write_never_assigns_a_framework_owned_member(prepare: Any) -> None:
     with pytest.raises(wi.WriteInstructionError, match="framework-owned"):
-        prepare(_target("update", "Account", {"id": 1, "version": 9}, if_version=3), _ACCOUNT)
+        prepare(_target("amend", "Account", {"id": 1, "version": 9}, if_version=3), _ACCOUNT)
 
 
 @_BOTH_PRODUCERS
 def test_a_temporal_targets_revision_is_its_observed_start(prepare: Any) -> None:
     prepared = prepare(
-        _target("update", "Balance", {"id": 1, "acctNum": "D"}, if_tx_start=_I1), _BALANCE
+        _target("amend", "Balance", {"id": 1, "acctNum": "D"}, if_tx_start=_I1), _BALANCE
     )
     assert prepared.expectation == wi.ExpectedTxStart(_I1)
     with pytest.raises(InstantError):
         prepare(
-            _target("update", "Balance", {"id": 1}, if_tx_start=cast("dt.datetime", _B1)),
+            _target("amend", "Balance", {"id": 1}, if_tx_start=cast("dt.datetime", _B1)),
             _BALANCE,
         )
     with pytest.raises(wi.WriteInstructionError, match="requires valid_from"):
-        prepare(_target("update", "Position", {"id": 1}, if_tx_start=_I1), _POSITION)
+        prepare(_target("amend", "Position", {"id": 1}, if_tx_start=_I1), _POSITION)
 
 
 def test_a_serialized_target_write_is_prepared_by_the_one_wire_producer() -> None:
     instruction = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Account",
             "row": {"id": 1, "balance": "5.00"},
             "ifVersion": 2,
@@ -786,7 +786,7 @@ def test_a_serialized_target_write_is_prepared_by_the_one_wire_producer() -> Non
         wi.prepare_wire_write(
             wi.deserialize(
                 {
-                    "mutation": "update",
+                    "mutation": "amend",
                     "entity": "Account",
                     "row": {"id": 1, "balance": 5},
                     "ifVersion": 2,
@@ -821,7 +821,7 @@ def test_member_name_honesty_accepts_declared_members() -> None:
     wi.prepare_typed_write(keyed, _ACCOUNT)
     predicate = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Account", "predicate": {"all": {}}},
             "assignments": [{"attr": "Account.balance", "value": 0}],
         }
@@ -834,7 +834,7 @@ def test_member_name_honesty_accepts_declared_members() -> None:
     [("price", "1.00"), ("orderedOn", "2024-07-01")],
 )
 def test_typed_preparation_does_not_decode_wire_literals(member: str, value: str) -> None:
-    instruction = wi.KeyedWrite("update", "Order", ({"id": 1, member: value},))
+    instruction = wi.KeyedWrite("amend", "Order", ({"id": 1, member: value},))
     with pytest.raises(ValueError, match="does not match the declared type"):
         wi.prepare_typed_write(instruction, _MODELS["orders"])
     wi.prepare_wire_write(instruction, _MODELS["orders"])
@@ -919,14 +919,14 @@ def test_a_prepared_revising_row_fills_inside_what_it_assigns_and_nowhere_else()
     # absence is a value — assigning a document replaces the whole subtree, so a
     # nested `many` the document left out is that subtree's empty collection.
     note = wi.prepare_typed_write(
-        wi.KeyedWrite("update", "Note", ({"id": 1, "title": "Ada"},)),
+        wi.KeyedWrite("amend", "Note", ({"id": 1, "title": "Ada"},)),
         _MODELS["note"],
     )
     assert isinstance(note, wi.PreparedKeyedWrite)
     assert dict(note.rows[0]) == {"id": 1, "title": "Ada"}
 
     customer = wi.prepare_typed_write(
-        wi.KeyedWrite("update", "Customer", ({"id": 9, "address": {"street": "Main"}},)),
+        wi.KeyedWrite("amend", "Customer", ({"id": 9, "address": {"street": "Main"}},)),
         _MODELS["customer"],
     )
     assert isinstance(customer, wi.PreparedKeyedWrite)
@@ -951,7 +951,7 @@ def test_a_coerced_typed_row_projects_its_leaves_and_judges_none() -> None:
 
     assert dict(coerced) == {"id": 1, "f32": 0.10000000149011612, "amount": Decimal("1.00005")}
     with pytest.raises(WriteRejectedError, match="does not match the declared type"):
-        wi.prepare_typed_write(wi.KeyedWrite("update", "WritableScalar", (row,)), model)
+        wi.prepare_typed_write(wi.KeyedWrite("amend", "WritableScalar", (row,)), model)
 
 
 @pytest.mark.parametrize("prepare", [wi.prepare_typed_write, wi.prepare_wire_write])
@@ -974,7 +974,7 @@ def test_prepared_json_leaves_are_deeply_frozen_before_retention(prepare: Any) -
 def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
     stated = dt.datetime(2024, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
     instruction = wi.KeyedWrite(
-        "update",
+        "amend",
         "Position",
         ({"id": 1, "value": 5},),
         valid_from=stated,
@@ -999,18 +999,18 @@ def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
 def test_both_producers_refuse_a_bound_that_is_no_instant(prepare: Any) -> None:
     for bound in ("2024-01-01T00:00:00.000000Z", dt.date(2024, 1, 1)):
         instruction = wi.KeyedWrite(
-            "update", "Position", ({"id": 1},), valid_from=cast("dt.datetime", bound)
+            "amend", "Position", ({"id": 1},), valid_from=cast("dt.datetime", bound)
         )
         with pytest.raises(InstantError, match="takes an aware datetime for valid_from"):
             prepare(instruction, _POSITION)
-    naive = wi.KeyedWrite("update", "Position", ({"id": 1},), valid_from=dt.datetime(2024, 1, 1))
+    naive = wi.KeyedWrite("amend", "Position", ({"id": 1},), valid_from=dt.datetime(2024, 1, 1))
     with pytest.raises(InstantError, match="naive datetime"):
         prepare(naive, _POSITION)
 
 
 def test_assigned_member_validation_rejects_a_plural_keyed_write() -> None:
     instruction = wi.KeyedWrite(
-        "update",
+        "amend",
         "Account",
         (
             {"id": 1, "balance": "1.00"},
@@ -1037,7 +1037,7 @@ def test_preparation_rejects_a_model_whose_inheritance_view_lost_the_target(
 
     with pytest.raises(RuntimeError, match="no Inheritance Facet view"):
         wi.prepare_typed_write(
-            wi.KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("1.00")},)),
+            wi.KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("1.00")},)),
             _ACCOUNT,
         )
 
@@ -1085,7 +1085,7 @@ def test_member_name_honesty_still_rejects_a_genuinely_undeclared_family_member(
 def test_member_name_honesty_rejects_foreign_assignment_owner() -> None:
     predicate = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Account", "predicate": {"all": {}}},
             "assignments": [{"attr": "Balance.value", "value": 0.00}],
         }
@@ -1100,7 +1100,7 @@ def test_member_name_honesty_rejects_a_duplicate_assignment() -> None:
     # individual assignment is otherwise well-formed.
     predicate = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Account", "predicate": {"all": {}}},
             "assignments": [
                 {"attr": "Account.balance", "value": 1},
@@ -1189,7 +1189,7 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
             "until": _B2,
         },
         {
-            "mutation": "updateUntil",
+            "mutation": "amendUntil",
             "entity": "Account",
             "rows": [{"id": 1, "balance": 5.00}],
             "validFrom": _B1,
@@ -1203,7 +1203,7 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
             "until": _B2,
         },
         {
-            "mutation": "updateUntil",
+            "mutation": "amendUntil",
             "target": {"entity": "Account", "predicate": {"all": {}}},
             "assignments": [{"attr": "Account.balance", "value": 0}],
             "validFrom": _B1,
@@ -1244,7 +1244,7 @@ def test_a_bounded_verb_on_a_non_temporal_target_hears_its_window_refused_first(
     "instruction",
     [
         {
-            "mutation": "updateUntil",
+            "mutation": "amendUntil",
             "entity": "Position",
             "rows": [{"id": 1, "value": "5.00"}],
             "validFrom": _B1,
@@ -1267,7 +1267,7 @@ def test_a_plural_keyed_instruction_is_rejected_on_a_temporal_target() -> None:
     # carries a `rule`, since the corpus grades it as a named pre-SQL rejection.
     plural = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Position",
             "rows": [{"id": 1, "value": 5}, {"id": 2, "value": 6.00}],
             "validFrom": _B1,
@@ -1284,7 +1284,7 @@ def test_a_plural_keyed_instruction_is_accepted_on_a_non_temporal_target() -> No
     # versioned non-temporal entity is the set-based flush batching collapses.
     plural = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "Account",
             "rows": [{"id": 1, "balance": 5}, {"id": 2, "balance": 6}],
         }
@@ -1336,7 +1336,7 @@ def test_member_name_honesty_covers_value_object_members() -> None:
 def test_member_name_honesty_rejects_a_primary_key_assignment() -> None:
     predicate = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Account", "predicate": {"all": {}}},
             "assignments": [{"attr": "Account.id", "value": 2}],
         }
@@ -1348,7 +1348,7 @@ def test_member_name_honesty_rejects_a_primary_key_assignment() -> None:
 def test_member_name_honesty_rejects_a_framework_owned_version_assignment() -> None:
     predicate = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Account", "predicate": {"all": {}}},
             "assignments": [{"attr": "Account.version", "value": 5}],
         }
@@ -1360,7 +1360,7 @@ def test_member_name_honesty_rejects_a_framework_owned_version_assignment() -> N
 def test_member_name_honesty_rejects_a_scalar_type_mismatched_assignment() -> None:
     predicate = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Account", "predicate": {"all": {}}},
             "assignments": [{"attr": "Account.owner", "value": 42}],
         }
@@ -1379,7 +1379,7 @@ def test_member_name_honesty_rejects_a_non_document_value_object_assignment() ->
     customer = _MODELS["customer"]
     predicate = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Customer", "predicate": {"all": {}}},
             "assignments": [{"attr": "Customer.address", "value": 42}],
         }
@@ -1398,7 +1398,7 @@ def test_member_name_honesty_accepts_a_well_formed_value_object_assignment() -> 
     }
     predicate = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Customer", "predicate": {"all": {}}},
             "assignments": [{"attr": "Customer.address", "value": document}],
         }
@@ -1417,7 +1417,7 @@ def test_member_name_honesty_rejects_a_non_nullable_value_object_assignment_of_n
     shipment = _MODELS["shipment"]
     predicate = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Shipment", "predicate": {"all": {}}},
             "assignments": [{"attr": "Shipment.destination", "value": None}],
         }
@@ -1432,7 +1432,7 @@ def test_member_name_honesty_accepts_a_nullable_value_object_assignment_of_none(
     customer = _MODELS["customer"]
     predicate = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Customer", "predicate": {"all": {}}},
             "assignments": [{"attr": "Customer.address", "value": None}],
         }
@@ -1486,7 +1486,7 @@ def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
     # while the selection itself can match nothing.
     predicate = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {
                 "entity": "Account",
                 "predicate": {"between": {"attr": "Account.id", "lower": 10, "upper": 1}},
@@ -1734,7 +1734,7 @@ def test_the_inheritance_family_rejection_outranks_the_assignment_rules() -> Non
     # fix an assignment on a write that is unsupported whatever it assigns.
     instruction = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {
                 "entity": "CardPayment",
                 "predicate": {"eq": {"attr": "CardPayment.id", "value": 1}},
@@ -1753,7 +1753,7 @@ def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() 
     shipment = _MODELS["shipment"]
     predicate = wi.deserialize(
         {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {"entity": "Shipment", "predicate": {"all": {}}},
             "assignments": [{"attr": "Shipment.name", "value": None}],
         }
@@ -1928,7 +1928,7 @@ def test_a_document_bound_must_be_a_finite_canonical_timestamp(bound: str, rule:
     with pytest.raises(wi.InstructionRejectedError) as raised:
         wi.deserialize(
             {
-                "mutation": "updateUntil",
+                "mutation": "amendUntil",
                 "entity": "Position",
                 "rows": [{"id": 1, "value": 1}],
                 "validFrom": _B1,
@@ -1940,7 +1940,7 @@ def test_a_document_bound_must_be_a_finite_canonical_timestamp(bound: str, rule:
 
 def test_the_schema_admits_no_infinite_authored_bound() -> None:
     document = {
-        "mutation": "updateUntil",
+        "mutation": "amendUntil",
         "entity": "Position",
         "rows": [{"id": 1, "value": 1}],
         "validFrom": _B1,
@@ -1953,7 +1953,7 @@ def test_the_schema_admits_no_infinite_authored_bound() -> None:
 def test_a_reserved_observation_key_refuses_before_any_window_is_judged() -> None:
     with pytest.raises(wi.WriteInstructionError, match="forbidden observation control key"):
         wi.KeyedWrite(
-            "updateUntil", "Account", ({"id": 1, "observedVersion": 2},), valid_from=_I2, until=_I1
+            "amendUntil", "Account", ({"id": 1, "observedVersion": 2},), valid_from=_I2, until=_I1
         )
 
 
@@ -2005,34 +2005,34 @@ _ALL = predicate_algebra.All()
             "a bitemporal 'insert' requires valid_from",
         ),
         (
-            wi.KeyedWrite("update", "Balance", ({"id": 1, "nonsense": 1},), valid_from=_I1),
+            wi.KeyedWrite("amend", "Balance", ({"id": 1, "nonsense": 1},), valid_from=_I1),
             _BALANCE,
-            "a Transaction-Time-Only 'update' takes no valid_from",
+            "a Transaction-Time-Only 'amend' takes no valid_from",
         ),
         (
             wi.PredicateWrite(
-                "update",
+                "amend",
                 wi.PredicateSelection("Account", _ALL),
                 (wi.WriteAssignment("Account.nonsense", 1),),
                 valid_from=_I1,
             ),
             _ACCOUNT,
-            "a non-temporal 'update' takes no valid_from",
+            "a non-temporal 'amend' takes no valid_from",
         ),
         (
-            wi.KeyedWrite("updateUntil", "Position", ({"id": 1},), valid_from=_I1),
+            wi.KeyedWrite("amendUntil", "Position", ({"id": 1},), valid_from=_I1),
             _POSITION,
             "states its window as a pair, and until is absent",
         ),
         (
-            wi.KeyedWrite("update", "Position", ({"id": 1},), valid_from=_I1, until=_I2),
+            wi.KeyedWrite("amend", "Position", ({"id": 1},), valid_from=_I1, until=_I2),
             _POSITION,
-            "'update' is unbounded and takes no until",
+            "'amend' is unbounded and takes no until",
         ),
         (
-            wi.KeyedWrite("updateUntil", "Position", ({"id": 1},), valid_from=_I2, until=_I1),
+            wi.KeyedWrite("amendUntil", "Position", ({"id": 1},), valid_from=_I2, until=_I1),
             _POSITION,
-            "'updateUntil' requires valid_from < until",
+            "'amendUntil' requires valid_from < until",
         ),
         (
             wi.KeyedWrite("terminateUntil", "Position", ({"id": 1},), valid_from=_I1, until=_I1),
@@ -2041,12 +2041,12 @@ _ALL = predicate_algebra.All()
         ),
         (
             wi.PredicateWrite(
-                "update",
+                "amend",
                 wi.PredicateSelection("Position", predicate_algebra.Between("Position.id", 10, 1)),
                 (wi.WriteAssignment("Position.value", 1),),
             ),
             _POSITION,
-            "a bitemporal 'update' requires valid_from",
+            "a bitemporal 'amend' requires valid_from",
         ),
         (
             wi.KeyedWrite("terminate", "Account", ({"id": 1, "nonsense": 1},)),
@@ -2090,7 +2090,7 @@ def test_both_producers_normalize_an_aware_bound_to_utc(prepare: Any) -> None:
 @pytest.mark.parametrize(
     ("instruction", "model"),
     [
-        pytest.param(wi.KeyedWrite("update", "Account", ({"id": 1},)), _ACCOUNT, id="non-temporal"),
+        pytest.param(wi.KeyedWrite("amend", "Account", ({"id": 1},)), _ACCOUNT, id="non-temporal"),
         pytest.param(
             wi.KeyedWrite("terminate", "Balance", ({"id": 1},)), _BALANCE, id="transaction-time"
         ),
@@ -2121,7 +2121,7 @@ def test_an_omitted_until_prepares_a_window_through_the_managed_open_end(prepare
 def test_derived_writes_share_the_prepared_window_rather_than_judge_it_again() -> None:
     prepared = wi.prepare_typed_write(
         wi.KeyedWrite(
-            "updateUntil", "Position", ({"id": 1, "value": 5},), valid_from=_I1, until=_I2
+            "amendUntil", "Position", ({"id": 1, "value": 5},), valid_from=_I1, until=_I2
         ),
         _POSITION,
     )
@@ -2132,7 +2132,7 @@ def test_derived_writes_share_the_prepared_window_rather_than_judge_it_again() -
 
 
 @pytest.mark.parametrize(
-    ("until", "mutation"), [pytest.param(None, "update"), pytest.param(_I2, "updateUntil")]
+    ("until", "mutation"), [pytest.param(None, "amend"), pytest.param(_I2, "amendUntil")]
 )
 def test_a_target_executes_as_the_keyed_update_its_shared_window_names(
     until: dt.datetime | None, mutation: wi.TargetMutation
@@ -2156,7 +2156,7 @@ def test_a_target_executes_as_the_keyed_update_its_shared_window_names(
 
 @_PRODUCERS
 def test_a_plural_temporal_keyed_write_is_refused_before_its_members(prepare: Any) -> None:
-    plural = wi.KeyedWrite("update", "Balance", ({"id": 1, "nonsense": 1}, {"id": 2}))
+    plural = wi.KeyedWrite("amend", "Balance", ({"id": 1, "nonsense": 1}, {"id": 2}))
     with pytest.raises(wi.InstructionRejectedError) as raised:
         prepare(plural, _BALANCE)
     assert raised.value.rule == "temporal-keyed-write-multi-row"
@@ -2166,7 +2166,7 @@ def test_a_plural_temporal_keyed_write_is_refused_before_its_members(prepare: An
 @pytest.mark.parametrize(
     ("mutation", "assignments", "message"),
     [
-        ("update", (), "a predicate-selected 'update' requires at least one assignment"),
+        ("amend", (), "a predicate-selected 'amend' requires at least one assignment"),
         (
             "delete",
             (wi.WriteAssignment("Account.balance", 1),),
@@ -2190,7 +2190,7 @@ def test_both_producers_judge_a_constructed_assignment_list(
 # --------------------------------------------------------------------------- #
 def _account_update(*assignments: tuple[str, object]) -> wi.PredicateWrite:
     return wi.PredicateWrite(
-        "update",
+        "amend",
         wi.PredicateSelection("Account", _ALL),
         tuple(wi.WriteAssignment(attr, value) for attr, value in assignments),
     )

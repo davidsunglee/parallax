@@ -47,7 +47,7 @@ when:
         - { id: 2, owner: Linus, balance: "250.00", version: 1 }
     - uow: writer
       write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.Account
           rows:
             - { id: 2, balance: "999.00" }

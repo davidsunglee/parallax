@@ -10,7 +10,7 @@ when:
   uow:
     concurrency: optimistic
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Fridge
       statements: 1
       note: rename Fridge 1 under an optimistic gate; own table, no tag, gate binds last

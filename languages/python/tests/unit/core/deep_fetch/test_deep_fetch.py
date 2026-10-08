@@ -210,7 +210,7 @@ def test_mutation_read_unions_an_explicit_projection_with_assigned_value_objects
     account = entity_of(ORDERS, "Order")
     prepared = prepare_typed_write(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection(account.identity.canonical, All()),
             (WriteAssignment(f"{account.identity.canonical}.name", "updated"),),
         ),

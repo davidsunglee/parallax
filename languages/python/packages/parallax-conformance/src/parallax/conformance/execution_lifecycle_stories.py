@@ -108,7 +108,7 @@ def a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
                 # runs on the SAME connection, and reaches the database in the
                 # outer boundary's pre-commit batch.
                 bumped = current.edit(balance=current.balance + _BUMP)
-                joined_tx.update(bumped)
+                joined_tx.amend(bumped)
                 return bumped
 
             return db.transact(joined_body)

@@ -265,11 +265,11 @@ def _keyed_widths(representation: Representation, widths: Mapping[int, tuple[flo
         if representation == "typed":
             for row in tx.find(Reading.where(Reading.all)).results():
                 f32, f64 = widths[row.id]
-                tx.update(row.edit(f32=f32, f64=f64))
+                tx.amend(row.edit(f32=f32, f64=f64))
         else:
             for node in tx.wire.find(_wire_query("Reading")).results():
                 f32, f64 = widths[cast("int", node["id"])]
-                tx.wire.update(node, {"f32": f32, "f64": f64})
+                tx.wire.amend(node, {"f32": f32, "f64": f64})
 
     return update
 
@@ -278,11 +278,11 @@ def _predicate_widths(representation: Representation, widths: Mapping[int, tuple
     def update(tx: Transaction) -> None:
         for key, (f32, f64) in widths.items():
             if representation == "typed":
-                tx.update_where(
+                tx.amend_where(
                     Reading.where(Reading.id == key), Reading.f32.set(f32), Reading.f64.set(f64)
                 )
             else:
-                tx.wire.update_where(
+                tx.wire.amend_where(
                     {
                         "entity": f"{_NAMESPACE}.Reading",
                         "predicate": {"eq": {"attr": f"{_NAMESPACE}.Reading.id", "value": key}},
@@ -392,17 +392,17 @@ def _restate_samples(representation: Representation, writer: Writer):
             for row in tx.find(Plot.where(Plot.all)).results():
                 sample = Sample(f32=row.sample.f32)
                 if writer == "keyed":
-                    tx.update(row.edit(sample=sample))
+                    tx.amend(row.edit(sample=sample))
                 else:
-                    tx.update_where(Plot.where(Plot.id == row.id), Plot.sample.set(sample))
+                    tx.amend_where(Plot.where(Plot.id == row.id), Plot.sample.set(sample))
         else:
             for node in tx.wire.find(_wire_query("Plot")).results():
                 sample = {"f32": cast("Mapping[str, object]", node["sample"])["f32"]}
                 if writer == "keyed":
-                    tx.wire.update(node, {"sample": sample})
+                    tx.wire.amend(node, {"sample": sample})
                 else:
                     target = {"attr": f"{_NAMESPACE}.Plot.id", "value": node["id"]}
-                    tx.wire.update_where(
+                    tx.wire.amend_where(
                         {"entity": f"{_NAMESPACE}.Plot", "predicate": {"eq": target}},
                         {"sample": sample},
                     )
@@ -492,12 +492,12 @@ def _lock_and_update_each(
             query = Marker.where(Marker.all).order_by(Marker.rank.asc())
             rows = _drained(tx.stream(query, batch_size=1), expected=len(ranked))
             for row in rows:
-                tx.update(row.edit(name="updated"))
+                tx.amend(row.edit(name="updated"))
         else:
             wire = _wire_query("Marker", orderBy=_wire_order("Marker", "rank"))
             rows = _drained(tx.wire.stream(wire, batch_size=1), expected=len(ranked))
             for node in rows:
-                tx.wire.update(node, {"name": "updated"})
+                tx.wire.amend(node, {"name": "updated"})
         return rows
 
     return ranked, db.transact(lock_and_update, concurrency="locking")

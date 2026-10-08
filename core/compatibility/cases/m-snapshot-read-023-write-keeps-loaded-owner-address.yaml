@@ -41,7 +41,7 @@ when:
             phones:
               - { type: work, number: '555-0100' }
     - write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.Customer
           rows:
             - id: 1

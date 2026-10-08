@@ -197,7 +197,7 @@ def _find(tx: Transaction, entity: type[Any], at: dt.datetime) -> Any:
 
 
 def _barrier(tx: Transaction) -> None:
-    tx.update_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
+    tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
 
 
 # --------------------------------------------------------------------------- #
@@ -228,14 +228,14 @@ class _Operation:
 
     def write(self, tx: Transaction, entity: type[Any], source: Any) -> None:
         amount, label = (150, "p1") if self.order == 0 else (175, "p2")
-        bounds: dict[str, Any] = {"valid_from": self.start, "until": self.until, "if_tx_start": _T0}
+        bounds: dict[str, Any] = {"valid_from": self.start, "until": self.until, "tx_start": _T0}
         match self.kind:
             case "P":
-                tx.wire.update(_name(entity), {"id": 1, "amount": amount}, **bounds)
+                tx.wire.amend_if(_name(entity), {"id": 1, "amount": amount}, **bounds)
             case "R":
-                tx.replace(entity(id=1, amount=amount + 150, label=label), **bounds)
+                tx.replace_if(entity(id=1, amount=amount + 150, label=label), **bounds)
             case "O":
-                tx.update(source.edit(label=label), until=self.until)
+                tx.amend(source.edit(label=label), until=self.until)
             case _:
                 tx.terminate(source, until=self.until)
 
@@ -306,11 +306,11 @@ def test_disjoint_targets_over_distinct_originals_meet_their_own_starts(
 ) -> None:
     db = _two_rectangles(profile_run, entity, _TA)
     writes: list[Callable[[Transaction], None]] = [
-        lambda tx: tx.wire.update(
-            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, if_tx_start=_T0
+        lambda tx: tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         ),
-        lambda tx: tx.replace(
-            entity(id=1, amount=300, label="r"), valid_from=_SEP, until=_OCT, if_tx_start=_T1
+        lambda tx: tx.replace_if(
+            entity(id=1, amount=300, label="r"), valid_from=_SEP, until=_OCT, tx_start=_T1
         ),
     ]
     if order == "later-first":
@@ -345,12 +345,12 @@ def test_a_disjoint_target_stating_another_rectangles_start_changes_nothing(
     def fn(tx: Transaction) -> None:
         nonlocal attempts
         attempts += 1
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, if_tx_start=_T0
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
         # September lies in the rectangle opened at T1; T0 names the other one.
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 175}, valid_from=_SEP, until=_OCT, if_tx_start=_T0
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 175}, valid_from=_SEP, until=_OCT, tx_start=_T0
         )
 
     with pytest.raises(ExecutionFailure) as failed:
@@ -361,13 +361,13 @@ def test_a_disjoint_target_stating_another_rectangles_start_changes_nothing(
 
 
 def _overlapping_observed(tx: Transaction, entity: type[Any], source: Any) -> None:
-    tx.update(source.edit(label="o"), until=_AUG)
+    tx.amend(source.edit(label="o"), until=_AUG)
 
 
 def _overlapping_target(tx: Transaction, entity: type[Any], source: Any) -> None:
     del source
-    tx.wire.update(
-        _name(entity), {"id": 1, "amount": 1}, valid_from=_JUN, until=_AUG, if_tx_start=_T0
+    tx.wire.amend_if(
+        _name(entity), {"id": 1, "amount": 1}, valid_from=_JUN, until=_AUG, tx_start=_T0
     )
 
 
@@ -387,7 +387,7 @@ def test_a_window_overlapping_a_targets_unequally_is_refused_and_earlier_work_st
     def fn(tx: Transaction) -> None:
         source = _find(tx, entity, _JUN)
         # An unbounded window reaches every later window, whatever its start.
-        tx.wire.update(_name(entity), {"id": 1, "amount": 150}, valid_from=_MAR, if_tx_start=_T0)
+        tx.wire.amend_if(_name(entity), {"id": 1, "amount": 150}, valid_from=_MAR, tx_start=_T0)
         with pytest.raises(WriteEvidenceError, match="write-evidence-already-claimed"):
             second(tx, entity, source)
 
@@ -486,11 +486,11 @@ def test_a_write_of_the_same_window_after_a_barrier_carries_the_values_left_befo
 
     def fn(tx: Transaction) -> None:
         source = _find(tx, entity, _FEB)
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, if_tx_start=_T0
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
         _barrier(tx)
-        tx.update(source.edit(label="o"), until=_APR)
+        tx.amend(source.edit(label="o"), until=_APR)
 
     db.transact(fn, concurrency=concurrency)
     # The observed edit lands on the row the target left: the amount is the
@@ -513,9 +513,9 @@ def test_overlapping_observed_writes_on_either_side_of_a_barrier_apply_in_author
 
     def fn(tx: Transaction) -> None:
         early, later = _find(tx, entity, _MAR), _find(tx, entity, _APR)
-        tx.update(early.edit(label="e"), until=_JUN)
+        tx.amend(early.edit(label="e"), until=_JUN)
         _barrier(tx)
-        tx.update(later.edit(amount=175), until=_AUG)
+        tx.amend(later.edit(amount=175), until=_AUG)
 
     db.transact(fn, concurrency=concurrency)
     assert _audited(profile_run) == [(1, 3)]
@@ -548,12 +548,12 @@ def test_a_side_effect_that_breaks_continuity_across_a_barrier_fails_the_later_o
     before = _rows(profile_run, entity)
 
     def fn(tx: Transaction) -> None:
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, if_tx_start=_T0
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
         _barrier(tx)
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 175}, valid_from=_JUN, until=_AUG, if_tx_start=_T0
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 175}, valid_from=_JUN, until=_AUG, tx_start=_T0
         )
 
     with pytest.raises(ExecutionFailure) as failed:
@@ -576,13 +576,13 @@ def test_after_a_read_flushes_one_window_a_later_window_restates_its_start(
     db = _seeded(profile_run, entity, _TA, _TB)
 
     def stale(tx: Transaction) -> None:
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, if_tx_start=_T0
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
         _find(tx, entity, _JAN)
         # The flush closed the original T0 named; its token is not rebased.
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 175}, valid_from=_JUN, until=_AUG, if_tx_start=_T0
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 175}, valid_from=_JUN, until=_AUG, tx_start=_T0
         )
 
     before = _rows(profile_run, entity)
@@ -593,15 +593,15 @@ def test_after_a_read_flushes_one_window_a_later_window_restates_its_start(
 
     def fresh(tx: Transaction) -> None:
         early = _find(tx, entity, _JUN)
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, if_tx_start=_T0
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
         current = _find(tx, entity, _JUN)
         with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-            tx.update(early.edit(label="stale"), until=_AUG)
-        tx.update(current.edit(label="fresh"), until=_AUG)
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 175}, valid_from=_SEP, until=_OCT, if_tx_start=_TB
+            tx.amend(early.edit(label="stale"), until=_AUG)
+        tx.amend(current.edit(label="fresh"), until=_AUG)
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 175}, valid_from=_SEP, until=_OCT, tx_start=_TB
         )
 
     db.transact(fresh, concurrency=concurrency)
@@ -641,7 +641,7 @@ def test_a_shared_original_revised_after_the_flush_read_fails_at_its_one_guard(
 
     def peer() -> None:
         peer_db.transact(
-            lambda tx: tx.update(_find(tx, entity, _MAY).edit(label="peer"), until=_JUN)
+            lambda tx: tx.amend(_find(tx, entity, _MAY).edit(label="peer"), until=_JUN)
         )
 
     ours, interleaving = _interleaved(profile_run, entity, peer, _TA, _TB)
@@ -650,13 +650,13 @@ def test_a_shared_original_revised_after_the_flush_read_fails_at_its_one_guard(
     def fn(tx: Transaction) -> None:
         nonlocal attempts
         attempts += 1
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, if_tx_start=_T0
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
         if barrier:
             _barrier(tx)
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 175}, valid_from=_JUN, until=_AUG, if_tx_start=_T0
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 175}, valid_from=_JUN, until=_AUG, tx_start=_T0
         )
 
     with pytest.raises(ExecutionFailure) as failed:
@@ -683,26 +683,26 @@ def test_a_lost_second_start_is_its_callers_and_a_lost_observed_original_retries
 
     def peer() -> None:
         peer_db.transact(
-            lambda tx: tx.update(_find(tx, entity, _JUL).edit(label="peer"), until=_AUG)
+            lambda tx: tx.amend(_find(tx, entity, _JUL).edit(label="peer"), until=_AUG)
         )
 
     ours, interleaving = _interleaved(profile_run, entity, peer, _TA)
     with pytest.raises(ExecutionFailure) as failed:
         ours.transact(
             lambda tx: (
-                tx.wire.update(
+                tx.wire.amend_if(
                     _name(entity),
                     {"id": 1, "amount": 150},
                     valid_from=_FEB,
                     until=_APR,
-                    if_tx_start=_T0,
+                    tx_start=_T0,
                 ),
-                tx.wire.update(
+                tx.wire.amend_if(
                     _name(entity),
                     {"id": 1, "amount": 175},
                     valid_from=_SEP,
                     until=_OCT,
-                    if_tx_start=_T1,
+                    tx_start=_T1,
                 ),
             ),
             retry_optimistic_conflicts=True,
@@ -719,7 +719,7 @@ def test_a_lost_second_start_is_its_callers_and_a_lost_observed_original_retries
 
     def later_peer() -> None:
         second_peer.transact(
-            lambda tx: tx.update(_find(tx, entity, _JUL).edit(label="peer"), until=_AUG)
+            lambda tx: tx.amend(_find(tx, entity, _JUL).edit(label="peer"), until=_AUG)
         )
 
     retried, interleaving = _interleaved(profile_run, entity, later_peer, _TA, _TB)
@@ -729,10 +729,10 @@ def test_a_lost_second_start_is_its_callers_and_a_lost_observed_original_retries
         nonlocal attempts
         attempts += 1
         source = _find(tx, entity, _SEP)
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, if_tx_start=_T0
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
-        tx.update(source.edit(label="o"), until=_OCT)
+        tx.amend(source.edit(label="o"), until=_OCT)
 
     retried.transact(fn, retry_optimistic_conflicts=True)
     assert (attempts, interleaving.failures) == (2, [])
@@ -758,17 +758,17 @@ def test_a_disjoint_observed_original_lost_without_retries_rolls_every_effect_ba
 
     def peer() -> None:
         peer_db.transact(
-            lambda tx: tx.update(_find(tx, entity, _JUL).edit(label="peer"), until=_AUG)
+            lambda tx: tx.amend(_find(tx, entity, _JUL).edit(label="peer"), until=_AUG)
         )
 
     ours, _interleaving = _interleaved(profile_run, entity, peer, _TA)
 
     def fn(tx: Transaction) -> None:
         source = _find(tx, entity, _SEP)
-        tx.wire.update(
-            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, if_tx_start=_T0
+        tx.wire.amend_if(
+            _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_APR, tx_start=_T0
         )
-        tx.update(source.edit(label="o"), until=_OCT)
+        tx.amend(source.edit(label="o"), until=_OCT)
 
     with pytest.raises(ExecutionFailure) as failed:
         ours.transact(fn)
@@ -795,11 +795,11 @@ def test_a_transaction_time_write_after_a_barrier_revises_the_row_the_first_open
     db.transact(seed)
 
     def fn(tx: Transaction) -> None:
-        tx.wire.update(_name(entity), {"id": 1, "label": "p"}, if_tx_start=_T0)
+        tx.wire.amend_if(_name(entity), {"id": 1, "label": "p"}, tx_start=_T0)
         _barrier(tx)
         # Both callers state the milestone the first one closes; the second's
         # stands at the row the first opened from it.
-        tx.wire.update(_name(entity), {"id": 1, "spec": {"title": "s2"}}, if_tx_start=_T0)
+        tx.wire.amend_if(_name(entity), {"id": 1, "spec": {"title": "s2"}}, tx_start=_T0)
 
     db.transact(fn, concurrency=concurrency)
     members = ", ".join(_member(entity, name) for name in ("label", "spec"))
@@ -829,9 +829,9 @@ def test_an_insertion_sources_edits_on_both_sides_of_a_barrier_keep_one_instant(
             _name(entity), {"id": 1, "amount": 100, "label": "a"}, valid_from=_JAN
         )
         _find(tx, entity, _JAN)
-        tx.wire.update(inserted, {"amount": 150}, until=_APR)
+        tx.wire.amend(inserted, {"amount": 150}, until=_APR)
         _barrier(tx)
-        tx.wire.update(inserted, {"label": "z"}, until=_JUN)
+        tx.wire.amend(inserted, {"label": "z"}, until=_JUN)
 
     db.transact(fn, concurrency=concurrency)
     assert _rows(profile_run, entity) == [

@@ -166,7 +166,7 @@ def _version_group(
     assert evidence is not None
     predicate = _prepared(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection(
                 entity,
                 predicate_algebra.Comparison("lessThan", f"{entity}.balance", "1000000.00"),
@@ -369,7 +369,7 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
     ownership = OpenedRows(frozenset())
     prepared = prepare_wire_write(
         TargetWrite(
-            "updateUntil",
+            "amendUntil",
             "Position",
             {"id": 1, "value": "9.00"},
             if_tx_start=_OPENED,
@@ -574,7 +574,7 @@ def _refuse_producers(monkeypatch: pytest.MonkeyPatch, model: Metamodel) -> None
 
 def _value_update(entity: str, valid_from: dt.datetime | None) -> PredicateWrite:
     return PredicateWrite(
-        "update",
+        "amend",
         PredicateSelection(
             entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", "1000000.00")
         ),
@@ -748,7 +748,7 @@ def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predec
     ]
     group = temporal_group(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
             assignments=(WriteAssignment("Branch.address", assigned_address),),
             valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
@@ -989,7 +989,7 @@ def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_
         ),
         prepare_typed_write(
             KeyedWrite(
-                "updateUntil",
+                "amendUntil",
                 "Position",
                 ({"id": 1, "value": Decimal("2.00")},),
                 valid_from=_JAN,

@@ -626,7 +626,7 @@ def test_a_pickle_written_before_the_refusal_existed_still_loads() -> None:
     assert snapshot_state_of(restored) is None
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        db.transact(lambda tx: tx.update(restored.edit(balance=Decimal("125.00"))))
+        db.transact(lambda tx: tx.amend(restored.edit(balance=Decimal("125.00"))))
     assert refusal.value.code == "write-value-not-stored"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -697,7 +697,7 @@ def test_a_successful_flush_consumes_the_evidence_its_write_used() -> None:
 
     def fn(tx: Transaction) -> object:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit(balance=Decimal("125.00")))
+        tx.amend(node.edit(balance=Decimal("125.00")))
         return _typed_hint(node)
 
     hint = cast("Any", account_db(port).transact(fn))
@@ -713,13 +713,13 @@ def test_reusing_a_consumed_source_after_the_flush_is_refused() -> None:
 
     def fn(tx: Transaction) -> mm.Account:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit(balance=Decimal("125.00")))
+        tx.amend(node.edit(balance=Decimal("125.00")))
         return node
 
     stale = db.transact(fn)
 
     def second(tx: Transaction) -> None:
-        tx.update(stale.edit(balance=Decimal("150.00")))
+        tx.amend(stale.edit(balance=Decimal("150.00")))
 
     with raises_contextualized(WriteEvidenceError) as refusal:
         db.transact(second)
@@ -739,9 +739,9 @@ def test_a_locking_source_consumed_by_a_flush_cannot_drive_a_second_write() -> N
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit(balance=Decimal("125.00")))
+        tx.amend(node.edit(balance=Decimal("125.00")))
         tx.find(mm.Account.where(mm.Account.id == 1))
-        tx.update(node.edit(balance=Decimal("150.00")))
+        tx.amend(node.edit(balance=Decimal("150.00")))
 
     with raises_contextualized(WriteEvidenceError) as refusal:
         account_db(port).transact(fn, concurrency="locking")
@@ -758,7 +758,7 @@ def test_an_intent_eliminated_before_dml_consumes_nothing() -> None:
 
     def fn(tx: Transaction) -> mm.Account:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit())
+        tx.amend(node.edit())
         return node
 
     unchanged = db.transact(fn)
@@ -777,7 +777,7 @@ def test_an_aborted_flush_spends_no_evidence() -> None:
     def doomed(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         escaped.append(node)
-        tx.update(node.edit(balance=Decimal("125.00")))
+        tx.amend(node.edit(balance=Decimal("125.00")))
         raise RuntimeError("abort")
 
     with raises_contextualized(RuntimeError, match="abort"):
@@ -835,7 +835,7 @@ def test_a_standalone_versioned_source_gates_a_later_transactions_write() -> Non
     db = account_db(port)
     node = db.find(mm.Account.where(mm.Account.id == 1)).result()
 
-    db.transact(lambda tx: tx.update(node.edit(balance=Decimal("125.00"))))
+    db.transact(lambda tx: tx.amend(node.edit(balance=Decimal("125.00"))))
     assert [type(op) for op in port.calls] == [ReadCall, BeginCall, WriteCall, CommitCall]
     (update,) = (call for call in port.calls if isinstance(call, WriteCall))
     assert update.binds[-1] == 4
@@ -850,7 +850,7 @@ def test_a_standalone_versioned_source_meeting_an_intervening_writer_conflicts()
     node = db.find(mm.Account.where(mm.Account.id == 1)).result()
 
     with raises_contextualized(OptimisticLockConflictError):
-        db.transact(lambda tx: tx.update(node.edit(balance=Decimal("125.00"))))
+        db.transact(lambda tx: tx.amend(node.edit(balance=Decimal("125.00"))))
 
 
 def test_a_standalone_temporal_source_carries_its_milestone_into_a_transaction() -> None:
@@ -858,7 +858,7 @@ def test_a_standalone_temporal_source_carries_its_milestone_into_a_transaction()
     db = db_for(BALANCE, port)
     node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
 
-    db.transact(lambda tx: tx.update(node.edit(value=Decimal("9.00"))))
+    db.transact(lambda tx: tx.amend(node.edit(value=Decimal("9.00"))))
     assert [type(op) for op in port.calls] == [
         ReadCall,
         BeginCall,
@@ -879,7 +879,7 @@ def test_a_standalone_versioned_source_is_refused_under_an_explicit_locking_pref
 
     with raises_contextualized(WriteEvidenceError) as refusal:
         db.transact(
-            lambda tx: tx.update(node.edit(balance=Decimal("125.00"))), concurrency="locking"
+            lambda tx: tx.amend(node.edit(balance=Decimal("125.00"))), concurrency="locking"
         )
     assert refusal.value.code == "write-evidence-unavailable"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
@@ -896,7 +896,7 @@ def test_a_standalone_unversioned_source_is_refused_under_the_default_preference
     node = db.find(Person.where(Person.id == 1)).result()
 
     with raises_contextualized(WriteEvidenceError) as refusal:
-        db.transact(lambda tx: tx.update(node.edit(name="Grace")))
+        db.transact(lambda tx: tx.amend(node.edit(name="Grace")))
     assert refusal.value.code == "write-evidence-unavailable"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -977,7 +977,7 @@ def test_a_shared_child_carries_an_origin_only_under_the_valid_root() -> None:
         assert _typed_hint(invalid_customer) is None
         assert _typed_hint(valid) is not None
         assert _typed_hint(valid_customer) is not None
-        tx.update(invalid_customer.edit(name="Rejected"))
+        tx.amend(invalid_customer.edit(name="Rejected"))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
         own_root(connect(port, vo.CUSTOMER_MODEL)).using_database_login().transact(fn)

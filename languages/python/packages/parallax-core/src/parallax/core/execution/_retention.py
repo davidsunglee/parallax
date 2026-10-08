@@ -324,7 +324,7 @@ def deferred_read_origins(
     evidence about the row it saw rather than an overwrite of the first read's.
     The identity half is the :class:`~parallax.core.write_plan.ObjectKey` a later
     keyed write computes, over the row's own resolved concrete Entity (never
-    family-normalized to the root), which is what ``tx.update(copy)`` resolves
+    family-normalized to the root), which is what ``tx.amend(copy)`` resolves
     its instance's class to.
 
     An unversioned Non-Temporal row observes no state, yet still yields a Read

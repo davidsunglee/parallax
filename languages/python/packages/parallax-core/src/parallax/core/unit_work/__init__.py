@@ -28,10 +28,12 @@ from parallax.core.unit_work.effects import (
     returns_rows,
 )
 from parallax.core.unit_work.instructions import (
+    AMEND_MUTATIONS,
+    ASSIGNMENT_MUTATIONS,
     BOUNDED_MUTATIONS,
     DESTRUCTIVE_MUTATIONS,
     INSERT_MUTATIONS,
-    UPDATE_MUTATIONS,
+    REPLACE_MUTATIONS,
     KeyedMutation,
     KeyedWrite,
     PredicateMutation,
@@ -86,12 +88,14 @@ from parallax.core.unit_work.write_planner import (
 from parallax.core.unit_work.write_validate import WriteRejectedError
 
 __all__ = [
+    "AMEND_MUTATIONS",
+    "ASSIGNMENT_MUTATIONS",
     "BOUNDED_MUTATIONS",
     "DESTRUCTIVE_MUTATIONS",
     "INSERT_MUTATIONS",
     "NO_AUDIT",
+    "REPLACE_MUTATIONS",
     "SELECTION_INTENT",
-    "UPDATE_MUTATIONS",
     "WRITE_EVIDENCE_CODES",
     "BufferItem",
     "BufferOutcome",

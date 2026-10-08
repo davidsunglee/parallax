@@ -99,7 +99,7 @@ For an **unversioned, non-temporal** target, a predicate-selected write is
 readless and emits exactly one statement unless it assigns a document-resident
 `many` occurrence. That narrow combination is refused before buffering or SQL as
 `predicate-write-readless-document-many-unsupported`; it never falls back to a
-planning-time read. Scalar and `one` assignments remain readless. `update` is:
+planning-time read. Scalar and `one` assignments remain readless. `amend` is:
 
 ```text
 update <table> set <column> = ?, … where <predicate>

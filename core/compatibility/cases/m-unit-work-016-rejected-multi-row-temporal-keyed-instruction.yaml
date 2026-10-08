@@ -5,7 +5,7 @@ tags: [m-unit-work, temporal, bitemporal, write, rejected, slice-snapshot-1, sli
 shape: rejected
 when:
   write:
-    mutation: update
+    mutation: amend
     entity: parallax.compatibility.Position
     rows:
       - { id: 1, value: "150.00" }

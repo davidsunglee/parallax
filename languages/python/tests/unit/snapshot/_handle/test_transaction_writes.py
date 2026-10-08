@@ -151,7 +151,7 @@ def test_update_lowers_to_its_keyed_dml() -> None:
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(fetched.edit(balance=Decimal("175.00")))
+        tx.amend(fetched.edit(balance=Decimal("175.00")))
 
     account_db(port).transact(fn)
     assert port.calls == [
@@ -186,7 +186,7 @@ def test_a_correction_authored_from_diagnostic_data_is_not_a_keyed_write_source(
         published = tx.find(Contact.where(Contact.id == 1)).checked().result()
         assert isinstance(published, InvalidData)
         current = cast("Contact", published.data)
-        tx.update(
+        tx.amend(
             current.edit(
                 address=ContactAddress(
                     street="Main",
@@ -264,7 +264,7 @@ def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(fetched.edit(balance=Decimal("175.00")))
+        tx.amend(fetched.edit(balance=Decimal("175.00")))
 
     with raises_contextualized(StaleWriteError, match="Account"):
         account_db(port).transact(fn, concurrency="locking")
@@ -287,7 +287,7 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(fetched.edit(balance=Decimal("175.00")))
+        tx.amend(fetched.edit(balance=Decimal("175.00")))
 
     with raises_contextualized(OptimisticLockConflictError, match="Account"):
         account_db(port).transact(fn, concurrency="optimistic")
@@ -315,8 +315,8 @@ def _mix_strategies(tx: Transaction) -> None:
     consignment = tx.find(
         mx.Consignment.where(mx.Consignment.id == 1).include(mx.Consignment.legs)
     ).result()
-    tx.update(consignment.edit(total=Decimal("20.00")))
-    tx.update(consignment.legs[0].edit(carrier="Baltic"))
+    tx.amend(consignment.edit(total=Decimal("20.00")))
+    tx.amend(consignment.legs[0].edit(carrier="Baltic"))
 
 
 def test_one_default_transaction_gates_the_versioned_write_and_locks_the_unversioned_read() -> None:
@@ -452,7 +452,7 @@ def test_update_of_a_copy_expressing_no_member_issues_no_dml() -> None:
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(fetched.edit())
+        tx.amend(fetched.edit())
 
     account_db(port).transact(fn)
     # The read happened; the write never did.
@@ -473,7 +473,7 @@ def test_a_keyed_update_changing_one_member_writes_its_whole_literal_set(
     def fn(tx: Transaction) -> None:
         if representation == "typed":
             fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
-            tx.update(fetched.edit(acct_num="A-1", value=Decimal("150.00")))
+            tx.amend(fetched.edit(acct_num="A-1", value=Decimal("150.00")))
         else:
             node = tx.wire.find(
                 {
@@ -482,7 +482,7 @@ def test_a_keyed_update_changing_one_member_writes_its_whole_literal_set(
                     "temporal": {"transaction-time": {"asOf": "latest"}},
                 }
             ).result()
-            tx.wire.update(node, {"acctNum": "A-1", "value": "150.00"})
+            tx.wire.amend(node, {"acctNum": "A-1", "value": "150.00"})
 
     db_for(BALANCE, port).transact(fn)
     assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2
@@ -527,7 +527,7 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(fetched.edit(balance=Decimal("175.00")))
+        tx.amend(fetched.edit(balance=Decimal("175.00")))
 
     account_db(port).transact(fn, concurrency="locking")
     expected = WriteCall(
@@ -573,7 +573,7 @@ def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.update(fetched.edit(value=Decimal("200.00")))
+        tx.amend(fetched.edit(value=Decimal("200.00")))
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -612,7 +612,7 @@ def test_a_bounded_keyed_update_lowers_the_rectangle_split() -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.update(fetched.edit(value=Decimal("200.00")), until=until)
+        tx.amend(fetched.edit(value=Decimal("200.00")), until=until)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -635,7 +635,7 @@ def test_a_bounded_keyed_update_expressing_no_member_issues_no_dml() -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.update(fetched.edit(), until=until)
+        tx.amend(fetched.edit(), until=until)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -656,7 +656,7 @@ def test_a_bounded_keyed_update_expressing_no_member_still_rejects_equal_bounds(
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.update(fetched.edit(), until=valid_from)
+        tx.amend(fetched.edit(), until=valid_from)
 
     with raises_contextualized(ValueError, match="requires valid_from < until"):
         own_root(
@@ -679,7 +679,7 @@ def test_a_bounded_keyed_update_with_a_naive_until_raises_the_proper_value_error
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.update(fetched.edit(value=Decimal("200.00")), until=naive_until)
+        tx.amend(fetched.edit(value=Decimal("200.00")), until=naive_until)
 
     # `pytest.raises(ValueError, ...)` itself is the pin against a
     # `TypeError` leak: `TypeError` is not a `ValueError`, so an un-normalized comparison
@@ -702,9 +702,7 @@ def test_a_bound_of_no_datetime_type_carries_the_same_refusal_a_naive_one_does()
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
         with pytest.raises(InstantError, match="no `timestamp`"):
-            tx.update(
-                fetched.edit(value=Decimal("200.00")), until=cast("dt.datetime", "2024-09-01")
-            )
+            tx.amend(fetched.edit(value=Decimal("200.00")), until=cast("dt.datetime", "2024-09-01"))
         with pytest.raises(InstantError, match="no `timestamp`"):
             tx.insert(
                 WherePosition(id=2, acct_num="B", value=Decimal("1.00")),
@@ -733,7 +731,7 @@ def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
     def non_temporal(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
         with pytest.raises(WriteInstructionError, match="takes no until"):
-            tx.update(fetched.edit(balance=Decimal("20.00")), until=until)
+            tx.amend(fetched.edit(balance=Decimal("20.00")), until=until)
 
     def absent_until(tx: Transaction) -> None:
         fetched = tx.find(
@@ -742,7 +740,7 @@ def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
         with pytest.raises(WriteInstructionError, match="until is absent"):
             tx.terminate(fetched, until=cast("dt.datetime", None))
         with pytest.raises(WriteInstructionError, match="until is absent"):
-            tx.update(fetched.edit(value=Decimal("200.00")), until=cast("dt.datetime", None))
+            tx.amend(fetched.edit(value=Decimal("200.00")), until=cast("dt.datetime", None))
 
     account_db(account).transact(non_temporal)
     own_root(
@@ -754,10 +752,12 @@ def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
 
 _UNIFIED_OPERATIONS = (
     "insert",
-    "update",
+    "amend",
+    "amend_if",
     "replace",
+    "replace_if",
     "terminate",
-    "update_where",
+    "amend_where",
     "terminate_where",
 )
 
@@ -783,7 +783,7 @@ def test_a_bounded_predicate_write_states_its_window_as_a_pair() -> None:
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(WriteInstructionError, match="until is absent"):
-            tx.update_where(
+            tx.amend_where(
                 target,
                 WherePosition.value.set(Decimal("200.00")),
                 valid_from=FIXED,
@@ -833,7 +833,7 @@ def test_an_update_beyond_its_observed_rectangle_reads_the_coverage_it_reaches(
 
     def fn(tx: Transaction) -> None:
         source = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)).result()
-        tx.update(source.edit(value=Decimal("150.00")))
+        tx.amend(source.edit(value=Decimal("150.00")))
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -864,7 +864,7 @@ def test_a_bounded_update_reads_coverage_only_up_to_its_bound() -> None:
 
     def fn(tx: Transaction) -> None:
         source = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)).result()
-        tx.update(source.edit(value=Decimal("150.00")), until=sep)
+        tx.amend(source.edit(value=Decimal("150.00")), until=sep)
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -895,11 +895,11 @@ def test_a_source_keeps_its_pin_through_projection_and_streaming(delivery: str) 
 
     def fn(tx: Transaction) -> None:
         if delivery == "projected":
-            tx.wire.update(tx.find(query).wire().result(), {"value": "150.00"})
+            tx.wire.amend(tx.find(query).wire().result(), {"value": "150.00"})
             return
         with tx.stream(query, batch_size=1) as stream:
             for source in stream:
-                tx.update(source.edit(value=Decimal("150.00")))
+                tx.amend(source.edit(value=Decimal("150.00")))
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -926,7 +926,7 @@ def test_a_source_with_no_pin_and_no_standing_insertion_names_no_start() -> None
         )
         tx.wire.terminate(opened)
         with pytest.raises(KeyedWriteValueError) as refused:
-            tx.wire.update(opened, {"value": "2.00"})
+            tx.wire.amend(opened, {"value": "2.00"})
         assert refused.value.code == "write-value-not-stored"
         with pytest.raises(WriteInstructionError, match="names no Valid-Time instant"):
             tx.wire.terminate(opened)
@@ -966,7 +966,7 @@ def test_a_keyed_update_of_a_source_read_at_valid_time_latest_is_refused() -> No
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
         ).result()
-        tx.update(fetched.edit(value=Decimal("200.00")))
+        tx.amend(fetched.edit(value=Decimal("200.00")))
 
     with raises_contextualized(WriteInstructionError, match="read at Valid-Time LATEST"):
         own_root(
@@ -1045,7 +1045,7 @@ def test_a_bounded_keyed_update_rejects_an_equal_window_bound() -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        tx.update(fetched.edit(value=Decimal("200.00")), until=valid_from)
+        tx.amend(fetched.edit(value=Decimal("200.00")), until=valid_from)
 
     with raises_contextualized(ValueError, match="requires valid_from < until"):
         own_root(
@@ -1110,7 +1110,7 @@ def test_a_standalone_temporal_source_is_accepted_without_an_in_transaction_rere
     node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
 
     def fn(tx: Transaction) -> None:
-        tx.update(node.edit(value=Decimal("9.00")))
+        tx.amend(node.edit(value=Decimal("9.00")))
 
     db.transact(fn)
     # One read (the standalone find), then the close and its chained successor —
@@ -1137,7 +1137,7 @@ def test_a_standalone_temporal_source_is_refused_under_an_explicit_locking_prefe
     node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
 
     def fn(tx: Transaction) -> None:
-        tx.update(node.edit(value=Decimal("9.00")))
+        tx.amend(node.edit(value=Decimal("9.00")))
 
     with raises_contextualized(WriteEvidenceError) as refusal:
         db.transact(fn, concurrency="locking")
@@ -1157,7 +1157,7 @@ def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
     def fn(tx: Transaction) -> None:
         fresh = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(fresh)
-        tx.update(fresh.edit(value=Decimal("2.00")))
+        tx.amend(fresh.edit(value=Decimal("2.00")))
 
     db.transact(fn)
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
@@ -1171,9 +1171,7 @@ def test_an_update_of_a_value_a_different_object_was_inserted_under_is_refused()
     # inserted here, so it still addresses no stored row.
     def fn(tx: Transaction) -> None:
         tx.insert(mm.Balance(id=9, acct_num="Z", value=Decimal("1.00")))
-        tx.update(
-            mm.Balance(id=10, acct_num="Z", value=Decimal("1.00")).edit(value=Decimal("2.00"))
-        )
+        tx.amend(mm.Balance(id=10, acct_num="Z", value=Decimal("1.00")).edit(value=Decimal("2.00")))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
         own_root(
@@ -1230,7 +1228,7 @@ def test_a_temporal_update_after_an_audit_read_of_the_same_milestone_commits(
     def fn(tx: Transaction) -> None:
         current = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
         tx.find(mm.Balance.where(mm.Balance.id == 1).as_of(tx_time=_AUDIT_INSTANT)).result()
-        tx.update(current.edit(value=Decimal("150.00")))
+        tx.amend(current.edit(value=Decimal("150.00")))
 
     db.transact(fn, concurrency=cast("Any", concurrency))
     close, chained = [op for op in port.calls if isinstance(op, WriteCall)]
@@ -1299,7 +1297,7 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_is_refused_too(
 
     def fn(tx: Transaction) -> None:
         node = _find_pinned_position(tx, tx_time=_TX_PIN)
-        tx.update(node.edit(value=Decimal("200.00")))
+        tx.amend(node.edit(value=Decimal("200.00")))
 
     with raises_contextualized(
         TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
@@ -1437,7 +1435,7 @@ class _OtherLifecycleState:
 
 def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
     def fn(tx: Transaction) -> None:
-        tx.update(new_account().edit(balance=Decimal("9.00")))
+        tx.amend(new_account().edit(balance=Decimal("9.00")))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
         own_root(
@@ -1467,7 +1465,7 @@ def test_a_key_member_naming_no_object_reaches_the_provenance_refusal(key: objec
     # bare `TypeError` raised on its behalf. The carriers are illustrative, not a
     # closed set.
     def fn(tx: Transaction) -> None:
-        tx.update(
+        tx.amend(
             mm.Account.model_construct(id=key, owner="Ada", balance=Decimal("100.00"), version=1)
         )
 
@@ -1491,7 +1489,7 @@ def test_insert_of_a_value_this_store_produced_names_the_update_verb() -> None:
     with raises_contextualized(KeyedWriteValueError) as refusal:
         account_db(port).transact(fn)
     assert refusal.value.code == "write-value-already-stored"
-    assert "tx.update(...)" in refusal.value.message
+    assert "tx.amend(...)" in refusal.value.message
     assert not any(isinstance(op, WriteCall) for op in port.calls)  # refused before any DML
 
 
@@ -1513,7 +1511,7 @@ def test_a_second_insert_of_the_same_instance_is_refused_before_any_dml() -> Non
     assert refusal.value.code == "write-value-already-stored"
     assert refusal.value.identity == mm.Account.identity
     assert "already buffered an insert of" in refusal.value.message
-    assert "tx.update(inserted.edit(...))" in refusal.value.message
+    assert "tx.amend(inserted.edit(...))" in refusal.value.message
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
@@ -1530,7 +1528,7 @@ def test_a_second_insert_of_the_same_object_is_refused_whatever_instance_spells_
     with raises_contextualized(KeyedWriteValueError) as refusal:
         db_for(PERSON, port).transact(fn)
     assert refusal.value.code == "write-value-already-stored"
-    assert "tx.update(inserted.edit(...))" in refusal.value.message
+    assert "tx.amend(inserted.edit(...))" in refusal.value.message
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
@@ -1547,7 +1545,7 @@ def test_the_repeated_insert_advice_carries_the_refused_values_into_the_opened_r
         tx.insert(inserted)
         with pytest.raises(KeyedWriteValueError):
             tx.insert(mm.Person(id=9, name="Grace"))
-        tx.update(inserted.edit(name="Grace"))
+        tx.amend(inserted.edit(name="Grace"))
 
     db_for(PERSON, port).transact(fn)
     assert [op for op in port.calls if isinstance(op, WriteCall)] == [
@@ -1563,7 +1561,7 @@ def test_an_insert_then_an_update_of_one_object_still_coalesces_into_the_insert(
     def fn(tx: Transaction) -> None:
         fresh = mm.Person(id=9, name="Newton")
         tx.insert(fresh)
-        tx.update(fresh.edit(name="Grace"))
+        tx.amend(fresh.edit(name="Grace"))
 
     db_for(PERSON, port).transact(fn)
     assert [op for op in port.calls if isinstance(op, WriteCall)] == [
@@ -1601,7 +1599,7 @@ def test_an_update_after_a_cancelled_insert_delete_pair_addresses_no_stored_row(
         fresh = mm.Person(id=9, name="Newton")
         tx.insert(fresh)
         tx.delete(fresh)
-        tx.update(fresh.edit(name="Grace"))
+        tx.amend(fresh.edit(name="Grace"))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
         db_for(PERSON, port).transact(fn)
@@ -1704,7 +1702,7 @@ def test_an_insert_after_a_cancelled_insert_terminate_pair_opens_the_milestone_a
     assert write_ops[0].sql.startswith("insert into")
 
 
-@pytest.mark.parametrize("verb", ["insert", "update"], ids=["insert", "update"])
+@pytest.mark.parametrize("verb", ["insert", "amend"], ids=["insert", "amend"])
 def test_a_value_carrying_another_sources_state_is_refused_by_both_families(verb: str) -> None:
     # A value's stored counterpart is only the one the writing source itself
     # produced, so neither family accepts another source's value — and the
@@ -1715,7 +1713,7 @@ def test_a_value_carrying_another_sources_state_is_refused_by_both_families(verb
         if verb == "insert":
             tx.insert(foreign)
         else:
-            tx.update(foreign.edit(balance=Decimal("175.00")))
+            tx.amend(foreign.edit(balance=Decimal("175.00")))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
         own_root(
@@ -1740,7 +1738,7 @@ def test_a_value_that_keys_no_row_is_still_refused_for_its_provenance() -> None:
 
     def fn(tx: Transaction) -> None:
         tx.insert(_TwinRight(id=1, right_only="x"))
-        tx.update(_RekeyedTwin(id_elsewhere=1, right_only="y").edit(right_only="z"))
+        tx.amend(_RekeyedTwin(id_elsewhere=1, right_only="y").edit(right_only="z"))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
         db_for(_TWIN_RIGHT, port).transact(fn)
@@ -1759,7 +1757,7 @@ def test_a_value_short_of_its_own_key_is_still_refused_for_its_provenance() -> N
     unkeyed = mm.Account.model_construct(owner="Ada", balance=Decimal("100.00"), version=1)
 
     def fn(tx: Transaction) -> None:
-        tx.update(unkeyed)
+        tx.amend(unkeyed)
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
         own_root(
@@ -1813,7 +1811,7 @@ def test_an_unversioned_update_of_such_a_value_is_refused_for_its_evidence(
     writer, node = _person_read_outside_the_writing_transaction(port, second_handle=second_handle)
 
     with raises_contextualized(WriteEvidenceError) as refusal:
-        writer.transact(lambda tx: tx.update(node.edit(name="Grace")))
+        writer.transact(lambda tx: tx.amend(node.edit(name="Grace")))
     assert refusal.value.code == "write-evidence-unavailable"
     assert refusal.value.object_key.primary_key == (("id", 1),)
     assert not any(isinstance(op, WriteCall) for op in port.calls)
@@ -1828,7 +1826,7 @@ def test_an_unversioned_update_of_a_participating_read_is_addressed_by_its_key()
 
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
-        tx.update(node.edit(name="Grace"))
+        tx.amend(node.edit(name="Grace"))
 
     db_for(PERSON, port).transact(fn)
     assert port.calls[-2:] == [
@@ -1846,7 +1844,7 @@ def test_update_of_an_unedited_node_buffers_nothing() -> None:
     )
 
     def fn(tx: Transaction) -> None:
-        tx.update(tx.find(mm.Account.where(mm.Account.id == 1)).result())
+        tx.amend(tx.find(mm.Account.where(mm.Account.id == 1)).result())
 
     account_db(port).transact(fn)
     assert port.calls == [BeginCall(), ReadCall(FIND_SQL_UNLOCKED, (1,)), CommitCall()]

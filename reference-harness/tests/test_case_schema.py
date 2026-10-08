@@ -146,7 +146,7 @@ def _settled_write_scenario_case() -> dict[str, Any]:
                     "write": [
                         {
                             "on": 0,
-                            "mutation": "update",
+                            "mutation": "amend",
                             "entity": "Position",
                             "rows": [{"id": 1, "value": 150.00}],
                             "validFrom": "2024-03-01T00:00:00+00:00",
@@ -347,12 +347,12 @@ def _write_value_scenario_case() -> dict[str, Any]:
         "when": {
             "scenario": [
                 {
-                    "action": "update",
+                    "action": "amend",
                     "value": "unmanaged",
                     "roundTrips": 0,
                     "expectError": "write-value-not-stored",
                 },
-                {"action": "update", "value": "thisSource", "roundTrips": 0},
+                {"action": "amend", "value": "thisSource", "roundTrips": 0},
                 {
                     "action": "insert",
                     "value": "thisSource",
@@ -552,7 +552,7 @@ def _boundary_case() -> dict[str, Any]:
         "given": {"fault": "serialization-failure"},
         "when": {
             "uow": {"concurrency": "optimistic"},
-            "boundary": [{"action": "read"}, {"action": "update"}],
+            "boundary": [{"action": "read"}, {"action": "amend"}],
         },
         "then": {"outcome": "committed"},
     }
@@ -644,7 +644,7 @@ def _rejected_keyed_write_case() -> dict[str, Any]:
         "shape": "rejected",
         "when": {
             "write": {
-                "mutation": "update",
+                "mutation": "amend",
                 "entity": "Position",
                 "rows": [{"id": 1, "value": 150.00}, {"id": 2, "value": 250.00}],
             }
@@ -1083,7 +1083,7 @@ def _conflict_keyed_write() -> dict[str, Any]:
     """
     doc = _conflict_case()
     doc["when"]["write"] = {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "Balance",
         "rows": [{"id": 1, "value": 150.00}],
     }
@@ -1185,7 +1185,7 @@ def _settled_write_predicate_selected() -> dict[str, Any]:
     """
     doc = _settled_write_scenario_case()
     doc["when"]["scenario"][1]["write"] = {
-        "mutation": "update",
+        "mutation": "amend",
         "target": {
             "entity": "Position",
             "predicate": {"eq": {"attr": "Position.id", "value": 1}},

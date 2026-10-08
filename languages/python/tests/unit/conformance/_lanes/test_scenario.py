@@ -218,7 +218,7 @@ def _ledger_update(
     step: dict[str, object] = {
         "write": [
             {
-                "mutation": "update",
+                "mutation": "amend",
                 "entity": "parallax.compatibility.Ledger",
                 "rows": [{"id": 2, "value": value}],
                 "at": at,
@@ -909,7 +909,7 @@ def _two_group_interleave_steps() -> list[dict[str, object]]:
         },
         {
             "uow": "a",
-            "write": [{"mutation": "update", "entity": "Account", "rows": [{"id": 1}]}],
+            "write": [{"mutation": "amend", "entity": "Account", "rows": [{"id": 1}]}],
             "roundTrips": 1,
             "statements": [
                 {
@@ -1005,7 +1005,7 @@ def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() ->
         },
         {
             "uow": "a",
-            "write": [{"mutation": "update", "entity": "Account", "rows": [{"id": 1}]}],
+            "write": [{"mutation": "amend", "entity": "Account", "rows": [{"id": 1}]}],
         },
     ]
     with pytest.raises(EngineError, match="interleave beyond the witnessed"):
@@ -1166,7 +1166,7 @@ def test_a_settled_write_names_a_versioned_targets_own_read_generation() -> None
 
     def settle(node: Any) -> object:
         write = scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
+            {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
             scenario.CaseStateEvidence(meta, TemporalShadow(), (node,)),
             set(),
@@ -1185,7 +1185,7 @@ def test_a_settled_write_is_refused_when_its_named_find_observed_no_such_row() -
     meta = model_facts.load_case_metamodel(_case("m-unit-work-001"))
     with pytest.raises(EngineError, match="observed 0 rows"):
         scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
+            {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
             scenario.CaseStateEvidence(meta, TemporalShadow(), ()),
             set(),
@@ -1228,7 +1228,7 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
     def settle(node: Any) -> object:
         write = scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             {
-                "mutation": "update",
+                "mutation": "amend",
                 "entity": "Balance",
                 "rows": [{"id": 1, "value": "5.00"}],
             },
@@ -1321,7 +1321,7 @@ def test_a_range_beyond_its_observation_needs_tracked_coverage_to_bind() -> None
     )
     instruction = instructions.prepare_wire_write(
         KeyedWrite(
-            "update",
+            "amend",
             "parallax.compatibility.Position",
             ({"id": 1, "value": "150.00"},),
             dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -1364,7 +1364,7 @@ def test_a_range_beyond_its_observation_binds_the_coverage_the_tracker_reads() -
     shadow.keep_unchanged(meta, (), [(entity, head), (entity, tail)])
     instruction = instructions.prepare_wire_write(
         KeyedWrite(
-            "update",
+            "amend",
             "parallax.compatibility.Position",
             ({"id": 1, "value": "150.00"},),
             dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -1496,7 +1496,7 @@ def test_the_lane_assigns_a_restated_occurrence_literally_and_keeps_unassigned_k
     )
     instruction = instructions.prepare_wire_write(
         KeyedWrite(
-            "update",
+            "amend",
             "parallax.compatibility.Voyage",
             ({"id": 7, "title": "Southbound", "manifest": {"cargo": "grain"}},),
         ),
@@ -1750,7 +1750,7 @@ def test_a_write_row_authoring_an_observed_tx_start_is_refused_even_when_version
             "when": {
                 "writeSequence": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Account",
                         "statements": 1,
                         "rows": [
@@ -1785,7 +1785,7 @@ def test_an_unversioned_row_authoring_an_observation_control_key_is_refused() ->
             "when": {
                 "writeSequence": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Wallet",
                         "statements": 2,
                         "rows": [
@@ -1812,7 +1812,7 @@ def test_uniform_multi_row_update_collapses_to_one_in_list_statement() -> None:
             "when": {
                 "writeSequence": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Wallet",
                         "statements": 1,
                         "rows": [
@@ -1908,7 +1908,7 @@ def test_update_entry_uniform_within_each_physical_group_collapses_per_group() -
             "when": {
                 "writeSequence": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Wallet",
                         "statements": 2,
                         "rows": [
@@ -1944,7 +1944,7 @@ def test_update_entry_non_uniform_within_a_physical_group_rejects_a_grouped_coun
             "when": {
                 "writeSequence": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Wallet",
                         "statements": 2,
                         "rows": [
@@ -1973,7 +1973,7 @@ def test_non_uniform_multi_row_update_decomposes_per_distinct_key() -> None:
             "when": {
                 "writeSequence": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Wallet",
                         "statements": 2,
                         "rows": [
@@ -2039,7 +2039,7 @@ def test_elided_no_op_row_is_not_counted_as_a_statement() -> None:
             "when": {
                 "writeSequence": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Account",
                         "statements": 1,
                         "rows": [
@@ -2067,7 +2067,7 @@ def test_an_entry_whose_every_row_elides_emits_no_statement() -> None:
     rows = [{"id": 1, "observedVersion": 1}, {"id": 2, "observedVersion": 1}]
     silent = _synthetic_write(
         "writeSequence",
-        {"when": {"writeSequence": [{"mutation": "update", "entity": "Account", "rows": rows}]}},
+        {"when": {"writeSequence": [{"mutation": "amend", "entity": "Account", "rows": rows}]}},
     )
     emissions, round_trips = scenario.compile_write_sequence_case(silent, "postgres")
     assert round_trips == 0
@@ -2077,7 +2077,7 @@ def test_an_entry_whose_every_row_elides_emits_no_statement() -> None:
         {
             "when": {
                 "writeSequence": [
-                    {"mutation": "update", "entity": "Account", "statements": 1, "rows": rows}
+                    {"mutation": "amend", "entity": "Account", "statements": 1, "rows": rows}
                 ]
             }
         },
@@ -2354,7 +2354,7 @@ def _ledger_materializing_pair(at: str, *, rollback: bool = False) -> list[dict[
     successor per resolved row."""
     write: dict[str, object] = {
         "write": {
-            "mutation": "update",
+            "mutation": "amend",
             "target": {
                 "entity": "parallax.compatibility.Ledger",
                 "predicate": _ledger_predicate(),
@@ -2474,7 +2474,7 @@ def test_is_materializing_write_step_returns_none_for_a_non_predicate_mapping() 
     # falls through to `None` rather than an assertion failure.
     meta = model_facts.load_case_metamodel(_case("m-unit-work-001"))
     step: Mapping[str, object] = {
-        "write": {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 1.0}]}
+        "write": {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": 1.0}]}
     }
     assert scenario.is_materializing_write_step(step, meta) is None
 
@@ -2691,7 +2691,7 @@ def _unversioned_conflict_case(rows: list[dict[str, object]]) -> case_format.Cas
         "conflict",
         {
             "model": "models/wallet.yaml",
-            "when": {"uow": {"concurrency": "optimistic"}, "mutation": "update", "write": rows},
+            "when": {"uow": {"concurrency": "optimistic"}, "mutation": "amend", "write": rows},
         },
     )
 
@@ -2854,7 +2854,7 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
 def test_predicate_writes_require_no_keyed_unit_source_read_or_framework_classification() -> None:
     model = models.load_models()["account"]
     instruction = instructions.PredicateWrite(
-        "update",
+        "amend",
         instructions.PredicateSelection("parallax.compatibility.Account", predicate.All()),
         (instructions.WriteAssignment("parallax.compatibility.Account.owner", "Ada"),),
     )
@@ -2895,7 +2895,7 @@ def test_a_temporal_write_sequence_row_authoring_an_observed_version_is_refused(
             "when": {
                 "writeSequence": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Balance",
                         "statements": 2,
                         "rows": [{"id": 2, "value": 100.00, "observedVersion": 7}],
@@ -2924,7 +2924,7 @@ def test_a_multi_row_temporal_write_sequence_entry_is_refused() -> None:
             "when": {
                 "writeSequence": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Balance",
                         "statements": 2,
                         "rows": [
@@ -2950,7 +2950,7 @@ def test_a_multi_row_temporal_scenario_write_entry_is_refused() -> None:
             {
                 "write": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Balance",
                         "rows": [
                             {"id": 1, "acctNum": "A", "value": 175.00},
@@ -3268,7 +3268,7 @@ def test_a_write_settles_against_a_row_its_own_unit_opened() -> None:
                         "at": "2025-01-01T00:00:00+00:00",
                     },
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "parallax.compatibility.Ledger",
                         "rows": [{"id": 9, "value": decimal.Decimal("150.00")}],
                         "at": "2025-01-01T00:00:00+00:00",
@@ -3332,7 +3332,7 @@ def test_a_named_find_publishing_no_row_of_a_writes_key_settles_nothing() -> Non
                         "write": [
                             {
                                 "on": 0,
-                                "mutation": "update",
+                                "mutation": "amend",
                                 "entity": "Account",
                                 "rows": [{"id": 1, "balance": "5.00", "observedVersion": 1}],
                             }
@@ -3413,7 +3413,7 @@ def test_one_entity_spelled_two_ways_owes_one_membership_read() -> None:
             {
                 "write": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "OrderItem",
                         "rows": [{"id": 21, "quantity": 9}],
                     },
@@ -3434,7 +3434,7 @@ def test_one_entity_spelled_two_ways_owes_one_membership_read() -> None:
 
 def _registry_advance(sequence: str) -> dict[str, object]:
     return {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "parallax.compatibility.PkSequence",
         "rows": [{"name": sequence, "nextVal": {"increment": 1}}],
     }
