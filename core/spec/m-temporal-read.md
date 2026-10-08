@@ -190,7 +190,7 @@ The Database Root's Clock Strategy supplies the finite Transaction-Time instant 
 open Transaction-Time intervals. Callers do not author it as Latest or Now.
 Transaction-Time-Only writes use that clock and no Valid-Time argument.
 
-Bitemporal writes receive `valid_from`; bounded `insertUntil`, `updateUntil`,
+Bitemporal writes receive `valid_from`; bounded `insertUntil`, `amendUntil`,
 and `terminateUntil` additionally receive `until`, with
 `valid_from < until`. These are Valid-Time coordinates. Transaction-Time
 coordinates still come exclusively from the Database Root's clock. The physical DML

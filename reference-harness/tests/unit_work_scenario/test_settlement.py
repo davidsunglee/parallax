@@ -410,7 +410,7 @@ def _versioned_settled_case(
                     "write": [
                         {
                             "on": 0,
-                            "mutation": "update",
+                            "mutation": "amend",
                             "entity": "Account",
                             "rows": [{"id": 1, "balance": "175.00"}],
                         }
@@ -462,7 +462,7 @@ def _reserved_version_column_case(*, advance: int) -> Case:
                     "write": [
                         {
                             "on": 0,
-                            "mutation": "update",
+                            "mutation": "amend",
                             "entity": "Account",
                             "rows": [{"id": 1, "balance": "175.00"}],
                         }
@@ -506,13 +506,13 @@ def _multi_object_settled_case(*, second_version: int = 5) -> Case:
                     "write": [
                         {
                             "on": 0,
-                            "mutation": "update",
+                            "mutation": "amend",
                             "entity": "Account",
                             "rows": [{"id": 1, "balance": "175.00"}],
                         },
                         {
                             "on": 0,
-                            "mutation": "update",
+                            "mutation": "amend",
                             "entity": "Account",
                             "rows": [{"id": 2, "balance": "60.00"}],
                         },
@@ -554,7 +554,7 @@ def _shared_table_settled_case(*, tag: str = "dog") -> Case:
                     "write": [
                         {
                             "on": 0,
-                            "mutation": "update",
+                            "mutation": "amend",
                             "entity": "parallax.compatibility.Dog",
                             "rows": [{"id": 1, "barkVolume": 9}],
                         }
@@ -676,7 +676,7 @@ def _settled_close_case(
                             "on": 0,
                             # Bounded inside the observed rectangle, so the flush
                             # reads no coverage beyond it.
-                            "mutation": "updateUntil",
+                            "mutation": "amendUntil",
                             "entity": "parallax.compatibility.DepositRate",
                             "rows": [{"id": 1, "amount": "3.00"}],
                             "validFrom": "2024-03-01T00:00:00.000000Z",
@@ -736,7 +736,7 @@ def _transaction_time_only_settled_case(*, on: int) -> Case:
                     "write": [
                         {
                             "on": on,
-                            "mutation": "update",
+                            "mutation": "amend",
                             "entity": "Balance",
                             "rows": [{"id": 1, "value": "150.00"}],
                             "at": "2024-10-01T00:00:00.000000Z",

@@ -46,7 +46,7 @@ when:
         - { id: 2, owner: Linus, balance: "250.00", version: 1 }
     - uow: concurrent
       write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.Account
           rows:
             - { id: 2, balance: "999.00" }
@@ -62,7 +62,7 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 9, owner: Noether, balance: "5.00", version: 1 }
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.Account
           rows:
             - { id: 2, balance: "300.00" }

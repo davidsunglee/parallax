@@ -143,7 +143,7 @@ def _increase_balance(tx: Transaction) -> None:
     """Read one Account and buffer a gated update of it — the shape that makes a
     zero-row write a shortfall the enforcer judges after the call completed."""
     account = tx.find(mm.Account.where(mm.Account.id == 7)).result()
-    tx.update(account.edit(balance=Decimal("9.00")))
+    tx.amend(account.edit(balance=Decimal("9.00")))
 
 
 # --------------------------------------------------------------------------- #

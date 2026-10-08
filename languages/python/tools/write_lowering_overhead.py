@@ -123,7 +123,7 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
         "flush), but no earlier read and no database execution"
     ),
     ACQUISITION_WINDOW: (
-        "one public tx.wire.update_where bounded by until over a Bitemporal target, from the "
+        "one public tx.wire.amend_where bounded by until over a Bitemporal target, from the "
         "caller's target and changes documents through preparation and production "
         "acquisition over freshly composed resolving rows to a buffered Materialized "
         "Write Group; no flush or serialization"

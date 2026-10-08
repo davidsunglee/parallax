@@ -129,7 +129,7 @@ def a_write_keeps_a_loaded_to_one_view(db: ScopedDatabase) -> tuple[Snapshot[Any
 
     def rewrite(tx: Transaction) -> None:
         observed = tx.find(Order.where(Order.id == 1)).result()
-        tx.update(observed.edit(name="Rewritten"))
+        tx.amend(observed.edit(name="Rewritten"))
 
     db.transact(rewrite)
     reread = db.find(Order.where(Order.id == 1)).result()  # where the write IS observable
@@ -180,7 +180,7 @@ def a_write_keeps_a_loaded_value_object_document(
 
     def rewrite(tx: Transaction) -> None:
         observed = tx.find(Customer.where(Customer.id == 1)).result()
-        tx.update(
+        tx.amend(
             observed.edit(
                 address=CustomerAddress(  # a changed city AND the phones in the opposite order
                     street="1 Park Ave",
@@ -224,7 +224,7 @@ def a_write_keeps_a_view_over_freshly_inserted_rows(
 
     def rewrite(tx: Transaction) -> None:
         observed = tx.find(OrderItem.where(OrderItem.id == 61)).result()
-        tx.update(observed.edit(sku="Rewritten"))
+        tx.amend(observed.edit(sku="Rewritten"))
 
     committed = db.transact(rewrite)
     reread = db.find(OrderItem.where(OrderItem.id == 61))  # where the write IS observable
@@ -238,7 +238,7 @@ def a_grouped_read_observes_its_own_relationship_writes(
         before = tx.find(Order.where(Order.id == 1).include(Order.items))
         loaded_item = before.result().items[1]  # item 11, by the declared `id desc`
         tx.insert(OrderItem(id=13, order_id=1, sku="D-130", quantity=6))
-        tx.update(loaded_item.edit(sku="Rewritten"))  # settles against the RELATIONSHIP's own row
+        tx.amend(loaded_item.edit(sku="Rewritten"))  # settles against the RELATIONSHIP's own row
         after = tx.find(Order.where(Order.id == 1).include(Order.items))  # sees both, uncommitted
         return before, after
 
@@ -264,7 +264,7 @@ def a_rectangle_split_keeps_a_loaded_relationship_view(
                 valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(
+        tx.amend(
             observed.edit(amount=Decimal("999.00")),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
@@ -282,7 +282,7 @@ def a_finite_transaction_time_pinned_view_is_read_only(db: ScopedDatabase) -> No
         superseded = tx.find(
             Balance.where(Balance.id == 1).as_of(tx_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC))
         ).result()
-        tx.update(superseded.edit(value=Decimal("999.00")))  # refused at the verb, before any DML
+        tx.amend(superseded.edit(value=Decimal("999.00")))  # refused at the verb, before any DML
 
     db.transact(mutate_the_pinned_view, concurrency="optimistic")
 
@@ -459,7 +459,7 @@ def _snapshot_read_025_clock() -> Clock:
     """`m-snapshot-read-025`'s own authored Transaction Instant.
 
     One instant, because the story flushes one `db.transact`, and that instant
-    is the `at:` its mirrored case's `updateUntil` declares — the split's three
+    is the `at:` its mirrored case's `amendUntil` declares — the split's three
     chained rectangles open at 2024-07-01 on the Transaction-Time axis, which is
     what lets the story's read-back be graded against the case's own rows.
     """

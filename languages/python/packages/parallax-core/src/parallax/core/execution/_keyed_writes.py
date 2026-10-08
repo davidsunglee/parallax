@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, Literal, Protocol
+from typing import Final, Literal, Protocol, cast
 
 from parallax.core.entity._layout import CatalogedModel
 
@@ -12,13 +12,14 @@ from parallax.core.entity._layout import CatalogedModel
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores.
 from parallax.core.execution._family import temporal_shape
-from parallax.core.execution._options import Omitted
+from parallax.core.execution._options import OMITTED, Omitted
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import Bitemporal, Pin, TimeInterval
 from parallax.core.unit_work import (
+    AMEND_MUTATIONS,
+    ASSIGNMENT_MUTATIONS,
     INSERT_MUTATIONS,
-    UPDATE_MUTATIONS,
     KeyedMutation,
     KeyedWrite,
     ReadOrigin,
@@ -45,12 +46,15 @@ __all__ = [
     "Provenance",
     "ResolvedKeyedInsert",
     "ResolvedKeyedWriteSource",
+    "TargetCondition",
     "TransactionTimePinReadOnlyError",
     "WriteRepresentation",
     "keyed_insert",
     "keyed_instruction",
     "keyed_write",
     "retained",
+    "stated_valid_from",
+    "target_condition",
     "validate_source_pin",
     "window_mutation",
 ]
@@ -131,14 +135,14 @@ only the representation knows.
 
 A provenance refusal names the verb that DOES accept the value, and a caller
 spells that verb in the interface they called: an already-stored value is
-re-authored through ``value.edit(...)`` and ``tx.update(...)`` where a Typed
-verb was handed it, and through ``tx.wire.update(value, {...})`` where a Wire
+re-authored through ``value.edit(...)`` and ``tx.amend(...)`` where a Typed
+verb was handed it, and through ``tx.wire.amend(value, {...})`` where a Wire
 one was. The rule, its class, and its code are one; only the spelling of the way
 out is the representation's."""
 
 _ALREADY_STORED_ADVICE: Final[Mapping[WriteRepresentation, str]] = {
-    "typed": "change it with `value.edit(...)` and write it with `tx.update(...)`",
-    "wire": "write the change with `tx.wire.update(value, {...})`",
+    "typed": "change it with `value.edit(...)` and write it with `tx.amend(...)`",
+    "wire": "write the change with `tx.wire.amend(value, {...})`",
 }
 """How each interface spells the verb that accepts a value already stored.
 
@@ -150,11 +154,11 @@ source that reaches the question is a node this store published."""
 
 _REPEATED_INSERT_ADVICE: Final[Mapping[WriteRepresentation, str]] = {
     "typed": (
-        "write the change with `tx.update(inserted.edit(...))`, where `inserted` is the value "
+        "write the change with `tx.amend(inserted.edit(...))`, where `inserted` is the value "
         "the first insert took"
     ),
     "wire": (
-        "write the change with `tx.wire.update(opened, {...})`, where `opened` is the node "
+        "write the change with `tx.wire.amend(opened, {...})`, where `opened` is the node "
         "the first insert answered"
     ),
 }
@@ -196,14 +200,14 @@ def validate_provenance(
     the message names the verb that does accept it, spelled in the
     ``representation`` the call arrived through (:data:`WriteRepresentation`).
 
-    On the UPDATE side this overlaps
+    On the amendment and replacement side this overlaps
     :meth:`~parallax.core.unit_work.UnitOfWork.resolve_write_evidence`: a value no
     managed source published, and a value another source published, both carry no
     hint and so no usable evidence either. Provenance is asked first because it
     is the more specific diagnosis — it names the verb that DOES accept the
     value, where the evidence refusal could only report that there was none.
 
-    An unedited value this source produced is NOT refused for an `update`: it
+    An unedited value this source produced is NOT refused for an `amend`: it
     carries no change, so it buffers nothing, issues no statement, and raises
     nothing — the same outcome as an edit whose net change is empty.
     ``delete`` / ``terminate`` / ``terminateUntil`` derive an identity row alone
@@ -218,12 +222,12 @@ def validate_provenance(
     row derived for the purpose, so a value whose class can key no row still
     reaches THIS refusal rather than an
     :class:`~parallax.core.entity.EntityRowError` raised on its behalf. It is the
-    UPDATE family's exemption only: the insert family asks whether an insertion
+    amendment and replacement family's exemption only: the insert family asks whether an insertion
     of the object still stands for the opposite verdict, and that refusal is
     :func:`refuse_repeated_insert`'s, asked once the row is prepared rather
     than here.
     """
-    if mutation not in UPDATE_MUTATIONS and mutation not in INSERT_MUTATIONS:
+    if mutation not in ASSIGNMENT_MUTATIONS and mutation not in INSERT_MUTATIONS:
         return
     if provenance == "none":
         if mutation in INSERT_MUTATIONS or inserted:
@@ -233,7 +237,7 @@ def validate_provenance(
             message=(
                 f"{identity.canonical}: {mutation!r} was handed a value no read of this "
                 "store produced, so it addresses no stored row; write it with "
-                "`tx.insert(...)`, or update a value a `find` returned"
+                "`tx.insert(...)`, or amend or replace a value a `find` returned"
             ),
             identity=identity,
         )
@@ -527,6 +531,59 @@ def window_mutation[M: KeyedMutation | TargetMutation](
     return bounded, until
 
 
+@dataclass(frozen=True, slots=True)
+class TargetCondition:
+    """The condition keywords a caller-conditioned write was handed, as the
+    canonical instruction carries them beside the names its caller stated, so
+    preparation can judge presence apart from value in its fixed order."""
+
+    if_version: int | None
+    if_tx_start: dt.datetime | None
+    unversioned: bool
+    stated: tuple[str, ...]
+
+
+def target_condition(
+    *,
+    version: object = OMITTED,
+    tx_start: object = OMITTED,
+    unversioned: object = OMITTED,
+) -> TargetCondition:
+    """The condition a ``_if`` write's keywords state, unjudged.
+
+    Omission is the one absence: a keyword stated as ``None`` or as any other
+    value is a stated condition, so preparation refuses more than one stated,
+    a missing one, and an invalid value — a ``None`` included — and never
+    falls back on a source's authority.
+    """
+    stated: tuple[str, ...] = ()
+    if not isinstance(version, Omitted):
+        stated += ("version",)
+    if not isinstance(tx_start, Omitted):
+        stated += ("tx_start",)
+    if not isinstance(unversioned, Omitted):
+        stated += ("unversioned",)
+    return TargetCondition(
+        if_version=None if isinstance(version, Omitted) else cast("int", version),
+        if_tx_start=None if isinstance(tx_start, Omitted) else cast("dt.datetime", tx_start),
+        unversioned=False if isinstance(unversioned, Omitted) else cast("bool", unversioned),
+        stated=stated,
+    )
+
+
+def stated_valid_from(valid_from: dt.datetime | Omitted) -> dt.datetime | None:
+    """A write's ``valid_from`` keyword as the bound preparation judges: an
+    omitted start is absent, and a stated ``None`` is refused rather than read
+    as omission."""
+    if isinstance(valid_from, Omitted):
+        return None
+    if cast("object", valid_from) is None:
+        raise WriteInstructionError(
+            "valid_from=None states no start; omit valid_from rather than stating None"
+        )
+    return valid_from
+
+
 def keyed_write(
     model: CatalogedModel,
     uow: UnitOfWork,
@@ -557,9 +614,11 @@ def keyed_write(
     A source-backed write states no start of its own: a Bitemporal one starts
     at its source's finite Valid-Time pin, or at the anchor its insertion was
     admitted with (:func:`source_start`). Preparation then judges that start
-    and ``until`` together, before an update that expresses no member is
-    dropped as the empty set it is. A refused write leaves the admissions as it
-    found them, because the buffer admits all or nothing.
+    and ``until`` together, before an amendment that expresses no member is
+    dropped as the empty set it is. A replacement is never empty: it states the
+    object's complete writable state, completed from whatever it omits. A
+    refused write leaves the admissions as it found them, because the buffer
+    admits all or nothing.
     """
     refuse_reentry(lifecycle)
     source.capture(mutation)
@@ -582,7 +641,7 @@ def keyed_write(
     validate_source_pin(resolved.entity.identity, resolved.pin)
     valid_from = source_start(meta, resolved, mutation, anchor)
     prepared = source.prepare(resolved, valid_from=valid_from, until=until)
-    if mutation in UPDATE_MUTATIONS and not prepared.assigned:
+    if mutation in AMEND_MUTATIONS and not prepared.assigned:
         return
     if authorized:
         uow.buffer(buffered_write(prepared.instruction, None, authority=authoring))
@@ -611,7 +670,7 @@ def source_start(
     states no start and is refused, as is a source neither a pin nor a standing
     insertion anchors.
     """
-    if mutation not in UPDATE_MUTATIONS and mutation not in _SOURCE_WINDOWED:
+    if mutation not in ASSIGNMENT_MUTATIONS and mutation not in _SOURCE_WINDOWED:
         return None
     entity = resolved.entity
     if not isinstance(temporal_shape(meta, entity), Bitemporal):

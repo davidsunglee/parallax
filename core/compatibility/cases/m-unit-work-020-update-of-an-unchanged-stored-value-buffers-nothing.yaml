@@ -4,7 +4,7 @@ tags: [m-unit-work, write-value, provenance, scenario, slice-snapshot-1]
 shape: scenario
 when:
   scenario:
-    - action: update
+    - action: amend
       value: thisSource
       roundTrips: 0
       note: accepted, and with no change to write it buffers nothing — no expectError, no DML

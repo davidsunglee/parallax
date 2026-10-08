@@ -186,7 +186,7 @@ def test_each_key_settles_every_mutation_and_the_module_function_delegates(
 
 
 def test_a_key_handed_none_of_the_evidence_its_arm_reads_settles_nothing() -> None:
-    assert _EXPLICIT_KEY.settled_evidence("update", object_key=_OBJECT, observation=None) is None
+    assert _EXPLICIT_KEY.settled_evidence("amend", object_key=_OBJECT, observation=None) is None
     assert _UNVERSIONED_KEY.settled_evidence("delete", object_key=None, observation=_RETAINED) is (
         None
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final, Literal, Protocol, cast
+from typing import Any, Final, Literal, Protocol, cast
 
 from parallax.conformance import (
     _case_ingress,
@@ -1427,14 +1427,14 @@ def _buffer_wire_predicate_write(
     changes = ActualWireProjection(model).entity_values(prepared.selection.target, managed_changes)
     valid_from, until = _authored_bounds(prepared.valid_time_window)
     match prepared.mutation:
-        case "update":
-            tx.wire.update_where(target, changes, valid_from=valid_from)
+        case "amend":
+            tx.wire.amend_where(target, changes, **_stated_start(valid_from))
         case "delete":
             tx.wire.delete_where(target)
         case "terminate":
-            tx.wire.terminate_where(target, valid_from=valid_from)
-        case "updateUntil":
-            tx.wire.update_where(
+            tx.wire.terminate_where(target, **_stated_start(valid_from))
+        case "amendUntil":
+            tx.wire.amend_where(
                 target,
                 changes,
                 valid_from=_required(valid_from),
@@ -2390,7 +2390,7 @@ def _run_materializing_pair(
     its target entity — ONE transaction, `m-case-format` "Materializing
     cases": "a preceding scenario read resolves the same target predicate ...
     It is a real resolving read, not a cache hit". Production materialization
-    (``tx.wire.update_where`` and its family) performs its OWN internal
+    (``tx.wire.amend_where`` and its family) performs its OWN internal
     resolve using the SAME predicate; with no concurrent writer between the
     two steps, that resolve observes the IDENTICAL rows the corpus's own
     preceding find step documents, so pairing them here reproduces the
@@ -2924,7 +2924,7 @@ def _buffer_wire_write(
                 entity_name, payload, valid_from=_required(valid_from), until=_required(until)
             )
             if instruction.mutation == "insertUntil"
-            else tx.wire.insert(entity_name, payload, valid_from=valid_from)
+            else tx.wire.insert(entity_name, payload, **_stated_start(valid_from))
         )
         state.opened[_node_object_key(opened)] = opened
         return opened
@@ -2942,10 +2942,12 @@ def _buffer_wire_write(
         {name: value for name, value in row.items() if name not in identity},
     )
     match instruction.mutation:
-        case "update":
-            tx.wire.update(node, changes)
-        case "updateUntil":
-            tx.wire.update(node, changes, until=_required(until))
+        case "amend":
+            tx.wire.amend(node, changes)
+        case "amendUntil":
+            tx.wire.amend(node, changes, until=_required(until))
+        case "replace" | "replaceUntil":
+            tx.wire.replace(node, changes, **({} if until is None else {"until": until}))
         case "delete":
             tx.wire.delete(node)
         case "terminate":
@@ -2964,25 +2966,24 @@ def _buffer_wire_target(
     document = ActualWireProjection(model).entity_values(instruction.target, dict(instruction.row))
     expectation = instruction.expectation
     valid_from, until = _authored_bounds(instruction.valid_time_window)
-    version = expectation.version if isinstance(expectation, ExpectedVersion) else None
-    tx_start = expectation.instant if isinstance(expectation, ExpectedTxStart) else None
-    verb = tx.wire.replace if instruction.replaces else tx.wire.update
-    if until is None:
-        verb(
-            entity_name,
-            document,
-            valid_from=valid_from,
-            if_version=version,
-            if_tx_start=tx_start,
-        )
-    else:
-        verb(
-            entity_name,
-            document,
-            valid_from=valid_from,
-            until=until,
-            if_tx_start=tx_start,
-        )
+    condition: dict[str, Any] = (
+        {"version": expectation.version}
+        if isinstance(expectation, ExpectedVersion)
+        else {"tx_start": expectation.instant}
+        if isinstance(expectation, ExpectedTxStart)
+        else {"unversioned": True}
+    )
+    bounds: dict[str, Any] = {**_stated_start(valid_from)}
+    if until is not None:
+        bounds["until"] = until
+    verb = tx.wire.replace_if if instruction.replaces else tx.wire.amend_if
+    verb(entity_name, document, **condition, **bounds)
+
+
+def _stated_start(valid_from: dt.datetime | None) -> dict[str, dt.datetime]:
+    """``valid_from`` as the keyword a public verb takes, omitted where the
+    instruction states no start."""
+    return {} if valid_from is None else {"valid_from": valid_from}
 
 
 def _wire_insert_payload(
@@ -3796,10 +3797,10 @@ def read_table_state(
     return state
 
 
-def _conflict_mutation(when: Mapping[str, object]) -> Literal["update", "delete"]:
+def _conflict_mutation(when: Mapping[str, object]) -> Literal["amend", "delete"]:
     """A conflict case's written verb (`m-case-format` ``when.mutation``),
-    defaulting to ``update``."""
-    return "delete" if when.get("mutation") == "delete" else "update"
+    defaulting to ``amend``."""
+    return "delete" if when.get("mutation") == "delete" else "amend"
 
 
 @dataclass(frozen=True, slots=True)
@@ -3827,7 +3828,7 @@ class _ConflictWrite:
 def _resolve_conflict_writes(
     model: AcceptedMetamodel,
     target: str,
-    mutation: Literal["update", "delete"],
+    mutation: Literal["amend", "delete"],
     write_rows: Sequence[Mapping[str, object]],
 ) -> tuple[_ConflictWrite, ...]:
     """Resolve a NON-TEMPORAL conflict attempt's ``write`` rows: strip each row's
@@ -4148,7 +4149,7 @@ def _run_conflict_write(
     concurrency: Concurrency,
     requests: case_format.TransactionKeywords,
     write_rows: Sequence[Mapping[str, object]],
-    mutation: Literal["update", "delete"],
+    mutation: Literal["amend", "delete"],
     nodes: Mapping[ObjectKey, WireEntity],
     lifecycle: LifecycleRun,
 ) -> tuple[tuple[LoweredStatement, ...], int, int]:
@@ -4199,7 +4200,7 @@ def _run_conflict_write(
                 if mutation == "delete":
                     tx.wire.delete(node)
                 else:
-                    tx.wire.update(node, _conflict_changes(model, write))
+                    tx.wire.amend(node, _conflict_changes(model, write))
             return landed  # the expectation machinery already verified this on success
 
         observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None

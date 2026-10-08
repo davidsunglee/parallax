@@ -25,6 +25,7 @@ from parallax.conformance.story_models import Wallet
 from parallax.core import Attr, Entity, attr
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import DomainModel
+from parallax.core.execution._options import OMITTED
 from parallax.core.unit_work import (
     MissingTargetError,
     RollbackOnlyError,
@@ -92,16 +93,16 @@ def _row(version: int = 3, balance: str = "100.00") -> dict[str, object]:
 
 
 def _patch(tx: Transaction, version: int = 3, **changes: object) -> None:
-    tx.wire.update("Account", {"id": 1, **changes}, if_version=version)
+    tx.wire.amend_if("Account", {"id": 1, **changes}, version=version)
 
 
 def _replace(
     tx: Transaction, representation: _Representation, version: int = 3, owner: str = "Zed"
 ) -> None:
     if representation == "typed":
-        tx.replace(mm.Account(id=1, owner=owner, balance=Decimal("3.00")), if_version=version)
+        tx.replace_if(mm.Account(id=1, owner=owner, balance=Decimal("3.00")), version=version)
     else:
-        tx.wire.replace("Account", {"id": 1, "owner": owner, "balance": "3.00"}, if_version=version)
+        tx.wire.replace_if("Account", {"id": 1, "owner": owner, "balance": "3.00"}, version=version)
 
 
 def _calls(port: ScriptedAdapter) -> list[PortCall]:
@@ -115,7 +116,7 @@ def test_a_wire_patch_gates_on_its_callers_version_and_reads_nothing() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
-        assert tx.wire.update("Account", {"id": 1, "balance": "175.00"}, if_version=3) is None
+        assert tx.wire.amend_if("Account", {"id": 1, "balance": "175.00"}, version=3) is None
 
     account_db(port).transact(fn)
     assert _calls(port) == [WriteCall(_GATED_BALANCE, (Decimal("175.00"), 4, 1, 3))]
@@ -147,11 +148,11 @@ def test_an_identity_only_patch_reads_writes_and_checks_nothing(
 ) -> None:
     versioned = ScriptedAdapter(Transact())
     account_db(versioned).transact(
-        lambda tx: tx.wire.update("Account", {"id": 1}, if_version=99), concurrency=concurrency
+        lambda tx: tx.wire.amend_if("Account", {"id": 1}, version=99), concurrency=concurrency
     )
     unversioned = ScriptedAdapter(Transact())
     db_for(MODELS["wallet"], unversioned).transact(
-        lambda tx: tx.wire.update("Wallet", {"id": 5}), concurrency=concurrency
+        lambda tx: tx.wire.amend_if("Wallet", {"id": 5}, unversioned=True), concurrency=concurrency
     )
     assert _calls(versioned) == _calls(unversioned) == []
 
@@ -161,14 +162,14 @@ def test_an_identity_only_patch_neither_cancels_nor_changes_earlier_work() -> No
 
     def fn(tx: Transaction) -> None:
         _patch(tx, balance="150.00")
-        tx.wire.update("Account", {"id": 1}, if_version=99)
+        tx.wire.amend_if("Account", {"id": 1}, version=99)
 
     account_db(port).transact(fn)
     assert _calls(port) == [WriteCall(_GATED_BALANCE, (Decimal("150.00"), 4, 1, 3))]
 
 
 @pytest.mark.parametrize("until", [FIXED, None], ids=["finite", "explicit-none"])
-@pytest.mark.parametrize("operation", ["update", "replace-typed", "replace-wire"])
+@pytest.mark.parametrize("operation", ["amend", "replace-typed", "replace-wire"])
 def test_a_non_temporal_target_refuses_until_before_an_empty_patch_is_dropped(
     operation: str, until: dt.datetime | None
 ) -> None:
@@ -177,12 +178,14 @@ def test_a_non_temporal_target_refuses_until_before_an_empty_patch_is_dropped(
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(WriteInstructionError, match="until"):
-            if operation == "update":
-                tx.wire.update("Account", {"id": 1}, until=bound, if_version=3)
+            if operation == "amend":
+                tx.wire.amend_if("Account", {"id": 1}, until=bound, version=3)
             elif operation == "replace-typed":
-                tx.replace(mm.Account(id=1, owner="Zed", balance=Decimal(1)), until=bound)
+                tx.replace_if(mm.Account(id=1, owner="Zed", balance=Decimal(1)), until=bound)
             else:
-                tx.wire.replace("Account", {"id": 1, "owner": "Zed", "balance": "1"}, until=bound)
+                tx.wire.replace_if(
+                    "Account", {"id": 1, "owner": "Zed", "balance": "1"}, until=bound
+                )
 
     account_db(port).transact(fn)
     assert _calls(port) == []
@@ -248,7 +251,7 @@ def test_a_locking_target_write_reuses_a_pending_observed_write_of_its_state() -
 
     def fn(tx: Transaction) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(source.edit(owner="Bo"))
+        tx.amend(source.edit(owner="Bo"))
         del source
         gc.collect()
         _patch(tx, balance="150.00")
@@ -278,7 +281,7 @@ def test_a_spent_read_never_stands_in_for_a_locking_acquisition_and_a_fresh_one_
 
     def fn(tx: Transaction) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(source.edit(owner="Bo"))
+        tx.amend(source.edit(owner="Bo"))
         fresh = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         with pytest.raises(WritePreconditionError):
             _patch(tx, version=3, balance="150.00")
@@ -328,7 +331,7 @@ def test_an_unversioned_target_takes_the_locking_fallback_and_misses_as_a_missin
     )
 
     def fn(tx: Transaction) -> None:
-        tx.wire.update("Wallet", {"id": 5, "balance": "2.00"})
+        tx.wire.amend_if("Wallet", {"id": 5, "balance": "2.00"}, unversioned=True)
 
     with raises_contextualized(MissingTargetError, match="Wallet"):
         db_for(MODELS["wallet"], port).transact(fn)
@@ -345,20 +348,20 @@ def test_a_target_writes_window_outranks_its_revision_which_outranks_its_payload
     def fn(tx: Transaction) -> None:
         refusals: list[str] = []
         for call in (
-            lambda: tx.wire.update("Account", unknown, valid_from=FIXED),
-            lambda: tx.wire.update("Account", unknown),
-            lambda: tx.wire.update("Account", unknown, if_version=3),
-            lambda: tx.wire.update("Account", {"id": 1}, if_tx_start=FIXED),
-            lambda: tx.wire.replace("Account", {"id": 1, "owner": "Zed"}, if_version=3),
+            lambda: tx.wire.amend_if("Account", unknown, valid_from=FIXED),
+            lambda: tx.wire.amend_if("Account", unknown),
+            lambda: tx.wire.amend_if("Account", unknown, version=3),
+            lambda: tx.wire.amend_if("Account", {"id": 1}, tx_start=FIXED),
+            lambda: tx.wire.replace_if("Account", {"id": 1, "owner": "Zed"}, version=3),
         ):
             with pytest.raises(ValueError) as refused:
                 call()
             refusals.append(str(refused.value))
         window, missing, undeclared, misstated, incomplete = refusals
         assert "valid_from" in window
-        assert "requires if_version" in missing
+        assert "requires version" in missing
         assert "undeclared" in undeclared and "nickname" in undeclared
-        assert "takes if_version, not if_tx_start" in misstated
+        assert "takes version, not tx_start" in misstated
         assert "balance" in incomplete
 
     account_db(port).transact(fn)
@@ -369,8 +372,8 @@ def test_an_unversioned_target_states_no_revision() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
-        with pytest.raises(WriteInstructionError, match="takes no revision argument"):
-            tx.replace(Wallet(id=5, owner="Ada", balance=Decimal(1)), if_version=1)
+        with pytest.raises(WriteInstructionError, match="takes unversioned, not version"):
+            tx.replace_if(Wallet(id=5, owner="Ada", balance=Decimal(1)), version=1)
 
     db_for(MODELS["wallet"], port).transact(fn)
     assert _calls(port) == []
@@ -414,7 +417,7 @@ def test_a_retried_attempt_states_the_same_callers_revision() -> None:
     def fn(tx: Transaction) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 2)).result()
         _patch(tx, balance="150.00")
-        tx.update(source.edit(owner="Bo"))
+        tx.amend(source.edit(owner="Bo"))
 
     account_db(port).transact(fn, retry_optimistic_conflicts=True)
     targets = [
@@ -438,7 +441,7 @@ def _r(tx: Transaction, _source: mm.Account) -> None:
 
 
 def _o(tx: Transaction, source: mm.Account) -> None:
-    tx.update(source.edit(owner="Bo"))
+    tx.amend(source.edit(owner="Bo"))
 
 
 def _d(tx: Transaction, source: mm.Account) -> None:
@@ -479,7 +482,7 @@ def test_exact_window_target_and_observed_writes_compose_into_one_statement(
             step(tx, source)
         tx.find(mm.Account.where(mm.Account.id == 2))
         with pytest.raises(WriteEvidenceError) as refused:
-            tx.update(source.edit(owner="Again"))
+            tx.amend(source.edit(owner="Again"))
         spent.append(refused.value)
 
     account_db(port).transact(fn)
@@ -492,7 +495,7 @@ def test_a_composed_write_whose_gate_fails_reports_the_callers_precondition() ->
 
     def fn(tx: Transaction) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(source.edit(owner="Bo"))
+        tx.amend(source.edit(owner="Bo"))
         _patch(tx, balance="150.00")
 
     with raises_contextualized(WritePreconditionError):
@@ -503,15 +506,15 @@ type _WalletStep = Callable[[Transaction, Wallet], None]
 
 
 def _wallet_p(tx: Transaction, _source: Wallet) -> None:
-    tx.wire.update("Wallet", {"id": 5, "balance": "2.00"})
+    tx.wire.amend_if("Wallet", {"id": 5, "balance": "2.00"}, unversioned=True)
 
 
 def _wallet_r(tx: Transaction, _source: Wallet) -> None:
-    tx.replace(Wallet(id=5, owner="Zed", balance=Decimal("3.00")))
+    tx.replace_if(Wallet(id=5, owner="Zed", balance=Decimal("3.00")), unversioned=True)
 
 
 def _wallet_o(tx: Transaction, source: Wallet) -> None:
-    tx.update(source.edit(owner="Bo"))
+    tx.amend(source.edit(owner="Bo"))
 
 
 def _wallet_d(tx: Transaction, source: Wallet) -> None:
@@ -580,7 +583,7 @@ def test_an_unversioned_target_composes_with_observed_writes_of_its_object(
         tx.find(Wallet.where(Wallet.id == 6))
         if submitted:
             with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
-                tx.update(source.edit(owner="Again"))
+                tx.amend(source.edit(owner="Again"))
 
     db_for(MODELS["wallet"], port).transact(fn)
     reads = [ReadCall(_WALLET_FIND_LOCKED, (5,))] * (2 if acquired else 1)
@@ -669,7 +672,7 @@ def test_a_target_write_of_a_state_a_pending_group_selected_is_refused() -> None
     port = ScriptedAdapter(Transact(Read(rows=[_row(version=2)]), Write()))
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Bo"))
+        tx.amend_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Bo"))
         with pytest.raises(WriteEvidenceError, match="already buffered"):
             _patch(tx, balance="150.00")
 
@@ -698,8 +701,8 @@ def test_a_target_write_of_an_object_this_attempt_inserted_is_refused(
             else:
                 _patch(tx, version=1, balance="2.00")
         assert refused.value.code == "write-evidence-inserted"
-        tx.wire.update("Account", {"id": 1}, if_version=1)
-        tx.update(inserted.edit(balance=Decimal("2.00")))
+        tx.wire.amend_if("Account", {"id": 1}, version=1)
+        tx.amend(inserted.edit(balance=Decimal("2.00")))
 
     account_db(port).transact(fn)
     assert [type(call) for call in _calls(port)] == (
@@ -726,7 +729,7 @@ def test_a_committed_object_rewritten_in_this_attempt_is_target_writable() -> No
 
     def fn(tx: Transaction) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(source.edit(owner="Bo"))
+        tx.amend(source.edit(owner="Bo"))
         assert tx.find(mm.Account.where(mm.Account.id == 1)).result().version == 4
         _patch(tx, version=4, balance="150.00")
 
@@ -737,16 +740,27 @@ def test_a_committed_object_rewritten_in_this_attempt_is_target_writable() -> No
 # --------------------------------------------------------------------------- #
 # The two update overloads, addressing, subtypes, and keyword-only arguments. #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("keyword", ["if_version", "if_tx_start", "valid_from"])
-def test_an_observed_update_takes_its_condition_from_its_source(keyword: str) -> None:
+@pytest.mark.parametrize("verb", ["amend", "replace"])
+@pytest.mark.parametrize("keyword", ["version", "tx_start", "unversioned", "valid_from"])
+def test_a_source_write_takes_no_condition_or_start(verb: str, keyword: str) -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()])))
-    stated: dict[str, object] = {"if_version": 3, "if_tx_start": FIXED, "valid_from": FIXED}
+    stated: dict[str, object] = {
+        "version": 3,
+        "tx_start": FIXED,
+        "unversioned": True,
+        "valid_from": FIXED,
+    }
 
     def fn(tx: Transaction) -> None:
         node = tx.wire.find(_ACCOUNT_ONE).result()
-        update = cast("Callable[..., None]", tx.wire.update)
-        with pytest.raises(WriteInstructionError, match="name its Entity instead"):
-            update(node, {"balance": "1.00"}, **{keyword: stated[keyword]})
+        write = cast("Callable[..., None]", getattr(tx.wire, verb))
+        with pytest.raises(TypeError, match=keyword):
+            write(node, {"balance": "1.00"}, **{keyword: stated[keyword]})
+        typed = cast("Callable[..., None]", getattr(tx, verb))
+        with pytest.raises(TypeError, match=keyword):
+            typed(
+                mm.Account(id=1, owner="Ada", balance=Decimal("1.00")), **{keyword: stated[keyword]}
+            )
 
     account_db(port).transact(fn)
 
@@ -756,7 +770,7 @@ def test_a_typed_replacement_of_a_read_value_is_addressed_by_its_key_alone() -> 
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.replace(fetched.edit(owner="Bo"), if_version=7)
+        tx.replace_if(fetched.edit(owner="Bo"), version=7)
 
     account_db(port).transact(fn)
     assert _calls(port) == [
@@ -789,7 +803,7 @@ def test_a_typed_replacement_of_a_read_value_leaves_its_read_only_members_unwrit
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(ledger.where(ledger.id == 1)).result()
-        tx.replace(fetched.edit(note="changed"), if_version=3)
+        tx.replace_if(fetched.edit(note="changed"), version=3)
 
     db_for(DomainModel(entity), port).transact(fn)
     write = _calls(port)[-1]
@@ -808,8 +822,8 @@ def test_a_subtype_target_write_is_guarded_by_its_tag_and_refuses_a_sibling_memb
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(WriteRejectedError):
-            tx.wire.update("CardPayment", {"id": 4, "tendered": "1.00"})
-        tx.wire.update("CardPayment", {"id": 4, "cardNetwork": "amex"})
+            tx.wire.amend_if("CardPayment", {"id": 4, "tendered": "1.00"}, unversioned=True)
+        tx.wire.amend_if("CardPayment", {"id": 4, "cardNetwork": "amex"}, unversioned=True)
 
     db_for(PAYMENT, port).transact(fn)
     read, write = _calls(port)
@@ -820,12 +834,18 @@ def test_a_subtype_target_write_is_guarded_by_its_tag_and_refuses_a_sibling_memb
 
 @pytest.mark.parametrize(
     "method",
-    [Transaction.replace, WireTransactionView.replace, WireTransactionView.update],
-    ids=["typed-replace", "wire-replace", "wire-update"],
+    [
+        Transaction.amend_if,
+        Transaction.replace_if,
+        WireTransactionView.amend_if,
+        WireTransactionView.replace_if,
+    ],
+    ids=["typed-amend-if", "typed-replace-if", "wire-amend-if", "wire-replace-if"],
 )
-def test_a_target_writes_revision_and_bounds_are_keyword_only(method: Callable[..., None]) -> None:
+def test_a_target_writes_condition_and_bounds_are_keyword_only(
+    method: Callable[..., None],
+) -> None:
     parameters = inspect.signature(method).parameters
-    for name in ("valid_from", "until", "if_version", "if_tx_start"):
+    for name in ("valid_from", "until", "version", "tx_start", "unversioned"):
         assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
-    assert parameters["if_version"].default is None
-    assert parameters["if_tx_start"].default is None
+        assert parameters[name].default is OMITTED

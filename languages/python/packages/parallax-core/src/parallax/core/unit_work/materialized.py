@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from parallax.core import inheritance, temporal_read
+from parallax.core.base import INFINITY
 from parallax.core.metamodel import (
     AttributeMetadata,
     Document,
@@ -18,8 +19,9 @@ from parallax.core.temporal_read import TemporalShape, TimeInterval, milestone_e
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform, Successor
 from parallax.core.unit_work.claims import SettledEvidence, WriteIntent, keyed_intent
 from parallax.core.unit_work.instructions import (
+    ASSIGNMENT_MUTATIONS,
     INSERT_MUTATIONS,
-    UPDATE_MUTATIONS,
+    REPLACE_MUTATIONS,
     ExpectedTxStart,
     ExpectedVersion,
     PreparedKeyedWrite,
@@ -362,15 +364,13 @@ class TargetKeyedWrite:
     object instead. ``claims`` are the retained observations of observed writes
     composed into a Non-Temporal one, which its completion spends; the caller's
     condition stays whatever values survive, and a destruction superseding the
-    write keeps it too. ``replaces`` says the row states a complete writable
-    state, whose window a temporal replacement fills.
+    write keeps it too.
     """
 
     instruction: PreparedKeyedWrite
     expectation: TargetExpectation
     scope: VersionedStateKey | ObjectKey
     claims: tuple[RetainedObservation, ...] = ()
-    replaces: bool = False
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS or len(self.instruction.rows) != 1:
@@ -385,7 +385,8 @@ def target_write(
     prepared: PreparedTargetWrite, families: inheritance.InheritanceFacet
 ) -> TargetKeyedWrite:
     """``prepared`` as the buffer item that carries its caller's condition: the
-    keyed update it executes as, claimed at the scope its expectation names."""
+    keyed amendment or replacement it executes as, claimed at the scope its
+    expectation names."""
     instruction = target_instruction(prepared)
     key = resolve_object_key(instruction, families)
     assert key is not None  # preparation required the key
@@ -398,7 +399,6 @@ def target_write(
             if isinstance(expectation, ExpectedVersion)
             else key
         ),
-        replaces=prepared.replaces,
     )
 
 
@@ -533,7 +533,7 @@ def temporal_contribution(item: TemporalKeyedWrite) -> TemporalContribution:
     observed = isinstance(item, ObservedKeyedWrite)
     expectation = item.expectation if isinstance(item, TargetKeyedWrite) else None
     return TemporalContribution(
-        kind="assignment" if item.instruction.mutation in UPDATE_MUTATIONS else "destructive",
+        kind="assignment" if item.instruction.mutation in ASSIGNMENT_MUTATIONS else "destructive",
         valid_time_window=item.instruction.valid_time_window,
         observation=item.observation if observed else None,
         claim=item.claim if observed else None,
@@ -562,9 +562,7 @@ def composed_temporal_write(
         target=held.target,
         key=held.key,
         contributions=contributions,
-        transform=_contributed(
-            held.transform, arriving.instruction, key_name, replaces=_replaces(arriving)
-        ),
+        transform=_contributed(held.transform, arriving.instruction, key_name),
     )
 
 
@@ -578,32 +576,30 @@ def _composed(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalWrite:
     )
 
 
-def _replaces(item: TemporalKeyedWrite) -> bool:
-    return isinstance(item, TargetKeyedWrite) and item.replaces
-
-
 def singleton_transform(item: TemporalKeyedWrite, key_name: str) -> CoverageTransform:
     """What ``item`` alone does to its object's existing coverage, built from
     the carrier itself rather than from a composition of one write."""
-    return _contributed(NO_TRANSFORM, item.instruction, key_name, replaces=_replaces(item))
+    return _contributed(NO_TRANSFORM, item.instruction, key_name)
 
 
 def _contributed(
-    transform: CoverageTransform,
-    instruction: PreparedKeyedWrite,
-    key_name: str,
-    *,
-    replaces: bool = False,
+    transform: CoverageTransform, instruction: PreparedKeyedWrite, key_name: str
 ) -> CoverageTransform:
     """``transform`` followed by one prepared keyed write over its prepared
-    window: an update assigns every member its row names but the key, which
-    addresses the object rather than changing it; any other write destroys."""
+    window: an amendment or a replacement assigns every member its row names
+    but the key, which addresses the object rather than changing it, and a
+    replacement's window becomes a replacement's extent whatever authorized
+    it; any other write destroys."""
     assigned = (
         {name: value for name, value in instruction.rows[0].items() if name != key_name}
-        if instruction.mutation in UPDATE_MUTATIONS
+        if instruction.mutation in ASSIGNMENT_MUTATIONS
         else None
     )
-    return transform.followed_by(instruction.valid_time_window, assigned, replaces=replaces)
+    return transform.followed_by(
+        instruction.valid_time_window,
+        assigned,
+        replaces=instruction.mutation in REPLACE_MUTATIONS,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -613,11 +609,12 @@ class PendingOpening:
 
     ``transform`` applies to the opening's own window exactly as a stored
     range's transform applies to stored coverage: assigned members replace the
-    opening's values inside each write's window, destruction removes coverage
-    there, and nothing outside the opening is ever created. Settlement opens
-    each part that survives as a new lineage seeded with the insert's own
-    state. ``intents`` keeps each composed write's window so admission can
-    judge the next one.
+    opening's values inside each write's window, and destruction removes
+    coverage there. Settlement opens each part that survives as a new lineage
+    seeded with the insert's own state. An amendment creates nothing outside
+    the opening; a replacement reaching past it establishes its complete state
+    over that reach too (:attr:`beyond`). ``intents`` keeps each composed
+    write's window so admission can judge the next one.
     """
 
     insert: PreparedKeyedWrite
@@ -633,6 +630,26 @@ class PendingOpening:
             transform=_contributed(self.transform, instruction, key_name),
             intents=(*self.intents, intent),
         )
+
+    @property
+    def beyond(self) -> TimeInterval | None:
+        """The stretch past the opening's window that a composed replacement
+        reaches — through the end of everything composed, since the stored
+        coverage there takes the whole transform — or ``None`` where no
+        replacement reaches past it."""
+        window = self.insert.valid_time_window
+        assert window is not None  # a Bitemporal opening states its window
+        end = window.end
+        if end is INFINITY or not any(
+            segment.replaces
+            and segment.valid_time_window is not None
+            and segment.valid_time_window.ends_after(end)
+            for segment in self.transform.segments
+        ):
+            return None
+        reach = self.transform.valid_time_window
+        assert reach is not None  # every segment of a Valid-Time transform has an extent
+        return TimeInterval(end, reach.end)
 
     @property
     def survives(self) -> bool:

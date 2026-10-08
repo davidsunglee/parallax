@@ -10,7 +10,7 @@ given:
   fixtures: true
 when:
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.PkSequence
       statements: 1
       note: reserve block 1 (base 1)
@@ -24,7 +24,7 @@ when:
         - { id: 1, zone: north }
         - { id: 2, zone: south }
         - { id: 3, zone: east }
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.PkSequence
       statements: 1
       note: reserve block 2 (base 4)

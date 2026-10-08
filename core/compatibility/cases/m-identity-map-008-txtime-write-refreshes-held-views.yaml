@@ -43,7 +43,7 @@ when:
           binds: [2, "2024-04-01T00:00:00.000000Z", "2024-04-01T00:00:00.000000Z"]
       expectRows:
         - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
-    - write: update
+    - write: amend
       roundTrips: 2
       note: audit-only update at 2024-07-01 — close the current row, then chain a new current milestone (250.00)
       statements:

@@ -8,7 +8,7 @@ shape: scenario
 when:
   scenario:
     - write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.WriteTwinItem
           rows:
             - id: 2
@@ -70,7 +70,7 @@ when:
           marks:
             - { code: C }
     - write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.WriteTwinItem
           rows:
             - id: 2

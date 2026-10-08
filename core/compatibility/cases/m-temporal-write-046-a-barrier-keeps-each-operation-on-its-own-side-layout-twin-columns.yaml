@@ -14,20 +14,20 @@ when:
   scenario:
     - uow: targets
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 1, amount: 150 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-04-01T00:00:00.000000Z"
           at: "2024-11-01T00:00:00.000000Z"
-        - mutation: update
+        - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
             predicate: { eq: { attr: parallax.compatibility.SequenceTag.id, value: 1 } }
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: q }
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 1, amount: 250 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
@@ -67,7 +67,7 @@ when:
           out_z: infinity
     - uow: observed
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 1
           entity: parallax.compatibility.SequenceSpan
           rows:
@@ -75,13 +75,13 @@ when:
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-04-01T00:00:00.000000Z"
           at: "2024-11-02T00:00:00.000000Z"
-        - mutation: update
+        - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
             predicate: { eq: { attr: parallax.compatibility.SequenceTag.id, value: 2 } }
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: r }
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 2
           entity: parallax.compatibility.SequenceSpan
           rows:
@@ -107,20 +107,20 @@ when:
           out_z: infinity
     - uow: carried
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 3, amount: 150 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-03-01T00:00:00.000000Z"
           at: "2024-11-03T00:00:00.000000Z"
-        - mutation: update
+        - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
             predicate: { eq: { attr: parallax.compatibility.SequenceTag.id, value: 1 } }
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: s }
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 4
           entity: parallax.compatibility.SequenceSpan
           rows:
@@ -137,7 +137,7 @@ when:
             - { id: 5, amount: 100, label: e, memo: { note: n5 } }
           validFrom: "2024-01-01T00:00:00.000000Z"
           at: "2024-11-04T00:00:00.000000Z"
-        - mutation: update
+        - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
             predicate: { eq: { attr: parallax.compatibility.SequenceTag.id, value: 2 } }

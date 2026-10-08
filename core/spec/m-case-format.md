@@ -163,7 +163,7 @@ A case is one of **eleven shapes**, named by the required top-level `shape`:
   `grading: state`, no golden at all and the complete final `then.tableState`
   (see *State-graded scenarios*).
 - **`conflict`** — an observation-requiring keyed write against a non-temporal
-  target (`when.mutation`: `update`, the default, or `delete`) asserted by
+  target (`when.mutation`: `amend`, the default, or `delete`) asserted by
   `then.affectedRows` for a single attempt, or an ordered `when.attempts` retry
   sequence (`m-opt-lock`).
 - **`coherence`** — a `when.coherence` two-node sequence (`m-coherence`).
@@ -376,15 +376,15 @@ in decimal space under any authored `tolerance`.
 | `given.sessionDefault` | `given` | boundary | the Isolation Level the connection ALREADY defaults to when the adapter takes it (`read-uncommitted`), established before intake — the seam `m-db-port` puts the once-per-connection floor check at |
 | `given.databaseOptions` | `given` | no | the transaction option defaults the Database Root every unit of work of the case runs through is CONFIGURED with at connect — the same four fields as `when.uow` (`maxRetries`, `concurrency`, `retryOptimisticConflicts`, `isolation`) under the same definitions; a field the case omits is the root's built-in default (`10` / `optimistic` / `false` / `read-committed`), and no field may be `null`. Configuration, not a request: an outer invocation resolves each option as its explicit `when.uow` value, else this root value, and a joining call compares against the ACTIVE transaction's resolved values, never against this record (see *Root configuration*, below) |
 | `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
-| `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
+| `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `amend` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `amendUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
 | `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectRows` / `expectError` / `sameObjectAs` / `differentObjectFrom`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and each submission of a `uow`-grouped write step MAY carry `on`, naming the read step it settles against or the insert whose value it writes through (see *Settling against a grouped find*, below) |
 | `when.coherence` | `when` | coherence | a two-node (A / B) step sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements`, except a `kind: commit` step, which carries none because what it performs is that node's own commit |
-| `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming any of the four transaction options — `maxRetries`, `concurrency`, `retryOptimisticConflicts`, `isolation` — THAT joining call explicitly requests) |
+| `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `amend` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming any of the four transaction options — `maxRetries`, `concurrency`, `retryOptimisticConflicts`, `isolation` — THAT joining call explicitly requests) |
 | `when.edit` | `when` | edit | the native edit under test: `source.origin` is `constructed` or `read`; a constructed source carries its whole authored `value`, while a read source carries the canonical `objectQuery` that produces its containing Entity; optional `source.path` names the Value Object occurrence to edit instead of that Entity. Optional `set` maps canonical member names to complete assigned values; omitting it spells a change-free edit |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
 | `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
-| `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete` |
+| `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `amend` (default) or `delete` |
 | `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — a standalone/table-level defect, cross-entity family invariant, or relationship join type mismatch a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.evolve` | `when` | evolution | the two accepted models the case evolves between: `earlier`, a model descriptor path or the explicit fresh-provisioning sentinel `null`, and `later`, a model descriptor path. It is an `evolution` case's ONLY `when` member (see *Evolution cases*, below) |
 | `when.uow` | `when` | no | the transaction options the action's outer invocation EXPLICITLY requests (`concurrency: locking \| optimistic`, `maxRetries`, `retryOptimisticConflicts`, `isolation`); a field the case omits is omitted at the invocation and resolves to the Database Root's configured default — `given.databaseOptions`, else the built-in (`m-unit-work`, `m-auto-retry`, `m-db-port`) — and no field may be `null`; `concurrency` is the requested Concurrency Preference, not a claim that every Entity uses one strategy; descriptive apart from `isolation` |
@@ -1043,7 +1043,7 @@ A **writeSequence** case proves a write contract by *application*, not
 introspection. The harness provisions a table, **applies the ordered DML golden
 SQL in order** (each `then.statements` entry with its own `binds`), then asserts
 the resulting rows equal `then.tableState`. This covers milestone-chaining
-temporal writes (`insert` / `update` / `terminate` and the bitemporal `*Until`
+temporal writes (`insert` / `amend` / `terminate` and the bitemporal `*Until`
 trio), batched non-temporal writes, ordinary `delete`, and the minimal
 `cascadeDelete` witness over dependent relationships. The DML statement count MUST
 equal the sum of the `when.writeSequence` steps' declared statement counts, and
@@ -1052,7 +1052,7 @@ equal the sum of the `when.writeSequence` steps' declared statement counts, and
 neutral write input row (`m-unit-work`: each row closes its own milestone and
 chains its own successors, and a temporal entity never collapses into a set-based
 statement), so a chain per key is authored as a **step per key**. A
-Transaction-Time-Only `update` declaring **one** statement is the guard that keeps
+Transaction-Time-Only `amend` declaring **one** statement is the guard that keeps
 the current milestone every assigned value of which it already holds
 (`m-temporal-write` *Unchanged milestones*): its golden assigns `in_z` to itself on the
 milestone's address and gates on the observed `in_z`, the harness checks that its
@@ -1072,7 +1072,7 @@ like a marker; the two are disambiguated by the field's declared metamodel role
 (`m-value-object`, `m-storage-layout`).
 
 A step MAY instead be a **caller-addressed** (target) write: it carries one `row`
-rather than `rows`, a `mutation` of `update` / `updateUntil` (a sparse patch) or
+rather than `rows`, a `mutation` of `amend` / `amendUntil` (an amendment) or
 `replace` / `replaceUntil` (a complete replacement), and the caller's own revision
 member — `ifVersion` or `ifTxStart` — exactly as `write-instruction.schema.json`'s
 target instruction does (`m-unit-work` *Write instruction vocabulary*). Its row
@@ -1194,7 +1194,7 @@ write, and the never-retriable missing target an unversioned target earns — is
 language-internal claim about the planner, the affected-row enforcer, and the
 retry loop rather than a corpus observable.
 
-The written verb is **`when.mutation`** — `update` (the default) or `delete`.
+The written verb is **`when.mutation`** — `amend` (the default) or `delete`.
 The verb does not decide whether the golden carries a gate: `when.uow.concurrency`
 does, uniformly across update and delete (`m-opt-lock`).
 
@@ -1431,7 +1431,7 @@ no translation alias is conforming.
 
 ```yaml
 - write:
-    mutation: update                    # update | delete | terminate | updateUntil | terminateUntil
+    mutation: amend                     # amend | delete | terminate | amendUntil | terminateUntil
     target:
       entity: Account
       predicate:
@@ -1446,13 +1446,13 @@ are deliberately small and structural:
 
 | Field | Required | Rule |
 |---|---|---|
-| `mutation` | yes | one of `update`, `delete`, `terminate`, `updateUntil`, `terminateUntil` |
+| `mutation` | yes | one of `amend`, `delete`, `terminate`, `amendUntil`, `terminateUntil` |
 | `target.entity` | yes | exact concrete descriptor entity the write begins from |
 | `target.predicate` | yes | one schema-valid `m-predicate` node; a set-based write shapes no result, so the Object Query clauses have no spelling in this position |
-| `assignments` | only `update` / `updateUntil` | ordered `{attr, value}` data; nonempty and unique; `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared multiplicity/nullability. |
+| `assignments` | only `amend` / `amendUntil` | ordered `{attr, value}` data; nonempty and unique; `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared multiplicity/nullability. |
 | `at` | temporal target | harness-supplied Transaction-Time instant for close/chain behavior; context, not an instruction member |
 | `validFrom` | Bitemporal target | Valid-Time lower bound for the plain or bounded temporal write |
-| `until` | `updateUntil` / `terminateUntil` | bounded write's exclusive upper bound |
+| `until` | `amendUntil` / `terminateUntil` | bounded write's exclusive upper bound |
 
 Delete and terminate mutations carry **no** assignments. Assignment list order is
 not SQL order: the target's Entity Layout order determines the emitted `set`
@@ -1474,7 +1474,7 @@ predicate. It is a real resolving read, not a cache hit: it declares exactly one
 round trip and one authored golden read statement, plus `expectRows`. An empty
 `expectRows` is valid only as that real zero-match resolution (`1 + 0`); a
 zero-round-trip/no-SQL step cannot materialize a predicate write. An unversioned,
-non-temporal `update` or `delete` is the sole readless exception. The read is not
+non-temporal `amend` or `delete` is the sole readless exception. The read is not
 inferred from its SQL and the write is not inferred from the read.
 
 For every resolved materialized row, the projection is descriptor-derived rather
@@ -1506,8 +1506,10 @@ write-instruction `$defs` rather than redefining them, layering only the `at` /
 `validFrom` / `until` authoring surface and the entry's own `on` and
 `expectError`. In a golden-graded case every entry is a **keyed** instruction
 (`mutation` + `entity` + `rows`, the case-format analogue of
-`write-instruction.schema.json`'s `keyedWriteInstruction`) its verb accepts. A
-state-graded case's buffer MAY also carry a **caller-addressed** submission
+`write-instruction.schema.json`'s `keyedWriteInstruction`) its verb accepts,
+never a source-authorized `replace` / `replaceUntil`. A state-graded case's
+buffer MAY also carry such a replacement, whose coverage depends on what its
+flush reads, a **caller-addressed** submission
 (`row` with `ifVersion` or `ifTxStart`, the `targetWriteInstruction`) and a
 readless **predicate** write, which is an ordering barrier inside the buffer
 (*State-graded scenarios*, below). The step's golden SQL (`statements`) is the **independent expected
@@ -1518,14 +1520,14 @@ the flush from the instructions themselves. Valid-Time bounds are `validFrom` an
 instruction field.
 
 The buffer is **general**: it spans a **single** keyed write (a buffer of one), a
-**mixed multi-object flush** — an `insert`, `update`, and `delete` of **different**
+**mixed multi-object flush** — an `insert`, `amend`, and `delete` of **different**
 objects, foreign-key-ordered at flush — and the **same-object coalescing** case
 alike. **Same-object folding at flush is the coalescing rule**, a runtime/planner
 property rather than a structural one: when two buffered instructions name the
-**same** entity and primary-key identity the flush combines them — insert-then-update
+**same** entity and primary-key identity the flush combines them — insert-then-amend
 writes the **final** value in place (`roundTrips: 1`), insert-then-delete **cancels**
 to **no** DML (`roundTrips: 0`, no `statements`). The two-keyed same-object
-insert-then-update / insert-then-delete pair is that rule's **single-object special
+insert-then-amend / insert-then-delete pair is that rule's **single-object special
 case**, not a separate shape. The JSON Schema pins only the structural shape (one or
 more keyed entries); it imposes **no** cross-entry same-object equality, and the
 retained static checks are per-entry **member-name honesty** (each keyed row key
@@ -1557,7 +1559,7 @@ Schema cannot see either.
       entity: Balance
       rows: [{ id: 9, acctNum: D, value: 100.00 }]
       at: "2024-06-01T00:00:00+00:00"       # Transaction-Time Clock context, not an instruction field
-    - mutation: update
+    - mutation: amend
       entity: Balance
       rows: [{ id: 9, value: 150.00 }]
       at: "2024-06-01T00:00:00+00:00"
@@ -1720,7 +1722,7 @@ prior step's result (so `on` is REQUIRED) or on the unit of work as a whole (so
 | `access` | read an already-loaded relationship / query-backed list (no SQL when already populated) | prior object (`on` required) | `m-op-list` |
 | `flush` | emit the unit of work's buffered DML | unit of work (`on` optional) | `m-unit-work` |
 | `commit` / `abort` | end the unit of work, committing or discarding it | unit of work (`on` optional) | `m-unit-work` |
-| `insert` / `update` | hand the keyed write verb of that name a value of stated provenance (`value`) | a value, not a prior object (`on` inapplicable) | `m-unit-work` |
+| `insert` / `amend` | hand the keyed write verb of that name a value of stated provenance (`value`) | a value, not a prior object (`on` inapplicable) | `m-unit-work` |
 
 **`on` is REQUIRED for the object-targeting verbs** (`mutate`, `load`,
 `access`) — each acts on the object(s) a prior step
@@ -1736,7 +1738,7 @@ or duplicated index is a loud harness failure.
 
 ##### Keyed write action steps (the value's provenance)
 
-The `insert` / `update` action verbs name the **keyed write verb** a client calls,
+The `insert` / `amend` action verbs name the **keyed write verb** a client calls,
 and what such a step observes is which verbs accept the **value** it is handed.
 Provenance is a property of that value rather than of a prior step's result, so
 the step names no `on`; it carries a **`value`** token instead, drawn from the
@@ -1798,7 +1800,7 @@ statements the steps' own verbs cost, never the reads that arrange a value of th
 stated provenance, which are the adapter's own affair. The suite verifies it the
 only way this lane can, as the absence of any durable effect: a statement that ran
 would have left one. So an accepted step here is one whose write **materializes
-nothing** — an `update` of a value no author changed, which buffers nothing. An
+nothing** — an `amend` of a value no author changed, which buffers nothing. An
 accepted `insert` is never that: it opens a row, so the verb buffers a write the
 committing unit of work flushes, and the step emits DML the declared zero denies.
 An `insert` step therefore **MUST** declare an `expectError` — the refusal its
@@ -1807,10 +1809,10 @@ acceptance is observable as an emitted statement is authored where that statemen
 has an oracle, never in this shape.
 
 ```yaml
-- action: update
+- action: amend
   value: unmanaged                          # no managed read produced it
   roundTrips: 0
-  expectError: write-value-not-stored       # ... so `update` addresses no stored row
+  expectError: write-value-not-stored       # ... so `amend` addresses no stored row
 ```
 
 `set` is legal **only** on a `mutate` action, and a `mutate` carrying none is the
@@ -1910,7 +1912,7 @@ verifies them (`m-conformance-adapter`, `m-api-conformance`):
   - `transaction-time-pin-read-only` — a mutation through a finite
     Transaction-Time pinned view, which records what the system knew and is never rewritten
     (`m-identity-map`).
-  - `write-value-not-stored` — an `update` verb handed a value no managed read
+  - `write-value-not-stored` — an `amend` verb handed a value no managed read
     produced, which therefore addresses no stored row (`m-unit-work`).
   - `write-value-already-stored` — an `insert` verb handed a value produced by a
     read through the very source it writes through, which therefore already
@@ -2559,7 +2561,7 @@ which own the family-specific names a row may not carry and classify them.
 That ordering belongs to the **row**, not to the form carrying it: a keyed
 instruction's rows are asked the Subtype-write rules and then the member-honesty
 refusal, in that order, before the instruction's own shape is judged at all. A
-keyed `update` of a concrete subtype carrying a sibling branch's attribute is
+keyed `amend` of a concrete subtype carrying a sibling branch's attribute is
 therefore `subtype-write-sibling-attribute` in both forms, and one neutral write
 row is classified one way however it is authored.
 

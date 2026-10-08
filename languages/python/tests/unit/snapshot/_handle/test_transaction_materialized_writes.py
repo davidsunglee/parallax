@@ -53,7 +53,7 @@ def test_a_multi_row_materialized_bitemporal_update_lowers_one_close_and_chain_p
     clock = FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             WherePosition.where(WherePosition.value == Decimal("200.00")),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=valid_from,
@@ -102,7 +102,7 @@ def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_r
     )
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             mm.Balance.where(mm.Balance.value < Decimal("1000000.00")),
             mm.Balance.value.set(Decimal("5.00")),
         )
@@ -119,7 +119,7 @@ def test_a_temporal_materializing_update_with_every_row_a_no_op_buffers_nothing(
     port = ScriptedAdapter(Transact(Read(rows=[_balance_row(1, Decimal("5.00"))])))
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(
+        tx.amend_where(
             mm.Balance.where(mm.Balance.value < Decimal("1000000.00")),
             mm.Balance.value.set(Decimal("5.00")),
         )

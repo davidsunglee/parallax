@@ -6,7 +6,7 @@ tags: [m-inheritance, m-unit-work, table-per-hierarchy, write, rejected, negativ
 shape: rejected
 when:
   write:
-    mutation: update
+    mutation: amend
     entity: parallax.compatibility.CardPayment
     rows:
       - { id: 10, tendered: 25.00 }

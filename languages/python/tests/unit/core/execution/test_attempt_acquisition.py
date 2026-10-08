@@ -62,7 +62,7 @@ def _account(account_id: int = 1) -> MappingRow:
 
 def _patch(*, version: int = 3) -> PreparedTargetWrite:
     return prepare_wire_write(
-        TargetWrite("update", "Account", {"id": 1, "balance": "9.00"}, if_version=version), _META
+        TargetWrite("amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version), _META
     )
 
 
@@ -100,7 +100,7 @@ def _ledger(*, balance: DocumentValue = "1.00") -> MappingRow:
 
 def _ledger_patch() -> PreparedTargetWrite:
     return prepare_wire_write(
-        TargetWrite("update", "Ledger", {"id": 1, "label": "Z"}, if_version=3),
+        TargetWrite("amend", "Ledger", {"id": 1, "label": "Z"}, if_version=3),
         model_of(_LEDGER),
     )
 
@@ -291,7 +291,7 @@ def test_a_coverage_read_is_a_read_call_of_the_write_batch_reaching_its_range() 
     }
     port = ScriptedAdapter(Transact(Read(rows=[stored]), Write(), Write()))
     patch = prepare_wire_write(
-        TargetWrite("update", "Balance", {"id": 1, "value": "9.00"}, if_tx_start=_T0),
+        TargetWrite("amend", "Balance", {"id": 1, "value": "9.00"}, if_tx_start=_T0),
         model_of(_BALANCE),
     )
     scope(port, _BALANCE, provider=recorder).transact(

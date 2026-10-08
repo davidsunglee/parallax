@@ -199,7 +199,7 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     def name_the_account(tx: Transaction) -> tuple[str, str | None]:
         account = tx.find(NicknamedAccount.where(NicknamedAccount.id == _TARGET_ID)).result()
         named = account.edit(nickname=_NICKNAME)
-        tx.update(named)
+        tx.amend(named)
         return tx.edition, named.nickname
 
     after, nickname = db.transact(name_the_account)

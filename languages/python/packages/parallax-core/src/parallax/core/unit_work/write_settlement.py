@@ -32,8 +32,9 @@ from parallax.core.unit_work.group_segments import (
     non_temporal_step,
 )
 from parallax.core.unit_work.instructions import (
+    AMEND_MUTATIONS,
+    ASSIGNMENT_MUTATIONS,
     INSERT_MUTATIONS,
-    UPDATE_MUTATIONS,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
 )
@@ -52,6 +53,7 @@ from parallax.core.unit_work.materialized import (
 from parallax.core.unit_work.ranges import (
     DeferredTemporalRange,
     range_claims,
+    settle_opening,
     settle_range,
 )
 from parallax.core.unit_work.retain import RetainedObservation
@@ -264,10 +266,19 @@ class WritePlanCompiler:
             shape = self._carrier_shape(item)
             if isinstance(item, PendingOpening):
                 assert isinstance(shape, Bitemporal)  # only a Bitemporal opening is composed
-                opened = self._settle_opening(item, shape, transaction_instant, audit)
-                pending.extend(opened.steps)
-                count += len(opened.steps)
-                units.append(ExecutionUnit(end=count, opened=opened.opened))
+                steps, unit = self._opening(
+                    item,
+                    shape,
+                    concurrency,
+                    transaction_instant,
+                    ownership,
+                    audit,
+                    start=count,
+                    guards=counts_unchanged_rows,
+                )
+                pending.extend(steps)
+                count = unit.end
+                units.append(unit)
                 continue
             if isinstance(shape, TransactionTimeOnly | Bitemporal):
                 assert not isinstance(item, PreparedKeyedWrite | ReadlessPredicateWrite)
@@ -638,36 +649,49 @@ class WritePlanCompiler:
             ),
         )
 
-    def _settle_opening(
+    def _opening(
         self,
         opening: PendingOpening,
         shape: Bitemporal,
+        concurrency: Concurrency,
         tx_instant: TransactionInstant,
+        ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
-    ) -> BoundRange:
+        *,
+        start: int,
+        guards: bool,
+    ) -> tuple[tuple[PlannedStep, ...], ExecutionUnit]:
         """A pending Bitemporal insertion and the writes it authorized since,
-        settled as the one unit of new lineages they leave: the insertion's
-        authored state is the seed every surviving part of its own window
-        carries, with the composed assignments overlaid there, through the
-        expansion a range settles its predecessors by. No predecessor is
-        fabricated for it, and nothing outside its window opens."""
-        insert = opening.insert
-        entity = insert.target
-        window = insert.valid_time_window
-        assert window is not None  # a Bitemporal opening states its window
-        view = entity_view(self._families, entity)
-        # Reaching a surviving temporal insert is what makes the attempt
-        # capture its instant; every part's fresh start derives from that value.
-        facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=tx_instant.value())
-        inserts = PredecessorExpander(
-            facts,
-            opening.transform,
-            key_attribute=view.primary_key.identity,
-            gated=False,
-            ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
+        settled as the one unit of new lineages they leave of its window,
+        together with any stored coverage a replacement it authorized reaches
+        past that window (:func:`~parallax.core.unit_work.ranges.settle_opening`):
+        bound now, or deferred until execution reads that coverage."""
+        entity = opening.insert.target
+        ranged = settle_opening(
+            opening,
+            view=entity_view(self._families, entity),
+            shape=shape,
+            # Only a replacement reaching past the opening reaches stored rows,
+            # whose closes the strategy gates.
+            gated=opening.beyond is not None
+            and self._concurrency.gates(concurrency, self._model, entity.identity),
+            # Reaching a surviving temporal insert is what makes the attempt
+            # capture its instant; every part's fresh start derives from that value.
+            instant=tx_instant.value(),
+            ownership=ownership,
             audit=audit,
-        ).lineage(resolve_row(entity, view, insert.rows[0], context="insert"), window)
-        return BoundRange(steps=inserts, opened=Openings(continued=openings(facts, inserts)))
+            guards=guards,
+        )
+        if isinstance(ranged, DeferredTemporalRange):
+            return (), ExecutionUnit(end=start, deferred=ranged)
+        steps = ranged.steps
+        return steps, ExecutionUnit(
+            end=start + len(steps),
+            changed=ranged.changed,
+            removed=ranged.removed,
+            opened=ranged.opened,
+            derived=ranged.derived,
+        )
 
     def _observed_version(
         self,
@@ -703,7 +727,10 @@ class WritePlanCompiler:
         if version_attr is None:
             _require_unobserved(entity, instruction.mutation, observation)
             return None
-        if instruction.mutation == "update" and version_attr.name in instruction.rows[0]:
+        if (
+            instruction.mutation in ASSIGNMENT_MUTATIONS
+            and version_attr.name in instruction.rows[0]
+        ):
             self._concurrency.reject_authored_version(entity.identity, version_attr)
         return self._concurrency.require_version(entity.identity, observation)
 
@@ -829,7 +856,7 @@ class WritePlanCompiler:
                     assigned_name(assignment): assignment.value
                     for assignment in mutation.managed_assignments
                 }
-                if mutation.mutation in UPDATE_MUTATIONS
+                if mutation.mutation in AMEND_MUTATIONS
                 else None
             ),
             replaces=False,

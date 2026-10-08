@@ -17,7 +17,9 @@ __all__ = [
 ]
 
 _INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
-_UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
+_UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset(
+    {"amend", "amendUntil", "replace", "replaceUntil"}
+)
 
 # The ONE reserved observation control key a flush-time authored row may carry
 # (`m-opt-lock`; ADR 0013) — never legitimate batch-collapse input: a row

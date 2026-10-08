@@ -19,7 +19,7 @@ when:
             geo:
               country: "NO"
             phones: []
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Customer
       statements: 1
       note: null out the nullable address valueObject → SQL NULL (the whole column)

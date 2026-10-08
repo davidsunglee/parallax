@@ -131,35 +131,68 @@ Write verbs are on the Transaction; their snake_case temporal parameters bind
 the corresponding core operations. Inserts accept fresh constructed values;
 later mutations require provenance where the core evidence rules prescribe it.
 Evidence is never a caller-supplied address. Set-based writes take an Object
-Query; update-bearing verbs also take Assignments.
+Query; amendment verbs also take Assignments.
 
-Each operation is one method: `insert`, `update`, `replace`, `terminate`,
-`update_where`, and `terminate_where`, on the Transaction and on `tx.wire`, take a keyword-only
-`until`. Omitting it selects the core unbounded verb; stating it — `None`
-included — selects the bounded one, whose window core preparation judges before
-an empty update is dropped, so `until=None` and an `until` on a target without
-Valid Time are refused rather than read as omission. Source-backed `update` and
-`terminate` take no start: a Bitemporal one starts at its source's finite
-Valid-Time pin, or where the insertion that produced its source was authored to
-start, and a source read at Valid-Time `LATEST` is refused. A Typed `update`
-assigns every member touched along the value's `edit` chain and a Wire `update`
-every key its change document names, equal values included; a change touching
-nothing writes nothing.
+The method names the authority. `amend`, `replace`, `delete`, and `terminate`
+take a source — a value this store published, or the value or node an insertion
+took or answered — and state no condition and no `valid_from`: a Bitemporal one
+starts at its source's finite Valid-Time pin, or where the insertion that
+produced its source was authored to start, and a source read at Valid-Time
+`LATEST` is refused. `amend_if` and `replace_if` address an object themselves
+and require exactly one keyword-only condition: `version` for a versioned
+Entity, `tx_start` for a temporal one, or `unversioned=True` for an unversioned
+Non-Temporal one. Presence is counted before any value is judged: none, more
+than one, a stated `None`, an `unversioned` other than `True`, or a condition the
+Entity does not take is refused, and no missing condition falls back on a
+source. `unversioned=True` never disables the Locking strategy. The keyword
+names a condition, never a value to store; the canonical instruction keeps
+`ifVersion` and `ifTxStart`.
 
-A temporal milestone such an update, or a target write below, leaves exactly
-as it was keeps its Transaction-Time start and gains no history
-(`m-temporal-write` *Unchanged milestones*). The shipped PostgreSQL adapter's dialect counts unchanged rows, so
+Every windowed verb — `insert`, `amend`, `amend_if`, `replace`, `replace_if`,
+`terminate`, `amend_where`, and `terminate_where`, on the Transaction and on
+`tx.wire` — takes a keyword-only `until`. Omitting it selects the core unbounded
+verb; stating it — `None` included — selects the bounded one, whose window core
+preparation judges before an empty amendment is dropped. Every verb taking
+`valid_from` treats omission alone as absence: a stated `None` is refused, so a
+caller forwarding optional bounds omits an unavailable one.
+
+A Typed `amend(source)` assigns every member touched along the value's `edit`
+chain; `amend(source, *assignments)` assigns exactly the given `Attr.set(...)`
+assignments instead and refuses a source with any edit history, restored or
+equal edits included. `amend_if(EntityClass, *assignments, key=...)` takes the
+concrete class and the scalar primary-key value, whatever the key Attribute is
+called; a mapping or tuple key is refused. Assignment references are judged
+against the class's own ancestry before they are flattened, so an inherited
+member applies and a foreign or duplicated one is refused. A Wire `amend`
+assigns every key its change document names. Equal values are assigned either
+way, and a change naming nothing writes nothing.
+
+A Typed `replace(source)` and `replace_if(payload, ...)` state the value's
+complete writable state. A Wire `replace(source, data)` states `data` alone;
+omitting `data` states the writable state `source` published, while `{}` is a
+stated, completed state. `replace_if` takes an Entity spelling with `data`, or a
+published node — current or historical — alone. A Wire source write's document
+may repeat the source's primary key, which must name the source's object and is
+never assigned; an entity-spelled write names its key in its document.
+`tx.wire.editable_data(source)` copies a published node's key and writable
+members into fresh mutable mappings and lists, preserving Wire spellings and
+absent members; it queries, completes, and authorizes nothing, and records no
+edit history.
+
+A temporal milestone such a write leaves exactly as it was keeps its
+Transaction-Time start and gains no history (`m-temporal-write` *Unchanged
+milestones*). The shipped PostgreSQL adapter's dialect counts unchanged rows, so
 under Optimistic each such milestone that existed before the transaction costs
 one guarding `UPDATE` rather than a close and its successors: it fires `UPDATE`
 triggers, creates a new row version, and holds the row's write lock until the
 transaction ends, including across any later dependent read. Another
 transaction that read the same milestone can still write it once this one
 commits, where a close would have made it conflict. Under Locking, and for rows
-the transaction opened itself, nothing is written. The update still spends its
-source, so a later write needs a fresh read either way. A target write's guard
-binds its `if_tx_start` instead, so losing that milestone is still the caller's
-failed precondition; a versioned non-temporal target advances its version,
-equal values included.
+the transaction opened itself, nothing is written. A source-authorized write
+still spends its source, so a later write needs a fresh read either way. A
+conditional write's guard binds its `tx_start` instead, so losing that
+milestone is still the caller's failed precondition; a versioned non-temporal
+target advances its version, equal values included.
 
 An insertion's authority (`m-unit-work` *Insertion authority*) rides its source
 privately. `tx.insert` binds it to the instance it took, beside any Snapshot
@@ -171,24 +204,16 @@ node unpickles as plain domain data that authorizes nothing — so pickling an
 inserted instance succeeds, unlike a read's node. Inserting the same instance
 again once its earlier insertion was removed rebinds it; drafts derived before
 keep the earlier, retired authority.
-A target write addresses an existing object by key under its caller's own
-revision (`m-unit-work` *Caller-addressed writes*): `tx.replace(instance, ...)`
-and `tx.wire.replace(entity_name, data, ...)` state its complete writable state,
-and `tx.wire.update(entity_name, changes, ...)` — the overload taking an Entity
-spelling rather than a published node — patches the members `changes` names.
-There is no Typed patch: a Typed value either came from a read, whose edit is an
-observed update, or states the whole object. The revision is a keyword-only
-argument, never a member: `if_version` for a versioned Entity, `if_tx_start` for a
-temporal one, neither for an unversioned one; `None` means it is not stated. The
-observed `tx.wire.update` overload takes neither, nor `valid_from`. Each target
-verb returns `None`. A Bitemporal target states `valid_from`, and the keyword
-`until` bounds it exactly as it bounds `insert`; a Transaction-Time-Only target
-takes neither. `if_tx_start` is the milestone start the caller's query
-returned, an aware `datetime`, never this transaction's own instant. A failed
-precondition raises `parallax.core.unit_work.WritePreconditionError` — at the
-call under Locking, at the flush under Optimistic — and is never retried; its
-`expected` is the stated revision. An object the attempt inserted is refused
-with `WriteEvidenceError(write-evidence-inserted)`.
+A conditional write addresses an existing object by key under its caller's own
+condition (`m-unit-work` *Caller-addressed writes*). Each returns `None`. A
+Bitemporal one states `valid_from`, and `until` bounds it exactly as it bounds
+`insert`; a Transaction-Time-Only one takes neither. `tx_start` is the
+milestone start the caller's query returned, an aware `datetime`, never this
+transaction's own instant. A failed precondition raises
+`parallax.core.unit_work.WritePreconditionError` — at the call under Locking, at
+the flush under Optimistic — and is never retried; its `expected` is the stated
+revision. An object the attempt inserted is refused with
+`WriteEvidenceError(write-evidence-inserted)`.
 `tx.wire` is the Wire ingress, sharing transaction state and policy. Public
 write-plan and flush operations are absent. Framework-owned attributes cannot
 be authored by construction, `edit`, assignments, or Wire changes.

@@ -377,7 +377,7 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
         tx.buffer(
             ObservedKeyedWrite(
                 instruction=_prepared_keyed(
-                    KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("0.00")},)),
+                    KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("0.00")},)),
                     _ACCOUNT,
                 ),
                 observation=resolved.evidence,
@@ -423,7 +423,7 @@ def test_a_multi_row_keyed_write_refuses_to_carry_one_write_observation() -> Non
         buffered_write(
             _prepared_keyed(
                 KeyedWrite(
-                    "update",
+                    "amend",
                     "Account",
                     ({"id": 1, "balance": Decimal("0.00")}, {"id": 2, "balance": Decimal("0.00")}),
                 ),
@@ -444,7 +444,7 @@ def test_an_insertion_authority_licenses_no_insert_and_no_multi_row_write() -> N
         buffered_write(
             _prepared_keyed(
                 KeyedWrite(
-                    "update",
+                    "amend",
                     "Account",
                     ({"id": 1, "balance": Decimal("0.00")}, {"id": 2, "balance": Decimal("0.00")}),
                 ),
@@ -461,7 +461,7 @@ def test_a_write_carrying_an_authority_no_standing_insertion_granted_is_refused(
     # issued — or one a later insertion of the object superseded — is refused
     # rather than settled.
     update = _prepared_keyed(
-        KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("1.00")},)), _ACCOUNT
+        KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("1.00")},)), _ACCOUNT
     )
 
     def body(tx: UnitOfWork) -> None:
@@ -490,7 +490,7 @@ def test_a_carrier_refuses_a_claim_naming_other_evidence() -> None:
     with pytest.raises(ValueError, match="the retained form of the observation"):
         ObservedKeyedWrite(
             instruction=_prepared_keyed(
-                KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("0.00")},)), _ACCOUNT
+                KeyedWrite("amend", "Account", ({"id": 1, "balance": Decimal("0.00")},)), _ACCOUNT
             ),
             observation=VersionObservation(observed_version=7),
             claim=other,
@@ -507,7 +507,7 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
     carriers = [
         buffered_write(
             _prepared_keyed(
-                KeyedWrite("update", "Account", ({"id": 1, "balance": balance},)), _ACCOUNT
+                KeyedWrite("amend", "Account", ({"id": 1, "balance": balance},)), _ACCOUNT
             ),
             retained,
         )
@@ -815,7 +815,7 @@ def _account_write(
     the retained observation a read of that state claims, or (``retained=False``)
     the same evidence as a caller-held value, which claims nothing."""
     row: dict[str, object] = {"id": account_id}
-    if mutation == "update":
+    if mutation == "amend":
         row["balance"] = Decimal("1.00")
     evidence = VersionObservation(observed_version=version)
     return buffered_write(
@@ -830,7 +830,7 @@ def _balance_update(key: int) -> BufferItem:
     observation = TemporalObservation(predecessor=PredecessorRow(_balance_members(key)))
     return buffered_write(
         _prepared_keyed(
-            KeyedWrite("update", "Balance", ({"id": key, "value": Decimal("2.00")},)), _BALANCE
+            KeyedWrite("amend", "Balance", ({"id": key, "value": Decimal("2.00")},)), _BALANCE
         ),
         RetainedObservation(_balance_state(key), observation, None),
     )
@@ -852,10 +852,10 @@ def test_buffering_a_group_claims_every_state_it_selected_as_a_keyed_read_would_
 
     def body(uow: UnitOfWork) -> None:
         assert uow.buffer(_account_group((1, 7), (2, 3))) is BufferOutcome.BUFFERED
-        _refused_as_claimed(uow, _account_write("update", 1, 7))
+        _refused_as_claimed(uow, _account_write("amend", 1, 7))
         _refused_as_claimed(uow, _account_write("delete", 2, 3))
         # Another state of a selected object is another claim scope.
-        assert uow.buffer(_account_write("update", 2, 7)) is BufferOutcome.BUFFERED
+        assert uow.buffer(_account_write("amend", 2, 7)) is BufferOutcome.BUFFERED
 
     _run(body, executor=recorder)
     assert sorted(_step_kinds(recorder)) == ["PlannedDelete", "PlannedDelete", "PlannedUpdate"]
@@ -896,7 +896,7 @@ def test_a_late_collision_leaves_the_pending_claim_it_met_standing() -> None:
     recorder = _Recorder()
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_write("update", 3, 7))
+        uow.buffer(_account_write("amend", 3, 7))
         with pytest.raises(UnitOfWorkError, match="collides with a claim"):
             uow.buffer(_account_group((1, 7), (2, 7), (3, 7), (4, 7)))
         with pytest.raises(UnitOfWorkError, match="collides with a claim"):
@@ -918,8 +918,8 @@ def test_a_group_selecting_one_state_twice_is_refused_and_leaves_no_claim() -> N
     def body(uow: UnitOfWork) -> None:
         with pytest.raises(UnitOfWorkError, match="incompatible"):
             uow.buffer(_account_group((1, 7), (2, 7), (1, 7)))
-        uow.buffer(_account_write("update", 1, 7))
-        uow.buffer(_account_write("update", 2, 7))
+        uow.buffer(_account_write("amend", 1, 7))
+        uow.buffer(_account_write("amend", 2, 7))
 
     _run(body, executor=recorder)
     assert set(_step_kinds(recorder)) == {"PlannedUpdate"}
@@ -935,7 +935,7 @@ _PERSON_META = model_of(PERSON)
 def _person_write(mutation: KeyedMutation, person_id: int) -> BufferItem:
     """An unversioned Non-Temporal Person write settling against its object."""
     row: dict[str, object] = {"id": person_id}
-    if mutation == "update":
+    if mutation == "amend":
         row["name"] = "Grace"
     prepared = _prepared_keyed(KeyedWrite(mutation, "Person", (row,)), _PERSON_META)
     return buffered_write(
@@ -948,11 +948,11 @@ def test_a_retained_observation_claims_its_state_and_compatible_intents_combine(
     recorder = _Recorder()
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_write("update", 1, 7))
-        uow.buffer(_account_write("update", 1, 7))
+        uow.buffer(_account_write("amend", 1, 7))
+        uow.buffer(_account_write("amend", 1, 7))
         uow.buffer(_account_write("delete", 1, 7))
         uow.buffer(_account_write("delete", 1, 7))
-        refusal = _refused_as_claimed(uow, _account_write("update", 1, 7))
+        refusal = _refused_as_claimed(uow, _account_write("amend", 1, 7))
         assert refusal.object_key == corpus_object_key("Account", ("id", 1))
         assert "parallax.compatibility.Account" in refusal.message
 
@@ -965,8 +965,8 @@ def test_a_retained_claim_is_taken_at_the_exact_observed_state() -> None:
     # other's assignment unrefused.
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_account_write("delete", 1, 7))
-        uow.buffer(_account_write("update", 1, 8))
-        _refused_as_claimed(uow, _account_write("update", 1, 7))
+        uow.buffer(_account_write("amend", 1, 8))
+        _refused_as_claimed(uow, _account_write("amend", 1, 7))
         raise _Abandoned
 
     with pytest.raises(_Abandoned):
@@ -976,9 +976,9 @@ def test_a_retained_claim_is_taken_at_the_exact_observed_state() -> None:
 def test_a_caller_held_observation_claims_nothing() -> None:
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_account_write("delete", 1, 7, retained=False))
-        uow.buffer(_account_write("update", 1, 7, retained=False))
+        uow.buffer(_account_write("amend", 1, 7, retained=False))
         # Nor did either take the retained form's claim at that state.
-        uow.buffer(_account_write("update", 1, 7))
+        uow.buffer(_account_write("amend", 1, 7))
         raise _Abandoned
 
     with pytest.raises(_Abandoned):
@@ -989,11 +989,11 @@ def test_an_object_claimed_write_claims_its_instructions_object() -> None:
     recorder = _Recorder()
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_person_write("update", 1))
+        uow.buffer(_person_write("amend", 1))
         uow.buffer(_person_write("delete", 1))
-        refusal = _refused_as_claimed(uow, _person_write("update", 1))
+        refusal = _refused_as_claimed(uow, _person_write("amend", 1))
         assert refusal.object_key == corpus_object_key("Person", ("id", 1))
-        uow.buffer(_person_write("update", 2))
+        uow.buffer(_person_write("amend", 2))
 
     _run(body, executor=recorder, meta=_PERSON_META)
     assert sorted(_step_kinds(recorder)) == ["PlannedDelete", "PlannedUpdate"]
@@ -1014,9 +1014,9 @@ def test_a_refused_carrier_or_claim_leaves_claims_and_pending_inserts_as_they_we
                     ),
                 )
             )
-        _refused_as_claimed(uow, _account_write("update", 1, 7))
+        _refused_as_claimed(uow, _account_write("amend", 1, 7))
         assert uow.buffer(_account_delete(9)) is BufferOutcome.CANCELLED_PENDING_INSERT
-        _refused_as_claimed(uow, _account_write("update", 1, 7))
+        _refused_as_claimed(uow, _account_write("amend", 1, 7))
 
     _run(body)
 
@@ -1059,7 +1059,7 @@ def test_every_other_accepted_item_reports_plain_buffering() -> None:
     )
 
     def body(uow: UnitOfWork) -> None:
-        assert uow.buffer(_account_write("update", 1, 7)) is BufferOutcome.BUFFERED
+        assert uow.buffer(_account_write("amend", 1, 7)) is BufferOutcome.BUFFERED
         assert uow.buffer(_account_write("delete", 2, 7)) is BufferOutcome.BUFFERED
         assert uow.buffer(_account_write("delete", 3, 7, retained=False)) is (
             BufferOutcome.BUFFERED
@@ -1072,7 +1072,7 @@ def test_every_other_accepted_item_reports_plain_buffering() -> None:
         _run(body)
 
     def unversioned(uow: UnitOfWork) -> None:
-        assert uow.buffer(_person_write("update", 1)) is BufferOutcome.BUFFERED
+        assert uow.buffer(_person_write("amend", 1)) is BufferOutcome.BUFFERED
         assert uow.buffer(_person_write("delete", 2)) is BufferOutcome.BUFFERED
         raise _Abandoned
 
@@ -1114,7 +1114,7 @@ def _balance_update_from(key: int, tx_start: object) -> BufferItem:
     )
     return buffered_write(
         _prepared_keyed(
-            KeyedWrite("update", "Balance", ({"id": key, "value": Decimal("2.00")},)), _BALANCE
+            KeyedWrite("amend", "Balance", ({"id": key, "value": Decimal("2.00")},)), _BALANCE
         ),
         RetainedObservation(state, observation, None),
     )
@@ -1187,8 +1187,8 @@ def test_a_row_whose_start_is_the_attempts_instant_is_not_owned_without_its_open
 
 
 def test_each_unit_spends_its_evidence_before_the_next_unit_executes() -> None:
-    first = _account_write("update", 1, 7)
-    second = _account_write("update", 2, 3)
+    first = _account_write("amend", 1, 7)
+    second = _account_write("amend", 2, 3)
     assert isinstance(first, ObservedKeyedWrite) and isinstance(second, ObservedKeyedWrite)
     claims = (first.claim, second.claim)
     seen: list[tuple[bool, ...]] = []
@@ -1224,8 +1224,8 @@ def test_a_unit_reported_out_of_order_dooms_the_attempt() -> None:
         completed(plan.units[1], None)
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_write("update", 1, 7))
-        uow.buffer(_account_write("update", 2, 3))
+        uow.buffer(_account_write("amend", 1, 7))
+        uow.buffer(_account_write("amend", 2, 3))
         with pytest.raises(UnitOfWorkError, match="out of order"):
             uow.read(lambda: None)
 
@@ -1244,7 +1244,7 @@ def test_a_bound_range_reported_for_a_planned_unit_dooms_the_attempt() -> None:
         completed(plan.units[0], BoundRange(steps=()))
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_write("update", 1, 7))
+        uow.buffer(_account_write("amend", 1, 7))
         with pytest.raises(UnitOfWorkError, match="deferred range"):
             uow.read(lambda: None)
 
@@ -1263,7 +1263,7 @@ def test_a_unit_reported_with_keys_it_never_allocated_dooms_the_attempt() -> Non
         completed(plan.units[0], None, allocated=(8,))
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_write("update", 1, 7))
+        uow.buffer(_account_write("amend", 1, 7))
         with pytest.raises(UnitOfWorkError, match=r"opening 0 row\(s\).*with 1 key"):
             uow.read(lambda: None)
 
@@ -1273,7 +1273,7 @@ def test_a_unit_reported_with_keys_it_never_allocated_dooms_the_attempt() -> Non
 
 def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
     failure = RuntimeError("the statement failed")
-    claimed = _account_write("update", 1, 7)
+    claimed = _account_write("amend", 1, 7)
     assert isinstance(claimed, ObservedKeyedWrite) and claimed.claim is not None
 
     def executor(
@@ -1304,7 +1304,7 @@ def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
 
 def test_a_planning_refusal_leaves_the_attempt_usable() -> None:
     bare_close = _prepared_keyed(
-        KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("2.00")},)), _BALANCE
+        KeyedWrite("amend", "Balance", ({"id": 1, "value": Decimal("2.00")},)), _BALANCE
     )
 
     def body(uow: UnitOfWork) -> None:
@@ -1429,7 +1429,7 @@ def test_a_guarded_unit_spends_its_source_and_leaves_an_unchanged_state_fresh(
         uow.buffer(
             buffered_write(
                 _prepared_keyed(
-                    KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal(value)},)),
+                    KeyedWrite("amend", "Balance", ({"id": 1, "value": Decimal(value)},)),
                     _BALANCE,
                 ),
                 claim,
@@ -1484,7 +1484,7 @@ def test_a_unit_names_its_sources_state_and_a_failed_unit_publishes_nothing() ->
             row = {"id": account_id, "balance": Decimal("1.00")}
             uow.buffer(
                 buffered_write(
-                    _prepared_keyed(KeyedWrite("update", "Account", (row,)), _ACCOUNT), claim
+                    _prepared_keyed(KeyedWrite("amend", "Account", (row,)), _ACCOUNT), claim
                 )
             )
         with pytest.raises(RuntimeError, match="the second unit failed"):
@@ -1517,7 +1517,7 @@ def test_a_unit_with_no_step_spends_its_source_and_changes_nothing() -> None:
         uow.buffer(
             buffered_write(
                 _prepared_keyed(
-                    KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("100.00")},)),
+                    KeyedWrite("amend", "Balance", ({"id": 1, "value": Decimal("100.00")},)),
                     _BALANCE,
                 ),
                 claim,
@@ -1609,9 +1609,7 @@ def test_a_row_a_unit_removes_and_reopens_at_one_address_stays_owned() -> None:
         uow.read(lambda: None)
         later = uow.retain(RetainedObservation(state, observation, None))
         uow.buffer(
-            _position_write(
-                "updateUntil", later, valid_from=_JAN, until=_DEC, value=Decimal("2.00")
-            )
+            _position_write("amendUntil", later, valid_from=_JAN, until=_DEC, value=Decimal("2.00"))
         )
 
     _run(body, meta=_POSITION, executor=executor)
@@ -1660,7 +1658,7 @@ def _bind(
 def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetWrite:
     prepared = prepare_wire_write(
         TargetWrite(
-            "updateUntil",
+            "amendUntil",
             "WherePosition",
             {"id": 1, "value": "175.00"},
             if_tx_start=_T0,
@@ -1711,7 +1709,7 @@ def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_pro
         held.append(claim)
         observed = prepare_wire_write(
             KeyedWrite(
-                "updateUntil",
+                "amendUntil",
                 "WherePosition",
                 ({"id": 1, "acctNum": "O"},),
                 valid_from=_FEB,
@@ -1723,7 +1721,7 @@ def test_a_unit_a_barrier_kept_back_binds_on_what_the_earlier_unit_spent_and_pro
         uow.buffer(buffered_write(observed, claim))
         barrier = prepare_wire_write(
             PredicateWrite(
-                "update",
+                "amend",
                 PredicateSelection(
                     "ShellTag", predicate_algebra.Comparison("eq", "ShellTag.id", 1)
                 ),
@@ -1781,7 +1779,7 @@ def test_an_objects_proofs_end_when_its_last_following_unit_completes() -> None:
         claim = uow.retain(RetainedObservation(state, original, uow.participation))
         observed = prepare_wire_write(
             KeyedWrite(
-                "updateUntil",
+                "amendUntil",
                 "WherePosition",
                 ({"id": 1, "acctNum": "O"},),
                 valid_from=_FEB,
@@ -1794,7 +1792,7 @@ def test_an_objects_proofs_end_when_its_last_following_unit_completes() -> None:
         for window in ((_JUN, _AUG), (_SEP, _OCT)):
             barrier = prepare_wire_write(
                 PredicateWrite(
-                    "update",
+                    "amend",
                     PredicateSelection(
                         "ShellTag", predicate_algebra.Comparison("eq", "ShellTag.id", 1)
                     ),
@@ -1833,7 +1831,7 @@ def _position_destroy(start: dt.datetime, until: dt.datetime) -> ObservedKeyedWr
 def _shell_barrier() -> PreparedPredicateWrite:
     barrier = prepare_wire_write(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection("ShellTag", predicate_algebra.Comparison("eq", "ShellTag.id", 1)),
             assignments=(WriteAssignment("ShellTag.label", "q"),),
         ),
@@ -1906,7 +1904,7 @@ def test_a_pending_opening_settles_as_one_unit_of_the_new_lineages_its_edits_lea
     )
     edit = _prepared_keyed(
         KeyedWrite(
-            "updateUntil", "WherePosition", ({"id": 1, "value": Decimal("2.00")},), _FEB, _APR
+            "amendUntil", "WherePosition", ({"id": 1, "value": Decimal("2.00")},), _FEB, _APR
         ),
         _BARRIERED,
     )

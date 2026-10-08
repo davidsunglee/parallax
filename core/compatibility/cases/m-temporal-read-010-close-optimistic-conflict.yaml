@@ -57,7 +57,7 @@ when:
         - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
     - uow: concurrent
       write:
-        - mutation: update
+        - mutation: amend
           "on": 1
           entity: parallax.compatibility.Balance
           rows:

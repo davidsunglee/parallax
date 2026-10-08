@@ -55,7 +55,7 @@ when:
       expectRows:
         - { id: 6, name: Hopper, sku: F-600, qty: 2, price: "60.00", active: true, ordered_on: 2024-07-07 }
     - write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 61, sku: Rewritten }

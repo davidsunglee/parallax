@@ -31,7 +31,7 @@ given:
               berth: B7
 when:
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Voyage
       statements: 2
       note: assign both occurrence kinds in one observed successor

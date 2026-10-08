@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import heapq
-from collections.abc import Hashable, Iterator, Sequence
+from collections.abc import Hashable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from operator import attrgetter, itemgetter
 from typing import Final, cast
@@ -19,9 +19,11 @@ from parallax.core.unit_work.claims import (
 )
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.instructions import (
+    AMEND_MUTATIONS,
+    ASSIGNMENT_MUTATIONS,
     DESTRUCTIVE_MUTATIONS,
     INSERT_MUTATIONS,
-    UPDATE_MUTATIONS,
+    REPLACE_MUTATIONS,
     ExpectedVersion,
     PreparedKeyedWrite,
     PreparedWrite,
@@ -362,7 +364,7 @@ class WritePlanner:
                     deletes.append((self._ranked(item.target), item))
                 continue
             instruction = _ordered_instruction(item)
-            if instruction.mutation in UPDATE_MUTATIONS:
+            if instruction.mutation in ASSIGNMENT_MUTATIONS:
                 updates.append(item)
             elif instruction.mutation in INSERT_MUTATIONS:
                 inserts.append((self._rank(instruction), item))
@@ -382,12 +384,12 @@ class WritePlanner:
 _RANK = itemgetter(0)
 
 
-def _merge_update_into_insert(
+def _merge_assignment_into_insert(
     insert: PreparedKeyedWrite,
-    update: PreparedKeyedWrite,
+    assigned: PreparedKeyedWrite,
     families: inheritance.InheritanceFacet,
 ) -> PreparedKeyedWrite:
-    """Overlay ``update``'s non-key row fields onto ``insert``'s row.
+    """Overlay ``assigned``'s non-key row fields onto ``insert``'s row.
 
     The coalesced write keeps the insert's mutation verb and Valid-Time window
     (so it still opens a current milestone / fully-current rectangle at
@@ -396,7 +398,7 @@ def _merge_update_into_insert(
     """
     key_name = _key_name(families, insert.target)
     merged = dict(insert.rows[0])
-    for name, value in update.rows[0].items():
+    for name, value in assigned.rows[0].items():
         if name != key_name:
             merged[name] = value
     return derive_keyed_write(insert, (merged,))
@@ -415,12 +417,10 @@ class PendingWrites:
     uncomposed sequence folds it through :func:`compose_writes`. Composition
     follows authored order:
 
-    * an update of an object whose insert is still pending folds into that
-      insert, and a destructive write of it cancels the pair. A Bitemporal
-      opening composes such writes over the coverage it opens instead
-      (:class:`~parallax.core.unit_work.materialized.PendingOpening`), so a
-      bounded write splits it and a destruction cancels only the coverage it
-      reaches;
+    * an amendment or replacement of an object whose insert is still pending
+      folds into that insert, and a destructive write of it cancels the pair; a
+      Bitemporal opening composes them over its coverage instead
+      (:class:`~parallax.core.unit_work.materialized.PendingOpening`);
     * writes claiming one non-temporal scope coalesce by the claim algebra
       (:func:`~parallax.core.unit_work.claims.admits`);
     * a write a caller addressed with its own starting condition
@@ -853,12 +853,12 @@ class PendingWrites:
             if opening.survives:
                 items[index] = opening
                 return False
-        elif instruction.mutation in UPDATE_MUTATIONS:
+        elif instruction.mutation in ASSIGNMENT_MUTATIONS:
             # No carrier wraps an insert, so a pending-insert slot is always a
             # bare instruction — and folding an update into it yields an insert,
             # which is why the merged item stays bare.
             assert isinstance(base, PreparedKeyedWrite)
-            items[index] = _merge_update_into_insert(base, instruction, self._families)
+            items[index] = _merge_assignment_into_insert(base, instruction, self._families)
             return False
         items[index] = None
         del self._inserts[key]
@@ -1138,7 +1138,7 @@ def _destroyed(held: PendingTemporal) -> Iterator[TimeInterval]:
                 yield window
         return
     instruction = held.instruction
-    if instruction.mutation not in UPDATE_MUTATIONS:
+    if instruction.mutation not in ASSIGNMENT_MUTATIONS:
         window = instruction.valid_time_window
         assert window is not None  # only a Bitemporal object's coverage is asked for
         yield window
@@ -1195,13 +1195,13 @@ type _Claimed = ClaimedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
 def _merged_claimed(base: _Claimed, arriving: _Claimed) -> _Claimed:
     """``base`` carrying ``arriving``'s assignments too, later value winning.
 
-    The surviving carrier keeps ``base``'s position, mutation, window, and claim
-    — the two claim one scope over one window, which is what let them coalesce —
-    and gains the merged row.
+    The surviving carrier keeps ``base``'s position, window, and claim — the
+    two claim one scope over one window, which is what let them coalesce — and
+    gains the merged row under the verb they leave (:func:`_coalesced`).
     """
     merged = dict(base.instruction.rows[0])
     merged.update(arriving.instruction.rows[0])
-    return _evidenced(base, arriving, derive_keyed_write(base.instruction, (merged,)))
+    return _evidenced(base, arriving, _coalesced(base.instruction, arriving.instruction, merged))
 
 
 def _evidenced(first: _Claimed, second: _Claimed, instruction: PreparedKeyedWrite) -> _Claimed:
@@ -1289,7 +1289,7 @@ def _decomposed_updates(
 def _splits_into_rows(
     item: PreparedKeyedWrite, temporal_facet: temporal_read.TemporalFacet
 ) -> bool:
-    if len(item.rows) < 2 or item.mutation not in UPDATE_MUTATIONS:
+    if len(item.rows) < 2 or item.mutation not in ASSIGNMENT_MUTATIONS:
         return False
     return not _is_temporal(temporal_facet, item.target)
 
@@ -1371,7 +1371,7 @@ def _without_noop_rows(
     instruction = buffered_instruction(item)
     if (
         not isinstance(instruction, PreparedKeyedWrite)
-        or instruction.mutation not in UPDATE_MUTATIONS
+        or instruction.mutation not in AMEND_MUTATIONS
     ):
         return item
     entity = instruction.target
@@ -1433,3 +1433,15 @@ def _ordered_instruction(
     if isinstance(item, PendingOpening):
         return item.insert
     return buffered_instruction(item)
+
+
+def _coalesced(
+    base: PreparedKeyedWrite, arriving: PreparedKeyedWrite, merged: Mapping[str, object]
+) -> PreparedKeyedWrite:
+    """``base`` over the ``merged`` row, replacing where either write did: a
+    replacement's complete state overlaid by an amendment, or overlaying one,
+    is still the complete state a replacement establishes over its window."""
+    if arriving.mutation not in REPLACE_MUTATIONS or base.mutation in REPLACE_MUTATIONS:
+        return derive_keyed_write(base, (merged,))
+    bounded = base.mutation.endswith("Until")
+    return derive_keyed_write(base, (merged,), mutation="replaceUntil" if bounded else "replace")

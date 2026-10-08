@@ -108,7 +108,7 @@ def test_an_optimistic_close_settles_against_the_rectangle_it_read(profile_run: 
     def correct(tx: Transaction) -> None:
         current = tx.find(Position.where(Position.id == 1).as_of(valid_time=_V3)).result()
         tx.find(Position.where(Position.id == 1).as_of(valid_time=_VP)).result()
-        tx.update(current.edit(value=Decimal("150.00")))
+        tx.amend(current.edit(value=Decimal("150.00")))
 
     db.transact(correct, concurrency="optimistic")
 
@@ -269,9 +269,9 @@ def _log_update(
     tx: Transaction, observed: Any, representation: _Representation, label: str
 ) -> None:
     if representation == "typed":
-        tx.update(observed.edit(label=label))
+        tx.amend(observed.edit(label=label))
     else:
-        tx.wire.update(observed, {"label": label})
+        tx.wire.amend(observed, {"label": label})
 
 
 def _span_update(
@@ -285,13 +285,13 @@ def _span_update(
     if representation == "typed":
         edited = observed.edit(amount=amount)
         if until is None:
-            tx.update(edited)
+            tx.amend(edited)
         else:
-            tx.update(edited, until=until)
+            tx.amend(edited, until=until)
     elif until is None:
-        tx.wire.update(observed, {"amount": amount})
+        tx.wire.amend(observed, {"amount": amount})
     else:
-        tx.wire.update(observed, {"amount": amount}, until=until)
+        tx.wire.amend(observed, {"amount": amount}, until=until)
 
 
 def _span_terminate(
@@ -494,7 +494,7 @@ def test_a_suffix_the_attempt_opened_takes_each_geometry_without_history_of_its_
     ]
 
 
-@pytest.mark.parametrize("terminating", [False, True], ids=["update", "terminate"])
+@pytest.mark.parametrize("terminating", [False, True], ids=["amend", "terminate"])
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
 @pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
@@ -546,9 +546,9 @@ def test_an_unsubmitted_read_of_a_changed_row_is_refused_and_a_fresh_read_carrie
         assert refused.value.code == "write-evidence-consumed"
         fresh = _log_find(tx, entity, representation)
         if representation == "typed":
-            tx.update(fresh.edit(spec=AttemptSpec(title="replaced", origin=None)))
+            tx.amend(fresh.edit(spec=AttemptSpec(title="replaced", origin=None)))
         else:
-            tx.wire.update(fresh, {"spec": other})
+            tx.wire.amend(fresh, {"spec": other})
 
     db.transact(edit, concurrency=concurrency)
 
@@ -629,10 +629,10 @@ def test_a_row_the_attempt_inserted_is_revised_in_place(
         # row it selects is one the attempt itself opened.
         if representation == "typed":
             tx.insert(entity(id=1, label="inserted", spec=_SPEC))
-            tx.update_where(entity.where(entity.id == 1), entity.label.set("edited"))
+            tx.amend_where(entity.where(entity.id == 1), entity.label.set("edited"))
         else:
             tx.wire.insert(_name(entity), {"id": 1, "label": "inserted", "spec": _SPEC_DOCUMENT})
-            tx.wire.update_where(_wire_target(entity), {"label": "edited"})
+            tx.wire.amend_where(_wire_target(entity), {"label": "edited"})
 
     db.transact(edit, concurrency=concurrency)
 
@@ -652,13 +652,13 @@ def test_a_predicate_write_revises_the_rectangles_the_attempt_opened(
         current = _span_find(tx, entity, representation, _FEB)
         _span_update(tx, current, representation, 150)
         if representation == "typed":
-            tx.update_where(entity.where(entity.id == 1), entity.amount.set(175), valid_from=_MAR)
-            tx.update_where(
+            tx.amend_where(entity.where(entity.id == 1), entity.amount.set(175), valid_from=_MAR)
+            tx.amend_where(
                 entity.where(entity.id == 1), entity.amount.set(200), valid_from=_APR, until=_MAY
             )
         else:
-            tx.wire.update_where(_wire_target(entity), {"amount": 175}, valid_from=_MAR)
-            tx.wire.update_where(_wire_target(entity), {"amount": 200}, valid_from=_APR, until=_MAY)
+            tx.wire.amend_where(_wire_target(entity), {"amount": 175}, valid_from=_MAR)
+            tx.wire.amend_where(_wire_target(entity), {"amount": 200}, valid_from=_APR, until=_MAY)
 
     db.transact(edit, concurrency=concurrency)
 
@@ -684,9 +684,9 @@ def test_a_predicate_termination_removes_the_row_the_attempt_opened(
     def edit(tx: Transaction) -> None:
         for label in ("first", "second"):
             if representation == "typed":
-                tx.update_where(entity.where(entity.id == 1), entity.label.set(label))
+                tx.amend_where(entity.where(entity.id == 1), entity.label.set(label))
             else:
-                tx.wire.update_where(_wire_target(entity), {"label": label})
+                tx.wire.amend_where(_wire_target(entity), {"label": label})
             _log_find(tx, entity, representation)
         if representation == "typed":
             tx.terminate_where(entity.where(entity.id == 1))
@@ -810,9 +810,9 @@ def test_a_read_stays_writable_until_a_change_to_its_state_completes(
         second = _log_find(tx, entity, representation)
         if representation == "typed":
             second.edit(label="draft")  # a local draft, never submitted
-            tx.update(first.edit(spec=AttemptSpec(title="replaced", origin=None)))
+            tx.amend(first.edit(spec=AttemptSpec(title="replaced", origin=None)))
         else:
-            tx.wire.update(first, {"spec": replaced})
+            tx.wire.amend(first, {"spec": replaced})
         _log_update(tx, second, representation, "pending")
         _log_find(tx, entity, representation)
         with pytest.raises(WriteEvidenceError):

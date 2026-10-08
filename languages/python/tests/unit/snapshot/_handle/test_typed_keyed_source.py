@@ -136,7 +136,7 @@ def test_a_published_value_answers_the_facts_its_own_read_filed() -> None:
     meta, codec = _accounts()
     node = _published_account()
 
-    resolved = TypedKeyedWriteSource(node, codec).resolve(meta, "update")
+    resolved = TypedKeyedWriteSource(node, codec).resolve(meta, "amend")
 
     assert resolved.entity.identity == mm.Account.identity
     assert resolved.provenance == "this"
@@ -149,7 +149,7 @@ def test_a_published_value_answers_the_facts_its_own_read_filed() -> None:
 def test_a_plainly_constructed_value_answers_that_no_read_produced_it() -> None:
     meta, codec = _accounts()
 
-    resolved = TypedKeyedWriteSource(new_account(), codec).resolve(meta, "update")
+    resolved = TypedKeyedWriteSource(new_account(), codec).resolve(meta, "amend")
 
     assert resolved.provenance == "none"
     assert resolved.hint is None
@@ -164,7 +164,7 @@ def test_a_pinned_view_answers_the_instant_it_stands_at() -> None:
     meta = cataloged_for(WHERE_POSITION_META).meta
 
     resolved = TypedKeyedWriteSource(node, row_codec_for(WHERE_POSITION_META)).resolve(
-        meta, "update"
+        meta, "amend"
     )
 
     assert resolved.pin is not None
@@ -183,7 +183,7 @@ def test_prepare_states_every_touched_member_as_its_literal_assignment() -> None
     meta, codec = _accounts()
     edited = _published_account().edit(balance=Decimal("125.00"))
     source = TypedKeyedWriteSource(edited, codec)
-    resolved = source.resolve(meta, "update")
+    resolved = source.resolve(meta, "amend")
 
     prepared = source.prepare(resolved, valid_from=None, until=None)
 
@@ -199,7 +199,7 @@ def test_a_wholly_restoring_chain_still_assigns_the_member_it_took_back() -> Non
     restored = _published_account().edit(balance=Decimal("125.00")).edit(balance=Decimal("100.00"))
     source = TypedKeyedWriteSource(restored, codec)
 
-    prepared = source.prepare(source.resolve(meta, "update"), valid_from=None, until=None)
+    prepared = source.prepare(source.resolve(meta, "amend"), valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("100.00")}
     assert prepared.assigned == {"balance"}
@@ -217,7 +217,7 @@ def test_a_correction_states_what_current_authoring_admits_over_any_stored_origi
         _published_contact().edit(address=_COMPLETE_ADDRESS), row_codec_for(CONTACT_MODEL)
     )
 
-    prepared = source.prepare(source.resolve(meta, "update"), valid_from=None, until=None)
+    prepared = source.prepare(source.resolve(meta, "amend"), valid_from=None, until=None)
 
     assert prepared.instruction.rows[0]["address"] == {
         "street": "Main",
@@ -232,7 +232,7 @@ def test_an_untouched_copy_authors_its_identity_row_alone() -> None:
     meta, codec = _accounts()
     source = TypedKeyedWriteSource(_published_account(), codec)
 
-    prepared = source.prepare(source.resolve(meta, "update"), valid_from=None, until=None)
+    prepared = source.prepare(source.resolve(meta, "amend"), valid_from=None, until=None)
 
     assert prepared.instruction.rows[0] == {"id": 1}
     assert prepared.assigned == frozenset()
@@ -254,7 +254,7 @@ def test_a_value_no_read_produced_keys_its_object_off_the_row_it_authors() -> No
     meta, codec = _accounts()
     source = TypedKeyedWriteSource(new_account().edit(balance=Decimal("9.00")), codec)
 
-    prepared = source.prepare(source.resolve(meta, "update"), valid_from=None, until=None)
+    prepared = source.prepare(source.resolve(meta, "amend"), valid_from=None, until=None)
 
     assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 7),))
 
@@ -308,5 +308,5 @@ def test_construction_and_capture_refuse_nothing_a_verb_would() -> None:
     # refuses re-entry before either runs.
     _, codec = _twins()
     rekeyed = _RekeyedTwin(id_elsewhere=1, only="x")
-    assert TypedKeyedWriteSource(rekeyed, codec).capture("update") is None
+    assert TypedKeyedWriteSource(rekeyed, codec).capture("amend") is None
     assert TypedKeyedInsertSource(rekeyed, codec).capture("insert") is None

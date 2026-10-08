@@ -99,9 +99,7 @@ def test_two_observations_of_one_transaction_time_row_validate_the_earlier() -> 
     # the later-authored one is the milestone the composition rewrites, and the
     # earlier is closed on its own gated address first, so a stale condition
     # fails before anything opens. Both sources are spent by the one unit.
-    plan = _plan(
-        _write("update", _STALE, value="150.00"), _write("update", _CURRENT, value="175.00")
-    )
+    plan = _plan(_write("amend", _STALE, value="150.00"), _write("amend", _CURRENT, value="175.00"))
     steps = list(plan.steps)
     assert [type(step) for step in steps] == [PlannedClose, PlannedClose, PlannedInsert]
     assert [step.cause for step in steps if isinstance(step, PlannedClose)] == [
@@ -135,7 +133,7 @@ def test_a_termination_after_an_update_through_another_observation_ends_the_row(
     stale, current = _observation(_JAN, "100.00"), _observation(_MAR, "120.00")
     steps = list(
         _plan(
-            _write("update", stale, value="150.00"),
+            _write("amend", stale, value="150.00"),
             _write("terminate", current),
             _write("terminate", current),
         ).steps
@@ -156,7 +154,7 @@ def test_a_pair_no_verb_admitted_is_left_standing_rather_than_composed() -> None
     # nothing; a buffer no unit of work admitted keeps both writes as authored.
     stale, current = _observation(_JAN, "100.00"), _observation(_MAR, "120.00")
     composed = compose_writes(
-        _BALANCE, [_write("terminate", stale), _write("update", current, value="1.00")]
+        _BALANCE, [_write("terminate", stale), _write("amend", current, value="1.00")]
     )
     assert [type(write) for write in composed] == [ObservedKeyedWrite, ObservedKeyedWrite]
 
@@ -174,7 +172,7 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
     model = formed(corpus_records()["position"])
     prepared = prepare_wire_write(
         KeyedWrite(
-            "update",
+            "amend",
             "Position",
             ({"id": 1, "value": "1.00"},),
             dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -218,7 +216,7 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
 
     def update(valid_from: dt.datetime, value: str, observed: TemporalObservation) -> BufferItem:
         prepared = prepare_wire_write(
-            KeyedWrite("update", "Position", ({"id": 1, "value": value},), valid_from), model
+            KeyedWrite("amend", "Position", ({"id": 1, "value": value},), valid_from), model
         )
         return buffered_write(prepared, observed)
 

@@ -305,7 +305,7 @@ def test_preflight_checks_predicate_write_assignments() -> None:
                 "scenario": [
                     {
                         "write": {
-                            "mutation": "update",
+                            "mutation": "amend",
                             "target": {
                                 "entity": "example.Reading",
                                 "predicate": {"eq": {"attr": "example.Reading.id", "value": 1}},
@@ -334,7 +334,7 @@ def test_preflight_checks_predicate_write_selection_literals() -> None:
                 "scenario": [
                     {
                         "write": {
-                            "mutation": "update",
+                            "mutation": "amend",
                             "target": {
                                 "entity": "example.Reading",
                                 "predicate": {

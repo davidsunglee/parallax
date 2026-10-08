@@ -29,7 +29,7 @@ when:
           out_z: infinity
     - uow: stale
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           "on": 0
           entity: parallax.compatibility.SequenceSpan
           rows:
@@ -37,7 +37,7 @@ when:
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-04-01T00:00:00.000000Z"
           at: "2024-11-01T00:00:00.000000Z"
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 4, amount: 150 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
@@ -46,14 +46,14 @@ when:
           at: "2024-11-01T00:00:00.000000Z"
     - uow: caught
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 2, amount: 150 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-04-01T00:00:00.000000Z"
           at: "2024-11-02T00:00:00.000000Z"
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 2, amount: 160 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
@@ -61,7 +61,7 @@ when:
           until: "2024-05-01T00:00:00.000000Z"
           at: "2024-11-02T00:00:00.000000Z"
           expectError: write-evidence-already-claimed
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 3, amount: 210 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
@@ -70,7 +70,7 @@ when:
           at: "2024-11-02T00:00:00.000000Z"
     - uow: equal
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 4, amount: 100 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"
@@ -80,7 +80,7 @@ when:
       note: "the amount span 4 holds, stated against the milestone it superseded: keeping an unchanged milestone never satisfies a stale condition"
     - uow: control
       write:
-        - mutation: updateUntil
+        - mutation: amendUntil
           entity: parallax.compatibility.SequenceSpan
           row: { id: 2, amount: 155 }
           ifTxStart: "2023-12-01T00:00:00.000000Z"

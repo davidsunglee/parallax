@@ -17,7 +17,7 @@ when:
       note: the outer body observes the row it will write
     - action: join
       note: a joining call naming no level inherits the boundary's own
-    - action: update
+    - action: amend
       note: the joined body buffers a write onto the shared unit of work
     - action: join
       isolation: repeatable-read

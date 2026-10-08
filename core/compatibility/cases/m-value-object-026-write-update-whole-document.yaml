@@ -19,7 +19,7 @@ when:
               country: "NO"
             phones:
               - { type: home, number: '555-1111' }
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Customer
       statements: 1
       note: replace the WHOLE address document (a different shape — proves no path-level merge)

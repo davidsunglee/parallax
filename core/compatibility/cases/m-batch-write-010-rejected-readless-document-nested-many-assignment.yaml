@@ -7,7 +7,7 @@ tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, rejected,
 shape: rejected
 when:
   write:
-    mutation: update
+    mutation: amend
     target:
       entity: parallax.compatibility.NestedRoute
       predicate:

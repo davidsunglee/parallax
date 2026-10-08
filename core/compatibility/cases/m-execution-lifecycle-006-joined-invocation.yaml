@@ -17,7 +17,7 @@ when:
       note: the OUTER body observes the row it will write
     - action: join
       note: open a joined unit of work — it shares the outer transaction, not a nested boundary of its own
-    - action: update
+    - action: amend
       note: the joined body writes; the OUTER boundary flushes the shared buffer
 then:
   outcome: committed

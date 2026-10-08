@@ -1353,7 +1353,7 @@ def test_a_resolving_read_widens_to_the_occurrence_its_write_assigns(
         damaged_case(_DOCUMENT_LAYOUT_ROW_FORM_READ)
     )
     write = _steps(case)[1]["write"]
-    write["mutation"] = "update"
+    write["mutation"] = "amend"
     write["assignments"] = [{"attr": "parallax.compatibility.Traveler.displayName", "value": "Ada"}]
     for expected, document in zip(_steps(case)[0]["expectRows"], _TRAVELER_DOCUMENTS, strict=True):
         expected["address"] = document["payload"]["address"]

@@ -19,17 +19,18 @@ Each run is one transaction. A case that revises a row first reads it through
 production (``tx.find`` or ``tx.wire.find``), because a keyed write is licensed
 only by evidence a read of this store retained, and a Typed case edits what the
 read published. The window then runs from the public verb — ``tx.insert``,
-``tx.update``, a bounded ``tx.update``, or their ``tx.wire`` peers — until
+``tx.amend``, a bounded ``tx.amend``, or their ``tx.wire`` peers — until
 ``transact`` returns: preparation, buffering, the pre-commit flush's planning,
 settlement, and SQL lowering, and the commit. The read and what the caller
 authors against it are outside it. The unchanged cases author no member at all,
-which is the update that changes nothing: a member restated at its stored value
+which is the amendment that changes nothing: a member restated at its stored value
 is a literal assignment and writes like any other.
 
 The caller-addressed target cases revise a row their transaction never read:
-a Wire patch (``tx.wire.update`` naming the Entity) or a Typed or Wire
-replacement (``tx.replace``, ``tx.wire.replace``) states the key, the
-Transaction-Time start a temporal caller last observed, and a Bitemporal
+a Wire amendment (``tx.wire.amend_if``) or a Typed or Wire replacement
+(``tx.replace_if``, ``tx.wire.replace_if``) states the key and the condition —
+the Transaction-Time start a temporal caller last observed, or the unversioned
+assertion — and a Bitemporal
 target's interior window, under the default Optimistic strategy. Their window
 opens at the verb, with nothing read before it, so it contains every read the
 target makes: the point read under the shared lock that an unversioned
@@ -460,7 +461,7 @@ def _categorical_cases() -> tuple[Case, ...]:
                     "changed",
                     layout,
                     ingress,
-                    mutation="update",
+                    mutation="amend",
                     key=301,
                     label="after",
                     predecessor="before",
@@ -473,7 +474,7 @@ def _categorical_cases() -> tuple[Case, ...]:
                     "unchanged",
                     layout,
                     ingress,
-                    mutation="update",
+                    mutation="amend",
                     key=501,
                     label="same",
                     predecessor="same",
@@ -487,7 +488,7 @@ def _categorical_cases() -> tuple[Case, ...]:
                     "changed",
                     layout,
                     ingress,
-                    mutation="update",
+                    mutation="amend",
                     key=701,
                     label="after",
                     predecessor="before",
@@ -500,7 +501,7 @@ def _categorical_cases() -> tuple[Case, ...]:
                     "interior",
                     layout,
                     ingress,
-                    mutation="updateUntil",
+                    mutation="amendUntil",
                     key=901,
                     label="middle",
                     predecessor="before",
@@ -528,7 +529,7 @@ def _target_cases() -> tuple[Case, ...]:
     for family, key, label, statements, bounded in _TARGET_TWINS:
         for layout in LAYOUTS:
             forms: tuple[tuple[str, TargetMutation, Ingress], ...] = (
-                ("target-patch", "updateUntil" if bounded else "update", "wire"),
+                ("target-patch", "amendUntil" if bounded else "amend", "wire"),
                 *(
                     ("target-replace", "replaceUntil" if bounded else "replace", ingress)
                     for ingress in INGRESSES
@@ -584,7 +585,7 @@ def _ancestor_cases() -> tuple[Case, ...]:
             f"ancestor-{level.family}",
             "typed",
             layout,
-            mutation="update",
+            mutation="amend",
             value=geometry_support.successor_instance(level, layout, ANCESTOR_KEY, changed=True),
             predecessor=geometry_support.successor_instance(
                 level, layout, ANCESTOR_KEY, changed=False
@@ -803,29 +804,30 @@ def _source(tx: Transaction, case: Case) -> object:
 
 def _address(tx: Transaction, case: Case) -> None:
     """Buffer ``case``'s target write through its public verb, conditioned on
-    the stored milestone's Transaction-Time start where the Entity has one."""
-    if_tx_start = TX_START if issubclass(case.entity, Bitemporal | TxTemporal) else None
+    the stored milestone's Transaction-Time start where the Entity has one and
+    asserted unversioned where it has none. Each branch states its keywords
+    literally, so the window holds the verb's own work and no argument
+    assembly."""
     name = case.entity.identity.name
+    temporal = issubclass(case.entity, Bitemporal | TxTemporal)
     if case.mutation in ("replace", "replaceUntil") and case.ingress == "typed":
         instance = cast("Entity", case.instance)
         if case.bounded:
-            tx.replace(
-                instance, valid_from=INTERIOR_FROM, until=INTERIOR_UNTIL, if_tx_start=if_tx_start
+            tx.replace_if(
+                instance, tx_start=TX_START, valid_from=INTERIOR_FROM, until=INTERIOR_UNTIL
             )
+        elif temporal:
+            tx.replace_if(instance, tx_start=TX_START)
         else:
-            tx.replace(instance, if_tx_start=if_tx_start)
+            tx.replace_if(instance, unversioned=True)
         return
-    verb = tx.wire.replace if case.mutation in ("replace", "replaceUntil") else tx.wire.update
+    verb = tx.wire.replace_if if case.mutation in ("replace", "replaceUntil") else tx.wire.amend_if
     if case.bounded:
-        verb(
-            name,
-            case.changes,
-            valid_from=INTERIOR_FROM,
-            until=INTERIOR_UNTIL,
-            if_tx_start=if_tx_start,
-        )
+        verb(name, case.changes, tx_start=TX_START, valid_from=INTERIOR_FROM, until=INTERIOR_UNTIL)
+    elif temporal:
+        verb(name, case.changes, tx_start=TX_START)
     else:
-        verb(name, case.changes, if_tx_start=if_tx_start)
+        verb(name, case.changes, unversioned=True)
 
 
 def _buffer(tx: Transaction, case: Case, source: object) -> None:
@@ -836,17 +838,17 @@ def _buffer(tx: Transaction, case: Case, source: object) -> None:
     if case.ingress == "typed":
         if case.mutation == "insert":
             tx.insert(cast("Entity", case.instance))
-        elif case.mutation == "updateUntil":
-            tx.update(cast("Entity", source), until=INTERIOR_UNTIL)
+        elif case.mutation == "amendUntil":
+            tx.amend(cast("Entity", source), until=INTERIOR_UNTIL)
         else:
-            tx.update(cast("Entity", source))
+            tx.amend(cast("Entity", source))
         return
     if case.mutation == "insert":
         tx.wire.insert(case.entity.identity.name, case.changes)
-    elif case.mutation == "updateUntil":
-        tx.wire.update(cast("WireEntity", source), case.changes, until=INTERIOR_UNTIL)
+    elif case.mutation == "amendUntil":
+        tx.wire.amend(cast("WireEntity", source), case.changes, until=INTERIOR_UNTIL)
     else:
-        tx.wire.update(cast("WireEntity", source), case.changes)
+        tx.wire.amend(cast("WireEntity", source), case.changes)
 
 
 def write(

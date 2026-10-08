@@ -56,6 +56,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.write_bounds import stated_start
 from tests.unit._transact_support import (
     ACCOUNT,
     BALANCE,
@@ -110,7 +111,7 @@ __all__ = [
 type Verb = Literal[
     "insert",
     "bounded_insert",
-    "update",
+    "amend",
     "bounded_update",
     "delete",
     "terminate",
@@ -151,7 +152,7 @@ is Locking under either preference."""
 VERBS: Final[tuple[Verb, ...]] = (
     "insert",
     "bounded_insert",
-    "update",
+    "amend",
     "bounded_update",
     "delete",
     "terminate",
@@ -161,7 +162,7 @@ CONCURRENCIES: Final[tuple[Concurrency, ...]] = ("locking", "optimistic")
 REPRESENTATIONS: Final[tuple[Representation, ...]] = ("typed", "wire")
 
 _INSERT_VERBS: Final[frozenset[str]] = frozenset({"insert", "bounded_insert"})
-_UPDATE_VERBS: Final[frozenset[str]] = frozenset({"update", "bounded_update"})
+_UPDATE_VERBS: Final[frozenset[str]] = frozenset({"amend", "bounded_update"})
 VALID_FROM: Final = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 UNTIL: Final = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
 _TX_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
@@ -816,13 +817,13 @@ def _call_typed(tx: Transaction, scenario: Scenario, value: EntityBase) -> None:
     valid_from, until = _bounded_window(scenario)
     match scenario.verb:
         case "insert":
-            tx.insert(value, valid_from=plain)
+            tx.insert(value, **stated_start(plain))
         case "bounded_insert":
             tx.insert(value, valid_from=valid_from, until=until)
-        case "update":
-            tx.update(value)
+        case "amend":
+            tx.amend(value)
         case "bounded_update":
-            tx.update(value, until=_source_until(scenario))
+            tx.amend(value, until=_source_until(scenario))
         case "delete":
             tx.delete(value)
         case "terminate":
@@ -883,13 +884,13 @@ def _call_wire(
     payload = _wire_payload(scenario, source)
     match scenario.verb:
         case "insert":
-            tx.wire.insert(scenario.target.entity, payload, valid_from=plain)
+            tx.wire.insert(scenario.target.entity, payload, **stated_start(plain))
         case "bounded_insert":
             tx.wire.insert(scenario.target.entity, payload, valid_from=valid_from, until=until)
-        case "update":
-            tx.wire.update(observed, authored)
+        case "amend":
+            tx.wire.amend(observed, authored)
         case "bounded_update":
-            tx.wire.update(observed, authored, until=_source_until(scenario))
+            tx.wire.amend(observed, authored, until=_source_until(scenario))
         case "delete":
             tx.wire.delete(observed)
         case "terminate":
@@ -952,10 +953,10 @@ def _open(tx: Transaction, scenario: Scenario) -> object:
         if scenario.opened_until:
             tx.insert(inserted, valid_from=VALID_FROM, until=UNTIL)
         else:
-            tx.insert(inserted, valid_from=target.valid_from)
+            tx.insert(inserted, **stated_start(target.valid_from))
         return inserted
     if scenario.opened_until:
         return tx.wire.insert(
             target.entity, dict(target.payload), valid_from=VALID_FROM, until=UNTIL
         )
-    return tx.wire.insert(target.entity, dict(target.payload), valid_from=target.valid_from)
+    return tx.wire.insert(target.entity, dict(target.payload), **stated_start(target.valid_from))

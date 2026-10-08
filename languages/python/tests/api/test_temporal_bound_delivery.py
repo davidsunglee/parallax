@@ -23,6 +23,7 @@ from parallax.core.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, Transaction, connect
 from tests._support.binary32 import narrowed, shortest_spelling
 from tests._support.root_ownership import own_root
+from tests._support.write_bounds import stated_start
 
 _NAMESPACE = "temporal.bound"
 
@@ -134,19 +135,19 @@ def _write(
         pinned: Pin | None = _CORRECTED_FROM if entity is Position else None
         if writer == "keyed" and representation == "typed":
             found = tx.find(_typed_query(entity, pinned, "latest")).result()
-            tx.update(found.edit(amount=_NEW))
+            tx.amend(found.edit(amount=_NEW))
         elif writer == "keyed":
             node = tx.wire.find(_wire_query(entity, pinned, "latest")).result()
-            tx.wire.update(node, {"amount": _NEW})
+            tx.wire.amend(node, {"amount": _NEW})
         elif representation == "typed":
-            tx.update_where(
-                entity.where(entity.id == 1), entity.amount.set(_NEW), valid_from=valid_from
+            tx.amend_where(
+                entity.where(entity.id == 1), entity.amount.set(_NEW), **stated_start(valid_from)
             )
         else:
-            tx.wire.update_where(
+            tx.wire.amend_where(
                 {"entity": name, "predicate": {"eq": {"attr": f"{name}.id", "value": 1}}},
                 {"amount": _NEW},
-                valid_from=valid_from,
+                **stated_start(valid_from),
             )
 
     return write
@@ -198,7 +199,9 @@ def test_each_milestone_reads_back_its_open_and_closed_bounds(
 ) -> None:
     db = _served(profile_run)
     db.transact(
-        lambda tx: tx.insert(entity(id=1, amount=_OLD), valid_from=_valid_from(entity, _VALID_FROM))
+        lambda tx: tx.insert(
+            entity(id=1, amount=_OLD), **stated_start(_valid_from(entity, _VALID_FROM))
+        )
     )
     db.transact(_write(representation, writer, entity))
 

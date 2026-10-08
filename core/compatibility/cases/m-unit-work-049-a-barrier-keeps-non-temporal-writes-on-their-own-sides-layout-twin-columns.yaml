@@ -21,18 +21,18 @@ when:
         - { id: 1, quantity: 5, label: t }
     - uow: same-state
       write:
-        - mutation: update
+        - mutation: amend
           "on": 0
           entity: parallax.compatibility.SequenceTag
           rows:
             - { id: 1, quantity: 1 }
-        - mutation: update
+        - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
             predicate: { lessThan: { attr: parallax.compatibility.SequenceTag.quantity, value: 2 } }
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: low }
-        - mutation: update
+        - mutation: amend
           "on": 0
           entity: parallax.compatibility.SequenceTag
           rows:
@@ -47,18 +47,18 @@ when:
         - { id: 1, balance: 10, memo: { note: m1 }, version: 1 }
     - uow: versioned
       write:
-        - mutation: update
+        - mutation: amend
           "on": 2
           entity: parallax.compatibility.SequenceAccount
           rows:
             - { id: 1, balance: 20 }
-        - mutation: update
+        - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
             predicate: { lessThan: { attr: parallax.compatibility.SequenceTag.quantity, value: 2 } }
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: lower }
-        - mutation: update
+        - mutation: amend
           "on": 2
           entity: parallax.compatibility.SequenceAccount
           rows:
@@ -70,13 +70,13 @@ when:
           entity: parallax.compatibility.SequenceTag
           rows:
             - { id: 3, quantity: 1, label: new }
-        - mutation: update
+        - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
             predicate: { lessThan: { attr: parallax.compatibility.SequenceTag.quantity, value: 2 } }
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: low3 }
-        - mutation: update
+        - mutation: amend
           "on": "/scenario/4/write/0"
           entity: parallax.compatibility.SequenceTag
           rows:
@@ -88,7 +88,7 @@ when:
           entity: parallax.compatibility.SequenceTag
           rows:
             - { id: 4, quantity: 1, label: x4 }
-        - mutation: update
+        - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
             predicate: { lessThan: { attr: parallax.compatibility.SequenceTag.quantity, value: 2 } }

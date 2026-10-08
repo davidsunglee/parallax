@@ -10,7 +10,7 @@
   ],
   "$defs": {
     "keyedWriteInstruction": {
-      "description": "A keyed write: a mutation on one entity carrying flat attribute-named rows. A Valid-Time mutation carries `validFrom`; the bounded `*Until` forms additionally carry `until`.",
+      "description": "A keyed write: a mutation on one entity carrying flat attribute-named rows, authorized by the source the write was stated through — a read's evidence or an admitted insertion — never by a condition of its own. A Valid-Time mutation carries `validFrom`; the bounded `*Until` forms additionally carry `until`.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "entity", "rows"],
@@ -36,7 +36,11 @@
         {
           "description": "A bounded `*Until` mutation is over `[validFrom, until)`, so it must carry both Valid-Time bounds; a plain mutation must omit `until`.",
           "if": {
-            "properties": { "mutation": { "enum": ["insertUntil", "updateUntil", "terminateUntil"] } },
+            "properties": {
+              "mutation": {
+                "enum": ["insertUntil", "amendUntil", "replaceUntil", "terminateUntil"]
+              }
+            },
             "required": ["mutation"]
           },
           "then": { "required": ["validFrom", "until"] },
@@ -45,7 +49,7 @@
       ]
     },
     "predicateWriteInstruction": {
-      "description": "A predicate-selected (set-based) write: a mutation on every row of `target.entity` matching `target.predicate`, with `assignments` on the update forms. This is the set-based analogue of the keyed instruction; `m-batch-write` / `m-opt-lock` decide whether it lowers readless (unversioned non-temporal) or materializes per-row (versioned / temporal). Assignment list order is DATA order only — the target's Entity Layout determines the emitted SET columns and their binds.",
+      "description": "A predicate-selected (set-based) write: a mutation on every row of `target.entity` matching `target.predicate`, with `assignments` on the amendment forms. This is the set-based analogue of the keyed instruction; `m-batch-write` / `m-opt-lock` decide whether it lowers readless (unversioned non-temporal) or materializes per-row (versioned / temporal). Assignment list order is DATA order only — the target's Entity Layout determines the emitted SET columns and their binds.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "target"],
@@ -68,9 +72,9 @@
       },
       "allOf": [
         {
-          "description": "The assignment-bearing update forms (`update` / `updateUntil`) MUST carry `assignments`; `delete` / `terminate` / `terminateUntil` MUST NOT.",
+          "description": "The assignment-bearing amendment forms (`amend` / `amendUntil`) MUST carry `assignments`; `delete` / `terminate` / `terminateUntil` MUST NOT.",
           "if": {
-            "properties": { "mutation": { "enum": ["update", "updateUntil"] } },
+            "properties": { "mutation": { "enum": ["amend", "amendUntil"] } },
             "required": ["mutation"]
           },
           "then": { "required": ["assignments"] },
@@ -79,7 +83,7 @@
         {
           "description": "A bounded predicate write is over `[validFrom, until)`, so it must carry both Valid-Time bounds; unbounded forms must omit `until`.",
           "if": {
-            "properties": { "mutation": { "enum": ["updateUntil", "terminateUntil"] } },
+            "properties": { "mutation": { "enum": ["amendUntil", "terminateUntil"] } },
             "required": ["mutation"]
           },
           "then": { "required": ["validFrom", "until"] },
@@ -88,7 +92,7 @@
       ]
     },
     "targetWriteInstruction": {
-      "description": "A caller-addressed (target) write: a sparse patch (`update` / `updateUntil`) or a complete replacement (`replace` / `replaceUntil`) of the one existing `entity` object its `row` names by primary key, under the starting revision its caller states. The row's primary-key members address the object and are no assignment; a patch's other members are its assignments, and a replacement's are the object's complete writable state. The revision is a member of its own, never a row member: `ifVersion` for a versioned target, `ifTxStart` — the observed milestone's Transaction-Time start, never the writing transaction's own instant — for a temporal one, and neither for an unversioned target. Which revision a target takes, and whether it requires `validFrom`, depends on the model and is judged when the write is prepared.",
+      "description": "A caller-addressed (target) write: an amendment (`amend` / `amendUntil`) or a complete replacement (`replace` / `replaceUntil`) of the one existing `entity` object its `row` names by primary key, under the starting revision its caller states. The row's primary-key members address the object and are no assignment; an amendment's other members are its assignments, and a replacement's are the object's complete writable state. The revision is a member of its own, never a row member: `ifVersion` for a versioned target, `ifTxStart` — the observed milestone's Transaction-Time start, never the writing transaction's own instant — for a temporal one, and neither for an unversioned target, whose caller asserts that it has none. Which revision a target takes, and whether it requires `validFrom`, depends on the model and is judged when the write is prepared.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "entity", "row"],
@@ -121,7 +125,7 @@
         {
           "description": "A bounded target write is over `[validFrom, until)`, so it must carry both Valid-Time bounds; unbounded forms must omit `until`.",
           "if": {
-            "properties": { "mutation": { "enum": ["updateUntil", "replaceUntil"] } },
+            "properties": { "mutation": { "enum": ["amendUntil", "replaceUntil"] } },
             "required": ["mutation"]
           },
           "then": { "required": ["validFrom", "until"] },
@@ -201,24 +205,26 @@
       "$ref": "identity.schema.json#/$defs/entityName"
     },
     "keyedMutation": {
-      "description": "The keyed write mutation surface: the MVP non-temporal / audit-only verbs (`insert` / `update` / `delete` / `terminate`) plus the full-bitemporal bounded rectangle split (`insertUntil` / `updateUntil` / `terminateUntil`). Deferred extension verbs are added here when their slices claim them. `compatibility-case.schema.json`'s buffered keyed write references this enum rather than redefining it.",
+      "description": "The keyed write mutation surface: `insert` opens a row, `amend` assigns the members its row names, `replace` states the object's complete writable state, and `delete` / `terminate` end it, plus the full-bitemporal bounded rectangle forms (`insertUntil` / `amendUntil` / `replaceUntil` / `terminateUntil`). `compatibility-case.schema.json`'s buffered keyed write references this enum rather than redefining it.",
       "enum": [
         "insert",
-        "update",
+        "amend",
+        "replace",
         "delete",
         "terminate",
         "insertUntil",
-        "updateUntil",
+        "amendUntil",
+        "replaceUntil",
         "terminateUntil"
       ]
     },
     "targetMutation": {
-      "description": "The caller-addressed (target) write mutation surface: the sparse patch `update` and the complete `replace`, each with its bounded `*Until` form.",
-      "enum": ["update", "updateUntil", "replace", "replaceUntil"]
+      "description": "The caller-addressed (target) write mutation surface: the amendment `amend` and the complete `replace`, each with its bounded `*Until` form.",
+      "enum": ["amend", "amendUntil", "replace", "replaceUntil"]
     },
     "predicateMutation": {
-      "description": "The predicate-selected (set-based) write mutation surface: the update / delete / terminate verbs plus the bounded `updateUntil` / `terminateUntil` (a set-based write has no `insert` form — there is no predicate to select rows that do not yet exist). `compatibility-case.schema.json`'s `predicateWrite` references this enum rather than redefining it.",
-      "enum": ["update", "delete", "terminate", "updateUntil", "terminateUntil"]
+      "description": "The predicate-selected (set-based) write mutation surface: the amend / delete / terminate verbs plus the bounded `amendUntil` / `terminateUntil` (a set-based write has no `insert` form — there is no predicate to select rows that do not yet exist — and no replacement). `compatibility-case.schema.json`'s `predicateWrite` references this enum rather than redefining it.",
+      "enum": ["amend", "delete", "terminate", "amendUntil", "terminateUntil"]
     }
   }
 }

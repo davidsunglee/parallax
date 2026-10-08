@@ -7,7 +7,7 @@ given:
   fixtures: true
 when:
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Dog
       statements: 1
       note: correct Dog 1's inherited Pet.licenseId; keyed by pk and tag-guarded on kind='dog'

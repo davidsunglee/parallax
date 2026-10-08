@@ -15,7 +15,7 @@ when:
         - { id: 1, acctNum: A, value: "100.00" }
       validFrom: "2024-01-01T00:00:00.000000Z"
       at: "2024-01-01T00:00:00.000000Z"
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Position
       statements: 3
       note: inactivate the original on the Transaction-Time dimension, then chain head (old) + new tail (new)

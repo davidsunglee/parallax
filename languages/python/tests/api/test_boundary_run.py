@@ -99,7 +99,7 @@ def _assert_outcome(
         result = run()
         assert result is not None
         expected_amount = (
-            target.committed if any(step.action == "update" for step in steps) else target.baseline
+            target.committed if any(step.action == "amend" for step in steps) else target.baseline
         )
         assert target.amount(result) == expected_amount
         assert _persisted_amount(verify_db, target) == expected_amount, (

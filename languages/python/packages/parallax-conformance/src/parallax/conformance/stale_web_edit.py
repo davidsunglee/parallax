@@ -61,7 +61,7 @@ def submit_balance_edit(
                 f"milestone starting {edge.tx_time.isoformat()}, but the current one starts "
                 f"{current_edge.tx_time.isoformat()}"
             )
-        tx.update(current.edit(**fields))
+        tx.amend(current.edit(**fields))
 
     db.transact(fn, concurrency=concurrency)
 
@@ -108,6 +108,6 @@ def submit_branch_edit(
                 f"starting {current_edge.valid_time.isoformat()} at "
                 f"{current_edge.tx_time.isoformat()}"
             )
-        tx.update(current.edit(**fields))
+        tx.amend(current.edit(**fields))
 
     db.transact(fn, concurrency=concurrency)

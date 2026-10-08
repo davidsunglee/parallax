@@ -24,7 +24,7 @@ when:
         - { id: 1, owner: Ada, balance: "100.00" }
     - uow: fallback
       write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.Wallet
           rows:
             - { id: 1, balance: "175.00" }

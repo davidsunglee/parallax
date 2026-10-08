@@ -172,9 +172,9 @@ class _Opened:
         bounds: dict[str, Any] = {} if until is None else {"until": until}
         if self._representation == "typed":
             self.source = self.source.edit(**changes)
-            self._tx.update(self.source, **bounds)
+            self._tx.amend(self.source, **bounds)
         else:
-            self._tx.wire.update(self.source, changes, **bounds)
+            self._tx.wire.amend(self.source, changes, **bounds)
 
     def terminate(self, until: dt.datetime | None = None) -> None:
         bounds: dict[str, Any] = {} if until is None else {"until": until}
@@ -337,11 +337,11 @@ def test_a_resubmitted_draft_reasserts_its_whole_touched_set(
         opened = entity(id=1, amount=100, spec=_SPEC)
         tx.insert(opened, valid_from=_JAN)
         draft = opened.edit(amount=150)
-        tx.update(draft)
+        tx.amend(draft)
         if helper_read:
             _read_span(tx, entity, "typed", _MAR)
-        tx.update(opened.edit(amount=200))
-        tx.update(draft.edit(spec=None))
+        tx.amend(opened.edit(amount=200))
+        tx.amend(draft.edit(spec=None))
 
     db.transact(edit)
     assert _span_rows(profile_run, entity) == [(_ATTEMPT, None, _JAN, None, 150, None)]
@@ -402,9 +402,9 @@ def test_an_insertion_source_revises_its_transaction_time_row_across_helper_read
             _read_log(tx, entity, representation)
             if representation == "typed":
                 source = source.edit(label=label)
-                tx.update(source)
+                tx.amend(source)
             else:
-                tx.wire.update(source, {"label": label})
+                tx.wire.amend(source, {"label": label})
 
     db.transact(edit, concurrency=concurrency)
     assert _log_rows(profile_run, entity) == [(_ATTEMPT, None, "second")]
@@ -428,9 +428,9 @@ def test_an_insertion_source_advances_its_version_across_helper_reads(
             tx.find(entity.where(entity.id == 1)).result()
             if representation == "typed":
                 source = source.edit(label=label)
-                tx.update(source)
+                tx.amend(source)
             else:
-                tx.wire.update(source, {"label": label})
+                tx.wire.amend(source, {"label": label})
 
     db.transact(edit, concurrency=concurrency)
     assert _ledger_rows(profile_run, entity) == [(1, "second", 3)]

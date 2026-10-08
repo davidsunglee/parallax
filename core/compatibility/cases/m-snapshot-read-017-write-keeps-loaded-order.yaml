@@ -37,7 +37,7 @@ when:
       expectRows:
         - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
     - write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.Order
           rows:
             - { id: 1, name: Rewritten }

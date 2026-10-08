@@ -27,12 +27,12 @@ when:
         - { id: 1, owner: Ada, balance: "100.00", version: 1 }
     - uow: merged-assignments
       write:
-        - mutation: update
+        - mutation: amend
           "on": 0
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "125.00" }
-        - mutation: update
+        - mutation: amend
           "on": 0
           entity: parallax.compatibility.Account
           rows:

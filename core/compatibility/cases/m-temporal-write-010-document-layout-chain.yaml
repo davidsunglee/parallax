@@ -20,7 +20,7 @@ when:
             cargo: timber
           legs: []
       at: "2026-01-01T00:00:00.000000Z"
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Voyage
       statements: 2
       note: close the current row, then chain a successor whose document carries the new title beside the unchanged members

@@ -67,7 +67,7 @@
       }
     },
     {
-      "description": "A conflict case (m-opt-lock): an observation-requiring keyed write asserted by the number of rows it affects. Loads the model's fixtures, OPTIONALLY runs an out-of-band `given.apply` (a concurrent transaction's stale-version mutation or row removal), then runs the golden statement(s) and asserts the affected-row count. The written verb is `when.mutation` — `update` (the default) or `delete` — and its target is non-temporal, which only a model-aware reader can check (m-case-format). Two forms: a SINGLE attempt (`when.write` + `then.affectedRows` + `then.statements`); or an ordered `when.attempts` retry sequence (each attempt carrying its own statements + affectedRows + write), proving the m-opt-lock retry contract — a stale UPDATE affects 0 rows, then a retry that re-reads the fresh version affects 1.",
+      "description": "A conflict case (m-opt-lock): an observation-requiring keyed write asserted by the number of rows it affects. Loads the model's fixtures, OPTIONALLY runs an out-of-band `given.apply` (a concurrent transaction's stale-version mutation or row removal), then runs the golden statement(s) and asserts the affected-row count. The written verb is `when.mutation` — `amend` (the default) or `delete` — and its target is non-temporal, which only a model-aware reader can check (m-case-format). Two forms: a SINGLE attempt (`when.write` + `then.affectedRows` + `then.statements`); or an ordered `when.attempts` retry sequence (each attempt carrying its own statements + affectedRows + write), proving the m-opt-lock retry contract — a stale UPDATE affects 0 rows, then a retry that re-reads the fresh version affects 1.",
       "required": ["shape"],
       "properties": {
         "shape": { "const": "conflict" },
@@ -300,7 +300,7 @@
         }
       },
       "else": {
-        "description": "A golden-graded scenario's every step declares the round trips its golden SQL is graded against, and its buffered entries are keyed instructions whose verbs accept them: its golden SQL is the independent lowering of that keyed buffer. A state-graded step MAY omit `roundTrips`, which nothing grades.",
+        "description": "A golden-graded scenario's every step declares the round trips its golden SQL is graded against, and its buffered entries are keyed instructions whose verbs accept them: its golden SQL is the independent lowering of that keyed buffer. A source-authorized replacement is state-graded only: the coverage it establishes depends on what its flush reads. A state-graded step MAY omit `roundTrips`, which nothing grades.",
         "properties": {
           "when": {
             "properties": {
@@ -313,7 +313,10 @@
                       "then": {
                         "items": {
                           "required": ["rows"],
-                          "not": { "required": ["expectError"] }
+                          "not": { "required": ["expectError"] },
+                          "properties": {
+                            "mutation": { "not": { "enum": ["replace", "replaceUntil"] } }
+                          }
                         }
                       }
                     }
@@ -409,7 +412,7 @@
       }
     },
     {
-      "description": "A scenario carrying a KEYED WRITE action step (`insert` / `update`) is `lane: api-conformance` throughout. What such a step observes is which verbs accept a live client-held VALUE of a stated provenance, which the wire harness can neither construct nor arrange, so it cannot execute the step at all — and a scenario is ONE ordered execution, not a set of steps to divide between executors. Assigning the whole case to the API Conformance Suite is therefore the only routing under which every step of it runs: a `harness` lane would report the case as run while the very step it turns on never executed.",
+      "description": "A scenario carrying a KEYED WRITE action step (`insert` / `amend`) is `lane: api-conformance` throughout. What such a step observes is which verbs accept a live client-held VALUE of a stated provenance, which the wire harness can neither construct nor arrange, so it cannot execute the step at all — and a scenario is ONE ordered execution, not a set of steps to divide between executors. Assigning the whole case to the API Conformance Suite is therefore the only routing under which every step of it runs: a `harness` lane would report the case as run while the very step it turns on never executed.",
       "if": {
         "required": ["when"],
         "properties": {
@@ -419,7 +422,7 @@
               "scenario": {
                 "contains": {
                   "required": ["action"],
-                  "properties": { "action": { "enum": ["insert", "update"] } }
+                  "properties": { "action": { "enum": ["insert", "amend"] } }
                 }
               }
             }
@@ -442,7 +445,7 @@
               "scenario": {
                 "contains": {
                   "required": ["action"],
-                  "properties": { "action": { "enum": ["insert", "update"] } }
+                  "properties": { "action": { "enum": ["insert", "amend"] } }
                 }
               }
             }
@@ -456,7 +459,7 @@
               "scenario": {
                 "items": {
                   "required": ["action"],
-                  "properties": { "action": { "enum": ["insert", "update"] } }
+                  "properties": { "action": { "enum": ["insert", "amend"] } }
                 }
               }
             }
@@ -798,7 +801,7 @@
                 "description": "A caller-addressed (target) step: its `row` names one existing object by primary key beside the members a patch assigns or the complete writable state a replacement states, and its condition is the caller's own revision member — `ifVersion` or `ifTxStart` — exactly as `write-instruction.schema.json`'s `targetWriteInstruction` carries it.",
                 "required": ["row"],
                 "properties": {
-                  "mutation": { "enum": ["update", "updateUntil", "replace", "replaceUntil"] }
+                  "mutation": { "enum": ["amend", "amendUntil", "replace", "replaceUntil"] }
                 },
                 "not": { "required": ["ifVersion", "ifTxStart"] }
               }
@@ -810,7 +813,7 @@
                   "required": ["mutation"],
                   "properties": {
                     "mutation": {
-                      "enum": ["insertUntil", "updateUntil", "terminateUntil", "replaceUntil"]
+                      "enum": ["insertUntil", "amendUntil", "terminateUntil", "replaceUntil"]
                     }
                   }
                 },
@@ -842,12 +845,12 @@
                 "description": "The mutation kind. The `*Until` trio bounds a Bitemporal mutation to a Valid-Time window.",
                 "enum": [
                   "insert",
-                  "update",
+                  "amend",
                   "terminate",
                   "delete",
                   "cascadeDelete",
                   "insertUntil",
-                  "updateUntil",
+                  "amendUntil",
                   "terminateUntil",
                   "replace",
                   "replaceUntil"
@@ -952,10 +955,10 @@
                 "then": { "required": ["on"] }
               },
               {
-                "description": "A keyed write ACTION verb (`insert` / `update`) is handed a value rather than a prior step's result, so it REQUIRES the `value` provenance token and names no `on` (m-unit-work *Write value provenance*). `value` is legal on no other step: provenance is a property of the value a verb is handed, and every other step form is handed none. Such a step carries NO golden SQL and declares `roundTrips: 0` (m-case-format *Keyed write action steps*): a refusal stops the verb before it buffers anything, and the one acceptance this shape admits — the `update` of a value no author changed, per the sibling `insert` rule — buffers nothing either, so its whole observable is the per-step `expectError`.",
+                "description": "A keyed write ACTION verb (`insert` / `amend`) is handed a value rather than a prior step's result, so it REQUIRES the `value` provenance token and names no `on` (m-unit-work *Write value provenance*). `value` is legal on no other step: provenance is a property of the value a verb is handed, and every other step form is handed none. Such a step carries NO golden SQL and declares `roundTrips: 0` (m-case-format *Keyed write action steps*): a refusal stops the verb before it buffers anything, and the one acceptance this shape admits — the `amend` of a value no author changed, per the sibling `insert` rule — buffers nothing either, so its whole observable is the per-step `expectError`.",
                 "if": {
                   "required": ["action"],
-                  "properties": { "action": { "enum": ["insert", "update"] } }
+                  "properties": { "action": { "enum": ["insert", "amend"] } }
                 },
                 "then": {
                   "required": ["value"],
@@ -968,7 +971,7 @@
                 "else": { "not": { "required": ["value"] } }
               },
               {
-                "description": "An `insert` keyed write action step REQUIRES `expectError`. Such a step declares `roundTrips: 0` and carries no golden SQL, so the only ACCEPTED write it can express is one that MATERIALIZES NOTHING (`m-case-format` *Keyed write action steps*) — the `update` of a value no author changed, which buffers nothing. An accepted `insert` is never that: it opens a row, so the verb buffers a write the committing unit of work flushes, and the step emits DML. A step declaring acceptance (no `expectError`) beside that zero would assert two things that cannot both hold, and nothing could catch it: the wire harness never runs the case, the API Conformance Suite asserts no golden SQL, and it grades the zero as the absence of the very durable effect the acceptance produces. So an `insert` step states the refusal its value's provenance earns, and a keyed write whose acceptance is observable as an emitted statement is authored where that statement has an oracle, never here.",
+                "description": "An `insert` keyed write action step REQUIRES `expectError`. Such a step declares `roundTrips: 0` and carries no golden SQL, so the only ACCEPTED write it can express is one that MATERIALIZES NOTHING (`m-case-format` *Keyed write action steps*) — the `amend` of a value no author changed, which buffers nothing. An accepted `insert` is never that: it opens a row, so the verb buffers a write the committing unit of work flushes, and the step emits DML. A step declaring acceptance (no `expectError`) beside that zero would assert two things that cannot both hold, and nothing could catch it: the wire harness never runs the case, the API Conformance Suite asserts no golden SQL, and it grades the zero as the absence of the very durable effect the acceptance produces. So an `insert` step states the refusal its value's provenance earns, and a keyed write whose acceptance is observable as an emitted statement is authored where that statement has an oracle, never here.",
                 "if": {
                   "required": ["action"],
                   "properties": { "action": { "const": "insert" } }
@@ -1066,7 +1069,7 @@
                 "$ref": "#/$defs/streamContext"
               },
               "write": {
-                "description": "Marks a WRITE step, in one of three forms (disjoint by JSON type). A legacy string LABEL (a coarse verb hint whose intent lives only in the golden SQL — a deferred migration, still carried by `m-identity-map-006/007/008/011` and `m-process-cache-003`). A single predicate-selected `$defs/predicateWrite` instruction. Or a `$defs/bufferedWriteSequence` — the ORDERED buffer of one-or-more KEYED write instructions a single unit of work accumulates and flushes together (m-unit-work), so the step encodes every buffered mutation explicitly rather than in prose. The buffered form is a GENERAL ordered keyed buffer: it spans a single keyed write, a mixed multi-object flush (insert / update / delete of DIFFERENT objects), and the two-keyed same-object coalescing pair alike — same-object folding at flush is the runtime coalescing rule, not a structural constraint. Under `grading: state` a buffer MAY also carry caller-addressed submissions and readless predicate writes (`$defs/submission`). Every structured form is the neutral requested operation the compile/run and API no-drift checks consume INDEPENDENTLY of golden SQL; golden SQL (`statements`) remains the independent expected lowering of the flush — for coalescing, one final-value write or NO DML — never the source an adapter deduces the writes from.",
+                "description": "Marks a WRITE step, in one of three forms (disjoint by JSON type). A legacy string LABEL (a coarse verb hint whose intent lives only in the golden SQL — a deferred migration, still carried by `m-identity-map-006/007/008/011` and `m-process-cache-003`). A single predicate-selected `$defs/predicateWrite` instruction. Or a `$defs/bufferedWriteSequence` — the ORDERED buffer of one-or-more KEYED write instructions a single unit of work accumulates and flushes together (m-unit-work), so the step encodes every buffered mutation explicitly rather than in prose. The buffered form is a GENERAL ordered keyed buffer: it spans a single keyed write, a mixed multi-object flush (insert / amend / delete of DIFFERENT objects), and the two-keyed same-object coalescing pair alike — same-object folding at flush is the runtime coalescing rule, not a structural constraint. Under `grading: state` a buffer MAY also carry caller-addressed submissions and readless predicate writes (`$defs/submission`). Every structured form is the neutral requested operation the compile/run and API no-drift checks consume INDEPENDENTLY of golden SQL; golden SQL (`statements`) remains the independent expected lowering of the flush — for coalescing, one final-value write or NO DML — never the source an adapter deduces the writes from.",
                 "oneOf": [
                   { "type": "string", "minLength": 1 },
                   { "$ref": "#/$defs/predicateWrite" },
@@ -1120,8 +1123,8 @@
                 "minimum": 0
               },
               "action": {
-                "description": "Marks an ACTION step and names the managed-object lifecycle verb it performs (m-case-format lifecycle vocabulary). `mutate` — assign the attributes in `set` in memory (no SQL for a snapshot object). `load` — explicitly trigger a deferred relationship load (m-deep-fetch), the portable, mandatory load trigger; its resolving read is INSTANCE-FORM (m-sql *Read projection*), materializing the loaded objects and selecting applicable Storage Layout `Document` slots. `access` — read a relationship / query-backed list (m-op-list): the FIRST access resolves and materializes the list in one INSTANCE-FORM read, while a later access hits already-populated state with no SQL. `flush` — emit the unit of work's buffered DML. `commit` / `abort` — end the unit of work, committing or discarding it (m-unit-work). `insert` / `update` — hand the keyed write verb of that name a VALUE whose provenance the sibling `value` states (m-unit-work *Write value provenance*): the step observes which verbs accept that value, so it names no prior step and carries no golden SQL.",
-                "enum": ["mutate", "load", "access", "flush", "commit", "abort", "insert", "update"]
+                "description": "Marks an ACTION step and names the managed-object lifecycle verb it performs (m-case-format lifecycle vocabulary). `mutate` — assign the attributes in `set` in memory (no SQL for a snapshot object). `load` — explicitly trigger a deferred relationship load (m-deep-fetch), the portable, mandatory load trigger; its resolving read is INSTANCE-FORM (m-sql *Read projection*), materializing the loaded objects and selecting applicable Storage Layout `Document` slots. `access` — read a relationship / query-backed list (m-op-list): the FIRST access resolves and materializes the list in one INSTANCE-FORM read, while a later access hits already-populated state with no SQL. `flush` — emit the unit of work's buffered DML. `commit` / `abort` — end the unit of work, committing or discarding it (m-unit-work). `insert` / `amend` — hand the keyed write verb of that name a VALUE whose provenance the sibling `value` states (m-unit-work *Write value provenance*): the step observes which verbs accept that value, so it names no prior step and carries no golden SQL.",
+                "enum": ["mutate", "load", "access", "flush", "commit", "abort", "insert", "amend"]
               },
               "on": {
                 "description": "The earlier scenario step(s) whose result this step operates on. A single zero-based index, or an array of indices when an ACTION spans sources at DIFFERENT lowered coordinates (a coordinate-grouped `load`, m-deep-fetch / m-identity-map). Every index MUST name an EARLIER step (the harness asserts `0 <= index < the current step's index`); the array form's indices MUST be UNIQUE (`uniqueItems`) — a source is referenced at most once. On an ACTION step it names the source object(s) the verb acts on: REQUIRED for object-targeting verbs and optional for boundary verbs (see the sibling `allOf`). A write step carries none: each of its buffered submissions names its own source (`$defs/submissionSource`).",
@@ -1136,7 +1139,7 @@
                 ]
               },
               "value": {
-                "description": "insert / update action only (enforced by the sibling `allOf`, which also REQUIRES it there). The PROVENANCE of the value the step hands its keyed write verb, as m-unit-work *Write value provenance* partitions it: `unmanaged` — no managed read produced the value; `thisSource` — a read through the very source this verb writes through admitted the value as valid stored Entity State; `anotherSource` — a read through some OTHER framework-managed source admitted it, the same store or not; `invalidRoot` — this source published the value only as diagnostic data inside a hydratable invalid root and therefore did not admit it as a keyed source. The case states the provenance and never how to obtain it: the adapter arranges the corresponding value through its own managed reads, or no read at all for `unmanaged`.",
+                "description": "insert / amend action only (enforced by the sibling `allOf`, which also REQUIRES it there). The PROVENANCE of the value the step hands its keyed write verb, as m-unit-work *Write value provenance* partitions it: `unmanaged` — no managed read produced the value; `thisSource` — a read through the very source this verb writes through admitted the value as valid stored Entity State; `anotherSource` — a read through some OTHER framework-managed source admitted it, the same store or not; `invalidRoot` — this source published the value only as diagnostic data inside a hydratable invalid root and therefore did not admit it as a keyed source. The case states the provenance and never how to obtain it: the adapter arranges the corresponding value through its own managed reads, or no read at all for `unmanaged`.",
                 "enum": ["unmanaged", "thisSource", "anotherSource", "invalidRoot"]
               },
               "set": {
@@ -1150,7 +1153,7 @@
                 "minLength": 1
               },
               "expectError": {
-                "description": "A neutral application-lifecycle error this step's verb must raise: `transaction-time-pin-read-only` for a mutation through a finite Transaction-Time-pinned view; or one of the three write-value provenance refusals (m-unit-work), which partition a value's provenance — `write-value-not-stored` for an update handed a value no managed read produced, `write-value-already-stored` for an insert handed a value produced by a read through the very source it writes through, and `write-value-foreign-lifecycle` for a value produced through some other framework-managed source, the same store or not.",
+                "description": "A neutral application-lifecycle error this step's verb must raise: `transaction-time-pin-read-only` for a mutation through a finite Transaction-Time-pinned view; or one of the three write-value provenance refusals (m-unit-work), which partition a value's provenance — `write-value-not-stored` for an amendment handed a value no managed read produced, `write-value-already-stored` for an insert handed a value produced by a read through the very source it writes through, and `write-value-foreign-lifecycle` for a value produced through some other framework-managed source, the same store or not.",
                 "enum": [
                   "transaction-time-pin-read-only",
                   "write-value-not-stored",
@@ -1259,7 +1262,7 @@
             "properties": {
               "action": {
                 "description": "The unit-of-work action this step performs, portably named (the concrete API is per-language). `join` opens a JOINED unit of work that shares the current one rather than a nested boundary of its own (m-unit-work), so every action after it runs inside that joined scope; the list stays FLAT because the body is one linear sequence, and what a case asserts about the sharing rides `then.outcome` and `then.executionLifecycle` rather than the list's shape.",
-                "enum": ["read", "create", "update", "terminate", "delete", "join"]
+                "enum": ["read", "create", "amend", "terminate", "delete", "join"]
               },
               "actorIdentity": {
                 "description": "The independently selected actor for THIS joining call. Legal on a join alone. Absence reuses the enclosing scope; presence derives an independent scope even where its values equal the outer selection.",
@@ -1403,9 +1406,9 @@
           ]
         },
         "mutation": {
-          "description": "conflict cases (m-opt-lock). The keyed verb `when.write` names, defaulting to `update`. `delete` selects the versioned keyed DELETE instead, whose golden carries no `set` clause. The verb decides neither gate presence nor shortfall classification — the target Entity's Effective Concurrency Strategy, derived from `when.uow.concurrency` and its Optimistic Lock Facet, decides both uniformly for the versioned UPDATE and the versioned DELETE. An effective-Locking golden renders no gate at all, so its zero-row outcome is the non-retriable stale write rather than an optimistic conflict.",
-          "enum": ["update", "delete"],
-          "default": "update"
+          "description": "conflict cases (m-opt-lock). The keyed verb `when.write` names, defaulting to `amend`. `delete` selects the versioned keyed DELETE instead, whose golden carries no `set` clause. The verb decides neither gate presence nor shortfall classification — the target Entity's Effective Concurrency Strategy, derived from `when.uow.concurrency` and its Optimistic Lock Facet, decides both uniformly for the versioned UPDATE and the versioned DELETE. An effective-Locking golden renders no gate at all, so its zero-row outcome is the non-retriable stale write rather than an optimistic conflict.",
+          "enum": ["amend", "delete"],
+          "default": "amend"
         }
       }
     },
@@ -2651,13 +2654,13 @@
       },
       "allOf": [
         {
-          "if": { "properties": { "mutation": { "enum": ["update", "updateUntil"] } } },
+          "if": { "properties": { "mutation": { "enum": ["amend", "amendUntil"] } } },
           "then": { "required": ["assignments"] },
           "else": { "not": { "required": ["assignments"] } }
         },
         {
           "description": "A bounded predicate write is over `[validFrom, until)`, so it must carry both Valid-Time bounds; unbounded forms must omit `until`.",
-          "if": { "properties": { "mutation": { "enum": ["updateUntil", "terminateUntil"] } } },
+          "if": { "properties": { "mutation": { "enum": ["amendUntil", "terminateUntil"] } } },
           "then": { "required": ["validFrom", "until"] },
           "else": { "not": { "required": ["until"] } }
         }
@@ -2701,7 +2704,7 @@
           "if": {
             "required": ["mutation"],
             "properties": {
-              "mutation": { "enum": ["insertUntil", "updateUntil", "terminateUntil"] }
+              "mutation": { "enum": ["insertUntil", "amendUntil", "replaceUntil", "terminateUntil"] }
             }
           },
           "then": { "required": ["validFrom", "until"] },
@@ -2746,7 +2749,7 @@
           "description": "A bounded target write is over `[validFrom, until)`; an unbounded one omits `until`.",
           "if": {
             "required": ["mutation"],
-            "properties": { "mutation": { "enum": ["updateUntil", "replaceUntil"] } }
+            "properties": { "mutation": { "enum": ["amendUntil", "replaceUntil"] } }
           },
           "then": { "required": ["validFrom", "until"] },
           "else": { "not": { "required": ["until"] } }
@@ -2796,7 +2799,7 @@
       "then": { "properties": { "outcome": { "const": "rolledBack" } } }
     },
     "bufferedWriteSequence": {
-      "description": "The ORDERED buffer a single unit of work accumulates and flushes together (m-unit-work) — one or more submissions, in the order they were requested. This is a GENERAL ordered buffer: entries MAY name different entities and different primary-key identities (a mixed-object flush — an insert of one object, an update of another, a delete of a third — such as `m-unit-work-009`), and a buffer MAY hold a single keyed instruction (a buffer of one — the single INSERT / UPDATE / DELETE writes). Same-object folding at flush IS the coalescing rule, and it is a RUNTIME / planner property, not a structural one: when two buffered entries name the SAME entity and primary-key identity the flush combines them (a same-transaction insert-then-update writes the final value in place with no intermediate milestone; insert-then-delete cancels to no DML). The two-keyed same-object insert-then-update / insert-then-delete pair is that rule's single-object SPECIAL CASE, not a separate shape — the three same-transaction coalescing witnesses (`m-temporal-write-008`, `m-temporal-write-030`, `m-unit-work-010`) are exactly that pair. The step's golden SQL (`statements`) is the INDEPENDENT expected lowering of the flush (one final-value write, NO DML, or the ordered per-object statements of a mixed flush), so a scenario encodes every requested mutation here explicitly rather than in a prose note. Under `grading: state` an entry MAY also be a caller-addressed submission or a readless predicate write, which is an ordering barrier inside the buffer (`$defs/submission`); a golden-graded buffer stays keyed.",
+      "description": "The ORDERED buffer a single unit of work accumulates and flushes together (m-unit-work) — one or more submissions, in the order they were requested. This is a GENERAL ordered buffer: entries MAY name different entities and different primary-key identities (a mixed-object flush — an insert of one object, an amendment of another, a delete of a third — such as `m-unit-work-009`), and a buffer MAY hold a single keyed instruction (a buffer of one — the single INSERT / UPDATE / DELETE writes). Same-object folding at flush IS the coalescing rule, and it is a RUNTIME / planner property, not a structural one: when two buffered entries name the SAME entity and primary-key identity the flush combines them (a same-transaction insert-then-amend writes the final value in place with no intermediate milestone; insert-then-delete cancels to no DML). The two-keyed same-object insert-then-amend / insert-then-delete pair is that rule's single-object SPECIAL CASE, not a separate shape — the three same-transaction coalescing witnesses (`m-temporal-write-008`, `m-temporal-write-030`, `m-unit-work-010`) are exactly that pair. The step's golden SQL (`statements`) is the INDEPENDENT expected lowering of the flush (one final-value write, NO DML, or the ordered per-object statements of a mixed flush), so a scenario encodes every requested mutation here explicitly rather than in a prose note. Under `grading: state` an entry MAY also be a caller-addressed submission or a readless predicate write, which is an ordering barrier inside the buffer (`$defs/submission`); a golden-graded buffer stays keyed.",
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/submission" }

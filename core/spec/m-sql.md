@@ -880,8 +880,8 @@ Database Root's Clock Strategy. The canonical Postgres DML:
 | Mutation | Golden DML |
 |---|---|
 | **insert** | `insert into balance(cols…) values (?, …, ?)` with `in_z = txInstant`, `out_z = infinity` |
-| **update** (close) | `update balance set out_z = ? where bal_id = ? and out_z = ?` — binds `[txInstant, pk, infinity]` |
-| **update** (chain) | `insert into balance(cols…) values (?, …, ?)` — new current row, `in_z = txInstant`, `out_z = infinity` |
+| **amend** (close) | `update balance set out_z = ? where bal_id = ? and out_z = ?` — binds `[txInstant, pk, infinity]` |
+| **amend** (chain) | `insert into balance(cols…) values (?, …, ?)` — new current row, `in_z = txInstant`, `out_z = infinity` |
 | **terminate** | the close `update` only (no insert) |
 
 > **The canonical `insert` form has no space before the column list** —
@@ -937,8 +937,8 @@ Postgres DML:
 | Mutation | Golden DML |
 |---|---|
 | **insertUntil** | one `insert into position(cols…) values (?, …, ?)` with Valid Time `[vf, until)` and Transaction Time `[txInstant, infinity)` |
-| **updateUntil** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` — binds `[txInstant, pk, observedValidEnd, infinity]` (closes Transaction Time of the addressed rectangle) |
-| **updateUntil** (head / middle / tail) | three `insert`s at Transaction Time `[txInstant, infinity)` — `head` Valid Time `[from_z, vf)` old value, `middle` Valid Time `[vf, until)` new value, `tail` Valid Time `[until, infinity)` old value |
+| **amendUntil** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` — binds `[txInstant, pk, observedValidEnd, infinity]` (closes Transaction Time of the addressed rectangle) |
+| **amendUntil** (head / middle / tail) | three `insert`s at Transaction Time `[txInstant, infinity)` — `head` Valid Time `[from_z, vf)` old value, `middle` Valid Time `[vf, until)` new value, `tail` Valid Time `[until, infinity)` old value |
 | **terminateUntil** | the inactivate `update` + `head` + `tail` inserts only (**no** `middle`) |
 
 The inactivate `update` **addresses** the one rectangle it closes: the primary key
@@ -957,27 +957,27 @@ plus each dimension's end column, `m-descriptor`) makes the chained rectangles
 admissible. The full rectangle-split semantics are `m-temporal-write`.
 
 **Plain (unbounded) writes.** Alongside the bounded `*Until` templates, the plain
-(unbounded) `insert` / `update` / `terminate` govern a value from an effective
+(unbounded) `insert` / `amend` / `terminate` govern a value from an effective
 Valid-Time instant `V` **through infinity** — the degenerate rectangle splits with no
 `until` (`m-temporal-write`). Plain `insert` is a **single** fully-current `INSERT`;
-plain `update` is the inactivate `update` plus a `head` **and** a new `tail`; plain
+plain `amend` is the inactivate `update` plus a `head` **and** a new `tail`; plain
 `terminate` is the inactivate `update` plus a **single `head`** (no tail):
 
 | Mutation | Golden DML | Binds |
 |---|---|---|
 | **insert** (plain) | `insert into position(cols…) values (?, …, ?)` — fully-current row, Valid Time `[V, infinity)`, Transaction Time `[txInstant, infinity)` | `[…row…, V, infinity, txInstant, infinity]` |
-| **update** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` | `[txInstant, pk, observedValidEnd, infinity]` |
-| **update** (head) | `insert into position(cols…) values (?, …, ?)` — old value, Valid Time `[from_z, V)`, Transaction Time `[txInstant, infinity)` | `[…row…, from_z, V, txInstant, infinity]` |
-| **update** (new tail) | `insert into position(cols…) values (?, …, ?)` — new value, Valid Time `[V, infinity)`, Transaction Time `[txInstant, infinity)` | `[…row…, V, infinity, txInstant, infinity]` |
+| **amend** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` | `[txInstant, pk, observedValidEnd, infinity]` |
+| **amend** (head) | `insert into position(cols…) values (?, …, ?)` — old value, Valid Time `[from_z, V)`, Transaction Time `[txInstant, infinity)` | `[…row…, from_z, V, txInstant, infinity]` |
+| **amend** (new tail) | `insert into position(cols…) values (?, …, ?)` — new value, Valid Time `[V, infinity)`, Transaction Time `[txInstant, infinity)` | `[…row…, V, infinity, txInstant, infinity]` |
 | **terminate** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` | `[txInstant, pk, observedValidEnd, infinity]` |
 | **terminate** (head) | `insert into position(cols…) values (?, …, ?)` — old value, Valid Time `[from_z, V)`, Transaction Time `[txInstant, infinity)` | `[…row…, from_z, V, txInstant, infinity]` |
 
 Plain `insert` opens a fully-current rectangle (`thru_z = out_z = infinity`) with
 **no** inactivation and no prior row to close — the `until = infinity`
 degenerate of `insertUntil`, sharing that template's `INSERT` shape (so the optimistic
-inactivation gate below does not apply to it). Plain `update` is **three** statements
+inactivation gate below does not apply to it). Plain `amend` is **three** statements
 (inactivate + `head` + new `tail`) and plain `terminate` is **two** (inactivate +
-`head`); neither chains a `middle` or an old-`tail`, so a plain `update` runs the new
+`head`); neither chains a `middle` or an old-`tail`, so a plain `amend` runs the new
 value unbounded to infinity and a plain `terminate` leaves `[V, infinity)` covered by
 no current-on-Transaction-Time row. The inactivate `update` for both addresses its
 rectangle exactly as the `*Until` inactivate above does, so the optimistic gate below
@@ -1556,8 +1556,8 @@ predicates; any gate the temporal write already carries (the optimistic
 | Statement | Canonical Postgres DML | Binds |
 |---|---|---|
 | **Transaction-Time-Only insert** | `insert into reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)` | `[<pk>, <tagValue>, …row…, <txInstant>, infinity]` |
-| **Transaction-Time-Only close** (`terminate` / `update` step 1) | `update reading set out_z = ? where id = ? and kind = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, infinity]` |
-| **bitemporal inactivation** (`terminate` / `terminateUntil` / `update` / `*Until` step 1) | `update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, <observedValidEnd>, infinity]` |
+| **Transaction-Time-Only close** (`terminate` / `amend` step 1) | `update reading set out_z = ? where id = ? and kind = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, infinity]` |
+| **bitemporal inactivation** (`terminate` / `terminateUntil` / `amend` / `*Until` step 1) | `update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, <observedValidEnd>, infinity]` |
 | **bitemporal head / middle / tail insert** | `insert into instrument(id, kind, price, coupon, from_z, thru_z, in_z, out_z) values (?, …, ?)` | `[<pk>, <tagValue>, …domain row…, <from_z>, <thru_z>, <txInstant>, infinity]` |
 
 The close / inactivation addresses its milestone exactly as its standalone form does

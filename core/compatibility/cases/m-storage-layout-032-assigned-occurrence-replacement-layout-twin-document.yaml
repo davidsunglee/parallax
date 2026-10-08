@@ -9,7 +9,7 @@ shape: scenario
 when:
   scenario:
     - write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.WriteTwinItem
           rows:
             - id: 1

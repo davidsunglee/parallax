@@ -28,7 +28,7 @@ __all__ = [
 
 # The predicate mutations that carry Assignments; the rest take none at all and
 # their verbs' signatures say so.
-_ASSIGNMENT_BEARING: Final[frozenset[PredicateMutation]] = frozenset({"update", "updateUntil"})
+_ASSIGNMENT_BEARING: Final[frozenset[PredicateMutation]] = frozenset({"amend", "amendUntil"})
 
 
 @dataclass(frozen=True, slots=True)

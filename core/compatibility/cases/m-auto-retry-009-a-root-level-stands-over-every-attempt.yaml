@@ -18,7 +18,7 @@ when:
   boundary:
     - action: read
       note: observe the versioned row
-    - action: update
+    - action: amend
       note: the first attempt's write raises an injected deadlock — auto-retried at the root's level
 then:
   outcome: committed

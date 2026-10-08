@@ -139,7 +139,7 @@ the originally-believed document of a past audit read. `writeSequence` cases sho
 document is **carried across the chain** exactly like a scalar column: a Transaction-Time-Only
 update closes the current row and chains a new milestone whose golden DML binds the
 whole document in its layout position (`m-value-object-032`, `m-temporal-write`), and a
-bitemporal `updateUntil` rectangle split carries the document verbatim onto the
+bitemporal `amendUntil` rectangle split carries the document verbatim onto the
 head / middle / tail rectangles (`m-value-object-033`, `m-temporal-write`) — in both, the
 close / inactivating `UPDATE` sets only the interval bound and never touches the
 document column.
@@ -240,7 +240,7 @@ but what lands at the occurrence's own position is still the whole document, and
 still no merge (`m-storage-layout`). On a temporal owner the same
 atomic document rides milestone chaining like any scalar column (see [Inherited
 temporality](#inherited-temporality)): a Transaction-Time-Only update chains it onto the new
-current milestone (`m-value-object-032`) and a bitemporal `updateUntil` carries it
+current milestone (`m-value-object-032`) and a bitemporal `amendUntil` carries it
 across the rectangle split (`m-value-object-033`); there is no
 value-object-specific write machinery.
 

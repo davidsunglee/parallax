@@ -18,7 +18,7 @@ when:
           rows:
             - { id: 9, acctNum: D, value: "100.00" }
           at: "2024-06-01T00:00:00.000000Z"
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.Balance
           rows:
             - { id: 9, value: "150.00" }

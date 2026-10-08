@@ -502,7 +502,7 @@ def test_a_pages_dependency_write_batch_is_that_pages_ordered_sibling() -> None:
         with tx.stream(mm.Account.where(mm.Account.id >= 1), batch_size=1) as stream:
             for account in stream:
                 if account.id == 1:
-                    tx.update(account.edit(balance=Decimal("125.00")))
+                    tx.amend(account.edit(balance=Decimal("125.00")))
 
     _accounts(port, recorder).transact(fn)
 

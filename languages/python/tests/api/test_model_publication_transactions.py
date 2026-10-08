@@ -70,7 +70,7 @@ def test_a_retry_adopts_b_and_commits_under_it(profile_run: Any) -> None:
         if len(seen) == 1:
             serving.publish(b, expected=a)
         account = tx.find(Account.where(Account.id == TARGET_ID)).result()
-        tx.update(account.edit(balance=account.balance + Decimal("1.00")))
+        tx.amend(account.edit(balance=account.balance + Decimal("1.00")))
         return tx.edition
 
     # The first attempt's write meets the injected deadlock and rolls back; the

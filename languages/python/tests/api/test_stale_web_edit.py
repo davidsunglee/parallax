@@ -108,7 +108,7 @@ def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
 
     def concurrent_write(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()
-        tx.update(current.edit(value=Decimal("200.00")))
+        tx.amend(current.edit(value=Decimal("200.00")))
 
     # The concurrent writer is a SECOND connected handle over the same
     # configuration: reusing configuration opens an independent runtime, so its
@@ -145,7 +145,7 @@ def test_a_submit_that_pins_the_transported_edge_is_read_only(
 
     def fn(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == 1).as_of(tx_time=edge.tx_time)).result()
-        tx.update(current.edit(value=Decimal("150.00")))
+        tx.amend(current.edit(value=Decimal("150.00")))
 
     with raises_contextualized(
         TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
@@ -207,7 +207,7 @@ def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
 
     def concurrent_write(tx: Transaction) -> None:
         current = tx.find(Branch.where(Branch.id == 1).as_of(valid_time=_I2)).result()
-        tx.update(current.edit(name="Renamed By Someone Else"))
+        tx.amend(current.edit(name="Renamed By Someone Else"))
 
     # An independent second session commits a REAL chaining update first, and is
     # released with the choreography that needed it.

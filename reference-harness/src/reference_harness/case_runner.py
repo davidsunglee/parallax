@@ -945,14 +945,14 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
 
 # The full-bitemporal `*Until` rectangle-split mutations: a Valid-Time-bounded
 # write whose ① carries the valid-time window (`at`/`until`/`validFrom`).
-_UNTIL_MUTATIONS = ("insertUntil", "updateUntil", "terminateUntil")
+_UNTIL_MUTATIONS = ("insertUntil", "amendUntil", "terminateUntil")
 
 # The plain (UNBOUNDED) bitemporal rectangle-split mutations: an everyday retroactive
 # correction/termination from an instant onward with no upper Valid-Time bound
 # (`m-temporal-write-022` / `m-temporal-write-023`). Like the `*Until` trio they close
 # the original on the Transaction-Time dimension and chain head / (new-)tail milestones, but
 # the residual window runs to the open bound (thru_z), so ① carries no `until`.
-_PLAIN_SPLIT_MUTATIONS = ("update", "terminate")
+_PLAIN_SPLIT_MUTATIONS = ("amend", "terminate")
 
 # The rectangle-split mutations that END coverage rather than carrying a changed
 # value forward: they re-open the head (and, when windowed, the tail) but no slice
@@ -966,7 +966,7 @@ _COUNTS_UNCHANGED_ROWS = frozenset({"postgres"})
 
 def _is_bitemporal(entity: Entity) -> bool:
     """Whether an entity carries BOTH as-of axes (Valid Time + Transaction Time) — the
-    full-bitemporal rectangle profile, where a plain `update` / `terminate` is a
+    full-bitemporal rectangle profile, where a plain `amend` / `terminate` is a
     milestone rectangle split (close + chain), not the audit-only close-and-open."""
     axes = {dim.get("dimension") for dim in entity.temporal_runtime_axes}
     return {"valid-time", "transaction-time"} <= axes
@@ -976,7 +976,7 @@ def _is_milestone_guard(entity: Entity, step: Mapping[str, Any]) -> bool:
     return (
         entity.is_temporal
         and not _is_bitemporal(entity)
-        and step["mutation"] == "update"
+        and step["mutation"] == "amend"
         and step.get("statements", 1) == 1
     )
 
@@ -1747,7 +1747,7 @@ def _assert_temporal_input(
         _assert_milestone_open(
             case, entity, full_columns, opened_row, step_statements[0], step_binds[0]
         )
-    elif mutation == "update":
+    elif mutation == "amend":
         assert_close(step_statements[0], step_binds[0])
         _assert_milestone_open(
             case, entity, full_columns, opened_row, step_statements[1], step_binds[1]
@@ -2037,7 +2037,7 @@ def _split_successors(
     """The rectangles a rectangle split re-opens at fresh Transaction Time ``at``.
 
     Every split re-opens the HEAD ``[closed.valid_start, validFrom)``. An ``update`` /
-    ``updateUntil`` carries the changed slice on from ``validFrom`` — to ``until`` when
+    ``amendUntil`` carries the changed slice on from ``validFrom`` — to ``until`` when
     the write is windowed, otherwise to the closed rectangle's own end — while a
     ``terminate`` / ``terminateUntil`` ends coverage there instead. A windowed split
     restores the TAIL ``[until, closed.valid_end)``, so a plain ``terminate`` is the

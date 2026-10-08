@@ -7,7 +7,7 @@ when:
   uow:
     concurrency: optimistic
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Account
       statements: 1
       note: the caller states the key, the assignment, and the version it last observed; nothing is read first, and the balance equal to the stored one is still assigned

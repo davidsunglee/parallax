@@ -10,7 +10,7 @@ given:
   fixtures: true
 when:
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.PkSequence
       statements: 1
       note: "reserve block (next_val += 20), base 100"

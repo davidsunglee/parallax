@@ -235,7 +235,7 @@ def test_changed_ancestor_cases_succeed_a_milestone_at_every_manifest_width() ->
     }
     assert {level.width for level in workloads.ancestor_levels()} == {4, 16, 64}
     assert all(
-        case.mutation == "update" and case.statements == 2 and case.stored is not None
+        case.mutation == "amend" and case.statements == 2 and case.stored is not None
         for case in ancestors
     )
     assert all(report.WINDOWS[case.name] == report.KEYED_WINDOW for case in ancestors)

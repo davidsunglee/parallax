@@ -7,7 +7,11 @@ from parallax.core.entity import AttributeAssignment, EntityRowCodec
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.execution import DatabaseOptions
 from parallax.core.execution._attempt import Attempt
-from parallax.core.execution._keyed_writes import window_mutation
+from parallax.core.execution._keyed_writes import (
+    stated_valid_from,
+    target_condition,
+    window_mutation,
+)
 from parallax.core.execution._options import OMITTED, Omitted
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
@@ -17,6 +21,7 @@ from parallax.snapshot._handle._stream import SnapshotStream
 from parallax.snapshot._handle._typed_writes import (
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,
+    typed_conditional_amend,
     typed_predicate_write,
     typed_target_write,
 )
@@ -37,21 +42,24 @@ class Transaction:
 
     A facade over one transaction attempt: its unit of work, its connection, and
     the selection it adopted.
-    The keyed verbs take entity instances: :meth:`insert` a full
-    instance (the Create Payload), :meth:`update` an edited copy (the sparse
-    row: primary key + effective change set — an empty effective set is a
-    no-op, zero round trips), :meth:`delete` a node or instance (keys off its
-    primary key). :meth:`find` runs a participating read and returns
-    ``Snapshot[T]``: force-flush + the lock suffix each materialized level's own
-    target Entity calls for, otherwise identical to
-    :meth:`ScopedDatabase.find`. The predicate-selected
-    ``_where`` verb family —
-    :meth:`update_where`, :meth:`delete_where`, :meth:`terminate_where` — mirrors
-    the keyed surface over a mutation-compatible Object Query: readless for an
+    The method names the authority a write runs under. The source-authorized
+    verbs take a value this store published or an insertion opened:
+    :meth:`amend` its edits or explicit assignments, :meth:`replace` its
+    complete writable state, :meth:`delete` and :meth:`terminate` its object.
+    :meth:`insert` opens a full instance (the Create Payload). The
+    caller-conditioned verbs :meth:`amend_if` and :meth:`replace_if` address an
+    object themselves under the one condition their caller states, never
+    falling back on a source's authority. :meth:`find` runs a participating
+    read and returns ``Snapshot[T]``: force-flush + the lock suffix each
+    materialized level's own target Entity calls for, otherwise identical to
+    :meth:`ScopedDatabase.find`. The predicate-selected ``_where`` verb family
+    — :meth:`amend_where`, :meth:`delete_where`, :meth:`terminate_where` —
+    writes every row a mutation-compatible Object Query selects: readless for an
     unversioned, non-temporal target, materializing to per-row keyed writes
     otherwise (ADR 0014, which those verbs reach through the Typed predicate
-    ingress). Every windowed verb
-    selects its bounded form with keyword-only ``until``. A reference used after
+    ingress). Every windowed verb selects its bounded form with keyword-only
+    ``until``, and a stated ``valid_from`` or ``until`` of ``None`` is refused
+    rather than read as omission. A reference used after
     its owning scope ends raises
     :class:`~parallax.core.unit_work.EscapedTransactionError` (every verb
     delegates to the unit of work, which fences use-after-scope).
@@ -108,7 +116,7 @@ class Transaction:
         self,
         instance: EntityBase,
         *,
-        valid_from: dt.datetime | None = None,
+        valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
     ) -> None:
         """Buffer a keyed insert of a full instance (the Create Payload,
@@ -120,7 +128,7 @@ class Transaction:
 
         The admitted instance carries the insertion's authority from then on, and
         so does every value derived from it afterwards by ``edit``: through them
-        the update and terminate verbs revise what the insert opened for the rest
+        the amend, replace, and terminate verbs revise what the insert opened for the rest
         of the attempt, starting at ``valid_from``, before and after a flush. A
         value derived before the insert, or another instance of the same key,
         carries none. The authority is private to the instance — not a member,
@@ -139,7 +147,7 @@ class Transaction:
         ``valid_from`` is a Bitemporal insert's Valid-Time start; a
         Transaction-Time-Only or non-temporal target takes none. ``until`` bounds
         a Bitemporal insert to ``[valid_from, until)``; omitting it opens
-        ``[valid_from, infinity)``. A stated ``until`` is a bound whatever its
+        ``[valid_from, infinity)``. A stated bound is a bound whatever its
         value — ``None`` is refused rather than read as omission — and a target
         with no Valid Time refuses one outright. The window is judged at THIS
         call, before any buffering. Both bounds come from these arguments, never
@@ -148,90 +156,167 @@ class Transaction:
         opened = self._attempt.keyed_insert(
             TypedKeyedInsertSource(instance, self._codec),
             mutation,
-            valid_from=valid_from,
+            valid_from=stated_valid_from(valid_from),
             until=bound,
         )
         bind_insertion(instance, opened.authority)
 
-    def update(self, copy: EntityBase, *, until: dt.datetime | Omitted = OMITTED) -> None:
-        """Buffer a sparse keyed update of an edited copy: its primary key plus
-        every member its edit chain touched, at the value each now holds.
-
-        The touched set is the literal assignment: a member set back to the value
-        the source was read with is still written, and a copy whose chain touched
-        nothing is the empty set, which buffers nothing and issues no statement. A
-        value no read of this store produced is refused instead, before any row is
-        derived (:class:`~parallax.core.execution.KeyedWriteValueError`,
-        ``write-value-not-stored``) — unless THIS transaction already admitted its
-        insert, which is the row it stores (`m-unit-work` "Insert-then-update
-        coalesces in place"). The version column, if any, is never authored here —
-        it is framework-owned end to end (`m-opt-lock`; ADR 0013): the write seam
-        derives its advance from the observation the source value itself retained.
-
-        A Bitemporal update starts where its source was read — the source's
-        finite Valid-Time pin, or the start an insert this transaction admitted
-        was authored with — and applies to every interval of the object's current
-        coverage from there: through infinity when ``until`` is omitted, or up to
-        the exclusive ``until``. Each interval keeps its own unassigned members,
-        and gaps stay gaps (`m-temporal-write`). A source read at Valid-Time
-        ``LATEST`` names no start and is refused. ``until`` follows
-        :meth:`insert`'s rules, and is judged at THIS call even when the set is
-        empty."""
-        mutation, bound = window_mutation("update", "updateUntil", until)
-        self._attempt.keyed_write(TypedKeyedWriteSource(copy, self._codec), mutation, until=bound)
-
-    def replace(
+    def amend(
         self,
-        instance: EntityBase,
-        *,
-        valid_from: dt.datetime | None = None,
+        source: EntityBase,
+        *assignments: AttributeAssignment[Any],
         until: dt.datetime | Omitted = OMITTED,
-        if_version: int | None = None,
-        if_tx_start: dt.datetime | None = None,
     ) -> None:
-        """Buffer a complete replacement of the existing object ``instance``'s
-        primary key names, under the revision its caller states.
+        """Buffer an amendment of the object ``source`` was read or inserted
+        as: the members it assigns, every other member of each predecessor
+        kept.
 
-        ``instance`` states the object's whole writable state: every member it
-        sets is written, an omitted nullable member is written empty and an
-        omitted ``many`` the empty collection, and an omitted required member is
-        refused — nothing is carried forward from the state it replaces.
-        Framework-owned members are never written. Whatever produced
-        ``instance`` is not consulted: a replacement is addressed by its key
-        and conditioned by its arguments alone.
+        Its members are either everything ``source``'s edit chain touched, at
+        the value each now holds, or exactly the ``Attr.set(...)``
+        ``assignments`` given beside an unedited ``source`` — never both, and
+        never a diff inferred from either. Each is literal: a member set back
+        to, or assigned, the value it already holds is still assigned. An
+        amendment assigning nothing buffers nothing and issues no statement.
+        An explicit assignment names a member ``source``'s Entity declares or
+        inherits, once, and its reference and value are judged before
+        anything is buffered.
 
-        The condition is the caller's: a versioned Entity requires
-        ``if_version``, the version the caller last observed; a temporal one
-        ``if_tx_start``, the Transaction-Time start of the milestone the caller
-        last observed where the write starts, never this transaction's own
-        instant; an unversioned one takes no revision argument. The write still
-        advances the version, or chains a milestone, when every value equals
-        what is stored. Under the Optimistic strategy the stated revision gates
-        the write, and a row that no longer stands at it raises
+        ``source`` supplies the write's authority, and the method takes no
+        condition of its own: a value no read of this store produced is
+        refused (:class:`~parallax.core.execution.KeyedWriteValueError`,
+        ``write-value-not-stored``) unless THIS transaction admitted its insert.
+        The version column, if any, is never authored here — it is
+        framework-owned end to end (`m-opt-lock`; ADR 0013): the write seam
+        derives its advance from the observation the source itself retained.
+
+        A Bitemporal amendment starts where its source was read — the source's
+        finite Valid-Time pin, or the start an insert this transaction admitted
+        was authored with — and applies to every interval of the object's
+        current coverage from there: through infinity when ``until`` is
+        omitted, or up to the exclusive ``until``. Each interval keeps its own
+        unassigned members, and gaps stay gaps (`m-temporal-write`). A source
+        read at Valid-Time ``LATEST`` names no start and is refused. ``until``
+        follows :meth:`insert`'s rules, and is judged at THIS call even when
+        nothing is assigned."""
+        mutation, bound = window_mutation("amend", "amendUntil", until)
+        self._attempt.keyed_write(
+            TypedKeyedWriteSource(source, self._codec, assignments), mutation, until=bound
+        )
+
+    def amend_if[E: EntityBase](
+        self,
+        entity: type[E],
+        *assignments: AttributeAssignment[E],
+        key: object,
+        version: int | Omitted = OMITTED,
+        tx_start: dt.datetime | Omitted = OMITTED,
+        unversioned: bool | Omitted = OMITTED,
+        valid_from: dt.datetime | Omitted = OMITTED,
+        until: dt.datetime | Omitted = OMITTED,
+    ) -> None:
+        """Buffer an amendment of the existing object of concrete ``entity``
+        that ``key`` names, under the one condition its caller states.
+
+        ``key`` is the object's scalar primary-key value, whatever the key
+        Attribute is called. ``assignments`` are ``Attr.set(...)`` calls naming
+        members ``entity`` declares or inherits, each at most once and each
+        assigned even when it equals the stored value; assigning nothing is
+        validated and then dropped, with no database work at all. No instance,
+        read, or source is consulted.
+
+        Exactly one condition is required, and it must be the one ``entity``
+        has: ``version``, the version of a versioned Entity its caller last
+        observed; ``tx_start``, the Transaction-Time start of the milestone a
+        temporal Entity's write starts from; or ``unversioned=True`` for an
+        Entity with neither. A missing, extra, ``None``, or inapplicable
+        condition is refused, never replaced by a source's authority. Under
+        the Optimistic strategy the stated revision gates the write, and a row
+        no longer standing at it raises
         :class:`~parallax.core.unit_work.WritePreconditionError` at flush, which
         no retry repeats. Under Locking the stored row is read under the shared
         lock now — reading nothing it already holds, and executing no pending
-        write — and a mismatch raises that error here. An object this
-        transaction inserted is refused (``write-evidence-inserted``): until
-        commit, write it through the instance the insert took or a read.
+        write — and a mismatch raises that error here; ``unversioned=True``
+        never disables that lock. An object this transaction inserted is
+        refused (``write-evidence-inserted``).
 
-        ``valid_from`` and ``until`` follow :meth:`insert`'s rules, so a
-        non-temporal target takes neither. A Bitemporal replacement requires
-        current coverage at ``valid_from`` and establishes ``instance``'s state
-        over its whole window, gaps and coverage after a scheduled termination
-        included; the stated milestone describes that start alone, and the
-        flush reads the later coverage the window reaches. Returns ``None``; a
-        read reports the saved state."""
+        A Bitemporal amendment requires ``valid_from`` and current coverage
+        there, and applies to every interval of its window, each keeping what
+        it does not assign; gaps and coverage after a scheduled termination
+        stay absent. ``valid_from`` and ``until`` follow :meth:`insert`'s
+        rules."""
+        mutation, bound = window_mutation("amend", "amendUntil", until)
+        start = stated_valid_from(valid_from)
+        condition = target_condition(version=version, tx_start=tx_start, unversioned=unversioned)
+        typed_conditional_amend(
+            self._attempt,
+            mutation,
+            entity,
+            assignments,
+            key,
+            condition,
+            valid_from=start,
+            until=bound,
+        )
+
+    def replace(self, source: EntityBase, *, until: dt.datetime | Omitted = OMITTED) -> None:
+        """Buffer a complete replacement of the object ``source`` was read or
+        inserted as, with ``source``'s whole writable state.
+
+        Every writable member ``source`` holds is written — edited or not, a
+        value equal to the stored one included — an omitted nullable member is
+        written empty and an omitted ``many`` the empty collection, and an
+        omitted required member is refused; nothing is carried forward from the
+        state it replaces. Framework-owned, read-only non-key, and relationship
+        members are never part of it.
+
+        ``source`` supplies the write's authority exactly as for
+        :meth:`amend`, which is also where a Bitemporal replacement starts; the
+        method takes no condition or start of its own. A Bitemporal replacement
+        establishes its state over its whole window, gaps and coverage after a
+        scheduled termination included, reading the later coverage its window
+        reaches at flush. Failed authority never licenses it to open coverage:
+        a replacement is no upsert. ``until`` follows :meth:`insert`'s rules."""
         mutation, bound = window_mutation("replace", "replaceUntil", until)
+        self._attempt.keyed_write(TypedKeyedWriteSource(source, self._codec), mutation, until=bound)
+
+    def replace_if(
+        self,
+        payload: EntityBase,
+        *,
+        version: int | Omitted = OMITTED,
+        tx_start: dt.datetime | Omitted = OMITTED,
+        unversioned: bool | Omitted = OMITTED,
+        valid_from: dt.datetime | Omitted = OMITTED,
+        until: dt.datetime | Omitted = OMITTED,
+    ) -> None:
+        """Buffer a complete replacement of the existing object ``payload``'s
+        primary key names, under the one condition its caller states.
+
+        ``payload`` states the object's whole writable state, completed as
+        :meth:`replace` completes it. Whatever produced ``payload`` is not
+        consulted: a historical observation can restore its state under a
+        current condition and new bounds without being copied first, and no
+        read's evidence or insertion's authority it carries stands in for the
+        condition. The condition follows :meth:`amend_if`'s rules.
+
+        A Bitemporal replacement requires ``valid_from`` and current coverage
+        there, and establishes ``payload``'s state over its whole window, gaps
+        and coverage after a scheduled termination included; the stated
+        milestone describes that start alone, and the flush reads the later
+        coverage the window reaches. ``valid_from`` and ``until`` follow
+        :meth:`insert`'s rules. Returns ``None``; a read reports the saved
+        state."""
+        mutation, bound = window_mutation("replace", "replaceUntil", until)
+        start = stated_valid_from(valid_from)
+        condition = target_condition(version=version, tx_start=tx_start, unversioned=unversioned)
         typed_target_write(
             self._attempt,
             mutation,
-            instance,
+            payload,
             self._codec,
-            valid_from=valid_from,
+            condition,
+            valid_from=start,
             until=bound,
-            if_version=if_version,
-            if_tx_start=if_tx_start,
         )
 
     def delete(self, node_or_instance: EntityBase) -> None:
@@ -255,7 +340,7 @@ class Transaction:
         `m-temporal-write`).
 
         A Transaction-Time-Only target closes its current milestone. A Bitemporal
-        one starts where its source was read, as :meth:`update` does, and ends
+        one starts where its source was read, as :meth:`amend` does, and ends
         every interval of current coverage from there — through infinity when
         ``until`` is omitted, or up to the exclusive ``until``; history and
         coverage outside that window survive."""
@@ -281,7 +366,7 @@ class Transaction:
         Every materialized node of a VERSIONED entity — root and included
         (deep-fetch) alike — CARRIES the observed version it was read at
         (`m-opt-lock`; ADR 0013), in EITHER concurrency mode: a later keyed
-        update/delete of that SAME object derives its version advance (and,
+        write of that SAME object derives its version advance (and,
         under optimistic concurrency, its gate) from THAT value's own retained
         observation, never from an implicit resolving read at write time. Every
         materialized node of a TEMPORAL entity likewise carries its whole
@@ -357,14 +442,14 @@ class Transaction:
         """
         return self._attempt.read_rows(query)
 
-    def update_where(
+    def amend_where(
         self,
         query: ObjectQuery[Any, Any],
         *assignments: AttributeAssignment[Any],
-        valid_from: dt.datetime | None = None,
+        valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
     ) -> None:
-        """A predicate-selected update: ``query`` MUST be mutation-compatible
+        """A predicate-selected amendment: ``query`` MUST be mutation-compatible
         (nothing but a target and a predicate); ``assignments`` are
         ``Attr.set(value)`` calls, non-empty, no duplicate field, each addressing
         the query's exact target. Readless (one statement) for an unversioned,
@@ -374,11 +459,16 @@ class Transaction:
         the Typed predicate ingress every ``_where`` verb here delegates to.
 
         A Bitemporal target requires ``valid_from``; ``until`` bounds the
-        correction to ``[valid_from, until)`` and follows :meth:`insert`'s
+        correction to ``[valid_from, until)``, and both follow :meth:`insert`'s
         rules."""
-        mutation, bound = window_mutation("update", "updateUntil", until)
+        mutation, bound = window_mutation("amend", "amendUntil", until)
         typed_predicate_write(
-            self._attempt, mutation, query, assignments, valid_from=valid_from, until=bound
+            self._attempt,
+            mutation,
+            query,
+            assignments,
+            valid_from=stated_valid_from(valid_from),
+            until=bound,
         )
 
     def delete_where(self, query: ObjectQuery[Any, Any]) -> None:
@@ -394,17 +484,22 @@ class Transaction:
         self,
         query: ObjectQuery[Any, Any],
         *,
-        valid_from: dt.datetime | None = None,
+        valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
     ) -> None:
         """A predicate-selected terminate over a TEMPORAL target, which always
         materializes — a temporal predicate write has no readless template.
         Transaction-Time-Only takes no ``valid_from``; Bitemporal requires it, and
-        ``until`` bounds the window to ``[valid_from, until)`` under
+        ``until`` bounds the window to ``[valid_from, until)``, both under
         :meth:`insert`'s rules."""
         mutation, bound = window_mutation("terminate", "terminateUntil", until)
         typed_predicate_write(
-            self._attempt, mutation, query, (), valid_from=valid_from, until=bound
+            self._attempt,
+            mutation,
+            query,
+            (),
+            valid_from=stated_valid_from(valid_from),
+            until=bound,
         )
 
 

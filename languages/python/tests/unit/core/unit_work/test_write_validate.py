@@ -241,13 +241,11 @@ def test_scalar_write_marker_exempts_type_checking() -> None:
 
 
 def test_sparse_update_does_not_require_an_absent_entity_attribute() -> None:
-    _accept({"id": 1}, mutation="update")  # `label` untouched
+    _accept({"id": 1}, mutation="amend")  # `label` untouched
 
 
 def test_sparse_update_still_type_checks_a_present_attribute() -> None:
-    assert (
-        _rejects({"id": 1, "flag": "nope"}, mutation="update").rule == "write-value-type-mismatch"
-    )
+    assert _rejects({"id": 1, "flag": "nope"}, mutation="amend").rule == "write-value-type-mismatch"
 
 
 # --------------------------------------------------------------------------- #
@@ -263,7 +261,7 @@ def test_nullable_value_object_explicit_null_is_fine() -> None:
 
 
 def test_sparse_update_does_not_require_an_absent_value_object() -> None:
-    _accept({"id": 1}, mutation="update")  # `spec` untouched, fine
+    _accept({"id": 1}, mutation="amend")  # `spec` untouched, fine
 
 
 def test_nested_value_object_required_missing_once_the_parent_is_present() -> None:
@@ -272,7 +270,7 @@ def test_nested_value_object_required_missing_once_the_parent_is_present() -> No
     # value-object document boundary.
     row = _row(spec={"note": "n"})
     assert _rejects(row).rule == "write-required-value-object-missing"
-    assert _rejects(row, mutation="update").rule == "write-required-value-object-missing"
+    assert _rejects(row, mutation="amend").rule == "write-required-value-object-missing"
 
 
 def test_nested_leaf_nullable_attribute_absent_is_fine() -> None:
@@ -326,13 +324,13 @@ def test_a_sparse_update_may_omit_a_many_occurrence_but_never_name_it_null() -> 
     # and null is a value: naming a `many` null on an update would bind SQL NULL to
     # its NOT NULL Column, or patch JSON null at its Document Path, which is exactly
     # the state the model has none of.
-    _accept({"id": 1}, mutation="update")
+    _accept({"id": 1}, mutation="amend")
     assert (
-        _rejects({"id": 1, "tags": None}, mutation="update").rule
+        _rejects({"id": 1, "tags": None}, mutation="amend").rule
         == "write-required-value-object-missing"
     )
     assert (
-        _rejects({"id": 1, "book": {"phones": None}}, mutation="update").rule
+        _rejects({"id": 1, "book": {"phones": None}}, mutation="amend").rule
         == "write-required-value-object-missing"
     )
 
@@ -522,7 +520,7 @@ def test_a_subtype_insert_requires_an_inherited_required_value_object() -> None:
 
 
 def test_a_subtype_update_type_checks_an_inherited_attribute() -> None:
-    refused = _refused(_FAMILY_MODEL, "Truck", {"id": 1, "name": 123}, mutation="update")
+    refused = _refused(_FAMILY_MODEL, "Truck", {"id": 1, "name": 123}, mutation="amend")
     assert refused.rule == "write-value-type-mismatch"
 
 

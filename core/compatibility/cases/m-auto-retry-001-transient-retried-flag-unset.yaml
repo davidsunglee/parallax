@@ -18,7 +18,7 @@ when:
   boundary:
     - action: read
       note: observe the versioned row
-    - action: update
+    - action: amend
       note: the first write raises an injected serialization failure — auto-retried
 then:
   outcome: committed

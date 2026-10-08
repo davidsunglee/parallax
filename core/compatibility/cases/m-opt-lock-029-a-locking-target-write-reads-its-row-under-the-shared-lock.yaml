@@ -7,7 +7,7 @@ when:
   uow:
     concurrency: locking
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Account
       statements: 1
       note: under Locking the caller's version is compared with the row an acquisition read under the shared lock, and the update itself is ungated

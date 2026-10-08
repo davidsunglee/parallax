@@ -187,7 +187,7 @@ def _until_write_cases():
         for case in _phase8_cases()
         if case.is_write_sequence
         and any(
-            step.get("mutation") in ("insertUntil", "updateUntil", "terminateUntil")
+            step.get("mutation") in ("insertUntil", "amendUntil", "terminateUntil")
             for step in case.write_sequence
         )
     ]
@@ -230,7 +230,7 @@ def _plain_split_write_cases():
         case
         for case in _phase8_cases()
         if case.is_write_sequence
-        and any(step.get("mutation") in ("update", "terminate") for step in case.write_sequence)
+        and any(step.get("mutation") in ("amend", "terminate") for step in case.write_sequence)
     ]
 
 
@@ -257,7 +257,7 @@ def test_plain_two_way_split_and_plain_terminate_statement_shapes() -> None:
     split = next(
         c for c in _plain_split_write_cases() if c.path.stem.startswith("m-temporal-write-022")
     )
-    update_step = next(s for s in split.write_sequence if s["mutation"] == "update")
+    update_step = next(s for s in split.write_sequence if s["mutation"] == "amend")
     assert update_step["statements"] == 3
     assert len(split.golden_statements("postgres")) == 4
     _assert_write_step_count(split, "postgres")
@@ -309,7 +309,7 @@ def test_gated_rectangle_split_close_reconstructs_the_observed_rectangle() -> No
     # from the `updateUntil` window boundaries and from the close instant.
     case = _gated_split_case()
     opening = next(s for s in case.write_sequence if s["mutation"] == "insert")
-    split = next(s for s in case.write_sequence if s["mutation"] == "updateUntil")
+    split = next(s for s in case.write_sequence if s["mutation"] == "amendUntil")
     # The golden close is the second statement (after the opening insert): its binds are
     # [at, pk, observedThruZ, infinity, observedTxStart].
     close_binds = case.statement_binds(1)
@@ -465,7 +465,7 @@ def test_rectangle_split_has_inactivate_plus_three_inserts() -> None:
     )
     # The updateUntil step is 4 statements: 1 inactivate UPDATE + head/middle/tail
     # inserts. With the leading insert that opens the original, 5 statements total.
-    step = next(s for s in update_until.write_sequence if s["mutation"] == "updateUntil")
+    step = next(s for s in update_until.write_sequence if s["mutation"] == "amendUntil")
     assert step["statements"] == 4
     assert len(update_until.golden_statements("postgres")) == 5
 

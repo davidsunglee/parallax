@@ -19,7 +19,7 @@ when:
             clause: standard
       validFrom: "2026-01-01T00:00:00.000000Z"
       at: "2026-01-01T00:00:00.000000Z"
-    - mutation: updateUntil
+    - mutation: amendUntil
       entity: parallax.compatibility.Charter
       statements: 4
       note: inactivate the original, then chain head / middle / tail carrying old / new / old

@@ -110,7 +110,7 @@ class Position(
     indices=(index("position_acct", "acct_num"),),
 ):
     """Mirror of ``models/position.yaml`` (full bitemporal): the write-family
-    stories' own bitemporal-insert / ``insertUntil`` / ``updateUntil`` witness
+    stories' own bitemporal-insert / ``insertUntil`` / ``amendUntil`` witness
     (``m-temporal-write-017/-019``). Every axis-governed attribute
     (``valid_start``/``valid_end``/``tx_start``/``tx_end``) is optional at
     construction: a fresh instance names only its payload, and the write path

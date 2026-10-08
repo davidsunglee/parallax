@@ -26,7 +26,7 @@ __all__ = [
 
 # The keyed write verbs a case can name. Every other action verb belongs to a
 # lane this runner does not drive.
-_WRITE_VALUE_ACTIONS: Final[frozenset[str]] = frozenset({"insert", "update"})
+_WRITE_VALUE_ACTIONS: Final[frozenset[str]] = frozenset({"insert", "amend"})
 
 # The fixture row every reachable write-value case reads through: every one
 # targets `models/account.yaml` (fixtures: id 2, Linus, balance 250.00,
@@ -218,7 +218,7 @@ def _apply(tx: Transaction, action: str, value: Entity) -> None:
     if action == "insert":
         tx.insert(value)
     else:
-        tx.update(value)
+        tx.amend(value)
 
 
 def graded_outcomes(

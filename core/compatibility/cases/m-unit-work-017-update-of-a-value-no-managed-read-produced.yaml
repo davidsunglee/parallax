@@ -10,7 +10,7 @@ tags: [m-unit-work, write-value, provenance, scenario, slice-snapshot-1]
 shape: scenario
 when:
   scenario:
-    - action: update
+    - action: amend
       value: unmanaged
       roundTrips: 0
       expectError: write-value-not-stored

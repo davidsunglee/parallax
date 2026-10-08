@@ -62,7 +62,7 @@ def test_nullable_encoded_sql_null_survives_delivery_and_predecessor_observation
     def update(tx: Transaction) -> None:
         observed = tx.find(mm.WritableScalar.where(mm.WritableScalar.id == 1)).result()
         assert observed.payload is None
-        tx.update(observed.edit(label="after"))
+        tx.amend(observed.edit(label="after"))
 
     db.transact(update)
     committed = db.find(mm.WritableScalar.where(mm.WritableScalar.id == 1)).result()

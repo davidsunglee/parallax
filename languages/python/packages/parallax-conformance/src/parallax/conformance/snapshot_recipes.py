@@ -81,7 +81,7 @@ def stream_and_write_inside_one_transaction(db: ScopedDatabase, page: int) -> li
         with tx.stream(Account.where(Account.id >= 1), batch_size=page) as accounts:
             for account in accounts:
                 balance = account.balance + Decimal("10.00")
-                tx.update(account.edit(balance=balance))
+                tx.amend(account.edit(balance=balance))
                 written.append(balance)
 
     db.transact(credit)

@@ -142,7 +142,7 @@ def _windows(bound: BoundRange) -> list[tuple[object, object, object]]:
 
 def test_a_range_its_observations_leave_uncovered_reads_only_the_uncovered_suffix() -> None:
     observed = observed_write(
-        "updateUntil",
+        "amendUntil",
         retained(rectangle(JAN, JUN, "100.00")),
         valid_from=MAR,
         until=SEP,
@@ -231,7 +231,7 @@ def test_a_patch_after_a_replacement_keeps_its_extent_and_overlays_its_gaps() ->
     bound = _bound(
         _deferred_unit(
             addressed_write(replaces=True, acctNum="Z", value="9.00"),
-            observed_write("updateUntil", START, value="7.00"),
+            observed_write("amendUntil", START, value="7.00"),
             addressed_write(acctNum="Y"),
         ),
         coverage,
@@ -494,7 +494,7 @@ def test_a_following_start_no_intact_proof_carries_is_the_callers_precondition(
 
 def test_a_following_observed_write_binds_to_the_values_the_earlier_unit_left() -> None:
     unit = _chained_unit(
-        observed_write("updateUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
+        observed_write("amendUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
     )
     bound = _bound(unit, [_opened(APR, "150.00")], ownership=_proven())
     opened = [
@@ -517,7 +517,7 @@ def test_a_following_observed_original_neither_standing_nor_proven_fails_as_its_
     concurrency: str, error: type[Exception]
 ) -> None:
     unit = _chained_unit(
-        observed_write("updateUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
+        observed_write("amendUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
         concurrency=concurrency,
     )
     with pytest.raises(error):
@@ -530,7 +530,7 @@ def test_a_following_observed_original_neither_standing_nor_proven_fails_as_its_
 
 def test_a_following_observed_original_still_standing_binds_as_any_original() -> None:
     unit = _chained_unit(
-        observed_write("updateUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
+        observed_write("amendUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
     )
     bound = _bound(unit, [WHOLE.evidence.predecessor], ownership=OpenedRows(frozenset()))  # type: ignore[union-attr]
     (close,) = (step for step in bound.steps if isinstance(step, PlannedClose))
@@ -539,7 +539,7 @@ def test_a_following_observed_original_still_standing_binds_as_any_original() ->
 
 def test_a_following_callers_precondition_outranks_a_lost_observation() -> None:
     unit = _chained_unit(
-        observed_write("updateUntil", WHOLE, valid_from=FEB, until=APR, acctNum="O"),
+        observed_write("amendUntil", WHOLE, valid_from=FEB, until=APR, acctNum="O"),
         addressed_write(valid_from=JUN, until=AUG, value="175.00"),
     )
     with pytest.raises(WritePreconditionError):
@@ -629,8 +629,8 @@ def test_a_leading_range_records_an_overlapped_observation_it_only_validated() -
     earlier = retained(rectangle(JAN, JUN, "100.00"))
     later = retained(rectangle(MAR, INFINITY, "300.00", tx_start=T1))
     unit = _chained_unit(
-        observed_write("updateUntil", earlier, valid_from=FEB, until=APR, acctNum="E"),
-        observed_write("updateUntil", later, valid_from=MAY, until=JUL, acctNum="L"),
+        observed_write("amendUntil", earlier, valid_from=FEB, until=APR, acctNum="E"),
+        observed_write("amendUntil", later, valid_from=MAY, until=JUL, acctNum="L"),
         leads=True,
         follows=False,
     )
@@ -643,8 +643,8 @@ def test_a_callers_start_is_guarded_ahead_of_an_overlapped_observation_it_valida
     earlier = retained(rectangle(JAN, JUN, "100.00"))
     later = retained(rectangle(MAR, INFINITY, "300.00", tx_start=T1))
     unit = _deferred_unit(
-        observed_write("updateUntil", earlier, valid_from=FEB, until=MAR, acctNum="E"),
-        observed_write("updateUntil", later, valid_from=MAY, until=JUL, acctNum="L"),
+        observed_write("amendUntil", earlier, valid_from=FEB, until=MAR, acctNum="E"),
+        observed_write("amendUntil", later, valid_from=MAY, until=JUL, acctNum="L"),
         addressed_write(valid_from=SEP, until=OCT, tx_start=T1, value="1.00"),
     )
     bound = _bound(unit, [later.evidence.predecessor])  # type: ignore[union-attr]

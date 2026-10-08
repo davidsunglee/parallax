@@ -133,7 +133,7 @@ def test_an_update_patches_only_the_assigned_paths_in_canonical_order() -> None:
     # canonical logical placement order is the layout's and both dialects apply their
     # mutation expressions left to right (m-dialect).
     (statement,) = _lower(
-        KeyedWrite("update", "Person", ({"id": 1, "score": 9, "displayName": "Ada"},))
+        KeyedWrite("amend", "Person", ({"id": 1, "score": 9, "displayName": "Ada"},))
     )
     assert statement.sql == (
         "update person set payload = "
@@ -146,7 +146,7 @@ def test_an_assigned_none_writes_json_null_rather_than_removing_the_key() -> Non
     # A NULL Column has one not-present state, so an assignment of `None` writes the
     # document's null rather than dropping the key — the two read back the same, and
     # writing neither would leave the stored value standing.
-    (statement,) = _lower(KeyedWrite("update", "Person", ({"id": 1, "displayName": None},)))
+    (statement,) = _lower(KeyedWrite("amend", "Person", ({"id": 1, "displayName": None},)))
     assert statement.binds == ("{displayName}", "null", 1)
 
 
@@ -154,7 +154,7 @@ def test_assigning_a_one_occurrence_binds_its_whole_subtree_at_its_own_path() ->
     # One path, one composite value, and no type test: the author stated a complete
     # `address`, so the statement writes that document rather than reaching inside the
     # stored one. `geo` is not named, and after this write the row does not hold it.
-    (statement,) = _lower(KeyedWrite("update", "Person", ({"id": 1, "address": {"city": "Bodo"}},)))
+    (statement,) = _lower(KeyedWrite("amend", "Person", ({"id": 1, "address": {"city": "Bodo"}},)))
     assert statement.sql == (
         "update person set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
     )
@@ -162,13 +162,13 @@ def test_assigning_a_one_occurrence_binds_its_whole_subtree_at_its_own_path() ->
 
 
 def test_assigning_null_to_a_one_occurrence_writes_json_null() -> None:
-    (statement,) = _lower(KeyedWrite("update", "Person", ({"id": 1, "address": None},)))
+    (statement,) = _lower(KeyedWrite("amend", "Person", ({"id": 1, "address": None},)))
     assert statement.binds == ("{address}", "null", 1)
 
 
 def test_assigning_a_many_occurrence_replaces_its_array_whole() -> None:
     (statement,) = _lower(
-        KeyedWrite("update", "Person", ({"id": 1, "tags": [{"label": "member"}]},))
+        KeyedWrite("amend", "Person", ({"id": 1, "tags": [{"label": "member"}]},))
     )
     assert statement.binds == ("{tags}", JsonDocument(({"label": "member"},)), 1)
 
@@ -177,8 +177,8 @@ def test_one_and_many_assignments_render_the_identical_statement_shape() -> None
     # The whole collapse in one assertion: cardinality selects no arm, so the two
     # occurrence kinds emit the same expression over their own paths and differ only
     # in the document each binds.
-    (one,) = _lower(KeyedWrite("update", "Person", ({"id": 1, "address": {"city": "Bodo"}},)))
-    (many,) = _lower(KeyedWrite("update", "Person", ({"id": 1, "tags": []},)))
+    (one,) = _lower(KeyedWrite("amend", "Person", ({"id": 1, "address": {"city": "Bodo"}},)))
+    (many,) = _lower(KeyedWrite("amend", "Person", ({"id": 1, "tags": []},)))
     assert one.sql == many.sql
 
 
@@ -188,7 +188,7 @@ def test_a_nested_occurrence_rides_inside_the_document_its_parent_binds() -> Non
     # than a second path of its own.
     (statement,) = _lower(
         KeyedWrite(
-            "update",
+            "amend",
             "Person",
             ({"id": 1, "address": {"geo": {"country": "NO"}}},),
         )

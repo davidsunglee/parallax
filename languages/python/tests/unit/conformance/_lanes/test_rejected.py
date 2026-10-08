@@ -142,12 +142,12 @@ def test_run_rejected_case_keyed_write_names_its_own_entity_not_the_default_targ
     # plural rows are refused on the temporal entity and accepted on the
     # non-temporal one, so the handle, not the model, is what decided it.
     plural_temporal: dict[str, object] = {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "Lease",
         "rows": [{"id": 1, "term": "annual"}, {"id": 2, "term": "monthly"}],
     }
     plural_non_temporal: dict[str, object] = {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "LeaseNote",
         "rows": [{"id": 1, "text": "first"}, {"id": 2, "text": "second"}],
     }
@@ -161,7 +161,7 @@ def test_run_rejected_case_keyed_write_names_its_own_entity_not_the_default_targ
 
 
 def test_run_rejected_case_raises_for_a_malformed_keyed_instruction() -> None:
-    malformed: dict[str, object] = {"mutation": "update", "rows": [{"id": 1}]}
+    malformed: dict[str, object] = {"mutation": "amend", "rows": [{"id": 1}]}
     with pytest.raises(EngineError, match="missing required key"):
         rejected.run_rejected_case(_synthetic_keyed_rejected(malformed, "models/position.yaml"))
 

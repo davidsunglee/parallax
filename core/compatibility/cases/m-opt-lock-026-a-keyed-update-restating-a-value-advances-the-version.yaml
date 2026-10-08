@@ -7,7 +7,7 @@ when:
   uow:
     concurrency: optimistic
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Account
       statements: 1
       note: the assigned balance equals the stored one; the write is still issued, gated on the observed version

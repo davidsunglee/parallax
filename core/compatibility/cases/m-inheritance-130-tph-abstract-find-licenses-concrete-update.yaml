@@ -28,7 +28,7 @@ when:
         - { id: 1, name: Sedan, version: 5, doors: 4, axles: null, familyVariant: Car }
     - uow: observe-and-update
       write:
-        - mutation: update
+        - mutation: amend
           entity: parallax.compatibility.Car
           rows:
             - { id: 1, name: Coupe }

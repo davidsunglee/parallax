@@ -137,12 +137,16 @@ how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
 `m-conformance-adapter` reference that shape rather than redefining it. There are three:
 
 - a **keyed** instruction — a `mutation` on one `entity` carrying the flat
-  attribute-named neutral write input (`rows`);
+  attribute-named neutral write input (`rows`), authorized by the source it was
+  stated through: `insert` opens a row, `amend` assigns the members its row
+  names, `replace` states the object's complete writable state
+  (*Source-authorized replacement*), and `delete` / `terminate` end it, each
+  with its bounded `*Until` form where one exists;
 - a **predicate-selected** instruction — a `mutation` on every row of a `target`
   (`entity` plus a bare `m-predicate` predicate) matching that predicate, with
-  `assignments` on the update forms;
-- a **caller-addressed** (target) instruction — a sparse patch (`update` /
-  `updateUntil`) or a complete replacement (`replace` / `replaceUntil`) of the one
+  `assignments` on the amendment forms;
+- a **caller-addressed** (target) instruction — an amendment (`amend` /
+  `amendUntil`) or a complete replacement (`replace` / `replaceUntil`) of the one
   existing `entity` object its `row` names by primary key, carrying its caller's
   own starting revision as `ifVersion` or `ifTxStart` (*Caller-addressed writes*).
 
@@ -307,7 +311,8 @@ satisfy the Effective Concurrency Strategy's evidence rule.
 
 Publication of diagnostic data is not source admission. When a classified result
 root suppresses its Read Origins under `m-snapshot-read`, a hydratable node exposed
-inside that result is treated as **NotStored** by keyed update verbs: no valid
+inside that result is treated as **NotStored** by keyed amendment and
+replacement verbs: no valid
 managed read source produced it for writing. This applies to every node in the
 classified root's graph, including a node whose page-owned Entity State is also
 reached by a separate valid root. The separate root-local node may carry its own
@@ -323,7 +328,8 @@ always has exactly one code:
 WriteValueRefusal = NotStored | AlreadyStored | ForeignLifecycle
 ```
 
-- **NotStored** (`write-value-not-stored`) — an `update` / `updateUntil` verb was
+- **NotStored** (`write-value-not-stored`) — an `amend` / `amendUntil` /
+  `replace` / `replaceUntil` verb was
   handed a value **no valid** managed read admitted as a keyed source. No source
   provenance establishes a stored row for it to address, so the refusal names the
   `insert` verb as the one that accepts it —
@@ -333,7 +339,7 @@ WriteValueRefusal = NotStored | AlreadyStored | ForeignLifecycle
 - **AlreadyStored** (`write-value-already-stored`) — an `insert` / `insertUntil`
   verb was handed a value produced by a read through **the very source this verb
   writes through**. That value already denotes a row that source stores, so the
-  refusal names the `update` verb.
+  refusal names the `amend` verb.
 - **ForeignLifecycle** (`write-value-foreign-lifecycle`) — the value was produced
   by a read through some **other** framework-managed source than the one this verb
   writes through. Both families refuse it, including when that other lifecycle
@@ -354,9 +360,9 @@ The partition is over **provenance**; whether a given answer *refuses* is the
 verb's question, and NotStored is the one answer whose refusal a second fact can
 lift. The value an insertion was stated through keeps the NotStored provenance —
 no read produced it — but it carries that insertion's authority, and the
-insertion opened a row for the update to address. **Read-your-own-writes** is
+insertion opened a row for the write to address. **Read-your-own-writes** is
 therefore normative: an implementation that refused such a value would refuse the
-developer spelling of *Insert-then-update coalesces in place*, and its refusal
+developer spelling of *Insert-then-amend coalesces in place*, and its refusal
 would name the `insert` verb the developer had just called. The exemption is the
 **authority the value carries**, never the object it names: a value of an object
 this unit of work inserted that carries no standing authority — one built
@@ -367,7 +373,7 @@ work's insertion lifts anything.
 Three consequences are normative:
 
 - A value this verb's own source produced that no author has changed is **not** a
-  refusal for an `update` verb. It assigns nothing, so it buffers nothing, issues
+  refusal for an `amend` verb. It assigns nothing, so it buffers nothing, issues
   no statement, and raises nothing. Requiring an author to
   test each value before writing it would defeat the change tracking the framework
   performs on the author's behalf.
@@ -436,22 +442,61 @@ removal or insertion dooms the attempt. Removing only part of the coverage, or
 an interior gap, removes nothing in this sense. None of this permits removing
 and re-inserting state that existed before the attempt.
 
+### Source-authorized replacement
+
+A keyed `replace` / `replaceUntil` states the complete writable state of the
+object its source addresses, under exactly the authority an amendment of that
+source would have: the source's retained evidence, or the standing authority of
+an insertion it carries (*Insertion authority*), and on a Bitemporal object the
+start that source names. Provenance, pins, evidence, consumption, and
+invalidation follow the amendment's rules unchanged; the write takes no
+condition or start of its own.
+
+Every replacement, source-authorized or caller-addressed, states the same
+**completed writable state**. Each writable member it omits is completed rather
+than carried forward: an omitted required scalar or single value object is
+refused, an omitted nullable one is written null, and an omitted collection is
+written empty. Nothing is filled from the source's evidence or any predecessor;
+the state excludes framework-owned revision and temporal members, read-only
+members other than the primary key, derived inheritance metadata, and
+relationships, whose loadedness never changes it. The key addresses the object
+and is never assigned. A replacement whose completed state equals what a
+milestone holds keeps that milestone exactly as an equal amendment does
+(`m-temporal-write` *Unchanged milestones*).
+
+The replacement intent belongs to the verb, so it survives every carrier and
+composition a write travels through — an observed, insertion-authorized, or
+caller-addressed write, and the composition of a pending insertion — whatever
+authorized it. On a Bitemporal object a replacement establishes its state over
+its whole window: rows it reaches take the completed state, and every part of
+the window no current row covers opens with it (`m-temporal-write` *Observed
+writes span their requested extent*). Authority comes first: a source whose
+evidence or insertion authority fails opens nothing, so a replacement is never
+an upsert, and existing-row proofs still do not coordinate concurrent creation
+inside a gap.
+
 ### Caller-addressed writes
 
 A **caller-addressed** (target) write is addressed by the object's primary key
 and conditioned by the starting revision its caller states — the version, or the
 Transaction-Time start of the milestone, an earlier query returned — never by a
-read's evidence or by anything the payload carries. A **patch** assigns the
+read's evidence or by anything the payload carries. An **amendment** assigns the
 members it names and leaves every other member as stored; a **replacement**
-states the object's whole writable state. Neither creates an object: the state
-it starts from must exist. Each buffers and answers nothing; an explicit read
-reports the saved state. A versioned target requires `ifVersion`, a temporal one
-`ifTxStart`, and an unversioned Non-Temporal target takes no revision, so it
-cannot detect a change since its caller's query.
+states the object's whole writable state, completed exactly as a
+source-authorized one is (*Source-authorized replacement*). Neither creates an
+object: the state it starts from must exist. Each buffers and answers nothing;
+an explicit read reports the saved state. A versioned target requires
+`ifVersion`, a temporal one `ifTxStart`, and an unversioned Non-Temporal target
+states neither: its caller asserts that the target has no revision, so the write
+cannot detect a change since its caller's query. The assertion never stands in
+for a revision a versioned or temporal target requires, and never disables the
+effective Locking strategy below. A write that states its condition is never
+admitted under a source's authority instead, and a source-authorized write
+states no condition.
 
-A patch that names nothing beside the key is the **empty** write: once it is
+An amendment that names nothing beside the key is the **empty** write: once it is
 validated it is dropped, with no database work, no existence or revision check,
-and no effect on earlier pending work. A nonempty patch and every replacement
+and no effect on earlier pending work. A nonempty amendment and every replacement
 carry **revision intent**: a versioned row's version advances even when every
 value it writes equals the stored one, and a later write composing with it keeps
 that intent. A temporal target's milestone is judged as any temporal write's
@@ -465,7 +510,7 @@ an optional exclusive `until` on a Bitemporal one, `validFrom` lying anywhere
 inside a stored rectangle. Its stated Transaction-Time start describes the
 coverage at `validFrom` alone. It is a range over current coverage like an
 observed write's (*deferred range unit*): its flush reads the coverage its
-window reaches, a patch assigns to each existing interval and creates nothing,
+window reaches, an amendment assigns to each existing interval and creates nothing,
 and a replacement also opens its state over every gap of its window
 (`m-temporal-write` *Caller-addressed writes span their requested extent*). Where
 that read shows no current row at `validFrom`, or one at another
@@ -576,7 +621,7 @@ later composed assignment included (*Observed-State Coalescing*). A write keeps
 its source condition whatever happens to its values, so a unit whose surviving
 assignment came from one source still spends every source composed into it,
 even when it emits no statement. Work that stated nothing against existing
-state — folded into a pending insert, cancelled against one, or an update
+state — folded into a pending insert, cancelled against one, or an amendment
 assigning no member — contributes no claim. Spending is idempotent, because
 consumption records a fact about one source rather than about one statement; a
 claim several units name is spent once.
@@ -838,7 +883,7 @@ Three rules follow, and an implementation **MUST** exhibit all three:
   write used is spent when the execution unit it composed into completes —
   whether or not its own values survived, and whether or not the unit emitted a
   statement — and a value still tied to a spent observation cannot drive
-  another write; the caller must read again. An update assigning no member
+  another write; the caller must read again. An amendment assigning no member
   consumes nothing, and a failed flush dooms the attempt, so nothing needs
   restoring. A source with no observation is spent the same way, on the
   source's own provenance shared by every value derived from it, once the flush
@@ -886,8 +931,9 @@ keys — are assigned whatever the source published for them, so an assignment
 equal to the stored value is still written: it advances a version, and for a
 temporal entity it is applied like any other assignment. A keyed temporal
 write's changed successor overlays every member the write assigns and carries
-every other member's persisted state. Only an update expressing **no** member is
-empty; it buffers nothing and claims nothing.
+every other member's persisted state. Only an amendment expressing **no**
+member is empty; it buffers nothing and claims nothing. A replacement is never
+empty: its completed state assigns every writable member.
 
 A temporal milestone such a write leaves exactly as it was is kept rather than
 closed and chained wherever that is proven (`m-temporal-write` *Unchanged
@@ -966,16 +1012,17 @@ they annihilate or merge rather than each producing durable SQL, because a state
 transaction never durably exposed to any other reader is never separately recorded.
 This follows Reladomo's transaction write queue (`TxOperations` /
 `GenericBiTemporalDirector` same-transaction handling): a same-transaction
-insert-then-update writes the final value in place, and a delete cancels a matching
+insert-then-amend writes the final value in place, and a delete cancels a matching
 pending insert.
 
-- **Insert-then-update coalesces in place.** A row inserted and then updated in the
-  same unit of work flushes as a **single** write carrying the **final** value; no
-  intermediate milestone is fabricated. A **non-temporal** insert-then-update emits
-  one `INSERT` with the post-update values (never `INSERT` + `UPDATE`); an
-  **Transaction-Time-Only** insert-then-update opens a single current milestone with the final
-  value — no close-and-chain, in contrast to the cross-transaction chaining of
-  `m-temporal-write`; a **bitemporal** insert-then-update covering the whole
+- **Insert-then-amend coalesces in place.** A row inserted and then amended or
+  replaced in the same unit of work flushes as a **single** write carrying the
+  **final** value; no intermediate milestone is fabricated. A **non-temporal**
+  insert-then-amend emits one `INSERT` with the final values (never `INSERT` +
+  `UPDATE`); an **Transaction-Time-Only** insert-then-amend opens a single current
+  milestone with the final value — no close-and-chain, in contrast to the
+  cross-transaction chaining of `m-temporal-write`; a **bitemporal**
+  insert-then-amend covering the whole
   opening opens a single fully-current rectangle with the final value — no
   inactivation / head-tail split, in contrast to its cross-transaction rectangle
   split.
@@ -983,10 +1030,19 @@ pending insert.
   of a still-pending opening is a temporal edit, composed with the opening as
   observed writes compose over stored coverage (*Observed-State Coalescing*): an
   edit bounded inside the opening splits it at its bound, one bounded at or beyond
-  the opening's end changes all of it, and nothing extends the opening past its
-  own window. Every edit starts at the insertion's anchor (*Insertion authority*).
-  The flush opens only the pieces that survive, each at the one Transaction
-  Instant, carrying the opening's values with the edits' assignments overlaid.
+  the opening's end changes all of it, and no amendment extends the opening past
+  its own window. Every edit starts at the insertion's anchor (*Insertion
+  authority*). The flush opens only the pieces that survive, each at the one
+  Transaction Instant, carrying the opening's values with the edits' assignments
+  overlaid. A replacement reaching past the opening establishes its complete
+  state over its whole window there too, as it would once the insertion had
+  executed: still without a flush at the call or an intermediate insertion, the
+  opening settles as one unit at the normal flush that reads the stored coverage
+  past its window inside the write batch, transforms each row the composed
+  writes reach under its own proof, opens the surviving pieces, and opens the
+  replacement's remaining extent (`m-temporal-write` *Observed writes span their
+  requested extent*). The opening's window counts as coverage, so nothing an
+  earlier composed destruction removed from it reopens.
 - **Insert-then-delete cancels.** A row inserted and then deleted in the same unit of
   work **cancels**: the two buffered writes annihilate and the flush emits **no** DML
   for that object — the net-zero effective-change-set elision, extended across two
@@ -1064,7 +1120,7 @@ with what the flush would have done:
 | -- | -- | -- |
 | nothing | any | the arriving intent is admitted |
 | assignment | assignment, same region | **coalesce** — the sparse assignments merge in authored order, the later value winning a repeated member, into one surviving write |
-| assignment | destruction, same region | **supersede** — the destruction replaces the assignments buffered before it, so an update then a delete at one scope is one delete |
+| assignment | destruction, same region | **supersede** — the destruction replaces the assignments buffered before it, so an amendment then a delete at one scope is one delete |
 | destruction | destruction, same region | **deduplicate** — the second says what the first said and adds nothing |
 | destruction | assignment | **incompatible** — no write means to resurrect a row that is going away |
 | any | any, different region | **incompatible** for a non-temporal write; a temporal object's observed writes compose instead (below) |
@@ -1077,7 +1133,7 @@ survivor, which claims the same scope.
 
 **A caller-addressed write claims the state its revision names** — the object at
 its stated version, or the object itself when it is unversioned — so it composes
-with observed writes of that same state by the table above: a patch and an
+with observed writes of that same state by the table above: an amendment and an
 observed assignment merge member by member, a replacement replaces what came
 before it and is overlaid by what follows, and a destruction supersedes both
 while keeping the caller's condition, which a destruction's own gate then binds.
@@ -1160,11 +1216,11 @@ writes a single unit of work accumulates and flushes together — and the step's
 golden SQL is the independent expected lowering of that flush. **Same-object folding
 at flush is the coalescing rule**, a runtime/planner property rather than a
 structural one: when two buffered instructions name the **same** entity and
-primary-key identity the flush combines them (insert-then-update writes the final
+primary-key identity the flush combines them (insert-then-amend writes the final
 value in place; insert-then-delete cancels to no DML — one final-value write, or no
-DML at all). The two-keyed same-object insert-then-update / insert-then-delete pair
+DML at all). The two-keyed same-object insert-then-amend / insert-then-delete pair
 is that rule's **single-object special case**; the same buffer equally expresses a
-single keyed write and a mixed multi-object flush (an `insert` / `update` / `delete`
+single keyed write and a mixed multi-object flush (an `insert` / `amend` / `delete`
 of **different** objects, ordered by foreign-key dependency). Predicate-selected
 buffered instructions remain **deferred** — the buffer is keyed-only. The buffered
 form and its authoring surface are the case format's (`m-case-format`); the
@@ -1444,7 +1500,7 @@ operation steps, each with a declared round-trip count — and plain write cases
 | read-your-own-writes scenario | a buffered write is flushed before a dependent find observes it |
 | rollback scenario | an aborted write is discarded; a post-abort find observes the original rows |
 | fk-ordering / flush cases | buffered writes flush ordered by foreign-key dependency |
-| insert-then-update coalescing (`m-unit-work-008`, `m-temporal-write-008`, `m-temporal-write-030`) | a same-transaction insert-then-update flushes as one write with the final value — no intermediate milestone (non-temporal / Transaction-Time-Only / Bitemporal) |
+| insert-then-amend coalescing (`m-unit-work-008`, `m-temporal-write-008`, `m-temporal-write-030`) | a same-transaction insert-then-amend flushes as one write with the final value — no intermediate milestone (non-temporal / Transaction-Time-Only / Bitemporal) |
 | insert-then-delete cancellation (`m-unit-work-010`) | a same-transaction insert-then-delete cancels — the flush emits no DML for that object |
 | dirty-read refusal (`m-unit-work-031`) | at Read Committed, a reading unit of work observes the committed row while a concurrent one holds an uncommitted write to it |
 | nonrepeatable-read refusal (`m-unit-work-032`, `-033`, `-034`) | at Repeatable Read, a unit of work's second read answers what its first did across a peer's committed write — for a plain find, a deep fetch's own included level, and a streamed delivery's pages |

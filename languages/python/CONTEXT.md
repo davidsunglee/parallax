@@ -18,6 +18,7 @@ Python-specific spelling and public semantics live in the
 | Transaction | The callback's explicit read/write surface | [Execution](spec/execution.md) |
 | Edit | A copy-based write input derived from an entity value | [Execution](spec/execution.md) |
 | Insertion source | The inserted instance, its later edits, or the node a Wire insert answered | [Execution](spec/execution.md) |
-| Target write | `tx.replace`, `tx.wire.replace`, or `tx.wire.update` over an Entity spelling, conditioned by `if_version` / `if_tx_start` | [Execution](spec/execution.md) |
+| Source write | `amend` or `replace` of the object a published or inserted value addresses, under that source's authority | [Execution](spec/execution.md) |
+| Conditional write | `amend_if` or `replace_if` of an object its caller addresses, conditioned by exactly one of `version`, `tx_start`, or `unversioned=True` | [Execution](spec/execution.md) |
 
 Private implementation names belong in their defining code, not this glossary.

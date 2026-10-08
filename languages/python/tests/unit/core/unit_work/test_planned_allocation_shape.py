@@ -91,7 +91,7 @@ def test_materialization_constructs_no_keyed_write_regardless_of_row_count(
 
     prepared = prepare_typed_write(
         PredicateWrite(
-            "update",
+            "amend",
             PredicateSelection(
                 "Account",
                 predicate_algebra.Comparison("lessThan", "Account.balance", "1000000.00"),

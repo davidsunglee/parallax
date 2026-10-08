@@ -182,9 +182,9 @@ def _update(
 ) -> None:
     bounded = {} if until is None else {"until": until}
     if representation == "typed":
-        tx.update(observed.edit(**_typed(changes)), **bounded)
+        tx.amend(observed.edit(**_typed(changes)), **bounded)
     else:
-        tx.wire.update(observed, changes, **bounded)
+        tx.wire.amend(observed, changes, **bounded)
 
 
 def _seed_log(profile_run: Any, entity: type[Any]) -> None:
@@ -375,7 +375,7 @@ def test_an_unchanged_rectangle_the_attempt_opened_is_neither_split_nor_revised(
         tx.insert(inserted, valid_from=_JAN)
         _update(tx, _span_find(tx, entity, representation, _MAR), representation, {"amount": 100})
         tx.find(entity.where(entity.id == 1).as_of(valid_time=_MAR)).result()
-        tx.update(inserted.edit(amount=100), until=_JUN)
+        tx.amend(inserted.edit(amount=100), until=_JUN)
 
     _db(profile_run, _TA).transact(fn)
     assert _span_rows(profile_run, entity) == [(_TA, None, _JAN, None, 100, "a", None, [])]
@@ -496,12 +496,12 @@ def test_losing_any_rectangle_after_the_flush_read_rolls_back_every_effect(
 
     def peer_patch() -> None:
         peer.transact(
-            lambda tx: tx.wire.update(
+            lambda tx: tx.wire.amend_if(
                 _name(entity),
                 {"id": 1, "amount": amount, "label": "peer"},
                 valid_from=start,
                 until=until,
-                if_tx_start=tx_start,
+                tx_start=tx_start,
             )
         )
 

@@ -87,10 +87,10 @@ _BALANCE_TARGET = boundary_runner.boundary_target(_case({}, model="models/balanc
 # when.uow / when.boundary / given.fault / then.outcome parsing.              #
 # --------------------------------------------------------------------------- #
 def test_boundary_steps_reads_the_ordered_list() -> None:
-    case = _case({"when": {"boundary": [{"action": "read"}, {"action": "update"}]}})
+    case = _case({"when": {"boundary": [{"action": "read"}, {"action": "amend"}]}})
     assert boundary_runner.boundary_steps(case) == [
         boundary_runner.BoundaryStep("read", {}),
-        boundary_runner.BoundaryStep("update", {}),
+        boundary_runner.BoundaryStep("amend", {}),
     ]
 
 
@@ -252,7 +252,7 @@ def test_run_boundary_actions_read_then_update() -> None:
     port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
 
     def fn(tx: Transaction) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("read", "update"), _ACCOUNT_TARGET)
+        return boundary_runner.run_boundary_actions(tx, _steps("read", "amend"), _ACCOUNT_TARGET)
 
     result = _db(port).transact(fn)
     assert result is not None
@@ -284,7 +284,7 @@ def test_a_join_repeating_the_boundarys_level_is_accepted() -> None:
     steps = [
         boundary_runner.BoundaryStep("read", {}),
         boundary_runner.BoundaryStep("join", {"isolation": "repeatable_read"}),
-        boundary_runner.BoundaryStep("update", {}),
+        boundary_runner.BoundaryStep("amend", {}),
     ]
 
     def fn(tx: Transaction) -> Any:
@@ -305,7 +305,7 @@ def test_run_boundary_actions_join_runs_the_rest_inside_a_joined_unit_of_work() 
 
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(
-            tx, _steps("read", "join", "update"), _ACCOUNT_TARGET, database=db
+            tx, _steps("read", "join", "amend"), _ACCOUNT_TARGET, database=db
         )
 
     result = db.transact(fn)
@@ -409,7 +409,7 @@ def test_a_balance_case_reads_and_advances_the_current_milestone() -> None:
     port = _FakePort(rows=[{**balance_row(in_z=in_z), "bal_id": 2, "val": Decimal("200.00")}])
 
     def fn(tx: Transaction) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("read", "update"), _BALANCE_TARGET)
+        return boundary_runner.run_boundary_actions(tx, _steps("read", "amend"), _BALANCE_TARGET)
 
     result = _db(port, MODELS["balance"]).transact(fn)
     assert result is not None
@@ -438,7 +438,7 @@ def test_run_boundary_actions_update_without_a_prior_read_raises() -> None:
     port = _FakePort(rows=[])
 
     def fn(tx: Transaction) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("update"), _ACCOUNT_TARGET)
+        return boundary_runner.run_boundary_actions(tx, _steps("amend"), _ACCOUNT_TARGET)
 
     with raises_contextualized(AssertionError, match="prior `read`"):
         _db(port).transact(fn)
@@ -561,7 +561,7 @@ def test_fault_injecting_port_state_survives_nested_transaction_wrapping() -> No
     db = _db(_faulted(inner, fault="deadlock", persistent=False))
 
     def fn(tx: Transaction) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("read", "update"), _ACCOUNT_TARGET)
+        return boundary_runner.run_boundary_actions(tx, _steps("read", "amend"), _ACCOUNT_TARGET)
 
     result = db.transact(fn)
     assert result is not None

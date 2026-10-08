@@ -95,7 +95,7 @@ def test_an_edited_occurrence_stores_what_it_names_and_carries_the_rest(
     def relocate(tx: Transaction) -> CustomerAddress:
         customer = tx.find(Customer.where(Customer.id == 1)).result()
         address = _address_of(customer)
-        tx.update(customer.edit(address=address.edit(city="Bergen")))
+        tx.amend(customer.edit(address=address.edit(city="Bergen")))
         return address
 
     published = db.transact(relocate)
@@ -115,7 +115,7 @@ def test_an_edited_occurrence_replaces_a_nested_and_a_plural_member_whole(
 
     def replace(tx: Transaction) -> None:
         customer = tx.find(Customer.where(Customer.id == 1)).result()
-        tx.update(
+        tx.amend(
             customer.edit(
                 address=_address_of(customer).edit(
                     geo=CustomerGeo(country="NO", point=CustomerPoint(lat=59.5, lon=10.75)),
@@ -144,7 +144,7 @@ def test_edits_compose_and_leave_every_value_they_derive_from_untouched(
         address = _address_of(customer)
         moved = address.edit(city="Bergen")
         renumbered = moved.edit(street="Nedre gate 2")
-        tx.update(customer.edit(address=renumbered))
+        tx.amend(customer.edit(address=renumbered))
         return address, moved
 
     published, intermediate = db.transact(compose)
@@ -180,7 +180,7 @@ def test_an_occurrence_carrying_no_net_change_is_still_assigned(
 
     def rewrite(tx: Transaction) -> None:
         customer = tx.find(Customer.where(Customer.id == 1)).result()
-        tx.update(customer.edit(address=derive(_address_of(customer))))
+        tx.amend(customer.edit(address=derive(_address_of(customer))))
 
     db.transact(rewrite)
 

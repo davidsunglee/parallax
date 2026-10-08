@@ -21,7 +21,7 @@ when:
             phones:
               - { type: home, number: '555-0100' }
       at: "2024-01-01T00:00:00.000000Z"
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.Supplier
       statements: 2
       note: close the current row, then chain a new current milestone carrying the new document D2

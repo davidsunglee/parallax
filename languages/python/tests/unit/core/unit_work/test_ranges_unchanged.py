@@ -84,7 +84,7 @@ def test_a_range_keeps_each_unchanged_original_and_transforms_only_the_changed_o
             observed_write(
                 SPANS,
                 "SequenceSpan",
-                "updateUntil",
+                "amendUntil",
                 _FROM_MARCH,
                 valid_from=MAR,
                 until=OCT,
@@ -125,7 +125,7 @@ def test_a_range_assigning_every_original_a_new_value_transforms_them_all() -> N
             observed_write(
                 SPANS,
                 "SequenceSpan",
-                "updateUntil",
+                "amendUntil",
                 _FROM_MARCH,
                 valid_from=MAR,
                 until=OCT,
@@ -146,7 +146,7 @@ def test_a_range_under_locking_states_nothing_for_its_unchanged_originals() -> N
             observed_write(
                 SPANS,
                 "SequenceSpan",
-                "updateUntil",
+                "amendUntil",
                 _FROM_MARCH,
                 valid_from=MAR,
                 until=OCT,
@@ -164,10 +164,10 @@ def test_a_net_equal_composition_leaves_its_original_unchanged() -> None:
     plan = planned(
         SPANS,
         observed_write(
-            SPANS, "SequenceSpan", "updateUntil", whole, valid_from=MAR, until=JUN, amount=150
+            SPANS, "SequenceSpan", "amendUntil", whole, valid_from=MAR, until=JUN, amount=150
         ),
         observed_write(
-            SPANS, "SequenceSpan", "updateUntil", whole, valid_from=MAR, until=JUN, amount=100
+            SPANS, "SequenceSpan", "amendUntil", whole, valid_from=MAR, until=JUN, amount=100
         ),
     )
     assert step_kinds(plan.steps) == ["PlannedTemporalGuard"]
@@ -181,7 +181,7 @@ def test_an_original_part_of_which_the_composition_destroys_is_changed() -> None
         observed_write(
             SPANS,
             "SequenceSpan",
-            "updateUntil",
+            "amendUntil",
             retained_state(SPANS, SPAN, first),
             valid_from=MAR,
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
@@ -215,7 +215,7 @@ def test_an_original_whose_start_the_composition_destroys_is_changed() -> None:
         observed_write(
             SPANS,
             "SequenceSpan",
-            "updateUntil",
+            "amendUntil",
             retained_state(SPANS, SPAN, first),
             valid_from=MAR,
             until=JUN,
@@ -239,7 +239,7 @@ def test_a_window_a_caller_addressed_keeps_a_milestone_it_leaves_unchanged() -> 
     target = target_write(
         prepare_wire_write(
             TargetWrite(
-                "updateUntil",
+                "amendUntil",
                 "SequenceSpan",
                 {"id": 1, "amount": 100},
                 if_tx_start=T0,
@@ -253,7 +253,7 @@ def test_a_window_a_caller_addressed_keeps_a_milestone_it_leaves_unchanged() -> 
     plan = planned(
         SPANS,
         observed_write(
-            SPANS, "SequenceSpan", "updateUntil", whole, valid_from=MAR, until=JUN, amount=100
+            SPANS, "SequenceSpan", "amendUntil", whole, valid_from=MAR, until=JUN, amount=100
         ),
         target,
     )
@@ -278,7 +278,7 @@ def test_an_owned_original_a_range_leaves_unchanged_is_neither_split_nor_revised
             observed_write(
                 SPANS,
                 "SequenceSpan",
-                "update",
+                "amend",
                 retained_state(SPANS, SPAN, owned_row),
                 valid_from=MAR,
                 amount=100,
@@ -302,7 +302,7 @@ _RESTATED = retained_state(BALANCES, BALANCE, balance_row("100.00"))
 
 def test_an_update_restating_its_milestone_is_one_guard_on_the_observed_start() -> None:
     plan = planned(
-        BALANCES, observed_write(BALANCES, "Balance", "update", _RESTATED, value="100.00")
+        BALANCES, observed_write(BALANCES, "Balance", "amend", _RESTATED, value="100.00")
     )
     (guard,) = plan.steps
     assert isinstance(guard, PlannedTemporalGuard)
@@ -318,7 +318,7 @@ def test_an_update_restating_its_milestone_is_one_guard_on_the_observed_start() 
 def test_without_a_count_that_proves_it_an_unchanged_milestone_is_closed_and_chained() -> None:
     plan = planned(
         BALANCES,
-        observed_write(BALANCES, "Balance", "update", _RESTATED, value="100.00"),
+        observed_write(BALANCES, "Balance", "amend", _RESTATED, value="100.00"),
         counts_unchanged_rows=False,
     )
     assert step_kinds(plan.steps) == ["PlannedClose", "PlannedInsert"]
@@ -330,7 +330,7 @@ def test_without_a_count_that_proves_it_an_unchanged_milestone_is_closed_and_cha
 def test_under_locking_the_held_lock_proves_an_unchanged_milestone_without_a_statement() -> None:
     plan = planned(
         BALANCES,
-        observed_write(BALANCES, "Balance", "update", _RESTATED, value="100.00"),
+        observed_write(BALANCES, "Balance", "amend", _RESTATED, value="100.00"),
         concurrency="locking",
         counts_unchanged_rows=False,
     )
@@ -346,7 +346,7 @@ def test_a_milestone_the_attempt_opened_needs_no_statement_to_stay_unchanged() -
     opened = retained_state(BALANCES, BALANCE, balance_row("100.00", NOW))
     plan = planned(
         BALANCES,
-        observed_write(BALANCES, "Balance", "update", opened, value="100.00"),
+        observed_write(BALANCES, "Balance", "amend", opened, value="100.00"),
         ownership=_REOPENED,
     )
     assert len(plan.steps) == 0
@@ -357,7 +357,7 @@ def test_an_earlier_milestone_at_an_address_the_attempt_reopened_is_not_proven_b
 ):
     plan = planned(
         BALANCES,
-        observed_write(BALANCES, "Balance", "update", _RESTATED, value="100.00"),
+        observed_write(BALANCES, "Balance", "amend", _RESTATED, value="100.00"),
         ownership=_REOPENED,
     )
     (revision,) = plan.steps
@@ -370,14 +370,14 @@ def test_an_earlier_milestone_at_an_address_the_attempt_reopened_is_not_proven_b
 def test_a_stale_start_at_an_address_the_attempt_reopened_is_its_callers_precondition() -> None:
     target = target_write(
         prepare_wire_write(
-            TargetWrite("update", "Balance", {"id": 1, "value": "100.00"}, if_tx_start=T0),
+            TargetWrite("amend", "Balance", {"id": 1, "value": "100.00"}, if_tx_start=T0),
             BALANCES,
         ),
         inheritance.view(BALANCES),
     )
     plan = planned(
         BALANCES,
-        observed_write(BALANCES, "Balance", "update", _RESTATED, value="100.00"),
+        observed_write(BALANCES, "Balance", "amend", _RESTATED, value="100.00"),
         target,
         ownership=_REOPENED,
     )
@@ -394,7 +394,7 @@ def test_owning_another_row_lends_no_proof_to_an_unchanged_milestone_the_attempt
     another = OpenedRows(frozenset({OwnedEndpoint(BALANCE, (2,), TRANSACTION_TIME_ENDS)}))
     plan = planned(
         BALANCES,
-        observed_write(BALANCES, "Balance", "update", _RESTATED, value="100.00"),
+        observed_write(BALANCES, "Balance", "amend", _RESTATED, value="100.00"),
         counts_unchanged_rows=False,
         ownership=another,
     )
@@ -417,7 +417,7 @@ def test_a_member_its_selection_does_not_declare_is_never_held() -> None:
 )
 def test_an_update_changing_any_member_closes_and_chains(members: Mapping[str, object]) -> None:
     plan = planned(
-        BALANCES, observed_write(BALANCES, "Balance", "update", _RESTATED, assigned=members)
+        BALANCES, observed_write(BALANCES, "Balance", "amend", _RESTATED, assigned=members)
     )
     assert step_kinds(plan.steps) == ["PlannedClose", "PlannedInsert"]
 
@@ -458,7 +458,7 @@ def test_a_bitemporal_write_inside_its_rectangle_compares_every_assigned_member(
         observed_write(
             SPANS,
             "SequenceSpan",
-            "updateUntil",
+            "amendUntil",
             evidence,
             valid_from=MAR,
             until=JUN,

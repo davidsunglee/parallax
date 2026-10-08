@@ -10,7 +10,7 @@ given:
   fixtures: true
 when:
   writeSequence:
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.PkSequence
       statements: 1
       note: base 1000
@@ -22,7 +22,7 @@ when:
       note: id 1000
       rows:
         - { id: 1000, tier: gold }
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.PkSequence
       statements: 1
       note: base 1005
@@ -34,7 +34,7 @@ when:
       note: id 1005
       rows:
         - { id: 1005, tier: silver }
-    - mutation: update
+    - mutation: amend
       entity: parallax.compatibility.PkSequence
       statements: 1
       note: base 1010

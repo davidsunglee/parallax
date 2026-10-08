@@ -41,7 +41,7 @@ _CASE_SCHEMA = load_schemas(_CORE)["compatibility-case.schema.json"]
 _QUERY = {"target": "Position", "predicate": {"all": {}}}
 _FIND = {"uow": "g", "objectQuery": _QUERY}
 _OTHER_FIND = {"uow": "h", "objectQuery": _QUERY}
-_WRITE = {"uow": "g", "write": [{"mutation": "update", "entity": "Position", "rows": [{"id": 1}]}]}
+_WRITE = {"uow": "g", "write": [{"mutation": "amend", "entity": "Position", "rows": [{"id": 1}]}]}
 
 
 def _settled(step: dict[str, Any], before: list[dict[str, Any]]) -> list[str]:

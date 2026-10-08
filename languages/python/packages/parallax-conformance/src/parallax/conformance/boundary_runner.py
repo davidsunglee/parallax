@@ -61,14 +61,14 @@ __all__ = [
 TARGET_ID: Final[int] = 2
 
 # A no-op update's effective change set would elide to zero DML (m-opt-lock
-# "No-op updates issue no DML") — every boundary `update` action therefore
+# "No-op updates issue no DML") — every boundary `amend` action therefore
 # advances the target's amount by a fixed, non-zero step so it always issues real DML.
 _BUMP: Final[Decimal] = Decimal("1.00")
 
 
 @dataclass(frozen=True, slots=True)
 class BoundaryTarget[E: Entity]:
-    """The row a boundary case's `read` and `update` actions move, chosen by the
+    """The row a boundary case's `read` and `amend` actions move, chosen by the
     case's model — the choreography a boundary case cannot author, since its
     `when.boundary` names actions only.
 
@@ -220,7 +220,7 @@ def run_boundary_actions[E: Entity](
       write's gate (`m-opt-lock`) and, read-your-own-writes, forces the flush of
       an ALREADY-buffered write (`m-unit-work-004`'s own "a dependent find
       observes the flushed write" step).
-    - ``update`` advances the last-read row's amount by :data:`_BUMP` (a real,
+    - ``amend`` advances the last-read row's amount by :data:`_BUMP` (a real,
       non-no-op change, `m-opt-lock` "No-op updates issue no DML") and
       buffers it.
     - ``create`` inserts a synthetic new account (id 90, outside the fixture
@@ -262,11 +262,11 @@ def _run_actions(
         action = step.action
         if action == "read":
             current = target.find(tx)
-        elif action == "update":
+        elif action == "amend":
             if current is None:
-                raise AssertionError("an `update` action needs a prior `read` observation")
+                raise AssertionError("an `amend` action needs a prior `read` observation")
             edited: Entity = target.edit(current)
-            tx.update(edited)
+            tx.amend(edited)
             current = edited
         elif action == "create":
             _refuse_beyond_the_account(action, target)

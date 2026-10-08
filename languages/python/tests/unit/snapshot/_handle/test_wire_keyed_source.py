@@ -112,7 +112,7 @@ def test_capture_judges_the_document_before_resolve_is_asked_for_a_source() -> N
     source = WireKeyedWriteSource(cast("object", {}), cast("dict[str, object]", []))
 
     with pytest.raises(instructions.WriteInstructionError, match="document of names"):
-        source.capture("update")
+        source.capture("amend")
 
 
 def test_construction_refuses_nothing_either_phase_would() -> None:
@@ -135,9 +135,9 @@ def test_an_insert_payload_that_is_no_document_is_judged_at_capture() -> None:
 # --------------------------------------------------------------------------- #
 def test_a_published_node_answers_the_facts_its_own_read_filed() -> None:
     source = WireKeyedWriteSource(_account_node(), {"balance": "125.00"})
-    source.capture("update")
+    source.capture("amend")
 
-    resolved = source.resolve(_meta(ACCOUNT), "update")
+    resolved = source.resolve(_meta(ACCOUNT), "amend")
 
     assert resolved.entity.identity == mm.Account.identity
     assert resolved.provenance == "this"
@@ -150,9 +150,9 @@ def test_a_published_node_answers_the_facts_its_own_read_filed() -> None:
 def test_a_projected_node_enters_the_existing_wire_keyed_source() -> None:
     node = _projected_account()
     source = WireKeyedWriteSource(node, {"balance": "125.00"})
-    source.capture("update")
+    source.capture("amend")
 
-    resolved = source.resolve(_meta(ACCOUNT), "update")
+    resolved = source.resolve(_meta(ACCOUNT), "amend")
     prepared = source.prepare(resolved, valid_from=None, until=None)
 
     assert resolved.provenance == "this"
@@ -172,9 +172,9 @@ def test_a_node_a_pinned_read_published_answers_the_instant_it_stands_at() -> No
         ),
     )
     source = WireKeyedWriteSource(node, {"value": "300.00"})
-    source.capture("update")
+    source.capture("amend")
 
-    resolved = source.resolve(_meta(WHERE_POSITION_META), "update")
+    resolved = source.resolve(_meta(WHERE_POSITION_META), "amend")
 
     assert resolved.pin is not None
     assert resolved.pin.tx_time == _TX_PIN
@@ -184,10 +184,10 @@ def test_an_argument_carrying_no_hint_is_refused_as_no_source_at_all() -> None:
     # Provenance is never asked of a Wire keyed source, because a source that
     # could answer anything but "this" is refused here first.
     source = WireKeyedWriteSource(cast("object", dict(_account_node())), {})
-    source.capture("update")
+    source.capture("amend")
 
     with pytest.raises(instructions.WriteInstructionError, match="carries no such provenance"):
-        source.resolve(_meta(ACCOUNT), "update")
+        source.resolve(_meta(ACCOUNT), "amend")
 
 
 # --------------------------------------------------------------------------- #
@@ -195,8 +195,8 @@ def test_an_argument_carrying_no_hint_is_refused_as_no_source_at_all() -> None:
 # --------------------------------------------------------------------------- #
 def test_prepare_states_every_authored_member_as_its_literal_assignment() -> None:
     source = WireKeyedWriteSource(_account_node(), {"balance": "125.00"})
-    source.capture("update")
-    resolved = source.resolve(_meta(ACCOUNT), "update")
+    source.capture("amend")
+    resolved = source.resolve(_meta(ACCOUNT), "amend")
 
     prepared = source.prepare(resolved, valid_from=None, until=None)
 
@@ -207,8 +207,8 @@ def test_prepare_states_every_authored_member_as_its_literal_assignment() -> Non
 
 def test_a_member_equal_to_what_the_source_published_is_still_assigned() -> None:
     source = WireKeyedWriteSource(_account_node(), {"balance": "100.00"})
-    source.capture("update")
-    resolved = source.resolve(_meta(ACCOUNT), "update")
+    source.capture("amend")
+    resolved = source.resolve(_meta(ACCOUNT), "amend")
 
     prepared = source.prepare(resolved, valid_from=None, until=None)
 

@@ -12,7 +12,7 @@ caller-addressed target reads nothing before its verb, so its own reads — an
 unversioned target's acquisition, a temporal target's coverage read at flush —
 fall inside that window. A
 predicate-acquisition case runs one
-public bounded ``tx.wire.update_where`` from the caller's documents through
+public bounded ``tx.wire.amend_where`` from the caller's documents through
 preparation and production acquisition over freshly composed resolving rows to a
 buffered Materialized Write Group, and stops before any flush. A public insert
 case runs one ``tx.wire.insert`` of a nested, polymorphic payload inside an open

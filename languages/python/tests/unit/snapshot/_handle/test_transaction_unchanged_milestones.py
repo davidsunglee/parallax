@@ -45,7 +45,7 @@ def _writes(port: ScriptedAdapter) -> list[WriteCall]:
 def _restate(tx: Transaction, representation: _Representation, value: str = "5.00") -> None:
     if representation == "typed":
         fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
-        tx.update(fetched.edit(value=Decimal(value)))
+        tx.amend(fetched.edit(value=Decimal(value)))
         return
     node = tx.wire.find(
         {
@@ -54,7 +54,7 @@ def _restate(tx: Transaction, representation: _Representation, value: str = "5.0
             "temporal": {"transaction-time": {"asOf": "latest"}},
         }
     ).result()
-    tx.wire.update(node, {"value": value})
+    tx.wire.amend(node, {"value": value})
 
 
 # --------------------------------------------------------------------------- #
@@ -123,12 +123,12 @@ def test_a_guarded_source_is_spent_and_a_fresh_read_writes_again() -> None:
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
-        tx.update(fetched.edit(value=Decimal("5.00")))
+        tx.amend(fetched.edit(value=Decimal("5.00")))
         fresh = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
         with pytest.raises(WriteEvidenceError) as spent:
-            tx.update(fetched.edit(value=Decimal("5.00")))
+            tx.amend(fetched.edit(value=Decimal("5.00")))
         assert spent.value.code == "write-evidence-consumed"
-        tx.update(fresh.edit(value=Decimal("5.00")))
+        tx.amend(fresh.edit(value=Decimal("5.00")))
 
     db_for(BALANCE, port).transact(fn)
     assert [call.sql for call in _writes(port)] == [_GUARD, _GUARD]
@@ -142,10 +142,10 @@ def test_a_wire_projection_of_a_guarded_source_shares_its_spent_evidence() -> No
     def fn(tx: Transaction) -> None:
         snapshot = tx.find(mm.Balance.where(mm.Balance.id == 1))
         projected = snapshot.wire().result()
-        tx.update(snapshot.result().edit(value=Decimal("5.00")))
+        tx.amend(snapshot.result().edit(value=Decimal("5.00")))
         tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
         with pytest.raises(WriteEvidenceError) as spent:
-            tx.wire.update(projected, {"value": "5.00"})
+            tx.wire.amend(projected, {"value": "5.00"})
         assert spent.value.code == "write-evidence-consumed"
 
     db_for(BALANCE, port).transact(fn)
@@ -184,7 +184,7 @@ def test_a_range_guards_its_unchanged_rectangles_where_it_would_have_closed_them
     )
 
     def fn(tx: Transaction) -> None:
-        tx.update(_find(tx, _MAR).edit(value=Decimal("100.00")), until=_OCT)
+        tx.amend(_find(tx, _MAR).edit(value=Decimal("100.00")), until=_OCT)
 
     db_for(WHERE_POSITION_META, port).transact(fn)
     guard_first, close, guard_last, opened = _writes(port)
@@ -221,13 +221,13 @@ def test_a_read_of_a_rectangle_the_range_kept_stays_writable(value: str, kept: b
     def fn(tx: Transaction) -> None:
         source = _find(tx, _MAR)
         last = _find(tx, november)
-        tx.update(source.edit(value=Decimal(value)), until=_OCT)
+        tx.amend(source.edit(value=Decimal(value)), until=_OCT)
         tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR)).result_or_none()
         if kept:
-            tx.update(last.edit(acct_num="B"), until=_DEC)
+            tx.amend(last.edit(acct_num="B"), until=_DEC)
             return
         with pytest.raises(WriteEvidenceError) as stale:
-            tx.update(last.edit(acct_num="B"), until=_DEC)
+            tx.amend(last.edit(acct_num="B"), until=_DEC)
         assert stale.value.code == "write-evidence-consumed"
 
     db_for(WHERE_POSITION_META, port).transact(fn)

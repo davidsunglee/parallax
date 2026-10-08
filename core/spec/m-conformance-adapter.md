@@ -237,13 +237,13 @@ For a **buffered** scenario write — the **ordered keyed buffer** under
 `/scenario/<n>/write` (`m-case-format`), **one or more** keyed instructions a single
 unit of work accumulates — the adapter buffers **every** entry in **one** unit of
 work and applies the `m-unit-work` flush: it **coalesces same-object entries**
-(same-transaction insert-then-update → a single final-value write in place;
+(same-transaction insert-then-amend → a single final-value write in place;
 insert-then-delete → cancel to no DML), then **foreign-key-orders and elides** the
 general multi-object flush, emitting the per-object DML. The **same-object
 coalescing pair** — a buffer of exactly two same-object entries — is the
 single-object **special case** of that flush, emitting a **single** final-value
 write or **no** DML at all; a **single** keyed write (a buffer of one) and a
-**mixed multi-object flush** (an `insert`, `update`, and `delete` of **different**
+**mixed multi-object flush** (an `insert`, `amend`, and `delete` of **different**
 objects) are the general cases. The adapter consumes the ordered structured
 instructions as the requested operations exactly as for the single-instruction
 forms — it MUST NOT treat the authored golden SQL as its write input or

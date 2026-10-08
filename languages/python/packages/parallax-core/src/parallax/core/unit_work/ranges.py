@@ -3,11 +3,12 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
+from operator import attrgetter
 from typing import Final, cast
 
 from parallax.core.base import ManagedValue
 from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata
+from parallax.core.metamodel import AttributeIdentity, EntityMetadata, ValueObjectIdentity
 from parallax.core.temporal_read import (
     Bitemporal,
     TimeInterval,
@@ -22,6 +23,7 @@ from parallax.core.temporal_write.expansion import (
     TemporalFacts,
     bitemporal_ends,
     entry_endpoint,
+    openings,
 )
 from parallax.core.unit_work.acquisition import CoverageReadRequest
 from parallax.core.unit_work.effects import (
@@ -36,6 +38,7 @@ from parallax.core.unit_work.materialized import (
     ComposedTemporalWrite,
     InsertionKeyedWrite,
     ObservedKeyedWrite,
+    PendingOpening,
     TargetKeyedWrite,
     TemporalKeyedWrite,
     singleton_transform,
@@ -57,13 +60,15 @@ from parallax.core.write_plan.plan import (
     SourceAuthority,
     TemporalWriteOwnership,
 )
-from parallax.core.write_plan.steps import TERMINATED, KeyTarget, PlannedInsert
+from parallax.core.write_plan.planned_rows import resolve_row
+from parallax.core.write_plan.steps import TERMINATED, KeyTarget, PlannedInsert, PlannedValue
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 __all__ = [
     "DeferredTemporalRange",
     "bind_deferred",
     "range_claims",
+    "settle_opening",
     "settle_range",
 ]
 
@@ -143,6 +148,8 @@ def _known_originals(
     validated.reverse()
     return tuple(bound), tuple(validated)
 
+
+_START: Final = attrgetter("start")
 
 _UNANCHORED: Final = object()
 """The anchor of a range no insertion authorized any write of."""
@@ -316,6 +323,16 @@ class _BoundRangeBuilder:
 
 
 @dataclass(frozen=True, slots=True)
+class _OpeningSeed:
+    """A pending insertion a range settles together with stored coverage: its
+    resolved authored state and the Valid-Time window it opens, which no
+    stored row is fabricated for."""
+
+    state: tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]
+    window: TimeInterval
+
+
+@dataclass(frozen=True, slots=True)
 class _RangeMeaning:
     """What one range settled to before any coverage is bound: finalized data
     alone, holding no ownership, audit, clock, or other producer.
@@ -325,7 +342,8 @@ class _RangeMeaning:
     begins and shared by the coverage check, acquisition, and continuation;
     ``None`` on a Transaction-Time-Only object. ``derives`` says a later unit
     of the same flush depends on what this one does to its originals, so its
-    bound range records it (:class:`Derivation`).
+    bound range records it (:class:`Derivation`). ``opening`` is the pending
+    insertion a replacement reaching past it settles with.
     """
 
     facts: TemporalFacts
@@ -338,6 +356,7 @@ class _RangeMeaning:
     conditions: tuple[_StartingCondition, ...] = ()
     derives: bool = False
     guards: bool = False
+    opening: _OpeningSeed | None = None
 
     @property
     def object_key(self) -> ObjectKey:
@@ -389,17 +408,24 @@ class _TemporalRangeBinder:
         already proved (``discharged``, by its position) is judged no further.
         Validations follow, then the remaining originals, and a replacement's
         extent then opens its complete state over every gap the originals leave.
+
+        A pending insertion the range settles with opens what the transform
+        leaves of its own window as new lineages, and its window is coverage no
+        gap opening refills.
         """
         meaning = self.meaning
         self._require_anchor(originals)
         starts = self._starts(originals, discharged)
         transform = meaning.transform
+        seed = meaning.opening
         gaps = (
-            transform.gaps(_valid_time_coverages(originals))
+            transform.gaps(_with_opening(_valid_time_coverages(originals), seed))
             if transform.replaces and isinstance(meaning.facts.shape, Bitemporal)
             else ()
         )
         concluded = meaning.object_key if concludes else None
+        if seed is not None:
+            return self._settled_with(seed, originals, gaps, concluded)
         if not starts and not validations and not gaps and len(originals) == 1:
             # One original's expansion already orders its own effect first.
             (original,) = originals
@@ -413,6 +439,27 @@ class _TemporalRangeBinder:
         for original in originals:
             if all(original is not start for start in starts):
                 bound.take(self._expanded(original, "coverage"))
+        for gap in gaps:
+            self._open(bound, gap)
+        return bound.range(concluded)
+
+    def _settled_with(
+        self,
+        seed: _OpeningSeed,
+        originals: Sequence[_Original],
+        gaps: Sequence[CoverageGap],
+        concluded: ObjectKey | None,
+    ) -> BoundRange:
+        """The pending insertion ``seed`` settled as one unit with the stored
+        ``originals`` its replacement reaches and the ``gaps`` it establishes:
+        every original's own effect first, then the insertion's surviving
+        parts, the originals' successors, and the gap openings."""
+        bound = _BoundRangeBuilder()
+        inserts = self.expansion.lineage(seed.state, seed.window)
+        bound.openings.extend(inserts)
+        bound.continued.extend(openings(self.meaning.facts, inserts))
+        for original in originals:
+            bound.take(self._expanded(original, "coverage"))
         for gap in gaps:
             self._open(bound, gap)
         return bound.range(concluded)
@@ -752,6 +799,73 @@ def settle_range(
             coverage=_coverage(meaning, requested),
         )
     return _binding(meaning, ownership, audit).bind(originals, validations)
+
+
+def settle_opening(
+    opening: PendingOpening,
+    *,
+    view: InheritanceEntityView,
+    shape: Bitemporal,
+    gated: bool,
+    instant: dt.datetime,
+    ownership: TemporalWriteOwnership,
+    audit: AuditDecoration,
+    guards: bool = False,
+) -> BoundRange | DeferredTemporalRange:
+    """A pending Bitemporal insertion and the writes its insertion authorized
+    since, settled as one unit: the insertion's authored state seeds every
+    surviving part of its own window, with the composed assignments overlaid
+    there, and no predecessor is fabricated for it.
+
+    A replacement it authorized reaching past the insertion's window
+    establishes its complete state there exactly as one reaching past a stored
+    row does: the stored coverage beyond the window is read at execution, each
+    row it reaches is transformed under its own proof, and the replacement's
+    gaps open. An amendment reaches nothing outside the insertion's window.
+    ``instant`` is the attempt's already-resolved Transaction Instant.
+    """
+    insert = opening.insert
+    entity = insert.target
+    window = insert.valid_time_window
+    assert window is not None  # a Bitemporal opening states its window
+    key_attribute = view.primary_key.identity
+    facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=instant)
+    attributes, value_objects = resolve_row(entity, view, insert.rows[0], context="insert")
+    key_value = attributes.get(key_attribute)
+    transform = opening.transform
+    beyond = opening.beyond
+    if beyond is None:
+        inserts = PredecessorExpander(
+            facts,
+            transform,
+            key_attribute=key_attribute,
+            gated=gated,
+            ownership=ownership,
+            audit=audit,
+        ).lineage((attributes, value_objects), window)
+        return BoundRange(steps=inserts, opened=Openings(continued=openings(facts, inserts)))
+    meaning = _RangeMeaning(
+        facts=facts,
+        transform=transform,
+        valid_time_window=transform.valid_time_window,
+        gated=gated,
+        key_attribute=key_attribute,
+        key_value=key_value,
+        guards=guards,
+        opening=_OpeningSeed((attributes, value_objects), window),
+    )
+    return DeferredTemporalRange(
+        meaning=meaning, originals=(), validations=(), coverage=_coverage(meaning, beyond)
+    )
+
+
+def _with_opening(
+    coverage: Iterator[TimeInterval], seed: _OpeningSeed | None
+) -> Iterable[TimeInterval]:
+    """``coverage`` with a pending insertion's window in its start order."""
+    if seed is None:
+        return coverage
+    return sorted((seed.window, *coverage), key=_START)
 
 
 def _range_of(

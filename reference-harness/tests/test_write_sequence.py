@@ -85,7 +85,7 @@ def test_one_entity_spelled_two_ways_owes_one_resolving_read() -> None:
     # charge the case a read it never issues.
     case = _synthetic_case({})
     entries = [
-        {"mutation": "update", "entity": "Customer", "rows": [{"id": 1, "name": "Ada"}]},
+        {"mutation": "amend", "entity": "Customer", "rows": [{"id": 1, "name": "Ada"}]},
         {
             "mutation": "delete",
             "entity": "parallax.compatibility.Customer",
@@ -102,13 +102,13 @@ def test_a_value_object_document_shaped_like_a_marker_still_owes_its_read() -> N
     # resolving read every such write owes.
     case = _synthetic_case({})
     document_entry = {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "parallax.compatibility.Customer",
         "rows": [{"id": 1, "address": {"increment": 1}}],
     }
     assert unit_resolving_reads(case, [document_entry]) == 1
     marker_entry = {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "parallax.compatibility.Customer",
         "rows": [{"id": 1, "name": {"increment": 1}}],
     }
@@ -126,7 +126,7 @@ def _account_case(raw: dict) -> Case:
 
 def test_a_target_step_is_graded_as_the_keyed_update_its_caller_conditions() -> None:
     patch = {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "parallax.compatibility.Account",
         "row": {"id": 2, "balance": "1.00"},
         "ifVersion": 4,
@@ -136,14 +136,14 @@ def test_a_target_step_is_graded_as_the_keyed_update_its_caller_conditions() -> 
     case = _account_case({"when": {"writeSequence": [patch, replacement]}})
     assert case.write_sequence == [
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "parallax.compatibility.Account",
             "statements": 1,
             "rows": [{"id": 2, "balance": "1.00", "observedVersion": 4}],
             "target": True,
         },
         {
-            "mutation": "update",
+            "mutation": "amend",
             "entity": "parallax.compatibility.Account",
             "statements": 1,
             "rows": [{"id": 2, "owner": "Zed", "balance": None, "observedVersion": 4}],
@@ -305,7 +305,7 @@ def test_a_guard_golden_matching_no_row_is_refused_where_it_executes() -> None:
 
 def test_a_target_step_owes_a_read_only_where_it_is_acquired() -> None:
     entry = {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "parallax.compatibility.Account",
         "rows": [{"id": 2, "balance": "1.00"}],
         "target": True,
@@ -320,7 +320,7 @@ def test_a_target_step_owes_a_read_only_where_it_is_acquired() -> None:
 
 def test_a_temporal_target_step_owes_its_coverage_read_and_under_locking_its_acquisition() -> None:
     entry = {
-        "mutation": "update",
+        "mutation": "amend",
         "entity": "parallax.compatibility.Balance",
         "rows": [{"id": 1, "value": "1.00"}],
         "target": True,
@@ -518,9 +518,9 @@ def test_plural_temporal_step_is_rejected() -> None:
 @pytest.mark.parametrize(
     ("case_id", "entity_name", "mutation", "expected"),
     [
-        ("m-batch-write-001", "Wallet", "update", "unversioned row"),
+        ("m-batch-write-001", "Wallet", "amend", "unversioned row"),
         ("m-opt-lock-002", "Account", "insert", "insert row"),
-        ("m-temporal-write-001", "Balance", "update", "temporal row"),
+        ("m-temporal-write-001", "Balance", "amend", "temporal row"),
     ],
 )
 def test_an_unentitled_write_row_observation_is_refused(
@@ -547,7 +547,7 @@ def test_a_versioned_update_row_observation_is_entitled() -> None:
     case = _write_case_by_id("m-opt-lock-002")
     entity = case.model.entity("Account")
     *_, observed = classify_write_row(
-        case, entity, {"id": 1, "observedVersion": 3}, mutation="update", opening=False
+        case, entity, {"id": 1, "observedVersion": 3}, mutation="amend", opening=False
     )
     assert observed == 3
 
@@ -871,7 +871,7 @@ def _customer_update_case(address, sql: str, binds: list) -> Case:
             "when": {
                 "writeSequence": [
                     {
-                        "mutation": "update",
+                        "mutation": "amend",
                         "entity": "Customer",
                         "rows": [{"id": 1, "address": address}],
                     }

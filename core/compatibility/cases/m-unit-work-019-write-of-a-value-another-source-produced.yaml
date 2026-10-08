@@ -16,7 +16,7 @@ when:
       roundTrips: 0
       expectError: write-value-foreign-lifecycle
       note: the insert family refuses another managed source's value
-    - action: update
+    - action: amend
       value: anotherSource
       roundTrips: 0
       expectError: write-value-foreign-lifecycle

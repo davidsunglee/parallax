@@ -17,30 +17,33 @@ is `m-sql`, and the conflict/retry contract is `m-opt-lock`.
 
 In Transaction-Time-Only mode there is no Valid-Time dimension, so the
 chaining is the simple close-and-open form; the bitemporal *rectangle split*
-follows below. The **MVP mutation surface** is `insert` / `update` /
-`terminate` (DQ11); the `*Until` trio belongs to Bitemporal writes.
+follows below. The **MVP mutation surface** is `insert` / `amend` / `replace` /
+`terminate` (DQ11); the `*Until` forms belong to Bitemporal writes. An amendment
+and a replacement chain alike on this axis: a replacement's successor states the
+complete writable state where an amendment's keeps every member it does not
+assign.
 
 Let `txInstant` be the transaction's finite Transaction-Time instant.
 
 | Mutation | Observable SQL sequence |
 |---|---|
 | **insert** | open one current row: `insert … (in_z = txInstant, out_z = infinity)` |
-| **update** | **close** the current row: `update … set out_z = ? where pk and out_z = ?` (`[txInstant, infinity]`), then **chain** a new current row: `insert … (in_z = txInstant, out_z = infinity)` with the new value |
-| **terminate** | **close** the current row (as in update's first step) and **insert nothing** — the terminated state is the *absence* of any `out_z = infinity` row |
+| **amend** | **close** the current row: `update … set out_z = ? where pk and out_z = ?` (`[txInstant, infinity]`), then **chain** a new current row: `insert … (in_z = txInstant, out_z = infinity)` with the new value |
+| **terminate** | **close** the current row (as in an amendment's first step) and **insert nothing** — the terminated state is the *absence* of any `out_z = infinity` row |
 
 Key invariants the suite pins down:
 
 - The close `UPDATE` is **keyed by the current-row predicate** (`pk and
   out_z = infinity`), never a blind in-place set — only the open milestone is
   closed.
-- After an **update**, the prior value survives as a **closed** milestone
+- After an **amend**, the prior value survives as a **closed** milestone
   (`out_z` finite); the new value is the current row (`out_z = infinity`). The
   observable state is **two** rows.
 - After a **terminate**, **no** row has `out_z = infinity`.
-- A keyed **update** assigns literally (`m-unit-work` *Comparing an assigned
-  member with its persisted value*), and an update assigning no member writes
-  nothing. An update every assigned value of which the current row already
-  holds leaves that row **unchanged**, whether a read observed the row, an
+- A keyed **amend** assigns literally (`m-unit-work` *Comparing an assigned
+  member with its persisted value*), and an amendment assigning no member writes
+  nothing. An amendment or replacement every assigned value of which the current
+  row already holds leaves that row **unchanged**, whether a read observed the row, an
   insertion authorized the write, or a caller's condition names the row
   (*Unchanged milestones*, below): under Optimistic, where the database's
   write count includes unchanged rows, one guard keeps it —
@@ -96,17 +99,17 @@ an exception this invariant admits.
 ### A row the attempt opened
 
 Within one attempt, a write whose observed current row was opened by that
-attempt's own earlier flush — by an `insert` or as an `update`'s chained row —
+attempt's own earlier flush — by an `insert` or as an amendment's chained row —
 addresses the row by the same Milestone Target and keeps its
 `in_z = txInstant` (*Ownership disposal*, below):
 
 | Mutation of a row the attempt opened | Observable SQL sequence |
 |---|---|
-| **update** | revise the row in place: `update … set <changed members> where pk and out_z = ?` (`[infinity]`), chaining nothing |
+| **amend** | revise the row in place: `update … set <changed members> where pk and out_z = ?` (`[infinity]`), chaining nothing |
 | **terminate** | remove the row: `delete from … where pk and out_z = ?` (`[infinity]`) |
 
 Under Optimistic the address is followed by the observed-`in_z` gate exactly as
-a close's is. An update every assigned value of which the row already holds
+a close's is. An amendment every assigned value of which the row already holds
 writes nothing. Ownership is the attempt's record of what it opened, never an
 `in_z` that happens to equal `txInstant`: a row an earlier attempt committed at
 the same instant is closed as usual. After the attempt, the Transaction-Time
@@ -119,13 +122,14 @@ revised or removed as above (`m-unit-work` *Insertion authority*).
 
 ### A caller-addressed write
 
-A caller-addressed patch or replacement (`m-unit-work` *Caller-addressed
+A caller-addressed amendment or replacement (`m-unit-work` *Caller-addressed
 writes*) observed no row either: it states the `in_z` of the current row its
 caller last observed as `ifTxStart`, and takes no Valid-Time bound. The current
 row is read inside the flush that writes it, and is closed and chained as an
-`update` is — a patch's chained row keeps every member it does not assign, a
+`amend` is — an amendment's chained row keeps every member it does not assign, a
 replacement's states the complete writable state — or kept unchanged where every
-value it assigns is one the row already holds, exactly as an update's is
+value it assigns is one the row already holds, exactly as a source-authorized
+write's is
 (*Unchanged milestones*): the caller's condition establishes the write's
 authority, not a demand for new history. Where that read finds no
 current row, or one at another `in_z`, the write is its caller's failed
@@ -146,14 +150,14 @@ current on *both* (`thru_z = out_z = infinity`).
 
 The signature bitemporal write is the **rectangle split** (research §6). A value
 is changed for a **bounded Valid-Time window** `[validFrom, until)` while the
-audit trail is preserved on the Transaction-Time axis. This is the `updateUntil` /
+audit trail is preserved on the Transaction-Time axis. This is the `amendUntil` /
 `terminateUntil` contract; with `insertUntil` they form the **`*Until` trio**
 (DQ11):
 
 | Mutation | Observable SQL sequence |
 |---|---|
 | **insertUntil** | open one row whose Valid-Time interval is `[validFrom, until)` at Transaction Time `[txInstant, infinity)`; a single `insert` (no prior row to close) |
-| **updateUntil** | **inactivate** the original current row by closing Transaction Time (`out_z = txInstant`), then chain **three** new rows at fresh Transaction Time `[txInstant, infinity)` — `head` Valid Time `[from_z, validFrom)` (old value), `middle` Valid Time `[validFrom, until)` (new value), `tail` Valid Time `[until, infinity)` (old value) |
+| **amendUntil** | **inactivate** the original current row by closing Transaction Time (`out_z = txInstant`), then chain **three** new rows at fresh Transaction Time `[txInstant, infinity)` — `head` Valid Time `[from_z, validFrom)` (old value), `middle` Valid Time `[validFrom, until)` (new value), `tail` Valid Time `[until, infinity)` (old value) |
 | **terminateUntil** | inactivate the original (as above), then chain only **head** and **tail** — **no** `middle` — so the value is **absent** inside the window |
 
 The split keeps the value unchanged before and after the window and changes it
@@ -168,7 +172,7 @@ trail. Key invariants the suite pins down:
   with `out_z = infinity` alone would be ambiguous, because several disjoint
   Valid-Time rectangles of one key may be current on Transaction Time. The three
   new rows are inserted **after** it.
-- After an `updateUntil`, the observable current-on-Transaction-Time state is exactly
+- After an `amendUntil`, the observable current-on-Transaction-Time state is exactly
   the `head` / `middle` / `tail` rectangles; the `middle` carries the new value.
 - After a `terminateUntil`, the window `[validFrom, until)` is covered by **no**
   current-on-Transaction-Time row.
@@ -192,25 +196,25 @@ rectangles admissible.
 ## Plain (unbounded) bitemporal writes
 
 Alongside the bounded `*Until` trio, the Bitemporal surface provides the
-three **plain (unbounded) writes** — `insert`, `update`, `terminate` — that govern
+three **plain (unbounded) writes** — `insert`, `amend`, `terminate` — that govern
 a value from a **Valid-Time instant** `V` **through infinity** rather than
 inside a bounded window. Each is the degenerate rectangle split obtained by letting
 the window's Valid-Time upper bound go to infinity: where an `*Until` mutation carries
 an explicit `until`, a plain mutation has none, so it never chains a `tail` back to
-the old value beyond the window. Plain `insert` / `update` / `terminate` are all
+the old value beyond the window. Plain `insert` / `amend` / `terminate` are all
 **required** behavior (ADR 0021). `V` is the mutation input's `validFrom`, and the
 window it governs is `[V, infinity)`.
 
 | Mutation | Observable SQL sequence |
 |---|---|
 | **insert** (plain) | open one row whose Valid-Time interval is `[V, infinity)` at Transaction Time `[txInstant, infinity)`; a single `insert` with no prior row to close, so the row is fully current (`thru_z = out_z = infinity`) |
-| **update** (plain) | inactivate the original by closing Transaction Time (`out_z = txInstant`), then chain two rows at fresh Transaction Time `[txInstant, infinity)` — `head` Valid Time `[from_z, V)` (old value) and a new `tail` Valid Time `[V, infinity)` (new value) |
+| **amend** (plain) | inactivate the original by closing Transaction Time (`out_z = txInstant`), then chain two rows at fresh Transaction Time `[txInstant, infinity)` — `head` Valid Time `[from_z, V)` (old value) and a new `tail` Valid Time `[V, infinity)` (new value) |
 | **terminate** (plain) | inactivate the original, then chain only a `head` over Valid Time `[from_z, V)`; `[V, infinity)` is covered by no current-on-Transaction-Time row |
 
 The three form a natural progression. Plain `insert` establishes the fully-current
-rectangle with no close; plain `update` and plain `terminate` share the same
+rectangle with no close; plain `amend` and plain `terminate` share the same
 inactivate + `head` prefix that preserves the prior value on Valid Time `[from_z, V)`,
-and differ only in the tail — `update` chains a new `tail` carrying the new value on
+and differ only in the tail — `amend` chains a new `tail` carrying the new value on
 `[V, infinity)`, whereas `terminate` chains no tail, so the value is **absent** from
 `V` onward. Key invariants the suite pins down:
 
@@ -218,7 +222,7 @@ and differ only in the tail — `update` chains a new `tail` carrying the new va
   inactivation and no prior row to close, so the optimistic inactivation gate below
   does **not** apply to it. It is the unbounded degenerate of `insertUntil` and
   shares that mutation's canonical `INSERT` shape.
-- For plain `update` and plain `terminate`, the inactivation `UPDATE` addresses the
+- For plain `amend` and plain `terminate`, the inactivation `UPDATE` addresses the
   one current rectangle exactly as the `*Until` inactivation does
   (`pk and thru_z = ? and out_z = ?`), so only that rectangle is inactivated; the
   chained rows are inserted **after** it. Under Optimistic the inactivation gains
@@ -228,11 +232,11 @@ and differ only in the tail — `update` chains a new `tail` carrying the new va
 - The inactivation `UPDATE` **MUST** affect exactly **one** row; a zero-row
   inactivation is an error under either strategy (*Affected-row conflict
   contract for closes*, below).
-- After a plain `update`, Valid Time `[from_z, V)` is current on Transaction Time
+- After a plain `amend`, Valid Time `[from_z, V)` is current on Transaction Time
   through the `head` (old value) and `[V, infinity)` through the new `tail` (new
   value). After a plain `terminate`, Valid Time `[from_z, V)` remains current
   through the `head` and `[V, infinity)` is covered by no current-on-Transaction-Time row.
-- For `update` and `terminate`, the original survives as a row closed on the
+- For `amend` and `terminate`, the original survives as a row closed on the
   Transaction-Time axis — the bitemporal audit trail — so both prior Valid-Time
   history and Transaction-Time history stay observable to as-of reads. (Plain `insert`
   opens fresh history; there is no prior milestone to preserve.)
@@ -246,8 +250,9 @@ companions of the `*Until` trio.
 ## Observed writes span their requested extent
 
 The tables above describe one current rectangle covering the whole window. A
-keyed `update`, `updateUntil`, `terminate`, or `terminateUntil` written from a
-source a read published is not confined to that rectangle. Its `validFrom` is
+keyed `amend`, `amendUntil`, `replace`, `replaceUntil`, `terminate`, or
+`terminateUntil` written from a source a read published is not confined to that
+rectangle. Its `validFrom` is
 the source's own finite Valid-Time pin — the coordinate the read stood at, not
 the observed rectangle's start — or, for a source an insertion of the same
 attempt authored, that insertion's `validFrom`, its anchor (`m-unit-work`
@@ -260,9 +265,16 @@ every current-on-Transaction-Time rectangle of the object that overlaps it:
   opened in Valid-Time order: a part outside the extent carries the
   rectangle's own values, and a part inside executes every assigned member over
   the rectangle's own unassigned values, an assigned value equal to the stored
-  one included — or is not opened, for termination;
-- a gap in coverage stays a gap: nothing is opened where no current rectangle
-  exists, and the write continues to the coverage beyond it;
+  one included — a replacement's complete stated state, for a replacement — or
+  is not opened, for termination;
+- an amendment leaves a gap in coverage a gap: nothing is opened where no
+  current rectangle exists, and the write continues to the coverage beyond it.
+  A replacement opens its complete state over every part of its extent no
+  current rectangle covers — a gap, or the coverage after a scheduled
+  termination — once, after every inactivation, exactly as a caller-addressed
+  replacement does (*Caller-addressed writes span their requested extent*).
+  Its authority is its source's: a source whose evidence or insertion
+  authority fails licenses no opening, so a replacement is never an upsert;
 - a rectangle outside the extent is untouched, and adjacent pieces are never
   merged across two rectangles;
 - every rectangle's inactivation precedes every opening (`m-sql`).
@@ -293,12 +305,20 @@ A write an insertion of the same attempt authorized observed no rectangle, so
 the coverage it reaches is read from its anchor inside the flush that writes it,
 and it requires a current rectangle containing that anchor. While the insertion
 is still pending, its opening is the coverage: an edit bounded inside the
-opening splits it, and nothing extends it beyond its own window (`m-unit-work`
-*Same-transaction write coalescing*).
+opening splits it, and an amendment never extends it beyond its own window
+(`m-unit-work` *Same-transaction write coalescing*). A replacement reaching past
+the opening establishes the same state there it would once the insertion had
+executed, settled in the opening's own unit at the normal flush: no flush runs
+at the call and no intermediate insertion is written. The stored coverage past
+the opening's window is read inside the write batch, each rectangle the composed
+writes reach is transformed under its own proof, the opening's surviving pieces
+open as new lineages, and every remaining part of the replacement's extent opens
+with its complete state. The opening's own window is coverage, so a part of it an
+earlier composed write destroyed is not reopened.
 
 ## Caller-addressed writes span their requested extent
 
-A caller-addressed patch or replacement (`m-unit-work` *Caller-addressed
+A caller-addressed amendment or replacement (`m-unit-work` *Caller-addressed
 writes*) states its own `validFrom`, any instant inside a current rectangle, and
 its requested extent is `[validFrom, until)`, through infinity when unbounded.
 It requires a current rectangle containing `validFrom` whose `in_z` is the
@@ -309,7 +329,7 @@ changed since the caller's query, and each is inactivated under its own `in_z`.
 
 | Mutation | Inside its requested extent |
 |---|---|
-| Patch | Each overlapping rectangle takes the assigned members over its own unassigned values, exactly as an observed write's does; a gap and the coverage after a scheduled termination stay absent. |
+| Amendment | Each overlapping rectangle takes the assigned members over its own unassigned values, exactly as an observed write's does; a gap and the coverage after a scheduled termination stay absent. |
 | Replacement | Each overlapping rectangle takes the complete stated state, and every part of the extent no current rectangle covers — a gap, or the coverage after a scheduled termination — is opened with that state too, once. |
 
 A rectangle the write leaves unchanged is kept rather than inactivated
@@ -348,9 +368,9 @@ destroys only its own.
 
 ```text
 Stored: [January, infinity) at T0
-Patch [February, April) from T0, then patch [June, August) from T0
-Final:  [January, February) | [February, April) first patch
-        | [April, June) | [June, August) second patch | [August, infinity)
+Amend [February, April) from T0, then amend [June, August) from T0
+Final:  [January, February) | [February, April) first amendment
+        | [April, June) | [June, August) second amendment | [August, infinity)
 ```
 
 When an ordering barrier separates such operations (`m-unit-work`
@@ -366,7 +386,7 @@ attempt adds no history of its own.
 **Concurrent creation in gaps is not coordinated.** The existing-row guards and
 shared locks above protect rows that exist when the flush reads them. A
 concurrent transaction may still open coverage inside a gap a replacement fills,
-or a gap a patch passes over, and both commits can leave overlapping current
+or a gap an amendment passes over, and both commits can leave overlapping current
 coverage; no isolation level is raised to prevent it.
 
 **Untracked same-token changes are a configuration constraint.** A supported
@@ -397,14 +417,14 @@ Optimistic, and every resulting row keeps `in_z = txInstant`:
 
 | Mutation of a rectangle `[s, e)` the attempt opened | Effect |
 |---|---|
-| **update** at `V` with `s < V` | update the rectangle into the changed tail `[V, e)`; insert the `head` `[s, V)` |
-| **update** at `V = s` | update the rectangle's value in place |
-| **updateUntil** `[V, U)` with `s < V < U < e` | update the rectangle into the carried tail `[U, e)`; insert `head` and `middle` |
+| **amend** at `V` with `s < V` | update the rectangle into the changed tail `[V, e)`; insert the `head` `[s, V)` |
+| **amend** at `V = s` | update the rectangle's value in place |
+| **amendUntil** `[V, U)` with `s < V < U < e` | update the rectangle into the carried tail `[U, e)`; insert `head` and `middle` |
 | **terminateUntil** `[V, U)` with `s < V < U < e` | update the rectangle into the carried tail `[U, e)`; insert the `head` |
 | **terminate** at `V` with `s < V` | delete the rectangle; insert the `head` `[s, V)` |
 | **terminate** at `V = s` | delete the rectangle |
 
-An update every assigned value of which the rectangle already holds over the
+An amendment every assigned value of which the rectangle already holds over the
 part it reaches — observed, insertion-authored, or caller-addressed — writes
 nothing at all: the rectangle is unchanged and is neither split nor revised.
 Ownership is never inferred from `in_z = txInstant`.
@@ -465,9 +485,9 @@ facts and the attempt's ownership as it stands then:
   its nonempty successors.
 
 For one authored mutation of a lone row this is the profile tables above: an
-`update` closes as `Superseded` and opens a `ChangedFrom` successor, plus
+`amend` closes as `Superseded` and opens a `ChangedFrom` successor, plus
 `CarriedFrom` heads and tails on Bitemporal data; a `terminate` closes as
-`Terminated` and opens only carried survivors; `updateUntil` yields a carried
+`Terminated` and opens only carried survivors; `amendUntil` yields a carried
 `head`, a changed `middle`, and a carried `tail`. Each successor is its own
 Planned Insert, opened at the attempt's Transaction Instant over
 `[txInstant, infinity)` on Transaction Time and over its own Valid-Time
@@ -691,15 +711,15 @@ order**, and each resolved row's **close-and-chain stays together as one adjacen
 unit** — the row's close `UPDATE` immediately followed by its chain `INSERT` —
 **never regrouped by statement kind** (all closes, then all inserts). This is the
 multi-statement-per-row generalization of `m-sql`'s "one keyed per-object write per
-resolved row": a `terminate` row contributes a lone close, an `update` row a
+resolved row": a `terminate` row contributes a lone close, an `amend` row a
 close-then-chain pair. `m-temporal-write-007` (terminate) and `m-temporal-write-009`
-(update) are the corpus witnesses.
+(amend) are the corpus witnesses.
 
 ## Composition with inheritance
 
 A milestone-chaining write on an inheritance participant (a concrete subtype of a
 family whose Transaction-Time axis is declared on the abstract root, `m-inheritance`) is
-the **same** close-and-open sequence — `insert` / `update` / `terminate` are
+the **same** close-and-open sequence — `insert` / `amend` / `terminate` are
 unchanged. Routing and tag guards are physical, owned by `m-inheritance` / `m-sql`,
 not restated here. The corpus proves Transaction-Time-Only terminate composed with both strategies
 (`m-inheritance-090` / `-091`).
@@ -723,7 +743,7 @@ milestone close. The corpus pins this composed order (`m-inheritance-105`).
 A rectangle-split write on an inheritance participant (a concrete subtype of a family
 whose bitemporal axes are declared on the abstract root, `m-inheritance`) is the
 **same** inactivate-and-chain sequence — the plain `terminate` and the windowed
-`terminateUntil`, and their `update` / `*Until` siblings, are unchanged. Routing and
+`terminateUntil`, and their `amend` / `*Until` siblings, are unchanged. Routing and
 tag guards are physical, owned by `m-inheritance` / `m-sql`, not restated here; the
 composed milestone shapes stay identical to the standalone witnesses, differing only
 in table / tag routing. The corpus pins both strategies
@@ -742,7 +762,7 @@ part of the required parity surface, and they are excluded from the coverage gat
 
 ## How the harness verifies (`m-case-format`)
 
-Write-sequence cases carry a `when.writeSequence` (ordered `insert` / `update` /
+Write-sequence cases carry a `when.writeSequence` (ordered `insert` / `amend` /
 `terminate`) and `then.tableState`. The harness **applies** the ordered DML
 golden SQL (`then.statements`) to a freshly-provisioned (empty) table, then asserts
 the resulting milestone rows equal `then.tableState` — including the
@@ -752,17 +772,17 @@ introspecting
 an implementation, the suite proves the *documented golden SQL itself* produces
 the correct milestones.
 
-On a two-axis entity the sequence carries the `insertUntil` / `updateUntil` /
-`terminateUntil` trio beside the plain unbounded `insert` / `update` /
+On a two-axis entity the sequence carries the `insertUntil` / `amendUntil` /
+`terminateUntil` trio beside the plain unbounded `insert` / `amend` /
 `terminate`, and the harness asserts the resulting rows — the inactivated original (`out_z`
 finite) plus the `head` / `middle` / `tail` rectangles current on Transaction Time
-(`out_z = infinity`); a plain `update` asserts the inactivated original plus a
+(`out_z = infinity`); a plain `amend` asserts the inactivated original plus a
 `head` and a new `tail`; a plain `terminate` asserts the inactivated original plus a
 lone `head`, with `[V, infinity)` covered by no current-on-Transaction-Time row; a plain
 `insert` asserts a single fully-current rectangle (`thru_z = out_z = infinity`) with
 no inactivation. The DML statement count must equal the sum of the steps' declared
 statement counts and the case's `then.roundTrips` (a plain `insert` step is 1
 statement; a plain `terminate` step is 2 statements — inactivate + `head`; a plain
-`update` step is 3 — inactivate + `head` + new `tail`). The standalone witnesses are
+`amend` step is 3 — inactivate + `head` + new `tail`). The standalone witnesses are
 `m-temporal-write-025-plain-insert`, `m-temporal-write-022-plain-update-split`, and
 `m-temporal-write-023-plain-terminate`.
