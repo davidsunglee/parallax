@@ -48,6 +48,7 @@ real implementation, graded against the golden SQL.
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import re
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -924,7 +925,11 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
     counts every call that reached the database, so it is that total plus one
     resolving read per entry writing against existing state
     (:func:`write_plan.unit_resolving_reads`) — the read a keyed write verb's source
-    requires, which is work the framework genuinely does.
+    requires, which is work the framework genuinely does. A Locking
+    caller-addressed Bitemporal entry's acquisition holds the rectangle the
+    case's own history leaves current at its ``validFrom``
+    (:func:`_acquired_start`), which decides whether its flush reads any
+    coverage beyond it.
     """
     statements = case.golden_statements(dialect)
     step_total = sum(step.get("statements", 1) for step in case.write_sequence)
@@ -934,7 +939,12 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
             f"statement(s) but the writeSequence declares {step_total} "
             f"(sum of per-step statement counts). They MUST be equal."
         )
-    reads = sum(unit_resolving_reads(case, [entry]) for entry in case.write_sequence)
+    reads = sum(
+        unit_resolving_reads(
+            case, [entry], acquired_start=lambda entry: _acquired_start(case, entry)
+        )
+        for entry in case.write_sequence
+    )
     if len(statements) + reads != case.round_trips:
         raise CaseFailure(
             f"{case.path.name}: then.statements ({dialect}) has {len(statements)} DML "
@@ -2166,6 +2176,32 @@ def _observed_rectangle(case: Case, entity: Entity, step: dict[str, Any], pk: An
             f"be derived from the case's own history."
         )
     return rectangles[0]
+
+
+def _acquired_start(case: Case, step: dict[str, Any]) -> tuple[Any, Any] | None:
+    """The Valid-Time ``[start, end)`` of the rectangle a caller-addressed
+    Bitemporal *step*'s acquisition reads — the one its history leaves current
+    holding its ``validFrom`` — or None where the replay leaves no such one."""
+    entity = case.model.entity(step["entity"])
+    ((_columns, pk, _set_cols, _version),) = (
+        classify_write_row(case, entity, row, mutation=step["mutation"], opening=True)
+        for row in step["rows"]
+    )
+    valid_from = step["validFrom"]
+    for rectangle in _current_rectangles(case, entity, step, pk):
+        if _starts_by(rectangle.valid_start, valid_from) and _ends_after(
+            rectangle.valid_end, valid_from
+        ):
+            return rectangle.valid_start, rectangle.valid_end
+    return None
+
+
+def _starts_by(start: Any, instant: Any) -> bool:
+    return dt.datetime.fromisoformat(start) <= dt.datetime.fromisoformat(instant)
+
+
+def _ends_after(end: Any, instant: Any) -> bool:
+    return end == "infinity" or dt.datetime.fromisoformat(end) > dt.datetime.fromisoformat(instant)
 
 
 def _current_rectangles(

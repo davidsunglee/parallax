@@ -356,7 +356,7 @@ def test_fixture_seeding_tracks_current_milestones_with_managed_axis_ends() -> N
             entity=entity,
             key_attribute=AttributeIdentity(entity.identity, "id"),
             key_value=1,
-            valid_time_window=TimeInterval(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), INFINITY),
+            valid_time_windows=(TimeInterval(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), INFINITY),),
             locking=False,
         ),
     )

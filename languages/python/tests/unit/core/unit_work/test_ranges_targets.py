@@ -150,10 +150,10 @@ def test_a_range_its_observations_leave_uncovered_reads_only_the_uncovered_suffi
     )
     unit = _deferred_unit(observed)
     assert unit.deferred is not None
-    window = _coverage(unit).valid_time_window
+    (window,) = _coverage(unit).valid_time_windows
     assert window == TimeInterval(JUN, SEP)
     prepared = observed.instruction.valid_time_window
-    assert prepared is not None and window is not None
+    assert prepared is not None
     assert window.end is prepared.end
 
 
@@ -161,14 +161,18 @@ def test_a_lone_target_range_reads_through_the_very_window_its_caller_prepared()
     target = addressed_write(value="150.00")
     unit = _deferred_unit(target)
     assert unit.deferred is not None
-    assert _coverage(unit).valid_time_window is target.instruction.valid_time_window
+    (window,) = _coverage(unit).valid_time_windows
+    assert window is target.instruction.valid_time_window
 
 
 def test_a_target_range_reads_its_window_and_gates_its_start_on_the_callers_revision() -> None:
     unit = _deferred_unit(addressed_write(value="150.00"))
     assert unit.deferred is not None
     acquisition = _coverage(unit)
-    assert (acquisition.valid_time_window, acquisition.locking) == (TimeInterval(MAR, SEP), False)
+    assert (acquisition.valid_time_windows, acquisition.locking) == (
+        (TimeInterval(MAR, SEP),),
+        False,
+    )
     bound = _bound(unit, [START.evidence.predecessor, LATER.evidence.predecessor])  # type: ignore[union-attr]
     first, second = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert first.affected_rows.on_shortfall == FAILED_PRECONDITION
@@ -340,7 +344,7 @@ def test_disjoint_targets_over_one_original_transform_it_once_under_one_guard() 
         addressed_write(valid_from=JUN, until=AUG, value="175.00"),
     )
     assert unit.deferred is not None
-    assert _coverage(unit).valid_time_window == TimeInterval(FEB, AUG)
+    assert _coverage(unit).valid_time_windows == (TimeInterval(FEB, AUG),)
     bound = _bound(unit, [WHOLE.evidence.predecessor])  # type: ignore[union-attr]
     (close,) = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert close.affected_rows.on_shortfall == FAILED_PRECONDITION
@@ -460,7 +464,7 @@ def _opened(start: dt.datetime, value: str = "100.00", **cells: object) -> Prede
 def test_a_following_range_reads_its_whole_window_and_discharges_a_proven_start() -> None:
     unit = _chained_unit(addressed_write(valid_from=JUN, until=AUG, value="175.00"))
     assert unit.deferred is not None
-    assert _coverage(unit).valid_time_window == TimeInterval(JUN, AUG)
+    assert _coverage(unit).valid_time_windows == (TimeInterval(JUN, AUG),)
     bound = _bound(unit, [_opened(APR)], ownership=_proven())
     # The start now stands at the row the earlier unit derived from the
     # original the caller stated; that row is the attempt's own, so it is

@@ -510,7 +510,8 @@ an optional exclusive `until` on a Bitemporal one, `validFrom` lying anywhere
 inside a stored rectangle. Its stated Transaction-Time start describes the
 coverage at `validFrom` alone. It is a range over current coverage like an
 observed write's (*deferred range unit*): its flush reads the coverage its
-window reaches, an amendment assigns to each existing interval and creates nothing,
+window reaches that no row its unit already holds covers, an amendment assigns
+to each existing interval and creates nothing,
 and a replacement also opens its state over every gap of its window
 (`m-temporal-write` *Caller-addressed writes span their requested extent*). Where
 that read shows no current row at `validFrom`, or one at another
@@ -551,6 +552,14 @@ Submission follows the target Entity's Effective Concurrency Strategy:
   and its stored revision then decides the precondition. A failure executing the
   read or assembling its rows still precedes the count.
 
+  A temporal target's acquisition reads its row **whole**, every Value Object
+  occurrence and the raw Structured Column included, so the write's range can
+  reuse that row as coverage (*Retained starting rows*). The call still judges
+  only what a read of the row alone judges — its Attributes; each occurrence is
+  judged at the write's execution turn, if the row is reused at all. The wider
+  read is the one place a failure can move earlier: a database or driver failure
+  producing an occurrence's column is the acquisition's, at the call.
+
 A failed precondition is the caller's: re-running the transaction re-states the
 same revision, so it is **never retried**, whatever the retry option, and no
 diagnostic read distinguishes a deleted row from a revised one. A failure at
@@ -565,6 +574,30 @@ attempt opened*). An object the attempt only rewrote is no
 insertion, and a later transaction addresses a committed insertion like any
 other row.
 
+### Retained starting rows
+
+A temporal target's Locking acquisition keeps the row it read with the write as
+**pending data**, not evidence: its Attributes judged, its Value Object
+occurrences pending, its raw Structured Column beside them. The row names the
+exact milestone it is, by its own coordinates rather than the caller's
+`validFrom`, and the attempt's count of completed changes when the read ran. It
+grants no authority — the condition the call proved stays the caller's — and it
+is no observation: no write is admitted on it.
+
+When the write's range reaches its turn, the row is **current** if no execution
+unit completed since its read has changed that exact milestone (*Execution units
+complete before later work runs*) — even one that kept its address and
+revision. A unit that kept the milestone unchanged, or changed other states, does
+not make it stale, and neither does an ordering barrier by itself. A current row
+is **completed** — each pending occurrence judged as an ordinary read judges it,
+with no statement, Database Call, or activity, and a finding refusing the write
+at that turn — and joins the range's coverage exactly as a row its coverage read
+returned would. A row no longer current is discarded without being judged and
+the coverage it held is read instead; the caller's condition is still judged,
+against the rows the range binds. Under Optimistic nothing is retained, since
+no acquisition runs. A retained row is released once its range has reused or
+discarded it, and with its write wherever the write itself is dropped.
+
 ### Row acquisition
 
 A write that must read existing rows before it can be settled reads them through
@@ -575,15 +608,17 @@ acquisition*). A request describes what to read and performs no read:
 | Request | What it reads | When |
 |---|---|---|
 | **Selection** | the rows a predicate-selected write on a versioned or temporal target will change | when the write is buffered, after pending writes are flushed through the read gate |
-| **Target** | the one row a Locking caller-addressed write addresses, at `validFrom` for a Bitemporal target, when no pending write or live read already proves it | when the write is buffered, with no force-flush |
-| **Coverage** | an object's current milestones across a deferred range unit's window | when the flush reaches that unit, inside its write batch |
+| **Target** | the one row a Locking caller-addressed write addresses, at `validFrom` for a Bitemporal target, when no pending write or live read already proves it; a temporal one whole, retained with the write | when the write is buffered, with no force-flush |
+| **Coverage** | an object's current milestones overlapping the parts of a deferred range unit's window no row it holds covers, in statements naming a bounded number of parts each | when the flush reaches that unit, inside its write batch |
+| **Completion** | nothing: the retained rows of a deferred range unit that are still current, each occurrence the target read left pending judged as a read judges it | when the flush reaches that unit, before its coverage is read |
 
 The unit of work hands each request a consumer of its own and receives the
 consumer's result. The consumer reads the judged rows, and their aligned raw
 documents, while the acquisition still holds them, adopts the row and document
 references it keeps into canonical evidence (`m-write-plan`), and retains
 nothing of the read itself; acquisition settles its resources however the
-consumer ends. Where a write reads nothing, it requests nothing: whether a
+consumer ends. A completion reaches the same kind of consumer with no read
+behind it. Where a write reads nothing, it requests nothing: whether a
 predicate write is readless — an unversioned Non-Temporal target — is decided
 once, when it is buffered, and a readless write reaches settlement already
 marked so, without a second routing decision there.
@@ -778,9 +813,15 @@ semantics already decided.
   such a range whatever it composes with, unless observed rows of its
   composition cover its window; its meaning also carries the caller's starting
   condition, which binding judges against the rows read before any step exists,
-  and a replacement's extent, whose uncovered parts binding opens. A composition
+  and a replacement's extent, whose uncovered parts binding opens. Its meaning
+  carries, too, the starting rows its callers' Locking acquisitions retained
+  (*Retained starting rows*): one still current at the unit's turn is completed
+  and reused as coverage, a stale one is discarded unjudged, and only the parts
+  of the window neither those rows nor the observed originals hold are read; a
+  part that read finds nothing in is a gap, read once. A composition
   an ordering barrier kept after earlier writes of its object reads its whole
-  window when its turn comes and binds to those rows alone: each observed
+  window when its turn comes — less what its reused retained rows hold — and
+  binds to the current rows alone: each observed
   condition holds where its rectangle still stands or an earlier unit of the
   flush proved it, each caller's start where it stands at the stated start or at
   a row derived from a proven original that held it at that start (*Execution

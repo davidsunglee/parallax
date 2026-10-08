@@ -38,6 +38,14 @@ from parallax.core import (
 )
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure, KeyedWriteValueError
+from parallax.core.execution_lifecycle import (
+    DatabaseCallFinished,
+    DatabaseReadCompleted,
+    ExecutionLifecycleHandler,
+    ExecutionLifecycleHandlerError,
+    RootExecution,
+)
+from parallax.core.read_delivery import StoredDataDecodingError
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
     WriteEvidenceError,
@@ -1220,4 +1228,187 @@ def test_a_transaction_time_source_replacement_chains_its_complete_state(
     assert _log_rows(profile_run, entity) == [
         (_T0, _TA, "a", _S1, []),
         (_TA, None, "r", spec, marks),
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Under Locking the flush reuses the starting row the call acquired, reads only #
+# the coverage that row leaves, and judges its occurrences only at the flush.   #
+# --------------------------------------------------------------------------- #
+class _Reads:
+    """A Provider recording the SQL of every read Database Call, in order."""
+
+    def __init__(self) -> None:
+        self.sql: list[str] = []
+
+    def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler | None:
+        del execution
+        return self
+
+    def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
+        raise AssertionError(error)
+
+    def handle(self, event: object, /) -> None:
+        if isinstance(event, DatabaseCallFinished) and isinstance(
+            event.outcome, DatabaseReadCompleted
+        ):
+            self.sql.append(event.statement.sql)
+
+    def of(self, entity: type[Any]) -> list[str]:
+        return [sql for sql in self.sql if f"from {_TABLES[entity]} " in sql]
+
+
+def _counted(profile_run: Any, reads: _Reads, *instants: dt.datetime) -> ScopedDatabase:
+    return own_root(
+        connect(
+            profile_run.port, _MODEL, clock=ScriptedClock(list(instants)), lifecycle_provider=reads
+        )
+    ).using_database_login()
+
+
+@_SPAN_AXES
+@_STRATEGIES
+def test_a_target_inside_its_starting_rectangle_reads_that_rectangle_once(
+    profile_run: Any, entity: type[Any], concurrency: _Concurrency
+) -> None:
+    _seeded_spans(profile_run, entity)
+    reads = _Reads()
+    db = _counted(profile_run, reads, _TA)
+    db.transact(
+        lambda tx: _span_patch(tx, entity, valid_from=_FEB, until=_MAR, amount=150),
+        concurrency=concurrency,
+    )
+    # Locking acquires the start at the call and reuses it as the flush's whole
+    # coverage; Optimistic reads nothing at the call and the coverage at flush.
+    (read,) = reads.of(entity)
+    assert read.endswith("for share of t0") is (concurrency == "locking")
+    assert _span_rows(profile_run, entity) == [
+        (_T0, _TA, _JAN, _APR, 100, "a", _S1, _M),
+        (_T1, None, _JUN, _AUG, 200, "b", _S2, []),
+        (_TA, None, _JAN, _FEB, 100, "a", _S1, _M),
+        (_TA, None, _FEB, _MAR, 150, "a", _S1, _M),
+        (_TA, None, _MAR, _APR, 100, "a", _S1, _M),
+    ]
+
+
+@_SPAN_AXES
+@_REPRESENTATIONS
+def test_a_locking_target_reads_only_the_coverage_past_its_acquired_start(
+    profile_run: Any, entity: type[Any], representation: _Representation
+) -> None:
+    _seeded_spans(profile_run, entity)
+    reads = _Reads()
+    db = _counted(profile_run, reads, _TA)
+    db.transact(lambda tx: _span_replace(tx, entity, representation), concurrency="locking")
+    acquisition, coverage = reads.of(entity)
+    assert "t0.from_z <= ? and t0.thru_z > ?" in acquisition
+    assert coverage.endswith("where t0.id = ? and t0.thru_z > ? and t0.out_z = ? for share of t0")
+    replaced: _SpanRow = (300, "r", None, [])
+    assert _span_rows(profile_run, entity) == [
+        *_SEED_HISTORY,
+        (_TA, None, _JAN, _MAR, 100, "a", _S1, _M),
+        (_TA, None, _MAR, _APR, *replaced),
+        (_TA, None, _APR, _JUN, *replaced),
+        (_TA, None, _JUN, _AUG, *replaced),
+        (_TA, None, _AUG, None, *replaced),
+    ]
+
+
+@_SPAN_AXES
+def test_locking_targets_read_the_parts_their_acquired_starts_leave_in_one_statement(
+    profile_run: Any, entity: type[Any]
+) -> None:
+    # The two starts are [January, April) and [June, August); between and after
+    # them the window reaches a gap and nothing, both resolved by one read.
+    _seeded_spans(profile_run, entity)
+    reads = _Reads()
+    db = _counted(profile_run, reads, _TA)
+
+    def fn(tx: Transaction) -> None:
+        _span_patch(tx, entity, valid_from=_FEB, until=_MAR, amount=150)
+        _span_patch(tx, entity, valid_from=_JUL, until=_SEP, tx_start=_T1, label="c")
+
+    db.transact(fn, concurrency="locking")
+    first, second, coverage = reads.of(entity)
+    assert "for share of t0" in first and "for share of t0" in second
+    assert ") or (" in coverage
+    assert _span_rows(profile_run, entity) == [
+        (_T0, _TA, _JAN, _APR, 100, "a", _S1, _M),
+        (_T1, _TA, _JUN, _AUG, 200, "b", _S2, []),
+        (_TA, None, _JAN, _FEB, 100, "a", _S1, _M),
+        (_TA, None, _FEB, _MAR, 150, "a", _S1, _M),
+        (_TA, None, _MAR, _APR, 100, "a", _S1, _M),
+        (_TA, None, _JUN, _JUL, 200, "b", _S2, []),
+        (_TA, None, _JUL, _AUG, 200, "c", _S2, []),
+    ]
+
+
+@_LOG_AXES
+@_STRATEGIES
+def test_a_transaction_time_target_reads_its_current_row_once(
+    profile_run: Any, entity: type[Any], concurrency: _Concurrency
+) -> None:
+    profile_run.reset(model_of(_MODEL), {})
+    _db(profile_run, _T0).transact(
+        lambda tx: tx.insert(entity(id=1, label="seed", spec=Spec(title="s1")))
+    )
+    reads = _Reads()
+    _counted(profile_run, reads, _TA).transact(
+        lambda tx: tx.wire.amend_if(_name(entity), {"id": 1, "label": "p"}, tx_start=_T0),
+        concurrency=concurrency,
+    )
+    assert len(reads.of(entity)) == 1
+    assert _log_rows(profile_run, entity) == [
+        (_T0, _TA, "seed", _S1, []),
+        (_TA, None, "p", _S1, []),
+    ]
+
+
+@_SPAN_AXES
+def test_a_locking_targets_invalid_stored_occurrence_fails_at_the_flush(
+    profile_run: Any, entity: type[Any]
+) -> None:
+    _seeded_spans(profile_run, entity)
+    column = (
+        "payload = jsonb_set(payload, '{spec}', '[1]')" if entity in _DOCUMENT else "spec = '[1]'"
+    )
+    profile_run.port.execute(f"update {_TABLES[entity]} set {column} where from_z = %s", [_JAN])
+    called: list[str] = []
+
+    def fn(tx: Transaction) -> None:
+        _span_patch(tx, entity, valid_from=_FEB, until=_MAR, amount=150)
+        called.append("admitted")
+
+    with pytest.raises(ExecutionFailure) as failed:
+        _db(profile_run, _TA).transact(fn, concurrency="locking")
+    # The call admitted the write on the row's revision; the occurrence its
+    # reuse needed was judged at the flush, and the attempt rolled back.
+    assert called == ["admitted"]
+    assert isinstance(failed.value.cause, StoredDataDecodingError)
+    assert [row[:4] for row in _span_rows(profile_run, entity)] == [
+        (_T0, None, _JAN, _APR),
+        (_T1, None, _JUN, _AUG),
+    ]
+
+
+@_SPAN_AXES
+def test_a_reused_start_a_flush_keeps_leaves_an_observation_of_it_writable(
+    profile_run: Any, entity: type[Any]
+) -> None:
+    _seeded_spans(profile_run, entity)
+
+    def fn(tx: Transaction) -> None:
+        source = _span_find(tx, entity, _FEB)
+        # The equal patch reuses the start its call acquired and keeps it.
+        _span_patch(tx, entity, valid_from=_MAR, until=_APR, amount=100)
+        tx.find(entity.where(entity.id == 2).as_of(valid_time=_MAR))
+        tx.amend(source.edit(label="z"), until=_MAR)
+
+    _db(profile_run, _TA).transact(fn, concurrency="locking")
+    assert [row[:6] for row in _span_rows(profile_run, entity)] == [
+        (_T0, _TA, _JAN, _APR, 100, "a"),
+        (_T1, None, _JUN, _AUG, 200, "b"),
+        (_TA, None, _JAN, _FEB, 100, "a"),
+        (_TA, None, _FEB, _MAR, 100, "z"),
+        (_TA, None, _MAR, _APR, 100, "a"),
     ]

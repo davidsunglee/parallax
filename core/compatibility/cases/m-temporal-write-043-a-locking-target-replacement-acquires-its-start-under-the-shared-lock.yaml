@@ -16,7 +16,7 @@ when:
     - mutation: replace
       entity: parallax.compatibility.Position
       statements: 3
-      note: the call reads the rectangle current at March under the shared lock and compares its Transaction-Time start with the caller's; the flush reads the coverage the unbounded window reaches, still locked, closes the rectangle ungated, keeps its head, and opens the complete replacement from March
+      note: the call reads the rectangle current at March whole under the shared lock and compares its Transaction-Time start with the caller's; that rectangle already covers the unbounded window, so the flush reuses it and reads nothing more, closes the rectangle ungated, keeps its head, and opens the complete replacement from March
       row: { id: 1, acctNum: B, value: "300.00" }
       validFrom: "2024-03-01T00:00:00.000000Z"
       ifTxStart: "2024-01-01T00:00:00.000000Z"
@@ -62,4 +62,4 @@ then:
         thru_z: infinity
         in_z: "2024-06-01T00:00:00.000000Z"
         out_z: infinity
-  roundTrips: 6
+  roundTrips: 5

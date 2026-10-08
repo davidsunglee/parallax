@@ -227,15 +227,17 @@ class WritePlanner:
     def bind_deferred(
         self,
         description: DeferredTemporalRange,
-        rows: PredecessorRows | None,
+        reused: PredecessorRows | None,
+        acquired: Sequence[PredecessorRows],
         /,
         *,
         ownership: TemporalWriteOwnership,
         actor_identity: ActorIdentity,
         transaction_instant: TransactionInstant,
     ) -> BoundRange:
-        """Bind a deferred range this planner finalized to the coverage read
-        for it, ``None`` where the read found no row.
+        """Bind a deferred range this planner finalized to the starting rows it
+        ``reused`` and the coverage ``acquired`` for it, each ``None`` or empty
+        where there was none.
 
         Its temporal meaning, concurrency, and gates were fixed when the plan
         was made; binding reads ``ownership`` as the running flush's earlier
@@ -246,7 +248,8 @@ class WritePlanner:
         """
         return bind_deferred(
             description,
-            rows,
+            reused,
+            acquired,
             ownership=ownership,
             audit=AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled),
         )

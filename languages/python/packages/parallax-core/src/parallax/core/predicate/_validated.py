@@ -150,3 +150,20 @@ def conjunction(*terms: ValidatedPredicate) -> ValidatedPredicate:
         And(operands=tuple(term.authored for term in flattened)),
         children=tuple(flattened),
     )
+
+
+def disjunction(first: ValidatedPredicate, *rest: ValidatedPredicate) -> ValidatedPredicate:
+    """Compose validated alternatives without decoding or resolving any
+    occurrence again, each conjunction among them grouped whole; a lone
+    alternative is answered itself."""
+    if not rest:
+        return first
+    alternatives = tuple(
+        ValidatedPredicate(Group(operand=term.authored), children=(term,))
+        if isinstance(term.authored, And)
+        else term
+        for term in (first, *rest)
+    )
+    return ValidatedPredicate(
+        Or(operands=tuple(term.authored for term in alternatives)), children=alternatives
+    )

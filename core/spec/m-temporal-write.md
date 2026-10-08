@@ -138,8 +138,10 @@ row, the write fails sooner, as Cardinality Corruption (`m-unit-work`). Under
 Optimistic the close's gate — or the guard keeping an unchanged row — binds the
 stated `ifTxStart` rather than an observation, and its zero-row shortfall is
 that failed precondition, never a retriable conflict. Under Locking the current
-row was read under the shared lock at submission and is read under it again by
-the flush, and the close is ungated.
+row was read whole under the shared lock at submission, and the flush reuses it
+unless an earlier unit of the attempt has since changed it, when it reads the
+row again under the lock (`m-unit-work` *Retained starting rows*); the close is
+ungated.
 
 ## The rectangle split
 
@@ -347,9 +349,11 @@ write fails sooner, as Cardinality Corruption (`m-unit-work`). Under Optimistic
 the starting rectangle's inactivation, or the guard keeping it unchanged, gates
 on the stated `ifTxStart`, and its shortfall is that failed precondition; every
 later rectangle's gates on its own `in_z`, and its shortfall is an ordinary
-conflict. Under Locking the starting rectangle was read under the shared lock
-at submission and every rectangle the flush reads is read under it again, so no
-inactivation is gated (`m-read-lock`).
+conflict. Under Locking the starting rectangle was read whole under the shared
+lock at submission, and the flush reuses it while no earlier unit of the attempt
+has changed it and reads only the rectangles it does not cover, under the same
+lock (`m-unit-work` *Retained starting rows*), so no inactivation is gated
+(`m-read-lock`).
 
 A caller-addressed write composes with observed writes of one window and one
 starting state (`m-unit-work` *Observed-State Coalescing*): a replacement's

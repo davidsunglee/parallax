@@ -362,7 +362,7 @@ def _acquisition(valid_from: dt.datetime, until: dt.datetime | None) -> Coverage
         entity=POSITION_ENTITY,
         key_attribute=key,
         key_value=1,
-        valid_time_window=TimeInterval(valid_from, INFINITY if until is None else until),
+        valid_time_windows=(TimeInterval(valid_from, INFINITY if until is None else until),),
         locking=False,
     )
 
@@ -482,7 +482,7 @@ def test_coverage_answers_a_tracked_milestones_value_objects_positionally() -> N
             entity=entity,
             key_attribute=AttributeIdentity(entity.identity, "id"),
             key_value=7,
-            valid_time_window=None,
+            valid_time_windows=(),
             locking=False,
         ),
     )

@@ -438,6 +438,7 @@
     "encode_occurrence",
     "is_text_compared",
     "locate_raw_entity_member",
+    "located_occurrence",
     "occurrence_shape",
     "persisted_document_equal",
     "prepare_effective_change",

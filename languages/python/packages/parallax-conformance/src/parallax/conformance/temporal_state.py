@@ -25,7 +25,7 @@ from parallax.core.unit_work.acquisition import (
     AcquireRows,
     CoverageReadRequest,
     RowConsumer,
-    RowReadRequest,
+    RowRequest,
 )
 from parallax.core.write_plan import (
     ObservedStateKey,
@@ -400,8 +400,8 @@ class TemporalShadow:
     def acquisition(self, model: Metamodel) -> AcquireRows:
         """The row acquisition a unit of work planning against this case state
         reads its coverage through: each coverage read answers the tracked
-        current milestones of its object that overlap its Valid-Time window, or
-        all of them where it has none — what the execution's own coverage read
+        current milestones of its object that overlap any of its Valid-Time
+        windows, or all of them where it names none — what the execution's own coverage read
         returns from the rows this tracker accounts for, through the same
         consumer."""
         return _CaseStateAcquisition(self, model)
@@ -411,7 +411,7 @@ class TemporalShadow:
         over its target's member selection."""
         entity = request.entity
         identity = (entity.identity.name, (request.key_value,))
-        window = request.valid_time_window
+        windows = request.valid_time_windows
         shape = temporal_read.view(model).shape(entity.identity)
         assert shape is not None  # the facet covers every accepted Entity
         members = _member_selection(model, entity).shape
@@ -420,9 +420,9 @@ class TemporalShadow:
             if slot[:2] != identity:
                 continue
             predecessor = observation.predecessor
-            if window is not None:
+            if windows:
                 coverage = temporal_read.valid_time_coverage(shape, predecessor, None)
-                if coverage is None or not coverage.overlaps(window):
+                if coverage is None or not any(coverage.overlaps(window) for window in windows):
                     continue
             rows.append(_positional(members, predecessor.members))
         return rows
@@ -473,7 +473,7 @@ class _CaseStateAcquisition:
     shadow: TemporalShadow
     model: Metamodel
 
-    def __call__[Request: RowReadRequest, Result](
+    def __call__[Request: RowRequest, Result](
         self, request: Request, consumer: RowConsumer[Request, Result], /
     ) -> Result:
         if not isinstance(

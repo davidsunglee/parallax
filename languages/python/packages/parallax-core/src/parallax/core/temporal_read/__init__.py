@@ -297,6 +297,35 @@ class TimeInterval:
                 cursor = covered
         return cursor
 
+    def uncovered(self, coverage: Iterable[TimeInterval]) -> tuple[TimeInterval, ...]:
+        """The parts of this interval no interval of ``coverage`` contains:
+        sorted, disjoint, nonempty, and never adjacent, so a part between two
+        covered stretches stands alone.
+
+        ``coverage`` must be ordered by start; adjacent, overlapping, and
+        duplicate intervals are all accepted. An interval that answers itself
+        is uncovered whole.
+        """
+        parts: list[TimeInterval] = []
+        cursor = self.start
+        end = self.end
+        for interval in coverage:
+            if end is not INFINITY and not interval.start < end:
+                break
+            if interval.starts_after(cursor):
+                parts.append(TimeInterval(cursor, interval.start))
+            covered = interval.end
+            if covered is INFINITY:
+                return tuple(parts)
+            if covered > cursor:
+                if end is not INFINITY and not covered < end:
+                    return tuple(parts)
+                cursor = covered
+        if not parts and cursor is self.start:
+            return (self,)
+        parts.append(TimeInterval(cursor, end))
+        return tuple(parts)
+
 
 def _before(instant: _dt.datetime, end: _End) -> bool:
     return end is INFINITY or instant < end

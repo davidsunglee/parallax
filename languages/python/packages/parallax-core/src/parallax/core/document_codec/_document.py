@@ -53,6 +53,7 @@ __all__ = [
     "encode_managed_document",
     "encode_managed_many",
     "locate_raw_entity_member",
+    "located_occurrence",
     "persisted_document_equal",
     "prepare_patches",
     "prepared_raw_member_classifier",
@@ -191,6 +192,18 @@ def locate_raw_entity_member(document: DocumentValue, member: str) -> RawLocated
     return _PRESENT_JSON_NULL if value is None else cast("DocumentValue", value)
 
 
+def located_occurrence(located: object) -> SqlNull | PresentDocument:
+    """The input :func:`decode_occurrence_classified` takes for an occurrence
+    :func:`locate_raw_entity_member` ``located``: SQL null where the member or
+    its whole document is missing, the present document otherwise — a present
+    JSON null included — whose contents are not examined here."""
+    if isinstance(located, (SqlNull, Missing)):
+        return SQL_NULL
+    return PresentDocument(
+        None if located is _PRESENT_JSON_NULL else cast("DocumentValue", located)
+    )
+
+
 def prepared_raw_member_classifier(
     shape: MemberShape,
     member_name: str,
@@ -209,16 +222,9 @@ def prepared_raw_member_classifier(
     def classify_occurrence(
         located: RawLocatedMemberInput,
     ) -> tuple[object, tuple[DocumentFinding, ...]]:
-        carrier = (
-            SQL_NULL
-            if isinstance(located, (SqlNull, Missing))
-            else PresentDocument(
-                None if located is _PRESENT_JSON_NULL else cast("DocumentValue", located)
-            )
-        )
         classified = decode_occurrence_classified(
             member.shape,
-            carrier,
+            located_occurrence(located),
             multiplicity=member.multiplicity,
             nullable=member.nullable,
             build_object=build_object,

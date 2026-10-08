@@ -318,7 +318,7 @@ def test_a_target_step_owes_a_read_only_where_it_is_acquired() -> None:
     assert unit_resolving_reads(unversioned, [wallet]) == 1
 
 
-def test_a_temporal_target_step_owes_its_coverage_read_and_under_locking_its_acquisition() -> None:
+def test_a_temporal_target_step_owes_its_coverage_read_unless_its_acquisition_holds_it() -> None:
     entry = {
         "mutation": "amend",
         "entity": "parallax.compatibility.Balance",
@@ -330,7 +330,55 @@ def test_a_temporal_target_step_owes_its_coverage_read_and_under_locking_its_acq
         return Case(path=Path("synthetic.yaml"), raw=raw, model=_balance_model())
 
     assert unit_resolving_reads(case({}), [entry, entry]) == 1
-    assert unit_resolving_reads(case({"when": {"uow": {"concurrency": "locking"}}}), [entry]) == 2
+    # A Transaction-Time-Only object's acquired row is its whole coverage.
+    assert unit_resolving_reads(case({"when": {"uow": {"concurrency": "locking"}}}), [entry]) == 1
+
+
+_MAR, _APR, _JUN, _SEP = (f"2024-{month:02d}-01T00:00:00.000000Z" for month in (3, 4, 6, 9))
+
+
+@pytest.mark.parametrize(
+    ("windows", "held", "reads"),
+    [
+        pytest.param(
+            [(_MAR, None)], {_MAR: ("2024-01-01T00:00:00.000000Z", "infinity")}, 1, id="held"
+        ),
+        pytest.param([(_MAR, _SEP)], {_MAR: ("2024-01-01T00:00:00.000000Z", _JUN)}, 2, id="short"),
+        pytest.param(
+            [(_MAR, _APR), (_JUN, _SEP)], {_MAR: (_MAR, _APR), _JUN: (_JUN, _SEP)}, 2, id="hole"
+        ),
+        pytest.param(
+            [(_MAR, _APR), (_APR, _SEP)],
+            {_MAR: (_MAR, _APR), _APR: (_APR, "infinity")},
+            1,
+            id="both",
+        ),
+        pytest.param([(_MAR, _SEP)], {}, 2, id="unknown"),
+    ],
+)
+def test_a_locking_bitemporal_target_owes_coverage_its_acquired_rows_do_not_hold(
+    windows: list[tuple[str, str | None]], held: dict[str, tuple[str, str]], reads: int
+) -> None:
+    locking = Case(
+        path=Path("synthetic.yaml"),
+        raw={"when": {"uow": {"concurrency": "locking"}}},
+        model=load_model(COMPATIBILITY_ROOT, "models/position.yaml"),
+    )
+    entries = [
+        {
+            "mutation": "amend" if until is None else "amendUntil",
+            "entity": "parallax.compatibility.Position",
+            "rows": [{"id": 1, "value": "1.00"}],
+            "target": True,
+            "validFrom": valid_from,
+            **({} if until is None else {"until": until}),
+        }
+        for valid_from, until in windows
+    ]
+    assert (
+        unit_resolving_reads(locking, entries, acquired_start=lambda e: held.get(e["validFrom"]))
+        == reads
+    )
 
 
 def _non_temporal_row_step(case) -> dict | None:

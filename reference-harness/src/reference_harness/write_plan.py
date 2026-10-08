@@ -26,7 +26,8 @@ rather than re-deriving them.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator
+import datetime as dt
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
@@ -106,7 +107,15 @@ def _entry_object_keys(case: Case, entry: dict[str, Any]) -> list[tuple[str, tup
     ]
 
 
-def unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
+type AcquiredStart = Callable[[dict[str, Any]], tuple[Any, Any] | None]
+"""The Valid-Time ``[start, end)`` of the row a Locking caller-addressed
+Bitemporal entry's acquisition holds — the rectangle its ``validFrom`` lies in —
+or ``None`` where the case's history does not tell."""
+
+
+def unit_resolving_reads(
+    case: Case, entries: list[dict[str, Any]], *, acquired_start: AcquiredStart | None = None
+) -> int:
     """The resolving reads ONE choreography unit owes: one per target Entity whose
     existing-row keyed writes address a row this unit did not itself open.
 
@@ -122,7 +131,10 @@ def unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
     A caller-addressed entry resolves no source either. Under Locking it owes
     one acquisition of each object it writes instead, which a second write of
     the same object reuses. A temporal one also owes the read of the coverage
-    its window reaches, which its flush makes once per object.
+    its window reaches, which its flush makes once per object — unless every
+    such entry of the object acquired its row and those rows already hold the
+    object's whole window: a Transaction-Time-Only row always does, and a
+    Bitemporal one where ``acquired_start`` places it over the window.
 
     Targets are counted by their canonical spelling, so two entries naming one
     Entity two ways owe one read between them.
@@ -130,14 +142,18 @@ def unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
     opened: set[tuple[str, tuple[Any, ...]]] = set()
     needed: set[str] = set()
     acquired: set[tuple[str, tuple[Any, ...]]] = set()
-    covered: set[tuple[str, tuple[Any, ...]]] = set()
+    coverage: dict[tuple[str, tuple[Any, ...]], list[_TargetWindow]] = {}
     for entry in entries:
         if entry.get("target"):
             entity = _entry_entity(case, entry)
-            if _acquires(case, entity):
-                acquired.update(_entry_object_keys(case, entry))
+            acquires = _acquires(case, entity)
+            keys = _entry_object_keys(case, entry)
+            if acquires:
+                acquired.update(keys)
             if entity.is_temporal:
-                covered.update(_entry_object_keys(case, entry))
+                window = _target_window(entity, entry, acquires, acquired_start)
+                for key in keys:
+                    coverage.setdefault(key, []).append(window)
             continue
         mutation = entry.get("mutation")
         if mutation in OPENING_MUTATIONS:
@@ -150,7 +166,67 @@ def unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
             continue
         if any(key not in opened for key in _entry_object_keys(case, entry)):
             needed.add(entity.canonical_name)
-    return len(needed) + len(acquired) + len(covered)
+    covered = sum(1 for windows in coverage.values() if not _held_whole(windows))
+    return len(needed) + len(acquired) + covered
+
+
+class _TargetWindow(NamedTuple):
+    """A temporal caller-addressed entry's requested Valid-Time window — ``None``
+    on a Transaction-Time-Only object — and what its acquisition holds of it:
+    ``None`` where it acquired nothing or the history does not tell,
+    ``_WHOLE`` for a Transaction-Time-Only object's one current row."""
+
+    requested: tuple[Any, Any] | None
+    held: tuple[Any, Any] | object | None
+
+
+_WHOLE = object()
+
+
+def _target_window(
+    entity: Entity,
+    entry: dict[str, Any],
+    acquires: bool,
+    acquired_start: AcquiredStart | None,
+) -> _TargetWindow:
+    if not any(axis.get("dimension") == "valid-time" for axis in entity.temporal_runtime_axes):
+        return _TargetWindow(None, _WHOLE if acquires else None)
+    requested = (entry.get("validFrom"), entry.get("until"))
+    held = acquired_start(entry) if acquires and acquired_start is not None else None
+    return _TargetWindow(requested, held)
+
+
+def _held_whole(windows: list[_TargetWindow]) -> bool:
+    """Whether the rows one object's acquisitions hold cover the window its
+    caller-addressed entries reach together, so its flush reads no coverage."""
+    if any(window.held is None for window in windows):
+        return False
+    if any(window.held is _WHOLE for window in windows):
+        return True
+    start = min(_instant(window.requested[0]) for window in windows if window.requested)
+    end = max(_instant(window.requested[1]) for window in windows if window.requested)
+    held = sorted(
+        (_instant(first), _instant(last))
+        for first, last in (window.held for window in windows if isinstance(window.held, tuple))
+    )
+    cursor = start
+    for first, last in held:
+        if first > cursor:
+            return False
+        cursor = max(cursor, last)
+        if cursor >= end:
+            return True
+    return cursor >= end
+
+
+_OPEN: dt.datetime = dt.datetime.max.replace(tzinfo=dt.UTC)
+
+
+def _instant(value: Any) -> dt.datetime:
+    """A window bound as an instant, ``None`` or ``infinity`` as the open one."""
+    if value is None or value == "infinity":
+        return _OPEN
+    return dt.datetime.fromisoformat(value)
 
 
 def _acquires(case: Case, entity: Entity) -> bool:

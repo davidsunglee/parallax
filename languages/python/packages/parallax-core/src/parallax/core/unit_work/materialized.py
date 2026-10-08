@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from parallax.core import inheritance, temporal_read
@@ -33,7 +33,11 @@ from parallax.core.unit_work.instructions import (
     target_instruction,
 )
 from parallax.core.unit_work.keys import resolve_object_key
-from parallax.core.unit_work.retain import InsertionIdentity, RetainedObservation
+from parallax.core.unit_work.retain import (
+    InsertionIdentity,
+    RetainedObservation,
+    RetainedTargetState,
+)
 from parallax.core.unit_work.write_validate import WriteRejectedError
 from parallax.core.write_plan.columns import ChunkedColumnBuilder, ColumnSlice, whole
 from parallax.core.write_plan.keys import (
@@ -365,13 +369,15 @@ class TargetKeyedWrite:
     object instead. ``claims`` are the retained observations of observed writes
     composed into a Non-Temporal one, which its completion spends; the caller's
     condition stays whatever values survive, and a destruction superseding the
-    write keeps it too.
+    write keeps it too. ``retained`` is the starting row a Locking temporal
+    write's admission read whole, which its range may reuse.
     """
 
     instruction: PreparedKeyedWrite
     expectation: TargetExpectation
     scope: VersionedStateKey | ObjectKey
     claims: tuple[RetainedObservation, ...] = ()
+    retained: RetainedTargetState | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS or len(self.instruction.rows) != 1:
@@ -451,7 +457,9 @@ class TemporalContribution:
     coverage at its window's start, the insertion's own anchor, which execution
     requires. Values the write assigned live in the composed transform, where a
     later write may overwrite them; the condition stays required whatever
-    happens to them.
+    happens to them. ``retained`` is the starting row a caller-addressed
+    write's Locking admission read whole: data its range may reuse, not part of
+    what the write is.
     """
 
     kind: Literal["assignment", "destructive"]
@@ -459,6 +467,7 @@ class TemporalContribution:
     observation: WriteObservation | None
     claim: RetainedObservation | None
     condition: ExpectedTxStart | None = None
+    retained: RetainedTargetState | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -532,13 +541,15 @@ caller addressed."""
 def temporal_contribution(item: TemporalKeyedWrite) -> TemporalContribution:
     """``item``'s lasting part once composed."""
     observed = isinstance(item, ObservedKeyedWrite)
-    expectation = item.expectation if isinstance(item, TargetKeyedWrite) else None
+    targeted = isinstance(item, TargetKeyedWrite)
+    expectation = item.expectation if targeted else None
     return TemporalContribution(
         kind="assignment" if item.instruction.mutation in ASSIGNMENT_MUTATIONS else "destructive",
         valid_time_window=item.instruction.valid_time_window,
         observation=item.observation if observed else None,
         claim=item.claim if observed else None,
         condition=expectation if isinstance(expectation, ExpectedTxStart) else None,
+        retained=item.retained if targeted else None,
     )
 
 

@@ -17,7 +17,7 @@ from parallax.core.unit_work import (
     buffered_write,
     object_key,
 )
-from parallax.core.unit_work.acquisition import AcquireRows, RowConsumer, RowReadRequest
+from parallax.core.unit_work.acquisition import AcquireRows, RowConsumer, RowRequest
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
@@ -45,7 +45,7 @@ class _NoRowReads:
     """A row acquisition for a unit of work whose writes read no row: any read
     asked of it fails the suite."""
 
-    def __call__[Request: RowReadRequest, Result](
+    def __call__[Request: RowRequest, Result](
         self, request: Request, consumer: RowConsumer[Request, Result], /
     ) -> Result:
         del consumer

@@ -1032,17 +1032,22 @@ A `max` insert of a Non-Temporal row answers nothing.
 An observed write whose requested extent reaches current rectangles no read of
 it observed (`m-temporal-write` *Observed writes span their requested extent*)
 reads those rectangles inside its flush, as an ordinary row-form read of the
-object's current coverage from the first instant its observations leave
-uncovered:
+object's current coverage overlapping the part of its extent no row the unit
+already holds covers:
 
 | Extent | Golden read | Binds |
 |---|---|---|
-| unbounded | `select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z > ? and t0.out_z = ?` | `[pk, uncoveredFrom, infinity]` |
-| bounded by `until` | `… where t0.pos_id = ? and t0.thru_z > ? and t0.from_z < ? and t0.out_z = ?` | `[pk, uncoveredFrom, until, infinity]` |
+| uncovered to the open bound | `select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z > ? and t0.out_z = ?` | `[pk, uncoveredFrom, infinity]` |
+| uncovered up to `uncoveredUntil` | `… where t0.pos_id = ? and t0.thru_z > ? and t0.from_z < ? and t0.out_z = ?` | `[pk, uncoveredFrom, uncoveredUntil, infinity]` |
+| several uncovered parts | `… where t0.pos_id = ? and ((t0.thru_z > ? and t0.from_z < ?) or (t0.thru_z > ? and t0.from_z < ?)) and t0.out_z = ?` | `[pk, from₁, until₁, from₂, until₂, infinity]` |
 
-Its projection is the predecessor projection of a resolving read, the
-Structured Column included under Relational Document Layout, and under Locking it
-carries the read-lock suffix below. The read belongs to the write step: it is
+Uncovered parts are disjoint and never adjacent, each bounded by its own
+endpoints, and a statement names a bounded number of them, so many parts take
+several such reads, all before the range binds. A row overlapping a part is read
+whole however little of it the part reaches, and a row two statements both
+return is one row. Its projection is the predecessor projection of a resolving
+read, the Structured Column included under Relational Document Layout, and under
+Locking it carries the read-lock suffix below. The read belongs to the write step: it is
 counted in that step's round trips, and a case authors no golden for it
 (`m-case-format`). Once the rectangles are known, every rectangle's inactivation,
 revision, or removal is emitted before any successor is inserted — rectangles in
@@ -1065,18 +1070,24 @@ inactivation. Under Locking, and for a rectangle the attempt opened, nothing is
 emitted for an unchanged rectangle.
 
 A caller-addressed temporal write (`m-temporal-write` *Caller-addressed writes span
-their requested extent*) observed nothing, so its coverage read starts at its own
-`validFrom`; a Transaction-Time-Only one reads `… where t0.bal_id = ? and t0.out_z
-= ?` with `[pk, infinity]`. Separate operations over disjoint windows pending
-together are one read, from the earliest window's start to the latest's end. The
+their requested extent*) observed nothing, so under Optimistic its coverage read
+starts at its own `validFrom`; a Transaction-Time-Only one reads `… where
+t0.bal_id = ? and t0.out_z = ?` with `[pk, infinity]`. Separate operations over
+disjoint windows pending together read their enclosing window, from the earliest
+window's start to the latest's end. Under Locking the rows the writes' submissions
+acquired are held already where still current (`m-unit-work` *Retained starting
+rows*), and only the enclosing window's parts they leave are read — nothing at all
+where they cover it, as a Transaction-Time-Only object's acquired current row
+always does. The
 rectangles holding callers' starts are inactivated, revised, removed, or
 guarded first, in the order the callers stated them, then the others in
 Valid-Time order. A
 replacement's openings over the gaps of its extent follow every rectangle's
 successors, in Valid-Time order. A composition an ordering barrier kept after
 earlier writes of its object reads its whole window, from its first window's
-start, once its turn comes. Under Locking the write's submission first reads its
-starting rectangle alone, with the read-lock suffix:
+start, once its turn comes, less what its reused acquired rows hold. Under
+Locking the write's submission first reads its starting rectangle alone, with
+the predecessor projection and the read-lock suffix:
 
 | Target | Golden read | Binds |
 |---|---|---|

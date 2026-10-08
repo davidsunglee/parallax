@@ -16,9 +16,11 @@ from parallax.core.write_plan.materialized import PredecessorRows, PredecessorRo
 
 __all__ = [
     "AcquireRows",
+    "CompletionRequest",
     "CoverageReadRequest",
     "RowConsumer",
     "RowReadRequest",
+    "RowRequest",
     "SelectionReadRequest",
     "TargetReadRequest",
     "consume_coverage",
@@ -61,30 +63,59 @@ class SelectionReadRequest:
 class TargetReadRequest:
     """The stored row a caller-addressed write of ``key`` starts from, read under
     the shared row lock: the row current at Valid-Time ``valid_from`` of a
-    Bitemporal object, which is ``None`` for any other."""
+    Bitemporal object, which is ``None`` for any other.
+
+    Where it ``retains`` the row, the range the write settles may reuse it as
+    coverage, so the row is read whole — every Value Object occurrence and the
+    raw Structured Column too — but judged only as a read of the row alone
+    judges it: each occurrence reaches the consumer pending, the unexamined
+    input its classification takes, for a :class:`CompletionRequest` to judge
+    if the row is reused."""
 
     entity: EntityMetadata
     key: ObjectKey
     valid_from: ManagedValue | None
+    retains: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class CoverageReadRequest:
     """The current coverage a deferred range binds to: one object's current rows
-    overlapping ``valid_time_window``, read under the shared row lock when
-    ``locking``. A Transaction-Time-Only object has no Valid Time, so its window
-    is ``None`` and its one current row is the coverage."""
+    overlapping any of ``valid_time_windows`` — sorted, disjoint, and never
+    adjacent — read whole under the shared row lock when ``locking``. A
+    Transaction-Time-Only object has no Valid Time, so it names no window and
+    its one current row is the coverage."""
 
     entity: EntityMetadata
     key_attribute: AttributeIdentity
     key_value: ManagedValue
-    valid_time_window: TimeInterval | None
+    valid_time_windows: tuple[TimeInterval, ...]
     locking: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CompletionRequest:
+    """Rows an earlier :class:`TargetReadRequest` that ``retains`` acquired,
+    their Value Object occurrences still pending, to be judged as an ordinary
+    read judges them before they become evidence.
+
+    It reads nothing: no statement runs, and its consumer receives the
+    completed rows, in order, beside the raw ``documents`` they were read with
+    — ``None`` where the read projected no Structured Column."""
+
+    entity: EntityMetadata
+    key_attribute: AttributeIdentity
+    rows: tuple[tuple[object, ...], ...]
+    documents: tuple[object | None, ...] | None
 
 
 type RowReadRequest = SelectionReadRequest | TargetReadRequest | CoverageReadRequest
 
-type RowConsumer[Request: RowReadRequest, Result] = Callable[
+type RowRequest = RowReadRequest | CompletionRequest
+"""Everything a unit of work asks its row acquisition for: a read, or the
+completion of rows a read already acquired."""
+
+type RowConsumer[Request: RowRequest, Result] = Callable[
     [
         Request,
         EntityMemberSelection,
@@ -111,10 +142,12 @@ class AcquireRows(Protocol):
     returns once the read's resources are settled, however the consumer left.
 
     Selection and target requests read in a Read of their own; a coverage
-    request reads in the Write Batch whose flush reaches its deferred range.
+    request reads in the Write Batch whose flush reaches its deferred range. A
+    :class:`CompletionRequest` reads nothing: its rows are judged with no
+    statement, Database Call, or activity, and its consumer runs over them.
     """
 
-    def __call__[Request: RowReadRequest, Result](
+    def __call__[Request: RowRequest, Result](
         self, request: Request, consumer: RowConsumer[Request, Result], /
     ) -> Result: ...
 
@@ -178,26 +211,26 @@ def consume_target(
     absent: object,
     documents: Sequence[object | None] | None,
     root_count: int,
-) -> tuple[int, tuple[object, ...] | None]:
+) -> tuple[int, tuple[object, ...] | None, object | None]:
     """How many roots the target read returned, and the judged row of a unique
-    one: no other root is judged, so a read returning several is decided by
-    its count alone."""
-    del request, selection, absent, documents
+    one beside the raw document it was read with: no other root is judged, so
+    a read returning several is decided by its count alone."""
+    del request, selection, absent
     if root_count != 1:
-        return root_count, None
-    return root_count, next(rows)
+        return root_count, None, None
+    return root_count, next(rows), None if documents is None else documents[0]
 
 
 def consume_coverage(
-    request: CoverageReadRequest,
+    request: CoverageReadRequest | CompletionRequest,
     selection: EntityMemberSelection,
     rows: Iterator[tuple[object, ...]],
     absent: object,
     documents: Sequence[object | None] | None,
     root_count: int,
 ) -> PredecessorRows | None:
-    """Every current row the coverage read returned, as complete Predecessor
-    Rows, or ``None`` where it returned none."""
+    """Every current row the coverage read returned, or the completion
+    completed, as complete Predecessor Rows, or ``None`` where there was none."""
     del root_count
     evidence = PredecessorRowsBuilder(
         selection,
