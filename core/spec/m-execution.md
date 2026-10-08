@@ -9,8 +9,9 @@ conditions it establishes, and executes writes by running the Write Plan
 `m-unit-work` finalizes, acquiring the rows a write needs to read, and reporting
 each completed unit back. Per the dependency graph it depends on `m-unit-work`
 for admission, evidence, finalization, and effects; `m-read-delivery` for every
-read it executes; `m-write-plan` for the plan and units it runs; `m-sql` for
-the statements it lowers; `m-deep-fetch` for the row reads acquisition plans;
+read it executes; `m-write-plan` for the plan and units it runs;
+`m-write-payload` for the payload preparer model preparation wires into the
+Write Planner and every statement stores; `m-sql` for the statements it lowers; `m-deep-fetch` for the row reads acquisition plans;
 `m-execution-authority` for the authority a scope captures; `m-auto-retry` for
 the attempt loop's bound and classification; `m-read-lock` for the lock an
 acquisition takes; `m-execution-lifecycle` for the activities it opens;
@@ -87,7 +88,8 @@ A **Model Selection** is a fully prepared, process-local, immutable selection of
 one accepted model under one **Model Edition**, an opaque nonempty token compared
 only for equality. Preparation completes every fallible derivation the model
 determines — member layouts, row facts, graph-construction facts, and the
-configured Write Planner — before the selection can be served, so no request
+configured Write Planner with its write payload preparer — before the selection
+can be served, so no request
 path derives any of them. Preparation guarantees structural readiness, not
 schema readiness, valid stored data, or the success of a later operation.
 
@@ -174,14 +176,18 @@ it contributes evidence.
 
 Execution runs the Write Plan a flush finalizes, unit by unit in plan order,
 inside the Write Batch the unit of work opened for it. It lowers each unit's
-Planned Writes through `m-sql`, executes them through the port, and has the unit
-of work enforce each step's affected rows. A deferred unit is bound first: the
-runtime asks the unit of work to acquire its coverage and bind it against the
-ownership earlier units published, then executes the bound steps. After a
-unit's steps all succeed — including a unit with no steps — the runtime reports
-it to the unit of work, which publishes its effects before the next unit binds
-(`m-unit-work` *Execution units complete before later work runs*). A unit that
-fails is never reported, and the failure dooms the attempt.
+Planned Writes through one shared path — the planner's payload preparer prepares
+what the statement about to run stores, and `m-sql` renders it — executes them
+through the port, and has the unit of work enforce each step's affected rows. A
+deferred unit is bound first: the runtime asks the unit of work to acquire its
+coverage and bind it against the ownership earlier units published, then
+executes the bound steps. After a unit's steps all succeed — including a unit
+with no steps — the runtime reports it to the unit of work, which publishes its
+effects before the next unit binds (`m-unit-work` *Execution units complete
+before later work runs*). No later unit's statement is prepared or lowered
+before the earlier unit completes, so a later step's lowering failure cannot
+overtake it. A unit that fails is never reported, and the failure dooms the
+attempt.
 
 ## What the suite pins down
 

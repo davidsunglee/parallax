@@ -45,7 +45,10 @@ when:
             value: { name: Coastal, stops: [{ port: Oslo }] }
         at: "2026-06-01T00:00:00.000000Z"
       roundTrips: 2
-      note: the successor patches the changed title into the retained document and carries the restored route
+      note: >-
+        the row survives because its title changes, so the successor executes every
+        assignment: the restated route replaces its stored subtree whole, while the
+        undeclared root key outside it rides forward from the retained document
       statements:
         - sql:
             postgres: update expedition set out_z = ? where id = ? and out_z = ? and in_z = ?
@@ -62,9 +65,8 @@ when:
               charterCode: NB-118
               route:
                 name: Coastal
-                sealNumber: S-4021
                 stops:
-                  - { port: Oslo, berth: B7 }
+                  - { port: Oslo }
 then:
   roundTrips: 3
   tableState:
@@ -88,6 +90,5 @@ then:
           charterCode: NB-118
           route:
             name: Coastal
-            sealNumber: S-4021
             stops:
-              - { port: Oslo, berth: B7 }
+              - { port: Oslo }

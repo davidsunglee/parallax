@@ -292,6 +292,28 @@ def _exact_scalar(value: object) -> str:
     return _HOST_ENCODE(value)
 
 
+def same_json_number(left: int | float, right: int | float) -> bool:
+    """Whether two numbers are one JSON number as :func:`dump_document` stores them.
+
+    Meaning, not spelling: ``1`` and ``1.0`` are one number, while a retained
+    ``0.10000000000000001`` is not the host float ``0.1`` it projects to.
+    """
+    left_kind = type(left)
+    if left_kind is type(right) and (left_kind is int or left_kind is float):
+        return left == right
+    return _stored_number(left) == _stored_number(right)
+
+
+def _stored_number(value: int | float) -> decimal.Decimal:
+    if isinstance(
+        value, _AmbiguousAuthoredFloat | _OutOfSpaceAuthoredFloat | _OutOfSpaceAuthoredInt
+    ):
+        return decimal.Decimal(value.token)
+    if isinstance(value, float):
+        return decimal.Decimal(float.__repr__(value))
+    return decimal.Decimal(int(value))
+
+
 def dump_document(document: object) -> str:
     """Serialize a structured document to JSON text for storage.
 

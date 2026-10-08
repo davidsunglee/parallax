@@ -98,11 +98,7 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
         "parallax.core.execution._write_lowering",
         "parallax.core.sql_gen._write",
-    ): frozenset({"compile_write_step"}),
-    (
-        "parallax.conformance._lanes.scenario",
-        "parallax.core.sql_gen._write",
-    ): frozenset({"compile_write_step"}),
+    ): frozenset({"StepPayload", "compile_write_step"}),
 }
 
 
@@ -511,7 +507,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
         "parallax.conformance._lanes.scenario",
         "parallax.core.execution._write_lowering",
-    ): frozenset({"stream_lowered"}),
+    ): frozenset({"lowered", "stream_lowered"}),
     ("parallax.conformance._lanes.scenario", "parallax.core.execution._keyed_writes"): frozenset(
         {"validate_source_pin"}
     ),

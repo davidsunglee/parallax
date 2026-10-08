@@ -11,7 +11,6 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -44,7 +43,6 @@ from parallax.core.unit_work.materialized import (
     TemporalContribution,
     target_write,
 )
-from parallax.core.unit_work.strategy import ActorIdentity
 from parallax.core.unit_work.uow import bind_deferred_range
 from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.write_plan import (
@@ -84,6 +82,7 @@ from tests.unit.core.unit_work._acquired_rows_support import (
     bind_held,
     coverage_read,
 )
+from tests.unit.core.unit_work._audit_support import RecordingAudit
 from tests.unit.core.unit_work._ownership_support import OpenedRows
 
 _SPANS = model("buffered-sequence-layout-twin-columns")
@@ -287,37 +286,35 @@ def test_binding_stamps_the_instant_planning_resolved_and_reads_no_clock() -> No
     assert stamped == {_PLANNED_AT}
 
 
-@dataclass(frozen=True, slots=True)
-class _RecordingAudit:
-    decorated: list[PlannedWrite]
-
-    def decorate(
-        self,
-        step: PlannedWrite,
-        *,
-        actor_identity: ActorIdentity,
-        transaction_instant: TransactionInstant,
-    ) -> PlannedWrite:
-        del actor_identity, transaction_instant
-        self.decorated.append(step)
-        return step
-
-
-def test_every_bound_step_is_decorated_once_whether_the_range_bound_now_or_later(
+def test_every_produced_row_and_close_is_audited_once_whether_the_range_bound_now_or_later(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    audit = _RecordingAudit([])
+    # Audit belongs to settlement, so a range finalizes each row it produces and
+    # stamps each close it emits when it binds, at planning or at execution
+    # alike, and the steps it answers are exactly what the hooks returned.
+    audit = RecordingAudit()
     monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
     head, tail = _retained(_HEAD), _retained(_TAIL)
 
     known = _plan(_update(head, _MAR, _JUN), _update(tail, _JUN, _SEP))
-    assert sorted(map(id, audit.decorated)) == sorted(map(id, known.steps))
+    assert sorted(map(id, audit.closes)) == sorted(
+        id(step) for step in known.steps if isinstance(step, PlannedClose)
+    )
+    assert sorted(map(id, audit.rows)) == sorted(
+        id(step.entries[0]) for step in known.steps if isinstance(step, PlannedInsert)
+    )
 
-    audit.decorated.clear()
+    audit.rows.clear()
+    audit.closes.clear()
     unit, _acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
-    assert audit.decorated == []
+    assert (audit.rows, audit.closes) == ([], [])
     bound = _bind(unit, [_TAIL])
-    assert sorted(map(id, audit.decorated)) == sorted(map(id, bound.steps))
+    assert sorted(map(id, audit.closes)) == sorted(
+        id(step) for step in bound.steps if isinstance(step, PlannedClose)
+    )
+    assert sorted(map(id, audit.rows)) == sorted(
+        id(step.entries[0]) for step in bound.steps if isinstance(step, PlannedInsert)
+    )
 
 
 def test_a_deferred_range_its_planner_did_not_finalize_is_refused_before_any_read() -> None:

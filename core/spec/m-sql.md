@@ -23,7 +23,9 @@ SQL compilation is private behind two closed entry points:
 
 ```text
 compileResolvedRead(ValidatedEntityQuery, Dialect) -> CompiledRead
-compilePlannedWrite(PlannedWrite, Dialect) -> LoweredStatement
+compilePlannedWrite(PlannedWrite, StepPayload, Dialect) -> LoweredStatement
+
+StepPayload = [RowPayload] | AssignmentPayload | none
 ```
 
 Neither entry point accepts a public Object Query, Predicate, Write Instruction,
@@ -32,7 +34,19 @@ exact target/member identities, an elaborated predicate of managed values,
 resolved temporal terms and ordering, and compact result metadata sufficient for
 row decoding and deep-fetch key gathering. A `PlannedWrite` carries the closed
 `m-write-plan` variant, exact member identities, managed values or generated-value
-expressions, target, concurrency decision, and affected-row policy.
+expressions, target, concurrency decision, and affected-row policy. Its
+`StepPayload` is what the statement stores, prepared by `m-write-payload`
+(`m-write-plan` *Write payloads*): one Row Payload per Write Row in entry
+order, the Assignment Payload a revising step writes, and nothing for a step that
+stores no represented value.
+
+The write compiler places, renders, and binds prepared values; it never
+assembles, encodes, or patches a payload itself. A missing payload, or one
+prepared from other inputs than the step's own — another entry's row, another
+assignment set, or misaligned entries — is a broken caller contract that the
+compiler refuses rather than a request to prepare one. Every caller lowers
+through one shared prepare-then-compile path, which prepares only the statement
+it is about to lower.
 
 `CompiledRead` carries one metadata-bearing `LoweredStatement` plus the compact
 result contract required for row materialization. `LoweredStatement` is the
@@ -419,8 +433,9 @@ first to rewrite it.
 An `INSERT` binds the Structured Column exactly once, as one complete encoded
 document, in its layout position — the same shape a conventional Value Object
 column already has. A temporal successor is an insert, and the document it binds
-is built from the retained raw predecessor document (`m-write-plan`), never
-re-encoded from decoded members.
+is the one `m-write-payload` prepared by patching the retained raw predecessor
+document at the successor's executed assignments, never re-encoded from decoded
+members.
 
 Assignments to a document-resident member never appear in a primary-key,
 discriminator, optimistic, or temporal gate, because no direct role is

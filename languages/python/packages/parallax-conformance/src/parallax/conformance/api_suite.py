@@ -1255,8 +1255,8 @@ _INVALID_ROOT_WRITE_VALUE_REASON: Final[str] = (
     "used by m-unit-work-017 through -020"
 )
 
-_RESTORED_MEMBER_WITNESS_REASON: Final[str] = (
-    "the restored-member witness of a materializing predicate update: its stored "
+_RESTATED_MEMBER_WITNESS_REASON: Final[str] = (
+    "the restated-member witness of a materializing predicate update: its stored "
     "document carries keys no authored value can produce, seeded by out-of-band SQL, so "
     "no idiomatic story can arrange it. The run sweep drives the case's own resolving "
     "read and predicate update against real Postgres and grades the successor document "
@@ -1468,7 +1468,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-020": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-028": _INVALID_ROOT_WRITE_VALUE_REASON,
     "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
-    "m-unit-work-042": _RESTORED_MEMBER_WITNESS_REASON,
+    "m-unit-work-042": _RESTATED_MEMBER_WITNESS_REASON,
     "m-unit-work-043": _TARGET_REPLACEMENT_TWIN_REASON,
     "m-unit-work-044": _TARGET_REPLACEMENT_TWIN_REASON,
     # -- buffered sequences, state-graded ------------------------------------ #

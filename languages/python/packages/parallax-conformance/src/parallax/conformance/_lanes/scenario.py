@@ -74,7 +74,7 @@ from parallax.core.execution import (
 )
 from parallax.core.execution._keyed_writes import validate_source_pin
 from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import stream_lowered
+from parallax.core.execution._write_lowering import lowered, stream_lowered
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -93,7 +93,6 @@ from parallax.core.predicate import (
     CanonicalDocumentError,
 )
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import TemporalReadError, TimeInterval
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
@@ -1318,16 +1317,21 @@ def _plan_and_lower(
                 )
                 executed.steps.extend(bound.steps)
                 executed.changed.extend(bound.changed)
-                statements.extend(compile_write_step(step, model, dialect) for step in bound.steps)
+                statements.extend(
+                    lowered(step, planner.payloads, model, dialect) for step in bound.steps
+                )
             unit = next(units, None)
 
-    for step, statement in stream_lowered(plan, model, dialect):
+    lowering = stream_lowered(plan, planner.payloads, model, dialect)
+    while True:
         bind_deferred()
+        lowered_step = next(lowering, None)
+        if lowered_step is None:
+            return executed, tuple(statements)
+        step, statement = lowered_step
         executed.steps.append(step)
         statements.append(statement)
         position += 1
-    bind_deferred()
-    return executed, tuple(statements)
 
 
 @dataclass(slots=True)

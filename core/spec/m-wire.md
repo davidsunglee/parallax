@@ -98,6 +98,12 @@ value. JSON kinds stay distinct, so `true` is never written as `1`. Whitespace,
 exponent spelling, and object-member order are not preserved. Callers supply no
 encoding choice and never see the provenance it reads.
 
+The same meaning decides whether two stored numbers are one: two numbers are
+equal exactly when `dumpDocument` stores the same numeric meaning for both. This
+module answers that comparison itself, so a consumer comparing stored documents
+(`m-document-codec` *Determinism and comparison*) never inspects the provenance
+either.
+
 ## One spelling, two consumers
 
 Two seams write neutral values out, and both write the same characters:

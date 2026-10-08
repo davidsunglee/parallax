@@ -50,7 +50,6 @@ from parallax.core.unit_work.materialized import (
     VersionedEvidence,
 )
 from parallax.core.unit_work.ranges import (
-    AuditDecoration,
     DeferredTemporalRange,
     range_claims,
     settle_range,
@@ -58,6 +57,7 @@ from parallax.core.unit_work.ranges import (
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
     ActorIdentity,
+    AuditDecoration,
     AuditStrategy,
     Concurrency,
     ConcurrencyStrategy,
@@ -98,13 +98,13 @@ from parallax.core.write_plan.steps import (
     RETURNED_MAX_PLUS_ONE,
     UNVERSIONED,
     ExactCount,
-    InsertEntry,
     MaxPlusOne,
     PlannedAssignments,
     PlannedDelete,
     PlannedInsert,
     PlannedUpdate,
     PlannedValue,
+    WriteRow,
     shortfall_classification,
 )
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
@@ -151,7 +151,7 @@ class WritePlanCompiler:
     that model, the Inheritance and Temporal facets it compiled, and the
     concurrency and audit strategies the composition layer wired.
     :meth:`compile` is its entire surface: no caller settles one item, packs a
-    segment, decorates a step, or collects a claim by hand.
+    segment, audits a row or step, or collects a claim by hand.
     """
 
     __slots__ = (
@@ -210,9 +210,11 @@ class WritePlanCompiler:
         large materialized run never forces a parallel ``PlannedWrite``-per-row
         object graph merely by being planned.
 
-        Provenance decoration reaches the eagerly settled steps only, before
-        they are packed and after each one's topology is settled; a Materialized
-        Write Group's rows stay as its segment produced them.
+        Audit reaches every write as it settles, before anything is packed: each
+        row a write produces — an opening, or a successor carried or changed —
+        is finalized once, and each update and close it emits is decorated
+        once. A Materialized Write Group's segment keeps only what its audit
+        added, so enumerating its steps audits nothing again.
 
         ``actor_identity`` is passed to the audit port and never inspected
         here; ``transaction_instant`` is threaded unevaluated until a surviving
@@ -237,7 +239,7 @@ class WritePlanCompiler:
         pending: list[PlannedStep] = []
         units: list[ExecutionUnit] = []
         count = 0
-        decorate: AuditDecoration | None = None
+        audit = AuditDecoration(self._audit, actor_identity, transaction_instant)
 
         def flush_pending() -> None:
             if pending:
@@ -251,7 +253,9 @@ class WritePlanCompiler:
                 item = item.write
             if isinstance(item, MaterializedWriteGroup):
                 flush_pending()
-                segment = self._settle_group(item, concurrency, transaction_instant, ownership)
+                segment = self._settle_group(
+                    item, concurrency, transaction_instant, ownership, audit
+                )
                 if len(segment):
                     segments.append(segment)
                     count += len(segment)
@@ -260,15 +264,13 @@ class WritePlanCompiler:
             shape = self._carrier_shape(item)
             if isinstance(shape, TransactionTimeOnly | Bitemporal):
                 assert not isinstance(item, PreparedKeyedWrite | ReadlessPredicateWrite)
-                if decorate is None:
-                    decorate = AuditDecoration(self._audit, actor_identity, transaction_instant)
                 steps, unit = self._range(
                     item,
                     shape,
                     concurrency,
                     transaction_instant,
                     ownership,
-                    decorate,
+                    audit,
                     start=count,
                     guards=counts_unchanged_rows,
                 )
@@ -278,16 +280,9 @@ class WritePlanCompiler:
                 continue
             assert not isinstance(item, ComposedTemporalWrite | MaterializedWriteGroup)
             settled, claim, own_state = self._settle_keyed(
-                item, concurrency, transaction_instant, shape, advances
+                item, concurrency, transaction_instant, shape, audit, advances
             )
-            for step in settled.steps:
-                pending.append(
-                    self._audit.decorate(
-                        step,
-                        actor_identity=actor_identity,
-                        transaction_instant=transaction_instant,
-                    )
-                )
+            pending.extend(settled.steps)
             count += len(settled.steps)
             units.append(
                 ExecutionUnit(
@@ -324,6 +319,7 @@ class WritePlanCompiler:
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
         shape: TemporalShape | None,
+        audit: AuditDecoration,
         advances: int = 0,
     ) -> tuple[_Settled, SourceAuthority | None, VersionedStateKey | None]:
         """One ordered keyed write's settled steps and effects, beside the
@@ -336,7 +332,7 @@ class WritePlanCompiler:
         observations of one state, changes that state wherever its steps
         change the row it observed."""
         if isinstance(item, ReadlessPredicateWrite):
-            return _Settled(steps=(_readless_step(item.instruction),)), None, None
+            return _Settled(steps=(_readless_step(item.instruction, audit),)), None, None
         own_state: VersionedStateKey | None = None
         observation: WriteObservation | None = None
         claim: SourceAuthority | None = None
@@ -367,6 +363,7 @@ class WritePlanCompiler:
             concurrency,
             tx_instant,
             shape,
+            audit,
             source=source,
             own_version=None if own_state is None else own_state.version,
             conditioned=isinstance(item, TargetKeyedWrite),
@@ -389,6 +386,7 @@ class WritePlanCompiler:
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
         shape: TemporalShape | None,
+        audit: AuditDecoration,
         *,
         source: ObservedStateKey | None = None,
         own_version: int | None = None,
@@ -414,11 +412,15 @@ class WritePlanCompiler:
         if isinstance(shape, TransactionTimeOnly | Bitemporal):
             if instruction.mutation not in INSERT_MUTATIONS:
                 raise _unobserved_close(entity, instruction.mutation)
-            return self._settle_temporal_insert(entity, shape, instruction, tx_instant, source)
+            return self._settle_temporal_insert(
+                entity, shape, instruction, tx_instant, source, audit
+            )
         facts = self._non_temporal_facts(entity)
         changed = _changes(source)
         if instruction.mutation == "insert":
-            return _Settled(steps=(self._settle_insert(facts, instruction),), changed=changed)
+            return _Settled(
+                steps=(self._settle_insert(facts, instruction, audit),), changed=changed
+            )
         addressed = self._addressed_facts(facts, concurrency, conditioned=conditioned)
         observed_version = (
             own_version
@@ -429,24 +431,27 @@ class WritePlanCompiler:
             observed_version = self._advanced(observed_version, advances)
         return _Settled(
             steps=(
-                non_temporal_step(
-                    facts,
-                    addressed,
-                    emission=(
-                        DELETION
-                        if instruction.mutation == "delete"
-                        else Revision(
-                            _addressed_assignments(facts, addressed, instruction.rows[0]),
-                            self._version_overlay(facts.version_attribute),
-                        )
-                    ),
-                    key_rows=instruction.rows,
-                    observed_version=observed_version,
-                    # One addressed instruction is ONE step however many keys it
-                    # addresses, so its expectation is the whole batch's (ADR 0044)
-                    # rather than a per-row one.
-                    affected_rows=ExactCount(
-                        expected=len(instruction.rows), on_shortfall=addressed.shortfall
+                _decorated(
+                    audit,
+                    non_temporal_step(
+                        facts,
+                        addressed,
+                        emission=(
+                            DELETION
+                            if instruction.mutation == "delete"
+                            else Revision(
+                                _addressed_assignments(facts, addressed, instruction.rows[0]),
+                                self._version_overlay(facts.version_attribute),
+                            )
+                        ),
+                        key_rows=instruction.rows,
+                        observed_version=observed_version,
+                        # One addressed instruction is ONE step however many keys it
+                        # addresses, so its expectation is the whole batch's (ADR 0044)
+                        # rather than a per-row one.
+                        affected_rows=ExactCount(
+                            expected=len(instruction.rows), on_shortfall=addressed.shortfall
+                        ),
                     ),
                 ),
             ),
@@ -460,7 +465,7 @@ class WritePlanCompiler:
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
         ownership: TemporalWriteOwnership,
-        decorate: AuditDecoration,
+        audit: AuditDecoration,
         *,
         start: int,
         guards: bool,
@@ -490,7 +495,7 @@ class WritePlanCompiler:
             # capture its instant.
             instant=tx_instant.value(),
             ownership=ownership,
-            decorate=decorate,
+            audit=audit,
             guards=guards,
         )
         claim = range_claims(item)
@@ -508,7 +513,7 @@ class WritePlanCompiler:
         )
 
     def _settle_insert(
-        self, facts: NonTemporalFacts, instruction: PreparedKeyedWrite
+        self, facts: NonTemporalFacts, instruction: PreparedKeyedWrite, audit: AuditDecoration
     ) -> PlannedInsert:
         """One keyed insert as its rows, each opening a new lineage.
 
@@ -523,7 +528,11 @@ class WritePlanCompiler:
             else (facts.version_attribute, self._concurrency.version_arithmetic().initial)
         )
         entries = tuple(
-            InsertEntry(row=planned_row(facts.entity, facts.view, row, version), origin=NEW_LINEAGE)
+            audit.finalize_row(
+                WriteRow(
+                    row=planned_row(facts.entity, facts.view, row, version), origin=NEW_LINEAGE
+                )
+            )
             for row in instruction.rows
         )
         return PlannedInsert(entity=facts.entity.identity, entries=entries)
@@ -590,6 +599,7 @@ class WritePlanCompiler:
         instruction: PreparedKeyedWrite,
         tx_instant: TransactionInstant,
         source: ObservedStateKey | None,
+        audit: AuditDecoration,
     ) -> _Settled:
         """One temporal insert as the new lineage it opens over its prepared
         window, the row recorded under the key it states or, where the
@@ -603,7 +613,11 @@ class WritePlanCompiler:
         inserts = (
             PlannedInsert(
                 entity=entity.identity,
-                entries=(opening(facts, attributes, value_objects, instruction.valid_time_window),),
+                entries=(
+                    audit.finalize_row(
+                        opening(facts, attributes, value_objects, instruction.valid_time_window)
+                    ),
+                ),
             ),
         )
         return _Settled(
@@ -659,6 +673,7 @@ class WritePlanCompiler:
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
         ownership: TemporalWriteOwnership,
+        audit: AuditDecoration,
     ) -> NonTemporalGroupSegment | TemporalGroupSegment:
         """One Materialized Write Group as one already-settled segment.
 
@@ -675,15 +690,16 @@ class WritePlanCompiler:
         shape = self._temporal_facet.shape(entity.identity)
         if isinstance(shape, TransactionTimeOnly | Bitemporal):
             return self._settle_temporal_group(
-                group, entity, shape, concurrency, tx_instant, ownership
+                group, entity, shape, concurrency, tx_instant, ownership, audit
             )
-        return self._settle_versioned_group(group, entity, concurrency)
+        return self._settle_versioned_group(group, entity, concurrency, audit)
 
     def _settle_versioned_group(
         self,
         group: MaterializedWriteGroup,
         entity: EntityMetadata,
         concurrency: Concurrency,
+        audit: AuditDecoration,
     ) -> NonTemporalGroupSegment:
         """A versioned (non-temporal) Materialized Write Group's segment.
 
@@ -722,7 +738,7 @@ class WritePlanCompiler:
                 prepared_assignments(entity, group.mutation.managed_assignments),
                 self._version_overlay(facts.version_attribute),
             )
-        return NonTemporalGroupSegment(
+        segment = NonTemporalGroupSegment(
             facts=facts,
             addressed=addressed,
             key_name=addressed.key_attributes[0].name,
@@ -736,6 +752,9 @@ class WritePlanCompiler:
                 entity.identity, facts.view.primary_key.identity.name, evidence, NON_TEMPORAL
             ),
         )
+        if audit.neutral or not isinstance(emission, Revision):
+            return segment
+        return segment.audited_by(audit)
 
     def _settle_temporal_group(
         self,
@@ -745,6 +764,7 @@ class WritePlanCompiler:
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
         ownership: TemporalWriteOwnership,
+        audit: AuditDecoration,
     ) -> TemporalGroupSegment:
         """A temporal Materialized Write Group's segment.
 
@@ -782,6 +802,7 @@ class WritePlanCompiler:
             key_attribute=view.primary_key.identity,
             gated=self._concurrency.gates(concurrency, self._model, entity.identity),
             ownership=ownership,
+            audit=audit,
         )
         return TemporalGroupSegment(
             expansion.settle_group(evidence, mutation.managed_assignments), evidence
@@ -869,22 +890,30 @@ def _addressed_assignments(
     )
 
 
-def _readless_step(instruction: PreparedPredicateWrite) -> PlannedStep:
+def _readless_step(instruction: PreparedPredicateWrite, audit: AuditDecoration) -> PlannedStep:
     """A readless predicate-selected write's one unversioned statement over
-    every row its selection matches."""
+    every row its selection matches, an update decorated once."""
     entity = instruction.selection.target
     target = instruction.selection
     if instruction.mutation == "delete":
         return PlannedDelete(
             entity=entity.identity, target=target, concurrency=UNVERSIONED, affected_rows=ANY_COUNT
         )
-    return PlannedUpdate(
-        entity=entity.identity,
-        target=target,
-        assignments=prepared_assignments(entity, instruction.managed_assignments),
-        concurrency=UNVERSIONED,
-        affected_rows=ANY_COUNT,
+    return audit.decorate_update(
+        PlannedUpdate(
+            entity=entity.identity,
+            target=target,
+            assignments=prepared_assignments(entity, instruction.managed_assignments),
+            concurrency=UNVERSIONED,
+            affected_rows=ANY_COUNT,
+        )
     )
+
+
+def _decorated(audit: AuditDecoration, step: PlannedStep) -> PlannedStep:
+    """An addressed Non-Temporal step as audit leaves it: an update decorated
+    once, a delete as it is."""
+    return audit.decorate_update(step) if isinstance(step, PlannedUpdate) else step
 
 
 def _require_unobserved(entity: EntityMetadata, mutation: str, observation: object | None) -> None:

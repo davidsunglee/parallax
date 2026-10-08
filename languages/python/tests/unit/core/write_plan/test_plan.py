@@ -28,7 +28,7 @@ from parallax.core.write_plan.plan import (
     UnitEffects,
     eager_segment,
 )
-from parallax.core.write_plan.steps import NEW_LINEAGE, InsertEntry, PlannedRow
+from parallax.core.write_plan.steps import NEW_LINEAGE, PlannedRow, WriteRow
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -39,7 +39,7 @@ _ID = AttributeIdentity(_ACCOUNT, "id")
 def _insert(key: int) -> PlannedInsert:
     return PlannedInsert(
         entity=_ACCOUNT,
-        entries=(InsertEntry(row=PlannedRow(attributes={_ID: key}), origin=NEW_LINEAGE),),
+        entries=(WriteRow(row=PlannedRow(attributes={_ID: key}), origin=NEW_LINEAGE),),
     )
 
 

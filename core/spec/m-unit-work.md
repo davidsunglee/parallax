@@ -582,7 +582,7 @@ No second planning operation exists to project the plan.
 
 A caller **MUST NOT** be required — or able — to sequence coalescing,
 cancellation, no-op elimination, batching, dependency ordering, Transaction
-Instant acquisition, temporal expansion, or provenance decoration itself. Those
+Instant acquisition, temporal expansion, or audit itself. Those
 are private stages, and no second public finalized or decorated plan exists
 beside the Write Plan.
 
@@ -622,7 +622,7 @@ The Write Planner privately owns this stage order:
 7. temporal expansion: expand each temporal unit's Coverage Transform over the
    predecessors planning holds (`m-temporal-write`), or finalize a requested
    range whose coverage no planning input holds
-8. decorate provenance
+8. audit: finalize each produced row, and decorate each update and close
 9. freeze the Planned Steps
 ```
 
@@ -639,10 +639,21 @@ Four of those orderings are load-bearing and therefore normative:
   one indivisible unit through stages 3–4 and expands at its already-decided
   position in stage 7 (ADR 0045), so its close and successors are adjacent and no
   unrelated step interleaves.
-- **Provenance decoration follows topology and precedes lowering.** Stage 8
-  consumes the finalized Insert Origins and Close Causes and adds ordinary
-  planned values; it changes no topology, classifies no gate, and emits no SQL
-  (ADR 0037).
+- **Audit follows topology and precedes realization and lowering.** Stage 8
+  reads each produced row's Row Origin and each close's Close Cause and adds
+  ordinary planned values; it changes no topology, target, gate, or affected-row
+  policy, and emits no SQL. Every row a write produces — a new lineage's
+  opening, or a successor carried or changed from its predecessor, a
+  Materialized Write Group's rows included — is **finalized once**, before
+  settlement chooses whether it is inserted or revises a row the attempt owns,
+  and every value finalization adds is an executed assignment of the row
+  (`m-write-plan` *Write Rows*). Each Non-Temporal update, keyed or readless, and
+  each emitted close is **decorated once**; neither needs a complete row. A
+  guard, a removal, a delete, and a milestone kept unchanged store no
+  represented value and are not audited. A Materialized Write Group keeps only
+  what its audit added, beside its compact evidence, so rebuilding one of its
+  steps audits nothing again, and the audit-neutral default answers each input
+  itself without resolving the Transaction Instant (ADR 0071, superseding ADR 0037).
 
 Stages are otherwise private. The stage list is an ordering contract, not an
 interface: nothing outside the planner may name, observe, or invoke a stage.
@@ -712,9 +723,9 @@ semantics already decided.
   Temporal meaning, concurrency, and gates are fixed when planning returns, and
   binding never recaptures the instant or consults the model: only the physical
   enumeration waits, for the rows read and for the Attempt Ownership and
-  continuity every earlier unit of the flush published. Provenance decoration
-  then decorates each bound step once, as stage 8 does an eagerly settled one,
-  changing no topology or gate. A range whose observed rows already cover it
+  continuity every earlier unit of the flush published. Binding audits each row
+  it produces and each close it emits once, as stage 8 does for a write settled
+  at planning, changing no topology or gate. A range whose observed rows already cover it
   settles at planning like any other write. A caller-addressed temporal write is
   such a range whatever it composes with, unless observed rows of its
   composition cover its window; its meaning also carries the caller's starting
@@ -790,7 +801,7 @@ however the flush ends.
 
 ## Planned Writes and Write Observations
 
-`m-write-plan` owns the Planned Write algebra — Insert Origin and Close Cause,
+`m-write-plan` owns the Planned Write algebra — Row Origin and Close Cause,
 planned rows and assignments, the Write Target, the Write Gate and its
 concurrency decision, and the Affected Rows Policy — and the Write Observation
 vocabulary: the Object Key and Observed State Key that address evidence, and
@@ -893,13 +904,12 @@ A resolved row every assigned member of which the classification answers as
 no clock, and for a temporal entity performs no close and chains no row. That
 holds however the codec reached the answer.
 
-The same holds member by member inside a Materialized Write Group row that
-survives because another of its assigned members is effective. Planning decides
-which of that row's assigned members are restored with the same classification,
-over the group's own retained row state, and a restored member contributes
-nothing to the row's changed successor: the successor carries the member's
-persisted state, so a stored subtree the assignment would have replaced — keys no
-member declares included — rides forward.
+Elimination decides the whole row and nothing smaller. A Materialized Write
+Group row that survives because one of its assigned members is effective
+executes **every** assignment, exactly as a keyed write does: a member the
+classification answers as restored is still written, so an assigned occurrence
+equal to its stored value replaces the stored subtree whole, keys no member
+declares included (`m-write-plan` *Write Rows*).
 
 Elimination is deliberately the conservative direction wherever that answer makes
 equal two documents a store spells differently: eliminating the row leaves the

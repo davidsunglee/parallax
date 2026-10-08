@@ -547,6 +547,10 @@ class Attempt:
         The single write-lowering seam (:func:`stream_lowered`) run on the
         transaction's own connection, inside the still-open ``port.transaction``
         scope — so an abort rolls back force-flushed writes with everything else.
+        Every statement stores the payload the adopted planner's preparer
+        prepares for it when its turn comes, and a unit is driven to completion
+        before the next statement is even lowered, so a later step's lowering
+        failure cannot overtake an earlier deferred unit.
         Every step lowers to exactly one statement, and a temporal mutation's
         effect on its predecessor precedes the rows it opens, so a failure there
         aborts BEFORE those rows ever execute. A unit is reported before any
@@ -580,24 +584,25 @@ class Attempt:
         del trigger
         meta = self._write.model.meta
         dialect = self._connection.dialect
+        statements = stream_lowered(plan, self._write.planner.payloads, meta, dialect)
         units = iter(plan.units)
         unit = next(units, None)
         executed = 0
         allocated: tuple[object, ...] = ()
-        for step, statement in stream_lowered(plan, meta, dialect):
+        while True:
             while unit is not None and unit.end == executed:
                 self._complete(unit, bind_deferred, completed, allocated)
                 allocated = ()
                 unit = next(units, None)
+            lowered_step = next(statements, None)
+            if lowered_step is None:
+                return
+            step, statement = lowered_step
             if unit is not None and unit.opened.allocated and returns_rows(step):
                 allocated = (*allocated, *self._run_returning(step, statement))
             else:
                 self._run(step, statement)
             executed += 1
-        while unit is not None and unit.end == executed:
-            self._complete(unit, bind_deferred, completed, allocated)
-            allocated = ()
-            unit = next(units, None)
 
     def _complete(
         self,
@@ -612,9 +617,10 @@ class Attempt:
             return
         bound = bind_deferred(deferred)
         meta = self._write.model.meta
+        payloads = self._write.planner.payloads
         dialect = self._connection.dialect
         for step in bound.steps:
-            self._run(step, lowered(step, meta, dialect))
+            self._run(step, lowered(step, payloads, meta, dialect))
         completed(unit, bound)
 
     def _run(self, step: PlannedStep, statement: LoweredStatement) -> None:

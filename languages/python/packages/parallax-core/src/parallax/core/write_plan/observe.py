@@ -26,7 +26,6 @@ __all__ = [
     "TemporalObservation",
     "VersionObservation",
     "WriteObservation",
-    "carries_cell",
     "occurrence_value",
 ]
 
@@ -156,10 +155,6 @@ class _EntityDocumentRow(Mapping[str, object]):
     def items(self) -> ItemsView[str, object]:
         return _DocumentItems(self, self._shape.members, self._values, self._absent)
 
-    def views(self, cell: object) -> bool:
-        """Whether this view reads exactly ``cell``, the positional row given."""
-        return self._values is cell
-
 
 class _AlignedItems(ItemsView[str, object]):
     __slots__ = ("_absent", "_aligned", "_members")
@@ -243,8 +238,8 @@ class PredecessorRow:
     complete primary key, every temporal bound, and every audit value — and no
     generated-value expression. Completeness is required because temporal
     expansion carries members the authored mutation never mentioned, and because
-    a later decorator must tell carried state from changed state without a second
-    read.
+    audit finalization must tell carried state from changed state without a
+    second read.
 
     ``document`` is the raw Structured Column document the observing read
     returned, retained beside the member state and never as an entry in it, so a
@@ -310,7 +305,7 @@ class PredecessorRow:
 
         A row whose document is absent or already immutable answers itself.
         Otherwise the answer views the same member row, so the cells a successor
-        carries stay this row's own (:meth:`carries`).
+        carries stay this row's own.
         """
         document = self.document
         owned = retain_document_value(document)
@@ -398,46 +393,6 @@ class PredecessorRow:
             change = prepare_effective_change(shape, assigned, absent=self._absent)
             return not change.any_effective(self._row)
         return not classify_effective_change(shape, assigned, self.members).effective
-
-    def carries(self, member: AttributeIdentity | ValueObjectIdentity, value: object) -> bool:
-        """Whether ``value`` is this row's own cell for ``member``, or the view
-        :meth:`identity_maps` builds over it — identity, never equality."""
-        selection = self._selection
-        if selection is None:
-            name = _member_name(member)
-            members = self.members
-            return name in members and members[name] is value
-        return carries_cell(selection, self._row, self._absent, member, value)
-
-
-def carries_cell(
-    selection: EntityMemberSelection,
-    row: tuple[object, ...],
-    absent: object | None,
-    member: AttributeIdentity | ValueObjectIdentity,
-    value: object,
-) -> bool:
-    """Whether ``value`` is ``row``'s own cell for ``member``, or a view over
-    it, as :meth:`PredecessorRow.carries` judges one positional row without
-    adopting it."""
-    position = selection.index[member]
-    cell = row[position]
-    if value is cell:
-        return True
-    declared = selection.shape.members[position]
-    if isinstance(declared, Leaf) or cell is None or cell is absent:
-        return False
-    if declared.multiplicity is not Multiplicity.MANY:
-        return isinstance(value, _EntityDocumentRow) and value.views(cell)
-    items = cast("tuple[object, ...]", cell)
-    return (
-        isinstance(value, tuple)
-        and len(cast("tuple[object, ...]", value)) == len(items)
-        and all(
-            isinstance(view, _EntityDocumentRow) and view.views(item)
-            for view, item in zip(cast("tuple[object, ...]", value), items, strict=True)
-        )
-    )
 
 
 def _member_name(member: AttributeIdentity | ValueObjectIdentity) -> str:

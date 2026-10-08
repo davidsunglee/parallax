@@ -22,20 +22,20 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
     PreparedEffectiveChange,
-    prepare_effective_change,
 )
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import model_of
+from parallax.core.execution import _planning as planning_composition
 from parallax.core.execution._planning import build_write_planner
+from parallax.core.execution._write_lowering import lowered
 from parallax.core.metamodel import (
+    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     Metamodel,
 )
-from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.temporal_write import expansion as expansion_module
 from parallax.core.temporal_write.coverage import Successor
 from parallax.core.temporal_write.expansion import PredecessorExpander, PredecessorExpansion
 from parallax.core.unit_work import (
@@ -59,6 +59,7 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
 )
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
     ObjectKey,
     PlannedClose,
@@ -87,22 +88,23 @@ from parallax.core.write_plan.steps import (
     CarriedFrom,
     ChangedFrom,
     Finite,
-    InsertEntry,
     PlannedRow,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedUpdate,
     PlannedWrite,
     TemporalUpperBound,
+    WriteRow,
 )
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit import _predicate_acquisition_support as acquisition_support
-from tests.unit._corpus_identity_support import corpus_object_key
+from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._positional_row_support import positional_row
 from tests.unit._temporal_group_support import temporal_group
+from tests.unit.core.unit_work._audit_support import RecordingAudit
 from tests.unit.core.unit_work._ownership_support import OpenedRows
 
 _ACCOUNT = corpus_model("account")
@@ -477,25 +479,14 @@ def test_a_bitemporal_close_refuses_a_row_that_holds_no_valid_time_end() -> None
 
 
 # --------------------------------------------------------------------------- #
-# Effective change is established by the producer: a surviving row of a       #
-# multi-assignment group carries the members it restores.                     #
+# A surviving row executes every assignment, a member it restores included:   #
+# settlement compares no assigned member against the row it reaches.          #
 # --------------------------------------------------------------------------- #
-def _comparisons(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
-    calls = {"prepared": 0, "compared": 0}
-    prepare = prepare_effective_change
-    effective_positions = PreparedEffectiveChange.effective_positions
+def _refuse_member_comparison(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("settlement compared an assigned member with its row")
 
-    def preparing(*args: Any, **kwargs: Any) -> PreparedEffectiveChange:
-        calls["prepared"] += 1
-        return prepare(*args, **kwargs)
-
-    def comparing(change: PreparedEffectiveChange, row: tuple[object, ...]) -> Any:
-        calls["compared"] += 1
-        return effective_positions(change, row)
-
-    monkeypatch.setattr(expansion_module, "prepare_effective_change", preparing)
-    monkeypatch.setattr(PreparedEffectiveChange, "effective_positions", comparing)
-    return calls
+    monkeypatch.setattr(PreparedEffectiveChange, "effective_positions", refuse)
 
 
 def _position_update(*assignments: WriteAssignment, account: str) -> MaterializedWriteGroup:
@@ -524,19 +515,20 @@ def _position_update(*assignments: WriteAssignment, account: str) -> Materialize
     )
 
 
-def test_a_surviving_multi_assignment_row_carries_the_member_it_restores(
+def test_a_surviving_multi_assignment_row_executes_the_member_it_restores(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = _comparisons(monkeypatch)
-    stored_account = "".join(("ACC", "-1"))
+    # Selection eliminates a row every assignment restores; one that survives
+    # because another assignment changes it executes all of them, as a keyed
+    # write does, so the restored member is stated rather than carried.
+    _refuse_member_comparison(monkeypatch)
     group = _position_update(
         WriteAssignment("Position.acctNum", "ACC-1"),
         WriteAssignment("Position.value", Decimal("9.00")),
-        account=stored_account,
+        account="".join(("ACC", "-1")),
     )
     assert isinstance(group.evidence, PredecessorRows)
     plan = _plan([group], _POSITION)
-    assert calls == {"prepared": 1, "compared": 0}
 
     changed = [
         entry
@@ -546,24 +538,27 @@ def test_a_surviving_multi_assignment_row_carries_the_member_it_restores(
         if isinstance(entry.origin, ChangedFrom)
     ]
     assert len(changed) == 2
-    assert calls == {"prepared": 1, "compared": 2}
+    (shared,) = {id(entry.executed) for entry in changed}
+    assignment = next(
+        assignment.value
+        for assignment in group.mutation.managed_assignments
+        if cast("AttributeIdentity", assignment.member.identity).name == "acctNum"
+    )
     for entry in changed:
-        values = _row_values(entry.row)
+        assert id(entry.executed) == shared
+        assert {cast("AttributeIdentity", member).name for member in entry.executed} == {
+            "acctNum",
+            "value",
+        }
         account = next(ident for ident in entry.row.attributes if ident.name == "acctNum")
-        assert entry.row.attributes[account] is stored_account
-        origin = cast("ChangedFrom", entry.origin)
-        assert origin.predecessor.carries(account, entry.row.attributes[account])
-        assert values["value"] == Decimal("9.00")
+        assert entry.row.attributes[account] is assignment
+        assert _row_values(entry.row)["value"] == Decimal("9.00")
 
 
-def test_single_assignment_groups_and_literal_keyed_writes_are_never_compared(
+def test_a_literal_keyed_write_overlays_every_member_it_assigns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = _comparisons(monkeypatch)
-    group = _position_update(WriteAssignment("Position.value", Decimal("9.00")), account="A")
-    list(_plan([group], _POSITION).steps)
-    assert calls == {"prepared": 0, "compared": 0}
-
+    _refuse_member_comparison(monkeypatch)
     prepared = _prepared_keyed(
         KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "B", "value": Decimal("9.00")},)),
         _BALANCE,
@@ -571,7 +566,6 @@ def test_single_assignment_groups_and_literal_keyed_writes_are_never_compared(
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
     literal = buffered_write(prepared, observation)
     (_close, successor) = _plan([literal], _BALANCE).steps
-    assert calls == {"prepared": 0, "compared": 0}
     # The successor overlays every member the row assigns, whatever it equals.
     assert _insert_rows(successor)[0]["acctNum"] == "B"
     assert _insert_rows(successor)[0]["value"] == Decimal("9.00")
@@ -650,14 +644,15 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
         predecessor=PredecessorRow.over_row(selection, row, stored, ABSENT)
     )
 
-    def lowered(plan: WritePlan) -> list[tuple[str, tuple[object, ...]]]:
+    def statements_of(plan: WritePlan) -> list[tuple[str, tuple[object, ...]]]:
+        payloads = LayoutPayloadPreparer(model)
         return [
             (statement.sql, tuple(statement.binds))
-            for statement in (compile_write_step(step, model, POSTGRES) for step in plan.steps)
+            for statement in (lowered(step, payloads, model, POSTGRES) for step in plan.steps)
         ]
 
-    eager = lowered(_plan([keyed], model, observations={key_: observation}))
-    materialized = lowered(
+    eager = statements_of(_plan([keyed], model, observations={key_: observation}))
+    materialized = statements_of(
         _plan([MaterializedWriteGroup(mutation=mutation, evidence=sealed)], model)
     )
     assert materialized == eager
@@ -741,7 +736,7 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
     )
     documents = [
         cast("Mapping[str, Any]", bind.value)
-        for bind in compile_write_step(changed, model, POSTGRES).binds
+        for bind in lowered(changed, LayoutPayloadPreparer(model), model, POSTGRES).binds
         if isinstance(bind, JsonDocument)
     ]
     assert documents == [
@@ -755,12 +750,10 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
     (address,) = (
         identity for identity in entry.row.value_objects if identity.path[-1] == "address"
     )
-    assert not cast("ChangedFrom", entry.origin).predecessor.carries(
-        address, entry.row.value_objects[address]
-    )
+    assert address in entry.executed
 
 
-def test_a_surviving_row_overlays_an_effective_value_object_and_carries_a_restored_leaf() -> None:
+def test_a_surviving_row_executes_a_restored_leaf_beside_an_effective_value_object() -> None:
     branch = corpus_model("branch")
     stored_name = "".join(("Central", " Branch"))
     address = {
@@ -802,7 +795,9 @@ def test_a_surviving_row_overlays_an_effective_value_object_and_carries_a_restor
     )
     name = next(ident for ident in changed.row.attributes if ident.name == "name")
     (address_identity,) = changed.row.value_objects
-    assert changed.row.attributes[name] is stored_name
+    assert set(changed.executed) == {name, address_identity}
+    assert changed.row.attributes[name] == stored_name
+    assert changed.row.attributes[name] is not stored_name
     assert changed.row.value_objects[address_identity] is next(
         assignment.value
         for assignment in group.mutation.managed_assignments
@@ -1108,11 +1103,12 @@ def test_any_index_finds_the_step_iteration_builds_there(
         _ = plan.steps[len(settled)]
 
 
-def test_an_owned_row_its_group_leaves_as_it_was_takes_no_step_and_changes_no_state() -> None:
-    # Row 2 is the attempt's own and already holds the assigned cell itself, so
-    # revising it in place would assign nothing: it keeps its address with no
-    # statement, names no changed state, and the rows around it are found by
-    # index past it.
+def test_an_owned_row_a_group_reaches_is_revised_with_what_it_already_holds() -> None:
+    # Row 2 is the attempt's own and already holds the assigned value. Selection
+    # is where a row every assignment restores is eliminated; a row that reaches
+    # settlement executes its assignments, so the owned row is revised in place
+    # at its address, stating the value it holds, while the rows around it are
+    # closed and chained.
     group = temporal_group(
         PredicateWrite(
             "update",
@@ -1140,9 +1136,15 @@ def test_an_owned_row_its_group_leaves_as_it_was_takes_no_step_and_changes_no_st
     assert [type(step).__name__ for step in settled] == [
         "PlannedClose",
         "PlannedInsert",
+        "PlannedTemporalRevision",
         "PlannedClose",
         "PlannedInsert",
     ]
+    revision = settled[2]
+    assert isinstance(revision, PlannedTemporalRevision)
+    assert {
+        identity.name: value for identity, value in revision.assignments.attributes.items()
+    } == {"acctNum": "A"}
     assert [_insert_rows(step)[0]["id"] for step in settled if isinstance(step, PlannedInsert)] == [
         1,
         3,
@@ -1150,7 +1152,7 @@ def test_an_owned_row_its_group_leaves_as_it_was_takes_no_step_and_changes_no_st
     assert [plan.steps[index] for index in range(len(settled))] == settled
     (unit,) = plan.units
     assert [state.object for state in unit.changed] == [
-        corpus_object_key("Balance", ("id", key)) for key in (1, 3)
+        corpus_object_key("Balance", ("id", key)) for key in (1, 2, 3)
     ]
     assert list(unit.opened.fresh) == [_endpoint("Balance", key, OPEN_END) for key in (1, 3)]
     assert list(unit.opened.continued) == []
@@ -1380,7 +1382,7 @@ _SIZING_FORBIDDEN: Final = (
     PredecessorExpansion,
     PlannedClose,
     PlannedInsert,
-    InsertEntry,
+    WriteRow,
     PlannedTemporalRevision,
     PlannedTemporalRemoval,
 )
@@ -1409,12 +1411,13 @@ def test_settling_a_bitemporal_group_builds_none_of_its_steps(
     assert set(large_counts) <= {"TimeInterval"}
     settled = list(plan.steps)
     accessed = built.reset()
-    # A revision is read off the one successor that keeps the row's address,
-    # built for it from the row's member cells alone.
+    # A revision is read off the one successor row that keeps the row's
+    # address, built for it from the row's member cells alone.
     revisions = sum(isinstance(step, PlannedTemporalRevision) for step in settled)
     assert revisions == len(owned)
     inserts = sum(isinstance(step, PlannedInsert) for step in settled)
-    assert accessed["PlannedInsert"] == inserts + revisions
+    assert accessed["PlannedInsert"] == inserts
+    assert accessed["WriteRow"] == inserts + revisions
     assert accessed["PredecessorRow"] == 16 + revisions
 
 
@@ -1549,12 +1552,12 @@ def test_many_small_groups_each_keep_their_own_view() -> None:
     ("restored", "changed"),
     [("acctNum", "value"), ("value", "acctNum")],
 )
-def test_an_owned_row_revised_by_a_multi_assignment_group_assigns_only_what_changes(
+def test_an_owned_row_revised_by_a_multi_assignment_group_assigns_every_member(
     restored: str, changed: str
 ) -> None:
     # The row is the attempt's own, so it is revised in place; of the group's
-    # two assignments the row already holds one, which the revision carries
-    # rather than restating, and the other is what it assigns.
+    # two assignments the row already holds one, which the revision states as
+    # it states the other, because a changed row executes its assignments.
     stored: dict[str, object] = {"acctNum": "".join(("A", "-1")), "value": Decimal("1.00")}
     assigned: dict[str, object] = {"acctNum": "B-1", "value": Decimal("9.00")}
     assigned[restored] = stored[restored]
@@ -1576,10 +1579,10 @@ def test_an_owned_row_revised_by_a_multi_assignment_group_assigns_only_what_chan
     assert isinstance(revision, PlannedTemporalRevision)
     assert {
         identity.name: value for identity, value in revision.assignments.attributes.items()
-    } == {changed: assigned[changed]}
+    } == {changed: assigned[changed], restored: assigned[restored]}
 
 
-def test_an_owned_row_revised_by_a_group_assigns_the_occurrence_it_changes() -> None:
+def test_an_owned_row_revised_by_a_group_assigns_the_occurrence_and_the_leaf_it_restates() -> None:
     branch = corpus_model("branch")
     address = {
         "street": "10 Old Road",
@@ -1617,6 +1620,70 @@ def test_an_owned_row_revised_by_a_group_assigns_the_occurrence_it_changes() -> 
     )
     (revision,) = plan.steps
     assert isinstance(revision, PlannedTemporalRevision)
-    assert revision.assignments.attributes == {}
+    assert {
+        identity.name: value for identity, value in revision.assignments.attributes.items()
+    } == {"name": "Central Branch"}
     (assigned,) = revision.assignments.value_objects.values()
     assert cast("Mapping[str, object]", assigned)["city"] == "Tampere"
+
+
+# --------------------------------------------------------------------------- #
+# Audit reaches every group topology once, while the group settles.           #
+# --------------------------------------------------------------------------- #
+def _stamped_like(audited: PlannedWrite, plain: PlannedWrite, stamp: AttributeIdentity) -> None:
+    if isinstance(plain, PlannedInsert):
+        assert isinstance(audited, PlannedInsert)
+        ((entry, original),) = zip(audited.entries, plain.entries, strict=True)
+        assert entry.row.attributes == {**original.row.attributes, stamp: "audited"}
+        assert set(entry.executed) == {*original.executed, stamp}
+    elif isinstance(plain, PlannedClose | PlannedTemporalRevision):
+        assert isinstance(audited, type(plain))
+        assert audited.assignments.attributes == {
+            **plain.assignments.attributes,
+            stamp: "audited",
+        }
+    else:
+        assert audited == plain
+
+
+@pytest.mark.parametrize(
+    ("entity", "mutation"),
+    [
+        ("Balance", "terminate"),
+        ("Balance", "update"),
+        ("Position", "update"),
+        ("Position", "updateUntil"),
+        ("Position", "terminateUntil"),
+    ],
+)
+def test_an_audited_group_steps_as_its_neutral_twin_plus_what_audit_added(
+    monkeypatch: pytest.MonkeyPatch, entity: str, mutation: PredicateMutation
+) -> None:
+    # Every disposition a group row takes — closed, removed, or revised in place
+    # with its successors — is audited where it produces a row or emits a close,
+    # and the steps the group rebuilds carry exactly that.
+    plain = list(_planned_group(entity, mutation, owned=(2,)).steps)
+    stamp = AttributeIdentity(corpus_entity(entity), "acctNum")
+    audit = RecordingAudit(stamps={stamp: "audited"})
+    monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
+    plan = _planned_group(entity, mutation, owned=(2,))
+    settled = (len(audit.rows), len(audit.closes))
+
+    audited = list(plan.steps)
+
+    assert (len(audit.rows), len(audit.closes)) == settled
+    assert len(audited) == len(plain)
+    for step, twin in zip(audited, plain, strict=True):
+        _stamped_like(step, twin, stamp)
+
+
+def test_a_row_the_window_never_reaches_is_not_audited(monkeypatch: pytest.MonkeyPatch) -> None:
+    stamp = AttributeIdentity(corpus_entity("Position"), "acctNum")
+    audit = RecordingAudit(stamps={stamp: "audited"})
+    monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
+    plan = _finalized(_POSITION, _position_group("updateUntil", _OPENED_AT, _OCT))
+
+    steps = list(plan.steps)
+
+    assert len(audit.closes) == 1
+    assert [step.target.key_values for step in steps if isinstance(step, PlannedClose)] == [(1,)]

@@ -35,6 +35,7 @@ from parallax.core.document_codec._shape import (
 )
 from parallax.core.metamodel import Multiplicity
 from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
+from parallax.core.wire._json import same_json_number
 
 __all__ = [
     "UNAVAILABLE",
@@ -43,14 +44,17 @@ __all__ = [
     "DocumentFindingCode",
     "DocumentPatch",
     "DocumentPathSegment",
+    "PreparedPatch",
     "SetLeaf",
     "SetValue",
-    "apply_patches",
+    "apply_prepared_patches",
     "comparison_text",
     "decode_occurrence_classified",
     "encode_managed_document",
     "encode_managed_many",
     "locate_raw_entity_member",
+    "persisted_document_equal",
+    "prepare_patches",
     "prepared_raw_member_classifier",
     "reduce_declared_members",
 ]
@@ -444,7 +448,7 @@ class SetLeaf:
     :class:`~parallax.core.document_codec.Present` stores that value's encoding,
     :data:`~parallax.core.document_codec.NULL` stores JSON null, and
     :data:`~parallax.core.document_codec.MISSING` removes the key. The encoding is
-    this module's to spell, which is why :func:`apply_patches` resolves the path
+    this module's to spell, which is why :func:`prepare_patches` resolves the path
     against a shape rather than taking an already-spelled document value.
     """
 
@@ -529,32 +533,82 @@ def comparison_text(neutral_type: NeutralType, value: object) -> str:
     return cast("str", encode_leaf(neutral_type, value))
 
 
-def apply_patches(
-    shape: MemberShape, document: object, patches: Sequence[DocumentPatch]
+@dataclass(frozen=True, slots=True)
+class PreparedPatch:
+    """One patch resolved against its shape and encoded, ready to apply anywhere.
+
+    ``value`` is the recursively immutable encoded content the path receives: a
+    leaf's spelling or JSON null when ``leaf`` names the leaf's type, and an
+    occurrence's complete document or JSON null when ``leaf`` is ``None``.
+    ``removes`` marks a leaf patch that deletes the key instead, which no SQL
+    assignment expresses.
+    """
+
+    path: tuple[str, ...]
+    value: object
+    leaf: NeutralType | None
+    removes: bool = False
+
+
+def prepare_patches(
+    shape: MemberShape, patches: Sequence[DocumentPatch]
+) -> tuple[PreparedPatch, ...]:
+    """``patches`` resolved against ``shape`` and encoded once, in order.
+
+    The preparation is independent of any predecessor document, so one prepared
+    sequence applies to every document of that shape
+    (:func:`apply_prepared_patches`) and supplies the same encoded values to a
+    path-patching statement. A path the shape does not declare is refused, and so
+    is a patch whose kind contradicts the member it names — a :class:`SetLeaf` at
+    an occurrence, whatever presence it carries, or a :class:`SetValue` at a
+    leaf. What a patch *carries* stays the caller's: removing a required member's
+    key, writing JSON null over it, or assigning an occurrence a document of some
+    other shape all produce a document this same shape then reads back as invalid
+    stored data, and nothing here refuses them.
+    """
+    if not patches:
+        raise ValueError("a patch sequence is nonempty")
+    prepared: list[PreparedPatch] = []
+    for patch in patches:
+        member = resolve(shape, patch.path)
+        dotted = ".".join(patch.path)
+        if isinstance(patch, SetValue):
+            if not isinstance(member, Occurrence):
+                raise ValueError(f"{dotted!r} names a leaf; use SetLeaf")
+            prepared.append(PreparedPatch(patch.path, retain_document_value(patch.document), None))
+            continue
+        if not isinstance(member, Leaf):
+            raise ValueError(f"{dotted!r} names an occurrence; use SetValue")
+        presence = patch.value
+        if isinstance(presence, Missing):
+            prepared.append(PreparedPatch(patch.path, None, member.type, removes=True))
+        elif isinstance(presence, ExplicitNull):
+            prepared.append(PreparedPatch(patch.path, None, member.type))
+        else:
+            encoded = retain_document_value(encode_leaf(member.type, presence.value))
+            prepared.append(PreparedPatch(patch.path, encoded, member.type))
+    return tuple(prepared)
+
+
+def apply_prepared_patches(
+    document: object, prepared: Sequence[PreparedPatch]
 ) -> FrozenMap[str, object]:
-    """``patches`` applied in order, left to right, each over the result of the last.
+    """``prepared`` applied to ``document`` in order, left to right, each over the
+    result of the last.
 
     Every key a patch is not told to change survives, unknown keys included. That is
     the whole point of patching rather than re-encoding: an application that rebuilt a
     document from the members it knows would silently drop the rest. The unit a patch
-    does change is the position it names: a :class:`SetValue` replaces its occurrence's
-    subtree whole, so the keys inside one it names do NOT survive, at any depth and
-    whatever the occurrence's cardinality.
+    does change is the position it names: an occurrence patch replaces its subtree
+    whole, so the keys inside one it names do NOT survive, at any depth and whatever
+    the occurrence's cardinality.
 
-    ``shape`` is what makes a :class:`SetLeaf`'s ``NeutralValue`` spellable here rather
-    than by its caller; it also refuses a path the model does not declare, so a patch
-    can never introduce a key no member names, and it refuses a patch whose kind
-    contradicts the member it names, so no patch writes an object into a leaf or a
-    leaf's encoded value into an occurrence. What a patch *carries* stays the
-    caller's: removing a required member's key, writing JSON null over it, or
-    assigning an occurrence a document of some other shape all produce a document
-    this same shape then reads back as invalid stored data, and nothing here refuses
-    them.
-
-    The result is recursively immutable. Mutable inputs and replacement payloads
-    are retained before sharing, while already-owned subtrees may be reused.
+    The result is recursively immutable and holds each prepared value itself, so
+    every document a sequence is applied to shares its encoded content. Mutable
+    inputs are retained before sharing, while already-owned subtrees may be
+    reused.
     """
-    if not patches:
+    if not prepared:
         raise ValueError("a patch sequence is nonempty")
     if type(document) is FrozenMap:
         current = dict(cast("FrozenMap[str, object]", document).items())
@@ -565,37 +619,88 @@ def apply_patches(
         }
     else:
         current = {}
-    for patch in patches:
-        _apply(shape, current, patch)
+    for patch in prepared:
+        target = current
+        for name in patch.path[:-1]:
+            child = target.get(name)
+            if isinstance(child, dict):
+                target = cast("dict[str, object]", child)
+                continue
+            replacement = (
+                dict(cast("FrozenMap[str, object]", child).items())
+                if type(child) is FrozenMap
+                else {}
+            )
+            target[name] = replacement
+            target = replacement
+        if patch.removes:
+            target.pop(patch.path[-1], None)
+        else:
+            target[patch.path[-1]] = patch.value
     return cast("FrozenMap[str, object]", _adopt_document_builder(current))
 
 
-def _apply(shape: MemberShape, root: dict[str, object], patch: DocumentPatch) -> None:
-    member = resolve(shape, patch.path)
-    target = root
-    for name in patch.path[:-1]:
-        child = target.get(name)
-        if isinstance(child, dict):
-            target = cast("dict[str, object]", child)
-            continue
-        replacement = (
-            dict(cast("FrozenMap[str, object]", child).items()) if type(child) is FrozenMap else {}
-        )
-        target[name] = replacement
-        target = replacement
-    name = patch.path[-1]
-    if isinstance(patch, SetValue):
-        if not isinstance(member, Occurrence):
-            raise ValueError(f"{'.'.join(patch.path)!r} names a leaf; use SetLeaf")
-        target[name] = retain_document_value(patch.document)
-    elif isinstance(patch.value, Missing):
-        target.pop(name, None)
-    elif isinstance(patch.value, ExplicitNull):
-        target[name] = None
-    elif isinstance(member, Leaf):
-        target[name] = retain_document_value(encode_leaf(member.type, patch.value.value))
-    else:
-        raise ValueError(f"{'.'.join(patch.path)!r} names an occurrence; use SetValue")
+def persisted_document_equal(left: object, right: object) -> bool:
+    """Whether two stored documents hold the same persisted content.
+
+    Every member participates, keys no shape declares included, and so does key
+    presence: an absent key and a JSON null differ. Object-member order does not
+    matter and array order does. JSON kinds stay distinct — ``true`` is not
+    ``1`` — and numbers compare by the exact meaning ``m-wire`` stores them
+    with, so ``1`` equals ``1.0`` while a retained ``0.10000000000000001`` is not
+    ``0.1``. Nothing is decoded against a shape, reduced to declared members, or
+    serialized.
+    """
+    pending: list[tuple[object, object]] = [(left, right)]
+    while pending:
+        first, second = pending.pop()
+        if first is not second and not _alike(first, second, pending):
+            return False
+    return True
+
+
+def _alike(first: object, second: object, pending: list[tuple[object, object]]) -> bool:
+    """Whether ``first`` and ``second`` may still be equal, queuing the member
+    pairs that decide it."""
+    kind = _json_kind(first)
+    if kind != _json_kind(second):
+        return False
+    if kind == "object":
+        first_members = cast("Mapping[str, object]", first)
+        second_members = cast("Mapping[str, object]", second)
+        if len(first_members) != len(second_members):
+            return False
+        for name, value in first_members.items():
+            if name not in second_members:
+                return False
+            pending.append((value, second_members[name]))
+        return True
+    if kind == "array":
+        first_items = cast("Sequence[object]", first)
+        second_items = cast("Sequence[object]", second)
+        if len(first_items) != len(second_items):
+            return False
+        pending.extend(zip(first_items, second_items, strict=True))
+        return True
+    if kind == "number":
+        return same_json_number(cast("int | float", first), cast("int | float", second))
+    return first == second
+
+
+def _json_kind(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int | float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if type(value) in (dict, FrozenMap):
+        return "object"
+    if type(value) in (list, tuple):
+        return "array"
+    raise TypeError(f"{type(value).__name__} is not a stored document value")
 
 
 def reduce_declared_members(

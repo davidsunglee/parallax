@@ -102,7 +102,7 @@ OBSERVED_FUNCTIONS: Final[Mapping[str, Callable[..., object]]] = {
     "occurrenceShape": document_codec.occurrence_shape,
     "encodeManagedDocument": encode_managed_document,
     "encodeManagedMany": encode_managed_many,
-    "applyPatches": document_codec.apply_patches,
+    "applyPatches": document_codec.apply_prepared_patches,
     "detachJsonContainer": detach_json_container,
 }
 """Pass observations over the keyed-write window: returns of each named function
@@ -110,10 +110,10 @@ per row, diagnostics that distinguish roots, nested values, and repeated calls,
 and gate nothing. They are counted over exactly the region the window is timed
 over, from the verb to ``transact``'s return, so the read before it counts
 nothing. The two managed encoders are observed at the private module
-SQL lowering imports them from, so the count is of the code objects production
-runs: a nested document returns once per recursion, one Many return covers every
-element it encodes, a successor lowered as patches returns once per replaced
-subtree, and an unchanged successor returns neither."""
+payload preparation imports them from, so the count is of the code objects
+production runs: a nested document returns once per recursion, one Many return
+covers every element it encodes, a successor lowered as patches returns once per
+replaced subtree, and an unchanged successor returns neither."""
 
 WINDOWS: Final[Mapping[str, Window]] = {
     **{case.name: KEYED_WINDOW for case in lowering_support.CASES},

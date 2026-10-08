@@ -2,13 +2,15 @@
 
 `m-write-plan` specifies the finalized semantic form of a write — the Planned
 Write algebra and the Write Target, Write Gate, and Affected Rows Policy
-vocabulary it is built from — and the Write Observation a write against existing
-state retains, including a temporal write's Predecessor Row. Per the dependency
-graph it depends on `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`,
-`m-document-codec`, and `m-temporal-read`, and on nothing that buffers, plans,
-executes, or lowers a write. `m-unit-work` plans buffered writes into this
-algebra and carries each observation to the write it settles; `m-sql` lowers the
-algebra (`m-sql` *Private compiler inputs*). Neither depends on the other for it.
+vocabulary it is built from — the Write Observation a write against existing
+state retains, including a temporal write's Predecessor Row, and the neutral
+vocabulary of the payload a write persists. Per the dependency graph it depends
+on `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-document-codec`,
+and `m-temporal-read`, and on nothing that buffers, plans, executes, lowers, or
+places a write. `m-unit-work` plans buffered writes into this algebra and carries
+each observation to the write it settles; `m-write-payload` prepares what each
+write persists; `m-sql` lowers the algebra with those prepared values (`m-sql`
+*Private compiler inputs*). None depends on another for it.
 
 ## The Planned Write algebra
 
@@ -18,7 +20,7 @@ effect are all settled before SQL lowering. The algebra is **closed**:
 
 ```text
 PlannedWrite =
-    PlannedInsert(entity, entries: NonEmpty[InsertEntry])
+    PlannedInsert(entity, entries: NonEmpty[WriteRow])
   | PlannedUpdate(entity, target, assignments, concurrency, affected_rows)
   | PlannedClose(entity, target, assignments, cause, concurrency, affected_rows)
   | PlannedDelete(entity, target, concurrency, affected_rows)
@@ -30,7 +32,7 @@ PlannedWrite =
 The algebra is **semantic and Attribute-keyed**. It contains no SQL, dialect
 object, driver value, physical column name, property name, or SQL ordering.
 
-- **Planned Insert** carries one or more insert entries. Every entry of one step
+- **Planned Insert** carries one or more Write Rows. Every entry of one step
   has the same canonical member set and generated-value shape; incompatible
   entries form separate steps. Membership *is* the batching decision, so there is
   no batch flag and no group identifier. A Planned Insert carries no Write
@@ -42,7 +44,7 @@ object, driver value, physical column name, property name, or SQL ordering.
 - **Planned Close** closes one current temporal milestone. Its assignments carry
   the Transaction-Time end. Its expected effect is always exactly one row.
 - **Planned Delete** is physical row deletion. It carries no row, assignments,
-  predecessor, Insert Origin, or Close Cause, and a Milestone Target is
+  predecessor, Row Origin, or Close Cause, and a Milestone Target is
   prohibited: represented-state absence is a temporal step, not a delete.
 - **Planned Temporal Revision** revises one current milestone the attempt itself
   opened, in place at its complete physical address. Its assignments carry
@@ -60,20 +62,45 @@ object, driver value, physical column name, property name, or SQL ordering.
   and always carries the close's Temporal Gate, assigns nothing it represents,
   and its expected effect is exactly one row. It changes no observed state.
 
-### Insert Origin and Close Cause
+### Write Rows, Row Origin, and Close Cause
 
 ```text
-InsertOrigin =
+RowOrigin =
     NewLineage
   | CarriedFrom(predecessor)
   | ChangedFrom(predecessor)
 
-InsertEntry(row: PlannedRow, origin: InsertOrigin)
+WriteRow(
+    row:      PlannedRow,
+    origin:   RowOrigin,
+    executed: PlannedAssignments | absent,
+    prepared: RowPayload | absent,      -- backing, outside the row's meaning
+)
 
 CloseCause = Superseded | Terminated
 ```
 
-Origin belongs to **each insert entry**, never to the whole step and never to a
+A **Write Row** is one represented row's state before settlement decides how it
+is realized — opened, or revised in place where the attempt owns its
+predecessor — and does not imply that every represented row changed: a new
+lineage and carried state are equally Write Rows. It is what a Planned Insert's
+entries are.
+
+A Write Row's **executed assignments** are the members it states explicitly —
+the authored assignments of the write that produced it, plus any audit value
+finalization added — each holding the value the row holds. Every other member of
+a carried or changed row is its predecessor's own state. An assignment is
+executed whatever value the predecessor already holds there: an equal authored
+value is still an assignment, and nothing infers executed members from value
+inequality or from whether a cell is its predecessor's own object. Rows the same
+assignments reach share one executed set. A new lineage writes every member it
+holds, so it needs none.
+
+A Write Row MAY carry **prepared** persisted backing (*Write payloads*, below)
+derived from exactly that row, which lowering reuses rather than preparing
+again. It is not part of the row's meaning, so equality ignores it.
+
+Origin belongs to **each Write Row**, never to the whole step and never to a
 parallel array, so a multi-row insert whose rows have different origins keeps
 that distinction. `NewLineage` begins a new Provenance Lineage; `CarriedFrom`
 carries represented state unchanged from its predecessor; `ChangedFrom` changes
@@ -83,7 +110,7 @@ independently `CarriedFrom`.
 
 An implementation **MUST NOT** introduce a generic disposition field, a parallel
 mutation-kind tag, or any free-floating label that a variant could contradict.
-Insert Origin exists only on an insert entry and Close Cause only on a close, so
+Row Origin exists only on a Write Row and Close Cause only on a close, so
 a termination cause on an inserted row and a lineage-start origin on a close are
 **unrepresentable** rather than merely invalid. A Planned Update needs no label
 either: *being* a Planned Update already carries the fact that an existing row
@@ -107,7 +134,7 @@ PlannedAssignments(
 ```
 
 A **Planned Row** is the immutable, duplicate-free complete semantic contents of
-one insert entry, including framework-owned version, temporal, and audit
+one Write Row, including framework-owned version, temporal, and audit
 attributes the planner derived. **Planned Assignments** is nonempty, immutable,
 and duplicate-free, and unlike a Planned Row it names only the members its step
 changes. Entity Layout continues to decide physical `SET` and bind order
@@ -116,7 +143,7 @@ changes. Entity Layout continues to decide physical `SET` and bind order
 Trusted settlement builders construct each final Attribute and Value Object map
 once and transfer that storage directly into the immutable carrier. Public or
 untrusted construction still establishes ownership defensively. Temporal
-expansion builds each successor directly as its final `InsertEntry` and
+expansion builds each successor directly as its final `WriteRow` and
 `PlannedRow`; there is no separate successor-row carrier and no metadata-to-name-
 to-metadata remapping between prepared assignments and final member identities.
 
@@ -316,7 +343,7 @@ Observation retains: every applicable scalar Attribute value, every complete
 Value Object occurrence, the complete primary key, every temporal bound, and
 every audit value, with no generated-value expression. Completeness is required
 because temporal expansion carries members the authored mutation never mentioned,
-and because a decorator must distinguish `m-edit`'s carried state from its
+and because audit finalization must distinguish `m-edit`'s carried state from its
 authored assignments without a second read (ADR 0042). Successors retain or view
 that state rather than copying it, and bulk materialization MAY expose a logical
 Predecessor Row view over a group's compact storage — aligned columns, or the
@@ -354,8 +381,8 @@ anyway, and this rule says only that the observation path carries the value
 forward instead of discarding it once known members are decoded.
 
 The successor is then built by patching that retained document
-(`m-document-codec`) **at `m-edit`'s assigned paths alone** rather than by
-re-encoding decoded members. That is what preserves keys a newer application
+(`m-document-codec`) **at its executed assignments' paths alone** rather than by
+re-encoding decoded members (`m-write-payload`). That is what preserves keys a newer application
 version wrote: an application that predates a key it never declares still
 carries that key across a close-and-insert, and so does every member the mutation
 left alone.
@@ -364,7 +391,41 @@ An assigned occurrence is where `m-edit`'s carry-forward stops. Assigning one
 replaces the subtree stored at its path, whole and at either cardinality, so an
 omitted declared member is absent in the successor and a key no member declares
 does not survive inside it — the author stated a complete value, and no stored
-member is merged back into it. An explicitly null occurrence stores JSON null. Everything
+member is merged back into it. That holds for an assigned occurrence equal to
+the stored one too: it is executed, so the undeclared keys inside the stored
+subtree are gone. An explicitly null occurrence stores JSON null. Everything
 outside an assigned occurrence — every unassigned occurrence, every unassigned
 document-resident Attribute, and every undeclared key at any position the
 mutation did not name — rides forward exactly as stored.
+
+## Write payloads
+
+```text
+WritePayloadPreparer
+  assignments(entity, PlannedAssignments) -> AssignmentPayload
+  row(entity, WriteRow)                   -> RowPayload
+  proven_unequal_non_interval(entity, WriteRow, WriteRow) -> Boolean
+  equal_non_interval(RowPayload, RowPayload)              -> Boolean
+
+RowPayload(entity, row: PlannedRow, cells: [PayloadCell])
+AssignmentPayload(entity, assignments: PlannedAssignments, cells: [PayloadCell])
+PayloadCell(contributor, value)
+```
+
+A Planned Write states what a write means; what it **persists** is its payload.
+This module declares the payload vocabulary and the interface that prepares it,
+so that settlement and lowering share one preparer without the algebra depending
+on storage placement. `m-write-payload` implements the interface; the execution
+module constructs it for one accepted model and hands it to the Write Planner it
+configures.
+
+A payload's cells follow Table Layout slot order, and each names its contributor
+by model identity — a member, the Table's shared Structured Column, or the
+table-per-hierarchy discriminator — never a physical column. A value is a
+planned scalar or generated-value expression, a complete encoded document, the
+discriminator's tag, or, for a revising step's shared Structured Column, the
+ordered prepared patches it applies. A payload holds the semantic row or
+assignment set it was prepared from by identity, which is the whole of its
+binding: a consumer handed a payload prepared from other inputs refuses it
+without comparing documents. No SQL, dialect object, driver value, or executable
+recipe enters a payload or a plan.

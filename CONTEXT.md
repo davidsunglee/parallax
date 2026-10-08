@@ -28,6 +28,8 @@ contract owners; this index does not add requirements.
 | Planned Write | One finalized semantic execution step, distinct from the SQL that lowers it | [Write plan](core/spec/m-write-plan.md) |
 | Object Key / Observed State Key | An object across its states versus one exact state a read observed | [Write plan](core/spec/m-write-plan.md) |
 | Write Observation / Predecessor Row | The evidence a write against existing state retains, and the complete observed row a temporal one carries | [Write plan](core/spec/m-write-plan.md) |
+| Write Row / executed assignments | One represented row before its realization is chosen, and the members it states explicitly rather than carries | [Write plan](core/spec/m-write-plan.md) |
+| Write payload | What a planned write persists, prepared once and rendered by SQL lowering | [Write payload](core/spec/m-write-payload.md) |
 | Predecessor / Successor | An existing milestone a temporal write acts on, versus a row derived from exactly one predecessor over part of its coverage | [Temporal writes](core/spec/m-temporal-write.md) |
 | Coverage Transform / Coverage Segment | What an object's composed writes do to its existing coverage, and one requested window of it | [Temporal writes](core/spec/m-temporal-write.md) |
 | Coverage Gap | Part of a replacement's extent no existing coverage holds, opened as a new lineage rather than a successor | [Temporal writes](core/spec/m-temporal-write.md) |

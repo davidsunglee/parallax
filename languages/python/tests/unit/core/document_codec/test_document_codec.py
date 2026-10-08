@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+import sys
 import uuid
-from collections.abc import Iterable
-from typing import cast
+from collections.abc import Iterable, Sequence
+from typing import Any, cast
 
 import pytest
 
@@ -34,6 +35,7 @@ from parallax.core.base import (
     UUID,
     Decimal,
     DocumentValue,
+    FrozenMap,
     NeutralType,
     PresentDocument,
 )
@@ -43,6 +45,7 @@ from parallax.core.document_codec import (
     UNAVAILABLE,
     DecodedMember,
     DocumentFinding,
+    DocumentPatch,
     Leaf,
     MemberShape,
     Occurrence,
@@ -50,7 +53,7 @@ from parallax.core.document_codec import (
     Present,
     SetLeaf,
     SetValue,
-    apply_patches,
+    apply_prepared_patches,
     comparison_text,
     decode_occurrence_classified,
     encode_leaf,
@@ -58,6 +61,8 @@ from parallax.core.document_codec import (
     is_text_compared,
     locate_raw_entity_member,
     occurrence_shape,
+    persisted_document_equal,
+    prepare_patches,
     prepared_raw_member_classifier,
     reduce_declared_members,
 )
@@ -641,6 +646,15 @@ _PROFILE = ValueObjectShapeDeclaration(
         ),
     ),
 )
+
+
+def _patched(
+    shape: MemberShape, document: object, patches: Sequence[DocumentPatch]
+) -> FrozenMap[str, object]:
+    """``patches`` prepared against ``shape`` and applied to ``document``."""
+    return apply_prepared_patches(document, prepare_patches(shape, patches))
+
+
 _SHAPE = _PROFILE.member_shape
 
 _NESTED_MANY_SHAPE = (
@@ -874,7 +888,7 @@ def test_an_unknown_key_never_becomes_a_member_value() -> None:
 
 def test_patch_preserves_every_key_it_is_not_told_to_change() -> None:
     stored = {"flag": True, "unknown": "from a newer writer", "entries": [{"kind": "home"}]}
-    patched = apply_patches(_SHAPE, stored, [SetLeaf(("day",), Present(dt.date(2026, 1, 15)))])
+    patched = _patched(_SHAPE, stored, [SetLeaf(("day",), Present(dt.date(2026, 1, 15)))])
     assert patched == {
         "flag": True,
         "unknown": "from a newer writer",
@@ -885,16 +899,16 @@ def test_patch_preserves_every_key_it_is_not_told_to_change() -> None:
 
 
 def test_a_leaf_patch_spells_its_value_through_the_encoding_table() -> None:
-    assert apply_patches(_SHAPE, {}, [SetLeaf(("origin", "city"), Present("Oslo"))]) == {
+    assert _patched(_SHAPE, {}, [SetLeaf(("origin", "city"), Present("Oslo"))]) == {
         "origin": {"city": "Oslo"}
     }
-    assert apply_patches(_SHAPE, {"flag": True}, [SetLeaf(("flag",), NULL)]) == {"flag": None}
-    assert apply_patches(_SHAPE, {"flag": True}, [SetLeaf(("flag",), MISSING)]) == {}
+    assert _patched(_SHAPE, {"flag": True}, [SetLeaf(("flag",), NULL)]) == {"flag": None}
+    assert _patched(_SHAPE, {"flag": True}, [SetLeaf(("flag",), MISSING)]) == {}
 
 
 def test_an_occurrence_patch_replaces_the_whole_subtree_it_names() -> None:
     stored = {"unknown": 1, "origin": {"city": "Oslo", "unknown": 2}}
-    replaced = apply_patches(
+    replaced = _patched(
         _SHAPE,
         stored,
         [SetValue(("origin",), encode_managed_document(_ORIGIN.member_shape, {}))],
@@ -907,7 +921,7 @@ def test_both_cardinalities_replace_their_subtree_and_null_stores_json_null() ->
         "origin": {"city": "Oslo", "unknown": 2},
         "entries": [{"kind": "old", "unknown": 3}],
     }
-    patched = apply_patches(
+    patched = _patched(
         _SHAPE,
         stored,
         [
@@ -919,7 +933,7 @@ def test_both_cardinalities_replace_their_subtree_and_null_stores_json_null() ->
         "origin": {"city": "Bergen"},
         "entries": [{"kind": "new"}],
     }
-    assert apply_patches(_SHAPE, stored, [SetValue(("origin",), None)]) == {
+    assert _patched(_SHAPE, stored, [SetValue(("origin",), None)]) == {
         "origin": None,
         "entries": [{"kind": "old", "unknown": 3}],
     }
@@ -936,7 +950,7 @@ def test_replacement_reaches_every_depth_of_the_subtree_it_names() -> None:
             ),
         )
     )
-    patched = apply_patches(
+    patched = _patched(
         wrapper,
         {
             "profile": {
@@ -1033,18 +1047,18 @@ def test_declared_member_reduction_refuses_wrong_occurrence_kinds() -> None:
 
 
 def test_patches_apply_left_to_right_each_over_the_result_of_the_last() -> None:
-    patched = apply_patches(
+    patched = _patched(
         _SHAPE,
         {},
         [SetLeaf(("flag",), Present(True)), SetLeaf(("flag",), Present(False))],
     )
     assert patched == {"flag": False}
     with pytest.raises(ValueError, match="nonempty"):
-        apply_patches(_SHAPE, {}, [])
+        _patched(_SHAPE, {}, [])
 
 
 def test_nested_and_overlapping_patches_reuse_the_latest_changed_ancestor() -> None:
-    patched = apply_patches(
+    patched = _patched(
         _SHAPE,
         {"origin": {"city": "Oslo", "unknown": 1}},
         [
@@ -1054,7 +1068,7 @@ def test_nested_and_overlapping_patches_reuse_the_latest_changed_ancestor() -> N
     )
     assert patched == {"origin": {"city": "Tromso", "replacement": True}}
 
-    replaced_last = apply_patches(
+    replaced_last = _patched(
         _SHAPE,
         {"origin": {"city": "Oslo"}},
         [
@@ -1064,7 +1078,7 @@ def test_nested_and_overlapping_patches_reuse_the_latest_changed_ancestor() -> N
     )
     assert replaced_last == {"origin": {"city": "Alta"}}
 
-    built_in_order = apply_patches(
+    built_in_order = _patched(
         _SHAPE,
         {},
         [
@@ -1080,7 +1094,7 @@ def test_patch_reuses_safe_untouched_subtrees_and_owns_aliased_replacements() ->
         _SHAPE, {"origin": {"city": "Oslo"}, "entries": ({"kind": "home"},)}
     )
     replacement = {"city": "Bergen"}
-    changed = apply_patches(_SHAPE, predecessor, [SetValue(("origin",), replacement)])
+    changed = _patched(_SHAPE, predecessor, [SetValue(("origin",), replacement)])
 
     replacement["city"] = "Alta"
 
@@ -1090,8 +1104,8 @@ def test_patch_reuses_safe_untouched_subtrees_and_owns_aliased_replacements() ->
 
 
 def test_patch_treats_a_non_object_root_or_intermediate_as_an_empty_object() -> None:
-    assert apply_patches(_SHAPE, 7, [SetLeaf(("flag",), Present(True))]) == {"flag": True}
-    assert apply_patches(
+    assert _patched(_SHAPE, 7, [SetLeaf(("flag",), Present(True))]) == {"flag": True}
+    assert _patched(
         _SHAPE,
         {"origin": "not-an-object"},
         [SetLeaf(("origin", "city"), Present("Oslo"))],
@@ -1103,14 +1117,139 @@ def test_a_patch_whose_kind_contradicts_its_member_is_refused_both_ways() -> Non
     # document the same shape reads back as invalid stored data — a leaf holding an
     # object, or an occurrence holding a scalar.
     with pytest.raises(ValueError, match="SetValue"):
-        apply_patches(_SHAPE, {}, [SetLeaf(("origin",), Present("Oslo"))])
+        _patched(_SHAPE, {}, [SetLeaf(("origin",), Present("Oslo"))])
     with pytest.raises(ValueError, match="SetLeaf"):
-        apply_patches(_SHAPE, {}, [SetValue(("day",), {})])
+        _patched(_SHAPE, {}, [SetValue(("day",), {})])
+
+
+@pytest.mark.parametrize("presence", [NULL, MISSING], ids=["null", "missing"])
+def test_a_leaf_patch_of_any_presence_at_an_occurrence_is_refused(presence: object) -> None:
+    # Exclusive pairing holds whatever the leaf patch carries: JSON null and
+    # removal at an occurrence's path are occurrence writes a SetValue states,
+    # so neither is applied as if the path named a leaf.
+    with pytest.raises(ValueError, match="names an occurrence; use SetValue"):
+        prepare_patches(_SHAPE, [SetLeaf(("origin",), cast("Any", presence))])
+
+
+def test_one_prepared_patch_sequence_applies_to_every_document_and_shares_its_values() -> None:
+    # Preparation resolves and encodes once, independently of any document, so
+    # every document it applies to holds the very values it prepared, and every
+    # key outside the patched paths — unknown ones included — stays as stored.
+    replacement = {"city": "Bergen"}
+    prepared = prepare_patches(
+        _SHAPE,
+        [SetLeaf(("day",), Present(dt.date(2026, 1, 15))), SetValue(("origin",), replacement)],
+    )
+    first = {"flag": True, "origin": {"city": "Oslo", "sealNumber": "S-1"}, "legacy": 1}
+    second = {"origin": None, "entries": [{"kind": "home"}]}
+
+    patched = [apply_prepared_patches(document, prepared) for document in (first, second)]
+
+    assert patched[0] == {
+        "flag": True,
+        "origin": {"city": "Bergen"},
+        "legacy": 1,
+        "day": "2026-01-15",
+    }
+    assert patched[1] == {
+        "origin": {"city": "Bergen"},
+        "entries": [{"kind": "home"}],
+        "day": "2026-01-15",
+    }
+    assert patched[0]["origin"] is patched[1]["origin"] is prepared[1].value
+    assert patched[0]["day"] is prepared[0].value
+    assert (prepared[0].leaf, prepared[1].leaf) == (DATE, None)
+    replacement["city"] = "Alta"
+    assert prepared[1].value == {"city": "Bergen"}
+
+
+def test_a_prepared_removal_deletes_only_its_own_key() -> None:
+    (removal,) = prepare_patches(_SHAPE, [SetLeaf(("flag",), MISSING)])
+    assert removal.removes
+    assert apply_prepared_patches({"flag": True, "legacy": 1}, (removal,)) == {"legacy": 1}
+
+
+# --------------------------------------------------------------------------- #
+# Persisted document equality                                                  #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ({"a": 1, "b": [1, 2]}, {"b": [1, 2], "a": 1}),
+        ({"x": 1}, {"x": 1.0}),
+        ({"x": None}, {"x": None}),
+        ([], ()),
+        ({"x": {"unknown": "kept"}}, {"x": {"unknown": "kept"}}),
+        ({"x": -0.0}, {"x": 0}),
+    ],
+    ids=["member-order", "integral-number", "null", "array-carriers", "unknown-keys", "zero"],
+)
+def test_documents_persisting_the_same_content_are_equal(left: object, right: object) -> None:
+    assert persisted_document_equal(left, right)
+    assert persisted_document_equal(FrozenMap({"doc": left}), {"doc": right})
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ({}, {"x": None}),
+        ([1, 2], [2, 1]),
+        ({"x": True}, {"x": 1}),
+        ({"x": "1"}, {"x": 1}),
+        ({"x": {"city": "Oslo"}}, {"x": {"city": "Oslo", "sealNumber": "S-1"}}),
+        ({"x": [{"label": "a"}]}, {"x": [{"label": "a"}, {"label": "a"}]}),
+        ({"x": None}, {"x": []}),
+        ({"a": 1}, {"b": 1}),
+    ],
+    ids=[
+        "presence",
+        "array-order",
+        "boolean-number",
+        "string-number",
+        "unknown-key",
+        "array-length",
+        "null-empty",
+        "member-names",
+    ],
+)
+def test_documents_differing_in_any_persisted_content_are_unequal(
+    left: object, right: object
+) -> None:
+    assert not persisted_document_equal(left, right)
+    assert not persisted_document_equal(right, left)
+
+
+def test_a_value_no_document_can_store_is_refused_rather_than_compared() -> None:
+    with pytest.raises(TypeError, match="is not a stored document value"):
+        persisted_document_equal({"x": object()}, {"x": 1})
+
+
+def test_retained_numbers_compare_by_the_meaning_they_are_stored_with() -> None:
+    retained = loads('{"x": 0.10000000000000001, "y": 1e999, "z": 0.25}')
+    assert retained == {"x": 0.1, "y": 0.0, "z": 0.25}  # host projections agree
+    assert not persisted_document_equal(retained, {"x": 0.1, "y": 0.0, "z": 0.25})
+    assert persisted_document_equal(
+        retained, loads('{"z": 0.250, "y": 1E+999, "x": 1.0000000000000001e-1}')
+    )
+
+
+def test_equality_walks_documents_deeper_than_the_interpreter_recursion_limit() -> None:
+    depth = sys.getrecursionlimit() + 100
+    left: object = 1
+    right: object = 1.0
+    for _ in range(depth):
+        left, right = {"n": left}, [right]
+    assert not persisted_document_equal(left, {"n": right})
+    nested_left: object = "leaf"
+    nested_right: object = "leaf"
+    for _ in range(depth):
+        nested_left, nested_right = {"n": nested_left}, {"n": nested_right}
+    assert persisted_document_equal(nested_left, nested_right)
 
 
 def test_a_returned_document_is_immutable_and_shares_no_mutable_input_state() -> None:
     stored: dict[str, object] = {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]}
-    patched = apply_patches(_SHAPE, stored, [SetLeaf(("flag",), NULL)])
+    patched = _patched(_SHAPE, stored, [SetLeaf(("flag",), NULL)])
     cast("dict[str, object]", stored["origin"])["city"] = "Bergen"
     cast("list[dict[str, object]]", stored["entries"])[0]["kind"] = "work"
     assert patched == {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}], "flag": None}
@@ -1127,7 +1266,7 @@ def test_a_returned_document_is_immutable_and_shares_no_mutable_input_state() ->
     answered, _findings = _read_member(_SHAPE, {"origin": origin}, "origin")
     cast("dict[str, object]", answered)["city"] = "Tromso"
     assert origin == {"city": "Oslo"}
-    replaced = apply_patches(_SHAPE, {}, [SetValue(("origin",), origin)])
+    replaced = _patched(_SHAPE, {}, [SetValue(("origin",), origin)])
     origin["city"] = "Alta"
     assert replaced["origin"] == {"city": "Oslo"}
     assert origin == {"city": "Alta"}
@@ -1152,7 +1291,7 @@ def test_immutable_codec_outputs_compose_through_decode_compare_and_patch() -> N
     assert _decoded(_SHAPE, encoded) == DecodedMember(
         Present({"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]})
     )
-    assert apply_patches(_SHAPE, encoded, [SetLeaf(("flag",), Present(True))]) == {
+    assert _patched(_SHAPE, encoded, [SetLeaf(("flag",), Present(True))]) == {
         "flag": True,
         "origin": {"city": "Oslo"},
         "entries": [{"kind": "home"}],

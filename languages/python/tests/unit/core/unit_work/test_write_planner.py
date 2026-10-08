@@ -21,7 +21,6 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, cast
 
@@ -74,7 +73,6 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core.unit_work.materialized import ObjectClaimedWrite, ObservedKeyedWrite
-from parallax.core.unit_work.strategy import ActorIdentity
 from parallax.core.unit_work.write_settlement import OrderedWrite
 from parallax.core.write_plan import (
     ObjectKey,
@@ -115,6 +113,7 @@ from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 from tests.unit._temporal_group_support import temporal_group
+from tests.unit.core.unit_work._audit_support import RecordingAudit
 
 _MODELS = corpus_records()
 _ACCOUNT = corpus_model("account")
@@ -365,12 +364,21 @@ def test_coalesced_temporal_writes_overlay_every_member_any_of_them_assigned() -
         ],
         _BALANCE,
     )
-    origin, row = _changed_entry(plan)
+    _origin, row = _changed_entry(plan)
     values = _row_values(row)
     assert values["acctNum"] == "B"
     assert values["value"] == Decimal("1.00")
-    (value,) = (identity for identity in row.attributes if identity.name == "value")
-    assert not origin.predecessor.carries(value, row.attributes[value])
+    (entry,) = (
+        entry
+        for step in plan.steps
+        if isinstance(step, PlannedInsert)
+        for entry in step.entries
+        if isinstance(entry.origin, ChangedFrom)
+    )
+    assert {cast("AttributeIdentity", member).name for member in entry.executed} == {
+        "acctNum",
+        "value",
+    }
 
 
 def test_a_destructive_intent_supersedes_the_assignments_buffered_before_it() -> None:
@@ -1761,36 +1769,17 @@ def test_eager_runs_pack_on_each_side_of_a_groups_own_segment() -> None:
     assert plan.steps[0] is plan.steps[0]
 
 
-@dataclass(frozen=True, slots=True)
-class _CountingAudit:
-    """The neutral strategy, recording each step it was handed."""
-
-    decorated: list[PlannedWrite]
-    actors: list[ActorIdentity]
-
-    def decorate(
-        self,
-        step: PlannedWrite,
-        *,
-        actor_identity: ActorIdentity,
-        transaction_instant: TransactionInstant,
-    ) -> PlannedWrite:
-        self.decorated.append(step)
-        self.actors.append(actor_identity)
-        return step
-
-
-def test_provenance_reaches_every_eager_step_once_and_no_materialized_row(
+def test_audit_decorates_each_update_once_at_settlement_and_never_on_enumeration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Decoration follows topology and precedes freezing, and its boundary is the
-    # eager arm: a Materialized Write Group's rows are rebuilt on demand from a
-    # segment holding no strategy and no unevaluated instant, so they cannot be
-    # decorated one at a time and are not (ADR 0037; `m-unit-work`). A neutral
-    # strategy hands back the step it was given, so each eager step of the frozen
-    # plan is the IDENTICAL object settlement produced — decoration sits between
-    # settling a step and packing it, and packing copies nothing.
-    audit = _CountingAudit([], [])
+    # Audit follows topology and precedes freezing for every arm, the
+    # Materialized Write Group's included: an eager update reaches the strategy
+    # once and is frozen as the update it returned, and a group's rows are
+    # decorated once each while the group settles. The group keeps only the
+    # values its audit added, so rebuilding a row's step on demand reaches no
+    # strategy and still carries them.
+    owner = AttributeIdentity(corpus_entity("Account"), "owner")
+    audit = RecordingAudit(stamps={owner: "audited"})
     monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
     model = _wallet_and_account()
     plan = build_write_planner(model).finalize(
@@ -1801,23 +1790,28 @@ def test_provenance_reaches_every_eager_step_once_and_no_materialized_row(
             buffered_writes=observed_buffer(_eager_group_eager(model), model, None),
         )
     )
-    assert len(plan.steps) == 3
-    assert len(audit.decorated) == 2
-    assert audit.actors == [TEST_ACTOR_IDENTITY, TEST_ACTOR_IDENTITY]
-    assert plan.steps[0] is audit.decorated[0]
-    assert plan.steps[2] is audit.decorated[1]
-    assert all(decorated is not plan.steps[1] for decorated in audit.decorated)
+    assert len(audit.updates) == 3
+    assert audit.actors == [TEST_ACTOR_IDENTITY] * 3
+    assert plan.steps[0] is audit.updates[0]
+    assert plan.steps[2] is audit.updates[2]
+
+    grouped = [plan.steps[1] for _ in range(2)]
+
+    assert len(audit.updates) == 3
+    for step in grouped:
+        assert isinstance(step, PlannedUpdate)
+        assert step.assignments.attributes[owner] == "audited"
 
 
-def test_provenance_decorates_the_topology_temporal_expansion_produced(
+def test_audit_finalizes_the_rows_and_closes_temporal_expansion_produced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Decoration follows TOPOLOGY, so what a temporal mutation hands the strategy
-    # is the run stage 7 expanded it into rather than the one update the buffer
-    # carried: the close reaches the strategy first, its chained successors reach
-    # it in their already-decided order, and no step of the frozen plan reaches it
-    # twice or not at all.
-    audit = _CountingAudit([], [])
+    # Audit follows TOPOLOGY, so what a temporal mutation hands the strategy is
+    # what stage 7 expanded it into rather than the one update the buffer
+    # carried: its close is decorated and each successor row it produces is
+    # finalized, once each, and the frozen plan holds exactly what the hooks
+    # returned.
+    audit = RecordingAudit()
     monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
     update = KeyedWrite(
         "update",
@@ -1835,9 +1829,46 @@ def test_provenance_decorates_the_topology_temporal_expansion_produced(
     )
     steps = list(plan.steps)
     assert isinstance(steps[0], PlannedClose)
-    assert len(steps) >= 2
-    assert all(isinstance(step, PlannedInsert) for step in steps[1:])
-    assert all(step is decorated for step, decorated in zip(steps, audit.decorated, strict=True))
+    assert audit.closes == [steps[0]]
+    assert steps[0] is audit.closes[0]
+    inserts = [step for step in steps[1:] if isinstance(step, PlannedInsert)]
+    assert len(inserts) == len(steps) - 1 >= 1
+    assert [id(row) for row in audit.rows] == [id(insert.entries[0]) for insert in inserts]
+
+
+def test_audit_states_what_it_adds_to_carried_and_changed_rows_as_executed_assignments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A carried head keeps its predecessor's state except where finalization
+    # assigns an audit value; a changed successor executes its authored
+    # assignments and the audit value together. Both state them explicitly, so
+    # what each row persists never has to be inferred.
+    stamp = AttributeIdentity(corpus_entity("Position"), "acctNum")
+    audit = RecordingAudit(stamps={stamp: "audited"})
+    monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
+    update = KeyedWrite(
+        "updateUntil",
+        "Position",
+        ({"id": 5, "value": Decimal("42.0")},),
+        valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        until=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+    )
+    key_ = object_key(update, _POSITION)
+    assert key_ is not None
+    plan = _plan(
+        [update],
+        _POSITION,
+        observations={key_: _bitemporal_observation()},
+        tx_instant=instant_at("2024-07-01T00:00:00+00:00"),
+    )
+    entries = [step.entries[0] for step in plan.steps if isinstance(step, PlannedInsert)]
+    origins = [type(entry.origin).__name__ for entry in entries]
+    assert origins == ["CarriedFrom", "ChangedFrom", "CarriedFrom"]
+    executed = [
+        {cast("AttributeIdentity", member).name for member in entry.executed} for entry in entries
+    ]
+    assert executed == [{"acctNum"}, {"acctNum", "value"}, {"acctNum"}]
+    assert all(entry.row.attributes[stamp] == "audited" for entry in entries)
 
 
 def test_only_surviving_writes_carry_claims_into_execution_units() -> None:

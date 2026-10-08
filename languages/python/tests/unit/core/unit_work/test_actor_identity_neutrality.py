@@ -26,6 +26,7 @@ from parallax.core.unit_work import (
     object_key,
 )
 from parallax.core.unit_work.strategy import ActorIdentity
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
     ObjectKey,
     PredecessorRow,
@@ -66,7 +67,10 @@ def _plan_under(
 
 
 def _statements(plan: WritePlan, model: Metamodel) -> list[LoweredStatement]:
-    return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]
+    return [
+        statement
+        for _step, statement in stream_lowered(plan, LayoutPayloadPreparer(model), model, POSTGRES)
+    ]
 
 
 def _assert_neutral(

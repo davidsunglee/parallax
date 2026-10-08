@@ -64,7 +64,7 @@ from parallax.core.execution._publication import write_projection
 from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._write import compile_write_step
+from parallax.core.sql_gen._write import StepPayload, compile_write_step
 from parallax.core.unit_work import NO_AUDIT, WritePlanner, WritePlanningRequest
 from parallax.core.unit_work.strategy import (
     AuditStrategy,
@@ -72,6 +72,7 @@ from parallax.core.unit_work.strategy import (
     ConcurrencyStrategy,
 )
 from parallax.core.write_plan import WritePlan
+from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.steps import PlannedWrite
 from parallax.snapshot import Transaction
 from tests._support import mirrored_models as mm
@@ -189,8 +190,11 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         batching: BatchingStrategy,
         concurrency: ConcurrencyStrategy,
         audit: AuditStrategy,
+        payloads: WritePayloadPreparer,
     ) -> WritePlanner:
-        planner = WritePlanner(model, batching=batching, concurrency=concurrency, audit=audit)
+        planner = WritePlanner(
+            model, batching=batching, concurrency=concurrency, audit=audit, payloads=payloads
+        )
         seen.built.append(_Built(planner=planner, audit=audit))
         return planner
 
@@ -200,14 +204,16 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         return finalized
 
     def lower(
-        plan: WritePlan, meta: Metamodel, dialect: Dialect
+        plan: WritePlan, payloads: WritePayloadPreparer, meta: Metamodel, dialect: Dialect
     ) -> Iterator[tuple[PlannedWrite, LoweredStatement]]:
         seen.lowered.append(plan)
-        yield from streaming(plan, meta, dialect)
+        yield from streaming(plan, payloads, meta, dialect)
 
-    def render(step: PlannedWrite, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
+    def render(
+        step: PlannedWrite, payload: StepPayload, meta: Metamodel, dialect: Dialect
+    ) -> LoweredStatement:
         seen.rendered.append(step)
-        return rendering(step, meta, dialect)
+        return rendering(step, payload, meta, dialect)
 
     monkeypatch.setattr(_planning, "WritePlanner", construct)
     monkeypatch.setattr(WritePlanner, "finalize", finalize)

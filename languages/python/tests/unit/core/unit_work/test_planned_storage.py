@@ -31,10 +31,11 @@ from parallax.core.base import INFINITY
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._construction_input import ABSENT
+from parallax.core.execution import _planning as planning_composition
 from parallax.core.execution._planning import build_write_planner
-from parallax.core.metamodel import AttributeMetadata, FacetKey, Metamodel
+from parallax.core.execution._write_lowering import lowered
+from parallax.core.metamodel import AttributeIdentity, AttributeMetadata, FacetKey, Metamodel
 from parallax.core.model_formation import ModelCompilerRequirement
-from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.expansion import PredecessorExpander
 from parallax.core.unit_work import (
@@ -58,8 +59,9 @@ from parallax.core.unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core.unit_work.materialized import GroupStates, target_write
-from parallax.core.unit_work.ranges import AuditDecoration, DeferredTemporalRange
+from parallax.core.unit_work.ranges import DeferredTemporalRange
 from parallax.core.unit_work.strategy import (
+    AuditDecoration,
     AuditStrategy,
     BatchingStrategy,
     ConcurrencyStrategy,
@@ -68,6 +70,7 @@ from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.unit_work.write_settlement import (
     WritePlanCompiler,  # producer-reach regression only
 )
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
     ChunkedColumnBuilder,
     EntityStateRow,
@@ -84,9 +87,11 @@ from parallax.core.write_plan.keys import TemporalStateKey
 from parallax.core.write_plan.steps import ChangedFrom, PlannedUpdate
 from tests._support.clock_probes import CountingClock, inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests.unit._corpus_identity_support import corpus_entity
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._temporal_group_support import temporal_group
 from tests.unit.core import _milestone_rows_support as milestone_rows
+from tests.unit.core.unit_work._audit_support import RecordingAudit
 from tests.unit.core.unit_work._ownership_support import OpenedRows
 
 _MODELS = models.load_models()
@@ -679,8 +684,8 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
 
 
 def test_mutating_a_materialized_groups_assignments_leaves_steps_unaffected() -> None:
-    # A temporal group's settled backing retains the group's resolved authored
-    # maps across every resolved row, so a caller reaching them through
+    # A temporal group's settled backing retains the group's one executed
+    # assignment set across every resolved row, so a caller reaching it through
     # `plan.steps.segments` must not be able to change what a subsequently
     # retrieved step carries — a Write Plan is immutable and its views are
     # stable.
@@ -770,7 +775,7 @@ def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predec
     phones = cast("Sequence[Mapping[str, object]]", address["phones"])
     predecessor = entry.origin.predecessor
     predecessor_address = cast("Mapping[str, object]", predecessor.member("address"))
-    assert predecessor.carries(address_identity, entry.row.value_objects[address_identity]) is False
+    assert entry.executed == (address_identity,)
     assert predecessor.members == EntityStateRow.over_declared_members(
         group.evidence.selection, retained, absent=ABSENT
     )
@@ -791,7 +796,9 @@ def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predec
         cast("dict[str, object]", predecessor_address)["city"] = "Espoo"
 
     assert plan.steps[2] == changed
-    *_carried, statement = (compile_write_step(step, _BRANCH, POSTGRES) for step in plan.steps)
+    *_carried, statement = (
+        lowered(step, LayoutPayloadPreparer(_BRANCH), _BRANCH, POSTGRES) for step in plan.steps
+    )
     assert statement.binds[-1] == JsonDocument(
         {
             "street": "30 New Road",
@@ -855,3 +862,104 @@ def test_repeated_planning_of_an_equal_materialized_group_yields_equal_plans() -
     )
     assert first_plan == second_plan
     assert first_plan.steps == second_plan.steps
+
+
+def test_a_materialized_group_keeps_only_what_its_audit_added_and_audits_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A group's rows are finalized, and its closes decorated, while the group
+    # settles: once per produced row and close, never again when a step is
+    # rebuilt. The backing keeps the values audit added, nothing else per row,
+    # and each rebuilt step carries them as executed assignments.
+    balance = corpus_entity("Balance")
+    stamp = AttributeIdentity(balance, "acctNum")
+    audit = RecordingAudit(stamps={stamp: "audited"})
+    monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
+    rows = [
+        {"id": key, "acctNum": "A", "value": 1.00, "txStart": _OPENED, "txEnd": INFINITY}
+        for key in (1, 2, 3)
+    ]
+    group = temporal_group(_value_update("Balance", None), _BALANCE, rows)
+    plan = build_write_planner(_BALANCE).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[group],
+        )
+    )
+    assert (len(audit.rows), len(audit.closes)) == (3, 3)
+    backing = cast("Any", plan.steps.segments[0]).backing
+    assert len(backing.audited) == 6
+    assert {tuple(stamped.attributes.items()) for stamped in backing.audited.values()} == {
+        ((stamp, "audited"),)
+    }
+
+    first = list(plan.steps)
+    second = list(plan.steps)
+
+    assert (len(audit.rows), len(audit.closes)) == (3, 3)
+    assert first == second
+    for step in first:
+        if isinstance(step, PlannedClose):
+            assert step.assignments.attributes[stamp] == "audited"
+        else:
+            assert isinstance(step, PlannedInsert)
+            (entry,) = step.entries
+            assert entry.row.attributes[stamp] == "audited"
+            assert {cast("AttributeIdentity", member).name for member in entry.executed} == {
+                "acctNum",
+                "value",
+            }
+
+
+@pytest.mark.parametrize("adds_nothing", [False, True], ids=["neutral", "adds-nothing"])
+def test_an_audit_adding_nothing_leaves_a_materialized_group_nothing_to_keep(
+    adds_nothing: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audit = RecordingAudit()
+    if adds_nothing:
+        monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
+    rows = [
+        {"id": key, "acctNum": "A", "value": 1.00, "txStart": _OPENED, "txEnd": INFINITY}
+        for key in (1, 2)
+    ]
+    group = temporal_group(_value_update("Balance", None), _BALANCE, rows)
+    plan = build_write_planner(_BALANCE).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[group],
+        )
+    )
+    assert cast("Any", plan.steps.segments[0]).backing.audited == {}
+    assert len(audit.rows) == (2 if adds_nothing else 0)
+
+
+def test_settling_or_enumerating_a_group_prepares_no_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # What a step persists is prepared when its statement is lowered and not
+    # before: settlement keeps semantic values, and rebuilding a step on demand
+    # assembles no document or assignment payload.
+    def refuse(*_args: object) -> object:
+        raise AssertionError("a payload was prepared before its statement was lowered")
+
+    rows = [
+        {"id": key, "acctNum": "A", "value": 1.00, "txStart": _OPENED, "txEnd": INFINITY}
+        for key in (1, 2)
+    ]
+    group = temporal_group(_value_update("Balance", None), _BALANCE, rows)
+    monkeypatch.setattr(LayoutPayloadPreparer, "row", refuse)
+    monkeypatch.setattr(LayoutPayloadPreparer, "assignments", refuse)
+    plan = build_write_planner(_BALANCE).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[group],
+        )
+    )
+    assert len(list(plan.steps)) == 4
+    assert plan.steps[3] == list(plan.steps)[3]

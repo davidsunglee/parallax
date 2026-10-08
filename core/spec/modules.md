@@ -126,6 +126,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-cascade-delete` | Cascade delete | active | cases |
 | `m-unit-work` | Transactions & unit of work | active | cases |
 | `m-write-plan` | Planned Write algebra, Write Observations, and predecessor evidence | active | cases |
+| `m-write-payload` | Persisted write payload assembly and persisted-state comparison | active | cases |
 | `m-read-lock` | In-transaction shared read lock | active | cases |
 | `m-auto-retry` | Bounded retry on transient conflict | active | cases |
 | `m-execution` | Database Roots, execution scopes, option resolution, Model Edition serving, and transaction attempts | active | cases |
@@ -229,6 +230,11 @@ m-write-plan --> m-predicate
 m-write-plan --> m-inheritance
 m-write-plan --> m-document-codec
 m-write-plan --> m-temporal-read
+m-write-payload --> m-core
+m-write-payload --> m-metamodel
+m-write-payload --> m-storage-layout
+m-write-payload --> m-document-codec
+m-write-payload --> m-write-plan
 m-execution-authority --> m-unit-work
 m-execution-authority --> m-db-port
 m-read-lock --> m-unit-work
@@ -284,6 +290,7 @@ m-read-delivery --> m-opt-lock
 m-execution --> m-unit-work
 m-execution --> m-read-delivery
 m-execution --> m-write-plan
+m-execution --> m-write-payload
 m-execution --> m-sql
 m-execution --> m-deep-fetch
 m-execution --> m-execution-authority
@@ -476,6 +483,20 @@ construction it may reference any behavioral module it harnesses.
   strategy, or SQL construct, so both `m-unit-work`, which produces the
   algebra, and `m-sql`, which lowers it, depend on it rather than on each
   other.
+- **`m-write-payload --> m-write-plan`, `--> m-storage-layout`, `-->
+  m-document-codec`; `m-execution --> m-write-payload`.** What a planned write
+  stores — each member at its slot, each document composed, patched, or compared
+  as persisted state — has one assembler beside the algebra rather than inside
+  it or inside SQL lowering. The plan stays independent of storage layout: it
+  declares the preparation interface and its neutral results, and the module
+  that executes writes constructs the concrete preparer and hands it to the
+  planner it configures, so neither `m-write-plan`, `m-unit-work`, nor
+  `m-temporal-write` names this one. `m-sql` renders and binds prepared values
+  and never assembles a payload, so it depends on the vocabulary in
+  `m-write-plan` and not on this module. Placement facts stay `m-storage-layout`'s
+  and encoding, patching, and exact document equality `m-document-codec`'s; this
+  module coordinates them and names no instruction, buffer, transaction,
+  strategy, or SQL construct.
 - **`m-unit-work --> m-temporal-write --> m-write-plan`.** Temporal geometry and
   the per-predecessor rules — reach, preservation, close and gate, ownership
   disposal, successors, and new-lineage openings — have one owner beneath the

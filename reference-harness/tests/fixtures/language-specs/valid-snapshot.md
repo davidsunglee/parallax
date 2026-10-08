@@ -49,6 +49,7 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
 | `m-unit-work` | `unit-work` |
 | `m-value-object` | `value-object` |
 | `m-wire` | `wire` |
+| `m-write-payload` | `write-payload` |
 | `m-write-plan` | `write-plan` |
 
 | Enforcement scope | Allowed direct first-party dependencies |

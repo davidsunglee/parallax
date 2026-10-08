@@ -156,15 +156,24 @@ encodeCandidate(shape: MemberShape,
                 constraints: nonempty Mapping<
                     nonempty sequence<MemberName>, NeutralValue>) -> Document
 
-patch(shape: MemberShape,
-      document: Document,
-      patches: nonempty ordered sequence<DocumentPatch>) -> Document
+preparePatches(shape: MemberShape,
+               patches: nonempty ordered sequence<DocumentPatch>)
+                                                     -> PreparedPatches
+
+applyPreparedPatches(document: Document,
+                     prepared: PreparedPatches)       -> Document
+
+persistedDocumentEqual(left: Document,
+                       right: Document)               -> boolean
 
 DocumentPatch =
     SetLeaf(path: nonempty sequence<MemberName>,
             value: Presence)
   | SetValue(path: nonempty sequence<MemberName>,
              document: Document | Null)
+
+PreparedPatches: nonempty ordered sequence of
+    (path, encoded value or JSON null, leaf type | occurrence, removes)
 ```
 
 `encode` builds one complete document from a shape and one presence-classified
@@ -358,13 +367,13 @@ choose which one survives, because a dropped constraint yields a probe that matc
 elements the predicate excludes, silently. The consumer either collapses the
 duplicate or refuses the predicate before it reaches here (`m-sql`, `m-dialect`).
 
-`patch` applies ordered patches to a document in memory and returns the result.
-It never reads the database and never issues a statement; composing the
-equivalent database expression is `m-sql`'s and `m-dialect`'s job, and the two
-MUST agree, which is what makes an in-memory successor and a path-patched
-`UPDATE` interchangeable.
+`applyPreparedPatches` applies ordered prepared patches to a document in memory
+and returns the result. It never reads the database and never issues a
+statement; composing the equivalent database expression from the same prepared
+values is `m-sql`'s and `m-dialect`'s job, and the two MUST agree, which is what
+makes an in-memory successor and a path-patched `UPDATE` interchangeable.
 
-`patch` resolves each path against `shape` for the same reason every other
+`preparePatches` resolves each path against `shape` for the same reason every other
 operation here takes one. A `SetLeaf` carries a `NeutralValue`, so writing it
 needs that leaf's declared Neutral Type; without the shape the caller would have
 to spell the encoding itself, which the consumer contract below forbids. The
@@ -375,7 +384,7 @@ value rather than a position in a document.
 
 Every operation is a pure function of its arguments. None mutates its input
 document, and a returned document shares no mutable state with one passed in.
-`patch` returns a recursively immutable owned document. It may share untouched
+`applyPreparedPatches` returns a recursively immutable owned document. It may share untouched
 owned subtrees with its input, but it owns mutable input and replacement
 containers before sharing them. Its changed root and surviving changed
 ancestors are each constructed once as final writable storage and adopted only
@@ -487,15 +496,36 @@ field.
 
 ## Patching, unknown keys, and occurrence assignments
 
-`patch` preserves every key it is not told to change, including unknown keys.
+Patching is two operations. `preparePatches` resolves each patch's path against
+the shape and encodes it once: a `SetLeaf`'s value by its declared leaf type,
+and a `SetValue`'s document retained as immutable content. The preparation is
+independent of any document, so one prepared sequence applies to every document
+of that shape and supplies the very same encoded values to a path-patching
+statement (`m-write-payload`); nothing encodes them again. It is not a second
+authored-payload validator. `applyPreparedPatches` applies a prepared sequence
+to one document without resolving or encoding anything, and the result holds the
+prepared values themselves.
+
+Preparation refuses a path the shape does not declare, and refuses a patch whose
+kind contradicts the member it names. The pairing is exclusive both ways and
+whatever the patch carries: a whole occurrence is written only through
+`SetValue` — its JSON null included — and a leaf only through `SetLeaf`, so a
+`SetLeaf` naming an occurrence is refused even when its presence is
+`ExplicitNull` or `Missing`. What a patch *carries* stays the caller's: removing
+a required member's key, writing JSON null over it, or assigning an occurrence a
+document of some other shape all produce a document the same shape then reads
+back as invalid stored data, and nothing here refuses them.
+
+Applying patches preserves every key it is not told to change, including unknown keys.
 That is the whole point of patching rather than re-encoding: an application that
 rebuilt a document from the members it knows would silently drop the rest. What
 it does change is the position each patch names, whole.
 
-- `SetLeaf` writes one path and leaves every other key untouched. Its value is a
-  leaf presence — a `NeutralValue`, `ExplicitNull`, or `Missing`: writing
-  `ExplicitNull` stores JSON null and writing `Missing` removes the key. A whole
-  occurrence is stated only through `SetValue`.
+- `SetLeaf` writes one leaf path and leaves every other key untouched. Its value
+  is a leaf presence — a `NeutralValue`, `ExplicitNull`, or `Missing`: writing
+  `ExplicitNull` stores JSON null and writing `Missing` removes the key. A
+  removal has no SQL assignment form; it exists for documents composed in
+  memory. A whole occurrence is stated only through `SetValue`.
 - `SetValue` **replaces** the occurrence at its path with the complete document
   it carries — the object a `one` holds, the ordered array a `many` holds — or
   stores JSON null when that document is `Null`. Nothing inside the replaced
@@ -546,9 +576,9 @@ reaches no further than the one path it names, so no dependency sort exists
 between them.
 
 A temporal successor is built by patching the retained raw predecessor document
-at the assigned paths alone rather than by re-encoding decoded members, so keys
-the running application does not declare survive the close-and-insert outside
-every occurrence the mutation assigned (`m-write-plan`). The predecessor is
+at its executed assignments' paths alone rather than by re-encoding decoded
+members, so keys the running application does not declare survive the
+close-and-insert outside every occurrence the mutation assigned (`m-write-plan`). The predecessor is
 retained under `m-core`'s recursive ownership contract once. A successor with no
 document changes reuses that exact owned document; a changed successor shallowly
 constructs one final root and shares untouched owned subtrees.
@@ -650,7 +680,7 @@ from asking.
 
 Document object-member order is **not observable state**. Construction is
 nevertheless deterministic — `encode` emits members in shape order, `encodeMany`
-emits elements in its sequence's order, and `patch` applies its patches in the
+emits elements in its sequence's order, and `applyPreparedPatches` applies its patches in the
 given order — so one set of logical values produces one document with one member
 order, which is what makes a golden bind stable to author. Determinism is a property of the document the codec builds, not of any
 serialized text: whitespace, and whatever order a driver, an engine, or a
@@ -667,6 +697,18 @@ Consumers that compare documents state their own rules on top of this one:
 fixtures. Whole-occurrence observed equality is not one of them — it is this
 module's own effective-change classification above, which every consumer asking
 whether an assignment changes anything asks rather than restates.
+
+**Persisted document equality** (`persistedDocumentEqual`) answers whether two
+stored documents hold the same persisted content, shape-free. Every member
+participates — keys no shape declares included — and so does key presence: an
+absent key and a JSON null differ. Object-member order does not matter; array
+order does. JSON kinds stay distinct, so `true` is not `1` and `"1"` is not `1`.
+Numbers compare by the exact numeric meaning `m-wire` stores them with, so `1`
+equals `1.0` while a retained `0.10000000000000001` is not `0.1`. Nothing is
+decoded against a shape, reduced to declared members, or serialized. It is not
+the effective-change classification: that one decides whether an assignment
+changes a declared value, and deliberately equates spellings this one keeps
+apart.
 
 ## Invalid stored data
 

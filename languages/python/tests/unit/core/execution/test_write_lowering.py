@@ -18,14 +18,16 @@ predicate-selected and multi-row batch forms use the same lowering seam. Plannin
 refuses a materializing predicate write that reaches it, a mixed-shape multi-row
 instruction, a milestone verb on a non-temporal entity, and an unsupported
 DB-computed marker with a loud
-``WritePlanningError``; lowering separately refuses a target with no effective
-table with ``SqlGenError`` — each a forward-error posture, never a wrong
+``WritePlanningError``, and payload preparation refuses a target with no
+effective table the same way — each a forward-error posture, never a wrong
 emission, mirroring the read compiler's own.
 
-The final section pins the two halves the non-temporal insert family crosses
+The final section pins the halves the non-temporal insert family crosses
 separately: the Write Planner settling an instruction into finalized steps, and
-the private SQL compiler rendering a step built by hand — proving that
-lowering answers a purely physical question and never re-derives a semantic one.
+the shared lowering path preparing and rendering a step built by hand — proving
+that lowering answers a purely physical question and never re-derives a semantic
+one — and the private SQL compiler refusing a payload that was not prepared from
+the step it renders.
 The composed emissions above are the byte-exact evidence; these are the seam
 itself.
 """
@@ -48,7 +50,7 @@ from parallax.core.base import STRING, FrozenMap
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution._planning import build_write_planner
-from parallax.core.execution._write_lowering import stream_lowered
+from parallax.core.execution._write_lowering import lowered, stream_lowered
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -66,7 +68,7 @@ from parallax.core.metamodel import Column as CoreColumn
 from parallax.core.metamodel import Table as CoreTable
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.sql_gen._write import compile_write_step
+from parallax.core.sql_gen._write import StepPayload, compile_write_step
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
@@ -76,6 +78,7 @@ from parallax.core.unit_work import (
     WritePlanningRequest,
 )
 from parallax.core.unit_work.instructions import WriteInstruction
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
     ObjectKey,
     PlannedInsert,
@@ -83,6 +86,7 @@ from parallax.core.write_plan import (
     WriteObservation,
     WritePlanningError,
 )
+from parallax.core.write_plan.payload import AssignmentPayload, PatchedDocument, RowPayload
 from parallax.core.write_plan.steps import (
     ANY_COUNT,
     MAX_PLUS_ONE,
@@ -93,7 +97,6 @@ from parallax.core.write_plan.steps import (
     UNGATED,
     UNVERSIONED,
     ExactCount,
-    InsertEntry,
     KeyTarget,
     PlannedAssignments,
     PlannedDelete,
@@ -104,6 +107,7 @@ from parallax.core.write_plan.steps import (
     ValidatedMutationSelection,
     Versioned,
     VersionGate,
+    WriteRow,
 )
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from parallax.descriptor import _records
@@ -113,6 +117,7 @@ from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit._document_layout_support import PERSON, document_model
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 ACCOUNT = corpus_model("account")
@@ -155,7 +160,10 @@ def _flush_and_lower(
             buffered_writes=observed_buffer(buffer, model, observations),
         )
     )
-    return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]
+    return [
+        statement
+        for _step, statement in stream_lowered(plan, LayoutPayloadPreparer(model), model, POSTGRES)
+    ]
 
 
 def _layout_columns(model: Metamodel, entity_name: str) -> tuple[str, ...]:
@@ -175,7 +183,7 @@ def _insert_columns(statement: LoweredStatement) -> tuple[str, ...]:
 def test_non_temporal_write_requires_an_effective_table() -> None:
     account = dataclasses.replace(records("account").entity("Account"), table=None)
     malformed = formed(_records.Metamodel(entities=(account,)))
-    with pytest.raises(SqlGenError, match="write target has no effective table"):
+    with pytest.raises(WritePlanningError, match="write target has no effective table"):
         _lower(
             KeyedWrite(
                 "insert",
@@ -965,7 +973,7 @@ def test_a_multi_column_key_target_renders_a_row_constructor() -> None:
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(expected=2, on_shortfall=MISSING_TARGET),
     )
-    statement = compile_write_step(step, WALLET, POSTGRES)
+    statement = lowered(step, LayoutPayloadPreparer(WALLET), WALLET, POSTGRES)
     assert statement.sql == "delete from wallet where (id, owner) in ((?, ?), (?, ?))"
     assert statement.binds == (1, "Ada", 2, "Bo")
 
@@ -1087,10 +1095,10 @@ def test_step_lowering_reads_an_immutable_write_input_into_an_immutable_document
     )
     step = PlannedInsert(
         entity=_identity(CUSTOMER, "Customer"),
-        entries=(InsertEntry(row=row, origin=NEW_LINEAGE),),
+        entries=(WriteRow(row=row, origin=NEW_LINEAGE),),
     )
 
-    statement = compile_write_step(step, CUSTOMER, POSTGRES)
+    statement = lowered(step, LayoutPayloadPreparer(CUSTOMER), CUSTOMER, POSTGRES)
 
     assert statement.binds[-1] == JsonDocument(
         {"city": "Oslo", "phones": [{"type": "home"}, {"type": "work"}]}
@@ -1112,7 +1120,7 @@ def test_finalization_settles_an_insert_into_one_step_of_new_lineage_entries() -
     assert step == PlannedInsert(
         entity=_identity(WALLET, "Wallet"),
         entries=(
-            InsertEntry(
+            WriteRow(
                 row=PlannedRow(
                     attributes={
                         _attribute(WALLET, "Wallet", "id"): 10,
@@ -1306,7 +1314,7 @@ def test_step_lowering_reads_column_participation_and_order_from_the_layout() ->
     step = PlannedInsert(
         entity=_identity(ORDERS, "OrderItem"),
         entries=(
-            InsertEntry(
+            WriteRow(
                 row=PlannedRow(
                     attributes={
                         _attribute(ORDERS, "OrderItem", "quantity"): 3,
@@ -1318,7 +1326,7 @@ def test_step_lowering_reads_column_participation_and_order_from_the_layout() ->
             ),
         ),
     )
-    statement = compile_write_step(step, ORDERS, POSTGRES)
+    statement = lowered(step, LayoutPayloadPreparer(ORDERS), ORDERS, POSTGRES)
     assert statement.sql == "insert into order_item(id, order_id, quantity) values (?, ?, ?)"
     assert statement.binds == (200, 100, 3)
 
@@ -1335,9 +1343,9 @@ def test_step_lowering_derives_the_table_per_hierarchy_tag_no_entry_names() -> N
     )
     step = PlannedInsert(
         entity=_identity(PAYMENT, "CardPayment"),
-        entries=(InsertEntry(row=row, origin=NEW_LINEAGE),),
+        entries=(WriteRow(row=row, origin=NEW_LINEAGE),),
     )
-    statement = compile_write_step(step, PAYMENT, POSTGRES)
+    statement = lowered(step, LayoutPayloadPreparer(PAYMENT), PAYMENT, POSTGRES)
     assert (
         statement.sql == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
     )
@@ -1379,9 +1387,9 @@ def test_an_insert_binds_the_empty_array_for_a_many_occurrence_the_row_never_nam
     # (m-value-object "Writing").
     step = PlannedInsert(
         entity=_CRATE,
-        entries=(InsertEntry(row=PlannedRow(attributes={_CRATE_ID: 7}), origin=NEW_LINEAGE),),
+        entries=(WriteRow(row=PlannedRow(attributes={_CRATE_ID: 7}), origin=NEW_LINEAGE),),
     )
-    statement = compile_write_step(step, _CRATE_MODEL, POSTGRES)
+    statement = lowered(step, LayoutPayloadPreparer(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
     assert statement.sql == "insert into crate(id, labels) values (?, ?)"
     assert statement.binds == (7, JsonDocument(()))
 
@@ -1397,7 +1405,7 @@ def test_an_update_leaves_a_many_occurrence_its_assignments_never_name_alone() -
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
     )
-    statement = compile_write_step(step, _CRATE_MODEL, POSTGRES)
+    statement = lowered(step, LayoutPayloadPreparer(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
     assert statement.sql == "update crate set note = ? where id = ?"
     assert statement.binds == ("fragile", 7)
 
@@ -1412,12 +1420,12 @@ def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:
     step = PlannedInsert(
         entity=_identity(PK_MAX, "Attendee"),
         entries=(
-            InsertEntry(row=row, origin=NEW_LINEAGE),
-            InsertEntry(row=row, origin=NEW_LINEAGE),
+            WriteRow(row=row, origin=NEW_LINEAGE),
+            WriteRow(row=row, origin=NEW_LINEAGE),
         ),
     )
     with pytest.raises(SqlGenError, match="one row at a time"):
-        compile_write_step(step, PK_MAX, POSTGRES)
+        lowered(step, LayoutPayloadPreparer(PK_MAX), PK_MAX, POSTGRES)
 
 
 @pytest.mark.parametrize(
@@ -1464,5 +1472,172 @@ def test_step_lowering_places_the_settled_version_from_the_versioned_decision(
         raise AssertionError(f"lowering asked {attribute.identity} whether it is the version")
 
     monkeypatch.setattr(AttributeMetadata, "optimistic_locking", property(undiscoverable))
-    statement = compile_write_step(step, VEHICLE, POSTGRES)
+    statement = lowered(step, LayoutPayloadPreparer(VEHICLE), VEHICLE, POSTGRES)
     assert (statement.sql, statement.binds) == (sql, binds)
+
+
+# --------------------------------------------------------------------------- #
+# The compiler renders prepared payloads strictly; the shared path prepares    #
+# only what the statement demands and reuses what settlement already holds.   #
+# --------------------------------------------------------------------------- #
+def _crate_insert(*keys: int) -> PlannedInsert:
+    return PlannedInsert(
+        entity=_CRATE,
+        entries=tuple(
+            WriteRow(
+                row=PlannedRow(attributes={_CRATE_ID: key, _CRATE_NOTE: "n"}), origin=NEW_LINEAGE
+            )
+            for key in keys
+        ),
+    )
+
+
+def _crate_update(note: str = "fragile") -> PlannedUpdate:
+    return PlannedUpdate(
+        entity=_CRATE,
+        target=KeyTarget(key_attributes=(_CRATE_ID,), key_values=((7,),)),
+        assignments=PlannedAssignments(attributes={_CRATE_NOTE: note}),
+        concurrency=UNVERSIONED,
+        affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
+    )
+
+
+def test_the_compiler_refuses_a_payload_not_prepared_from_its_own_step() -> None:
+    # Lowering never assembles a payload: a missing one, one prepared from
+    # another entry or assignment set, or one in another entry order is a broken
+    # caller contract rather than a request to prepare.
+    payloads = LayoutPayloadPreparer(_CRATE_MODEL)
+    insert = _crate_insert(1, 2)
+    first, second = (payloads.row(_CRATE, entry) for entry in insert.entries)
+    update = _crate_update()
+    foreign = payloads.assignments(_CRATE, _crate_update().assignments)
+    refused: list[tuple[PlannedStep, StepPayload]] = [
+        (insert, None),
+        (insert, (first,)),
+        (insert, (second, first)),
+        (insert, (first, payloads.row(_CRATE, _crate_insert(2).entries[0]))),
+        (update, None),
+        (update, foreign),
+        (
+            PlannedDelete(
+                entity=_CRATE,
+                target=update.target,
+                concurrency=UNVERSIONED,
+                affected_rows=update.affected_rows,
+            ),
+            foreign,
+        ),
+    ]
+    for step, payload in refused:
+        with pytest.raises(SqlGenError):
+            compile_write_step(step, payload, _CRATE_MODEL, POSTGRES)
+    narrower = dataclasses.replace(
+        second, contributors=second.contributors[:-1], values=second.values[:-1]
+    )
+    with pytest.raises(SqlGenError, match="every entry of one insert stores the same cells"):
+        compile_write_step(insert, (first, narrower), _CRATE_MODEL, POSTGRES)
+    assert compile_write_step(insert, (first, second), _CRATE_MODEL, POSTGRES).binds == (
+        1,
+        "n",
+        JsonDocument(()),
+        2,
+        "n",
+        JsonDocument(()),
+    )
+
+
+def test_lowering_reuses_backing_an_entry_already_carries() -> None:
+    class _Unprepared(LayoutPayloadPreparer):
+        def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
+            raise AssertionError(f"lowering prepared {entity} again")
+
+    (entry,) = _crate_insert(7).entries
+    carried = entry.with_prepared(LayoutPayloadPreparer(_CRATE_MODEL).row(_CRATE, entry))
+    step = PlannedInsert(entity=_CRATE, entries=(carried,))
+
+    statement = lowered(step, _Unprepared(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
+
+    assert statement.binds == (7, "n", JsonDocument(()))
+    assert carried == entry
+    with pytest.raises(ValueError, match="prepared from its own row"):
+        entry.with_prepared(
+            LayoutPayloadPreparer(_CRATE_MODEL).row(_CRATE, _crate_insert(8).entries[0])
+        )
+
+
+def test_a_narrow_update_prepares_its_assignments_alone() -> None:
+    class _AssignmentsOnly(LayoutPayloadPreparer):
+        def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
+            raise AssertionError("a narrow update demanded a complete row")
+
+    statement = lowered(_crate_update(), _AssignmentsOnly(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
+    assert statement.sql == "update crate set note = ? where id = ?"
+
+
+def test_a_revision_binds_the_very_values_its_prepared_patches_encode() -> None:
+    # The document paths a revising statement assigns are the prepared patches'
+    # own encoded values, so a successor document patched from the same
+    # preparation and this statement store one encoding.
+    document = document_model()
+    address = ValueObjectIdentity(PERSON, ("address",))
+    step = PlannedUpdate(
+        entity=PERSON,
+        target=KeyTarget(key_attributes=(AttributeIdentity(PERSON, "id"),), key_values=((1,),)),
+        assignments=PlannedAssignments(
+            attributes={AttributeIdentity(PERSON, "displayName"): "Ada"},
+            value_objects={address: {"city": "Oslo", "geo": None}},
+        ),
+        concurrency=UNVERSIONED,
+        affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
+    )
+    payload = LayoutPayloadPreparer(document).assignments(PERSON, step.assignments)
+    (patched,) = payload.values
+    assert isinstance(patched, PatchedDocument)
+    name, occurrence = patched.patches
+
+    statement = compile_write_step(step, payload, document, POSTGRES)
+
+    assert JsonDocument(occurrence.value) in statement.binds
+    (bound,) = (bind for bind in statement.binds if isinstance(bind, JsonDocument))
+    assert bound.value is occurrence.value
+    assert name.value == "Ada"
+
+
+def test_the_compiler_places_no_cell_its_layout_does_not_hold() -> None:
+    # A cell is placed by its contributor's slot; one naming a member the Table
+    # does not hold, or a document key removal no assignment can express, is
+    # refused rather than silently dropped.
+    update = _crate_update()
+    stray = AttributeIdentity(_CRATE, "missing")
+    misplaced = AssignmentPayload(
+        entity=_CRATE, assignments=update.assignments, contributors=(stray,), values=("value",)
+    )
+    with pytest.raises(SqlGenError, match="occupies no Column"):
+        compile_write_step(update, misplaced, _CRATE_MODEL, POSTGRES)
+    with pytest.raises(ValueError, match="aligns one value with each contributor"):
+        dataclasses.replace(misplaced, values=())
+    (entry,) = _crate_insert(7).entries
+    with pytest.raises(ValueError, match="aligns one value with each contributor"):
+        RowPayload(entity=_CRATE, row=entry.row, contributors=(stray,), values=())
+
+    document = document_model()
+    step = PlannedUpdate(
+        entity=PERSON,
+        target=KeyTarget(key_attributes=(AttributeIdentity(PERSON, "id"),), key_values=((1,),)),
+        assignments=PlannedAssignments(attributes={AttributeIdentity(PERSON, "score"): None}),
+        concurrency=UNVERSIONED,
+        affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
+    )
+    prepared = LayoutPayloadPreparer(document).assignments(PERSON, step.assignments)
+    (root,) = prepared.contributors
+    (patched,) = prepared.values
+    assert isinstance(patched, PatchedDocument)
+    (score,) = patched.patches
+    removal = AssignmentPayload(
+        entity=PERSON,
+        assignments=step.assignments,
+        contributors=(root,),
+        values=(PatchedDocument((dataclasses.replace(score, removes=True),)),),
+    )
+    with pytest.raises(SqlGenError, match="removes no document key"):
+        compile_write_step(step, removal, document, POSTGRES)

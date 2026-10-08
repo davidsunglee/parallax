@@ -23,14 +23,15 @@ from typing import Final, cast
 
 import pytest
 
-from parallax.core import storage_layout
 from parallax.core.base import FrozenMap, retain_document_value
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import _managed as managed
+from parallax.core.document_codec import persisted_document_equal
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.execution._keyed_sql import collapse_group_key
+from parallax.core.execution._write_lowering import lowered
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -38,13 +39,9 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._write import (
-    _successor_patches,  # pyright: ignore[reportPrivateUsage] - patch-selection property only
-    compile_write_step,
-)
-from parallax.core.storage_layout import DocumentResidentSelection
 from parallax.core.unit_work import KeyedWrite
 from parallax.core.unit_work.instructions import WriteInstruction
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRow
 from parallax.core.write_plan.observe import (
     _EntityDocumentRow as _EntityDocumentRowType,  # pyright: ignore[reportPrivateUsage] - comparison spy only
@@ -53,10 +50,11 @@ from parallax.core.write_plan.steps import (
     NEW_LINEAGE,
     CarriedFrom,
     ChangedFrom,
-    InsertEntry,
-    InsertOrigin,
+    ExecutedMembers,
     PlannedInsert,
     PlannedRow,
+    RowOrigin,
+    WriteRow,
 )
 from tests._support.lowering_probes import lower_instruction
 from tests.unit._document_layout_support import PERSON, columns_model, document_model, entity
@@ -337,35 +335,34 @@ _SELECTION = LayoutCatalog(DOCUMENT).entity(PERSON).member_selection
 
 def _successor_maps(
     predecessor: PredecessorRow, changes: Mapping[str, object]
-) -> tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object]]:
+) -> tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object], ExecutedMembers]:
     """A changed successor's complete row as temporal expansion composes one:
-    the predecessor's own cells, with ``changes`` overlaid as authored values."""
+    the predecessor's own cells, with ``changes`` executed over them as authored
+    values, and the members it executes."""
     attributes, value_objects = predecessor.identity_maps(_SELECTION)
+    executed: set[AttributeIdentity | ValueObjectIdentity] = set()
     for name, value in changes.items():
         binding = _SELECTION.binding(name)
         assert binding is not None
+        executed.add(binding.identity)
         if isinstance(binding, AttributeMetadata):
             attributes[binding.identity] = value
         else:
             value_objects[binding.identity] = retain_document_value(value)
-    return attributes, value_objects
+    return attributes, value_objects, tuple(executed)
 
 
 def _opened(
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
-    origin: InsertOrigin,
+    origin: RowOrigin,
+    executed: ExecutedMembers = (),
 ) -> object:
+    row = PlannedRow(attributes=attributes, value_objects=value_objects)
     step = PlannedInsert(
-        entity=PERSON,
-        entries=(
-            InsertEntry(
-                row=PlannedRow(attributes=attributes, value_objects=value_objects),
-                origin=origin,
-            ),
-        ),
+        entity=PERSON, entries=(WriteRow(row=row, origin=origin, executed=executed),)
     )
-    return _document(compile_write_step(step, DOCUMENT, POSTGRES))
+    return _document(lowered(step, LayoutPayloadPreparer(DOCUMENT), DOCUMENT, POSTGRES))
 
 
 def _successor(
@@ -378,9 +375,12 @@ def _successor(
     """The Structured Column one opened row binds, given the milestone it succeeds
     and the members it changed."""
     predecessor = PredecessorRow(observed, document=document)
-    attributes, value_objects = _successor_maps(predecessor, changes)
+    attributes, value_objects, executed = _successor_maps(predecessor, changes)
     return _opened(
-        attributes, value_objects, NEW_LINEAGE if origin is None else origin(predecessor)
+        attributes,
+        value_objects,
+        NEW_LINEAGE if origin is None else origin(predecessor),
+        () if origin is None else executed,
     )
 
 
@@ -398,9 +398,9 @@ def test_a_successor_patches_the_retained_document_so_an_unknown_key_survives() 
 
 
 def test_a_carried_occurrence_keeps_the_unknown_keys_inside_its_own_subtree() -> None:
-    # A changed successor carries every member it did not change as its
-    # predecessor's own cell, so `address` is never rebuilt and `sealNumber`
-    # rides forward with it.
+    # A changed successor executes only what it assigns and carries every other
+    # member as its predecessor's own cell, so `address` is never rebuilt and
+    # `sealNumber` rides forward with it.
     successor = _successor({"score": 21}, document=_STORED, origin=ChangedFrom)
     assert successor == {**_STORED, "score": 21}
 
@@ -417,10 +417,10 @@ def test_a_carried_occurrence_rides_forward_however_its_observation_spelled_it()
     assert successor == {**_STORED, "score": 21}
 
 
-def test_a_restated_equal_value_is_a_change_because_carrying_is_identity() -> None:
-    # Lowering never compares values: a member the successor holds as anything
-    # but its predecessor's own cell was changed by its producer, so an equal
-    # but distinct `address` replaces the stored subtree and `sealNumber` with it.
+def test_a_restated_equal_value_replaces_its_subtree_because_it_is_executed() -> None:
+    # Lowering never compares values: the successor states what it assigns, so
+    # an equal `address` the write executes replaces the stored subtree and
+    # `sealNumber` with it.
     successor = _successor(
         {"address": {"city": "Oslo", "geo": {"country": "NO"}}},
         document=_STORED,
@@ -457,7 +457,7 @@ def test_a_carried_successor_binds_the_retained_document_itself() -> None:
     assert _successor({}, document=retained, origin=CarriedFrom) is retained
 
 
-def test_a_changed_successor_that_carries_every_cell_binds_the_retained_document() -> None:
+def test_a_changed_successor_executing_nothing_binds_the_retained_document() -> None:
     retained = retain_document_value(_STORED)
     assert _successor({}, document=retained, origin=ChangedFrom) is retained
 
@@ -501,39 +501,25 @@ _CHANGES: Final[tuple[tuple[str, object], ...]] = (
 )
 
 
-def _residents() -> DocumentResidentSelection:
-    view = storage_layout.view(DOCUMENT).entity(PERSON)
-    assert view is not None
-    resident = view.document_residents
-    assert resident is not None
-    return resident
-
-
 def _positional_predecessor(document: object) -> PredecessorRow:
     return PredecessorRow.over_row(_SELECTION, _POSITIONAL, document, ABSENT)
 
 
-def _patch_paths(
-    predecessor: PredecessorRow,
-    attributes: Mapping[AttributeIdentity, object],
-    value_objects: Mapping[ValueObjectIdentity, object],
-) -> list[tuple[str, ...]]:
-    resident = _residents()
-    return [
-        patch.path for patch in _successor_patches(resident, attributes, value_objects, predecessor)
-    ]
-
-
-def test_patches_are_exactly_the_resident_members_the_predecessor_does_not_carry() -> None:
+def test_a_successor_patches_exactly_the_resident_members_it_executes() -> None:
     # Every combination of changes, equal restatements included, over both a
-    # trusted positional predecessor and a caller-supplied mapping.
+    # trusted positional predecessor and a caller-supplied mapping: what an
+    # executed member assigns replaces what it names, and everything else is
+    # the retained document as stored.
     for selected in range(1 << len(_CHANGES)):
-        _assert_patches_follow_carrying(
+        _assert_patches_follow_execution(
             dict(change for index, change in enumerate(_CHANGES) if selected & (1 << index))
         )
 
 
-def _assert_patches_follow_carrying(changes: Mapping[str, object]) -> None:
+def _assert_patches_follow_execution(changes: Mapping[str, object]) -> None:
+    expected: dict[str, object] = dict(_STORED_ROW)
+    for name, value in changes.items():
+        expected[name] = value.isoformat() if isinstance(value, dt.date) else value
     for predecessor in (
         _positional_predecessor(_STORED_ROW),
         PredecessorRow(
@@ -541,31 +527,9 @@ def _assert_patches_follow_carrying(changes: Mapping[str, object]) -> None:
             document=_STORED_ROW,
         ),
     ):
-        attributes, value_objects = _successor_maps(predecessor, changes)
-        resident = _residents()
-        expected = [
-            placement.path
-            for position, placement in zip(resident.positions, resident.placements, strict=True)
-            for binding in (_SELECTION.bindings[position],)
-            for values in (
-                cast(
-                    "Mapping[object, object]",
-                    attributes if isinstance(binding, AttributeMetadata) else value_objects,
-                ),
-            )
-            if binding.identity in values
-            and not predecessor.carries(binding.identity, values[binding.identity])
-        ]
-        assert _patch_paths(predecessor, attributes, value_objects) == expected
-        assert set(expected) <= {
-            placement.path
-            for placement, name in zip(
-                resident.placements,
-                (_SELECTION.shape.members[position].name for position in resident.positions),
-                strict=True,
-            )
-            if name in changes
-        }
+        attributes, value_objects, executed = _successor_maps(predecessor, changes)
+        opened = _opened(attributes, value_objects, ChangedFrom(predecessor), executed)
+        assert persisted_document_equal(opened, expected), changes
 
 
 def test_lowering_a_changed_successor_compares_no_values(
@@ -577,7 +541,7 @@ def test_lowering_a_changed_successor_compares_no_values(
         raise AssertionError("lowering compared a successor's values")
 
     predecessor = _positional_predecessor(_STORED_ROW)
-    attributes, value_objects = _successor_maps(
+    attributes, value_objects, executed = _successor_maps(
         predecessor, {"score": 8, "address": {"city": "Alta"}}
     )
     monkeypatch.setattr(FrozenMap, "__eq__", compared)
@@ -585,7 +549,7 @@ def test_lowering_a_changed_successor_compares_no_values(
     monkeypatch.setattr(managed, "_structurally_equal", compared)
     monkeypatch.setattr(managed, "_canonical_member", compared)
     monkeypatch.setattr(managed, "classify_effective_change", compared)
-    opened = _opened(attributes, value_objects, ChangedFrom(predecessor))
+    opened = _opened(attributes, value_objects, ChangedFrom(predecessor), executed)
     monkeypatch.undo()
     assert opened == {
         **_STORED_ROW,
@@ -597,10 +561,10 @@ def test_lowering_a_changed_successor_compares_no_values(
 def test_lowering_leaves_the_retained_document_as_it_found_it() -> None:
     stored = copy.deepcopy(_STORED_ROW)
     predecessor = _positional_predecessor(stored)
-    attributes, value_objects = _successor_maps(
+    attributes, value_objects, executed = _successor_maps(
         predecessor, {"score": 8, "tags": [{"label": "member"}], "address": None}
     )
-    _opened(attributes, value_objects, ChangedFrom(predecessor))
+    _opened(attributes, value_objects, ChangedFrom(predecessor), executed)
     _opened(*predecessor.identity_maps(_SELECTION), CarriedFrom(predecessor))
     assert stored == _STORED_ROW
     assert predecessor.document is stored
