@@ -51,8 +51,11 @@ from parallax.core.write_plan.plan import (
 )
 from parallax.core.write_plan.steps import (
     FAILED_PRECONDITION,
+    NEW_LINEAGE,
+    OPTIMISTIC_CONFLICT,
     UNGATED,
     Finite,
+    PlannedTemporalGuard,
     PlannedTemporalRevision,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
@@ -90,13 +93,16 @@ from tests.unit.core.unit_work._temporal_targets_support import (
 # --------------------------------------------------------------------------- #
 # Binding: the caller's start, replacement extent, and destruction.            #
 # --------------------------------------------------------------------------- #
-def _deferred_unit(*writes: BufferItem, concurrency: str = "optimistic") -> ExecutionUnit:
+def _deferred_unit(
+    *writes: BufferItem, concurrency: str = "optimistic", guards: bool = False
+) -> ExecutionUnit:
     plan = build_write_planner(POSITION).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
             concurrency=concurrency,  # type: ignore[arg-type]
             buffered_writes=compose_writes(POSITION, list(writes)),
+            counts_unchanged_rows=guards,
         )
     )
     (unit,) = plan.units
@@ -250,6 +256,79 @@ def test_a_locking_target_range_reads_its_coverage_under_the_shared_lock_ungated
     bound = _bound(unit, [START.evidence.predecessor])  # type: ignore[union-attr]
     close = next(step for step in bound.steps if isinstance(step, PlannedClose))
     assert close.concurrency == UNGATED
+
+
+# --------------------------------------------------------------------------- #
+# Unchanged milestones: a caller's condition is authority, not new history.    #
+# --------------------------------------------------------------------------- #
+_COVERAGE = [rectangle(JAN, JUN, "100.00"), rectangle(JUN, INFINITY, "200.00", tx_start=T1)]
+
+
+def test_an_equal_start_is_kept_by_a_guard_on_its_callers_revision_beside_later_changes() -> None:
+    unit = _deferred_unit(addressed_write(value="100.00"), guards=True)
+    bound = _bound(unit, _COVERAGE)
+    guard, close, *_opened = bound.steps
+    assert isinstance(guard, PlannedTemporalGuard)
+    assert guard.concurrency.observed_start == T0
+    assert guard.affected_rows.on_shortfall == FAILED_PRECONDITION
+    assert isinstance(close, PlannedClose)
+    assert close.affected_rows.on_shortfall == OPTIMISTIC_CONFLICT
+    assert _windows(bound) == [(JUN, SEP, Decimal("100.00")), (SEP, INFINITY, Decimal("200.00"))]
+    # Only the later rectangle's state changes; the kept start still stands.
+    (changed,) = bound.changed
+    assert changed.milestone.tx_time == T1  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("concurrency", "guards", "kinds"),
+    [
+        ("locking", False, []),
+        ("optimistic", False, [PlannedClose, PlannedInsert, PlannedInsert]),
+    ],
+    ids=["locking", "no-matched-row-count"],
+)
+def test_an_equal_start_needs_no_statement_under_locking_and_is_chained_where_unprovable(
+    concurrency: str, guards: bool, kinds: list[type[object]]
+) -> None:
+    unit = _deferred_unit(
+        addressed_write(value="100.00", until=JUN), concurrency=concurrency, guards=guards
+    )
+    bound = _bound(unit, _COVERAGE[:1])
+    assert [type(step) for step in bound.steps] == kinds
+    if kinds:
+        closing = bound.steps[0]
+        assert isinstance(closing, PlannedClose)
+        # The fallback close keeps the classification its guard would have.
+        assert closing.affected_rows.on_shortfall == FAILED_PRECONDITION
+    else:
+        assert tuple(bound.changed) == ()
+
+
+def test_an_equal_replacement_keeps_what_it_holds_and_still_opens_its_gaps() -> None:
+    coverage = [rectangle(JAN, APR, "100.00"), rectangle(JUN, INFINITY, "100.00", tx_start=T1)]
+    unit = _deferred_unit(addressed_write(replaces=True, acctNum="A", value="100.00"), guards=True)
+    bound = _bound(unit, coverage)
+    start, later, gap = bound.steps
+    assert isinstance(start, PlannedTemporalGuard)
+    assert start.affected_rows.on_shortfall == FAILED_PRECONDITION
+    assert isinstance(later, PlannedTemporalGuard)
+    assert later.affected_rows.on_shortfall == OPTIMISTIC_CONFLICT
+    assert _windows(bound) == [(APR, JUN, Decimal("100.00"))]
+    assert isinstance(gap, PlannedInsert)
+    (opening,) = gap.entries
+    assert opening.origin is NEW_LINEAGE
+    assert (tuple(bound.changed), bound.removed) == ((), ())
+
+
+def test_an_equal_target_of_a_row_the_attempt_opened_is_kept_without_a_statement() -> None:
+    opened = rectangle(JAN, INFINITY, "100.00", tx_start=T)
+    owned = OpenedRows(frozenset({OwnedEndpoint(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)}))
+    bound = _bound(
+        _deferred_unit(addressed_write(value="100.00", tx_start=T), guards=True),
+        [opened],
+        ownership=owned,
+    )
+    assert (bound.steps, tuple(bound.changed), bound.removed) == ((), (), ())
 
 
 # --------------------------------------------------------------------------- #

@@ -68,6 +68,16 @@ when:
           validFrom: "2024-06-01T00:00:00.000000Z"
           until: "2024-07-01T00:00:00.000000Z"
           at: "2024-11-02T00:00:00.000000Z"
+    - uow: equal
+      write:
+        - mutation: updateUntil
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 4, amount: 100 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-02-01T00:00:00.000000Z"
+          until: "2024-04-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+      note: "the amount span 4 holds, stated against the milestone it superseded: keeping an unchanged milestone never satisfies a stale condition"
     - uow: control
       write:
         - mutation: updateUntil
@@ -92,6 +102,13 @@ then:
         at: commit
         entity: parallax.compatibility.SequenceSpan
         key: { id: 3 }
+        shortfall: failedPrecondition
+    equal:
+      outcome: rolledBack
+      flushFailure:
+        at: commit
+        entity: parallax.compatibility.SequenceSpan
+        key: { id: 4 }
         shortfall: failedPrecondition
     control: { outcome: committed }
   tableState:

@@ -350,23 +350,18 @@ class WritePlanner:
                 ordered.append(item)
                 continue
             if isinstance(item, AfterRemoval):
-                # Everything authored before the removal-dependent inserts
-                # executes first, the removal they depend on included; what is
-                # authored after them orders with them as usual.
+                # Everything authored before the removal-dependent insert
+                # executes first, the removal it depends on included; what is
+                # authored after it orders with it as usual.
                 close_region()
-                inserts.extend((self._rank(insert), insert) for insert in item.inserts)
-                continue
+                item = item.insert
             if isinstance(item, ComposedTemporalWrite):
                 if item.assigns:
                     updates.append(item)
                 else:
                     deletes.append((self._ranked(item.target), item))
                 continue
-            instruction = (
-                item.write.instruction
-                if isinstance(item, FollowingKeyedWrite)
-                else buffered_instruction(item)
-            )
+            instruction = _ordered_instruction(item)
             if instruction.mutation in UPDATE_MUTATIONS:
                 updates.append(item)
             elif instruction.mutation in INSERT_MUTATIONS:
@@ -1016,34 +1011,29 @@ class PendingWrites:
     def writes(self) -> tuple[BufferedWrite, ...]:
         """The composed writes, in authored order, with every cancelled write
         gone, every object claim unwrapped to its own instruction, every
-        Bitemporal opening flushed as the inserts its writes leave, and every
-        insert that must follow a removal marked as such."""
+        Bitemporal opening composed with the writes its insertion authorized,
+        and every insert that must follow a removal marked as such."""
         written: list[BufferedWrite] = []
         after_removal = self._after_removal or ()
         follows = {} if self._regions is None else self._regions.follows
         for index, item in enumerate(self._items):
             if item is None:
                 continue
-            if isinstance(item, PendingOpening):
-                inserts = item.inserts()
-            elif index in after_removal:
-                assert isinstance(item, PreparedKeyedWrite)  # an insert is a bare instruction
-                inserts = (item,)
-            else:
-                advances = follows.get(index)
-                if advances is not None and isinstance(
-                    item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
-                ):
-                    written.append(FollowingKeyedWrite(item, advances))
-                else:
-                    written.append(
-                        item.instruction if isinstance(item, ObjectClaimedWrite) else item
-                    )
-                continue
             if index in after_removal:
-                written.append(AfterRemoval(inserts))
+                # An insert is a bare instruction, or an opening composed over it.
+                assert isinstance(item, PreparedKeyedWrite | PendingOpening)
+                written.append(AfterRemoval(item))
+                continue
+            if isinstance(item, PendingOpening):
+                written.append(item)
+                continue
+            advances = follows.get(index)
+            if advances is not None and isinstance(
+                item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
+            ):
+                written.append(FollowingKeyedWrite(item, advances))
             else:
-                written.extend(inserts)
+                written.append(item.instruction if isinstance(item, ObjectClaimedWrite) else item)
         return tuple(written)
 
     def sources(self) -> tuple[SourceAuthority, ...]:
@@ -1370,7 +1360,9 @@ def _without_noop_rows(
     eliminated whole or passed through untouched, and is never rebuilt around a
     narrower instruction.
     """
-    if isinstance(item, ComposedTemporalWrite | AfterRemoval | FollowingKeyedWrite):
+    if isinstance(
+        item, ComposedTemporalWrite | PendingOpening | AfterRemoval | FollowingKeyedWrite
+    ):
         return item
     if isinstance(item, TargetKeyedWrite) and isinstance(item.expectation, ExpectedVersion):
         # A caller-conditioned write of a versioned row still advances its
@@ -1422,3 +1414,22 @@ def _settled_attributes(
         for axis in axes:
             settled.update((axis.start_attribute, axis.end_attribute))
     return frozenset(settled)
+
+
+def _ordered_instruction(
+    item: PreparedKeyedWrite
+    | ReadlessPredicateWrite
+    | ObservedKeyedWrite
+    | InsertionKeyedWrite
+    | TargetKeyedWrite
+    | FollowingKeyedWrite
+    | PendingOpening
+    | MaterializedWriteGroup,
+) -> PreparedWrite:
+    """The instruction ordering ranks ``item`` by: a pending opening's own
+    insert, and the write a barrier keeps after earlier ones."""
+    if isinstance(item, FollowingKeyedWrite):
+        return item.write.instruction
+    if isinstance(item, PendingOpening):
+        return item.insert
+    return buffered_instruction(item)

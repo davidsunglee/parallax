@@ -27,7 +27,6 @@ from parallax.core.unit_work.instructions import (
     PreparedTargetWrite,
     PreparedWrite,
     TargetExpectation,
-    derive_opening,
     target_instruction,
 )
 from parallax.core.unit_work.keys import resolve_object_key
@@ -615,8 +614,10 @@ class PendingOpening:
     ``transform`` applies to the opening's own window exactly as a stored
     range's transform applies to stored coverage: assigned members replace the
     opening's values inside each write's window, destruction removes coverage
-    there, and nothing outside the opening is ever created. ``intents`` keeps
-    each composed write's window so admission can judge the next one.
+    there, and nothing outside the opening is ever created. Settlement opens
+    each part that survives as a new lineage seeded with the insert's own
+    state. ``intents`` keeps each composed write's window so admission can
+    judge the next one.
     """
 
     insert: PreparedKeyedWrite
@@ -638,25 +639,6 @@ class PendingOpening:
         """Whether any of the opened coverage survives its composed writes."""
         return bool(self._surviving())
 
-    def inserts(self) -> tuple[PreparedKeyedWrite, ...]:
-        """The inserts the opening flushes as: one per nonempty interval its
-        composed writes leave, carrying the opening's values with each
-        interval's assignments overlaid."""
-        insert = self.insert
-        row = insert.rows[0]
-        inserts: list[PreparedKeyedWrite] = []
-        for surviving in self._surviving():
-            coverage = surviving.valid_time_coverage
-            assert coverage is not None  # a Bitemporal opening's coverage lies on Valid Time
-            inserts.append(
-                derive_opening(
-                    insert,
-                    row if surviving.assigned is None else {**row, **surviving.assigned},
-                    valid_time_window=coverage,
-                )
-            )
-        return tuple(inserts)
-
     def _surviving(self) -> tuple[Successor, ...]:
         window = self.insert.valid_time_window
         assert window is not None  # a Bitemporal opening states its window
@@ -665,12 +647,12 @@ class PendingOpening:
 
 @dataclass(frozen=True, slots=True)
 class AfterRemoval:
-    """Inserts of an object whose earlier insertion an earlier pending write
-    removes completely, which execute only after everything authored before
-    them: an insert ordinarily runs ahead of every removal, and these must
-    follow the one that clears their way."""
+    """An insert of an object whose earlier insertion an earlier pending write
+    removes completely, which executes only after everything authored before
+    it: an insert ordinarily runs ahead of every removal, and this one must
+    follow the one that clears its way."""
 
-    inserts: tuple[PreparedKeyedWrite, ...]
+    insert: PreparedKeyedWrite | PendingOpening
 
 
 @dataclass(frozen=True, slots=True)

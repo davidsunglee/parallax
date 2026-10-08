@@ -2129,12 +2129,6 @@ def test_derived_writes_share_the_prepared_window_rather_than_judge_it_again() -
     window = prepared.valid_time_window
     assert window is not None
     assert wi.derive_keyed_write(prepared, ({"id": 2, "value": 5},)).valid_time_window is window
-    piece = TimeInterval(_I1, INFINITY)
-    opened = wi.derive_opening(prepared, {"id": 1, "value": 5}, valid_time_window=piece)
-    assert (opened.mutation, opened.valid_time_window) == ("insert", piece)
-    assert opened.valid_time_window is piece
-    bounded = wi.derive_opening(prepared, {"id": 1, "value": 5}, valid_time_window=window)
-    assert bounded.mutation == "insertUntil"
 
 
 @pytest.mark.parametrize(

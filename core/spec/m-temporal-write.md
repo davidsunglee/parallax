@@ -39,8 +39,9 @@ Key invariants the suite pins down:
 - After a **terminate**, **no** row has `out_z = infinity`.
 - A keyed **update** assigns literally (`m-unit-work` *Comparing an assigned
   member with its persisted value*), and an update assigning no member writes
-  nothing. An observed or insertion-authored update every assigned value of
-  which the current row already holds leaves that row **unchanged**
+  nothing. An update every assigned value of which the current row already
+  holds leaves that row **unchanged**, whether a read observed the row, an
+  insertion authorized the write, or a caller's condition names the row
   (*Unchanged milestones*, below): under Optimistic, where the database's
   write count includes unchanged rows, one guard keeps it —
   `update … set in_z = in_z where pk and out_z = ? and in_z = ?`
@@ -123,15 +124,18 @@ writes*) observed no row either: it states the `in_z` of the current row its
 caller last observed as `ifTxStart`, and takes no Valid-Time bound. The current
 row is read inside the flush that writes it, and is closed and chained as an
 `update` is — a patch's chained row keeps every member it does not assign, a
-replacement's states the complete writable state — even where it assigns only
-values the row already holds, since its caller asked for the revision. Where that read finds no
+replacement's states the complete writable state — or kept unchanged where every
+value it assigns is one the row already holds, exactly as an update's is
+(*Unchanged milestones*): the caller's condition establishes the write's
+authority, not a demand for new history. Where that read finds no
 current row, or one at another `in_z`, the write is its caller's failed
 precondition before any statement executes; where it finds more than one current
-row, the write fails sooner, as Cardinality Corruption (`m-unit-work`). Under Optimistic the close's gate
-binds the stated `ifTxStart` rather than an observation, and its zero-row
-shortfall is that failed precondition, never a retriable conflict. Under Locking
-the current row was read under the shared lock at submission and is read under
-it again by the flush, and the close is ungated.
+row, the write fails sooner, as Cardinality Corruption (`m-unit-work`). Under
+Optimistic the close's gate — or the guard keeping an unchanged row — binds the
+stated `ifTxStart` rather than an observation, and its zero-row shortfall is
+that failed precondition, never a retriable conflict. Under Locking the current
+row was read under the shared lock at submission and is read under it again by
+the flush, and the close is ungated.
 
 ## The rectangle split
 
@@ -308,12 +312,19 @@ changed since the caller's query, and each is inactivated under its own `in_z`.
 | Patch | Each overlapping rectangle takes the assigned members over its own unassigned values, exactly as an observed write's does; a gap and the coverage after a scheduled termination stay absent. |
 | Replacement | Each overlapping rectangle takes the complete stated state, and every part of the extent no current rectangle covers — a gap, or the coverage after a scheduled termination — is opened with that state too, once. |
 
+A rectangle the write leaves unchanged is kept rather than inactivated
+(*Unchanged milestones*), the starting rectangle included: each rectangle is
+judged by its own values over the part of it the extent reaches, so the starting
+rectangle's equality keeps that rectangle alone, never a later one the write
+changes or a gap a replacement opens.
+
 Every inactivation precedes every opening, the starting rectangle's first; a
 replacement's opened gaps follow the pieces of the rectangles it inactivates.
 Where the flush's read shows no rectangle containing `validFrom`, or one at
 another `in_z`, the write is the caller's failed precondition before any
 statement executes; where it shows more than one containing `validFrom`, the
-write fails sooner, as Cardinality Corruption (`m-unit-work`). Under Optimistic the starting rectangle's inactivation gates
+write fails sooner, as Cardinality Corruption (`m-unit-work`). Under Optimistic
+the starting rectangle's inactivation, or the guard keeping it unchanged, gates
 on the stated `ifTxStart`, and its shortfall is that failed precondition; every
 later rectangle's gates on its own `in_z`, and its shortfall is an ordinary
 conflict. Under Locking the starting rectangle was read under the shared lock
@@ -393,10 +404,10 @@ Optimistic, and every resulting row keeps `in_z = txInstant`:
 | **terminate** at `V` with `s < V` | delete the rectangle; insert the `head` `[s, V)` |
 | **terminate** at `V = s` | delete the rectangle |
 
-An observed or insertion-authored update every assigned value of which the
-rectangle already holds over the part it reaches writes nothing at all: the
-rectangle is unchanged and is neither split nor revised. Ownership is never
-inferred from `in_z = txInstant`.
+An update every assigned value of which the rectangle already holds over the
+part it reaches — observed, insertion-authored, or caller-addressed — writes
+nothing at all: the rectangle is unchanged and is neither split nor revised.
+Ownership is never inferred from `in_z = txInstant`.
 
 ## Temporal expansion
 
@@ -490,15 +501,14 @@ successor is, with a `NewLineage` origin. No predecessor is fabricated for it.
 
 A temporal write is applied to each current milestone it reaches, and a
 milestone it leaves exactly as it was is **unchanged**: the write's final
-composed effect keeps every interval of it, assigns no member a value other than
-the one it already holds there — compared by `m-document-codec`'s
-effective-change classification over the assigned members alone, never over a
-source's earlier value or an intermediate edit — and no caller-addressed write's
-window reaches it. A caller-addressed write asked for a revision, so a milestone
-its window reaches is never unchanged, whatever values it assigns. An
-observed or insertion-authored write keeps an unchanged milestone rather than
-closing it and chaining an equal successor, wherever its unchanged state is
-proven without changing it:
+composed effect keeps every interval of it and assigns no member a value other
+than the one it already holds there — compared by `m-document-codec`'s
+effective-change classification over the assigned members alone, an amendment's
+assignments or a replacement's complete stated writable state, never over a
+source's earlier value or an intermediate edit. Authority takes no part in the
+judgment: an observed, an insertion-authored, and a caller-addressed write alike
+keep an unchanged milestone rather than closing it and chaining an equal
+successor, wherever its unchanged state is proven without changing it:
 
 - a milestone the attempt opened is invisible to every other transaction, so it
   needs no proof and no statement;
@@ -508,29 +518,41 @@ proven without changing it:
 - under Optimistic a milestone that existed before the attempt is proven by a
   **Planned Temporal Guard**: a write that matches the milestone only at its
   observed address and Transaction-Time start, changes no value, and holds the
-  row's write lock until the transaction ends. Matching is the proof, so a
-  database whose write count reports only the rows an update changed cannot give
-  it (`m-dialect` *Unchanged-row count*); there the milestone is closed and
-  chained as a changed one is, a choice made before anything executes. A guard
-  that matches no row is the milestone's ordinary conflict, never a reason to
-  fall back.
+  row's write lock until the transaction ends. The guard on the milestone
+  holding a caller-addressed write's start binds that caller's stated
+  `ifTxStart`, and its shortfall is the caller's failed precondition; every
+  other guard binds the milestone's own observed start, and its shortfall is the
+  milestone's ordinary conflict. Matching is the proof, so a database whose
+  write count reports only the rows an update changed cannot give it
+  (`m-dialect` *Unchanged-row count*); there the milestone is closed and chained
+  as a changed one is, its gate classified as the guard's would be, a choice
+  made before anything executes. A guard that matches no row is never a reason
+  to fall back.
 
 Either way nothing is closed or opened, the milestone keeps its Transaction-Time
 start and its history gains nothing, and the unit's other milestones transform
 as usual. The unit still completes: it spends every source it composed, and it
 changes no state of the kept milestone, so an observation of that state from
-another source stays eligible and another transaction's revision token for it
-still holds. A guard is not zero work: it is a database write that fires update
-triggers and keeps its lock through any later dependent read until the
-transaction ends.
+another source stays eligible, another transaction's revision token for it
+still holds, and a caller's stated start still names it. A stale stated start is
+still its caller's failed precondition. A guard is not zero work: it is a
+database write that fires update triggers and keeps its lock through any later
+dependent read until the transaction ends.
 
 Judgment is by final effective state, not by the number of successors that
 describe it: successors that together cover the whole milestone without a gap,
 every one carrying or assigning only values it already holds, leave it
 unchanged — a bounded equal assignment keeps its rectangle across a carried
-head and tail. A predicate-selected row is instead eliminated before planning
-when every assigned member is restored (`m-unit-work` *Comparing an assigned
-member with its persisted value*).
+head and tail. It is per milestone: a write equal to the milestone holding its
+start keeps that milestone alone, and still changes a later one it reaches or a
+gap a replacement opens. It is by declared value: a replacement whose complete
+stated state a milestone already holds keeps that milestone whole, stored
+content no member declares included, although executing the same replacement on
+a changed milestone replaces that content where it assigns (`m-write-plan`
+*Write Rows*). A kept milestone is not a successor the write produced. A
+predicate-selected row is instead eliminated before planning when every
+assigned member is restored (`m-unit-work` *Comparing an assigned member with
+its persisted value*).
 
 ### Ownership disposal
 

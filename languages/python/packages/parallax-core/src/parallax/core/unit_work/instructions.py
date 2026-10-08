@@ -73,7 +73,6 @@ __all__ = [
     "WriteInstructionError",
     "coerce_typed_row",
     "derive_keyed_write",
-    "derive_opening",
     "deserialize",
     "prepare_typed_write",
     "prepare_wire_write",
@@ -441,27 +440,6 @@ def derive_keyed_write(
     sealed = tuple(cast("Mapping[str, object]", retain_document_value(row)) for row in rows)
     return _prepared_keyed_write(
         prepared.mutation, prepared.target, sealed, prepared.valid_time_window
-    )
-
-
-def derive_opening(
-    prepared: PreparedKeyedWrite,
-    row: Mapping[str, object],
-    *,
-    valid_time_window: TimeInterval,
-) -> PreparedKeyedWrite:
-    """One piece of an admitted Bitemporal opening: ``row`` opened over
-    ``valid_time_window``.
-
-    The piece states the same target and an already-judged window inside the
-    opening's own, so nothing is judged again.
-    """
-    sealed = (cast("Mapping[str, object]", retain_document_value(row)),)
-    return _prepared_keyed_write(
-        "insert" if valid_time_window.end is INFINITY else "insertUntil",
-        prepared.target,
-        sealed,
-        valid_time_window,
     )
 
 

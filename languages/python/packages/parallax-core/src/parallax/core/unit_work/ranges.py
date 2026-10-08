@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Iterable, Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Final, cast
 
 from parallax.core.base import ManagedValue
@@ -19,11 +19,9 @@ from parallax.core.temporal_write.coverage import CoverageGap, CoverageTransform
 from parallax.core.temporal_write.expansion import (
     ExpansionRole,
     PredecessorExpander,
-    PredecessorExpansion,
     TemporalFacts,
     bitemporal_ends,
     entry_endpoint,
-    opening,
 )
 from parallax.core.unit_work.acquisition import CoverageReadRequest
 from parallax.core.unit_work.effects import (
@@ -285,48 +283,36 @@ def _valid_end(original: _Original) -> object | None:
 @dataclass(slots=True)
 class _BoundRangeBuilder:
     """What binding one range accumulates: every original's own effect before
-    any opening, and the facts its unit publishes. Effects one original alone
-    contributes are kept as it gave them."""
+    any opening, and the facts its unit publishes, appended as each original
+    settles rather than copied whole each time."""
 
     effects: list[PlannedStep] = field(default_factory=list[PlannedStep])
     openings: list[PlannedStep] = field(default_factory=list[PlannedStep])
-    changed: tuple[ObservedStateKey, ...] = ()
-    removed: tuple[OwnedEndpoint, ...] = ()
-    fresh: tuple[OwnedEndpoint, ...] = ()
-    continued: tuple[OwnedEndpoint, ...] = ()
-    derived: tuple[Derivation, ...] = ()
+    changed: list[ObservedStateKey] = field(default_factory=list[ObservedStateKey])
+    removed: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
+    fresh: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
+    continued: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
+    derived: list[Derivation] = field(default_factory=list[Derivation])
 
-    def take(self, expansion: PredecessorExpansion) -> None:
+    def take(self, expansion: BoundRange) -> None:
         for step in expansion.steps:
             (self.openings if isinstance(step, PlannedInsert) else self.effects).append(step)
-        self.changed += tuple(expansion.changed)
-        self.removed += tuple(expansion.removed)
+        self.changed.extend(expansion.changed)
+        self.removed.extend(expansion.removed)
         opened = expansion.opened
-        self.fresh += tuple(opened.fresh)
-        self.continued += tuple(opened.continued)
-        self.derived += expansion.derived
+        self.fresh.extend(opened.fresh)
+        self.continued.extend(opened.continued)
+        self.derived.extend(expansion.derived)
 
     def range(self, concludes: ObjectKey | None) -> BoundRange:
         return BoundRange(
             steps=(*self.effects, *self.openings),
-            changed=self.changed,
-            removed=self.removed,
-            opened=Openings(self.fresh, self.continued),
-            derived=self.derived,
+            changed=tuple(self.changed),
+            removed=tuple(self.removed),
+            opened=Openings(tuple(self.fresh), tuple(self.continued)),
+            derived=tuple(self.derived),
             concludes=concludes,
         )
-
-
-def _bound(expansion: PredecessorExpansion, concludes: ObjectKey | None) -> BoundRange:
-    """A range of one original, its expansion's steps as they are."""
-    return BoundRange(
-        steps=expansion.steps,
-        changed=expansion.changed,
-        removed=expansion.removed,
-        opened=expansion.opened,
-        derived=expansion.derived,
-        concludes=concludes,
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,7 +403,8 @@ class _TemporalRangeBinder:
         if not starts and not validations and not gaps and len(originals) == 1:
             # One original's expansion already orders its own effect first.
             (original,) = originals
-            return _bound(self._expanded(original, "coverage"), concluded)
+            expansion = self._expanded(original, "coverage")
+            return expansion if concluded is None else replace(expansion, concludes=concluded)
         bound = _BoundRangeBuilder()
         for original in starts:
             bound.take(self._expanded(original, "starting"))
@@ -433,23 +420,14 @@ class _TemporalRangeBinder:
     def _open(self, bound: _BoundRangeBuilder, gap: CoverageGap) -> None:
         """Open a replacement's new lineage over ``gap``, after every original's
         own effect."""
-        meaning = self.meaning
-        facts = meaning.facts
-        attributes, value_objects = self.expansion.assignments(gap.assigned)
-        entry = self.expansion.finalized(
-            opening(
-                facts,
-                {**attributes, meaning.key_attribute: meaning.key_value},
-                dict(value_objects),
-                gap.valid_time_window,
-            )
-        )
+        facts = self.meaning.facts
+        entry = self.expansion.gap(gap)
         bound.openings.append(PlannedInsert(entity=facts.entity.identity, entries=(entry,)))
         endpoint = entry_endpoint(facts, entry)
         if endpoint is not None:
-            bound.fresh += (endpoint,)
+            bound.fresh.append(endpoint)
 
-    def _expanded(self, original: _Original, role: ExpansionRole) -> PredecessorExpansion:
+    def _expanded(self, original: _Original, role: ExpansionRole) -> BoundRange:
         return self.expansion.expand(
             original.predecessor,
             role=role,
@@ -858,7 +836,6 @@ def bind_deferred(
 def _binding(
     meaning: _RangeMeaning, ownership: TemporalWriteOwnership, audit: AuditDecoration
 ) -> _TemporalRangeBinder:
-    conditions = meaning.conditions
     return _TemporalRangeBinder(
         meaning,
         ownership,
@@ -869,9 +846,6 @@ def _binding(
             key_value=meaning.key_value,
             gated=meaning.gated,
             guards=meaning.guards,
-            addressed=(
-                tuple(condition.valid_time_window for condition in conditions) if conditions else ()
-            ),
             derives=meaning.derives,
             ownership=ownership,
             audit=audit,

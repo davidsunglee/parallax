@@ -42,7 +42,7 @@ when the row was read, or read for the write inside its flush, holds until the
 transaction ends, so the row is still what was read and no optimistic guard is
 added. The lock protects only the rows read under it; the starting-row lock a
 caller-addressed write acquires never stands in for the rows its window reaches,
-and a caller-addressed write is never kept unchanged anyway.
+which its flush reads under the lock before keeping any of them.
 
 ### What one temporal observation locks
 

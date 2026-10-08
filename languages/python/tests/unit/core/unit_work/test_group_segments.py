@@ -37,7 +37,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import Successor
-from parallax.core.temporal_write.expansion import PredecessorExpander, PredecessorExpansion
+from parallax.core.temporal_write.expansion import PredecessorExpander
 from parallax.core.unit_work import (
     BufferItem,
     Concurrency,
@@ -77,6 +77,7 @@ from parallax.core.write_plan.columns import ColumnSlice
 from parallax.core.write_plan.keys import ObservedStateKey
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
+    BoundRange,
     Derivation,
     Descent,
     ExecutionUnit,
@@ -1410,7 +1411,7 @@ class _Built:
 _SIZING_FORBIDDEN: Final = (
     TimeInterval,
     Successor,
-    PredecessorExpansion,
+    BoundRange,
     PlannedClose,
     PlannedInsert,
     WriteRow,

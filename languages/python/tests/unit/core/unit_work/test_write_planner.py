@@ -1836,6 +1836,63 @@ def test_audit_finalizes_the_rows_and_closes_temporal_expansion_produced(
     assert [id(row) for row in audit.rows] == [id(insert.entries[0]) for insert in inserts]
 
 
+def test_audit_finalizes_each_part_a_pending_opening_leaves_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A pending insertion's edits leave it as several new lineages; each is a
+    # produced row the strategy finalizes once, and enumerating the plan again
+    # hands it nothing more.
+    audit = RecordingAudit()
+    monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
+    plan = _plan(
+        [
+            KeyedWrite(
+                "insert",
+                "Position",
+                ({"id": 5, "acctNum": "P5", "value": Decimal("1.0")},),
+                valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            ),
+            KeyedWrite(
+                "updateUntil",
+                "Position",
+                ({"id": 5, "value": Decimal("2.0")},),
+                valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                until=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            ),
+        ],
+        _POSITION,
+        tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    )
+    entries = [step.entries[0] for step in plan.steps if isinstance(step, PlannedInsert)]
+    assert len(entries) == 2
+    assert [id(row) for row in audit.rows] == [id(entry) for entry in entries]
+    list(plan.steps)
+    assert len(audit.rows) == 2
+
+
+def test_audit_never_reaches_a_milestone_a_write_keeps_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audit = RecordingAudit()
+    monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
+    update = KeyedWrite(
+        "update",
+        "Position",
+        ({"id": 5, "value": Decimal("1.0")},),
+        valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+    )
+    key_ = object_key(update, _POSITION)
+    assert key_ is not None
+    plan = _plan(
+        [update],
+        _POSITION,
+        observations={key_: _bitemporal_observation()},
+        tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    )
+    assert list(plan.steps) == []
+    assert (audit.rows, audit.closes) == ([], [])
+
+
 def test_audit_states_what_it_adds_to_carried_and_changed_rows_as_executed_assignments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

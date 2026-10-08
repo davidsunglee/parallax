@@ -454,7 +454,10 @@ validated it is dropped, with no database work, no existence or revision check,
 and no effect on earlier pending work. A nonempty patch and every replacement
 carry **revision intent**: a versioned row's version advances even when every
 value it writes equals the stored one, and a later write composing with it keeps
-that intent.
+that intent. A temporal target's milestone is judged as any temporal write's
+instead, and one it leaves exactly as it was is kept, under the guard or lock
+that proves it (`m-temporal-write` *Unchanged milestones*): the stated start
+establishes the write's authority, not a demand for new history.
 
 A temporal target write also states its **window**: none on a
 Transaction-Time-Only target, whose current row it writes, and `validFrom` with

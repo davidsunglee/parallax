@@ -103,7 +103,7 @@ from parallax.core.write_plan.plan import (
     OwnedEndpoint,
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
-from parallax.core.write_plan.steps import Finite, PlannedClose, PlannedUpdate
+from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, PlannedClose, PlannedUpdate
 from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_object_key
@@ -1881,6 +1881,63 @@ def test_pending_destruction_after_an_opening_leaves_out_what_precedes_the_inser
     pending.add(_position_destroy(_FEB, _APR), key)
     assert list(pending.destroyed_coverage(key, after_opening=True)) == [_window(_FEB, _APR)]
     assert list(pending.destroyed_coverage(key)) == [_window(_FEB, _APR), _window(_JUN, _AUG)]
+
+
+def _opening_geometry(plan: WritePlan) -> set[tuple[object, object, object]]:
+    """Each row a plan's inserts open, by Valid Time and value."""
+    rows: set[tuple[object, object, object]] = set()
+    for step in plan.steps:
+        if isinstance(step, PlannedInsert):
+            (entry,) = step.entries
+            cells = {identity.name: value for identity, value in entry.row.attributes.items()}
+            rows.add((cells["validStart"], cells["validEnd"], cells["value"]))
+    return rows
+
+
+def test_a_pending_opening_settles_as_one_unit_of_the_new_lineages_its_edits_leave() -> None:
+    insert = _prepared_keyed(
+        KeyedWrite(
+            "insert",
+            "WherePosition",
+            ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
+            valid_from=_FEB,
+        ),
+        _BARRIERED,
+    )
+    edit = _prepared_keyed(
+        KeyedWrite(
+            "updateUntil", "WherePosition", ({"id": 1, "value": Decimal("2.00")},), _FEB, _APR
+        ),
+        _BARRIERED,
+    )
+    destroy = _prepared_keyed(
+        KeyedWrite("terminateUntil", "WherePosition", ({"id": 1},), _JUN, _AUG),
+        _BARRIERED,
+    )
+    plan = build_write_planner(_BARRIERED).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=TransactionInstant(FixedClock(_FIXED)),
+            concurrency="optimistic",
+            buffered_writes=compose_writes(_BARRIERED, [insert, edit, destroy]),
+        )
+    )
+    # No predecessor is fabricated for the insert: every surviving part of its
+    # own window opens as a new lineage, together, as one unit.
+    (unit,) = plan.units
+    assert {type(step) for step in plan.steps} == {PlannedInsert}
+    assert {step.entries[0].origin for step in plan.steps} == {NEW_LINEAGE}  # type: ignore[union-attr]
+    assert _opening_geometry(plan) == {
+        (_FEB, _APR, Decimal("2.00")),
+        (_APR, _JUN, Decimal("1.00")),
+        (_AUG, INFINITY, Decimal("1.00")),
+    }
+    assert tuple(unit.opened.continued) == (
+        _position_endpoint(_APR),
+        _position_endpoint(_JUN),
+        _position_endpoint(None),
+    )
+    assert (tuple(unit.changed), tuple(unit.opened.fresh)) == ((), ())
 
 
 def _position_endpoint(end: dt.datetime | None) -> OwnedEndpoint:

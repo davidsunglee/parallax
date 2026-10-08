@@ -325,9 +325,9 @@ A **zero-row** close is an error under **either** strategy (never silent) — a
 retriable conflict under Optimistic, a distinct non-retriable stale/consistency
 error under Locking.
 
-A milestone an observed or insertion-authored write leaves unchanged
-(`m-temporal-write` *Unchanged milestones*) is not closed, and under Optimistic the
-same gate rides a **guard** instead: an `UPDATE` of that milestone's own address
+A milestone a write leaves unchanged (`m-temporal-write` *Unchanged
+milestones*) is not closed, and under Optimistic the same gate rides a **guard**
+instead: an `UPDATE` of that milestone's own address
 that assigns its `in_z` to itself, binds the observed `in_z` last, and **MUST**
 affect exactly one row. A zero-row guard is the same retriable conflict a stale
 close is, so a peer that revised the milestone after it was observed — even to
@@ -338,8 +338,10 @@ it still matches once this one commits. The guard relies on the database
 counting a matched row it left unchanged (`m-dialect` *Unchanged-row count*);
 without that count no guard is issued and the milestone is closed and chained.
 Under Locking the shared lock already proves the unchanged milestone and no
-statement is issued for it (`m-read-lock`). A caller-stated `ifTxStart` is never
-satisfied by a guard: a caller-addressed write asked for the revision.
+statement is issued for it (`m-read-lock`). The guard on the milestone holding a
+caller-addressed write's start binds the caller's stated `ifTxStart`, as that
+milestone's close would, and its zero-row shortfall is the caller's failed
+precondition (*Conflict detection*), never the retriable conflict.
 
 The write shapes and the current-row-predicate-is-not-a-gate
 rationale are `m-temporal-write`; the conflict/retry contract is
@@ -396,7 +398,8 @@ Policy*), because re-running the transaction re-states the same version against
 the same stored row. Where a write's gate binds both a caller's stated version and
 an observation of the same state — one composed from both — the shortfall is the
 caller's. A temporal caller-addressed write's starting gate is classified the
-same way; a later milestone's gate in the same write is an ordinary conflict,
+same way, whether a close or a guard carries it; a later milestone's gate in the
+same write is an ordinary conflict,
 retried under the opt-in with the caller's stated start unchanged.
 
 ## Retry contract

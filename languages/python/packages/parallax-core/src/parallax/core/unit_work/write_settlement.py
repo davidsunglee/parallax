@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Container, Mapping, Sequence
-from dataclasses import dataclass
 
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeIdentity, AttributeMetadata, EntityMetadata, Metamodel
@@ -45,6 +44,7 @@ from parallax.core.unit_work.materialized import (
     InsertionKeyedWrite,
     MaterializedWriteGroup,
     ObservedKeyedWrite,
+    PendingOpening,
     ReadlessPredicateWrite,
     TargetKeyedWrite,
     VersionedEvidence,
@@ -71,6 +71,7 @@ from parallax.core.write_plan.observe import TemporalObservation, WriteObservati
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     AllocatedOpening,
+    BoundRange,
     CombinedSourceAuthority,
     ExecutionUnit,
     Openings,
@@ -78,7 +79,6 @@ from parallax.core.write_plan.plan import (
     SourceAuthority,
     StepSegment,
     TemporalWriteOwnership,
-    UnitEffects,
     WritePlan,
     eager_segment,
 )
@@ -122,6 +122,7 @@ type OrderedWrite = (
     | TargetKeyedWrite
     | FollowingKeyedWrite
     | ComposedTemporalWrite
+    | PendingOpening
     | MaterializedWriteGroup
 )
 """One element of the sequence settlement reads: a buffer item once the
@@ -132,13 +133,6 @@ coalescing is the only stage that reads one, and it hands the survivor on as the
 ordinary instruction it always was, so batching, ordering, and settlement see an
 unversioned write as the bare instruction they measure every other one by.
 """
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _Settled(UnitEffects):
-    """One settled write's steps beside the effects their success publishes."""
-
-    steps: tuple[PlannedStep, ...]
 
 
 class WritePlanCompiler:
@@ -229,14 +223,17 @@ class WritePlanCompiler:
         current rows this attempt already opened, so a write against one of
         them revises or removes that row instead of closing it into history.
 
-        A milestone an observed or insertion-authored write leaves exactly as
-        it was is kept rather than closed and chained, where its unchanged
+        A milestone a write leaves exactly as it was — whether its source
+        observed it, an insertion authorized the write, or a caller's condition
+        names it — is kept rather than closed and chained, where its unchanged
         state is proven without changing it: by the shared lock under Locking,
         by ownership for a row the attempt opened, and otherwise by a guard
-        that matches the observed milestone — which only a database whose
-        write count includes unchanged rows (``counts_unchanged_rows``) can
-        report. Without that proof the milestone is closed and chained as any
-        changed one.
+        that matches the milestone at its observed or stated start — which only
+        a database whose write count includes unchanged rows
+        (``counts_unchanged_rows``) can report. Without that proof the
+        milestone is closed and chained as any changed one. A pending
+        insertion settles with the writes its insertion authorized as the one
+        unit of new lineages they leave of its window.
         """
         segments: list[StepSegment] = []
         pending: list[PlannedStep] = []
@@ -265,6 +262,13 @@ class WritePlanCompiler:
                 units.append(segment.unit(count))
                 continue
             shape = self._carrier_shape(item)
+            if isinstance(item, PendingOpening):
+                assert isinstance(shape, Bitemporal)  # only a Bitemporal opening is composed
+                opened = self._settle_opening(item, shape, transaction_instant, audit)
+                pending.extend(opened.steps)
+                count += len(opened.steps)
+                units.append(ExecutionUnit(end=count, opened=opened.opened))
+                continue
             if isinstance(shape, TransactionTimeOnly | Bitemporal):
                 assert not isinstance(item, PreparedKeyedWrite | ReadlessPredicateWrite)
                 steps, unit = self._range(
@@ -306,6 +310,8 @@ class WritePlanCompiler:
         dispatch; ``None`` for a bare instruction, whose settlement reads it."""
         if isinstance(item, ComposedTemporalWrite):
             return self._temporal_facet.shape(item.target.identity)
+        if isinstance(item, PendingOpening):
+            return self._temporal_facet.shape(item.insert.target.identity)
         if isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite):
             return self._temporal_facet.shape(item.instruction.target.identity)
         return None
@@ -324,7 +330,7 @@ class WritePlanCompiler:
         shape: TemporalShape | None,
         audit: AuditDecoration,
         advances: int = 0,
-    ) -> tuple[_Settled, SourceAuthority | None, VersionedStateKey | None]:
+    ) -> tuple[BoundRange, SourceAuthority | None, VersionedStateKey | None]:
         """One ordered keyed write's settled steps and effects, beside the
         claim its unit spends and the state its carrier itself names as
         changed. ``advances`` is how many versions earlier writes of its scope
@@ -335,7 +341,7 @@ class WritePlanCompiler:
         observations of one state, changes that state wherever its steps
         change the row it observed."""
         if isinstance(item, ReadlessPredicateWrite):
-            return _Settled(steps=(_readless_step(item.instruction, audit),)), None, None
+            return BoundRange(steps=(_readless_step(item.instruction, audit),)), None, None
         own_state: VersionedStateKey | None = None
         observation: WriteObservation | None = None
         claim: SourceAuthority | None = None
@@ -395,7 +401,7 @@ class WritePlanCompiler:
         own_version: int | None = None,
         conditioned: bool = False,
         advances: int = 0,
-    ) -> _Settled:
+    ) -> BoundRange:
         """One ordered write's steps and effects. ``source`` is the observed
         state the write's claim names, which it changes wherever it changes the
         row it observed. ``own_version`` is the version a write
@@ -421,7 +427,7 @@ class WritePlanCompiler:
         facts = self._non_temporal_facts(entity)
         changed = _changes(source)
         if instruction.mutation == "insert":
-            return _Settled(
+            return BoundRange(
                 steps=(self._settle_insert(facts, instruction, audit),), changed=changed
             )
         addressed = self._addressed_facts(facts, concurrency, conditioned=conditioned)
@@ -432,7 +438,7 @@ class WritePlanCompiler:
         )
         if advances and observed_version is not None:
             observed_version = self._advanced(observed_version, advances)
-        return _Settled(
+        return BoundRange(
             steps=(
                 _decorated(
                     audit,
@@ -603,7 +609,7 @@ class WritePlanCompiler:
         tx_instant: TransactionInstant,
         source: ObservedStateKey | None,
         audit: AuditDecoration,
-    ) -> _Settled:
+    ) -> BoundRange:
         """One temporal insert as the new lineage it opens over its prepared
         window, the row recorded under the key it states or, where the
         database allocates the key, under the key its insert answers."""
@@ -623,7 +629,7 @@ class WritePlanCompiler:
                 ),
             ),
         )
-        return _Settled(
+        return BoundRange(
             steps=inserts,
             changed=_changes(source),
             opened=Openings(
@@ -631,6 +637,37 @@ class WritePlanCompiler:
                 allocated=_allocated(facts, inserts) if allocates else (),
             ),
         )
+
+    def _settle_opening(
+        self,
+        opening: PendingOpening,
+        shape: Bitemporal,
+        tx_instant: TransactionInstant,
+        audit: AuditDecoration,
+    ) -> BoundRange:
+        """A pending Bitemporal insertion and the writes it authorized since,
+        settled as the one unit of new lineages they leave: the insertion's
+        authored state is the seed every surviving part of its own window
+        carries, with the composed assignments overlaid there, through the
+        expansion a range settles its predecessors by. No predecessor is
+        fabricated for it, and nothing outside its window opens."""
+        insert = opening.insert
+        entity = insert.target
+        window = insert.valid_time_window
+        assert window is not None  # a Bitemporal opening states its window
+        view = entity_view(self._families, entity)
+        # Reaching a surviving temporal insert is what makes the attempt
+        # capture its instant; every part's fresh start derives from that value.
+        facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=tx_instant.value())
+        inserts = PredecessorExpander(
+            facts,
+            opening.transform,
+            key_attribute=view.primary_key.identity,
+            gated=False,
+            ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
+            audit=audit,
+        ).lineage(resolve_row(entity, view, insert.rows[0], context="insert"), window)
+        return BoundRange(steps=inserts, opened=Openings(continued=openings(facts, inserts)))
 
     def _observed_version(
         self,
