@@ -81,13 +81,13 @@ query = Balance.where(Balance.all).as_of(
 Temporal writes preserve history rather than overwriting it. Bitemporal
 operations support valid-time changes and bounded corrections: change a
 value for a particular interval while preserving the portions before and after
-it. The [usage guide's temporal example](languages/python/docs/usage-guide.md#bitemporal-update-until-splits-headmiddletail)
-shows an update restricted to a date range.
+it. The [usage guide's temporal example](languages/python/docs/usage-guide.md#bitemporal-amend-until-splits-headmiddletail)
+shows an amendment restricted to a date range.
 
 ## Make Changes Through Explicit Transactions
 
 Returned objects are immutable. Insert new values, use `edit(...)` and an
-explicit update to persist changes, or delete an entity through the transaction.
+explicit amendment to persist changes, or delete an entity through the transaction.
 Writes are explicit rather than inferred from mutation of a live object graph.
 
 Transactions buffer changes in a unit of work, coalesce or cancel compatible

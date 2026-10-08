@@ -7,11 +7,7 @@ from parallax.core.entity import AttributeAssignment, EntityRowCodec
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.execution import DatabaseOptions
 from parallax.core.execution._attempt import Attempt
-from parallax.core.execution._keyed_writes import (
-    stated_valid_from,
-    target_condition,
-    window_mutation,
-)
+from parallax.core.execution._keyed_writes import target_condition, window_mutation
 from parallax.core.execution._options import OMITTED, Omitted
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
@@ -156,7 +152,7 @@ class Transaction:
         opened = self._attempt.keyed_insert(
             TypedKeyedInsertSource(instance, self._codec),
             mutation,
-            valid_from=stated_valid_from(valid_from),
+            valid_from=valid_from,
             until=bound,
         )
         bind_insertion(instance, opened.authority)
@@ -245,7 +241,6 @@ class Transaction:
         stay absent. ``valid_from`` and ``until`` follow :meth:`insert`'s
         rules."""
         mutation, bound = window_mutation("amend", "amendUntil", until)
-        start = stated_valid_from(valid_from)
         condition = target_condition(version=version, tx_start=tx_start, unversioned=unversioned)
         typed_conditional_amend(
             self._attempt,
@@ -254,7 +249,7 @@ class Transaction:
             assignments,
             key,
             condition,
-            valid_from=start,
+            valid_from=valid_from,
             until=bound,
         )
 
@@ -307,7 +302,6 @@ class Transaction:
         :meth:`insert`'s rules. Returns ``None``; a read reports the saved
         state."""
         mutation, bound = window_mutation("replace", "replaceUntil", until)
-        start = stated_valid_from(valid_from)
         condition = target_condition(version=version, tx_start=tx_start, unversioned=unversioned)
         typed_target_write(
             self._attempt,
@@ -315,7 +309,7 @@ class Transaction:
             payload,
             self._codec,
             condition,
-            valid_from=start,
+            valid_from=valid_from,
             until=bound,
         )
 
@@ -467,7 +461,7 @@ class Transaction:
             mutation,
             query,
             assignments,
-            valid_from=stated_valid_from(valid_from),
+            valid_from=valid_from,
             until=bound,
         )
 
@@ -478,7 +472,7 @@ class Transaction:
          — in both modes, since each row's write requires that row's own prior
          observation — with no no-op elimination, because a delete changes a
          row's existence, never a value (`m-opt-lock`)."""
-        typed_predicate_write(self._attempt, "delete", query, (), valid_from=None)
+        typed_predicate_write(self._attempt, "delete", query, ())
 
     def terminate_where(
         self,
@@ -498,7 +492,7 @@ class Transaction:
             mutation,
             query,
             (),
-            valid_from=stated_valid_from(valid_from),
+            valid_from=valid_from,
             until=bound,
         )
 

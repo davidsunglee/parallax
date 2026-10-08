@@ -1069,6 +1069,28 @@ def test_an_insertion_replacement_reaches_later_coverage_whether_or_not_it_flush
 
 
 @_SPAN_AXES
+@pytest.mark.parametrize("flushed", [False, True], ids=["pending", "flushed"])
+def test_a_terminated_insertion_replacement_removes_what_it_reached_whether_or_not_it_flushed(
+    profile_run: Any, entity: type[Any], flushed: bool
+) -> None:
+    db = _seeded_later(profile_run, entity, _TA)
+
+    def fn(tx: Transaction) -> None:
+        opened = entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=())
+        tx.insert(opened, valid_from=_JAN, until=_APR)
+        if flushed:
+            _span_find(tx, entity, _FEB)
+        tx.replace(opened.edit(amount=300, label="r"), until=_JUN)
+        tx.terminate(opened, until=_JUN)
+
+    db.transact(fn)
+    assert _span_rows(profile_run, entity) == [
+        (_T0, _TA, _MAY, _JUL, 200, "b", _S2, []),
+        (_TA, None, _JUN, _JUL, 200, "b", _S2, []),
+    ]
+
+
+@_SPAN_AXES
 def test_an_ended_insertion_authorizes_no_replacement(profile_run: Any, entity: type[Any]) -> None:
     db = _seeded_later(profile_run, entity, _TA)
 

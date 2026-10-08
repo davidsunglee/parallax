@@ -821,7 +821,8 @@ def settle_opening(
     establishes its complete state there exactly as one reaching past a stored
     row does: the stored coverage beyond the window is read at execution, each
     row it reaches is transformed under its own proof, and the replacement's
-    gaps open. An amendment reaches nothing outside the insertion's window.
+    gaps open. An amendment or a destruction reaches past the window only as
+    far as such a replacement does, and transforms what it reaches there too.
     ``instant`` is the attempt's already-resolved Transaction Instant.
     """
     insert = opening.insert

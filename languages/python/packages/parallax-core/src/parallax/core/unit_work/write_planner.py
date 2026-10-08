@@ -833,10 +833,12 @@ class PendingWrites:
         """Fold a write of ``key`` into its still-pending insert, answering
         whether that cancelled the insert.
 
-        A non-temporal or Transaction-Time-Only opening takes an update's values
-        in place and is cancelled by any destruction, which removes all of it. A
-        Bitemporal opening composes the write over the coverage it opens and is
-        cancelled only once no coverage survives.
+        A non-temporal or Transaction-Time-Only opening takes an amendment's
+        values in place and is cancelled by any destruction, which removes all
+        of it. A Bitemporal opening composes the write over the coverage it
+        opens and is cancelled only once no coverage survives and no composed
+        replacement reached stored coverage past it, which its writes still
+        transform.
         """
         items = self._items
         index = self._inserts[key]
@@ -850,7 +852,7 @@ class PendingWrites:
                     insert=cast("PreparedKeyedWrite", base), transform=NO_TRANSFORM, intents=()
                 )
             ).then(instruction, _key_name(self._families, target))
-            if opening.survives:
+            if opening.survives or opening.beyond is not None:
                 items[index] = opening
                 return False
         elif instruction.mutation in ASSIGNMENT_MUTATIONS:

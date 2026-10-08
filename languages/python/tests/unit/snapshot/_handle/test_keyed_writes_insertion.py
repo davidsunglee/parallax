@@ -1198,8 +1198,12 @@ def test_a_pending_replacement_inside_its_opening_reads_nothing() -> None:
     ]
 
 
-def test_a_destruction_of_a_pending_replacements_window_cancels_it_whole() -> None:
-    port = ScriptedAdapter(Transact())
+@pytest.mark.parametrize("stored", [False, True], ids=["nothing-stored", "stored-later"])
+def test_a_destruction_of_a_pending_replacements_window_removes_what_it_reached(
+    stored: bool,
+) -> None:
+    rows = [_stored(_MAY, _AUG)] if stored else []
+    port = ScriptedAdapter(Transact(Read(rows=rows), Write(times=2 if stored else 0)))
 
     def fn(tx: Transaction) -> None:
         opened = _position()
@@ -1208,7 +1212,41 @@ def test_a_destruction_of_a_pending_replacements_window_cancels_it_whole() -> No
         tx.terminate(opened, until=_JUN)
 
     _transact(port, fn)
-    assert not any(isinstance(call, ReadCall | WriteCall) for call in port.calls)
+    (coverage,) = [call for call in port.calls if isinstance(call, ReadCall)]
+    assert coverage.binds == (1, _MAR, _JUN, INFINITY_INSTANT)
+    if stored:
+        close, _opening = _writes(port)
+        assert close.sql.startswith("update where_position set out_z = %s")
+        assert _opened(port) == [(Decimal("200.00"), _JUN, _AUG)]
+    else:
+        assert _writes(port) == []
+
+
+@pytest.mark.parametrize("replaced_first", [False, True], ids=["amended-first", "replaced-first"])
+def test_a_pending_amendment_reaches_only_as_far_as_the_replacement(
+    replaced_first: bool,
+) -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_stored(_MAY, _AUG)]), Write(times=5)))
+
+    def fn(tx: Transaction) -> None:
+        opened = _position()
+        tx.insert(opened, valid_from=_JAN, until=_MAR)
+        if replaced_first:
+            tx.replace(opened.edit(value=Decimal("300.00")), until=_JUN)
+        tx.amend(opened.edit(value=Decimal("150.00")), until=_DEC)
+        if not replaced_first:
+            tx.replace(opened.edit(value=Decimal("300.00")), until=_JUN)
+
+    _transact(port, fn)
+    (coverage,) = [call for call in port.calls if isinstance(call, ReadCall)]
+    assert coverage.binds == (1, _MAR, _JUN, INFINITY_INSTANT)
+    final = Decimal("150.00") if replaced_first else Decimal("300.00")
+    assert _opened(port) == [
+        (final, _JAN, _MAR),
+        (final, _MAY, _JUN),
+        (Decimal("200.00"), _JUN, _AUG),
+        (final, _MAR, _MAY),
+    ]
 
 
 def test_a_replacement_over_coverage_a_pending_destruction_removed_is_refused() -> None:

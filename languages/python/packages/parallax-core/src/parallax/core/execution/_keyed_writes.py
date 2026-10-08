@@ -706,7 +706,7 @@ def keyed_insert(
     opening: KeyedInsertSource,
     mutation: KeyedMutation,
     *,
-    valid_from: dt.datetime | None = None,
+    valid_from: dt.datetime | Omitted = OMITTED,
     until: dt.datetime | None = None,
 ) -> OpenedKeyedWrite:
     """Open a row through the insert's own door.
@@ -736,6 +736,7 @@ def keyed_insert(
     names the row so a caller holding no Entity Class can revise it.
     """
     refuse_reentry(lifecycle)
+    start = stated_valid_from(valid_from)
     opening.capture(mutation)
     meta = model.meta
     resolved = opening.resolve(meta, mutation)
@@ -747,7 +748,7 @@ def keyed_insert(
         inserted=False,
         representation=resolved.representation,
     )
-    prepared = opening.prepare(resolved, valid_from=valid_from, until=until)
+    prepared = opening.prepare(resolved, valid_from=start, until=until)
     opened = object_key(prepared, meta)
     # A Create Payload is a complete document, so the row it buffers always names
     # its own object by the time validation has admitted it.

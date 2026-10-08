@@ -1041,8 +1041,10 @@ pending insert.
   past its window inside the write batch, transforms each row the composed
   writes reach under its own proof, opens the surviving pieces, and opens the
   replacement's remaining extent (`m-temporal-write` *Observed writes span their
-  requested extent*). The opening's window counts as coverage, so nothing an
-  earlier composed destruction removed from it reopens.
+  requested extent*). Every other composed edit reaches past the opening's window
+  only as far as such a replacement does, the stored coverage there included. The
+  opening's window counts as coverage, so nothing an earlier composed destruction
+  removed from it reopens.
 - **Insert-then-delete cancels.** A row inserted and then deleted in the same unit of
   work **cancels**: the two buffered writes annihilate and the flush emits **no** DML
   for that object — the net-zero effective-change-set elision, extended across two

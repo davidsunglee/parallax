@@ -19,7 +19,7 @@ from parallax.core.execution._keyed_writes import (
     keyed_insert,
     keyed_write,
 )
-from parallax.core.execution._options import DatabaseOptions
+from parallax.core.execution._options import OMITTED, DatabaseOptions, Omitted
 from parallax.core.execution._publication import SelectedReadModel, SelectedWriteModel
 from parallax.core.execution._read_policy import (
     ReadInputs,
@@ -361,7 +361,7 @@ class Attempt:
         mutation: KeyedMutation,
         /,
         *,
-        valid_from: dt.datetime | None = None,
+        valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | None = None,
     ) -> OpenedKeyedWrite:
         """Open a row through the insert's own door, answering the authority
