@@ -276,7 +276,7 @@ class PredecessorExpander:
         owned = self._ownership.owns(own)
         gated, guards = self._gated, self._guards
         code = _disposition(
-            unchanged=_provable(owned=owned, gated=gated, guards=guards)
+            unchanged=self._keeps(predecessor, owned)
             and self._unchanged(predecessor, coverage, successors),
             owned=owned,
             gated=gated,
@@ -407,6 +407,21 @@ class PredecessorExpander:
         if audit.neutral:
             return group
         return group.audited_by(audit, evidence)
+
+    def _keeps(self, predecessor: PredecessorRow, owned: bool) -> bool:
+        """Whether ``predecessor``, if unchanged, could be kept as it is
+        (:func:`_provable`).
+
+        Ownership proves only the row the attempt opened at the address it
+        records. Every such row carries the attempt's instant, so a gated
+        predecessor at another Transaction-Time start is an earlier milestone
+        observed at an address the attempt has since reopened: it is never kept
+        unchanged, and its disposal gates on its observed start."""
+        gated = self._gated
+        if owned and gated:
+            start = self._facts.shape.transaction_time.start_attribute
+            return predecessor.cell(start) == self._facts.instant
+        return _provable(owned=owned, gated=gated, guards=self._guards)
 
     def _unchanged(
         self,

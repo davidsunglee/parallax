@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Protocol, cast
 from parallax.core.base import retain_document_value
 from parallax.core.document_codec import (
     PreparedEffectiveChange,
-    classify_effective_change,
     prepare_effective_change,
 )
 from parallax.core.metamodel import (
@@ -395,9 +394,7 @@ class PredecessorRow:
             return False
         if self._selection is comparison.selection:
             return not comparison.prepared(self._absent).any_effective(self._row)
-        return not classify_effective_change(
-            comparison.selection.shape, comparison.assigned, self.members
-        ).effective
+        return not comparison.by_name().any_effective_in(self.members)
 
 
 class AssignedComparison:
@@ -426,6 +423,12 @@ class AssignedComparison:
             change = prepare_effective_change(self.selection.shape, self.assigned, absent=absent)
             self._prepared = prepared = (absent, change)
         return prepared[1]
+
+    def by_name(self) -> PreparedEffectiveChange:
+        """The comparison prepared for rows held by member name, which read no
+        absence marker, so whichever preparation is held serves them."""
+        prepared = self._prepared
+        return self.prepared(None) if prepared is None else prepared[1]
 
 
 def _member_name(member: AttributeIdentity | ValueObjectIdentity) -> str:

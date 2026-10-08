@@ -48,6 +48,8 @@ BALANCES = model("balance")
 SPAN = EntityIdentity("parallax.compatibility", "SequenceSpan")
 BALANCE = EntityIdentity("parallax.compatibility", "Balance")
 T0 = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
+NOW = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
+"""The planning attempt's instant, which every row it opened carries."""
 JAN, MAR, APR, MAY, JUN, AUG, OCT, DEC = (
     dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 4, 5, 6, 8, 10, 12)
 )
@@ -70,13 +72,13 @@ def span_row(
     )
 
 
-def balance_row(value: str) -> PredecessorRow:
+def balance_row(value: str, tx_start: dt.datetime = T0) -> PredecessorRow:
     return PredecessorRow(
         members={
             "id": 1,
             "acctNum": "A",
             "value": Decimal(value),
-            "txStart": T0,
+            "txStart": tx_start,
             "txEnd": INFINITY,
         }
     )
@@ -122,7 +124,7 @@ def planned(
     return build_write_planner(meta).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=instant_at("2024-11-01T00:00:00+00:00"),
+            transaction_instant=instant_at(NOW.isoformat()),
             concurrency=concurrency,  # type: ignore[arg-type]
             buffered_writes=compose_writes(meta, list(writes)),
             ownership=ownership,
@@ -144,7 +146,7 @@ def bound_range(
         unit,
         rows,
         ownership=ownership,
-        transaction_instant=instant_at("2024-11-01T00:00:00+00:00"),
+        transaction_instant=instant_at(NOW.isoformat()),
     )
 
 
@@ -172,6 +174,7 @@ __all__ = [
     "JUN",
     "MAR",
     "MAY",
+    "NOW",
     "OCT",
     "SPAN",
     "SPANS",

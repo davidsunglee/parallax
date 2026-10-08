@@ -9,11 +9,13 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Iterable, Mapping
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
 from parallax.core import inheritance, temporal_read
 from parallax.core.base import INFINITY
+from parallax.core.document_codec import PreparedEffectiveChange, prepare_effective_change
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageGap, CoverageTransform
@@ -24,9 +26,8 @@ from parallax.core.temporal_write.expansion import (
     opening,
 )
 from parallax.core.unit_work.strategy import NO_AUDIT, AuditDecoration
-from parallax.core.write_plan import ObjectKey, PredecessorRow
+from parallax.core.write_plan import ObjectKey, PredecessorRow, observe
 from parallax.core.write_plan.keys import TemporalStateKey
-from parallax.core.write_plan.observe import AssignedComparison
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
@@ -84,7 +85,9 @@ _SPAN_FACTS = _facts(_SPANS, _SPAN)
 _BALANCE_FACTS = _facts(_BALANCES, _BALANCE)
 
 
-def _span(start: dt.datetime, end: object, amount: int = 100) -> PredecessorRow:
+def _span(
+    start: dt.datetime, end: object, amount: int = 100, tx_start: dt.datetime = _T0
+) -> PredecessorRow:
     return PredecessorRow(
         members={
             "id": 1,
@@ -93,7 +96,7 @@ def _span(start: dt.datetime, end: object, amount: int = 100) -> PredecessorRow:
             "memo": None,
             "validStart": start,
             "validEnd": end,
-            "txStart": _T0,
+            "txStart": tx_start,
             "txEnd": INFINITY,
         }
     )
@@ -183,6 +186,7 @@ def _endpoint(end: object) -> OwnedEndpoint:
 
 
 _STORED = _span(_JAN, INFINITY)
+_OPENED = _span(_JAN, INFINITY, tx_start=_NOW)
 
 
 # --------------------------------------------------------------------------- #
@@ -350,21 +354,24 @@ _RESTATING = _assigning(TimeInterval(_MAR, _SEP), {"amount": 100})
 
 
 @pytest.mark.parametrize(
-    ("gated", "ownership", "kinds"),
+    ("gated", "ownership", "stored", "kinds"),
     [
-        (True, NO_TEMPORAL_WRITE_OWNERSHIP, [PlannedTemporalGuard]),
-        (False, NO_TEMPORAL_WRITE_OWNERSHIP, []),
-        (True, OpenedRows(frozenset({_endpoint(INFINITY)})), []),
+        (True, NO_TEMPORAL_WRITE_OWNERSHIP, _STORED, [PlannedTemporalGuard]),
+        (False, NO_TEMPORAL_WRITE_OWNERSHIP, _STORED, []),
+        (True, OpenedRows(frozenset({_endpoint(INFINITY)})), _OPENED, []),
     ],
     ids=["optimistic-guard", "locking", "owned"],
 )
 def test_an_equal_bounded_assignment_keeps_the_rectangle_across_carried_head_and_tail(
-    gated: bool, ownership: TemporalWriteOwnership, kinds: list[type[PlannedWrite]]
+    gated: bool,
+    ownership: TemporalWriteOwnership,
+    stored: PredecessorRow,
+    kinds: list[type[PlannedWrite]],
 ) -> None:
     expanded = _expand(
         _expansion(_SPAN_FACTS, _RESTATING, gated=gated, guards=True, ownership=ownership),
         _SPAN_FACTS,
-        _STORED,
+        stored,
     )
     assert _kinds(expanded.steps) == kinds
     assert (tuple(expanded.changed), tuple(expanded.opened.fresh), expanded.removed) == ((), (), ())
@@ -376,25 +383,50 @@ def test_an_unchanged_rectangle_is_closed_where_no_guard_can_prove_it() -> None:
 
 
 @pytest.mark.parametrize(
-    ("gated", "ownership", "kinds"),
+    ("gated", "ownership", "stored", "kinds"),
     [
-        (True, NO_TEMPORAL_WRITE_OWNERSHIP, [PlannedTemporalGuard]),
-        (False, NO_TEMPORAL_WRITE_OWNERSHIP, []),
-        (True, OpenedRows(frozenset({_endpoint(INFINITY)})), []),
+        (True, NO_TEMPORAL_WRITE_OWNERSHIP, _STORED, [PlannedTemporalGuard]),
+        (False, NO_TEMPORAL_WRITE_OWNERSHIP, _STORED, []),
+        (True, OpenedRows(frozenset({_endpoint(INFINITY)})), _OPENED, []),
     ],
     ids=["optimistic-guard", "locking", "owned"],
 )
 def test_a_starting_rectangle_a_caller_named_is_kept_unchanged_like_any_other(
-    gated: bool, ownership: TemporalWriteOwnership, kinds: list[type[PlannedWrite]]
+    gated: bool,
+    ownership: TemporalWriteOwnership,
+    stored: PredecessorRow,
+    kinds: list[type[PlannedWrite]],
 ) -> None:
     expanded = _expand(
         _expansion(_SPAN_FACTS, _RESTATING, gated=gated, guards=True, ownership=ownership),
         _SPAN_FACTS,
-        _STORED,
+        stored,
         "starting",
     )
     assert _kinds(expanded.steps) == kinds
     assert (tuple(expanded.changed), tuple(expanded.opened.fresh), expanded.removed) == ((), (), ())
+
+
+@pytest.mark.parametrize(
+    ("role", "shortfall"),
+    [("coverage", OPTIMISTIC_CONFLICT), ("starting", FAILED_PRECONDITION)],
+)
+def test_an_earlier_milestone_at_an_address_the_attempt_reopened_keeps_its_gate(
+    role: ExpansionRole, shortfall: object
+) -> None:
+    reopened = OpenedRows(frozenset({_endpoint(INFINITY)}))
+    revision, *opened = _expand(
+        _expansion(_SPAN_FACTS, _RESTATING, guards=True, ownership=reopened),
+        _SPAN_FACTS,
+        _STORED,
+        role,
+    ).steps
+    assert isinstance(revision, PlannedTemporalRevision)
+    assert _kinds(opened) == [PlannedInsert, PlannedInsert]
+    assert revision.concurrency == TemporalGate(
+        start_attribute=_SPAN_FACTS.shape.transaction_time.start_attribute, observed_start=_T0
+    )
+    assert revision.affected_rows.on_shortfall == shortfall
 
 
 def test_the_guard_keeping_a_callers_start_fails_as_that_callers_precondition() -> None:
@@ -574,13 +606,12 @@ def test_an_assignment_mapping_is_compared_once_however_many_predecessors_it_rea
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepared: list[object] = []
-    original = AssignedComparison.__init__
 
-    def counting(self: AssignedComparison, *args: object) -> None:
-        prepared.append(self)
-        original(self, *args)  # type: ignore[arg-type]
+    def counting(*args: Any, **kwargs: Any) -> PreparedEffectiveChange:
+        prepared.append(args)
+        return prepare_effective_change(*args, **kwargs)
 
-    monkeypatch.setattr(AssignedComparison, "__init__", counting)
+    monkeypatch.setattr(observe, "prepare_effective_change", counting)
     expansion = _expansion(
         _SPAN_FACTS, _assigning(TimeInterval(_JAN, INFINITY), {"amount": 100}), guards=True
     )

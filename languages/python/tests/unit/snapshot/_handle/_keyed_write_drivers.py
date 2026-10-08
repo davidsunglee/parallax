@@ -60,6 +60,7 @@ from tests.unit._transact_support import (
     ACCOUNT,
     BALANCE,
     CONTACT,
+    FIXED,
     INFINITY_INSTANT,
     PERSON,
     balance_row,
@@ -332,14 +333,16 @@ _LATEST_BOTH: Final[Mapping[str, object]] = {
 }
 
 
-def _position_row(key: int, acct_num: str, value: Decimal, from_z: dt.datetime) -> MappingRow:
+def _position_row(
+    key: int, acct_num: str, value: Decimal, from_z: dt.datetime, in_z: dt.datetime = _TX_START
+) -> MappingRow:
     return {
         "id": key,
         "acct_num": acct_num,
         "value": value,
         "from_z": from_z,
         "thru_z": INFINITY_INSTANT,
-        "in_z": _TX_START,
+        "in_z": in_z,
         "out_z": INFINITY_INSTANT,
     }
 
@@ -436,7 +439,7 @@ BALANCE_TARGET: Final = Target(
         "bal_id": 9,
         "acct_num": "A-9",
         "val": Decimal("5.00"),
-        "in_z": _TX_START,
+        "in_z": FIXED,
         "out_z": INFINITY_INSTANT,
     },
     inserted_typed_query=_balance_query(9),
@@ -513,7 +516,7 @@ POSITION_TARGET: Final = Target(
     wire_query=_wire_query(_POSITION, 1, _LATEST_BOTH),
     fresh=lambda: WherePosition(id=2, acct_num="B", value=Decimal("10.00")),
     payload={"id": 2, "acctNum": "B", "value": "10.00"},
-    inserted_row=_position_row(2, "B", Decimal("10.00"), VALID_FROM),
+    inserted_row=_position_row(2, "B", Decimal("10.00"), VALID_FROM, FIXED),
     inserted_typed_query=_position_query(2),
     inserted_wire_query=_wire_query(_POSITION, 2, _LATEST_BOTH),
     change_typed={"value": Decimal("300.00")},
