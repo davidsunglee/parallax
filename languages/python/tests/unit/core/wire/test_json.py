@@ -4,7 +4,9 @@ import copy
 import decimal
 import json
 import math
+import sys
 import weakref
+from collections.abc import Callable
 from typing import cast
 
 import pytest
@@ -189,3 +191,54 @@ def test_an_unsupported_value_fails_as_the_standard_encoder_does(respelled: bool
 def test_a_yaml_number_token_is_written_as_json() -> None:
     assert _meaning(dump_document([authored_number("+1e999")])) == [decimal.Decimal("1e999")]
     assert dump_document([authored_number("+0.1")]) == "[0.1]"
+
+
+def _in_array(inner: object) -> object:
+    return [inner]
+
+
+def _in_object(inner: object) -> object:
+    return {"n": inner}
+
+
+def _in_retained_object(inner: object) -> object:
+    return FrozenMap({"n": (inner,)})
+
+
+@pytest.mark.parametrize(
+    ("enclose", "opening", "closing"),
+    [
+        (_in_array, "[", "]"),
+        (_in_object, '{"n": ', "}"),
+        (_in_retained_object, '{"n": [', "]}"),
+    ],
+    ids=["array", "object", "retained"],
+)
+@pytest.mark.parametrize("token", ["0.1", "0.10000000000000001"])
+def test_a_document_nested_past_the_interpreter_recursion_limit_is_written(
+    enclose: Callable[[object], object], opening: str, closing: str, token: str
+) -> None:
+    depth = sys.getrecursionlimit()
+    document = loads(token)
+    for _ in range(depth):
+        document = enclose(document)
+    assert dump_document(document) == opening * depth + token + closing * depth
+
+
+def _self_containing(member: object) -> list[object]:
+    document: list[object] = [member]
+    document.append(document)
+    return document
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        _self_containing(loads("0.1")),
+        _self_containing(loads("0.10000000000000001")),
+        _self_containing(FrozenMap({"exact": loads("0.10000000000000001")})),
+    ],
+)
+def test_a_circular_document_fails_as_the_standard_encoder_does(document: object) -> None:
+    with pytest.raises(ValueError, match="Circular reference detected"):
+        dump_document(document)
