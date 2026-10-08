@@ -1222,6 +1222,31 @@ def test_a_destruction_of_a_pending_replacements_window_removes_what_it_reached(
         assert _writes(port) == []
 
 
+@pytest.mark.parametrize("stored", [False, True], ids=["nothing-stored", "stored-later"])
+def test_a_destruction_of_all_a_pending_replacement_reached_admits_a_reinsertion_after_it(
+    stored: bool,
+) -> None:
+    rows = [_stored(_MAY, _AUG)] if stored else []
+    port = ScriptedAdapter(Transact(Read(rows=rows), Write(times=3 if stored else 1)))
+
+    def fn(tx: Transaction) -> None:
+        first = _position()
+        tx.insert(first, valid_from=_JAN, until=_MAR)
+        tx.replace(first.edit(value=Decimal("300.00")), until=_JUN)
+        tx.terminate(first, until=_JUN)
+        _refused_as_not_stored(lambda: tx.replace(first.edit(value=Decimal("1.00")), until=_JUN))
+        with pytest.raises(WriteInstructionError, match="names no Valid-Time instant"):
+            tx.terminate(first, until=_JUN)
+        tx.insert(_position("400.00"), valid_from=_JAN, until=_JUN)
+
+    _transact(port, fn)
+    (coverage,) = [call for call in port.calls if isinstance(call, ReadCall)]
+    assert coverage.binds == (1, _MAR, _JUN, INFINITY_INSTANT)
+    assert port.calls.index(coverage) < port.calls.index(_writes(port)[-1])
+    reached = [(Decimal("200.00"), _JUN, _AUG)] if stored else []
+    assert _opened(port) == [*reached, (Decimal("400.00"), _JAN, _JUN)]
+
+
 @pytest.mark.parametrize("replaced_first", [False, True], ids=["amended-first", "replaced-first"])
 def test_a_pending_amendment_reaches_only_as_far_as_the_replacement(
     replaced_first: bool,

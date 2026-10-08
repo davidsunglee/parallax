@@ -975,12 +975,13 @@ class UnitOfWork:
         the object is stored and a pending write removes all of it, the insert
         executes after that removal. A write an insertion authorized
         (:class:`~parallax.core.unit_work.materialized.InsertionKeyedWrite`) is
-        admitted only while that authority stands.
+        admitted only while that authority stands, and a write leaving nothing
+        of what a still-unflushed insertion opened ends it.
 
         The outcome reports the pending-insert transition buffering made: a
         destructive write that leaves nothing of an object's still-unflushed
-        insert cancels that pair — recognized when the pair is complete rather
-        than when it is planned.
+        insert, and reaches no stored coverage past it, cancels that pair —
+        recognized when the pair is complete rather than when it is planned.
         """
         self._ensure_open()
         if isinstance(item, InsertionKeyedWrite):
@@ -1011,10 +1012,14 @@ class UnitOfWork:
             )
             return BufferOutcome.BUFFERED
         folds = key is not None and self._pending.folds_into_opening(key)
-        if self._pending.add(item, key):
-            assert key is not None  # only a write of one object cancels its insert
+        cancelled = self._pending.add(item, key)
+        if folds and key is not None and not self._pending.folds_into_opening(key):
+            # Nothing the pending insertion opened survives this write, whether
+            # or not its composed destruction still settles stored coverage.
             targets.cancel_insert(key)
-            return BufferOutcome.CANCELLED_PENDING_INSERT
+            if cancelled:
+                return BufferOutcome.CANCELLED_PENDING_INSERT
+            return BufferOutcome.BUFFERED
         if (
             key is not None
             and not folds

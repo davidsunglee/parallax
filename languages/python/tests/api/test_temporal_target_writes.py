@@ -1091,6 +1091,36 @@ def test_a_terminated_insertion_replacement_removes_what_it_reached_whether_or_n
 
 
 @_SPAN_AXES
+@pytest.mark.parametrize("flushed", [False, True], ids=["pending", "flushed"])
+def test_a_reinsertion_follows_the_removal_of_all_an_insertion_replacement_reached(
+    profile_run: Any, entity: type[Any], flushed: bool
+) -> None:
+    db = _seeded_later(profile_run, entity, _TA)
+
+    def fn(tx: Transaction) -> None:
+        first = entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=())
+        tx.insert(first, valid_from=_JAN, until=_APR)
+        if flushed:
+            _span_find(tx, entity, _FEB)
+        tx.replace(first.edit(amount=300, label="r"), until=_JUN)
+        tx.terminate(first, until=_JUN)
+        tx.insert(
+            entity(id=1, amount=400, label="c", spec=Spec(title="s1"), marks=()),
+            valid_from=_JAN,
+            until=_JUN,
+        )
+        with pytest.raises(KeyedWriteValueError, match="write-value-not-stored"):
+            tx.replace(first.edit(amount=500), until=_JUN)
+
+    db.transact(fn)
+    assert _span_rows(profile_run, entity) == [
+        (_T0, _TA, _MAY, _JUL, 200, "b", _S2, []),
+        (_TA, None, _JAN, _JUN, 400, "c", _S1, []),
+        (_TA, None, _JUN, _JUL, 200, "b", _S2, []),
+    ]
+
+
+@_SPAN_AXES
 def test_an_ended_insertion_authorizes_no_replacement(profile_run: Any, entity: type[Any]) -> None:
     db = _seeded_later(profile_run, entity, _TA)
 
