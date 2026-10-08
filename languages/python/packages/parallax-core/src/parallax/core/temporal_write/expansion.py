@@ -1130,12 +1130,22 @@ def _in_member_order(
 
 
 def _finalized_additions(candidate: WriteRow, finalized: WriteRow) -> PlannedAssignments | None:
-    """The values finalization added to ``candidate`` as executed members, or
-    ``None`` where it added none."""
-    added = [member for member in finalized.executed if member not in candidate.executed]
+    """The executed values finalization added to ``candidate`` or replaced in
+    it, or ``None`` where it did neither."""
+    row = finalized.row
+    before = candidate.row
+    added = [
+        member
+        for member in finalized.executed
+        if member not in candidate.executed
+        or (
+            row.attributes[member] is not before.attributes[member]
+            if isinstance(member, AttributeIdentity)
+            else row.value_objects[member] is not before.value_objects[member]
+        )
+    ]
     if not added:
         return None
-    row = finalized.row
     return adopt_planned_assignments(
         {
             member: row.attributes[member]

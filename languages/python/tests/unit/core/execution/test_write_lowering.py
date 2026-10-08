@@ -98,6 +98,7 @@ from parallax.core.write_plan.steps import (
     UNVERSIONED,
     ExactCount,
     KeyTarget,
+    NewLineage,
     PlannedAssignments,
     PlannedDelete,
     PlannedRow,
@@ -1559,10 +1560,28 @@ def test_lowering_reuses_backing_an_entry_already_carries() -> None:
 
     assert statement.binds == (7, "n", JsonDocument(()))
     assert carried == entry
-    with pytest.raises(ValueError, match="prepared from its own row"):
+    with pytest.raises(ValueError, match="the payload prepared from it"):
         entry.with_prepared(
             LayoutPayloadPreparer(_CRATE_MODEL).row(_CRATE, _crate_insert(8).entries[0])
         )
+
+
+def test_backing_a_row_inherits_through_another_input_is_refused() -> None:
+    # Copying a carrier keeps its backing, so the same row reached with another
+    # executed selection or origin still holds cells prepared from the old one.
+    (entry,) = _crate_insert(7).entries
+    backing = LayoutPayloadPreparer(_CRATE_MODEL).row(_CRATE, entry)
+    carried = entry.with_prepared(backing)
+    for restated in (
+        dataclasses.replace(carried, executed=(_CRATE_NOTE,)),
+        dataclasses.replace(carried, origin=NewLineage()),
+    ):
+        assert restated.prepared is backing
+        step = PlannedInsert(entity=_CRATE, entries=(restated,))
+        with pytest.raises(SqlGenError, match="belongs to another entry"):
+            lowered(step, LayoutPayloadPreparer(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
+        with pytest.raises(ValueError, match="the payload prepared from it"):
+            restated.with_prepared(backing)
 
 
 def test_a_narrow_update_prepares_its_assignments_alone() -> None:
@@ -1618,7 +1637,7 @@ def test_the_compiler_places_no_cell_its_layout_does_not_hold() -> None:
         dataclasses.replace(misplaced, values=())
     (entry,) = _crate_insert(7).entries
     with pytest.raises(ValueError, match="aligns one value with each contributor"):
-        RowPayload(entity=_CRATE, row=entry.row, contributors=(stray,), values=())
+        RowPayload(entity=_CRATE, source=entry, contributors=(stray,), values=())
 
     document = document_model()
     step = PlannedUpdate(
