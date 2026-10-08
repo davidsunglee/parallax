@@ -287,6 +287,12 @@ def _holds(original: _Original, anchor: object) -> bool:
     return coverage.contains(anchor)
 
 
+def _physical(original: _Original) -> tuple[ObservedStateKey, object | None]:
+    """The physical row ``original`` is: its state, which names its start on
+    each axis, and the Valid-Time end its address holds."""
+    return original.state, _valid_end(original)
+
+
 def _valid_end(original: _Original) -> object | None:
     """The Valid-Time end cell ``original`` covers to, which its physical address
     holds; ``None`` on a Transaction-Time-Only object."""
@@ -624,21 +630,28 @@ class _TemporalRangeBinder:
         return tuple(ordered), frozenset(discharged)
 
     def read(self, rows: Sequence[PredecessorRows]) -> list[_Original]:
-        """Every row of ``rows`` as an original, each physical state once: a
-        row two reads both returned is one row, while two rows sharing an
-        address but not a state stay two. One read returns each row once."""
+        """Every row of ``rows`` as an original, each physical row once: a row
+        an earlier read already returned, at the same state and Valid-Time end,
+        is not repeated, while every row one read returns stays, however it
+        overlaps the others."""
         meaning = self.meaning
-        originals = [
-            _original(meaning.facts, meaning.key_attribute, meaning.key_value, predecessor, None)
+        reads = [
+            [
+                _original(
+                    meaning.facts, meaning.key_attribute, meaning.key_value, predecessor, None
+                )
+                for predecessor in _acquired_predecessors(acquired)
+            ]
             for acquired in rows
-            for predecessor in _acquired_predecessors(acquired)
         ]
-        if len(rows) < 2:
-            return originals
-        distinct: dict[ObservedStateKey, _Original] = {}
-        for original in originals:
-            distinct.setdefault(original.state, original)
-        return list(distinct.values())
+        if len(reads) < 2:
+            return reads[0] if reads else []
+        originals: list[_Original] = []
+        earlier: set[tuple[ObservedStateKey, object | None]] = set()
+        for read in reads:
+            originals.extend(original for original in read if _physical(original) not in earlier)
+            earlier.update(_physical(original) for original in read)
+        return originals
 
     def _require_one_start(self, current: Sequence[_Original]) -> None:
         for condition in self.meaning.conditions:
@@ -764,7 +777,8 @@ def settle_range(
     addressed, whose caller's condition requires the coverage at its start to
     stand at the Transaction-Time start it states; the starting row its Locking
     admission read whole travels with the range, which reuses it as coverage
-    if it is still current at execution.
+    if it is still current at execution. A range bound now reuses none, and
+    releases each such row here.
 
     A composition an ordering barrier kept after earlier writes of the same
     object (:class:`~parallax.core.unit_work.materialized.ChainedTemporalWrite`)
@@ -812,6 +826,8 @@ def settle_range(
         return DeferredTemporalRange(
             meaning=meaning, originals=originals, validations=validations, retained=retained
         )
+    for state in retained:
+        state.take()
     return _binding(meaning, ownership, audit).bind(originals, validations)
 
 
