@@ -4,9 +4,11 @@ import decimal
 import json
 import math
 import sys
-from collections.abc import Callable, Mapping
-from typing import Self, cast
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from json.encoder import encode_basestring_ascii
+from typing import Final, Self, cast
 
+from parallax.core.base import FrozenMap, frozen_map_json_backing
 from parallax.core.base._neutral import ManagedValueExclusion, host_float_number
 from parallax.core.wire._types import WireValue
 
@@ -55,13 +57,28 @@ class _AuthoredFloat(float, _ImmutableAuthoredNumber):
         # point or exponent, leaving at most fifteen significant digits, and no two such
         # decimals name the same binary64, so an exact one is also that float32 number.
         authored = decimal.Decimal(token)
+        unambiguous = len(token) <= _MAX_UNAMBIGUOUS_TOKEN_LENGTH
         if authored == decimal.Decimal.from_float(value) and (
-            len(token) <= _MAX_UNAMBIGUOUS_TOKEN_LENGTH or authored == host_float_number(value)
+            unambiguous or authored == host_float_number(value)
         ):
             return value
-        number = super().__new__(cls, value)
+        # The same bound makes a normal float's shortest host spelling name the token's
+        # own number; any other token is compared with that spelling when written.
+        kind = (
+            _AuthoredFloat
+            if unambiguous and abs(value) >= sys.float_info.min
+            else _AmbiguousAuthoredFloat
+        )
+        number = float.__new__(kind, value)
         number.token = token
         return number
+
+
+class _AmbiguousAuthoredFloat(_AuthoredFloat):
+    """A retained float whose digits leave open whether its shortest host spelling
+    names the same number."""
+
+    __slots__ = ()
 
 
 class _OutOfSpaceAuthoredFloat(_AuthoredFloat, ManagedValueExclusion):
@@ -151,3 +168,114 @@ def prepared_loads(
 def loads(text: str | bytes, *, name_cache: dict[str, str] | None = None) -> WireValue:
     """Parse any JSON root, rejecting duplicate names and non-JSON constants."""
     return _PreparedLoader(name_cache)(text)
+
+
+_HOST_SPELLED: Final = frozenset(
+    {str, int, float, bool, type(None), FrozenMap, _AuthoredInt, _AuthoredFloat}
+)
+"""Member types the host encoder spells with their own meaning; a FrozenMap's
+members are judged when the encoder reaches it."""
+_OUT_OF_SPACE: Final = frozenset({_OutOfSpaceAuthoredFloat, _OutOfSpaceAuthoredInt})
+
+
+class _HostSpellingChangesMeaning(Exception):
+    pass
+
+
+def _host_spelling_keeps_meaning(number: _AuthoredFloat) -> bool:
+    spelled = float.__repr__(number)
+    return spelled == number.token or decimal.Decimal(spelled) == decimal.Decimal(number.token)
+
+
+def _require_host_spelling(members: Iterable[object]) -> None:
+    if not _HOST_SPELLED.issuperset(map(type, members)):
+        _require_host_spelled_members(members)
+
+
+def _require_host_spelled_members(members: Iterable[object]) -> None:
+    for member in members:
+        kind = type(member)
+        if kind is _AmbiguousAuthoredFloat:
+            if not _host_spelling_keeps_meaning(cast("_AuthoredFloat", member)):
+                raise _HostSpellingChangesMeaning
+        elif kind in _OUT_OF_SPACE:
+            raise _HostSpellingChangesMeaning
+        elif kind is dict:
+            _require_host_spelling(cast("dict[object, object]", member).values())
+        elif kind is list or kind is tuple:
+            _require_host_spelling(cast("Sequence[object]", member))
+
+
+def _judged_backing(value: object) -> object:
+    if type(value) is FrozenMap:
+        backing = frozen_map_json_backing(cast("FrozenMap[object, object]", value))
+        members = backing.values()
+        if not _HOST_SPELLED.issuperset(map(type, members)):
+            _require_host_spelled_members(members)
+        return backing
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+_HOST_ENCODE: Final = json.JSONEncoder(default=_judged_backing).encode
+
+
+def _write_exactly(value: object, parts: list[str]) -> None:
+    kind = type(value)
+    if kind is FrozenMap or kind is dict:
+        members = (
+            frozen_map_json_backing(cast("FrozenMap[str, object]", value))
+            if kind is FrozenMap
+            else cast("dict[str, object]", value)
+        )
+        parts.append("{")
+        separator = ""
+        for key, member in members.items():
+            parts.append(separator)
+            parts.append(encode_basestring_ascii(key))
+            parts.append(": ")
+            _write_exactly(member, parts)
+            separator = ", "
+        parts.append("}")
+    elif kind is list or kind is tuple:
+        parts.append("[")
+        separator = ""
+        for member in cast("Sequence[object]", value):
+            parts.append(separator)
+            _write_exactly(member, parts)
+            separator = ", "
+        parts.append("]")
+    else:
+        parts.append(_exact_scalar(value))
+
+
+def _exact_scalar(value: object) -> str:
+    kind = type(value)
+    if kind is str:
+        return encode_basestring_ascii(cast("str", value))
+    if kind is int or kind is _AuthoredInt:
+        return int.__repr__(cast("int", value))
+    if kind is _AuthoredFloat or (kind is float and math.isfinite(cast("float", value))):
+        return float.__repr__(cast("float", value))
+    if kind is _AmbiguousAuthoredFloat and _host_spelling_keeps_meaning(
+        cast("_AuthoredFloat", value)
+    ):
+        return float.__repr__(cast("float", value))
+    if kind is _AmbiguousAuthoredFloat or kind in _OUT_OF_SPACE:
+        return str(decimal.Decimal(cast("_ImmutableAuthoredNumber", value).token))
+    return _HOST_ENCODE(value)
+
+
+def dump_document(document: object) -> str:
+    """Serialize a structured document to JSON text for storage.
+
+    Every number keeps the exact numeric meaning it was retained with, not its
+    spelling. Immutable carriers are read in place; text is otherwise what
+    ``json.dumps`` writes, including its failure for an unsupported value.
+    """
+    try:
+        _require_host_spelling((document,))
+        return _HOST_ENCODE(document)
+    except _HostSpellingChangesMeaning:
+        parts: list[str] = []
+        _write_exactly(document, parts)
+        return "".join(parts)

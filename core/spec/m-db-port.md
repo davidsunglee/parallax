@@ -42,8 +42,11 @@ document, including the recognized recursively immutable object and array
 carriers `m-core` admits. A concrete adapter serializes that carrier directly
 through its driver's structured-document binding mechanism. It MUST NOT first
 thaw or recursively copy an immutable document into mutable containers, and it
-MUST NOT interpret model shape or leaf meaning. The final serialized bytes and
-driver buffers remain necessary adapter output.
+MUST NOT interpret model shape or leaf meaning. Its JSON text is `m-wire`'s
+`dumpDocument` of the carrier, so every number is stored with the exact meaning
+it carries, a number retained from an earlier read included; the adapter
+interprets no numeric provenance itself. The final serialized bytes and driver
+buffers remain necessary adapter output.
 
 `executePipeline` takes an ordered sequence of independent row-returning
 statements, each carrying its own SQL, binds, and `documentReads`, and returns

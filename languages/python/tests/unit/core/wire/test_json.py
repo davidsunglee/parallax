@@ -3,16 +3,19 @@ from __future__ import annotations
 import copy
 import decimal
 import json
+import math
 import weakref
 from typing import cast
 
 import pytest
 
+from parallax.core.base import FrozenMap, retain_document_value
 from parallax.core.base._neutral import host_float_number
 from parallax.core.wire._json import (
     _MAX_UNAMBIGUOUS_TOKEN_LENGTH,  # pyright: ignore[reportPrivateUsage]
     authored_number,
     authored_token,
+    dump_document,
     loads,
     prepared_loads,
 )
@@ -82,7 +85,7 @@ def test_an_exact_token_past_the_length_bound_keeps_its_digits_only_for_another_
     assert (host_float_number(float(value)) != decimal.Decimal(token)) is kept
 
 
-@pytest.mark.parametrize("token", ["0.1", "-1e-400", "1e309", "-0"])
+@pytest.mark.parametrize("token", ["0.1", "0.10000000000000001", "-1e-400", "1e309", "-0"])
 def test_an_authored_number_is_its_own_copy_and_keeps_its_token(token: str) -> None:
     value = authored_number(token)
     assert authored_token(value) == token
@@ -90,6 +93,99 @@ def test_an_authored_number_is_its_own_copy_and_keeps_its_token(token: str) -> N
     assert copy.deepcopy(value) is value
 
 
-@pytest.mark.parametrize("token", ["0.1", "1e309"])
+@pytest.mark.parametrize("token", ["0.1", "0.10000000000000001", "1e309"])
 def test_an_authored_float_keeps_its_token_without_an_instance_dictionary(token: str) -> None:
     assert not hasattr(authored_number(token), "__dict__")
+
+
+def _meaning(text: str) -> object:
+    return json.loads(text, parse_float=decimal.Decimal, parse_int=decimal.Decimal)
+
+
+def _plain(value: object) -> object:
+    if isinstance(value, FrozenMap | dict):
+        members = cast("dict[str, object]", value)
+        return {key: _plain(member) for key, member in members.items()}
+    if isinstance(value, tuple | list):
+        return [_plain(member) for member in cast("list[object]", value)]
+    return value
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "0.10000000000000001",
+        "3.14159265358979323846264338327950288",
+        "1.000000059604644775390625",
+        "1e999",
+        "-1e-400",
+        "4e-324",
+        "1" + "0" * 5000,
+    ],
+)
+def test_a_retained_number_the_host_would_respell_keeps_its_exact_meaning(token: str) -> None:
+    exact = decimal.Decimal(token)
+    assert _meaning(dump_document(loads(token))) == exact
+    assert _meaning(dump_document(loads(f"[{token}]"))) == [exact]
+    retained = retain_document_value(loads(f'{{"n": [[{token}]]}}'))
+    assert _meaning(dump_document(retained)) == {"n": [[exact]]}
+
+
+@pytest.mark.parametrize(
+    ("source", "written"),
+    [
+        ("[0.1, 12.50, 1e-07, 0.0000001]", "[0.1, 12.5, 1e-07, 1e-07]"),
+        (
+            "[0.30000000000000004, 0.000012345678901234568]",
+            "[0.30000000000000004, 1.2345678901234568e-05]",
+        ),
+        ("[5e-324, -0, 1E2, 1, 1.0]", "[5e-324, 0, 100.0, 1, 1.0]"),
+    ],
+)
+def test_a_retained_number_the_host_spells_with_its_meaning_keeps_the_host_spelling(
+    source: str, written: str
+) -> None:
+    assert dump_document(retain_document_value(loads(source))) == written
+    assert _meaning(written) == _meaning(source)
+
+
+def test_a_respelled_document_writes_every_other_value_as_the_standard_encoder_does() -> None:
+    ordinary: dict[str, object] = {
+        "text": 'Bergen \u00e6 "q"',
+        "count": 7,
+        "ratio": 0.5,
+        "retained": loads("12.34"),
+        "computed": loads("0.30000000000000004"),
+        "negativeZero": loads("-0"),
+        "flag": True,
+        "off": False,
+        "none": None,
+        "nested": {"list": [1, (2.5, "x")], "frozen": FrozenMap({"inner": [None]})},
+    }
+    respelled = loads("0.10000000000000001")
+    expected = json.dumps({**cast("dict[str, object]", _plain(ordinary)), "exact": "@"})
+    expected = expected.replace('"@"', "0.10000000000000001")
+    assert dump_document(retain_document_value({**ordinary, "exact": respelled})) == expected
+    assert dump_document({**ordinary, "exact": respelled}) == expected
+    assert dump_document(FrozenMap(ordinary)) == json.dumps(_plain(ordinary))
+
+
+def test_a_non_finite_float_beside_a_respelled_number_is_spelled_as_json_dumps_does() -> None:
+    respelled = loads("0.10000000000000001")
+    assert dump_document([respelled, math.nan, math.inf]) == "[0.10000000000000001, NaN, Infinity]"
+    assert json.dumps([0.1, math.nan, math.inf]) == "[0.1, NaN, Infinity]"
+
+
+@pytest.mark.parametrize("respelled", [False, True])
+def test_an_unsupported_value_fails_as_the_standard_encoder_does(respelled: bool) -> None:
+    members: dict[str, object] = {"unsupported": object()}
+    if respelled:
+        members["exact"] = loads("0.10000000000000001")
+    for document in (FrozenMap(members), members):
+        with pytest.raises(TypeError, match="Object of type object is not JSON serializable"):
+            dump_document(document)
+
+
+def test_a_yaml_number_token_is_written_as_json() -> None:
+    assert _meaning(dump_document([authored_number("+1e999")])) == [decimal.Decimal("1e999")]
+    assert dump_document([authored_number("+0.1")]) == "[0.1]"

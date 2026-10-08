@@ -1,8 +1,9 @@
 # m-wire — Neutral Wire Codec
 
 `m-wire` owns the complete serialized typed-literal boundary: strict JSON source
-loading, admitted literal decoding, canonical stored decoding, and the **one
-canonical output spelling** of every managed value. It depends on `m-core`
+loading, admitted literal decoding, canonical stored decoding, the **one
+canonical output spelling** of every managed value, and the JSON text a
+structured document is stored as. It depends on `m-core`
 alone. It knows no model, shape, path, layout, predicate, query, SQL, dialect,
 driver, continuation, transaction, or conformance case.
 
@@ -12,13 +13,14 @@ module never guesses one from a carrier.
 
 ## Operations and failures
 
-The Neutral Wire Codec exposes four operations:
+The Neutral Wire Codec exposes five operations:
 
 ```text
 loads(jsonTextOrBytes) -> WireValue
 decodeWire(declaredType, admittedWireValue) -> ManagedValue
 decodeCanonicalWire(declaredType, canonicalWireValue) -> ManagedValue
 encodeWire(declaredType, managedValue) -> WireValue
+dumpDocument(document) -> jsonText
 ```
 
 `WireValue` is the recursive JSON data model: null, boolean, integer, finite
@@ -77,7 +79,24 @@ structured mappings and values rather than each adding raw-body overloads. A
 deliberately constructed mapping passes directly. Output Parallax publishes is
 ordinary JSON data and serializes through an ordinary JSON encoder; generic
 reserialization of an unconsumed `loads` result is valid JSON but is not promised
-to preserve authored number tokens.
+to preserve authored number tokens. Storage does not reserialize generically: it
+writes through `dumpDocument` below.
+
+## Structured-document storage text
+
+`dumpDocument` writes the JSON text a structured document is stored as. It reads
+the portable document carriers `m-core` admits, recursively immutable ones
+included, in place. Every number keeps its exact numeric meaning: the meaning of
+its retained token when it came through `loads`, otherwise its value. So a stored
+document read, carried forward unassigned, and written again stores the numbers
+it held (`m-document-codec`), never a host-float projection of them.
+
+Meaning, not spelling, is what is kept. `1` and `1.0` are one number and either
+may be written; a retained `0.10000000000000001` is another number than `0.1`
+and is never written as it; a number outside the host float range keeps its
+value. JSON kinds stay distinct, so `true` is never written as `1`. Whitespace,
+exponent spelling, and object-member order are not preserved. Callers supply no
+encoding choice and never see the provenance it reads.
 
 ## One spelling, two consumers
 

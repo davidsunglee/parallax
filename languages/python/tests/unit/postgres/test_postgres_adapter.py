@@ -13,6 +13,7 @@ lifetimes in ``test_postgres_pool.py``.
 
 from __future__ import annotations
 
+import decimal
 import json
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -30,7 +31,14 @@ from psycopg.types.json import Jsonb, JsonbLoader
 
 import parallax.postgres
 import parallax.postgres._connection as connection_module
-from parallax.core.base import INFINITY, SQL_NULL, FrozenMap, PresentDocument, TemporalBound
+from parallax.core.base import (
+    INFINITY,
+    SQL_NULL,
+    STRING,
+    FrozenMap,
+    PresentDocument,
+    TemporalBound,
+)
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
@@ -45,6 +53,12 @@ from parallax.core.db_port import (
     isolation_level,
 )
 from parallax.core.dialect import PhysicalIndexName
+from parallax.core.document_codec import Present, SetLeaf, apply_patches
+from parallax.core.metamodel import (
+    ValueObjectAttributeDeclaration,
+    ValueObjectShapeDeclaration,
+    ValueObjectShapeKey,
+)
 from parallax.core.wire._json import authored_token
 from parallax.postgres import PostgresAdapter, isolation_spelling
 from parallax.postgres._compiled_loaders import compiled_loaders
@@ -120,6 +134,31 @@ def test_frozen_document_dump_preserves_standard_unsupported_leaf_errors() -> No
 
     with pytest.raises(TypeError, match="not JSON serializable"):
         transformer.dump_sequence(adapted, [PyFormat.AUTO])
+
+
+def test_a_patched_successor_binds_its_retained_numbers_with_their_exact_meaning() -> None:
+    # The stored document arrives through the adapter's own loader, the codec
+    # patches a declared leaf and carries the unknown members, and the bind
+    # writes what was carried with the meaning it was read with.
+    stored = connection_module._DocumentJsonbLoader(3802).load(  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
+        b'{"city": "Oslo", "reading": 0.10000000000000001, "wide": 1e999, "plain": 0.1}'
+    )
+    shape = ValueObjectShapeDeclaration(
+        key=ValueObjectShapeKey(),
+        attributes=(ValueObjectAttributeDeclaration(name="city", type=STRING, nullable=True),),
+    ).member_shape
+    successor = apply_patches(shape, stored, [SetLeaf(("city",), Present("Bergen"))])
+    (dumped,) = Transformer(postgres.adapters).dump_sequence(
+        adapt_binds([JsonDocument(successor)]), [PyFormat.AUTO]
+    )
+
+    assert dumped is not None
+    assert json.loads(bytes(dumped), parse_float=decimal.Decimal) == {
+        "city": "Bergen",
+        "reading": decimal.Decimal("0.10000000000000001"),
+        "wide": decimal.Decimal("1e999"),
+        "plain": decimal.Decimal("0.1"),
+    }
 
 
 # -- port-boundary re-raise (m-db-error) ----------------------------------------

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import contextlib
-import json
 from collections.abc import Callable, Generator, Sequence
-from typing import Any, cast
+from typing import Any
 
 import psycopg
 from psycopg.abc import AdaptContext, Buffer
@@ -12,7 +11,7 @@ from psycopg.rows import RowMaker, TupleRow, tuple_row
 from psycopg.sql import SQL, Literal
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 
-from parallax.core.base import FrozenMap, TemporalBound, frozen_map_json_backing
+from parallax.core.base import TemporalBound
 from parallax.core.db_error import DatabaseError, classify_error
 from parallax.core.db_port import (
     BeginFailed,
@@ -33,7 +32,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.wire._json import prepared_loads
+from parallax.core.wire._json import dump_document, prepared_loads
 from parallax.postgres._compiled_loaders import compiled_loaders
 from parallax.postgres._isolation import isolation_spelling
 
@@ -159,16 +158,6 @@ def translating_driver_errors(dialect: Dialect) -> Generator[None]:
         raise translate_driver_error(dialect, exc) from exc
 
 
-def _document_json_default(value: object) -> object:
-    if type(value) is FrozenMap:
-        return frozen_map_json_backing(cast("FrozenMap[object, object]", value))
-    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
-
-
-def _dumps_document(value: object) -> str:
-    return json.dumps(value, default=_document_json_default)
-
-
 def adapt_binds(binds: Sequence[object]) -> list[object]:
     """Adapt neutral binds to psycopg's driver bind types at the adapter boundary.
 
@@ -178,7 +167,7 @@ def adapt_binds(binds: Sequence[object]) -> list[object]:
     adapter — no driver type is exported to the developer surface (m-db-port).
     """
     return [
-        Jsonb(bind.value, dumps=_dumps_document) if isinstance(bind, JsonDocument) else bind
+        Jsonb(bind.value, dumps=dump_document) if isinstance(bind, JsonDocument) else bind
         for bind in binds
     ]
 

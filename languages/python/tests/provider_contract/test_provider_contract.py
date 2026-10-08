@@ -16,6 +16,8 @@ skip is reported, never silent.
 
 from __future__ import annotations
 
+import decimal
+import json
 import threading
 from contextlib import closing, suppress
 from typing import Any, cast
@@ -26,7 +28,7 @@ from parallax.conformance import engine, models, provision
 from parallax.conformance._postgres_control import PostgresControl
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.models import default_models_dir
-from parallax.core.base import SQL_NULL, PresentDocument
+from parallax.core.base import SQL_NULL, PresentDocument, retain_document_value
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
@@ -34,12 +36,14 @@ from parallax.core.db_port import (
     CallbackRaised,
     CommitFailed,
     Committed,
+    JsonDocument,
     PipelineStatement,
     RollbackFailed,
     RolledBack,
     isolation_level,
 )
 from parallax.core.dialect import POSTGRES
+from parallax.core.wire import loads
 from parallax.core.wire._json import authored_token
 from parallax.evolution.model_evolution import ABSENT, evolve
 from parallax.evolution.schema_delta import schema_delta
@@ -191,6 +195,31 @@ def test_pipeline_preserves_statement_results_and_one_array_bind(profile_run: An
                 assert authored_token(row[1]["x"]) == "0.1"
     finally:
         session.close()
+
+
+def test_a_document_bind_stores_every_number_with_its_exact_meaning(profile_run: Any) -> None:
+    # Read the way a stored predecessor is, then bound back: PostgreSQL stores
+    # each number with the meaning it was read with, not a binary64 projection.
+    stored = retain_document_value(
+        loads(
+            '{"reading": 0.10000000000000001, "wide": 1e999, "tiny": -1e-400, "ratio": 0.1,'
+            ' "count": 1, "whole": 1.0, "flag": true, "items": [0.10000000000000001, 2]}'
+        )
+    )
+    ((text,),) = profile_run.port.execute("select (%s::jsonb)::text", [JsonDocument(stored)])
+    meaning = json.loads(cast("str", text), parse_float=decimal.Decimal, parse_int=decimal.Decimal)
+
+    assert meaning == {
+        "reading": decimal.Decimal("0.10000000000000001"),
+        "wide": decimal.Decimal("1e999"),
+        "tiny": decimal.Decimal("-1e-400"),
+        "ratio": decimal.Decimal("0.1"),
+        "count": decimal.Decimal(1),
+        "whole": decimal.Decimal(1),
+        "flag": True,
+        "items": [decimal.Decimal("0.10000000000000001"), decimal.Decimal(2)],
+    }
+    assert type(meaning["flag"]) is bool
 
 
 def test_transaction_commits_and_reports_the_body_value(profile_run: Any) -> None:
