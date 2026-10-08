@@ -52,6 +52,7 @@ _EXPECTED_MODULE_UNIONS = {
         "m-unit-work",
         "m-value-object",
         "m-wire",
+        "m-write-payload",
         "m-write-plan",
     ],
     "slice-managed-1": [
@@ -86,6 +87,7 @@ _EXPECTED_MODULE_UNIONS = {
         "m-unit-work",
         "m-value-object",
         "m-wire",
+        "m-write-payload",
         "m-write-plan",
     ],
 }

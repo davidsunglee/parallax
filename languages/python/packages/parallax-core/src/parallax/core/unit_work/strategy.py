@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
@@ -16,11 +16,18 @@ from parallax.core.unit_work.instructions import KeyedMutation
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.write_plan.keys import ObjectKey
 from parallax.core.write_plan.observe import WriteObservation
-from parallax.core.write_plan.steps import PlannedWrite
+from parallax.core.write_plan.planned_rows import WritePlanningError
+from parallax.core.write_plan.steps import (
+    PlannedAssignments,
+    PlannedClose,
+    PlannedUpdate,
+    WriteRow,
+)
 
 __all__ = [
     "NO_AUDIT",
     "ActorIdentity",
+    "AuditDecoration",
     "AuditStrategy",
     "BatchingStrategy",
     "Concurrency",
@@ -218,46 +225,194 @@ was missing.
 
 @runtime_checkable
 class AuditStrategy(Protocol):
-    """How Audit Provenance decorates one finalized step.
+    """How Audit Provenance stamps what a write stores (`m-unit-work`).
 
-    Decoration consumes the settled Insert Origins and Close Causes and adds
-    ordinary planned values; it changes no topology, classifies no gate, and
-    emits no SQL. ``actor_identity`` and ``transaction_instant`` are the
-    request-scoped inputs a real provenance adapter needs — the identity to
-    stamp and the shared instant to stamp it at — passed through unevaluated:
-    an implementation that never resolves ``transaction_instant`` costs the
-    surviving flush no clock access beyond what its own topology already
-    required (`m-unit-work` "The Transaction Instant").
+    :meth:`finalize_row` gives one represented row — a new lineage's opening,
+    or a successor carried or changed from its predecessor — its final values,
+    once, before settlement compares or realizes it. Every value it adds or
+    changes is an executed assignment of the row it returns, beside the row's
+    authored ones, and every other member keeps the value it had.
+    :meth:`decorate_update` stamps a Non-Temporal update, keyed or readless,
+    without a complete row, and :meth:`decorate_close` stamps a closed
+    predecessor. Each adds ordinary planned values and changes no topology,
+    target, gate, cause, or affected-row policy, and emits no SQL. A guard, a
+    removal, a delete, and a milestone kept unchanged store no represented
+    value and meet none of them.
 
-    Only eagerly settled steps reach this port. A Materialized Write Group's
-    rows are rebuilt on demand from a segment holding no strategy object and
-    no unevaluated instant, so they cannot be decorated one step at a time;
-    every row of one group shares one authored mutation, one Actor Identity,
-    and one instant, so a group's provenance is one overlay resolved at settle
-    time rather than a per-row decoration.
+    ``actor_identity`` and ``transaction_instant`` are the request-scoped inputs
+    a real provenance adapter needs — the identity to stamp and the shared
+    instant to stamp it at — passed through unevaluated: an implementation that
+    never resolves ``transaction_instant`` costs the surviving flush no clock
+    access beyond what its own topology already required (`m-unit-work` "The
+    Transaction Instant").
     """
 
-    def decorate(
+    def finalize_row(
         self,
-        step: PlannedWrite,
+        write_row: WriteRow,
         *,
         actor_identity: ActorIdentity,
         transaction_instant: TransactionInstant,
-    ) -> PlannedWrite: ...
+    ) -> WriteRow: ...
+
+    def decorate_update(
+        self,
+        update: PlannedUpdate,
+        *,
+        actor_identity: ActorIdentity,
+        transaction_instant: TransactionInstant,
+    ) -> PlannedUpdate: ...
+
+    def decorate_close(
+        self,
+        close: PlannedClose,
+        *,
+        actor_identity: ActorIdentity,
+        transaction_instant: TransactionInstant,
+    ) -> PlannedClose: ...
 
 
 @dataclass(frozen=True, slots=True)
 class UndecoratedAudit:
-    """The audit-neutral default: every step passes through unchanged."""
+    """The audit-neutral default: every row, update, and close passes through
+    unchanged."""
 
-    def decorate(
+    def finalize_row(
         self,
-        step: PlannedWrite,
+        write_row: WriteRow,
         *,
         actor_identity: ActorIdentity,
         transaction_instant: TransactionInstant,
-    ) -> PlannedWrite:
-        return step
+    ) -> WriteRow:
+        return write_row
+
+    def decorate_update(
+        self,
+        update: PlannedUpdate,
+        *,
+        actor_identity: ActorIdentity,
+        transaction_instant: TransactionInstant,
+    ) -> PlannedUpdate:
+        return update
+
+    def decorate_close(
+        self,
+        close: PlannedClose,
+        *,
+        actor_identity: ActorIdentity,
+        transaction_instant: TransactionInstant,
+    ) -> PlannedClose:
+        return close
 
 
 NO_AUDIT: Final[UndecoratedAudit] = UndecoratedAudit()
+
+
+@dataclass(frozen=True, slots=True)
+class AuditDecoration:
+    """The configured Audit Strategy applied with the attempt's Actor Identity
+    and Transaction Instant, whether settlement runs at planning or binds a
+    range at execution. Built for one settlement and never retained by what it
+    settles.
+
+    Each hook's answer is held to its contract before settlement uses it, so a
+    strategy cannot move what a step addresses or change a value without
+    stating it as an executed assignment. ``neutral`` says the strategy is the
+    audit-neutral default, which answers every input unchanged: a settlement
+    holding rows only as compact backing then builds none merely to ask, and
+    keeps what any other strategy adds (``assignments_added``) rather than the
+    steps it answered.
+    """
+
+    audit: AuditStrategy
+    actor_identity: ActorIdentity
+    transaction_instant: TransactionInstant
+
+    @property
+    def neutral(self) -> bool:
+        return isinstance(self.audit, UndecoratedAudit)
+
+    def finalize_row(self, write_row: WriteRow) -> WriteRow:
+        finalized = self.audit.finalize_row(
+            write_row,
+            actor_identity=self.actor_identity,
+            transaction_instant=self.transaction_instant,
+        )
+        if finalized is not write_row:
+            _require_finalized(write_row, finalized)
+        return finalized
+
+    def decorate_update(self, update: PlannedUpdate) -> PlannedUpdate:
+        decorated = self.audit.decorate_update(
+            update,
+            actor_identity=self.actor_identity,
+            transaction_instant=self.transaction_instant,
+        )
+        if decorated is not update and (
+            decorated.entity != update.entity
+            or decorated.target != update.target
+            or decorated.concurrency != update.concurrency
+            or decorated.affected_rows != update.affected_rows
+            or not _extends(update.assignments, decorated.assignments)
+        ):
+            raise _audit_refused("an update's decoration")
+        return decorated
+
+    def decorate_close(self, close: PlannedClose) -> PlannedClose:
+        decorated = self.audit.decorate_close(
+            close,
+            actor_identity=self.actor_identity,
+            transaction_instant=self.transaction_instant,
+        )
+        if decorated is not close and (
+            decorated.entity != close.entity
+            or decorated.target != close.target
+            or decorated.cause != close.cause
+            or decorated.concurrency != close.concurrency
+            or decorated.affected_rows != close.affected_rows
+            or not _extends(close.assignments, decorated.assignments)
+        ):
+            raise _audit_refused("a close's decoration")
+        return decorated
+
+
+def _require_finalized(write_row: WriteRow, finalized: WriteRow) -> None:
+    """Refuse a finalized row that changed its origin, dropped an executed
+    member, or changed a member it does not state as executed."""
+    executed = finalized.executed
+    if (
+        finalized.origin is not write_row.origin
+        or any(member not in executed for member in write_row.executed)
+        or not _keeps(write_row.row.attributes, finalized.row.attributes, executed)
+        or not _keeps(write_row.row.value_objects, finalized.row.value_objects, executed)
+    ):
+        raise _audit_refused("a row's finalization")
+
+
+def _keeps[K](
+    members: Mapping[K, object], final: Mapping[K, object], stated: Collection[object]
+) -> bool:
+    """Whether ``final`` holds every member of ``members`` as it was, but for
+    the ``stated`` ones, and adds none it does not state."""
+    return all(
+        member in final and (final[member] is value or member in stated)
+        for member, value in members.items()
+    ) and all(member in members or member in stated for member in final)
+
+
+def _extends(stated: PlannedAssignments, final: PlannedAssignments) -> bool:
+    """Whether ``final`` keeps every assignment ``stated`` makes, as stated."""
+    return all(
+        identity in final.attributes and final.attributes[identity] is value
+        for identity, value in stated.attributes.items()
+    ) and all(
+        identity in final.value_objects and final.value_objects[identity] is value
+        for identity, value in stated.value_objects.items()
+    )
+
+
+def _audit_refused(what: str) -> WritePlanningError:
+    return WritePlanningError(
+        f"{what} must state every value it adds or changes as an assignment and keep the "
+        "origin, address, gate, and affected-row policy it was given (m-unit-work)"
+    )

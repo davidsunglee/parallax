@@ -1,7 +1,7 @@
 # valueObject WHOLE-document UPDATE: an update REPLACES the entire document column,
 # never a path inside it (m-value-object write, m-sql), on Postgres AND MariaDB.
 model: models/customer.yaml
-tags: [m-value-object, m-sql, write-sequence, update, json, nested, to-many, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-write-payload, m-sql, write-sequence, update, json, nested, to-many, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

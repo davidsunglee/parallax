@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -13,6 +13,9 @@ from parallax.core.metamodel import (
 )
 from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.write_plan.observe import PredecessorRow
+
+if TYPE_CHECKING:
+    from parallax.core.write_plan.payload import RowPayload
 
 __all__ = [
     "ANY_COUNT",
@@ -33,8 +36,6 @@ __all__ = [
     "ExactCount",
     "FailedPrecondition",
     "Finite",
-    "InsertEntry",
-    "InsertOrigin",
     "KeyTarget",
     "MaxPlusOne",
     "MilestoneTarget",
@@ -53,6 +54,7 @@ __all__ = [
     "PlannedUpdate",
     "PlannedValue",
     "PlannedWrite",
+    "RowOrigin",
     "SelfIncrement",
     "Shortfall",
     "StaleWrite",
@@ -62,10 +64,12 @@ __all__ = [
     "ValidatedMutationSelection",
     "VersionGate",
     "Versioned",
+    "WriteRow",
     "WriteTarget",
     "admits_shortfall",
     "adopt_planned_assignments",
     "adopt_planned_row",
+    "assignments_added",
     "shortfall_classification",
     "shortfall_for",
 ]
@@ -147,28 +151,30 @@ class CarriedFrom:
 class ChangedFrom:
     """An insert whose represented state revises its predecessor's.
 
-    The authored change set is overlaid on the predecessor, so the entry retains
-    both what changed and what it changed from. Its producer overlays only the
-    members it effectively changes: at every document-resident member it does
-    not, the row holds the predecessor's own cell, which is how lowering tells a
-    changed member from a carried one without comparing values
-    (:meth:`~parallax.core.write_plan.observe.PredecessorRow.carries`).
+    The row holds the predecessor's own cells at every member nothing assigns,
+    and its Write Row names what was assigned (:attr:`WriteRow.executed`), so
+    an assignment equal to the stored value is still one the row executes.
     """
 
     predecessor: PredecessorRow
 
 
-type InsertOrigin = NewLineage | CarriedFrom | ChangedFrom
-"""Where one insert entry's represented state came from.
+type ExecutedMembers = tuple[AttributeIdentity | ValueObjectIdentity, ...]
+"""The members a Write Row states explicitly, each holding the value its row
+holds, in its Entity's member order; rows the same assignments reach share one
+selection."""
 
-Origin belongs to each entry rather than to the whole step or to a parallel
+type RowOrigin = NewLineage | CarriedFrom | ChangedFrom
+"""Where one Write Row's represented state came from.
+
+Origin belongs to each row rather than to the whole step or to a parallel
 array, so entries of different origins may share one Planned Insert.
 """
 
 
 @dataclass(frozen=True, slots=True)
 class PlannedRow:
-    """The immutable, duplicate-free semantic contents of one insert entry.
+    """The immutable, duplicate-free semantic contents of one Write Row.
 
     ``attributes`` holds every scalar member the row writes — including the
     framework-owned values the planner derived, which no caller authors — and
@@ -195,11 +201,39 @@ class PlannedRow:
 
 
 @dataclass(frozen=True, slots=True)
-class InsertEntry:
-    """One row of a Planned Insert, with the origin of the state it carries."""
+class WriteRow:
+    """One represented row's state before settlement chooses how it is
+    realized, and the origin of that state.
+
+    ``executed`` names the members the row states explicitly — its authored
+    assignments and the audit values finalization added — whose values are the
+    row's own, shared by every row the same assignments reach. Every other
+    member of a carried or changed row is its predecessor's own state. A new
+    lineage writes every member it holds either way.
+
+    ``prepared`` is persisted backing a payload preparer already derived from
+    this row, which lowering reuses. It is not part of the row's meaning, so
+    equality ignores it.
+    """
 
     row: PlannedRow
-    origin: InsertOrigin
+    origin: RowOrigin
+    executed: ExecutedMembers = ()
+    prepared: RowPayload | None = field(default=None, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        row = self.row
+        for member in self.executed:
+            if member not in (
+                row.attributes if isinstance(member, AttributeIdentity) else row.value_objects
+            ):
+                raise ValueError(f"{member}: an executed member is one its Write Row holds")
+
+    def with_prepared(self, prepared: RowPayload) -> WriteRow:
+        """This row carrying ``prepared``, which a preparer derived from it."""
+        if prepared.row is not self.row:
+            raise ValueError("a Write Row carries only the payload prepared from its own row")
+        return replace(self, prepared=prepared)
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,7 +248,7 @@ class PlannedInsert:
     """
 
     entity: EntityIdentity
-    entries: tuple[InsertEntry, ...]
+    entries: tuple[WriteRow, ...]
 
     def __post_init__(self) -> None:
         if not self.entries:
@@ -719,7 +753,7 @@ class PlannedUpdate:
 class PlannedDelete:
     """A physical removal of existing Non-Temporal rows.
 
-    It carries no row, assignments, predecessor, Insert Origin, or Close Cause:
+    It carries no row, assignments, predecessor, Row Origin, or Close Cause:
     represented-state absence on a temporal target is a close, not a delete.
     """
 
@@ -871,3 +905,31 @@ type PlannedWrite = (
     | PlannedTemporalGuard
 )
 """The closed algebra of finalized semantic execution steps."""
+
+
+def assignments_added(
+    stated: PlannedAssignments | None, final: PlannedAssignments | None
+) -> PlannedAssignments | None:
+    """The assignments ``final`` makes beyond ``stated``, which it keeps, or
+    ``None`` where it makes no other.
+
+    What an audit hook added to a row, close, or update, so compact backing can
+    hold that alone and lay it over the value it rebuilds on demand.
+    """
+    if final is None or final is stated:
+        return None
+    if stated is None:
+        return final
+    attributes = {
+        identity: value
+        for identity, value in final.attributes.items()
+        if identity not in stated.attributes
+    }
+    value_objects = {
+        identity: value
+        for identity, value in final.value_objects.items()
+        if identity not in stated.value_objects
+    }
+    if not attributes and not value_objects:
+        return None
+    return adopt_planned_assignments(attributes, value_objects)

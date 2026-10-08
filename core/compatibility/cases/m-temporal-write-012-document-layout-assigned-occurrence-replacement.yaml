@@ -7,7 +7,7 @@
 # untouched. The contrast is m-temporal-write-011, where `manifest` is CARRIED rather
 # than assigned and keeps the very key this case's assignment destroys.
 model: models/document-layout.yaml
-tags: [m-temporal-write, m-storage-layout, m-document-codec, m-value-object, m-sql, write-sequence, update, audit-only, temporal, json, document-layout, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-write-payload, m-storage-layout, m-document-codec, m-value-object, m-sql, write-sequence, update, audit-only, temporal, json, document-layout, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 compileEligibility:
   mode: run-only

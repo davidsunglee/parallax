@@ -27,6 +27,7 @@ from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import BufferItem, KeyedWrite, WritePlanningRequest, WriteRejectedError
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.descriptor import _records
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
@@ -98,7 +99,10 @@ def _flush_and_lower(
             buffered_writes=observed_buffer(buffer, model, None),
         )
     )
-    return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]
+    return [
+        statement
+        for _step, statement in stream_lowered(plan, LayoutPayloadPreparer(model), model, POSTGRES)
+    ]
 
 
 def test_insert_collapses_for_an_unversioned_non_pk_gen_entity() -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Hashable, Sequence
 from dataclasses import dataclass
 from typing import cast
 
@@ -13,28 +13,13 @@ from parallax.core.dialect import (
     DocumentLeafAssignment,
     DocumentValueAssignment,
 )
-from parallax.core.document_codec import (
-    NULL,
-    DocumentPatch,
-    Present,
-    SetLeaf,
-    SetValue,
-    apply_patches,
-    encode_leaf,
-)
-from parallax.core.document_codec._document import (
-    encode_managed_document,
-    encode_managed_many,
-)
+from parallax.core.document_codec import PreparedPatch
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    Multiplicity,
-    ValueObjectIdentity,
-    ValueObjectMetadata,
 )
 from parallax.core.sql_gen._compile import compile_write_predicate
 from parallax.core.sql_gen._context import (
@@ -43,23 +28,22 @@ from parallax.core.sql_gen._context import (
     StatementBuilder,
 )
 from parallax.core.storage_layout import (
-    DocumentResidentSelection,
+    ColumnContributor,
     EntityLayoutView,
-    RelationalDocument,
+    InheritanceDiscriminator,
 )
 from parallax.core.wire import WireValue
-from parallax.core.write_plan import PredecessorRow
+from parallax.core.write_plan.payload import (
+    AssignmentPayload,
+    PatchedDocument,
+    RowPayload,
+)
 from parallax.core.write_plan.steps import (
-    NEW_LINEAGE,
-    CarriedFrom,
     Finite,
-    InsertOrigin,
     KeyTarget,
     MaxPlusOne,
     MilestoneTarget,
-    NewLineage,
     NonTemporalConcurrency,
-    PlannedAssignments,
     PlannedClose,
     PlannedDelete,
     PlannedInsert,
@@ -77,7 +61,12 @@ from parallax.core.write_plan.steps import (
     WriteTarget,
 )
 
-__all__ = ["compile_write_step"]
+__all__ = ["StepPayload", "compile_write_step"]
+
+type StepPayload = tuple[RowPayload, ...] | AssignmentPayload | None
+"""The prepared values one step's statement stores: one Row Payload per insert
+entry, in entry order, the Assignment Payload a revising step writes, or
+nothing for a step that stores no represented value."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,81 +119,111 @@ def entity_layout(meta: Metamodel, entity: EntityMetadata) -> EntityLayoutView |
     return storage_layout.view(meta).entity(entity.identity)
 
 
-def compile_write_step(step: PlannedWrite, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
-    """Lower one finalized step to its single DML statement."""
+def compile_write_step(
+    step: PlannedWrite, payload: StepPayload, meta: Metamodel, dialect: Dialect
+) -> LoweredStatement:
+    """Lower one finalized step to its single DML statement, storing exactly the
+    values ``payload`` prepared for it.
+
+    Lowering places, renders, and binds; it never assembles a payload itself. A
+    payload prepared from other inputs than the step's own, or a missing one, is
+    a broken caller contract rather than a request to prepare one here.
+    """
     match step:
         case PlannedInsert():
-            return _lower_insert(step, meta, dialect)
+            return _lower_insert(step, _row_payloads(step, payload), meta, dialect)
         case PlannedUpdate():
-            return _lower_update(step, meta, dialect)
+            return _lower_update(step, _assignment_payload(step, payload), meta, dialect)
         case PlannedClose() | PlannedTemporalRevision():
-            return _lower_milestone_update(step, meta, dialect)
+            return _lower_milestone_update(step, _assignment_payload(step, payload), meta, dialect)
         case PlannedDelete():
+            _require_no_payload(step, payload)
             return _lower_delete(step, meta, dialect)
         case PlannedTemporalRemoval():
+            _require_no_payload(step, payload)
             return _lower_milestone_removal(step, meta, dialect)
         case PlannedTemporalGuard():
+            _require_no_payload(step, payload)
             return _lower_milestone_guard(step, meta, dialect)
 
 
-def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
+def _row_payloads(step: PlannedInsert, payload: StepPayload) -> tuple[RowPayload, ...]:
+    if not isinstance(payload, tuple) or len(payload) != len(step.entries):
+        raise SqlGenError(
+            f"{step.entity.canonical}: an insert stores one prepared Row Payload per entry"
+        )
+    for entry, prepared in zip(step.entries, payload, strict=True):
+        if prepared.row is not entry.row or prepared.entity != step.entity:
+            raise SqlGenError(
+                f"{step.entity.canonical}: a prepared Row Payload belongs to another entry"
+            )
+    return payload
+
+
+def _assignment_payload(
+    step: PlannedUpdate | PlannedClose | PlannedTemporalRevision, payload: StepPayload
+) -> AssignmentPayload:
+    if (
+        not isinstance(payload, AssignmentPayload)
+        or payload.assignments is not step.assignments
+        or payload.entity != step.entity
+    ):
+        raise SqlGenError(
+            f"{step.entity.canonical}: a revising step stores the Assignment Payload prepared "
+            "from its own assignments"
+        )
+    return payload
+
+
+def _require_no_payload(step: PlannedWrite, payload: StepPayload) -> None:
+    if payload is not None:
+        raise SqlGenError(f"{step.entity.canonical}: this step stores no prepared payload")
+
+
+def _lower_insert(
+    step: PlannedInsert, payloads: tuple[RowPayload, ...], meta: Metamodel, dialect: Dialect
+) -> LoweredStatement:
     """`insert into <table>(<participating columns in Table Layout order>) values
     (?, …)[, (?, …)…]`, or the pk-gen `max` INSERT…SELECT form when a cell
     carries a generated-value expression, ending `returning <column>` where
     that allocation is returned.
 
-    Only the columns the step's entries name are emitted — an entry omitting a
+    Only the columns the prepared rows name are emitted — an entry omitting a
     nullable member produces a narrower `INSERT`, never an explicit `NULL` bind
     — and every entry renders one value tuple against that one shared column
-    list, in entry order. The table-per-hierarchy tag is derived from the
-    layout's own discriminator assignment at its own slot; no entry ever names
-    it.
-
-    Under Relational Document Layout every document-resident member the entry
-    names collapses into the one shared Structured Column cell, which each entry
-    binds whether or not it names any: the Column is `NOT NULL` and every governed
-    row carries a document, the empty object included (`m-storage-layout`).
-
-    An entry whose Insert Origin carries a predecessor — a temporal successor —
-    composes that cell from the predecessor's own retained document instead
-    (:func:`_successor_document`), so the entries of one step may bind different
-    documents while naming the same members.
+    list, in entry order. Every entry of one step names the same members, so
+    every row's cells name the same columns.
     """
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
-    rows = [
-        _member_cells(
-            view,
-            entry.row.attributes,
-            entry.row.value_objects,
-            entity,
-            stamp_tag=True,
-            opening=True,
-            origin=entry.origin,
-        )
-        for entry in step.entries
-    ]
-    columns = ", ".join(dialect.quote(column) for column, _, _ in rows[0])
+    first = payloads[0]
+    placement = _placement(view, entity, first.contributors)
+    columns, types, documents = placement
+    for payload in payloads[1:]:
+        if payload.contributors != first.contributors:
+            raise SqlGenError(
+                f"{entity.identity.name!r}: every entry of one insert stores the same cells"
+            )
+    column_sql = ", ".join(dialect.quote(column) for column in columns)
     table = view.layout.table.name
     ctx = _ctx(meta, dialect)
-    if not any(isinstance(value, MaxPlusOne) for _, value, _ in rows[0]):
+    if not any(isinstance(value, MaxPlusOne) for value in first.values):
         ctx.bind_typed_rows(
-            tuple(tuple(value for _column, value, _type in row) for row in rows),
-            tuple(
-                None if neutral_type is None else (neutral_type, "MANAGED")
-                for _column, _value, neutral_type in rows[0]
-            ),
+            [_bound(payload.values, documents) for payload in payloads],
+            [None if neutral_type is None else (neutral_type, "MANAGED") for neutral_type in types],
         )
-        tuples = ", ".join(f"({', '.join('?' for _ in row)})" for row in rows)
-        return ctx.finish(f"insert into {table}({columns}) values {tuples}")
-    if len(rows) > 1:
+        tuples = ", ".join(f"({', '.join('?' for _ in columns)})" for _ in payloads)
+        return ctx.finish(f"insert into {table}({column_sql}) values {tuples}")
+    if len(payloads) > 1:
         raise SqlGenError(
             f"multi-entry insert on {entity.identity.name!r}: a generated-value expression "
             "folds into the statement itself, so it renders one row at a time (m-pk-gen)"
         )
     select_parts: list[str] = []
     returned: list[str] = []
-    for column, value, neutral_type in rows[0]:
+    for column, value, neutral_type in zip(
+        columns, _bound(first.values, documents), types, strict=True
+    ):
         if isinstance(value, MaxPlusOne):
             select_parts.append(f"coalesce(max(t0.{dialect.quote(column)}), ?) + ?")
             ctx.bind_framework(0)
@@ -216,12 +235,14 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Low
             _bind(ctx, value, neutral_type)
     returning = f" returning {', '.join(returned)}" if returned else ""
     return ctx.finish(
-        f"insert into {table}({columns}) select {', '.join(select_parts)} from {table} t0"
+        f"insert into {table}({column_sql}) select {', '.join(select_parts)} from {table} t0"
         f"{returning}"
     )
 
 
-def _lower_update(step: PlannedUpdate, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
+def _lower_update(
+    step: PlannedUpdate, payload: AssignmentPayload, meta: Metamodel, dialect: Dialect
+) -> LoweredStatement:
     """`update <table> set <assigned columns> = ?, … where <target>[ and <gate>]`.
 
     The assigned columns follow the Table Layout's slot order, with one
@@ -236,7 +257,7 @@ def _lower_update(step: PlannedUpdate, meta: Metamodel, dialect: Dialect) -> Low
     view = _layout(meta, entity)
     ctx = _ctx(meta, dialect)
     version = step.concurrency.attribute if isinstance(step.concurrency, Versioned) else None
-    assignment_sql = _assignment_clause(ctx, view, step.assignments, version, entity, dialect)
+    assignment_sql = _assignment_clause(ctx, view, meta, payload, version, entity, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _gate(ctx, view, step.concurrency, meta, dialect)
     return ctx.finish(
@@ -245,7 +266,10 @@ def _lower_update(step: PlannedUpdate, meta: Metamodel, dialect: Dialect) -> Low
 
 
 def _lower_milestone_update(
-    step: PlannedClose | PlannedTemporalRevision, meta: Metamodel, dialect: Dialect
+    step: PlannedClose | PlannedTemporalRevision,
+    payload: AssignmentPayload,
+    meta: Metamodel,
+    dialect: Dialect,
 ) -> LoweredStatement:
     """`update <table> set <assignments> where <milestone target>[ and <gate>]`.
 
@@ -260,7 +284,7 @@ def _lower_milestone_update(
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
     ctx = _ctx(meta, dialect)
-    assignment_sql = _assignment_clause(ctx, view, step.assignments, None, entity, dialect)
+    assignment_sql = _assignment_clause(ctx, view, meta, payload, None, entity, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
     return ctx.finish(
@@ -312,25 +336,29 @@ def _lower_delete(step: PlannedDelete, meta: Metamodel, dialect: Dialect) -> Low
 def _assignment_clause(
     ctx: StatementBuilder,
     view: EntityLayoutView,
-    assignments: PlannedAssignments,
+    meta: Metamodel,
+    payload: AssignmentPayload,
     version: AttributeIdentity | None,
     entity: EntityMetadata,
     dialect: Dialect,
 ) -> str:
     version_column = None if version is None else _column(view, version, entity)
-    cells = _member_cells(
-        view,
-        assignments.attributes,
-        assignments.value_objects,
-        entity,
-        stamp_tag=False,
-        opening=False,
-    )
-    ordered = [cell for cell in cells if cell[0] != version_column]
-    ordered.extend(cell for cell in cells if cell[0] == version_column)
+    columns, types, documents = _placement(view, entity, payload.contributors)
     parts: list[str] = []
-    for column, value, neutral_type in ordered:
-        parts.append(_assignment(ctx, column, value, neutral_type, dialect))
+    advance: tuple[str, object, NeutralType | None] | None = None
+    for column, value, neutral_type, document in zip(
+        columns, payload.values, types, documents, strict=True
+    ):
+        if isinstance(value, PatchedDocument):
+            value = _document_assignments(value.patches, entity)
+        elif document:
+            value = JsonDocument(value)
+        if column == version_column:
+            advance = (column, value, neutral_type)
+        else:
+            parts.append(_assignment(ctx, column, value, neutral_type, dialect))
+    if advance is not None:
+        parts.append(_assignment(ctx, *advance, dialect))
     return ", ".join(parts)
 
 
@@ -525,307 +553,83 @@ def _temporal_gate(
     return f" and {dialect.quote(column)} = ?"
 
 
-# One arm per Column contributor kind, in Table Layout slot order. It runs per written row
-# and visits every slot, so the arms stay inline rather than behind a per-slot call.
-def _member_cells(  # noqa: C901
+type _Placement = tuple[list[str], list[NeutralType | None], list[bool]]
+"""The physical Column of each prepared cell, its Attribute's Neutral Type where
+it binds a scalar, and whether it binds a whole document."""
+
+
+def _placement(
     view: EntityLayoutView,
-    attributes: Mapping[AttributeIdentity, object],
-    value_objects: Mapping[ValueObjectIdentity, object],
     entity: EntityMetadata,
-    *,
-    stamp_tag: bool,
-    opening: bool,
-    origin: InsertOrigin = NEW_LINEAGE,
-) -> Sequence[_Cell]:
-    """The named members as ``(column, value)`` pairs, in Table Layout slot order.
+    contributors: Sequence[Hashable],
+) -> _Placement:
+    """Where each prepared cell lands: the physical Column its contributor's
+    slot occupies.
 
-    The view supplies both the physical Column each member occupies and the one
-    order every cell follows, so a caller's own member order never reaches the
-    statement. A Value Object occurrence with a Column of its own binds as one
-    :class:`~parallax.core.db_port.JsonDocument` there — the whole document,
-    never decomposed — and every document-resident member instead collapses into
-    the Table's one shared Structured Column, whose cell an ``opening`` statement
-    fills with the row's complete document and a revising one with the ordered
-    path assignments it patches.
-
-    An ``opening`` statement binds a `many` occurrence's Column whether or not
-    the row names it: absence and the empty array are one logical zero state, so
-    an unnamed `many` stores ``[]`` (`m-value-object`), which is the same answer
-    the codec composes for one inside a document. A revising statement leaves an
-    unnamed occurrence alone, because patching touches only what it assigns.
-
-    ``stamp_tag`` additionally emits the table-per-hierarchy discriminator at its
-    own slot. An opening row writes it because the row's concrete subtype is being
-    established; a revising statement leaves it alone, since revising a row never
-    changes what it is.
-
-    ``origin`` is where an opening row's state came from, which decides how its
-    Structured Column is composed: from the retained document of the milestone it
-    succeeds, or from the row's own members alone (:func:`_successor_document`).
+    A document a cell stores — a Value Object occurrence with a Column of its
+    own, or the Table's shared Structured Column — binds as one
+    :class:`~parallax.core.db_port.JsonDocument`, never decomposed. A scalar
+    binds at its Attribute's Neutral Type.
     """
-    discriminator = view.discriminator if stamp_tag else None
-    cells: list[_Cell] = []
-    matched = 0
-    for slot in view.columns:
-        contributor = slot.contributor
-        if discriminator is not None and slot == discriminator.slot:
-            cells.append((slot.column.name, discriminator.value, None))
-        elif isinstance(contributor, RelationalDocument):
-            resident = view.document_residents
-            if resident is None:  # pragma: no cover - a Relational Document slot owns residency
+    columns: list[str] = []
+    types: list[NeutralType | None] = []
+    documents: list[bool] = []
+    selection = view.member_selection
+    for contributor in contributors:
+        if isinstance(contributor, InheritanceDiscriminator):
+            discriminator = view.discriminator
+            if discriminator is None or discriminator.slot.contributor != contributor:
                 raise SqlGenError(
-                    f"{view.entity.canonical}: Relational Document slot has no resident selection"
+                    f"{entity.identity.name!r}: a prepared discriminator cell names no tag slot"
                 )
-            if opening:
-                cells.append(
-                    (
-                        slot.column.name,
-                        JsonDocument(
-                            _successor_document(
-                                resident,
-                                attributes,
-                                value_objects,
-                                origin,
-                            )
-                        ),
-                        None,
-                    )
-                )
-            else:
-                patches = _patches(resident, attributes, value_objects)
-                if patches.assignments:
-                    cells.append((slot.column.name, patches, None))
-            matched += _resident_count(resident, attributes, value_objects)
-        elif isinstance(contributor, AttributeIdentity) and contributor in attributes:
-            attribute = _attribute_binding(view, contributor)
-            cells.append((slot.column.name, attributes[contributor], attribute.type))
-            matched += 1
-        elif isinstance(contributor, ValueObjectIdentity):
-            occurrence = _occurrence_binding(view, contributor)
-            if contributor in value_objects:
-                value = value_objects[contributor]
-                document = None if value is None else _occurrence_document(occurrence, value)
-                cells.append((slot.column.name, JsonDocument(document), None))
-                matched += 1
-            elif opening and occurrence.multiplicity is Multiplicity.MANY:
-                cells.append(
-                    (slot.column.name, JsonDocument(_occurrence_document(occurrence, ())), None)
-                )
-    _require_placed(matched, len(attributes) + len(value_objects), entity)
-    return cells
-
-
-def _resident_count(
-    resident: DocumentResidentSelection,
-    attributes: Mapping[AttributeIdentity, object],
-    value_objects: Mapping[ValueObjectIdentity, object],
-) -> int:
-    """How many of this step's named members the Structured Column accounts for."""
-    return sum(
-        (isinstance(binding, AttributeMetadata) and binding.identity in attributes)
-        or (not isinstance(binding, AttributeMetadata) and binding.identity in value_objects)
-        for position in resident.positions
-        for binding in (resident.member_selection.bindings[position],)
-    )
-
-
-def _row_document(
-    resident: DocumentResidentSelection,
-    attributes: Mapping[AttributeIdentity, object],
-    value_objects: Mapping[ValueObjectIdentity, object],
-) -> object:
-    """One opening row's complete Structured Column document.
-
-    Composed through the codec against the shape of every APPLICABLE
-    document-resident member rather than only the named ones, so presence
-    classification stays the codec's: a member the row omits is absent, one the
-    row sets to ``None`` is JSON null, and a `many` occurrence always contributes
-    its array even where the row never mentions it (`m-document-codec`).
-    """
-    values: dict[str, object] = {}
-    for position in resident.positions:
-        binding = resident.member_selection.bindings[position]
-        if isinstance(binding, AttributeMetadata) and binding.identity in attributes:
-            raw = attributes[binding.identity]
-            values[binding.identity.name] = raw
-        elif not isinstance(binding, AttributeMetadata) and binding.identity in value_objects:
-            occurrence = binding
-            raw = value_objects[occurrence.identity]
-            values[occurrence.identity.path[-1]] = raw
-    return encode_managed_document(resident.shape, values)
-
-
-def _successor_document(
-    resident: DocumentResidentSelection,
-    attributes: Mapping[AttributeIdentity, object],
-    value_objects: Mapping[ValueObjectIdentity, object],
-    origin: InsertOrigin,
-) -> object:
-    """One opening row's Structured Column, given where its state came from.
-
-    A row that succeeds a milestone whose observation retained the predecessor's
-    raw document is composed from that document, so every key it carries outside
-    the members the successor changed survives the close-and-insert — a key a
-    newer application version wrote included (`m-document-codec`, `m-write-plan`).
-    Settlement already made that document recursively immutable (`m-db-port`).
-    A carried successor binds it itself: its state is its predecessor's,
-    unchanged. A changed successor patches it at the members it changed alone: a
-    member it carries forward is already spelled in the retained document, and
-    re-encoding it from its decoded value would rebuild the subtree an occurrence
-    holds and drop the unknown keys inside it — an assignment the author never
-    made.
-
-    Without a retained document there is nothing to preserve — a new lineage opens
-    no predecessor, and an observation that read no row knows no key this model
-    does not declare — so the row's own complete member set composes the document
-    (:func:`_row_document`).
-    """
-    if isinstance(origin, NewLineage) or origin.predecessor.document is None:
-        return _row_document(resident, attributes, value_objects)
-    predecessor = origin.predecessor
-    if isinstance(origin, CarriedFrom):
-        return predecessor.document
-    patches = _successor_patches(resident, attributes, value_objects, predecessor)
-    if not patches:
-        return predecessor.document
-    return apply_patches(resident.shape, predecessor.document, patches)
-
-
-def _successor_patches(
-    resident: DocumentResidentSelection,
-    attributes: Mapping[AttributeIdentity, object],
-    value_objects: Mapping[ValueObjectIdentity, object],
-    predecessor: PredecessorRow,
-) -> tuple[DocumentPatch, ...]:
-    """The in-memory patches carrying one changed successor's changes onto its
-    predecessor's retained document.
-
-    Its producer carried every document-resident member it did not effectively
-    change as the predecessor's own cell (:class:`ChangedFrom`), so a member is
-    changed exactly when the predecessor does not carry the value the successor
-    holds. The test is identity, never a comparison of values: the retained
-    document spells a member as stored while the successor holds it as decoded,
-    and a carried occurrence misread as changed would be REPLACED by its declared
-    members and lose every key no member names.
-
-    Order is canonical logical placement order, which both the in-memory patch and
-    the equivalent path-patched `UPDATE` apply left to right (`m-storage-layout`).
-    """
-    patches: list[DocumentPatch] = []
-    for position, placement in zip(resident.positions, resident.placements, strict=True):
-        binding = resident.member_selection.bindings[position]
-        if isinstance(binding, AttributeMetadata):
-            if binding.identity not in attributes:
-                continue
-            raw = attributes[binding.identity]
-            if predecessor.carries(binding.identity, raw):
-                continue
-            patches.append(SetLeaf(placement.path, NULL if raw is None else Present(raw)))
+            columns.append(discriminator.slot.column.name)
+            types.append(None)
+            documents.append(False)
+            continue
+        slot = view.layout.contribution(cast("ColumnContributor", contributor))
+        if slot is None:
+            raise SqlGenError(
+                f"{entity.identity.name!r}: a prepared cell's contributor occupies no Column of "
+                "the target's Table Layout"
+            )
+        columns.append(slot.column.name)
+        if isinstance(contributor, AttributeIdentity):
+            binding = selection.bindings[selection.position(contributor)]
+            types.append(cast("AttributeMetadata", binding).type)
+            documents.append(False)
         else:
-            occurrence = binding
-            if (
-                occurrence.identity not in value_objects
-            ):  # pragma: no cover - successor rows are complete
-                continue
-            raw = value_objects[occurrence.identity]
-            if predecessor.carries(occurrence.identity, raw):
-                continue
-            patches.append(
-                SetValue(
-                    placement.path,
-                    None if raw is None else _occurrence_document(occurrence, raw),
-                )
-            )
-    return tuple(patches)
+            types.append(None)
+            documents.append(True)
+    return columns, types, documents
 
 
-def _patches(
-    resident: DocumentResidentSelection,
-    attributes: Mapping[AttributeIdentity, object],
-    value_objects: Mapping[ValueObjectIdentity, object],
+def _bound(values: tuple[object, ...], documents: Sequence[bool]) -> Sequence[object]:
+    """One row's bind values: each stored document wrapped as the port's
+    structured-document carrier, every other value as it is."""
+    if not any(documents):
+        return values
+    return [
+        JsonDocument(value) if document else value
+        for value, document in zip(values, documents, strict=True)
+    ]
+
+
+def _document_assignments(
+    patches: Sequence[PreparedPatch], entity: EntityMetadata
 ) -> _DocumentAssignments:
-    """The ordered path assignments a revising statement applies.
-
-    A revising statement writes only the paths it assigns, so every key it does
-    not name survives — a model member the step left alone and a key a newer
-    application version wrote alike (`m-storage-layout`). An assigned ``None``
-    writes JSON null rather than removing the key, which is the one not-present
-    state a NULL Column also has. An assigned occurrence binds its WHOLE document
-    at its own path, whatever its cardinality, so nothing inside the subtree it
-    replaces survives.
-    """
-    patches: list[DocumentAssignment] = []
-    leaf_types: list[NeutralType | None] = []
-    for position, placement in zip(resident.positions, resident.placements, strict=True):
-        binding = resident.member_selection.bindings[position]
-        if isinstance(binding, AttributeMetadata) and binding.identity in attributes:
-            raw = attributes[binding.identity]
-            patches.append(
-                DocumentLeafAssignment(
-                    placement.path,
-                    None if raw is None else _leaf(binding.type, raw),
-                )
+    assignments: list[DocumentAssignment] = []
+    for patch in patches:
+        if patch.removes:
+            raise SqlGenError(
+                f"{entity.identity.name!r}: a revising statement assigns values and removes no "
+                "document key"
             )
-            leaf_types.append(binding.type)
-        elif not isinstance(binding, AttributeMetadata):
-            occurrence = binding
-            if occurrence.identity not in value_objects:
-                continue
-            raw = value_objects[occurrence.identity]
-            patches.append(
-                DocumentValueAssignment(
-                    placement.path,
-                    None if raw is None else _occurrence_document(occurrence, raw),
-                )
-            )
-            leaf_types.append(None)
-    return _DocumentAssignments(tuple(patches), tuple(leaf_types))
-
-
-def _attribute_binding(view: EntityLayoutView, identity: AttributeIdentity) -> AttributeMetadata:
-    binding = view.member_selection.bindings[view.member_selection.position(identity)]
-    if not isinstance(binding, AttributeMetadata):  # pragma: no cover - identities are disjoint
-        raise SqlGenError(f"{identity.name!r}: the Column contributor is not an Attribute")
-    return binding
-
-
-def _occurrence_binding(
-    view: EntityLayoutView, identity: ValueObjectIdentity
-) -> ValueObjectMetadata:
-    binding = view.member_selection.bindings[view.member_selection.position(identity)]
-    if isinstance(binding, AttributeMetadata):  # pragma: no cover - identities are disjoint
-        raise SqlGenError(f"{identity.path[-1]!r}: the Column contributor is not an occurrence")
-    return binding
-
-
-def _occurrence_document(occurrence: ValueObjectMetadata, value: object) -> object:
-    """One Value Object occurrence's document, spelled by the codec.
-
-    The write input carries each leaf in whatever portable spelling it was
-    authored or built in; the codec owns the ONE spelling stored, so the value
-    the statement binds is composed here rather than handed to a serializer as it
-    arrived. That is what gives a ``decimal``, ``bytes``, ``date``, ``time``,
-    ``timestamp``, or ``uuid`` leaf inside an occurrence its storage form on the
-    write lane, and it is idempotent over an already-encoded document because
-    every decode leg is the encode leg's inverse (`m-document-codec`).
-    """
-    shape = occurrence.document_shape
-    if occurrence.multiplicity is Multiplicity.MANY:
-        return encode_managed_many(shape, cast("Sequence[Mapping[str, object]]", value))
-    return encode_managed_document(shape, cast("Mapping[str, object]", value))
-
-
-def _leaf(neutral_type: NeutralType, value: object) -> object:
-    """One managed leaf's canonical document spelling."""
-    return encode_leaf(neutral_type, value)
-
-
-def _require_placed(matched: int, named: int, entity: EntityMetadata) -> None:
-    if matched != named:  # pragma: no cover - finalization resolves against this view
-        raise SqlGenError(
-            f"{entity.identity.name!r}: a planned member occupies no Column of the target's "
-            "Table Layout"
+        assignments.append(
+            DocumentValueAssignment(patch.path, patch.value)
+            if patch.leaf is None
+            else DocumentLeafAssignment(patch.path, patch.value)
         )
+    return _DocumentAssignments(tuple(assignments), tuple(patch.leaf for patch in patches))
 
 
 def _column(view: EntityLayoutView, attribute: AttributeIdentity, entity: EntityMetadata) -> str:

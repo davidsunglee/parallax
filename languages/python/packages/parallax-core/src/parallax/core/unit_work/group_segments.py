@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 from typing import Final
 
 from parallax.core.base import retain_document_value
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata
 from parallax.core.temporal_write.expansion import PredecessorUse, SettledGroup
-from parallax.core.unit_work.strategy import VersionArithmetic
+from parallax.core.unit_work.strategy import AuditDecoration, VersionArithmetic
 from parallax.core.write_plan.columns import ColumnSlice
 from parallax.core.write_plan.keys import ObservedStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
@@ -27,6 +28,7 @@ from parallax.core.write_plan.steps import (
     Versioned,
     VersionGate,
     adopt_planned_assignments,
+    assignments_added,
 )
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
@@ -149,6 +151,9 @@ class NonTemporalGroupSegment:
     reachable here — every value :meth:`step` reads is either a settled fact or
     an aligned column lookup by row index — and two calls for the same index
     return equal but distinct objects, never a shared mutable flyweight.
+
+    ``audited`` holds, by row, only what a non-neutral audit added to that
+    row's update when the group settled.
     """
 
     facts: NonTemporalFacts
@@ -159,6 +164,7 @@ class NonTemporalGroupSegment:
     emission: NonTemporalEmission
     affected_rows: AffectedRows
     changed: Iterable[ObservedStateKey]
+    audited: Mapping[int, PlannedAssignments] = MappingProxyType({})
 
     def __len__(self) -> int:
         return len(self.versions)
@@ -167,6 +173,33 @@ class NonTemporalGroupSegment:
         return ExecutionUnit(end=end, changed=self.changed)
 
     def step(self, index: int) -> PlannedStep:
+        step = self._settled(index)
+        stamped = self.audited.get(index)
+        if stamped is None or not isinstance(step, PlannedUpdate):
+            return step
+        return replace(
+            step,
+            assignments=adopt_planned_assignments(
+                {**step.assignments.attributes, **stamped.attributes},
+                {**step.assignments.value_objects, **stamped.value_objects},
+            ),
+        )
+
+    def audited_by(self, audit: AuditDecoration) -> NonTemporalGroupSegment:
+        """This segment with what ``audit`` adds to each row's update, decorated
+        once per row now rather than when a step is built."""
+        added: dict[int, PlannedAssignments] = {}
+        for index in range(len(self)):
+            update = self._settled(index)
+            assert isinstance(update, PlannedUpdate)  # only a revising group is audited
+            stamped = assignments_added(
+                update.assignments, audit.decorate_update(update).assignments
+            )
+            if stamped is not None:
+                added[index] = stamped
+        return replace(self, audited=MappingProxyType(added)) if added else self
+
+    def _settled(self, index: int) -> PlannedStep:
         return non_temporal_step(
             self.facts,
             self.addressed,

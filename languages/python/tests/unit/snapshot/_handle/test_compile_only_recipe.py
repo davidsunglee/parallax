@@ -28,6 +28,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.execution._planning import build_write_planner
 from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.unit_work import WritePlanner, WritePlanningRequest
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WritePlan
 from parallax.snapshot import Database, Transaction
 from tests._support.db_port import (
@@ -82,7 +83,7 @@ def test_the_compile_lane_emits_exactly_one_plans_own_lowering(
     expected = [
         statement
         for value in planned
-        for _step, statement in stream_lowered(value, model, POSTGRES)
+        for _step, statement in stream_lowered(value, LayoutPayloadPreparer(model), model, POSTGRES)
     ]
     assert [(emission.sql, emission.binds) for emission in emissions] == [
         (statement.sql, statement.binds) for statement in expected

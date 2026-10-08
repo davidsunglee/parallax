@@ -11,6 +11,7 @@ from parallax.core.execution._planning import build_write_planner
 from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.unit_work import KeyedWrite, WritePlanningRequest
 from parallax.core.unit_work.instructions import PreparedTargetWrite, prepare_typed_write
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
@@ -89,7 +90,7 @@ def test_a_temporal_insert_answers_the_key_the_database_allocates(
     (unit,) = plan.units
     assert unit.opened.allocated == (AllocatedOpening(entity.identity, ends),)
     assert tuple(unit.opened.continued) == ()
-    ((step, statement),) = stream_lowered(plan, _META, POSTGRES)
+    ((step, statement),) = stream_lowered(plan, LayoutPayloadPreparer(_META), _META, POSTGRES)
     assert isinstance(step, PlannedInsert)
     assert RETURNED_MAX_PLUS_ONE in step.entries[0].row.attributes.values()
     assert statement.sql.endswith(" returning id")
@@ -99,5 +100,5 @@ def test_a_non_temporal_insert_records_no_allocated_row_and_answers_nothing() ->
     plan = _plan(Plain)
     (unit,) = plan.units
     assert unit.opened.allocated == ()
-    ((_step, statement),) = stream_lowered(plan, _META, POSTGRES)
+    ((_step, statement),) = stream_lowered(plan, LayoutPayloadPreparer(_META), _META, POSTGRES)
     assert "returning" not in statement.sql

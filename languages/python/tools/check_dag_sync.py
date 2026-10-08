@@ -115,6 +115,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-db-error": "parallax.core.db_error",
     "m-unit-work": "parallax.core.unit_work",
     "m-write-plan": "parallax.core.write_plan",
+    "m-write-payload": "parallax.core.write_payload",
     "m-read-lock": "parallax.core.read_lock",
     "m-auto-retry": "parallax.core.auto_retry",
     "m-execution-authority": "parallax.core.execution_authority",

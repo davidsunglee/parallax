@@ -26,7 +26,6 @@ from parallax.core.temporal_write.expansion import (
     opening,
 )
 from parallax.core.unit_work.acquisition import CoverageReadRequest
-from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.effects import (
     CardinalityCorruptionError,
     MissingTargetError,
@@ -44,7 +43,7 @@ from parallax.core.unit_work.materialized import (
     singleton_transform,
 )
 from parallax.core.unit_work.retain import RetainedObservation
-from parallax.core.unit_work.strategy import ActorIdentity, AuditStrategy
+from parallax.core.unit_work.strategy import AuditDecoration
 from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, TemporalStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
@@ -64,31 +63,11 @@ from parallax.core.write_plan.steps import TERMINATED, KeyTarget, PlannedInsert
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 __all__ = [
-    "AuditDecoration",
     "DeferredTemporalRange",
     "bind_deferred",
     "range_claims",
     "settle_range",
 ]
-
-
-@dataclass(frozen=True, slots=True)
-class AuditDecoration:
-    """The configured Audit Strategy applied, with the attempt's Actor Identity
-    and Transaction Instant, to every step one range collects, whether the
-    range binds at planning or at execution. Built for one binding and never
-    retained by what it binds."""
-
-    audit: AuditStrategy
-    actor_identity: ActorIdentity
-    transaction_instant: TransactionInstant
-
-    def __call__(self, step: PlannedStep) -> PlannedStep:
-        return self.audit.decorate(
-            step,
-            actor_identity=self.actor_identity,
-            transaction_instant=self.transaction_instant,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,11 +296,9 @@ class _BoundRangeBuilder:
     continued: tuple[OwnedEndpoint, ...] = ()
     derived: tuple[Derivation, ...] = ()
 
-    def take(self, expansion: PredecessorExpansion, decorate: AuditDecoration) -> None:
+    def take(self, expansion: PredecessorExpansion) -> None:
         for step in expansion.steps:
-            (self.openings if isinstance(step, PlannedInsert) else self.effects).append(
-                decorate(step)
-            )
+            (self.openings if isinstance(step, PlannedInsert) else self.effects).append(step)
         self.changed += tuple(expansion.changed)
         self.removed += tuple(expansion.removed)
         opened = expansion.opened
@@ -340,12 +317,10 @@ class _BoundRangeBuilder:
         )
 
 
-def _bound(
-    expansion: PredecessorExpansion, decorate: AuditDecoration, concludes: ObjectKey | None
-) -> BoundRange:
-    """A range of one original, its expansion's steps decorated once."""
+def _bound(expansion: PredecessorExpansion, concludes: ObjectKey | None) -> BoundRange:
+    """A range of one original, its expansion's steps as they are."""
     return BoundRange(
-        steps=tuple(map(decorate, expansion.steps)),
+        steps=expansion.steps,
         changed=expansion.changed,
         removed=expansion.removed,
         opened=expansion.opened,
@@ -357,7 +332,7 @@ def _bound(
 @dataclass(frozen=True, slots=True)
 class _RangeMeaning:
     """What one range settled to before any coverage is bound: finalized data
-    alone, holding no ownership, decoration, clock, or other producer.
+    alone, holding no ownership, audit, clock, or other producer.
 
     ``facts.instant`` is the attempt's resolved instant. ``valid_time_window``
     is the final transform's enclosing window, derived once when settlement
@@ -387,12 +362,11 @@ class _RangeMeaning:
 class _TemporalRangeBinder:
     """One binding of a range's ``meaning`` to its coverage, reading the
     attempt's live ``ownership`` through the range's one predecessor
-    ``expansion`` and decorating every step it collects once. Exists only while
+    ``expansion``, which finalizes every row it produces once. Exists only while
     it binds."""
 
     meaning: _RangeMeaning
     ownership: TemporalWriteOwnership
-    decorate: AuditDecoration
     expansion: PredecessorExpander
 
     def bind(
@@ -440,19 +414,18 @@ class _TemporalRangeBinder:
             else ()
         )
         concluded = meaning.object_key if concludes else None
-        decorate = self.decorate
         if not starts and not validations and not gaps and len(originals) == 1:
             # One original's expansion already orders its own effect first.
             (original,) = originals
-            return _bound(self._expanded(original, "coverage"), decorate, concluded)
+            return _bound(self._expanded(original, "coverage"), concluded)
         bound = _BoundRangeBuilder()
         for original in starts:
-            bound.take(self._expanded(original, "starting"), decorate)
+            bound.take(self._expanded(original, "starting"))
         for original in validations:
-            bound.take(self._expanded(original, "validation"), decorate)
+            bound.take(self._expanded(original, "validation"))
         for original in originals:
             if all(original is not start for start in starts):
-                bound.take(self._expanded(original, "coverage"), decorate)
+                bound.take(self._expanded(original, "coverage"))
         for gap in gaps:
             self._open(bound, gap)
         return bound.range(concluded)
@@ -463,15 +436,15 @@ class _TemporalRangeBinder:
         meaning = self.meaning
         facts = meaning.facts
         attributes, value_objects = self.expansion.assignments(gap.assigned)
-        entry = opening(
-            facts,
-            {**attributes, meaning.key_attribute: meaning.key_value},
-            dict(value_objects),
-            gap.valid_time_window,
+        entry = self.expansion.finalized(
+            opening(
+                facts,
+                {**attributes, meaning.key_attribute: meaning.key_value},
+                dict(value_objects),
+                gap.valid_time_window,
+            )
         )
-        bound.openings.append(
-            self.decorate(PlannedInsert(entity=facts.entity.identity, entries=(entry,)))
-        )
+        bound.openings.append(PlannedInsert(entity=facts.entity.identity, entries=(entry,)))
         endpoint = entry_endpoint(facts, entry)
         if endpoint is not None:
             bound.fresh += (endpoint,)
@@ -703,7 +676,7 @@ class DeferredTemporalRange(DeferredRange):
     read that coverage.
 
     It holds what settlement decided and nothing that could decide again: no
-    claim, ownership, decoration, clock, or model. The rows read for
+    claim, ownership, audit, clock, or model. The rows read for
     :attr:`coverage` join the observed originals at every address those do
     not already hold; binding then proceeds exactly as for a range bound at
     planning. A ``continued`` range follows earlier writes of its object across
@@ -727,7 +700,7 @@ def settle_range(
     gated: bool,
     instant: dt.datetime,
     ownership: TemporalWriteOwnership,
-    decorate: AuditDecoration,
+    audit: AuditDecoration,
     guards: bool = False,
 ) -> BoundRange | DeferredTemporalRange:
     """One temporal object's pending writes as a range over its current
@@ -800,7 +773,7 @@ def settle_range(
             validations=validations,
             coverage=_coverage(meaning, requested),
         )
-    return _binding(meaning, ownership, decorate).bind(originals, validations)
+    return _binding(meaning, ownership, audit).bind(originals, validations)
 
 
 def _range_of(
@@ -867,13 +840,13 @@ def bind_deferred(
     rows: PredecessorRows | None,
     *,
     ownership: TemporalWriteOwnership,
-    decorate: AuditDecoration,
+    audit: AuditDecoration,
 ) -> BoundRange:
     """``description`` bound to the coverage read for it — ``None`` where the
     read found no row — through the same binding a range known at planning
-    takes, under the attempt's current ``ownership``, every step decorated
-    once."""
-    binding = _binding(description.meaning, ownership, decorate)
+    takes, under the attempt's current ``ownership``, every produced row
+    finalized and every emitted close decorated once."""
+    binding = _binding(description.meaning, ownership, audit)
     if description.continued:
         originals, discharged = binding.continued(
             rows, (*description.originals, *description.validations)
@@ -883,13 +856,12 @@ def bind_deferred(
 
 
 def _binding(
-    meaning: _RangeMeaning, ownership: TemporalWriteOwnership, decorate: AuditDecoration
+    meaning: _RangeMeaning, ownership: TemporalWriteOwnership, audit: AuditDecoration
 ) -> _TemporalRangeBinder:
     conditions = meaning.conditions
     return _TemporalRangeBinder(
         meaning,
         ownership,
-        decorate,
         PredecessorExpander(
             meaning.facts,
             meaning.transform,
@@ -902,6 +874,7 @@ def _binding(
             ),
             derives=meaning.derives,
             ownership=ownership,
+            audit=audit,
         ),
     )
 

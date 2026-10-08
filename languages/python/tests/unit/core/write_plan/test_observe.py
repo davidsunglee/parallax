@@ -273,40 +273,9 @@ def test_identity_maps_hold_each_cell_and_view_each_occurrence_over_its_own_cell
     assert _plain(value_objects[_TAGS]) == ({"label": "founder"}, {"label": None})
     assert again is not attributes
     assert again_objects[_ADDRESS] is not value_objects[_ADDRESS]
-    for maps in ((attributes, value_objects), (again, again_objects)):
-        for member, value in (*maps[0].items(), *maps[1].items()):
-            assert predecessor.carries(member, value)
 
 
-def test_a_positional_predecessor_carries_by_identity_never_by_equality() -> None:
-    fresh_name = "".join(("A", "da"))
-    values = (7, fresh_name, ABSENT, None, ("Bergen", ABSENT), (("founder",), (None,)))
-    predecessor = _adopted(values)
-    _, value_objects = predecessor.identity_maps(_SELECTION)
-    address = value_objects[_ADDRESS]
-    tags = cast("tuple[object, ...]", value_objects[_TAGS])
-
-    assert predecessor.carries(_DISPLAY_NAME, fresh_name)
-    assert not predecessor.carries(_DISPLAY_NAME, "Ada")
-    assert predecessor.carries(_SCORE, ABSENT)
-    assert predecessor.carries(_JOINED_ON, None)
-    assert not predecessor.carries(_JOINED_ON, "2024-01-01")
-    assert predecessor.carries(_ADDRESS, address)
-    assert not predecessor.carries(_ADDRESS, dict(cast("Mapping[str, object]", address)))
-    assert not predecessor.carries(_ADDRESS, _adopted().identity_maps(_SELECTION)[1][_ADDRESS])
-    assert predecessor.carries(_TAGS, tags)
-    assert not predecessor.carries(_TAGS, tags[:1])
-    assert not predecessor.carries(_TAGS, (tags[0], {"label": None}))
-    assert not predecessor.carries(_TAGS, list(tags))
-
-    nulls = _adopted((7, "Ada", ABSENT, None, None, ABSENT))
-    assert nulls.carries(_ADDRESS, None)
-    assert not nulls.carries(_ADDRESS, {"city": "Bergen"})
-    assert nulls.carries(_TAGS, ABSENT)
-    assert not nulls.carries(_TAGS, ())
-
-
-def test_a_mapping_backed_predecessor_carries_only_its_own_stored_values() -> None:
+def test_a_mapping_backed_predecessor_maps_its_own_stored_values() -> None:
     predecessor = PredecessorRow({"id": 7, "address": {"city": "Bergen"}})
     address = predecessor.member("address")
 
@@ -317,9 +286,6 @@ def test_a_mapping_backed_predecessor_carries_only_its_own_stored_values() -> No
     assert predecessor.cell(_ID) == 7
     assert predecessor.cell(_ADDRESS) is address
     assert predecessor.axis_start(None, _ID) == 7
-    assert predecessor.carries(_ADDRESS, address)
-    assert not predecessor.carries(_ADDRESS, {"city": "Bergen"})
-    assert not predecessor.carries(_TAGS, ())
 
 
 def test_a_predecessor_member_its_selection_lacks_is_a_broken_invariant() -> None:

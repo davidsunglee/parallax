@@ -331,6 +331,7 @@ tree fails the sync check.
 | `m-unit-work` | `parallax.core.unit_work` |
 | `m-value-object` | `parallax.core.value_object` |
 | `m-wire` | `parallax.core.wire` |
+| `m-write-payload` | `parallax.core.write_payload` |
 | `m-write-plan` | `parallax.core.write_plan` |
 
 The second table declares the edges no module tag carries: for a support scope,
@@ -564,7 +565,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   parallax.core.sql_gen._compile | CompiledRead, compile_read | parallax.core.execution._attempt
   parallax.core.sql_gen._compile | CompiledRead | parallax.core.read_delivery._fetch; parallax.core.read_delivery._page_reader
   parallax.core.sql_gen._seek | null_pattern | parallax.core.read_delivery._read_plan
-  parallax.core.sql_gen._write | compile_write_step | parallax.core.execution._write_lowering; parallax.conformance._lanes.scenario
+  parallax.core.sql_gen._write | StepPayload, compile_write_step | parallax.core.execution._write_lowering
   ```
 
   Read delivery's and execution's imports are first-party private
@@ -620,16 +621,17 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   delivery and stored-data refusal it grades are production's. The scenario and
   snapshot lanes drive the production write planner, lowering, and source-pin
   check through the conformance-only `build_write_planner`, `stream_lowered`,
-  and `validate_source_pin`, read from the execution modules that define them,
+  `lowered`, and `validate_source_pin`, read from the execution modules that
+  define them,
   and the snapshot lane spells a Wire family variant with `FAMILY_VARIANT_KEY`
   from the Wire publication module. The scenario lane reads each published Wire value's Read Origin
   through `parallax.snapshot._publication._wire.read_origin_of`, and the
   insertion authority a Wire insert's node carries through `authoring_of`, the
   readers the Wire write verbs use, so the claims and keys it settles are the
   ones a real write settles against; both are implementation-private, so no
-  exported name reaches them. The scenario lane's private `m-sql` write-step
-  compiler reach is enumerated separately in the carrier-neutral block above,
-  and the case loader's `wire._json.authored_number` reach is the production YAML
+  exported name reaches them. The scenario lane lowers a bound deferred range's
+  steps through that same `lowered` rather than reaching the `m-sql` write-step
+  compiler, and the case loader's `wire._json.authored_number` reach is the production YAML
   token-preservation seam. Compatibility inputs use canonical Wire literals, so
   case ingress needs no private token-inspection reach. Case ingress does reach
   `parallax.core.document_codec._authoring` for exactly `prepare_authoring` and

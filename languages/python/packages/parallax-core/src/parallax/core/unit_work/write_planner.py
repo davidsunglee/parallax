@@ -49,10 +49,11 @@ from parallax.core.unit_work.materialized import (
     composed_temporal_write,
     temporal_contribution,
 )
-from parallax.core.unit_work.ranges import AuditDecoration, DeferredTemporalRange, bind_deferred
+from parallax.core.unit_work.ranges import DeferredTemporalRange, bind_deferred
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
     ActorIdentity,
+    AuditDecoration,
     AuditStrategy,
     BatchingStrategy,
     Concurrency,
@@ -62,6 +63,7 @@ from parallax.core.unit_work.write_settlement import OrderedWrite, WritePlanComp
 from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, VersionedStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import TemporalObservation
+from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
@@ -118,14 +120,14 @@ class WritePlanner:
     wired; :meth:`finalize` plans a flush, and :meth:`bind_deferred` binds a
     deferred range of a plan it finalized once that range's coverage is read.
     No caller sequences coalescing, batching, ordering, temporal expansion,
-    observation validation, instant acquisition, or provenance decoration by
-    hand.
+    observation validation, instant acquisition, or audit by hand.
 
     The compiler it constructs here is its own, built over the same model and
     compiled facets and living exactly as long: a prepared Model Selection
     carries a mutually consistent model, codec, planner, and compiler, and
     publication replaces the whole selection rather than rebinding any of
-    them.
+    them. So does the write payload preparer it is wired with, which every plan
+    it answers is lowered through (:attr:`payloads`).
     """
 
     __slots__ = (
@@ -135,6 +137,7 @@ class WritePlanner:
         "_concurrency",
         "_families",
         "_model",
+        "_payloads",
         "_relationships",
         "_temporal_facet",
     )
@@ -146,6 +149,7 @@ class WritePlanner:
         batching: BatchingStrategy,
         concurrency: ConcurrencyStrategy,
         audit: AuditStrategy,
+        payloads: WritePayloadPreparer,
     ) -> None:
         self._model = model
         self._families = inheritance.view(model)
@@ -154,6 +158,7 @@ class WritePlanner:
         self._batching = batching
         self._concurrency = concurrency
         self._audit = audit
+        self._payloads = payloads
         self._compiler = WritePlanCompiler(
             model,
             self._families,
@@ -161,6 +166,12 @@ class WritePlanner:
             concurrency=concurrency,
             audit=audit,
         )
+
+    @property
+    def payloads(self) -> WritePayloadPreparer:
+        """The model's write payload preparer, which lowers every plan this
+        planner answers and every range it binds."""
+        return self._payloads
 
     def finalize(self, request: WritePlanningRequest) -> WritePlan:
         """Plan one flush: eliminate no-ops, batch, order, and hand the whole
@@ -218,16 +229,16 @@ class WritePlanner:
 
         Its temporal meaning, concurrency, and gates were fixed when the plan
         was made; binding reads ``ownership`` as the running flush's earlier
-        units left it and never recaptures the instant. The configured
-        provenance decoration decorates each bound step once with
-        ``actor_identity`` and ``transaction_instant``, changing no topology
-        and classifying no gate.
+        units left it and never recaptures the instant. The configured audit
+        finalizes each row the binding produces once, and decorates each close
+        it emits, with ``actor_identity`` and ``transaction_instant``, changing no
+        topology and classifying no gate.
         """
         return bind_deferred(
             description,
             rows,
             ownership=ownership,
-            decorate=AuditDecoration(self._audit, actor_identity, transaction_instant),
+            audit=AuditDecoration(self._audit, actor_identity, transaction_instant),
         )
 
     def version_attribute(self, entity: EntityIdentity) -> AttributeIdentity | None:

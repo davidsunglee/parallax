@@ -23,6 +23,7 @@ from parallax.core.unit_work.instructions import (
     WriteInstruction,
     prepare_typed_write,
 )
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WriteObservation
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, TemporalWriteOwnership
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
@@ -88,7 +89,7 @@ def _stream(
             counts_unchanged_rows=dialect.counts_unchanged_rows,
         )
     )
-    return list(stream_lowered(plan, model, dialect))
+    return list(stream_lowered(plan, LayoutPayloadPreparer(model), model, dialect))
 
 
 def _prepared(instruction: WriteInstruction, model: Metamodel) -> PreparedWrite:

@@ -10,7 +10,7 @@ The statements stay byte-exact against the corpus goldens (``m-temporal-write-00
 /105``, ``m-value-object-032/033``). Alongside them the settled steps pin what
 lowering can no longer see: the mode-independent Milestone Target (the key plus
 one exclusive upper bound per As-Of Axis) against the observed-``in_z`` gate the
-concurrency mode decides, each successor's Insert Origin, each close's Close
+concurrency mode decides, each successor's Row Origin, each close's Close
 Cause, and the two zero-row-close shortfall tags
 (:class:`~parallax.core.unit_work.OptimisticConflict` for a gated mismatch,
 :class:`~parallax.core.unit_work.StaleWrite` for an ungated one).
@@ -47,10 +47,10 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
 from parallax.core.execution._planning import build_write_planner
+from parallax.core.execution._write_lowering import lowered
 from parallax.core.metamodel import EntityIdentity, EntityMetadata
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.sql_gen._write import compile_write_step
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, TransactionTimeOnly
 from parallax.core.unit_work import (
     Concurrency,
@@ -61,6 +61,7 @@ from parallax.core.unit_work import (
     WriteBatchReason,
     run_unit_of_work,
 )
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
     SUPERSEDED,
     TERMINATED,
@@ -86,13 +87,13 @@ from parallax.core.write_plan.steps import (
     ChangedFrom,
     ExactCount,
     Finite,
-    InsertEntry,
     NewLineage,
     PlannedRow,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     TemporalGate,
+    WriteRow,
 )
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from parallax.descriptor._records import Metamodel
@@ -784,8 +785,13 @@ def test_temporal_close_requires_an_effective_table() -> None:
         observation=_observed(tx_start="2024-02-01T00:00:00+00:00"),
     )
     balance = dataclasses.replace(BALANCE.entity("Balance"), table=None)
-    with pytest.raises(SqlGenError, match="write target has no effective table"):
-        compile_write_step(close, formed(Metamodel(entities=(balance,))), POSTGRES)
+    with pytest.raises(WritePlanningError, match="write target has no effective table"):
+        lowered(
+            close,
+            LayoutPayloadPreparer(formed(Metamodel(entities=(balance,)))),
+            formed(Metamodel(entities=(balance,))),
+            POSTGRES,
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -840,11 +846,9 @@ def test_a_generated_key_milestone_insert_binds_managed_infinity_outside_typed_s
             shape.transaction_time.end_attribute: OPEN_BOUND,
         }
     )
-    step = PlannedInsert(
-        entity=entity.identity, entries=(InsertEntry(row=row, origin=NEW_LINEAGE),)
-    )
+    step = PlannedInsert(entity=entity.identity, entries=(WriteRow(row=row, origin=NEW_LINEAGE),))
 
-    statement = compile_write_step(step, model, POSTGRES)
+    statement = lowered(step, LayoutPayloadPreparer(model), model, POSTGRES)
 
     assert statement.sql == (
         "insert into ledger(id, amount, in_z, out_z) "

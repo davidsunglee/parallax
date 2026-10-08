@@ -52,7 +52,6 @@ from parallax.core.write_plan.steps import (
     UNVERSIONED,
     AffectedRows,
     ExactCount,
-    InsertEntry,
     KeyTarget,
     MilestoneTarget,
     NonTemporalConcurrency,
@@ -69,6 +68,7 @@ from parallax.core.write_plan.steps import (
     ValidatedMutationSelection,
     Versioned,
     VersionGate,
+    WriteRow,
 )
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 from tests.unit._corpus_model_support import model as corpus_model
@@ -208,7 +208,7 @@ def test_a_guard_matches_its_one_milestone_or_conflicts(
 def _insert() -> PlannedInsert:
     return PlannedInsert(
         entity=_ACCOUNT,
-        entries=(InsertEntry(row=PlannedRow(attributes={_ID: 1}), origin=NEW_LINEAGE),),
+        entries=(WriteRow(row=PlannedRow(attributes={_ID: 1}), origin=NEW_LINEAGE),),
     )
 
 
@@ -267,7 +267,7 @@ def _allocating(key: object = RETURNED_MAX_PLUS_ONE) -> PlannedInsert:
     return PlannedInsert(
         entity=_ACCOUNT,
         entries=(
-            InsertEntry(row=PlannedRow(attributes={_ID: key, _OWNER: "Ada"}), origin=NEW_LINEAGE),
+            WriteRow(row=PlannedRow(attributes={_ID: key, _OWNER: "Ada"}), origin=NEW_LINEAGE),
         ),
     )
 
@@ -310,7 +310,7 @@ def test_a_key_answered_twice_is_a_result_invariant_failure() -> None:
     two = PlannedInsert(
         entity=_ACCOUNT,
         entries=tuple(
-            InsertEntry(row=PlannedRow(attributes={_ID: RETURNED_MAX_PLUS_ONE}), origin=NEW_LINEAGE)
+            WriteRow(row=PlannedRow(attributes={_ID: RETURNED_MAX_PLUS_ONE}), origin=NEW_LINEAGE)
             for _ in range(2)
         ),
     )

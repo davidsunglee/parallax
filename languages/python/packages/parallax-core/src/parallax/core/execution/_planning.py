@@ -12,6 +12,7 @@ from parallax.core.execution._keyed_sql import collapse_group_key
 from parallax.core.execution._publication import ModelSelection, check_edition, select_model
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.unit_work import NO_AUDIT, WritePlanner
+from parallax.core.write_payload import LayoutPayloadPreparer
 
 __all__ = ["build_write_planner", "prepare_model"]
 
@@ -58,15 +59,18 @@ class _BatchingAdapter:
 
 
 def build_write_planner(model: Metamodel) -> WritePlanner:
-    """One ``WritePlanner`` for ``model``, wired with production strategies.
+    """One ``WritePlanner`` for ``model``, wired with production strategies and
+    the model's write payload preparer, which every flush it plans is lowered
+    through.
 
     Called once per prepared model selection (:func:`prepare_model`) and
     identically by the conformance engine's compile lane, so the two lanes plan
-    through the same deterministic computation.
+    and prepare through the same deterministic computation.
     """
     return WritePlanner(
         model,
         batching=_BatchingAdapter(),
         concurrency=CONCURRENCY,
         audit=NO_AUDIT,
+        payloads=LayoutPayloadPreparer(model),
     )

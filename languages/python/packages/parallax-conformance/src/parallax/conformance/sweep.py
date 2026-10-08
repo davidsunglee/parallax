@@ -38,6 +38,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-api-conformance",
         "m-unit-work",
         "m-write-plan",
+        "m-write-payload",
         "m-temporal-write",
         "m-navigate",
         "m-deep-fetch",

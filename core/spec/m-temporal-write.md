@@ -254,8 +254,9 @@ every current-on-Transaction-Time rectangle of the object that overlaps it:
 
 - each overlapping rectangle is inactivated once, and its nonempty pieces are
   opened in Valid-Time order: a part outside the extent carries the
-  rectangle's own values, and a part inside carries the assigned members over
-  the rectangle's own unassigned values — or is not opened, for termination;
+  rectangle's own values, and a part inside executes every assigned member over
+  the rectangle's own unassigned values, an assigned value equal to the stored
+  one included — or is not opened, for termination;
 - a gap in coverage stays a gap: nothing is opened where no current rectangle
   exists, and the write continues to the coverage beyond it;
 - a rectangle outside the extent is untouched, and adjacent pieces are never
@@ -550,9 +551,12 @@ opened*): no axis end is moved to make a successor match, nor is a successor
 matched against any predecessor but its own. A milestone that existed before the
 attempt is never revised in place or removed, so its history stays immutable,
 and a revised or reopened row keeps the attempt's Transaction Instant as its
-Transaction-Time start. Closing, revising, or removing a predecessor changes its
-observed state; a kept address a revision would assign nothing leaves it as it
-was.
+Transaction-Time start. A revision assigns every executed assignment of the
+successor it realizes (`m-write-plan` *Write Rows*), whatever value the row
+already holds there, plus a moved Valid-Time start; it never assigns the key, an
+axis end, or the Transaction-Time start. Closing, revising, or removing a
+predecessor changes its observed state; a kept address whose successor executes
+nothing and keeps its start leaves it as it was.
 
 ### An overlapped observation is retired, not transformed
 

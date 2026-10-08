@@ -12,7 +12,7 @@ from parallax.core import document_codec
 from parallax.core.base import INT32
 from parallax.core.document_codec import Leaf, MemberShape, Occurrence, _document
 from parallax.core.metamodel import Multiplicity
-from parallax.core.sql_gen import _write as sql_write
+from parallax.core.write_payload import _preparer as payload_preparer
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.memory_instruments import (
@@ -38,9 +38,9 @@ def test_observer_counts_nested_calls() -> None:
     assert observation.calls == {"outer": 1, "inner": 2}
 
 
-def test_the_observed_functions_are_the_managed_encoders_lowering_calls() -> None:
+def test_the_observed_functions_are_the_managed_encoders_payload_preparation_calls() -> None:
     assert tuple(OBSERVED_FUNCTIONS) == write_lowering_overhead.CALL_NAMES
-    lowering = vars(sql_write)
+    lowering = vars(payload_preparer)
     assert (
         OBSERVED_FUNCTIONS["encodeManagedDocument"]
         is _document.encode_managed_document
@@ -50,6 +50,11 @@ def test_the_observed_functions_are_the_managed_encoders_lowering_calls() -> Non
         OBSERVED_FUNCTIONS["encodeManagedMany"]
         is _document.encode_managed_many
         is lowering["encode_managed_many"]
+    )
+    assert (
+        OBSERVED_FUNCTIONS["applyPatches"]
+        is document_codec.apply_prepared_patches
+        is lowering["apply_prepared_patches"]
     )
     assert not {"encodeDocument", "encodeMany"} & set(OBSERVED_FUNCTIONS)
     assert "encode_managed_document" not in document_codec.__all__

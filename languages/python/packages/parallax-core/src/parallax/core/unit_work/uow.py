@@ -1605,7 +1605,7 @@ class UnitOfWork:
     def _bind_deferred(self, description: DeferredRange, /) -> BoundRange:
         """Bind a deferred range of the running flush under this attempt's
         current ownership and continuity proofs — those every earlier unit
-        published — and its configured provenance decoration."""
+        published — and its configured audit."""
         return bind_deferred_range(
             description,
             acquire_rows=self.acquire_rows,
@@ -1774,7 +1774,7 @@ def bind_deferred_range(
     """``description`` read and bound: its coverage read through
     ``acquire_rows`` and sealed as Predecessor Rows while the read's resources
     are live, then bound by the ``planner`` that finalized it under
-    ``ownership``, its steps decorated with the configured provenance.
+    ``ownership``, each row it produces and close it emits audited once.
 
     The one interpreter of a deferred description: a description ``planner``
     did not finalize is refused before anything is read.

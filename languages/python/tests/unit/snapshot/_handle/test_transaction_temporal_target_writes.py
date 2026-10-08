@@ -23,6 +23,7 @@ import pytest
 from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     OptimisticLockConflictError,
@@ -34,8 +35,11 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.ranges import DeferredTemporalRange
 from parallax.core.unit_work.write_planner import WritePlanner
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRows
+from parallax.core.write_plan.payload import AssignmentPayload
 from parallax.core.write_plan.plan import BoundRange
+from parallax.core.write_plan.steps import PlannedAssignments
 from parallax.snapshot import ScopedDatabase, Transaction
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -1138,10 +1142,15 @@ def test_a_transaction_time_target_after_a_barrier_revises_the_row_the_first_ope
     assert revision.sql.startswith("update balance set acct_num = %s where bal_id = %s")
 
 
-def test_a_transaction_time_target_restating_the_row_the_first_opened_writes_nothing() -> None:
+def test_a_transaction_time_target_restating_the_row_the_first_opened_revises_it() -> None:
+    # The restated value equals the one the opened row holds, but a target's
+    # assignment is executed rather than compared away, so the row the first
+    # write opened is revised in place with it.
     owned = {**balance_row(in_z=FIXED), "val": Decimal("150.00")}
     port = ScriptedAdapter(
-        Transact(Read(rows=[balance_row(in_z=_T0)]), Write(times=2), Write(), Read(rows=[owned]))
+        Transact(
+            Read(rows=[balance_row(in_z=_T0)]), Write(times=2), Write(), Read(rows=[owned]), Write()
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -1150,5 +1159,35 @@ def test_a_transaction_time_target_restating_the_row_the_first_opened_writes_not
         tx.wire.update("Balance", {"id": 1, "acctNum": owned["acct_num"]}, if_tx_start=_T0)
 
     db_for(DomainModel(mm.Balance, WhereTag), port).transact(fn)
-    assert _sql_kinds(port) == ["read", "close", "insert", "barrier", "read"]
+    assert _sql_kinds(port) == ["read", "close", "insert", "barrier", "read", "revise"]
     assert isinstance(port.calls[-1], CommitCall)
+
+
+def test_a_deferred_unit_completes_before_a_later_statement_is_prepared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Execution drives each unit to completion before it lowers the next
+    # statement, so the target's coverage read and its own statements precede
+    # even preparing the barrier's payload: a later step's lowering can never
+    # overtake an earlier deferred unit.
+    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_T0)]), Write(times=2), Write()))
+    prepared: list[tuple[str, list[str]]] = []
+    assignments = LayoutPayloadPreparer.assignments
+
+    def recording(
+        self: LayoutPayloadPreparer, entity: EntityIdentity, planned: PlannedAssignments
+    ) -> AssignmentPayload:
+        prepared.append((entity.name, _sql_kinds(port)))
+        return assignments(self, entity, planned)
+
+    monkeypatch.setattr(LayoutPayloadPreparer, "assignments", recording)
+
+    def fn(tx: Transaction) -> None:
+        tx.wire.update("Balance", {"id": 1, "value": "150.00"}, if_tx_start=_T0)
+        _barrier(tx)
+
+    db_for(DomainModel(mm.Balance, WhereTag), port).transact(fn)
+    assert prepared == [
+        ("Balance", ["read"]),
+        ("WhereTag", ["read", "close", "insert"]),
+    ]

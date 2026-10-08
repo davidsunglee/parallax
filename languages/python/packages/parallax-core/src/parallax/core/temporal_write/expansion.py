@@ -4,18 +4,16 @@ import bisect
 import datetime as dt
 import functools
 from array import array
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
 from enum import Enum
 from types import MappingProxyType
-from typing import Final, Literal
+from typing import Final, Literal, Protocol, cast
 
 from parallax.core.base import INFINITY, TemporalBound
-from parallax.core.document_codec import PreparedEffectiveChange, prepare_effective_change
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import (
     AttributeIdentity,
-    AttributeMetadata,
     EntityMetadata,
     ValueObjectIdentity,
 )
@@ -34,7 +32,7 @@ from parallax.core.temporal_write.coverage import (
 )
 from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, TemporalStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
-from parallax.core.write_plan.observe import PredecessorRow, carries_cell
+from parallax.core.write_plan.observe import PredecessorRow
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
@@ -47,7 +45,6 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.planned_rows import (
     PreparedAssignment,
     WritePlanningError,
-    assigned_name,
     resolve_row,
     resolved_assignments,
 )
@@ -61,8 +58,8 @@ from parallax.core.write_plan.steps import (
     ChangedFrom,
     CloseCause,
     ExactCount,
+    ExecutedMembers,
     Finite,
-    InsertEntry,
     MaxPlusOne,
     MilestoneTarget,
     PlannedAssignments,
@@ -78,8 +75,10 @@ from parallax.core.write_plan.steps import (
     TemporalGate,
     TemporalUpperBound,
     Ungated,
+    WriteRow,
     adopt_planned_assignments,
     adopt_planned_row,
+    assignments_added,
     shortfall_for,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_UPPER_BOUND
@@ -89,6 +88,7 @@ __all__ = [
     "PredecessorExpander",
     "PredecessorExpansion",
     "PredecessorUse",
+    "RowAudit",
     "SettledGroup",
     "TemporalFacts",
     "bitemporal_ends",
@@ -106,6 +106,22 @@ earlier observation it only validates and retires."""
 type _ResolvedState = tuple[
     dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]
 ]
+
+
+class RowAudit(Protocol):
+    """How a temporal unit's audit finalizes each row it produces and stamps
+    each close it emits, already bound to the attempt's actor and instant.
+
+    ``neutral`` says every row and close passes through unchanged, so compact
+    backing need build none merely to ask.
+    """
+
+    @property
+    def neutral(self) -> bool: ...
+
+    def finalize_row(self, write_row: WriteRow, /) -> WriteRow: ...
+
+    def decorate_close(self, close: PlannedClose, /) -> PlannedClose: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,13 +163,17 @@ class PredecessorExpander:
     ``addressed`` holds the windows a range's callers addressed, ``gated`` and
     ``guards`` whether its closes gate and whether the database can prove an
     unchanged milestone by a guard, and ``derives`` whether a later unit of the
-    flush relies on what it derives. Each canonical assignment mapping is
-    resolved once per expansion, however many successors and gaps share it.
-    Nothing returned retains the expansion or the ownership it read.
+    flush relies on what it derives. ``audit`` finalizes each row the unit
+    produces, carried or changed, once, and stamps each close it emits. Each
+    canonical assignment mapping is resolved once per expansion, however many
+    successors and gaps share it, and every changed successor it reaches executes
+    that one shared assignment set. Nothing returned retains the expansion or the
+    ownership it read.
     """
 
     __slots__ = (
         "_addressed",
+        "_audit",
         "_derives",
         "_facts",
         "_gated",
@@ -177,6 +197,7 @@ class PredecessorExpander:
         addressed: tuple[TimeInterval | None, ...] = (),
         derives: bool = False,
         ownership: TemporalWriteOwnership,
+        audit: RowAudit,
     ) -> None:
         self._facts = facts
         self._transform = transform
@@ -187,7 +208,10 @@ class PredecessorExpander:
         self._addressed = addressed
         self._derives = derives
         self._ownership = ownership
-        self._resolved: tuple[tuple[Mapping[str, object], _ResolvedState], ...] = ()
+        self._audit = audit
+        self._resolved: tuple[
+            tuple[Mapping[str, object], _ResolvedState, ExecutedMembers], ...
+        ] = ()
 
     def expand(
         self,
@@ -209,6 +233,9 @@ class PredecessorExpander:
         removed instead (:meth:`_disposed`). A ``starting`` predecessor's gated
         close fails as its caller's precondition. A ``validation`` predecessor
         is retired as Terminated through the same disposal, opening nothing.
+        Only an emitted close is stamped by the unit's audit; a guard proving a
+        kept milestone and the close a removal or revision addresses like are
+        not.
         """
         if role == "validation":
             closing = self.closing(predecessor, coverage, TERMINATED)
@@ -258,13 +285,21 @@ class PredecessorExpander:
         """``assigned`` under its resolved member identities, resolved once per
         expansion. The answer is shared, so a caller opening a row from it
         copies what it stamps."""
-        for mapping, maps in self._resolved:
+        return self._resolution(assigned)[0]
+
+    def finalized(self, write_row: WriteRow) -> WriteRow:
+        """``write_row`` as the unit's audit finalizes it, once."""
+        return self._audit.finalize_row(write_row)
+
+    def _resolution(self, assigned: Mapping[str, object]) -> tuple[_ResolvedState, ExecutedMembers]:
+        for mapping, maps, executed in self._resolved:
             if mapping is assigned:
-                return maps
+                return maps, executed
         facts = self._facts
         maps = resolve_row(facts.entity, facts.view, assigned, context="insert")
-        self._resolved += ((assigned, maps),)
-        return maps
+        executed = _in_member_order(facts, (*maps[0], *maps[1]))
+        self._resolved += ((assigned, maps, executed),)
+        return maps, executed
 
     def settle_group(
         self, evidence: PredecessorRows, assignments: Sequence[PreparedAssignment]
@@ -273,33 +308,28 @@ class PredecessorExpander:
         predecessor of this expansion's one-segment transform, settled into
         the immutable backing its steps and effects are read from.
 
-        ``assignments`` are the group's own, resolved here once for every row;
-        a marker no opened row can express is refused before anything is
+        ``assignments`` are the group's own, resolved here once for every row
+        into the one executed assignment set every changed successor shares; a
+        marker no opened row can express is refused before anything is
         settled. Selection already eliminated every row the assignments leave
-        unchanged, so no row is judged unchanged again. Each row's disposition
-        follows the same rules :meth:`expand` applies — reach, close, revision
-        or removal of a row the attempt opened, and the nonempty successors —
-        decided from the row's own cells without building any of its steps.
-        An unowned Transaction-Time-Only group reads no row at all: every row
-        takes the one disposition its mutation decides.
+        unchanged, so no row is judged unchanged again, and a surviving row
+        executes every assignment, those restoring a stored value included,
+        exactly as a keyed write does. Each row's disposition follows the same
+        rules :meth:`expand` applies — reach, close, revision or removal of a
+        row the attempt opened, and the nonempty successors — decided from the
+        row's own cells without building any of its steps. An unowned
+        Transaction-Time-Only group reads no row at all: every row takes the one
+        disposition its mutation decides.
 
-        With two or more assignments a selected row may still restore some of
-        them, so the codec's effective-change comparison is prepared once here
-        and a changed successor overlays only the members it answers as
-        effective for that row (`m-unit-work` "Comparing an assigned member").
+        A non-neutral audit finalizes every produced row and stamps every
+        emitted close here, once, and the backing keeps only what it added
+        (:attr:`SettledGroup.audited`), so enumerating the group's steps never
+        audits again.
         """
         facts = self._facts
         attributes, value_objects = resolved_assignments(facts.entity, assignments, "insert")
+        executed = _in_member_order(facts, (*attributes, *value_objects))
         selection = evidence.selection
-        change = (
-            prepare_effective_change(
-                selection.shape,
-                {assigned_name(assignment): assignment.value for assignment in assignments},
-                absent=evidence.absent,
-            )
-            if len(assignments) >= 2
-            else None
-        )
         shape = facts.shape
         transform = self._transform
         valid_positions = (
@@ -317,12 +347,9 @@ class PredecessorExpander:
             owning=self._ownership.owns_any(facts.entity.identity),
             key_position=evidence.key_position,
             valid_positions=valid_positions,
-            absent=evidence.absent,
-            attributes=attributes,
-            value_objects=value_objects,
-            change=change,
+            executed=executed,
         ).settle(evidence)
-        return SettledGroup(
+        group = SettledGroup(
             facts=facts,
             transform=transform,
             key_attributes=self._key_attributes,
@@ -334,12 +361,16 @@ class PredecessorExpander:
             valid_positions=valid_positions,
             assigned_attributes=MappingProxyType(attributes),
             assigned_value_objects=MappingProxyType(value_objects),
-            change=change,
+            executed=executed,
             uniform=uniform,
             dispositions=dispositions,
             offsets=offsets,
             length=length,
         )
+        audit = self._audit
+        if audit.neutral:
+            return group
+        return group.audited_by(audit, evidence)
 
     def _kept_unchanged(
         self,
@@ -380,6 +411,12 @@ class PredecessorExpander:
         )
 
     def _successor(self, predecessor: PredecessorRow, successor: Successor) -> PlannedInsert:
+        return PlannedInsert(
+            entity=self._facts.entity.identity, entries=(self._candidate(predecessor, successor),)
+        )
+
+    def _candidate(self, predecessor: PredecessorRow, successor: Successor) -> WriteRow:
+        """``successor`` of ``predecessor`` as the finalized row it produces."""
         coverage = successor.valid_time_coverage
         if coverage is None:
             start = end = None
@@ -387,9 +424,13 @@ class PredecessorExpander:
             start, end = coverage.start, coverage.end
         assigned = successor.assigned
         if assigned is None:
-            return _successor_insert(self._facts, predecessor, start, end)
-        attributes, value_objects = self.assignments(assigned)
-        return _successor_insert(self._facts, predecessor, start, end, attributes, value_objects)
+            row = _successor_row(self._facts, predecessor, start, end)
+        else:
+            maps, executed = self._resolution(assigned)
+            row = _successor_row(
+                self._facts, predecessor, start, end, assigned=maps, executed=executed
+            )
+        return self._audit.finalize_row(row)
 
     def _disposed(
         self,
@@ -420,7 +461,7 @@ class PredecessorExpander:
         if not owned:
             inserts = self._opened(predecessor, successors)
             return PredecessorExpansion(
-                steps=(closing, *inserts),
+                steps=(self._audit.decorate_close(closing), *inserts),
                 changed=changed,
                 opened=Openings(fresh=openings(facts, inserts)),
                 derived=derived,
@@ -444,17 +485,13 @@ class PredecessorExpander:
         keeping = successors[kept]
         inserts = self._opened(predecessor, (*successors[:kept], *successors[kept + 1 :]))
         extent = keeping.valid_time_coverage
-        assigned = keeping.assigned
+        kept_row = self._candidate(predecessor, keeping)
         if not _revises(
-            facts,
             moved=extent is not None and coverage is not None and extent.start != coverage.start,
-            assigned=None if assigned is None else self.assignments(assigned),
-            carries=predecessor.carries,
+            executed=kept_row.executed,
         ):
             return _owned(inserts, openings(facts, inserts), continues, (), derived)
-        assignments = _revision_assignments(
-            facts, self._successor(predecessor, keeping).entries[0], predecessor
-        )
+        assignments = _revision_assignments(facts, kept_row, predecessor)
         revision = PlannedTemporalRevision(
             entity=closing.entity,
             target=closing.target,
@@ -600,6 +637,13 @@ class SettledGroup:
     its place and is skipped by the lookup. Nothing here is a producer or the
     attempt's live ownership: what each row's disposition reads was decided
     when the group settled.
+
+    ``assigned_attributes`` and ``assigned_value_objects`` are the group's one
+    assignment set, which every changed successor executes whole and states as
+    ``executed``. ``audited`` holds, by row and step slot, only
+    what a non-neutral audit added to that step's row or close when the group
+    settled; a step it added nothing to, and every step under the neutral one,
+    holds nothing.
     """
 
     facts: TemporalFacts
@@ -611,11 +655,12 @@ class SettledGroup:
     valid_positions: tuple[int, int] | None
     assigned_attributes: Mapping[AttributeIdentity, PlannedValue]
     assigned_value_objects: Mapping[ValueObjectIdentity, object]
-    change: PreparedEffectiveChange | None
+    executed: ExecutedMembers
     uniform: int
     dispositions: array[int] | None
     offsets: array[int] | None
     length: int
+    audited: Mapping[tuple[int, int], PlannedAssignments] = MappingProxyType({})
 
     def __len__(self) -> int:
         return self.length
@@ -653,9 +698,42 @@ class SettledGroup:
         """The step at ``slot`` of ``row`` (:meth:`locate`), built from the
         row's member ``values`` and the ``predecessor`` its use asks for."""
         if slot == _ROW_EFFECT:
-            return self._effect(self._code(row), values, predecessor)
+            return self._effect(row, self._code(row), values, predecessor)
         assert predecessor is not None  # every successor reads its predecessor
-        return self._successor(slot, values, predecessor)
+        return PlannedInsert(
+            entity=self.facts.entity.identity,
+            entries=(self._candidate(row, slot, values, predecessor),),
+        )
+
+    def audited_by(self, audit: RowAudit, evidence: PredecessorRows) -> SettledGroup:
+        """This group with what ``audit`` adds to each row it produces and each
+        close it emits, finalized once per step now rather than when a step is
+        built."""
+        added: dict[tuple[int, int], PlannedAssignments] = {}
+        for row, values in enumerate(evidence.rows):
+            code = self._code(row)
+            if code & _UNREACHED:
+                continue
+            disposal = code & _DISPOSAL
+            if disposal == _CLOSE:
+                close = cast("PlannedClose", self._effect(row, code, values, None))
+                stamped = assignments_added(
+                    close.assignments, audit.decorate_close(close).assignments
+                )
+                if stamped is not None:
+                    added[row, _ROW_EFFECT] = stamped
+            positions = _positions(_opened(code))
+            if disposal == _REVISE:
+                positions = (*positions, _kept_position(code))
+            if not positions:
+                continue
+            predecessor = PredecessorRow.over_row(evidence.selection, values, None, evidence.absent)
+            for position in positions:
+                candidate = self._candidate(row, position, values, predecessor)
+                stamped = _finalized_additions(candidate, audit.finalize_row(candidate))
+                if stamped is not None:
+                    added[row, position] = stamped
+        return replace(self, audited=MappingProxyType(added)) if added else self
 
     def effects(self, evidence: PredecessorRows) -> UnitEffects:
         """What every row's success publishes, as views over ``evidence`` and
@@ -714,7 +792,11 @@ class SettledGroup:
         return self.uniform if dispositions is None else dispositions[row]
 
     def _effect(
-        self, code: int, values: tuple[object, ...], predecessor: PredecessorRow | None
+        self,
+        row: int,
+        code: int,
+        values: tuple[object, ...],
+        predecessor: PredecessorRow | None,
     ) -> PlannedWrite:
         facts = self.facts
         gate_position = self.gate_position
@@ -735,7 +817,16 @@ class SettledGroup:
         )
         disposal = code & _DISPOSAL
         if disposal == _CLOSE:
-            return closing
+            stamped = self.audited.get((row, _ROW_EFFECT))
+            if stamped is None:
+                return closing
+            return replace(
+                closing,
+                assignments=adopt_planned_assignments(
+                    {**closing.assignments.attributes, **stamped.attributes},
+                    {**closing.assignments.value_objects, **stamped.value_objects},
+                ),
+            )
         if disposal == _REMOVE:
             return PlannedTemporalRemoval(
                 entity=closing.entity,
@@ -744,8 +835,8 @@ class SettledGroup:
                 affected_rows=closing.affected_rows,
             )
         assert predecessor is not None  # a revision reads its predecessor's cells
-        piece = self._successor(_kept_position(code), values, predecessor)
-        assignments = _revision_assignments(facts, piece.entries[0], predecessor)
+        kept = self._candidate(row, _kept_position(code), values, predecessor)
+        assignments = _revision_assignments(facts, kept, predecessor)
         return PlannedTemporalRevision(
             entity=closing.entity,
             target=closing.target,
@@ -754,22 +845,25 @@ class SettledGroup:
             affected_rows=closing.affected_rows,
         )
 
-    def _successor(
-        self, position: int, values: tuple[object, ...], predecessor: PredecessorRow
-    ) -> PlannedInsert:
+    def _candidate(
+        self, row: int, position: int, values: tuple[object, ...], predecessor: PredecessorRow
+    ) -> WriteRow:
+        """The finalized row ``row``'s successor at ``position`` stores."""
         start, end = self._extent(position, values)
-        if position != WITHIN:
-            return _successor_insert(self.facts, predecessor, start, end)
-        change = self.change
-        return _successor_insert(
-            self.facts,
-            predecessor,
-            start,
-            end,
-            self.assigned_attributes,
-            self.assigned_value_objects,
-            effective=None if change is None else change.effective_positions(values),
+        candidate = (
+            _successor_row(
+                self.facts,
+                predecessor,
+                start,
+                end,
+                assigned=(self.assigned_attributes, self.assigned_value_objects),
+                executed=self.executed,
+            )
+            if position == WITHIN
+            else _successor_row(self.facts, predecessor, start, end)
         )
+        stamped = self.audited.get((row, position))
+        return candidate if stamped is None else _stamped(self.facts, candidate, stamped)
 
     def _extent(self, position: int, values: tuple[object, ...]) -> tuple[object, object]:
         valid = self.valid_positions
@@ -834,10 +928,7 @@ class _RowDisposal:
     owning: bool
     key_position: int
     valid_positions: tuple[int, int] | None
-    absent: object
-    attributes: Mapping[AttributeIdentity, PlannedValue]
-    value_objects: Mapping[ValueObjectIdentity, object]
-    change: PreparedEffectiveChange | None
+    executed: ExecutedMembers
 
     def settle(
         self, evidence: PredecessorRows
@@ -900,45 +991,12 @@ class _RowDisposal:
             return code | _REMOVE
         kept = opened[kept_at]
         revises = _revises(
-            facts,
             moved=valid is not None and transform.successor_extent(kept, start, end)[0] != start,
-            # Only the changed successor overlays anything; a carried one is
+            # Only the changed successor executes anything; a carried one is
             # the row's own cells.
-            assigned=(self.attributes, self.value_objects) if kept == WITHIN else None,
-            carries=functools.partial(
-                carries_cell, facts.view.member_selection, values, self.absent
-            ),
-            change=self.change,
-            values=values,
+            executed=self.executed if kept == WITHIN else (),
         )
         return code | (_REVISE if revises else _KEEP) | kept << _KEPT_SHIFT
-
-
-def _overlaid(
-    facts: TemporalFacts,
-    attributes: Mapping[AttributeIdentity, PlannedValue],
-    value_objects: Mapping[ValueObjectIdentity, object],
-    effective: Iterable[int] | None,
-) -> Iterator[tuple[AttributeIdentity | ValueObjectIdentity, object]]:
-    """Each member a changed successor overlays on its predecessor's own cells
-    (:func:`_successor_insert`) that a revision of the predecessor could
-    assign: none of the address or the temporal bounds stamping writes."""
-    stamped = _addressed(facts)
-    if isinstance(facts.shape, Bitemporal):
-        stamped = stamped | {facts.shape.valid_time.start_attribute}
-    if effective is None:
-        for attribute, value in attributes.items():
-            if attribute not in stamped:
-                yield attribute, value
-        yield from value_objects.items()
-        return
-    bindings = facts.view.member_selection.bindings
-    for position in effective:
-        binding = bindings[position]
-        if not isinstance(binding, AttributeMetadata):
-            yield binding.identity, value_objects[binding.identity]
-        elif binding.identity not in stamped:
-            yield binding.identity, attributes[binding.identity]
 
 
 def _require_valid_time(facts: TemporalFacts, start: object, end: object) -> None:
@@ -1012,46 +1070,84 @@ def _preserved(
     return PredecessorExpansion(steps=(guard,))
 
 
-def _successor_insert(
+def _successor_row(
     facts: TemporalFacts,
     predecessor: PredecessorRow,
     valid_start: object,
     valid_end: object,
-    assigned_attributes: Mapping[AttributeIdentity, PlannedValue] | None = None,
-    assigned_value_objects: Mapping[ValueObjectIdentity, object] | None = None,
     *,
-    effective: Iterable[int] | None = None,
-) -> PlannedInsert:
+    assigned: tuple[Mapping[AttributeIdentity, PlannedValue], Mapping[ValueObjectIdentity, object]]
+    | None = None,
+    executed: ExecutedMembers = (),
+) -> WriteRow:
     """One successor of ``predecessor`` over ``[valid_start, valid_end)`` —
-    ignored without Valid Time — as its own Planned Insert.
+    ignored without Valid Time — as the row it represents.
 
-    A successor starts from its predecessor's own cells, so every member it does
-    not change is the predecessor's cell object — the identity lowering patches
-    by. Without assignments it is carried (:class:`CarriedFrom`); otherwise it
-    is changed (:class:`ChangedFrom`) and overlays the assigned members at the
-    ``effective`` selection positions, or every assigned member when
-    ``effective`` is absent.
+    A successor starts from its predecessor's own cells. A carried one keeps
+    them all (:class:`CarriedFrom`); a changed one (:class:`ChangedFrom`)
+    overlays every ``assigned`` member, whatever value the predecessor already
+    holds there, and states them as its ``executed`` members.
     """
     attributes, value_objects = predecessor.identity_maps(facts.view.member_selection)
-    if assigned_attributes is None:
+    if assigned is None:
         origin: CarriedFrom | ChangedFrom = CarriedFrom(predecessor=predecessor)
     else:
-        assert assigned_value_objects is not None  # a changed successor assigns both maps
-        if effective is None:
-            attributes.update(assigned_attributes)
-            value_objects.update(assigned_value_objects)
-        else:
-            bindings = facts.view.member_selection.bindings
-            for position in effective:
-                binding = bindings[position]
-                if isinstance(binding, AttributeMetadata):
-                    attributes[binding.identity] = assigned_attributes[binding.identity]
-                else:
-                    value_objects[binding.identity] = assigned_value_objects[binding.identity]
+        attributes.update(assigned[0])
+        value_objects.update(assigned[1])
         origin = ChangedFrom(predecessor=predecessor)
     _stamp(facts, attributes, valid_start, valid_end)
-    entry = InsertEntry(row=adopt_planned_row(attributes, value_objects), origin=origin)
-    return PlannedInsert(entity=facts.entity.identity, entries=(entry,))
+    return WriteRow(
+        row=adopt_planned_row(attributes, value_objects), origin=origin, executed=executed
+    )
+
+
+def _stamped(facts: TemporalFacts, write_row: WriteRow, stamped: PlannedAssignments) -> WriteRow:
+    """``write_row`` with the values an audit added when its group settled,
+    each an executed member of the row."""
+    row = write_row.row
+    return WriteRow(
+        row=adopt_planned_row(
+            {**row.attributes, **stamped.attributes},
+            {**row.value_objects, **stamped.value_objects},
+        ),
+        origin=write_row.origin,
+        executed=_in_member_order(
+            facts,
+            (
+                *write_row.executed,
+                *(member for member in stamped.members if member not in write_row.executed),
+            ),
+        ),
+    )
+
+
+def _in_member_order(
+    facts: TemporalFacts, members: Iterable[AttributeIdentity | ValueObjectIdentity]
+) -> ExecutedMembers:
+    """``members`` in the Entity's member order, so one assignment set selects
+    one sequence however it was authored."""
+    return tuple(sorted(members, key=facts.view.member_selection.index.__getitem__))
+
+
+def _finalized_additions(candidate: WriteRow, finalized: WriteRow) -> PlannedAssignments | None:
+    """The values finalization added to ``candidate`` as executed members, or
+    ``None`` where it added none."""
+    added = [member for member in finalized.executed if member not in candidate.executed]
+    if not added:
+        return None
+    row = finalized.row
+    return adopt_planned_assignments(
+        {
+            member: row.attributes[member]
+            for member in added
+            if isinstance(member, AttributeIdentity)
+        },
+        {
+            member: row.value_objects[member]
+            for member in added
+            if isinstance(member, ValueObjectIdentity)
+        },
+    )
 
 
 def opening(
@@ -1059,7 +1155,7 @@ def opening(
     attributes: dict[AttributeIdentity, PlannedValue],
     value_objects: dict[ValueObjectIdentity, object],
     valid_time_window: TimeInterval | None,
-) -> InsertEntry:
+) -> WriteRow:
     """A new lineage's row: resolved authored ``attributes`` and
     ``value_objects``, which it adopts, over ``valid_time_window`` — ``None``
     without Valid Time — stamped as every opened row is."""
@@ -1067,7 +1163,7 @@ def opening(
         _stamp(facts, attributes, None, None)
     else:
         _stamp(facts, attributes, valid_time_window.start, valid_time_window.end)
-    return InsertEntry(row=adopt_planned_row(attributes, value_objects), origin=NEW_LINEAGE)
+    return WriteRow(row=adopt_planned_row(attributes, value_objects), origin=NEW_LINEAGE)
 
 
 def _stamp(
@@ -1125,66 +1221,39 @@ def _valid_end(coverage: TimeInterval | None) -> object:
     return None if coverage is None else coverage.end
 
 
-def _revises(
-    facts: TemporalFacts,
-    *,
-    moved: bool,
-    assigned: tuple[Mapping[AttributeIdentity, PlannedValue], Mapping[ValueObjectIdentity, object]]
-    | None,
-    carries: Callable[[AttributeIdentity | ValueObjectIdentity, object], bool],
-    change: PreparedEffectiveChange | None = None,
-    values: tuple[object, ...] = (),
-) -> bool:
+def _revises(*, moved: bool, executed: ExecutedMembers) -> bool:
     """Whether revising a row the attempt opened in place into the successor
-    keeping its address assigns anything, decided before any payload is built.
-
-    It does where the successor's Valid-Time start ``moved``, or where a member
-    the successor overlays — ``assigned``, a changed successor's resolved
-    assignments, restricted to ``change``'s effective positions over the row's
-    member ``values`` where a comparison was prepared — is not one the row
-    ``carries``. It stops at the first such member;
-    :func:`_revision_assignments` enumerates the payload only for an emitted
-    revision.
-    """
-    if moved:
-        return True
-    # A carried successor ending where its row ends begins later than the row.
-    assert assigned is not None
-    attributes, value_objects = assigned
-    effective = None if change is None else change.effective_positions(values)
-    return any(
-        not carries(member, value)
-        for member, value in _overlaid(facts, attributes, value_objects, effective)
-    )
+    keeping its address assigns anything: it does where the successor's
+    Valid-Time start ``moved``, and wherever the successor executes a member,
+    whatever value the row already holds there."""
+    return moved or bool(executed)
 
 
 def _revision_assignments(
-    facts: TemporalFacts, entry: InsertEntry, predecessor: PredecessorRow
+    facts: TemporalFacts, write_row: WriteRow, predecessor: PredecessorRow
 ) -> PlannedAssignments:
-    """What revising ``predecessor`` in place into ``entry``'s state assigns,
-    once :func:`_revises` decided that it assigns something.
+    """What revising ``predecessor`` in place into ``write_row``'s state
+    assigns, once :func:`_revises` decided that it assigns something.
 
-    Every member ``entry`` does not carry as the predecessor's own cell, plus a
-    moved Valid-Time start. The key, every axis end, and the Transaction-Time
-    start belong to the address the revision preserves.
+    Every member the row executes, plus a moved Valid-Time start. The key, every
+    axis end, and the Transaction-Time start belong to the address the revision
+    preserves.
     """
     shape = facts.shape
     addressed = _addressed(facts)
-    valid_start = shape.valid_time.start_attribute if isinstance(shape, Bitemporal) else None
+    row = write_row.row
     attributes: dict[AttributeIdentity, PlannedValue] = {}
-    for identity, value in entry.row.attributes.items():
-        if identity in addressed:
-            continue
-        if identity == valid_start:
-            if value != predecessor.cell(identity):
-                attributes[identity] = value
-        elif not predecessor.carries(identity, value):
-            attributes[identity] = value
-    value_objects = {
-        identity: value
-        for identity, value in entry.row.value_objects.items()
-        if not predecessor.carries(identity, value)
-    }
+    value_objects: dict[ValueObjectIdentity, object] = {}
+    for member in write_row.executed:
+        if isinstance(member, ValueObjectIdentity):
+            value_objects[member] = row.value_objects[member]
+        elif member not in addressed:
+            attributes[member] = row.attributes[member]
+    if isinstance(shape, Bitemporal):
+        valid_start = shape.valid_time.start_attribute
+        moved_to = row.attributes[valid_start]
+        if moved_to != predecessor.cell(valid_start):
+            attributes[valid_start] = moved_to
     assert attributes or value_objects  # payload construction never reverses the decision
     return adopt_planned_assignments(attributes, value_objects)
 
@@ -1215,7 +1284,7 @@ def openings(facts: TemporalFacts, inserts: Sequence[PlannedInsert]) -> tuple[Ow
     return tuple(endpoints)
 
 
-def entry_endpoint(facts: TemporalFacts, entry: InsertEntry) -> OwnedEndpoint | None:
+def entry_endpoint(facts: TemporalFacts, entry: WriteRow) -> OwnedEndpoint | None:
     attributes = entry.row.attributes
     value = attributes.get(facts.view.primary_key.identity)
     # A key the database allocates is named only once its insert answers it.

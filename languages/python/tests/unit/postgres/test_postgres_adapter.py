@@ -53,7 +53,12 @@ from parallax.core.db_port import (
     isolation_level,
 )
 from parallax.core.dialect import PhysicalIndexName
-from parallax.core.document_codec import Present, SetLeaf, apply_patches
+from parallax.core.document_codec import (
+    Present,
+    SetLeaf,
+    apply_prepared_patches,
+    prepare_patches,
+)
 from parallax.core.metamodel import (
     ValueObjectAttributeDeclaration,
     ValueObjectShapeDeclaration,
@@ -147,7 +152,9 @@ def test_a_patched_successor_binds_its_retained_numbers_with_their_exact_meaning
         key=ValueObjectShapeKey(),
         attributes=(ValueObjectAttributeDeclaration(name="city", type=STRING, nullable=True),),
     ).member_shape
-    successor = apply_patches(shape, stored, [SetLeaf(("city",), Present("Bergen"))])
+    successor = apply_prepared_patches(
+        stored, prepare_patches(shape, [SetLeaf(("city",), Present("Bergen"))])
+    )
     (dumped,) = Transformer(postgres.adapters).dump_sequence(
         adapt_binds([JsonDocument(successor)]), [PyFormat.AUTO]
     )
