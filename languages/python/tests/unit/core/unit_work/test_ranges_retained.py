@@ -71,7 +71,7 @@ def _holding(item: TargetKeyedWrite, state: RetainedTargetState) -> TargetKeyedW
     return dataclasses.replace(item, retained=state)
 
 
-def _unit(
+def _planned(
     *writes: BufferItem, concurrency: str = "locking", follows: bool = False
 ) -> ExecutionUnit:
     buffered = compose_writes(POSITION, list(writes))
@@ -88,6 +88,13 @@ def _unit(
         )
     )
     (unit,) = plan.units
+    return unit
+
+
+def _unit(
+    *writes: BufferItem, concurrency: str = "locking", follows: bool = False
+) -> ExecutionUnit:
+    unit = _planned(*writes, concurrency=concurrency, follows=follows)
     assert isinstance(unit.deferred, DeferredTemporalRange)
     return unit
 
@@ -183,6 +190,17 @@ def test_a_row_two_reads_both_return_is_bound_once() -> None:
     )
     closes = [step for step in bound.steps if isinstance(step, PlannedClose)]
     assert len(closes) == 2
+
+
+def test_overlapping_rows_one_read_returns_beside_a_reused_row_are_each_bound() -> None:
+    # Two current rows sharing a start on both axes are distinct physical rows.
+    ending = rectangle(JUN, SEP, "200.00")
+    unbounded = rectangle(JUN, INFINITY, "300.00")
+    unit = _unit(_holding(addressed_write(value="150.00"), _held(_START)))
+    bound, held = _bind(unit, [_START, ending, unbounded])
+    assert _coverage_windows(held) == [(TimeInterval(JUN, SEP),)]
+    closes = [step for step in bound.steps if isinstance(step, PlannedClose)]
+    assert len(closes) == 3
 
 
 @pytest.mark.parametrize("replaces", [False, True], ids=["amendment", "replacement"])
@@ -296,4 +314,15 @@ def test_without_a_freshness_judge_every_retained_row_is_discarded() -> None:
         transaction_instant=_INSTANT,
     )
     assert _coverage_windows(held) == [(TimeInterval(MAR, SEP),)]
+    assert state.take() is None
+
+
+def test_a_range_bound_at_planning_releases_the_row_it_retained() -> None:
+    whole = rectangle(JAN, INFINITY, "100.00")
+    state = _held(whole)
+    unit = _planned(
+        observed_write("amendUntil", retained(whole), valid_from=MAR, until=APR, value="150.00"),
+        _holding(addressed_write(valid_from=APR, until=MAY, value="175.00"), state),
+    )
+    assert unit.deferred is None
     assert state.take() is None
