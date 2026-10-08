@@ -4,7 +4,7 @@ import decimal
 import json
 import math
 import sys
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from json.encoder import encode_basestring_ascii
 from typing import Final, Self, cast
 
@@ -193,17 +193,23 @@ def _require_host_spelling(members: Iterable[object]) -> None:
 
 
 def _require_host_spelled_members(members: Iterable[object]) -> None:
-    for member in members:
-        kind = type(member)
-        if kind is _AmbiguousAuthoredFloat:
-            if not _host_spelling_keeps_meaning(cast("_AuthoredFloat", member)):
+    pending = [members]
+    while pending:
+        for member in pending.pop():
+            kind = type(member)
+            if kind is _AmbiguousAuthoredFloat:
+                if not _host_spelling_keeps_meaning(cast("_AuthoredFloat", member)):
+                    raise _HostSpellingChangesMeaning
+            elif kind in _OUT_OF_SPACE:
                 raise _HostSpellingChangesMeaning
-        elif kind in _OUT_OF_SPACE:
-            raise _HostSpellingChangesMeaning
-        elif kind is dict:
-            _require_host_spelling(cast("dict[object, object]", member).values())
-        elif kind is list or kind is tuple:
-            _require_host_spelling(cast("Sequence[object]", member))
+            elif kind is dict or kind is list or kind is tuple:
+                nested = (
+                    cast("dict[object, object]", member).values()
+                    if kind is dict
+                    else cast("Sequence[object]", member)
+                )
+                if not _HOST_SPELLED.issuperset(map(type, nested)):
+                    pending.append(nested)
 
 
 def _judged_backing(value: object) -> object:
@@ -217,35 +223,56 @@ def _judged_backing(value: object) -> object:
 
 
 _HOST_ENCODE: Final = json.JSONEncoder(default=_judged_backing).encode
+_CONTAINERS: Final = frozenset({FrozenMap, dict, list, tuple})
 
 
-def _write_exactly(value: object, parts: list[str]) -> None:
-    kind = type(value)
-    if kind is FrozenMap or kind is dict:
-        members = (
-            frozen_map_json_backing(cast("FrozenMap[str, object]", value))
-            if kind is FrozenMap
-            else cast("dict[str, object]", value)
-        )
-        parts.append("{")
+def _write_exactly(document: object) -> str:
+    if type(document) not in _CONTAINERS:
+        return _exact_scalar(document)
+    parts: list[str] = []
+    open_containers: list[tuple[Iterator[object], bool, int]] = []
+    open_identities: set[int] = set()
+    container = document
+    while True:
+        identity = id(container)
+        if identity in open_identities:
+            raise ValueError("Circular reference detected")
+        open_identities.add(identity)
+        kind = type(container)
+        if kind is list or kind is tuple:
+            parts.append("[")
+            open_containers.append((iter(cast("Sequence[object]", container)), False, identity))
+        else:
+            backing = (
+                frozen_map_json_backing(cast("FrozenMap[str, object]", container))
+                if kind is FrozenMap
+                else cast("dict[str, object]", container)
+            )
+            parts.append("{")
+            open_containers.append((iter(backing.items()), True, identity))
         separator = ""
-        for key, member in members.items():
-            parts.append(separator)
-            parts.append(encode_basestring_ascii(key))
-            parts.append(": ")
-            _write_exactly(member, parts)
-            separator = ", "
-        parts.append("}")
-    elif kind is list or kind is tuple:
-        parts.append("[")
-        separator = ""
-        for member in cast("Sequence[object]", value):
-            parts.append(separator)
-            _write_exactly(member, parts)
-            separator = ", "
-        parts.append("]")
-    else:
-        parts.append(_exact_scalar(value))
+        while open_containers:
+            members, is_object, identity = open_containers[-1]
+            for member in members:
+                parts.append(separator)
+                separator = ", "
+                if is_object:
+                    name, member = cast("tuple[str, object]", member)
+                    parts.append(encode_basestring_ascii(name))
+                    parts.append(": ")
+                if type(member) in _CONTAINERS:
+                    container = member
+                    break
+                parts.append(_exact_scalar(member))
+            else:
+                open_containers.pop()
+                open_identities.remove(identity)
+                parts.append("}" if is_object else "]")
+                separator = ", "
+                continue
+            break
+        else:
+            return "".join(parts)
 
 
 def _exact_scalar(value: object) -> str:
@@ -273,9 +300,10 @@ def dump_document(document: object) -> str:
     ``json.dumps`` writes, including its failure for an unsupported value.
     """
     try:
+        # Encoding first lets the encoder reject a cycle before the census walks
+        # mutable containers it does not track; a FrozenMap retains only immutable ones.
+        text = _HOST_ENCODE(document)
         _require_host_spelling((document,))
-        return _HOST_ENCODE(document)
     except _HostSpellingChangesMeaning:
-        parts: list[str] = []
-        _write_exactly(document, parts)
-        return "".join(parts)
+        return _write_exactly(document)
+    return text
