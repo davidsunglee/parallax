@@ -454,6 +454,7 @@ class PendingWrites:
     __slots__ = (
         "_after_removal",
         "_claims",
+        "_ended",
         "_families",
         "_inserts",
         "_items",
@@ -483,6 +484,9 @@ class PendingWrites:
         # the first write it records, since most buffers hold neither.
         self._removals: set[ObjectKey] | None = None
         self._after_removal: set[int] | None = None
+        # Objects whose ended Bitemporal opening still settles the stored
+        # coverage its replacement reached, which a further insert follows.
+        self._ended: set[ObjectKey] | None = None
         # The scope each object's claimed writes stand at, and the scope of each
         # object's pending caller-conditioned write — both allocated by the first
         # such write, since a buffer holding none needs neither.
@@ -795,7 +799,7 @@ class PendingWrites:
             items.append(item)
             index = len(items) - 1
             self._inserts[key] = index
-            if after_removal:
+            if after_removal or (self._ended is not None and key in self._ended):
                 if self._after_removal is None:
                     self._after_removal = set()
                 self._after_removal.add(index)
@@ -836,9 +840,10 @@ class PendingWrites:
         A non-temporal or Transaction-Time-Only opening takes an amendment's
         values in place and is cancelled by any destruction, which removes all
         of it. A Bitemporal opening composes the write over the coverage it
-        opens and is cancelled only once no coverage survives and no composed
-        replacement reached stored coverage past it, which its writes still
-        transform.
+        opens and ends once nothing its writes opened survives. It is then
+        cancelled, unless a composed replacement reached stored coverage past
+        it: the composed destruction still settles there, though the insert no
+        longer stands, so a further insert of the object follows it.
         """
         items = self._items
         index = self._inserts[key]
@@ -852,8 +857,15 @@ class PendingWrites:
                     insert=cast("PreparedKeyedWrite", base), transform=NO_TRANSFORM, intents=()
                 )
             ).then(instruction, _key_name(self._families, target))
-            if opening.survives or opening.beyond is not None:
+            if opening.survives or opening.transform.assigns:
                 items[index] = opening
+                return False
+            if opening.beyond is not None:
+                items[index] = opening
+                del self._inserts[key]
+                if self._ended is None:
+                    self._ended = set()
+                self._ended.add(key)
                 return False
         elif instruction.mutation in ASSIGNMENT_MUTATIONS:
             # No carrier wraps an insert, so a pending-insert slot is always a
@@ -1056,6 +1068,7 @@ class PendingWrites:
         self._temporal.clear()
         self._removals = None
         self._after_removal = None
+        self._ended = None
         self._objects = None
         self._targets = None
         self._regions = None

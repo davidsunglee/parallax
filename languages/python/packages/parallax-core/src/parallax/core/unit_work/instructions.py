@@ -1745,11 +1745,9 @@ def addressed_members(
     a key member that is no value of that type is refused as such, and one
     naming another object is refused before anything is buffered.
     """
-    stated: tuple[str, ...] = ()
-    for name, addressed in address:
-        if name not in document:
-            continue
-        key = _family_position(model, entity).primary_key
+    stated = {name: addressed for name, addressed in address if name in document}
+    key = _family_position(model, entity).primary_key
+    for name, addressed in stated.items():
         value = _decoded_wire(key.type, document[name], f"{entity.identity.canonical}.{name}")
         if value != addressed:
             raise WriteInstructionError(
@@ -1757,10 +1755,7 @@ def addressed_members(
                 "the source this write addresses is another object — a key member addresses "
                 "the write and never changes it"
             )
-        stated = (*stated, name)
-    if not stated:
-        return document
-    return {name: value for name, value in document.items() if name not in stated}
+    return {name: member for name, member in document.items() if name not in stated}
 
 
 def coerce_typed_row(
