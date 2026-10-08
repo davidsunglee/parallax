@@ -1052,7 +1052,8 @@ condition fails before the range writes anything new.
 A rectangle the write leaves unchanged (`m-temporal-write` *Unchanged milestones*) is
 neither inactivated nor reopened. Under Optimistic, where the dialect's write
 count includes unchanged rows (`m-dialect`), its place in that order is taken by
-a guard on its own address, gated on its observed `in_z`:
+a guard on its own address, gated on its observed `in_z` — or, for the rectangle
+holding a caller-addressed write's start, on the caller's stated `ifTxStart`:
 
 | Target | Guard | Binds |
 |---|---|---|
@@ -1068,8 +1069,9 @@ their requested extent*) observed nothing, so its coverage read starts at its ow
 `validFrom`; a Transaction-Time-Only one reads `… where t0.bal_id = ? and t0.out_z
 = ?` with `[pk, infinity]`. Separate operations over disjoint windows pending
 together are one read, from the earliest window's start to the latest's end. The
-rectangles holding callers' starts are inactivated, revised, or removed first,
-in the order the callers stated them, then the others in Valid-Time order. A
+rectangles holding callers' starts are inactivated, revised, removed, or
+guarded first, in the order the callers stated them, then the others in
+Valid-Time order. A
 replacement's openings over the gaps of its extent follow every rectangle's
 successors, in Valid-Time order. A composition an ordering barrier kept after
 earlier writes of its object reads its whole window, from its first window's

@@ -25,19 +25,21 @@ from parallax.core.write_plan import (
     PredecessorRow,
 )
 from parallax.core.write_plan.keys import TemporalStateKey
+from parallax.core.write_plan.observe import AssignedComparison
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
     OwnedEndpoint,
 )
-from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import (
+    FAILED_PRECONDITION,
     OPTIMISTIC_CONFLICT,
     ExactCount,
     Finite,
     PlannedTemporalGuard,
     TemporalGate,
 )
+from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from tests.unit.core.unit_work._ownership_support import OpenedRows
 from tests.unit.core.unit_work._unchanged_milestones_support import (
     APR,
@@ -230,7 +232,7 @@ def test_an_original_whose_start_the_composition_destroys_is_changed() -> None:
     assert step_kinds(plan.steps) == ["PlannedTemporalGuard", "PlannedClose", "PlannedInsert"]
 
 
-def test_a_window_a_caller_addressed_is_revised_however_equal_its_values() -> None:
+def test_a_window_a_caller_addressed_keeps_a_milestone_it_leaves_unchanged() -> None:
     whole = retained_state(SPANS, SPAN, span_row(JAN, INFINITY, 100, "a"))
     target = target_write(
         prepare_wire_write(
@@ -253,12 +255,12 @@ def test_a_window_a_caller_addressed_is_revised_however_equal_its_values() -> No
         ),
         target,
     )
-    assert step_kinds(plan.steps) == [
-        "PlannedClose",
-        "PlannedInsert",
-        "PlannedInsert",
-        "PlannedInsert",
-    ]
+    # The caller's start is the rectangle kept, so its guard binds the stated
+    # start and a shortfall against it is that caller's failed precondition.
+    (guard,) = plan.steps
+    assert isinstance(guard, PlannedTemporalGuard)
+    assert guard.concurrency.observed_start == T0
+    assert guard.affected_rows == ExactCount(expected=1, on_shortfall=FAILED_PRECONDITION)
 
 
 def test_an_owned_original_a_range_leaves_unchanged_is_neither_split_nor_revised() -> None:
@@ -364,8 +366,8 @@ def test_a_member_its_selection_does_not_declare_is_never_held() -> None:
     assert selection is not None
     members = selection.member_selection
     row = balance_row("100.00")
-    assert row.holds(members, {"value": Decimal("100.00")})
-    assert not row.holds(members, {"value": Decimal("100.00"), "undeclared": 1})
+    assert row.holds(AssignedComparison(members, {"value": Decimal("100.00")}))
+    assert not row.holds(AssignedComparison(members, {"value": Decimal("100.00"), "undeclared": 1}))
 
 
 @pytest.mark.parametrize(

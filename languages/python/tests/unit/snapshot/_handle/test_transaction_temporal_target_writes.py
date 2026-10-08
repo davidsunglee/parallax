@@ -4,10 +4,11 @@ verbs (scripted port).
 A temporal target states its key, its Valid-Time window where its family has
 one, and the Transaction-Time start its caller last observed. These tests grade
 what each call puts on the wire and when: nothing at an Optimistic call and the
-coverage read at flush, the Locking acquisition and its reuse, the start guard
-that fails as the caller's precondition while a later row's loss retries, the
-empty patch, bounds validation, the exact-window composition matrix with
-observed writes, and the refusals that leave earlier work executable.
+coverage read at flush, the Locking acquisition and its reuse, the start's gate
+— a guard keeping an unchanged start included — that fails as the caller's
+precondition while a later row's loss retries, the empty patch, bounds
+validation, the exact-window composition matrix with observed writes, and the
+refusals that leave earlier work executable.
 """
 
 from __future__ import annotations
@@ -680,16 +681,52 @@ def test_a_target_after_an_observed_write_of_another_revision_is_refused() -> No
 
 
 # --------------------------------------------------------------------------- #
-# Revision intent, failure precedence, isolation and subtype routing.          #
+# Unchanged milestones, failure precedence, isolation and subtype routing.     #
 # --------------------------------------------------------------------------- #
-def test_an_equal_valued_temporal_patch_still_chains_its_milestone() -> None:
-    port = ScriptedAdapter(
-        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=4))
+def test_an_equal_temporal_patch_keeps_its_milestone_by_a_guard_on_the_stated_start() -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write()))
+    _db(port).transact(lambda tx: _patch(tx, value="100.00"), retry_optimistic_conflicts=True)
+    (guard,) = _writes(port)
+    assert guard.sql.startswith("update where_position set in_z = in_z where id = %s")
+    assert guard.binds[-1] == _T0
+    lost = ScriptedAdapter(
+        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(affected=0))
     )
+    # The guard binds the caller's condition, so losing it is that caller's
+    # failed precondition, never a retry.
+    with raises_contextualized(WritePreconditionError):
+        _db(lost).transact(lambda tx: _patch(tx, value="100.00"), retry_optimistic_conflicts=True)
+    assert len(_writes(lost)) == 1
+
+
+def test_an_equal_valued_temporal_patch_under_locking_writes_nothing() -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)], times=2)))
+    _db(port).transact(lambda tx: _patch(tx, value="100.00"), concurrency="locking")
+    assert len(_reads(port)) == 2
+    assert _writes(port) == []
+
+
+def test_an_equal_valued_temporal_patch_of_a_stale_start_still_fails_its_precondition() -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT, tx_start=_T1)])))
+    with raises_contextualized(WritePreconditionError):
+        _db(port).transact(lambda tx: _patch(tx, value="100.00"))
+    assert _writes(port) == []
+
+
+def test_an_equal_patch_keeps_each_rectangle_it_leaves_and_rewrites_the_others() -> None:
+    later = _rectangle(_JUN, INFINITY_INSTANT, "200.00", tx_start=_T1)
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, _JUN), later]), Write(times=4)))
     _db(port).transact(lambda tx: _patch(tx, value="100.00"))
-    close, *opened = _writes(port)
-    assert close.sql.startswith("update where_position set out_z")
-    assert [call.binds[2] for call in opened] == [Decimal("100.00")] * 3
+    guard, close, *opened = _writes(port)
+    # The start already holds the value over everything the window reaches of
+    # it, so its guard keeps it; the later rectangle changes over its own part.
+    assert guard.sql.startswith("update where_position set in_z = in_z")
+    assert guard.binds[-1] == _T0
+    assert (close.binds[2], close.binds[-1]) == ("infinity", _T1)
+    assert [call.binds[2:5] for call in opened] == [
+        (Decimal("100.00"), _JUN, _SEP),
+        (Decimal("200.00"), _SEP, INFINITY_INSTANT),
+    ]
 
 
 @_STRATEGIES
@@ -1142,15 +1179,12 @@ def test_a_transaction_time_target_after_a_barrier_revises_the_row_the_first_ope
     assert revision.sql.startswith("update balance set acct_num = %s where bal_id = %s")
 
 
-def test_a_transaction_time_target_restating_the_row_the_first_opened_revises_it() -> None:
-    # The restated value equals the one the opened row holds, but a target's
-    # assignment is executed rather than compared away, so the row the first
-    # write opened is revised in place with it.
+def test_a_transaction_time_target_restating_the_row_the_first_opened_keeps_it() -> None:
+    # The restated value equals the one the opened row holds, so the row the
+    # first write opened is left as it is: the attempt's ownership proves it.
     owned = {**balance_row(in_z=FIXED), "val": Decimal("150.00")}
     port = ScriptedAdapter(
-        Transact(
-            Read(rows=[balance_row(in_z=_T0)]), Write(times=2), Write(), Read(rows=[owned]), Write()
-        )
+        Transact(Read(rows=[balance_row(in_z=_T0)]), Write(times=2), Write(), Read(rows=[owned]))
     )
 
     def fn(tx: Transaction) -> None:
@@ -1159,7 +1193,7 @@ def test_a_transaction_time_target_restating_the_row_the_first_opened_revises_it
         tx.wire.update("Balance", {"id": 1, "acctNum": owned["acct_num"]}, if_tx_start=_T0)
 
     db_for(DomainModel(mm.Balance, WhereTag), port).transact(fn)
-    assert _sql_kinds(port) == ["read", "close", "insert", "barrier", "read", "revise"]
+    assert _sql_kinds(port) == ["read", "close", "insert", "barrier", "read"]
     assert isinstance(port.calls[-1], CommitCall)
 
 

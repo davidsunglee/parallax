@@ -5,7 +5,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, cast
 
 from parallax.core.base import retain_document_value
-from parallax.core.document_codec import classify_effective_change, prepare_effective_change
+from parallax.core.document_codec import (
+    PreparedEffectiveChange,
+    classify_effective_change,
+    prepare_effective_change,
+)
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -21,6 +25,7 @@ if TYPE_CHECKING:
     from parallax.core.inheritance import EntityMemberSelection
 
 __all__ = [
+    "AssignedComparison",
     "EntityStateRow",
     "PredecessorRow",
     "TemporalObservation",
@@ -381,18 +386,46 @@ class PredecessorRow:
                 value_objects[binding.identity] = value
         return attributes, value_objects
 
-    def holds(self, selection: EntityMemberSelection, assigned: Mapping[str, object]) -> bool:
-        """Whether every member ``assigned`` names, by declared name, already
-        holds here the value it assigns — the codec's effective-change
+    def holds(self, comparison: AssignedComparison) -> bool:
+        """Whether every member ``comparison`` assigns, by declared name,
+        already holds here the value it assigns — the codec's effective-change
         classification (`m-document-codec`) over those members alone, so no
         other member is read or compared."""
-        shape = selection.shape
-        if any(shape.position(name) is None for name in assigned):
+        if not comparison.declared:
             return False
-        if self._selection is selection:
-            change = prepare_effective_change(shape, assigned, absent=self._absent)
-            return not change.any_effective(self._row)
-        return not classify_effective_change(shape, assigned, self.members).effective
+        if self._selection is comparison.selection:
+            return not comparison.prepared(self._absent).any_effective(self._row)
+        return not classify_effective_change(
+            comparison.selection.shape, comparison.assigned, self.members
+        ).effective
+
+
+class AssignedComparison:
+    """One assignment set's effective-change comparison against the predecessors
+    of one member selection, its assigned values canonicalized once however many
+    predecessors are compared (:meth:`PredecessorRow.holds`).
+
+    ``declared`` is whether ``selection`` declares every member ``assigned``
+    names; a name it does not declare is a value no predecessor holds.
+    """
+
+    __slots__ = ("_prepared", "assigned", "declared", "selection")
+
+    def __init__(self, selection: EntityMemberSelection, assigned: Mapping[str, object]) -> None:
+        self.selection = selection
+        self.assigned = assigned
+        shape = selection.shape
+        self.declared = all(shape.position(name) is not None for name in assigned)
+        self._prepared: tuple[object, PreparedEffectiveChange] | None = None
+
+    def prepared(self, absent: object) -> PreparedEffectiveChange:
+        """The comparison prepared for positional rows marking an absent cell
+        ``absent``."""
+        prepared = self._prepared
+        if prepared is None or prepared[0] is not absent:
+            change = prepare_effective_change(self.selection.shape, self.assigned, absent=absent)
+            self._prepared = prepared = (absent, change)
+        return prepared[1]
 
 
 def _member_name(member: AttributeIdentity | ValueObjectIdentity) -> str:

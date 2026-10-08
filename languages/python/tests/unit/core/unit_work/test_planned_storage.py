@@ -39,6 +39,7 @@ from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.expansion import PredecessorExpander
 from parallax.core.unit_work import (
+    KeyedWrite,
     MaterializedWriteGroup,
     PredicateSelection,
     PredicateWrite,
@@ -963,3 +964,47 @@ def test_settling_or_enumerating_a_group_prepares_no_payload(
     )
     assert len(list(plan.steps)) == 4
     assert plan.steps[3] == list(plan.steps)[3]
+
+
+def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A pending insertion's surviving parts are settled by the one temporal
+    # expansion every range uses, which the plan does not keep, and what they
+    # persist is prepared only when each statement is lowered.
+    def refuse(*_args: object) -> object:
+        raise AssertionError("a payload was prepared before its statement was lowered")
+
+    monkeypatch.setattr(LayoutPayloadPreparer, "row", refuse)
+    monkeypatch.setattr(LayoutPayloadPreparer, "assignments", refuse)
+    writes = [
+        prepare_typed_write(
+            KeyedWrite(
+                "insert",
+                "Position",
+                ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
+                valid_from=_JAN,
+            ),
+            _POSITION,
+        ),
+        prepare_typed_write(
+            KeyedWrite(
+                "updateUntil",
+                "Position",
+                ({"id": 1, "value": Decimal("2.00")},),
+                valid_from=_JAN,
+                until=_MAR,
+            ),
+            _POSITION,
+        ),
+    ]
+    plan = build_write_planner(_POSITION).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=compose_writes(_POSITION, writes),
+        )
+    )
+    assert len(list(plan.steps)) == 2
+    assert not [value for value in _reachable_from_plan(plan) if _is_producer(value)]

@@ -321,6 +321,126 @@ def test_a_bounded_replacement_fills_only_up_to_its_exclusive_end(
     ]
 
 
+# --------------------------------------------------------------------------- #
+# Unchanged milestones: the caller's milestone is authority, not new history.  #
+# --------------------------------------------------------------------------- #
+@_SPAN_AXES
+@_STRATEGIES
+def test_an_equal_patch_keeps_the_rectangle_it_leaves_and_rewrites_the_later_one(
+    profile_run: Any, entity: type[Any], concurrency: _Concurrency
+) -> None:
+    db = _seeded_spans(profile_run, entity, _TA, _TB)
+    db.transact(lambda tx: _span_patch(tx, entity, amount=100), concurrency=concurrency)
+    # The start already holds 100 over everything the window reaches of it, so
+    # it keeps its milestone; equality there suppresses nothing later.
+    assert _span_rows(profile_run, entity) == [
+        (_T0, None, _JAN, _APR, 100, "a", _S1, _M),
+        (_T1, _TA, _JUN, _AUG, 200, "b", _S2, []),
+        (_TA, None, _JUN, _AUG, 100, "b", _S2, []),
+    ]
+    # The caller's milestone still stands, so a later caller stating it succeeds.
+    db.transact(lambda tx: _span_patch(tx, entity, until=_APR, amount=150))
+    assert _span_rows(profile_run, entity)[:2] == [
+        (_T0, _TB, _JAN, _APR, 100, "a", _S1, _M),
+        (_T1, _TA, _JUN, _AUG, 200, "b", _S2, []),
+    ]
+
+
+def _equal_replacement(
+    tx: Transaction, entity: type[Any], representation: _Representation, **bounds: Any
+) -> None:
+    if representation == "typed":
+        tx.replace(
+            entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=(Mark(code="m"),)),
+            **bounds,
+        )
+    else:
+        tx.wire.replace(
+            _name(entity),
+            {"id": 1, "amount": 100, "label": "a", "spec": _S1, "marks": _M},
+            **bounds,
+        )
+
+
+@_SPAN_AXES
+@_STRATEGIES
+@_REPRESENTATIONS
+def test_a_replacement_stating_what_its_rectangle_holds_keeps_it(
+    profile_run: Any,
+    entity: type[Any],
+    concurrency: _Concurrency,
+    representation: _Representation,
+) -> None:
+    db = _seeded_spans(profile_run, entity, _TA)
+    db.transact(
+        lambda tx: _equal_replacement(
+            tx, entity, representation, valid_from=_FEB, until=_APR, if_tx_start=_T0
+        ),
+        concurrency=concurrency,
+    )
+    assert _span_rows(profile_run, entity) == _SEED_CURRENT
+
+
+@_SPAN_AXES
+@_REPRESENTATIONS
+def test_an_equal_replacement_of_a_stale_milestone_still_fails_its_precondition(
+    profile_run: Any, entity: type[Any], representation: _Representation
+) -> None:
+    db = _seeded_spans(profile_run, entity, _TA)
+    with pytest.raises(ExecutionFailure) as failed:
+        db.transact(
+            lambda tx: _equal_replacement(
+                tx, entity, representation, valid_from=_FEB, until=_APR, if_tx_start=_T1
+            ),
+            retry_optimistic_conflicts=True,
+        )
+    assert isinstance(failed.value.cause, WritePreconditionError)
+    assert _span_rows(profile_run, entity) == _SEED_CURRENT
+
+
+@pytest.mark.parametrize(
+    ("label", "kept"), [("a", True), ("z", False)], ids=["unchanged", "changed"]
+)
+def test_an_unchanged_replacement_keeps_stored_content_no_member_declares(
+    profile_run: Any, label: str, kept: bool
+) -> None:
+    db = _seeded_spans(profile_run, DocumentSpan, _TA)
+    control = profile_run.control()
+    try:
+        control.execute_write(
+            "update ttw_document_span set payload = jsonb_set(payload, '{spec,ledger}', '7') "
+            "where from_z = %s",
+            [_JAN],
+        )
+    finally:
+        control.close()
+    db.transact(
+        lambda tx: tx.wire.replace(
+            _name(DocumentSpan),
+            {"id": 1, "amount": 100, "label": label, "spec": _S1, "marks": _M},
+            valid_from=_FEB,
+            until=_APR,
+            if_tx_start=_T0,
+        )
+    )
+    specs = profile_run.port.execute(
+        "select in_z, from_z, payload->'spec' from ttw_document_span "
+        "where out_z = 'infinity' and from_z < %s order by from_z",
+        [_JUN],
+    )
+    if kept:
+        # Every declared value is the one stored, so the milestone stays whole,
+        # its undeclared ledger included.
+        assert [tuple(row) for row in specs] == [(_T0, _JAN, {"title": "s1", "ledger": 7})]
+    else:
+        # A changed rectangle executes every stated member: its carried head
+        # keeps the stored occurrence, the replaced piece states its own.
+        assert [tuple(row) for row in specs] == [
+            (_TA, _JAN, {"title": "s1", "ledger": 7}),
+            (_TA, _FEB, {"title": "s1"}),
+        ]
+
+
 @_SPAN_AXES
 @_STRATEGIES
 @pytest.mark.parametrize(
@@ -623,7 +743,6 @@ def _peer_split(label: str) -> list[tuple[object, ...]]:
 
 _PEER_ROWS: dict[str, list[tuple[object, ...]]] = {
     "start": _peer_split("peer"),
-    "start-same-value": _peer_split("a"),
     "start-by-overlapping-replacement": [
         (_T0, _TP, _JAN, _JUN, 100, "a"),
         (_T1, _TP, _JUN, None, 200, "b"),
@@ -635,9 +754,7 @@ _PEER_ROWS: dict[str, list[tuple[object, ...]]] = {
 
 
 @_SPAN_AXES
-@pytest.mark.parametrize(
-    "lost", ["start", "start-same-value", "start-by-overlapping-replacement", "later"]
-)
+@pytest.mark.parametrize("lost", ["start", "start-by-overlapping-replacement", "later"])
 def test_a_row_another_session_revises_after_the_flush_read_it_fails_by_whose_it_was(
     profile_run: Any, entity: type[Any], lost: str
 ) -> None:
@@ -652,19 +769,6 @@ def test_a_row_another_session_revises_after_the_flush_read_it_fails_by_whose_it
                     _name(entity),
                     {"id": 1, "amount": 900, "label": "peer"},
                     valid_from=_APR,
-                    if_tx_start=_T0,
-                )
-            )
-            return
-        if lost == "start-same-value":
-            # A caller-addressed patch revises the start even though it assigns the
-            # value the row holds; an observed one would keep the milestone instead.
-            peer_db.transact(
-                lambda tx: tx.wire.update(
-                    _name(entity),
-                    {"id": 1, "label": "a"},
-                    valid_from=_FEB,
-                    until=_APR,
                     if_tx_start=_T0,
                 )
             )
@@ -714,6 +818,43 @@ def test_a_row_another_session_revises_after_the_flush_read_it_fails_by_whose_it
         (_TB, None, _JUN, _JUL, 150, "b"),
         (_TB, None, _JUL, _SEP, 150, "peer"),
         (_TB, None, _SEP, None, 150, "b"),
+    ]
+
+
+@_SPAN_AXES
+def test_a_peers_equal_patch_of_the_start_leaves_the_stated_milestone_standing(
+    profile_run: Any, entity: type[Any]
+) -> None:
+    _two_rectangles(profile_run, entity)
+    peer_db = _db(profile_run, _TP)
+
+    def peer() -> None:
+        # The peer's patch assigns the label the start already holds, so its
+        # guard keeps that milestone, and its Transaction-Time start with it.
+        peer_db.transact(
+            lambda tx: tx.wire.update(
+                _name(entity),
+                {"id": 1, "label": "a"},
+                valid_from=_FEB,
+                until=_APR,
+                if_tx_start=_T0,
+            )
+        )
+
+    interleaving = AfterCoverageRead(_TABLES[entity], peer)
+    ours = own_root(
+        connect(
+            profile_run.port, _MODEL, clock=ScriptedClock([_TA]), lifecycle_provider=interleaving
+        )
+    ).using_database_login()
+    ours.transact(lambda tx: _span_patch(tx, entity, amount=150))
+    assert interleaving.failures == []
+    assert [row[:6] for row in _span_rows(profile_run, entity)] == [
+        (_T0, _TA, _JAN, _JUN, 100, "a"),
+        (_T1, _TA, _JUN, None, 200, "b"),
+        (_TA, None, _JAN, _MAR, 100, "a"),
+        (_TA, None, _MAR, _JUN, 150, "a"),
+        (_TA, None, _JUN, None, 150, "b"),
     ]
 
 

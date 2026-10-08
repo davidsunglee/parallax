@@ -394,12 +394,13 @@ def test_a_peer_revision_to_equal_values_after_the_read_still_conflicts(
     attempts = 0
 
     def revise() -> None:
-        # A caller-addressed patch revises the row although its values are equal.
-        peer.transact(
-            lambda peer_tx: peer_tx.wire.update(
-                _name(entity), {"id": 1, "amount": 100}, if_tx_start=_S1
-            )
-        )
+        # The peer changes the row and restores its value in one transaction, so
+        # a new milestone holds values equal to the one this attempt read.
+        def restore(peer_tx: Transaction) -> None:
+            _update(peer_tx, _log_find(peer_tx, entity, "typed"), "typed", {"amount": 120})
+            _update(peer_tx, _log_find(peer_tx, entity, "typed"), "typed", {"amount": 100})
+
+        peer.transact(restore)
 
     def fn(tx: Transaction) -> None:
         nonlocal attempts
@@ -497,7 +498,7 @@ def test_losing_any_rectangle_after_the_flush_read_rolls_back_every_effect(
         peer.transact(
             lambda tx: tx.wire.update(
                 _name(entity),
-                {"id": 1, "amount": amount},
+                {"id": 1, "amount": amount, "label": "peer"},
                 valid_from=start,
                 until=until,
                 if_tx_start=tx_start,
