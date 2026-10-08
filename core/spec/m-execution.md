@@ -166,11 +166,15 @@ stopped early, never started, or raised. The request kind decides the bracket:
 |---|---|
 | Selection of a predicate write | its own Read under the attempt, after the unit of work has flushed pending writes through its read gate |
 | Target of a Locking caller-addressed write | its own Read under the attempt, with no force-flush |
-| Coverage of a deferred range | a read Database Call inside the current Write Batch, opening no Read |
+| Coverage of a deferred range | a read Database Call inside the current Write Batch, opening no Read; one per bounded statement its uncovered parts need |
+| Completion of retained rows | none: no statement, Database Call, or activity, before the range's coverage is read |
 
 A row whose stored data is invalid is refused with the same judgement and
 refusal every other read uses (`m-read-delivery` *Invalid stored data*) before
-it contributes evidence.
+it contributes evidence. A retaining target read hands its consumer each row
+with only what a read of the row alone judges judged, and its Value Object
+occurrences pending; a completion judges those occurrences, from the retained
+row alone, with the judgement and refusal the read would have applied to them.
 
 ### Flush execution
 
@@ -179,9 +183,9 @@ inside the Write Batch the unit of work opened for it. It lowers each unit's
 Planned Writes through one shared path — the planner's payload preparer prepares
 what the statement about to run stores, and `m-sql` renders it — executes them
 through the port, and has the unit of work enforce each step's affected rows. A
-deferred unit is bound first: the runtime asks the unit of work to acquire its
-coverage and bind it against the ownership earlier units published, then
-executes the bound steps. After a unit's steps all succeed — including a unit
+deferred unit is bound first: the runtime asks the unit of work to complete the
+retained rows it reuses, acquire the coverage they leave, and bind both against
+the ownership earlier units published, then executes the bound steps. After a unit's steps all succeed — including a unit
 with no steps — the runtime reports it to the unit of work, which publishes its
 effects before the next unit binds (`m-unit-work` *Execution units complete
 before later work runs*). No later unit's statement is prepared or lowered

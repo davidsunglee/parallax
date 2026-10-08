@@ -35,6 +35,7 @@ from parallax.core.predicate._validated import (
     conjunction as _validated_conjunction,
 )
 from parallax.core.predicate._validated import deferred_membership as _deferred_membership
+from parallax.core.predicate._validated import disjunction as _validated_disjunction
 from parallax.core.predicate._validated import framework_comparison as _framework_comparison
 from parallax.core.predicate._validated import managed_comparison as _managed_comparison
 from parallax.core.relationship import RelationshipMetadata
@@ -288,17 +289,19 @@ def plan_coverage_read(
     model: Metamodel,
     key: str,
     key_value: ManagedValue,
-    valid_time_window: TimeInterval | None,
+    valid_time_windows: tuple[TimeInterval, ...],
 ) -> ValidatedEntityQuery:
-    """The one flat read of a temporal object's current coverage overlapping
-    ``valid_time_window`` that an execution-bound range transforms, bounded by
-    the window's endpoints as they are, with no upper term where it runs to the
-    open bound. A Transaction-Time-Only object has no Valid Time to bound, so
-    its read selects its current row.
+    """The one flat read of a temporal object's current coverage overlapping any
+    of ``valid_time_windows`` that an execution-bound range transforms, each
+    window bounded by its endpoints as they are, with no upper term where it
+    runs to the open bound, and several windows read as alternatives. A
+    Transaction-Time-Only object has no Valid Time to bound, so its read
+    selects its current row.
 
     Every row it selects is current on Transaction Time and is projected whole,
     every document included, because the range carries each row's unassigned
-    members forward.
+    members forward. A row overlapping a window is selected whole, however
+    little of it the window reaches.
     """
     families = inheritance.view(model)
     root = inheritance.root_metadata(families, model, entity.identity)
@@ -319,23 +322,40 @@ def plan_coverage_read(
         if axis.dimension is TemporalDimension.TRANSACTION_TIME:
             terms.append(_framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY))
             continue
-        assert valid_time_window is not None  # a Valid-Time axis bounds every range over it
+        assert valid_time_windows  # a Valid-Time axis bounds every range over it
         terms.append(
-            _managed_comparison(
-                op="greaterThan", attr=end_ref, member=end, value=valid_time_window.start
+            _validated_disjunction(
+                *(
+                    _overlapping(window, start=start, start_ref=start_ref, end=end, end_ref=end_ref)
+                    for window in valid_time_windows
+                )
             )
         )
-        until = valid_time_window.end
-        if until is not INFINITY:
-            terms.append(
-                _managed_comparison(op="lessThan", attr=start_ref, member=start, value=until)
-            )
     predicate = navigate.canonicalize_validated(_validated_conjunction(*terms), model, entity, {})
     return ValidatedEntityQuery(
         target=entity.identity,
         entity=entity,
         validated_predicate=predicate,
         projection=_projection_for(entity, families, ReadProjectionRequest("all", True)),
+    )
+
+
+def _overlapping(
+    window: TimeInterval,
+    *,
+    start: AttributeMetadata,
+    start_ref: str,
+    end: AttributeMetadata,
+    end_ref: str,
+) -> ValidatedPredicate:
+    """The rows whose Valid Time overlaps ``window``: ending after its start
+    and, where it is bounded, starting before its end."""
+    after = _managed_comparison(op="greaterThan", attr=end_ref, member=end, value=window.start)
+    until = window.end
+    if until is INFINITY:
+        return after
+    return _validated_conjunction(
+        after, _managed_comparison(op="lessThan", attr=start_ref, member=start, value=until)
     )
 
 
@@ -346,11 +366,13 @@ def plan_target_read(
     key: str,
     key_value: ManagedValue,
     valid_from: ManagedValue | None = None,
+    whole: bool = False,
 ) -> ValidatedEntityQuery:
     """The one flat point read of the stored row a caller-addressed write starts
     from: the object ``key`` names — on a temporal object its current row, at
     Valid-Time ``valid_from`` on a Bitemporal one — projected with no document,
-    since what is read is the row's presence and revision."""
+    since what is read is the row's presence and revision, or projected
+    ``whole`` as a coverage read projects it, where the row is retained."""
     families = inheritance.view(model)
     root = inheritance.root_metadata(families, model, entity.identity)
     view = _entity_view(families, entity.identity)
@@ -383,7 +405,11 @@ def plan_target_read(
         validated_predicate=navigate.canonicalize_validated(
             _validated_conjunction(*terms), model, entity, {}
         ),
-        projection=_projection_for(entity, families, ReadProjectionRequest("none", False)),
+        projection=_projection_for(
+            entity,
+            families,
+            ReadProjectionRequest("all", True) if whole else ReadProjectionRequest("none", False),
+        ),
     )
 
 

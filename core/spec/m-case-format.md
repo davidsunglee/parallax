@@ -1135,8 +1135,12 @@ state:
   Concurrency Strategy takes, it owes instead **one acquisition per object** —
   the locked point read that participation requires (`m-unit-work` *Caller-addressed
   writes*) — and none under Optimistic. A temporal one also owes **one coverage
-  read per object** under either strategy, the read of the coverage its window
-  reaches that its flush makes (`m-temporal-write`).
+  read per object**, the read of the coverage its window reaches that its flush
+  makes (`m-temporal-write`) — unless, under Locking, the rows its acquisitions
+  read already cover the window its entries reach together (`m-unit-work`
+  *Retained starting rows*): a Transaction-Time-Only object's always does, and a
+  Bitemporal one's does where the rectangles the case's own history leaves
+  current at each `validFrom` cover it.
 
 A **grouped** scenario write step owes none of its own: its group's find steps
 are what publish the values it settles against, and those finds already declare

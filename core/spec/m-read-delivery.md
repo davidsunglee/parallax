@@ -139,6 +139,14 @@ judged and decoded. Equal witnesses share that one judgment and its frozen
 evidence. Value construction and Wire publication trust the resulting judged
 Entity State and never invoke a second codec or scalar-admission pass over it.
 
+A write's acquisition can read a row whole while deferring its occurrences
+(`m-unit-work` *Retained starting rows*). It judges the row's Attributes as a
+read projecting no occurrence judges them, and locates and tags each occurrence
+— SQL null, present JSON null, or present content — without examining its
+content. Judging those inputs later, from the retained row alone, applies exactly
+the classification, construction, findings, and paths an ordinary read gives the
+same stored occurrences; only their findings follow the Attributes' in time.
+
 For each requested Value Object occurrence, that one codec traversal constructs
 the final positional member row directly in canonical `MemberShape` order. Nested
 `One` outputs are member rows and nested `Many` outputs are ordered tuples of

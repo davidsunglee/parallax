@@ -209,7 +209,7 @@ def test_a_range_binds_alike_whether_planning_knew_its_coverage_or_execution_rea
     (planned,) = known.units
     assert planned.deferred is None
     read, acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
-    assert acquisition.valid_time_window == temporal_read.TimeInterval(_JUN, _SEP)
+    assert acquisition.valid_time_windows == (temporal_read.TimeInterval(_JUN, _SEP),)
 
     bound = _bind(read, [_TAIL])
 
@@ -430,7 +430,7 @@ def test_a_lone_write_reaching_past_what_it_observed_reads_only_the_rest(
     built = _Compositions(monkeypatch)
     unit, acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
     assert built.built == 0
-    assert acquisition.valid_time_window == temporal_read.TimeInterval(_JUN, _SEP)
+    assert acquisition.valid_time_windows == (temporal_read.TimeInterval(_JUN, _SEP),)
     assert unit.claim is head
 
 

@@ -22,6 +22,7 @@ from parallax.core.document_codec import (
     Missing,
     Present,
     decode_occurrence_classified,
+    located_occurrence,
     occurrence_shape,
 )
 from parallax.core.entity._layout import EntityLayout
@@ -52,6 +53,7 @@ __all__ = [
     "EntityReadMapping",
     "build_positional_many",
     "build_positional_object",
+    "complete_occurrences",
     "register_reduced_row",
 ]
 
@@ -203,15 +205,20 @@ class EntityReadMapping:
         classifiable: int | None,
         correlation_findings: tuple[StoredDataIssueInput, ...],
         unknown_family_tag: UnknownFamilyTag | None,
+        *,
+        occurrences: bool = True,
     ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
         """Judge the payload of one reduced row claimed under this mapping, from the
-        inputs its Page retained for it, answering its member row and findings."""
+        inputs its Page retained for it, answering its member row and findings.
+
+        Without ``occurrences`` only the row's Attributes are judged: each Value
+        Object occurrence the row carried keeps the input its classification
+        takes, which :func:`complete_occurrences` judges later."""
+        carried = self.every_member_present if classifiable is None else classifiable
         values, findings, classified = _classify_payload(
-            witness,
-            self,
-            self.every_member_present if classifiable is None else classifiable,
+            witness, self, carried if occurrences else carried & self._attribute_positions
         )
-        return _decode_payload(
+        members, issues = _decode_payload(
             values,
             self,
             routed_values,
@@ -219,7 +226,15 @@ class EntityReadMapping:
             findings,
             unknown_family_tag,
             classified,
+            occurrences=occurrences,
         )
+        if not occurrences:
+            members = _pending_occurrences(values, self, members)
+        return values if members is None else tuple(members), issues
+
+    @property
+    def _attribute_positions(self) -> int:
+        return (1 << self.layout.attribute_count) - 1
 
 
 def register_reduced_row(
@@ -333,7 +348,9 @@ def _decode_payload(
     findings: tuple[DocumentFinding, ...],
     unknown_family_tag: UnknownFamilyTag | None,
     classified: int,
-) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
+    *,
+    occurrences: bool,
+) -> tuple[list[object] | None, tuple[StoredDataIssueInput, ...]]:
     issues: list[StoredDataIssueInput] | None = (
         [_translate_finding(finding, mapping) for finding in findings] if findings else None
     )
@@ -363,11 +380,9 @@ def _decode_payload(
         captured=correlation_findings,
         classified=classified,
     )
-    members, issues = _decode_occurrences(values, mapping, classified, members, issues)
-    return (
-        values if members is None else tuple(members),
-        () if issues is None else tuple(issues),
-    )
+    if occurrences:
+        members, issues = _decode_occurrences(values, mapping, classified, members, issues)
+    return members, () if issues is None else tuple(issues)
 
 
 def _decode_occurrences(
@@ -522,6 +537,61 @@ def build_positional_many(values: Iterable[object]) -> tuple[object, ...]:
     return tuple(values)
 
 
+def _pending_occurrences(
+    values: tuple[object, ...],
+    mapping: EntityReadMapping,
+    members: list[object] | None,
+) -> list[object] | None:
+    """Each Value Object occurrence of a whole read's row an Attribute-only
+    judgment leaves, as the input its own classification takes, SQL null and a
+    present JSON null kept apart and the contents unexamined: its location in
+    the shared Structured Column tagged as the codec tags it, or the Document
+    Read its own Column already is."""
+    for position in range(mapping.layout.attribute_count, len(values)):
+        raw = values[position]
+        pending = (
+            _occurrence_input(raw)
+            if mapping.document_member_names[position] is None
+            else located_occurrence(raw)
+        )
+        if pending is raw:
+            continue
+        if members is None:
+            members = list(values)
+        members[position] = pending
+    return members
+
+
+def complete_occurrences(
+    layout: EntityLayout, row: tuple[object, ...]
+) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
+    """Judge the Value Object occurrences an Attribute-only judgment left
+    pending (:meth:`EntityReadMapping.decode_payload`), answering the completed
+    member row and the occurrences' findings in member order.
+
+    Each occurrence takes the classification an ordinary read gives it, so the
+    completed row and its findings are the ones an ordinary read judges from
+    the same stored state; the Attribute prefix is not judged again."""
+    members = list(row)
+    issues: list[StoredDataIssueInput] = []
+    for position, declared in enumerate(layout.occurrences, start=layout.attribute_count):
+        members[position], findings = _occurrence(row[position], declared)
+        issues.extend(_occurrence_issue(finding, declared, layout.concrete) for finding in findings)
+    return tuple(members), tuple(issues)
+
+
+def _occurrence_input(raw: object) -> SqlNull | PresentDocument:
+    """The input an occurrence stored in a Column of its own is classified
+    from: the driver's ``None`` is SQL null."""
+    return (
+        raw
+        if isinstance(raw, (SqlNull, PresentDocument))
+        else SQL_NULL
+        if raw is None
+        else PresentDocument(cast("DocumentValue", raw))
+    )
+
+
 def _occurrence(
     raw: object,
     declared: OccurrenceMetadata,
@@ -531,16 +601,9 @@ def _occurrence(
     """Build one top-level occurrence directly as positional member rows."""
     if outer_classified:
         return raw, ()
-    carrier = (
-        raw
-        if isinstance(raw, (SqlNull, PresentDocument))
-        else SQL_NULL
-        if raw is None
-        else PresentDocument(cast("DocumentValue", raw))
-    )
     classified = decode_occurrence_classified(
         occurrence_shape(declared),
-        carrier,
+        _occurrence_input(raw),
         multiplicity=declared.multiplicity,
         nullable=declared.nullable,
         build_object=build_positional_object,

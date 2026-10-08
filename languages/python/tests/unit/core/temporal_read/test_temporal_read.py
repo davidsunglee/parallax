@@ -969,6 +969,64 @@ def test_the_first_uncovered_instant_of_a_window(
     assert window.first_uncovered(iter(coverage)) == uncovered
 
 
+@pytest.mark.parametrize(
+    ("window", "coverage", "uncovered"),
+    [
+        pytest.param(TimeInterval(JAN, JUN), [], [TimeInterval(JAN, JUN)], id="nothing-held"),
+        pytest.param(TimeInterval(FEB, MAY), [TimeInterval(JAN, JUN)], [], id="held-whole"),
+        pytest.param(
+            _open(JAN),
+            [TimeInterval(MAR, MAY)],
+            [TimeInterval(JAN, MAR), _open(MAY)],
+            id="held-middle",
+        ),
+        pytest.param(
+            TimeInterval(JAN, AUG),
+            [TimeInterval(FEB, MAR), TimeInterval(APR, MAY), TimeInterval(JUN, JUL)],
+            [
+                TimeInterval(JAN, FEB),
+                TimeInterval(MAR, APR),
+                TimeInterval(MAY, JUN),
+                TimeInterval(JUL, AUG),
+            ],
+            id="several-holes",
+        ),
+        pytest.param(
+            TimeInterval(JAN, JUN),
+            [TimeInterval(JAN, MAR), TimeInterval(MAR, APR)],
+            [TimeInterval(APR, JUN)],
+            id="adjacent-held",
+        ),
+        pytest.param(
+            TimeInterval(JAN, JUN),
+            [TimeInterval(FEB, APR), TimeInterval(FEB, APR), TimeInterval(MAR, MAY)],
+            [TimeInterval(JAN, FEB), TimeInterval(MAY, JUN)],
+            id="duplicate-overlapping-held",
+        ),
+        pytest.param(
+            TimeInterval(MAR, MAY),
+            [TimeInterval(JAN, FEB), TimeInterval(JUN, JUL)],
+            [TimeInterval(MAR, MAY)],
+            id="held-outside",
+        ),
+        pytest.param(_open(MAR), [_open(JAN)], [], id="open-held"),
+        pytest.param(
+            _open(MAR), [TimeInterval(JAN, APR)], [_open(APR)], id="open-window-finite-held"
+        ),
+    ],
+)
+def test_the_uncovered_parts_of_a_window(
+    window: TimeInterval, coverage: list[TimeInterval], uncovered: list[TimeInterval]
+) -> None:
+    assert window.uncovered(iter(coverage)) == tuple(uncovered)
+
+
+def test_a_window_nothing_covers_is_its_own_uncovered_part() -> None:
+    window = TimeInterval(JAN, JUN)
+    (part,) = window.uncovered(())
+    assert part is window
+
+
 class _Consumed:
     """Start-ordered coverage yielded once, counting what was drawn from it."""
 

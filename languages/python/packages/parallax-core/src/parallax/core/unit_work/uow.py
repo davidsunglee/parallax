@@ -4,7 +4,7 @@ import bisect
 import datetime as dt
 import threading
 from collections.abc import Callable, Hashable, Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import islice
 from types import TracebackType
@@ -21,6 +21,7 @@ from parallax.core.temporal_read import (
     NonTemporal,
     TimeInterval,
     TransactionTimeOnly,
+    milestone_edge,
 )
 from parallax.core.unit_work.acquisition import (
     AcquireRows,
@@ -63,12 +64,17 @@ from parallax.core.unit_work.materialized import (
     readless_write,
     target_write,
 )
-from parallax.core.unit_work.ranges import DeferredTemporalRange
+from parallax.core.unit_work.ranges import (
+    DeferredTemporalRange,
+    coverage_reads,
+    retained_completion,
+)
 from parallax.core.unit_work.retain import (
     InsertionIdentity,
     ParticipationToken,
     ReadOrigin,
     RetainedObservation,
+    RetainedTargetState,
 )
 from parallax.core.unit_work.strategy import ActorIdentity, Concurrency, EvidencePolicyLookup
 from parallax.core.unit_work.write_planner import (
@@ -82,6 +88,8 @@ from parallax.core.write_plan.keys import (
     TemporalStateKey,
     VersionedStateKey,
 )
+from parallax.core.write_plan.materialized import PredecessorRows
+from parallax.core.write_plan.observe import PredecessorRow
 from parallax.core.write_plan.plan import (
     AllocatedOpening,
     BoundRange,
@@ -1088,6 +1096,8 @@ class UnitOfWork:
         through ``acquire_rows``, executing nothing pending. That read's root
         count decides first: more than one stored row is Cardinality
         Corruption, whatever those rows hold, and none means no row stands.
+        A temporal object's row is read whole and kept with the write, for its
+        range to reuse while it is still current (:class:`RetainedTargetState`).
         The Optimistic strategy reads nothing: the caller's revision becomes
         the write's gate.
         A temporal target names its state by its stated Transaction-Time start
@@ -1123,9 +1133,9 @@ class UnitOfWork:
         if policy.effective_strategy(self.settings.concurrency) == "locking":
             if temporal:
                 assert isinstance(expectation, ExpectedTxStart)  # a temporal target's revision
-                self._acquire_temporal(item, key, expectation)
+                item = self._acquire_temporal(item, key, expectation)
             elif not (self._pending.holds_scope(scope) or self._participates(scope)):
-                stored = self._stored_target(target, key, None)
+                stored, _row, _document = self._stored_target(target, key, None)
                 if isinstance(expectation, ExpectedVersion) and (
                     stored is None or stored.version != expectation.version
                 ):
@@ -1136,38 +1146,58 @@ class UnitOfWork:
 
     def _acquire_temporal(
         self, item: TargetKeyedWrite, key: ObjectKey, expectation: ExpectedTxStart
-    ) -> None:
+    ) -> TargetKeyedWrite:
         """Prove a Locking caller-addressed write of a temporal object starts
-        from the state its caller stated, or refuse it.
+        from the state its caller stated, or refuse it, answering the write
+        with the row it read where it read one.
 
         A pending write of the object over exactly this window already holds
         that state: admission required it to start from exactly this one. A
         write over a disjoint window starts elsewhere and proves nothing here.
         Otherwise a live read of the state this attempt holds does, else
-        it is read.
+        it is read, whole, and kept with the write as the state the read found
+        at this point of the attempt's changes.
         """
         window = item.instruction.valid_time_window
         if self._pending.states_window(key, window):
-            return
+            return item
         valid_from = _window_start(window)
         if self._participates(
             TemporalStateKey(key, Edge(tx_time=expectation.instant, valid_time=valid_from))
         ):
-            return
+            return item
         target = item.instruction.target
-        stored = self._stored_target(target, key, valid_from)
+        read_at = self._freshness
+        stored, row, document = self._stored_target(target, key, valid_from, retains=True)
         if stored is None or stored.tx_start != expectation.instant:
             raise WritePreconditionError(
                 target.identity, dict(key.primary_key), expectation.instant
             )
+        assert row is not None  # a stored revision was read off this row
+        selection = self._family(target).member_selection
+        shape = temporal_read.view(self.meta).shape(target.identity)
+        assert isinstance(shape, TransactionTimeOnly | Bitemporal)  # a temporal target
+        state = TemporalStateKey(
+            key, milestone_edge(shape, PredecessorRow.over_row(selection, row, None, None), None)
+        )
+        return replace(item, retained=RetainedTargetState(state, read_at, row, document))
 
     def _stored_target(
-        self, target: EntityMetadata, key: ObjectKey, valid_from: dt.datetime | None
-    ) -> StoredTarget | None:
+        self,
+        target: EntityMetadata,
+        key: ObjectKey,
+        valid_from: dt.datetime | None,
+        *,
+        retains: bool = False,
+    ) -> tuple[StoredTarget | None, tuple[object, ...] | None, object | None]:
         """The stored revision of the row ``key`` names, read under the shared
         lock, or ``None`` where no row stands — judged once the read is over,
-        from its root count first and the unique row's revision cell after."""
-        count, row = self.acquire_rows(TargetReadRequest(target, key, valid_from), consume_target)
+        from its root count first and the unique row's revision cell after —
+        beside that row and its raw document, read whole where it ``retains``
+        them."""
+        count, row, document = self.acquire_rows(
+            TargetReadRequest(target, key, valid_from, retains=retains), consume_target
+        )
         view = self._family(target)
         if count > 1:
             ((_name, value),) = key.primary_key
@@ -1178,16 +1208,17 @@ class UnitOfWork:
                 count,
             )
         if row is None:
-            return None
+            return None, None, None
         selection = view.member_selection
         shape = temporal_read.view(self.meta).shape(target.identity)
         if isinstance(shape, TransactionTimeOnly | Bitemporal):
             start = row[selection.position(shape.transaction_time.start_attribute)]
-            return StoredTarget(tx_start=normalize_instant(cast("dt.datetime", start)))
+            stored = StoredTarget(tx_start=normalize_instant(cast("dt.datetime", start)))
+            return stored, row, document
         version = self._planner.version_attribute(target.identity)
         if version is None:
-            return StoredTarget()
-        return StoredTarget(cast("int", row[selection.position(version)]))
+            return StoredTarget(), row, document
+        return StoredTarget(cast("int", row[selection.position(version)])), row, document
 
     def _family(self, entity: EntityMetadata) -> InheritanceEntityView:
         view = inheritance.view(self.meta).entity(entity.identity)
@@ -1509,9 +1540,7 @@ class UnitOfWork:
         """
         self._ensure_open()
         key = observation.key
-        log = self._changed
-        changed = log.get(key) if log else None
-        if changed is not None and changed > (self._freshness if read_at is None else read_at):
+        if not self._current(key, self._freshness if read_at is None else read_at):
             observation.invalidate()
             return observation
         held = self._observations.get(key)
@@ -1519,6 +1548,15 @@ class UnitOfWork:
             return held
         self._observations[key] = observation
         return observation
+
+    def _current(self, state: ObservedStateKey, read_at: int) -> bool:
+        """Whether no execution unit that completed after a read capturing
+        :attr:`freshness` ``read_at`` changed ``state``: what that read found
+        of ``state`` is still what the attempt stores, whatever else changed.
+        An unchanged milestone a guard proved is no change."""
+        log = self._changed
+        changed = log.get(state) if log else None
+        return changed is None or changed <= read_at
 
     def read[T](self, read_fn: Callable[[], T]) -> T:
         """Serve a call-time read, force-flushing pending writes first.
@@ -1618,6 +1656,7 @@ class UnitOfWork:
             ownership=self._targets,
             actor_identity=self._actor_identity,
             transaction_instant=self._transaction_instant,
+            current=self._current,
         )
 
     def _report(
@@ -1775,11 +1814,17 @@ def bind_deferred_range(
     ownership: TemporalWriteOwnership,
     actor_identity: ActorIdentity,
     transaction_instant: TransactionInstant,
+    current: Callable[[ObservedStateKey, int], bool] | None = None,
 ) -> BoundRange:
-    """``description`` read and bound: its coverage read through
-    ``acquire_rows`` and sealed as Predecessor Rows while the read's resources
-    are live, then bound by the ``planner`` that finalized it under
+    """``description`` read and bound: the starting rows it retained that are
+    still ``current`` completed through ``acquire_rows``, which reads nothing
+    for them, then only the coverage nothing it holds covers read through
+    ``acquire_rows``, every row sealed as Predecessor Rows while its read's
+    resources are live, then bound by the ``planner`` that finalized it under
     ``ownership``, each row it produces and close it emits audited once.
+
+    Without ``current`` no retained row is judged current, so each is
+    discarded unjudged and its coverage read instead.
 
     The one interpreter of a deferred description: a description ``planner``
     did not finalize is refused before anything is read.
@@ -1788,14 +1833,26 @@ def bind_deferred_range(
         raise TypeError(
             f"a deferred range this planner did not finalize cannot be bound: {description!r}"
         )
-    rows = acquire_rows(description.coverage, consume_coverage)
+    completion = retained_completion(description, current or _never_current)
+    reused = None if completion is None else acquire_rows(completion, consume_coverage)
+    acquired: list[PredecessorRows] = []
+    for request in coverage_reads(description, reused):
+        rows = acquire_rows(request, consume_coverage)
+        if rows is not None:
+            acquired.append(rows)
     return planner.bind_deferred(
         description,
-        rows,
+        reused,
+        acquired,
         ownership=ownership,
         actor_identity=actor_identity,
         transaction_instant=transaction_instant,
     )
+
+
+def _never_current(state: ObservedStateKey, read_at: int) -> bool:
+    del state, read_at
+    return False
 
 
 def _already_claimed(target: EntityMetadata, key: ObjectKey) -> WriteEvidenceError:

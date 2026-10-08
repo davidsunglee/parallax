@@ -1118,7 +1118,11 @@ def test_an_acquisition_read_selects_current_transaction_time_by_managed_infinit
     jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     query = (
         deep_fetch.plan_coverage_read(
-            rate, model=RATE, key="id", key_value=1, valid_time_window=TimeInterval(jan, INFINITY)
+            rate,
+            model=RATE,
+            key="id",
+            key_value=1,
+            valid_time_windows=(TimeInterval(jan, INFINITY),),
         )
         if read == "coverage"
         else deep_fetch.plan_target_read(rate, model=RATE, key="id", key_value=1, valid_from=jan)
@@ -1148,7 +1152,7 @@ def test_a_coverage_read_bounds_valid_time_by_the_endpoints_of_the_window_it_is_
 
     def valid_time_terms(window: TimeInterval) -> dict[str, tuple[object, ...]]:
         query = deep_fetch.plan_coverage_read(
-            rate, model=RATE, key="id", key_value=1, valid_time_window=window
+            rate, model=RATE, key="id", key_value=1, valid_time_windows=(window,)
         )
         terms: dict[str, tuple[object, ...]] = {}
         for term in query.validated_predicate.children:
@@ -1164,6 +1168,41 @@ def test_a_coverage_read_bounds_valid_time_by_the_endpoints_of_the_window_it_is_
     assert bounded["validEnd greaterThan"][0] is jan
     assert bounded["validStart lessThan"][0] is jun
     assert valid_time_terms(TimeInterval(jan, INFINITY)) == {"validEnd greaterThan": (jan,)}
+
+
+def test_a_coverage_read_of_several_windows_selects_rows_overlapping_any_of_them() -> None:
+    rate = entity_of(RATE, "Rate")
+    jan, mar, may, jul = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 5, 7))
+    query = deep_fetch.plan_coverage_read(
+        rate,
+        model=RATE,
+        key="id",
+        key_value=1,
+        valid_time_windows=(
+            TimeInterval(jan, mar),
+            TimeInterval(may, jul),
+            TimeInterval(jul, INFINITY),
+        ),
+    )
+    statement = compile_read(query, RATE, POSTGRES).statement
+    assert statement.sql.endswith(
+        "and ((t0.thru_z > ? and t0.from_z < ?) or (t0.thru_z > ? and t0.from_z < ?) "
+        "or t0.thru_z > ?) and t0.out_z = ?"
+    )
+    assert statement.binds[-7:] == (1, jan, mar, may, jul, jul, INFINITY)
+
+
+@pytest.mark.parametrize("whole", [False, True], ids=["revision", "whole"])
+def test_a_target_read_projects_its_row_whole_only_where_it_retains_it(whole: bool) -> None:
+    rate = entity_of(RATE, "Rate")
+    jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    target = deep_fetch.plan_target_read(
+        rate, model=RATE, key="id", key_value=1, valid_from=jan, whole=whole
+    )
+    coverage = deep_fetch.plan_coverage_read(
+        rate, model=RATE, key="id", key_value=1, valid_time_windows=(TimeInterval(jan, INFINITY),)
+    )
+    assert (target.projection == coverage.projection) is whole
 
 
 def test_concrete_target_root_query_injects_a_pinned_axis() -> None:

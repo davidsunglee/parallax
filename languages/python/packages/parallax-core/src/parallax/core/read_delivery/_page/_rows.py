@@ -33,6 +33,7 @@ __all__ = [
     "PageRows",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
+    "attribute_state",
     "dedupe_issues",
     "exact_stored_equal",
     "judged_state",
@@ -139,6 +140,8 @@ class PayloadDecoder(Protocol):
         classifiable: int | None,
         correlation_findings: tuple[StoredDataIssueInput, ...],
         unknown_family_tag: UnknownFamilyTag | None,
+        *,
+        occurrences: bool = True,
     ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]: ...
 
 
@@ -232,9 +235,10 @@ class DecoderRows:
         return self._values.get(projection) is not None
 
     def decode(
-        self, projection: int
+        self, projection: int, *, occurrences: bool = True
     ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
-        """``projection``'s member row and payload findings."""
+        """``projection``'s member row and payload findings, its Value Object
+        occurrences left pending without ``occurrences``."""
         if projection in self._values:
             decoder = self._values[projection]
         else:
@@ -253,6 +257,7 @@ class DecoderRows:
             None if masks is None else masks.get(projection),
             () if findings is None else findings.get(projection, ()),
             None if tags is None else tags.get(projection),
+            occurrences=occurrences,
         )
 
     def settle(self, projection: int) -> None:
@@ -483,17 +488,33 @@ def state_for(rows: PageRows, projection: int) -> EntityState:
     return state
 
 
+def attribute_state(rows: PageRows, projection: int) -> EntityState:
+    """``projection``'s Attributes judged as its Entity State would judge them,
+    each Value Object occurrence the row carried left pending.
+
+    Such a partial state is shared with nothing and cached nowhere: no other
+    reader of the Page can observe it."""
+    member_row, findings = rows.decoders.decode(projection, occurrences=False)
+    return EntityState(member_row, _with_identity_findings(rows, projection, findings))
+
+
 def _decoded(rows: PageRows, projection: int) -> EntityState:
     member_row, findings = rows.decoders.decode(projection)
     if rows.keys[projection] is not None:
         rows.decoders.settle(projection)
+    _notify(rows.observer, "states_decoded")
+    return EntityState(member_row, _with_identity_findings(rows, projection, findings))
+
+
+def _with_identity_findings(
+    rows: PageRows, projection: int, findings: tuple[StoredDataIssueInput, ...]
+) -> tuple[StoredDataIssueInput, ...]:
     identity_findings = rows.issues[projection]
     if not findings:
-        findings = identity_findings
-    elif identity_findings:
-        findings = dedupe_issues((*findings, *identity_findings))
-    _notify(rows.observer, "states_decoded")
-    return EntityState(member_row, findings)
+        return identity_findings
+    if identity_findings:
+        return dedupe_issues((*findings, *identity_findings))
+    return findings
 
 
 def _notify(observer: object | None, name: str) -> None:

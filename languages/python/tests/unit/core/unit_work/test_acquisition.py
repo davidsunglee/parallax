@@ -35,7 +35,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.acquisition import (
     RowConsumer,
-    RowReadRequest,
+    RowRequest,
     SelectionReadRequest,
     TargetReadRequest,
     consume_selection,
@@ -92,7 +92,7 @@ class _Logged:
     held: HeldRows
     log: list[str]
 
-    def __call__[Request: RowReadRequest, Result](
+    def __call__[Request: RowRequest, Result](
         self, request: Request, consumer: RowConsumer[Request, Result], /
     ) -> Result:
         self.log.append(f"read:{type(request).__name__}")
@@ -311,18 +311,22 @@ def test_a_target_read_without_a_unique_root_requests_no_row(count: int) -> None
     answered = consume_target(
         _target_request(), _selection(_ACCOUNT, "Account"), iter(rows), _ABSENT, None, count
     )
-    assert answered == (count, None)
+    assert answered == (count, None, None)
     assert not rows.started
 
 
-def test_a_target_read_with_a_unique_root_answers_that_row() -> None:
+@pytest.mark.parametrize("documents", [None, ["raw"]], ids=["columns", "document"])
+def test_a_target_read_with_a_unique_root_answers_that_row_and_its_document(
+    documents: list[object] | None,
+) -> None:
     row = (1, "Ada", Decimal("100.00"), 3)
     rows = _Rows([row])
-    count, answered = consume_target(
-        _target_request(), _selection(_ACCOUNT, "Account"), iter(rows), _ABSENT, None, 1
+    count, answered, document = consume_target(
+        _target_request(), _selection(_ACCOUNT, "Account"), iter(rows), _ABSENT, documents, 1
     )
     assert (count, answered) == (1, row)
     assert answered is row
+    assert document is (None if documents is None else documents[0])
 
 
 def _target_request() -> TargetReadRequest:

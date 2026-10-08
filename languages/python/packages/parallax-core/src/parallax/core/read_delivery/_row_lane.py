@@ -12,6 +12,7 @@ from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.read_delivery._convert import complete_occurrences
 from parallax.core.read_delivery._fetch import execute_read
 from parallax.core.read_delivery._page import (
     INERT_OBSERVER,
@@ -22,6 +23,7 @@ from parallax.core.read_delivery._page import (
     Page,
     PageRows,
     VersionAttributes,
+    attribute_state,
     diagnosis,
     observed_edge,
     observed_object_key,
@@ -39,7 +41,14 @@ from parallax.core.read_delivery._row_converter import RowPublisher
 from parallax.core.temporal_read import validated_query_pin
 from parallax.core.unit_work import Concurrency
 
-__all__ = ["PublishedRow", "RowsResult", "find_rows", "publishable_member_rows"]
+__all__ = [
+    "PublishedRow",
+    "RowsResult",
+    "admitted_member_rows",
+    "completed_member_row",
+    "find_rows",
+    "publishable_member_rows",
+]
 
 
 type PublishedRow = Mapping[str, object] | InvalidData[Mapping[str, object]]
@@ -214,6 +223,40 @@ def publishable_member_rows(page: Page) -> Generator[tuple[object, ...]]:
             raise stored_data_refusal(state.findings[0])
         _release_raw_row(rows, root)
         yield state.member_row
+
+
+def admitted_member_rows(page: Page) -> Generator[tuple[object, ...]]:
+    """Each flat root's positional member row with its Attributes judged, in
+    result order, refusing the first root whose Attributes hold invalid stored
+    data.
+
+    The judgment :func:`publishable_member_rows` makes of a read projecting no
+    Value Object, made of a read that projects them all: each occurrence its
+    root carried stays the unexamined input its classification takes — its
+    Column's value, or its location in the raw Structured Column, SQL null and
+    a present JSON null kept apart — so the row outlives the Page and
+    :func:`completed_member_row` judges those inputs later, if at all. Each
+    root is judged only when the caller asks for it, and its raw row is
+    released once judged.
+    """
+    rows = page_rows(page)
+    for root in rows.roots:
+        state = attribute_state(rows, root)
+        if state.findings:
+            raise stored_data_refusal(state.findings[0])
+        _release_raw_row(rows, root)
+        yield state.member_row
+
+
+def completed_member_row(layout: EntityLayout, row: tuple[object, ...]) -> tuple[object, ...]:
+    """A member row :func:`admitted_member_rows` produced for ``layout``'s
+    Entity, its Value Object occurrences judged as an ordinary read judges
+    them, refusing the first that holds invalid stored data. No statement runs
+    and no Page is involved."""
+    member_row, findings = complete_occurrences(layout, row)
+    if findings:
+        raise stored_data_refusal(findings[0])
+    return member_row
 
 
 def _invalid_root(

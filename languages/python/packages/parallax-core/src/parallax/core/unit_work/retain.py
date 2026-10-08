@@ -4,10 +4,16 @@ from typing import Final, Protocol, cast
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
-from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, TemporalStateKey
 from parallax.core.write_plan.observe import WriteObservation
 
-__all__ = ["InsertionIdentity", "ParticipationToken", "ReadOrigin", "RetainedObservation"]
+__all__ = [
+    "InsertionIdentity",
+    "ParticipationToken",
+    "ReadOrigin",
+    "RetainedObservation",
+    "RetainedTargetState",
+]
 
 
 class InsertionIdentity:
@@ -117,6 +123,48 @@ class RetainedObservation:
     def invalidate(self) -> None:
         """Record that a successful own change replaced the observed state."""
         self._spent |= _INVALIDATED
+
+
+class RetainedTargetState:
+    """The stored row a Locking caller-addressed temporal write's acquisition
+    read whole, kept for the range that write settles as pending data rather
+    than evidence: its Attributes judged, its Value Object occurrences still
+    pending, its raw Structured Column beside them.
+
+    ``state`` is the exact milestone the row is, by its own coordinates, and
+    ``read_at`` the unit of work's change count when the read ran, which
+    together decide whether the row is still current when the range binds. It
+    grants no authority: the caller's condition proved at admission stays the
+    write's own.
+
+    The row and document are handed over once, by :meth:`take`, so the range
+    that reuses or discards them leaves nothing pinned behind it.
+    """
+
+    __slots__ = ("_document", "_row", "read_at", "state")
+
+    def __init__(
+        self,
+        state: TemporalStateKey,
+        read_at: int,
+        row: tuple[object, ...],
+        document: object | None,
+    ) -> None:
+        self.state: Final = state
+        self.read_at: Final = read_at
+        self._row: tuple[object, ...] | None = row
+        self._document = document
+
+    def take(self) -> tuple[tuple[object, ...], object | None] | None:
+        """The row and its document, released from this state, or ``None``
+        once an earlier call took them."""
+        row = self._row
+        if row is None:
+            return None
+        document = self._document
+        self._row = None
+        self._document = None
+        return row, document
 
 
 class _Spent:

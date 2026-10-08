@@ -53,7 +53,11 @@ from parallax.core.read_delivery._page_reader import FlatPageRequest, PageReader
 from parallax.core.read_delivery._paging import At, PagingPlan
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.read_delivery._read_plan import ReadPlanner
-from parallax.core.read_delivery._row_lane import publishable_member_rows
+from parallax.core.read_delivery._row_lane import (
+    admitted_member_rows,
+    completed_member_row,
+    publishable_member_rows,
+)
 from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
@@ -71,9 +75,11 @@ from parallax.core.unit_work import (
     returns_rows,
 )
 from parallax.core.unit_work.acquisition import (
+    CompletionRequest,
     CoverageReadRequest,
     RowConsumer,
     RowReadRequest,
+    RowRequest,
     SelectionReadRequest,
     TargetReadRequest,
 )
@@ -388,7 +394,7 @@ class Attempt:
 
     # Row acquisition.
 
-    def _acquire_rows[Request: RowReadRequest, Result](
+    def _acquire_rows[Request: RowRequest, Result](
         self, request: Request, consumer: RowConsumer[Request, Result], /
     ) -> Result:
         """Read the rows ``request`` names on this attempt's connection and hand
@@ -409,7 +415,15 @@ class Attempt:
         identity under ``Columns`` layout and the document fan-out under
         Relational Document Layout, each raw Structured Column retained beside
         its row so evidence can carry the document the row actually held.
+
+        A completion reads nothing and opens no activity: the rows a retaining
+        target read left are judged where that read stopped, before any
+        database work could begin.
         """
+        if isinstance(request, CompletionRequest):
+            return self._completed_rows(
+                request, cast("RowConsumer[CompletionRequest, Result]", consumer)
+            )
         if isinstance(request, CoverageReadRequest):
             return self._consume(self._coverage_read(request), self._batch, request, consumer)
         with self._activity.read(request.entity.identity, "rows") as read:
@@ -420,6 +434,22 @@ class Attempt:
             )
             return self._consume(compiled, read, request, consumer)
 
+    def _completed_rows[Result](
+        self, request: CompletionRequest, consumer: RowConsumer[CompletionRequest, Result]
+    ) -> Result:
+        """Run ``consumer`` over ``request``'s rows, each judged complete by the
+        reader as it is asked for."""
+        layout = self._write.model.layouts.entity(request.entity.identity)
+        rows = request.rows
+        return consumer(
+            request,
+            layout.member_selection,
+            (completed_member_row(layout, row) for row in rows),
+            ABSENT,
+            request.documents,
+            len(rows),
+        )
+
     def _consume[Request: RowReadRequest, Result](
         self,
         compiled: CompiledRead,
@@ -429,7 +459,8 @@ class Attempt:
     ) -> Result:
         """Execute ``compiled`` as one flat Page and run ``consumer`` over its
         judged member rows, releasing the Page however the consumer left it —
-        before starting the rows, part way through them, or by raising."""
+        before starting the rows, part way through them, or by raising. A
+        retaining target read's rows have only their Attributes judged."""
         model = self._write.model
         connection = self._connection
         layout = entity_layout(model.meta, request.entity)
@@ -441,7 +472,11 @@ class Attempt:
             )
         )
         page = stage.page
-        rows = publishable_member_rows(page)
+        rows = (
+            admitted_member_rows(page)
+            if isinstance(request, TargetReadRequest) and request.retains
+            else publishable_member_rows(page)
+        )
         try:
             return consumer(
                 request,
@@ -485,7 +520,7 @@ class Attempt:
     def _target_read(self, request: TargetReadRequest) -> CompiledRead:
         """The point read of the row a caller-addressed write starts from: the
         current row at ``valid_from`` of a Bitemporal object, the current one of
-        any other."""
+        any other, read whole where the request retains it."""
         meta = self._write.model.meta
         entity = request.entity
         ((name, value),) = request.key.primary_key
@@ -495,6 +530,7 @@ class Attempt:
             key=name,
             key_value=cast("ManagedValue", value),
             valid_from=request.valid_from,
+            whole=request.retains,
         )
         return self._row_read(query, entity_read_lock(meta, entity.identity, self._preference))
 
@@ -504,7 +540,7 @@ class Attempt:
             model=self._write.model.meta,
             key=request.key_attribute.name,
             key_value=request.key_value,
-            valid_time_window=request.valid_time_window,
+            valid_time_windows=request.valid_time_windows,
         )
         return self._row_read(query, "locking" if request.locking else None)
 

@@ -6,16 +6,17 @@ closed."""
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from decimal import Decimal
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import pytest
 
 from parallax.conformance import models
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.class_models import MODELS
-from parallax.core.base import INFINITY, DocumentValue, PresentDocument
+from parallax.core import Attr, Bitemporal, Document, DomainModel, ValueObject, attr
+from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.entity._model import model_of
@@ -31,10 +32,22 @@ from parallax.core.execution_lifecycle import (
     WriteBatchStarted,
 )
 from parallax.core.inheritance import EntityMemberSelection
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    ValueObjectAttributeIdentity,
+    ValueObjectIdentity,
+    entity_by_name,
+)
 from parallax.core.read_delivery import StoredDataDecodingError
 from parallax.core.read_delivery._row_converter import ReadRowConverter
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import CardinalityCorruptionError, TargetWrite
-from parallax.core.unit_work.acquisition import TargetReadRequest
+from parallax.core.unit_work.acquisition import (
+    CompletionRequest,
+    CoverageReadRequest,
+    TargetReadRequest,
+    consume_target,
+)
 from parallax.core.unit_work.instructions import PreparedTargetWrite, prepare_wire_write
 from parallax.core.write_plan import ObjectKey
 from parallax.descriptor import domain_model_from_document
@@ -311,3 +324,270 @@ def test_a_coverage_read_is_a_read_call_of_the_write_batch_reaching_its_range() 
         WriteCall,
         CommitCall,
     ]
+
+
+# --------------------------------------------------------------------------- #
+# A retained target row: its Attributes judged by its read, its occurrences    #
+# by its completion, exactly as a read of the same stored row judges them.     #
+# --------------------------------------------------------------------------- #
+class HullMark(ValueObject):
+    title: Attr[str]
+
+
+class HullSpec(ValueObject):
+    title: Attr[str]
+    marks: Attr[tuple[HullMark, ...]]
+
+
+class ColumnsHull(Bitemporal, table="hull_columns", namespace="parallax.execution"):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[int]
+    spec: Attr[HullSpec | None]
+    keel: Attr[HullMark]
+    marks: Attr[tuple[HullMark, ...]]
+
+
+class DocumentHull(
+    Bitemporal, table="hull_document", namespace="parallax.execution", layout=Document()
+):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[int]
+    spec: Attr[HullSpec | None]
+    keel: Attr[HullMark]
+    marks: Attr[tuple[HullMark, ...]]
+
+
+_HULLS: Final = DomainModel(ColumnsHull, DocumentHull)
+_JAN: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_MAR: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_SQL_NULL_OCCURRENCE: Final = object()
+_VALID: Final[dict[str, object]] = {
+    "spec": {"title": "s", "marks": [{"title": "n"}]},
+    "keel": {"title": "k"},
+    "marks": [{"title": "m"}],
+}
+
+
+def _hull_row(entity: type[Any], occurrences: Mapping[str, object]) -> MappingRow:
+    axes: dict[str, object] = {"from_z": _JAN, "thru_z": INFINITY, "in_z": _T0, "out_z": INFINITY}
+    if entity is DocumentHull:
+        document: dict[str, DocumentValue] = {"amount": 100}
+        for name, value in occurrences.items():
+            if value is not _SQL_NULL_OCCURRENCE:
+                document[name] = cast("DocumentValue", value)
+        return {"id": 1, **axes, "payload": PresentDocument(document)}
+    row: dict[str, object] = {"id": 1, "amount": 100, **axes}
+    for name, value in occurrences.items():
+        row[name] = (
+            SQL_NULL
+            if value is _SQL_NULL_OCCURRENCE
+            else PresentDocument(cast("DocumentValue", value))
+        )
+    return row
+
+
+_STORED: Final[dict[str, Mapping[str, object]]] = {
+    "valid": _VALID,
+    "nullable-sql-null": {**_VALID, "spec": _SQL_NULL_OCCURRENCE},
+    "nullable-json-null": {**_VALID, "spec": None},
+    "required-sql-null": {**_VALID, "keel": _SQL_NULL_OCCURRENCE},
+    "required-json-null": {**_VALID, "keel": None},
+    "nested-leaf": {**_VALID, "spec": {"title": 7, "marks": []}},
+    "nested-many-kind": {**_VALID, "spec": {"title": "s", "marks": {"title": "n"}}},
+    "many-element-leaf": {**_VALID, "marks": [{"title": "m"}, {"title": 2}]},
+    "one-kind": {**_VALID, "keel": ["k"]},
+    "unknown-keys": {**_VALID, "spec": {"title": "s", "marks": [], "extra": 1}},
+}
+
+
+def _hull_keys(entity: type[Any]) -> tuple[Any, ObjectKey]:
+    metadata = entity_by_name(model_of(_HULLS), f"parallax.execution.{entity.__name__}")
+    assert metadata is not None
+    return metadata, ObjectKey(metadata.identity, (("id", 1),))
+
+
+def _judged(acquire: Any) -> object:
+    """The member rows an acquisition hands its consumer, or the refusal it raised."""
+    try:
+        return acquire()
+    except StoredDataDecodingError as refused:
+        return (refused.message, refused.entity, refused.member)
+
+
+def _member_rows(
+    request: object,
+    selection: EntityMemberSelection,
+    rows: Iterator[tuple[object, ...]],
+    absent: object,
+    documents: Sequence[object | None] | None,
+    root_count: int,
+) -> list[tuple[object, ...]]:
+    del request, selection, absent, documents, root_count
+    return list(rows)
+
+
+@pytest.mark.parametrize("entity", [ColumnsHull, DocumentHull], ids=["columns", "document"])
+@pytest.mark.parametrize("stored", list(_STORED), ids=list(_STORED))
+def test_a_completed_retained_row_is_judged_as_a_coverage_read_judges_it(
+    entity: type[Any], stored: str
+) -> None:
+    row = _hull_row(entity, _STORED[stored])
+    port = ScriptedAdapter(Transact(Read(rows=[row]), Read(rows=[row])))
+    metadata, key = _hull_keys(entity)
+    key_attribute = AttributeIdentity(metadata.identity, "id")
+    seen: list[object] = []
+
+    def fn(tx: Attempt) -> None:
+        coverage = CoverageReadRequest(
+            metadata, key_attribute, 1, (TimeInterval(_JAN, INFINITY),), locking=True
+        )
+        seen.append(_judged(lambda: tx.uow.acquire_rows(coverage, _member_rows)))
+        count, retained, document = tx.uow.acquire_rows(
+            TargetReadRequest(metadata, key, _MAR, retains=True), consume_target
+        )
+        assert count == 1 and retained is not None
+        completion = CompletionRequest(
+            metadata, key_attribute, (retained,), None if document is None else (document,)
+        )
+        seen.append(_judged(lambda: tx.uow.acquire_rows(completion, _member_rows)))
+
+    scope(port, _HULLS).transact(fn, itself, concurrency="locking")
+    ordinary, completed = seen
+    assert completed == ordinary
+
+
+def test_a_non_object_structured_column_is_refused_alike_by_a_retaining_read() -> None:
+    # Every member located in a non-object document is missing: the required
+    # Attribute refuses the row at the read, as it refuses an ordinary read.
+    row = {**_hull_row(DocumentHull, _VALID), "payload": PresentDocument(["not", "an", "object"])}
+    port = ScriptedAdapter(Transact(Read(rows=[row]), Read(rows=[row])))
+    metadata, key = _hull_keys(DocumentHull)
+    key_attribute = AttributeIdentity(metadata.identity, "id")
+    seen: list[object] = []
+
+    def fn(tx: Attempt) -> None:
+        coverage = CoverageReadRequest(
+            metadata, key_attribute, 1, (TimeInterval(_JAN, INFINITY),), locking=True
+        )
+        seen.append(_judged(lambda: tx.uow.acquire_rows(coverage, _member_rows)))
+        seen.append(
+            _judged(
+                lambda: tx.uow.acquire_rows(
+                    TargetReadRequest(metadata, key, _MAR, retains=True), consume_target
+                )
+            )
+        )
+
+    scope(port, _HULLS).transact(fn, itself, concurrency="locking")
+    ordinary, retaining = seen
+    assert retaining == ordinary
+    assert ordinary == (
+        "parallax.execution.DocumentHull holds invalid stored data (stored-data-attribute-null)",
+        metadata.identity,
+        AttributeIdentity(metadata.identity, "amount"),
+    )
+
+
+@pytest.mark.parametrize("entity", [ColumnsHull, DocumentHull], ids=["columns", "document"])
+def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
+    entity: type[Any],
+) -> None:
+    # The occurrence is judged when the flush completes the row it reuses, after
+    # the call has returned and inside the write batch, with no read of its own.
+    recorder = RecordingLifecycleProvider()
+    row = _hull_row(entity, {**_VALID, "spec": {"title": 7, "marks": []}})
+    port = ScriptedAdapter(Transact(Read(rows=[row])))
+    metadata, _key = _hull_keys(entity)
+    called: list[str] = []
+
+    def fn(tx: Attempt) -> None:
+        tx.target_write(
+            prepare_wire_write(
+                TargetWrite(
+                    "amend",
+                    metadata.identity.canonical,
+                    {"id": 1, "amount": 5},
+                    if_tx_start=_T0,
+                    valid_from=_MAR,
+                ),
+                model_of(_HULLS),
+            )
+        )
+        called.append("returned")
+
+    with raises_contextualized(StoredDataDecodingError) as refused:
+        scope(port, _HULLS, provider=recorder).transact(fn, itself, concurrency="locking")
+    assert called == ["returned"]
+    assert refused.value.member == ValueObjectAttributeIdentity(
+        ValueObjectIdentity(metadata.identity, ("spec",)), "title"
+    )
+    events = recorder.roots[-1].events
+    (read,) = [event for event in events if isinstance(event, ReadStarted)]
+    batch = next(
+        index for index, event in enumerate(events) if isinstance(event, WriteBatchStarted)
+    )
+    assert events.index(read) < batch
+    assert not any(isinstance(event, DatabaseCallStarted) for event in events[batch:])
+
+
+def test_a_completion_reads_nothing_and_opens_no_activity() -> None:
+    recorder = RecordingLifecycleProvider()
+    row = _hull_row(DocumentHull, _VALID)
+    port = ScriptedAdapter(Transact(Read(rows=[row])))
+    metadata, key = _hull_keys(DocumentHull)
+    key_attribute = AttributeIdentity(metadata.identity, "id")
+
+    def fn(tx: Attempt) -> None:
+        _count, retained, document = tx.uow.acquire_rows(
+            TargetReadRequest(metadata, key, _MAR, retains=True), consume_target
+        )
+        assert retained is not None
+        completion = CompletionRequest(metadata, key_attribute, (retained,), (document,))
+        (completed,) = tx.uow.acquire_rows(completion, _member_rows)
+        assert completed[-3:] == (("s", (("n",),)), ("k",), (("m",),))
+        assert [type(call) for call in port.calls] == [BeginCall, ReadCall]
+
+    scope(port, _HULLS, provider=recorder).transact(fn, itself, concurrency="locking")
+    names = _names(recorder.roots[-1].events)
+    assert names.count("ReadStarted") == 1
+    assert names.count("DatabaseCallStarted") == 1
+
+
+@pytest.mark.parametrize("entity", [ColumnsHull, DocumentHull], ids=["columns", "document"])
+def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(entity: type[Any]) -> None:
+    # An Attribute is judged as the narrow read judged it, before the stated
+    # revision is compared; the occurrences beside it are left to the flush.
+    row = _hull_row(entity, {**_VALID, "spec": {"title": 7, "marks": []}})
+    if entity is DocumentHull:
+        payload = row["payload"]
+        assert isinstance(payload, PresentDocument)
+        document = cast("dict[str, DocumentValue]", payload.document)
+        row = {**row, "payload": PresentDocument({**document, "amount": None})}
+    else:
+        # A native Column is trusted as the provider returned it; a temporal
+        # end is host-checked.
+        row = {**row, "thru_z": None}
+    port = ScriptedAdapter(Transact(Read(rows=[row])))
+    metadata, _key = _hull_keys(entity)
+    refused: list[StoredDataDecodingError] = []
+
+    def fn(tx: Attempt) -> None:
+        with pytest.raises(StoredDataDecodingError) as caught:
+            tx.target_write(
+                prepare_wire_write(
+                    TargetWrite(
+                        "amend",
+                        metadata.identity.canonical,
+                        {"id": 1, "amount": 5},
+                        if_tx_start=dt.datetime(1999, 1, 1, tzinfo=dt.UTC),
+                        valid_from=_MAR,
+                    ),
+                    model_of(_HULLS),
+                )
+            )
+        refused.append(caught.value)
+
+    scope(port, _HULLS).transact(fn, itself, concurrency="locking")
+    (failure,) = refused
+    attribute = "amount" if entity is DocumentHull else "validEnd"
+    assert failure.member == AttributeIdentity(metadata.identity, attribute)

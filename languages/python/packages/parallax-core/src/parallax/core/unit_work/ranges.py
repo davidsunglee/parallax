@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from operator import attrgetter
 from typing import Final, cast
@@ -25,7 +25,7 @@ from parallax.core.temporal_write.expansion import (
     entry_endpoint,
     openings,
 )
-from parallax.core.unit_work.acquisition import CoverageReadRequest
+from parallax.core.unit_work.acquisition import CompletionRequest, CoverageReadRequest
 from parallax.core.unit_work.effects import (
     CardinalityCorruptionError,
     MissingTargetError,
@@ -43,7 +43,7 @@ from parallax.core.unit_work.materialized import (
     TemporalKeyedWrite,
     singleton_transform,
 )
-from parallax.core.unit_work.retain import RetainedObservation
+from parallax.core.unit_work.retain import RetainedObservation, RetainedTargetState
 from parallax.core.unit_work.strategy import AuditDecoration
 from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, TemporalStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
@@ -67,10 +67,17 @@ from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 __all__ = [
     "DeferredTemporalRange",
     "bind_deferred",
+    "coverage_reads",
     "range_claims",
+    "retained_completion",
     "settle_opening",
     "settle_range",
 ]
+
+_COVERAGE_TERMS: Final = 64
+"""The most Valid-Time windows one coverage read names; more uncovered windows
+are read by several reads, all before the range binds. Past this many, one
+statement's cost grows faster than the round trip a larger statement saves."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -536,11 +543,12 @@ class _TemporalRangeBinder:
 
     def acquired(
         self,
-        rows: PredecessorRows | None,
+        acquired: Sequence[_Original],
         known: Sequence[_Original],
     ) -> tuple[_Original, ...]:
-        """``known`` together with each acquired row at an address none of them
-        holds, ordered by start.
+        """``known`` together with each current row of ``acquired`` — those the
+        range reused and those it read — at an address none of them holds,
+        ordered by start.
 
         A caller-addressed operation's start names one current row, so more than
         one current row holding that start is Cardinality Corruption — an
@@ -550,10 +558,7 @@ class _TemporalRangeBinder:
         known original may be stale, so only the acquired rows are current
         evidence and a stale original is left to its own gate.
         """
-        if rows is None:
-            return tuple(known)
         ends = {_valid_end(original) for original in known}
-        acquired = self._read(rows)
         merged = [*known, *(o for o in acquired if _valid_end(o) not in ends)]
         self._require_one_start(acquired if self.meaning.gated else merged)
         _order_by_start(merged)
@@ -561,12 +566,12 @@ class _TemporalRangeBinder:
 
     def continued(
         self,
-        rows: PredecessorRows | None,
+        read: Sequence[_Original],
         known: Sequence[_Original],
     ) -> tuple[tuple[_Original, ...], frozenset[int]]:
         """The rows a range an ordering barrier kept after earlier writes of its
-        object binds to, read over its whole window, beside the positions of
-        the caller conditions the flush has already proved.
+        object binds to — the current rows of its whole window — beside the
+        positions of the caller conditions the flush has already proved.
 
         The units before the barrier may have transformed the originals this
         range's writes were admitted against. An observed original still
@@ -582,7 +587,6 @@ class _TemporalRangeBinder:
         other start is the caller's failed precondition, which outranks an
         observed loss.
         """
-        read = self._read(rows) if rows is not None else ()
         self._require_one_start(read)
         standing = {original.state for original in read}
         lost = next(
@@ -619,12 +623,22 @@ class _TemporalRangeBinder:
         _order_by_start(ordered)
         return tuple(ordered), frozenset(discharged)
 
-    def _read(self, rows: PredecessorRows) -> list[_Original]:
+    def read(self, rows: Sequence[PredecessorRows]) -> list[_Original]:
+        """Every row of ``rows`` as an original, each physical state once: a
+        row two reads both returned is one row, while two rows sharing an
+        address but not a state stay two. One read returns each row once."""
         meaning = self.meaning
-        return [
+        originals = [
             _original(meaning.facts, meaning.key_attribute, meaning.key_value, predecessor, None)
-            for predecessor in _acquired_predecessors(rows)
+            for acquired in rows
+            for predecessor in _acquired_predecessors(acquired)
         ]
+        if len(rows) < 2:
+            return originals
+        distinct: dict[ObservedStateKey, _Original] = {}
+        for original in originals:
+            distinct.setdefault(original.state, original)
+        return list(distinct.values())
 
     def _require_one_start(self, current: Sequence[_Original]) -> None:
         for condition in self.meaning.conditions:
@@ -701,20 +715,23 @@ class DeferredTemporalRange(DeferredRange):
     read that coverage.
 
     It holds what settlement decided and nothing that could decide again: no
-    claim, ownership, audit, clock, or model. The rows read for
-    :attr:`coverage` join the observed originals at every address those do
-    not already hold; binding then proceeds exactly as for a range bound at
-    planning. A ``continued`` range follows earlier writes of its object across
-    an ordering barrier, so it binds to the rows it read alone, judging its
-    observed originals and caller conditions against what the earlier units
-    proved.
+    claim, ownership, audit, clock, or model. ``retained`` are the starting
+    rows its callers' Locking admissions read whole, each reused only if it is
+    still current when the range binds (:func:`retained_completion`); the
+    coverage neither they nor the observed originals hold is read then
+    (:func:`coverage_reads`), and the rows read join the observed originals at
+    every address those do not already hold. Binding then proceeds exactly as
+    for a range bound at planning. A ``continued`` range follows earlier writes
+    of its object across an ordering barrier, so it binds to the current rows
+    alone — the reused rows and those it read — judging its observed originals
+    and caller conditions against what the earlier units proved.
     """
 
     meaning: _RangeMeaning
     originals: tuple[_Original, ...]
     validations: tuple[_Original, ...]
-    coverage: CoverageReadRequest
     continued: bool = False
+    retained: tuple[RetainedTargetState, ...] = ()
 
 
 def settle_range(
@@ -745,14 +762,16 @@ def settle_range(
     so a range of such writes alone always reads its coverage, and requires
     coverage at the insertion's anchor once read. So does a write a caller
     addressed, whose caller's condition requires the coverage at its start to
-    stand at the Transaction-Time start it states.
+    stand at the Transaction-Time start it states; the starting row its Locking
+    admission read whole travels with the range, which reuses it as coverage
+    if it is still current at execution.
 
     A composition an ordering barrier kept after earlier writes of the same
     object (:class:`~parallax.core.unit_work.materialized.ChainedTemporalWrite`)
-    always reads its whole window at execution: the units before the barrier
-    changed coverage no planning input knows, and the conditions it was
-    admitted with may already have been proven on the originals those units
-    transformed. One a later region follows records what it derives.
+    always binds at execution: the units before the barrier changed coverage
+    no planning input knows, and the conditions it was admitted with may
+    already have been proven on the originals those units transformed. One a
+    later region follows records what it derives.
 
     ``instant`` is the attempt's already-resolved Transaction Instant, which a
     deferred range retains as a value.
@@ -760,7 +779,9 @@ def settle_range(
     key_attribute = view.primary_key.identity
     entity, key_value, transform = _range_of(item, key_attribute)
     facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=instant)
-    originals, validations, anchor, conditions = _known(item, facts, key_attribute, key_value)
+    originals, validations, anchor, conditions, retained = _known(
+        item, facts, key_attribute, key_value
+    )
     chained = item if isinstance(item, ChainedTemporalWrite) else None
     window = transform.valid_time_window
     meaning = _RangeMeaning(
@@ -780,23 +801,16 @@ def settle_range(
             meaning=meaning,
             originals=originals,
             validations=validations,
-            coverage=_coverage(meaning, window),
             continued=True,
+            retained=retained,
         )
-    requested = window
     if window is not None:
-        uncovered = window.first_uncovered(_valid_time_coverages(originals))
-        reached = uncovered is not None
-        if uncovered is not None:
-            requested = window.clipped(start=uncovered)
+        reached = window.first_uncovered(_valid_time_coverages(originals)) is not None
     else:
         reached = not originals
     if reached:
         return DeferredTemporalRange(
-            meaning=meaning,
-            originals=originals,
-            validations=validations,
-            coverage=_coverage(meaning, requested),
+            meaning=meaning, originals=originals, validations=validations, retained=retained
         )
     return _binding(meaning, ownership, audit).bind(originals, validations)
 
@@ -834,8 +848,7 @@ def settle_opening(
     attributes, value_objects = resolve_row(entity, view, insert.rows[0], context="insert")
     key_value = attributes.get(key_attribute)
     transform = opening.transform
-    beyond = opening.beyond
-    if beyond is None:
+    if opening.beyond is None:
         inserts = PredecessorExpander(
             facts,
             transform,
@@ -855,9 +868,7 @@ def settle_opening(
         guards=guards,
         opening=_OpeningSeed((attributes, value_objects), window),
     )
-    return DeferredTemporalRange(
-        meaning=meaning, originals=(), validations=(), coverage=_coverage(meaning, beyond)
-    )
+    return DeferredTemporalRange(meaning=meaning, originals=(), validations=())
 
 
 def _with_opening(
@@ -888,15 +899,27 @@ def _known(
     facts: TemporalFacts,
     key_attribute: AttributeIdentity,
     key_value: object,
-) -> tuple[tuple[_Original, ...], tuple[_Original, ...], object, tuple[_StartingCondition, ...]]:
+) -> tuple[
+    tuple[_Original, ...],
+    tuple[_Original, ...],
+    object,
+    tuple[_StartingCondition, ...],
+    tuple[RetainedTargetState, ...],
+]:
     """What planning knows of ``item``'s range: the originals it binds and
-    validates, its insertion anchor, and its callers' starting conditions."""
+    validates, its insertion anchor, its callers' starting conditions, and the
+    starting rows their admissions retained."""
     if isinstance(item, ComposedTemporalWrite):
         originals, validations = _known_originals(item, facts, key_attribute, key_value)
-        return originals, validations, _anchor(item), _conditions(item)
+        retained = tuple(
+            contribution.retained
+            for contribution in item.contributions
+            if contribution.retained is not None
+        )
+        return originals, validations, _anchor(item), _conditions(item), retained
     window = item.instruction.valid_time_window
     if isinstance(item, InsertionKeyedWrite):
-        return (), (), _anchored_at(window), ()
+        return (), (), _anchored_at(window), (), ()
     if isinstance(item, TargetKeyedWrite):
         expectation = item.expectation
         conditions = (
@@ -904,7 +927,8 @@ def _known(
             if isinstance(expectation, ExpectedTxStart)
             else ()
         )
-        return (), (), _UNANCHORED, conditions
+        retained = () if item.retained is None else (item.retained,)
+        return (), (), _UNANCHORED, conditions, retained
     observation = item.observation
     assert isinstance(observation, TemporalObservation)  # settlement refuses any other
     claim = item.claim
@@ -915,37 +939,116 @@ def _known(
         observation.predecessor,
         None if claim is None else claim.key,
     )
-    return (original,), (), _UNANCHORED, ()
+    return (original,), (), _UNANCHORED, (), ()
 
 
-def _coverage(meaning: _RangeMeaning, window: TimeInterval | None) -> CoverageReadRequest:
+def retained_completion(
+    description: DeferredTemporalRange, current: Callable[[ObservedStateKey, int], bool]
+) -> CompletionRequest | None:
+    """The completion of every starting row ``description`` retained that is
+    still ``current`` — no change the attempt completed since its read replaced
+    it — and that no other original of the range already is, or ``None`` where
+    none is reusable.
+
+    Each retained row is taken from its state here, reused or not, so a stale
+    one is discarded without being judged. A range gated by Optimistic proofs
+    reuses none: a row's freshness within the attempt says nothing of changes
+    outside it.
+    """
+    retained = description.retained
+    if not retained:
+        return None
+    meaning = description.meaning
+    held = {original.state for original in (*description.originals, *description.validations)}
+    rows: list[tuple[object, ...]] = []
+    documents: list[object | None] = []
+    for state in retained:
+        taken = state.take()
+        if (
+            taken is None
+            or meaning.gated
+            or state.state in held
+            or not current(state.state, state.read_at)
+        ):
+            continue
+        held.add(state.state)
+        row, document = taken
+        rows.append(row)
+        documents.append(document)
+    if not rows:
+        return None
+    return CompletionRequest(
+        entity=meaning.facts.entity,
+        key_attribute=meaning.key_attribute,
+        rows=tuple(rows),
+        documents=None if all(document is None for document in documents) else tuple(documents),
+    )
+
+
+def coverage_reads(
+    description: DeferredTemporalRange, reused: PredecessorRows | None
+) -> tuple[CoverageReadRequest, ...]:
+    """The reads of the coverage ``description``'s window needs that nothing
+    already holds: the observed originals of a range that follows no barrier,
+    the ``reused`` starting rows, and a pending insertion's own window.
+
+    What remains of a Bitemporal window is read as its sorted, disjoint parts,
+    in reads naming a bounded number of them each; nothing is read where
+    nothing remains. A Transaction-Time-Only object's one current row is read
+    unless a reused or observed row already is it.
+    """
+    meaning = description.meaning
+    originals = () if description.continued else description.originals
+    window = meaning.valid_time_window
+    if window is None:
+        return () if originals or reused is not None else (_coverage(meaning, ()),)
+    covered = [original.valid_time_coverage for original in originals]
+    if reused is not None:
+        shape = meaning.facts.shape
+        covered.extend(valid_time_coverage(shape, reused, index) for index in range(len(reused)))
+    seed = meaning.opening
+    if seed is not None:
+        covered.append(seed.window)
+    missing = window.uncovered(
+        sorted((interval for interval in covered if interval is not None), key=_START)
+    )
+    return tuple(
+        _coverage(meaning, missing[first : first + _COVERAGE_TERMS])
+        for first in range(0, len(missing), _COVERAGE_TERMS)
+    )
+
+
+def _coverage(meaning: _RangeMeaning, windows: tuple[TimeInterval, ...]) -> CoverageReadRequest:
     return CoverageReadRequest(
         entity=meaning.facts.entity,
         key_attribute=meaning.key_attribute,
         key_value=cast("ManagedValue", meaning.key_value),
-        valid_time_window=window,
+        valid_time_windows=windows,
         locking=not meaning.gated,
     )
 
 
 def bind_deferred(
     description: DeferredTemporalRange,
-    rows: PredecessorRows | None,
+    reused: PredecessorRows | None,
+    acquired: Sequence[PredecessorRows],
     *,
     ownership: TemporalWriteOwnership,
     audit: AuditDecoration,
 ) -> BoundRange:
-    """``description`` bound to the coverage read for it — ``None`` where the
-    read found no row — through the same binding a range known at planning
-    takes, under the attempt's current ``ownership``, every produced row
-    finalized and every emitted close decorated once."""
+    """``description`` bound to the current rows its window holds — the
+    starting rows it ``reused`` and the coverage ``acquired`` beside them —
+    through the same binding a range known at planning takes, under the
+    attempt's current ``ownership``, every produced row finalized and every
+    emitted close decorated once."""
     binding = _binding(description.meaning, ownership, audit)
+    current = binding.read(acquired if reused is None else (reused, *acquired))
     if description.continued:
         originals, discharged = binding.continued(
-            rows, (*description.originals, *description.validations)
+            current, (*description.originals, *description.validations)
         )
         return binding.bind(originals, (), discharged, concludes=not description.meaning.derives)
-    return binding.bind(binding.acquired(rows, description.originals), description.validations)
+    return binding.bind(binding.acquired(current, description.originals), description.validations)
 
 
 def _binding(

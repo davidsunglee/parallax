@@ -33,8 +33,10 @@ from parallax.core.unit_work import (
     WriteInstructionError,
     WritePreconditionError,
     WriteRejectedError,
+    ranges,
 )
 from parallax.core.unit_work.ranges import DeferredTemporalRange
+from parallax.core.unit_work.retain import RetainedTargetState
 from parallax.core.unit_work.write_planner import WritePlanner
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRows
@@ -208,12 +210,15 @@ def test_a_deferred_range_is_bound_once_between_its_coverage_read_and_its_first_
     def recording(
         planner: WritePlanner,
         description: DeferredTemporalRange,
-        rows: PredecessorRows | None,
+        reused: PredecessorRows | None,
+        acquired: tuple[PredecessorRows, ...],
         /,
         **supplied: Any,
     ) -> BoundRange:
-        seen.append((len(_reads(port)), len(_writes(port)), None if rows is None else len(rows)))
-        return bind(planner, description, rows, **supplied)
+        assert reused is None
+        read = sum(len(rows) for rows in acquired) if acquired else None
+        seen.append((len(_reads(port)), len(_writes(port)), read))
+        return bind(planner, description, reused, acquired, **supplied)
 
     monkeypatch.setattr(WritePlanner, "bind_deferred", recording)
     if acquired is None:
@@ -277,8 +282,10 @@ def test_a_lost_start_guard_is_the_callers_precondition_and_a_lost_later_row_ret
 # Locking: the start is read under the shared lock at the call, or reused.     #
 # --------------------------------------------------------------------------- #
 def test_a_locking_bitemporal_target_reads_its_start_at_the_call_and_writes_ungated() -> None:
+    # The start read at the call holds the whole window, so the flush reuses it
+    # as the range's coverage and reads nothing more.
     port = ScriptedAdapter(
-        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)], times=2), Write(times=4))
+        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=4))
     )
 
     def fn(tx: Transaction) -> None:
@@ -291,23 +298,27 @@ def test_a_locking_bitemporal_target_reads_its_start_at_the_call_and_writes_unga
         assert acquired.binds == (1, _MAR, _MAR, INFINITY_INSTANT)
 
     _db(port).transact(fn, concurrency="locking")
-    _acquired, coverage = _reads(port)
-    assert coverage.sql.endswith("for share of t0")
-    close, *_opened = _writes(port)
+    assert len(_reads(port)) == 1
+    close, *opened = _writes(port)
     assert close.sql.endswith("where id = %s and thru_z = %s and out_z = %s")
+    assert [call.binds[2:5] for call in opened] == [
+        (Decimal("100.00"), _JAN, _MAR),
+        (Decimal("150.00"), _MAR, _SEP),
+        (Decimal("100.00"), _SEP, INFINITY_INSTANT),
+    ]
 
 
 def test_a_locking_transaction_time_target_reads_its_current_row_under_the_shared_lock() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_T0)], times=2), Write(times=2)))
+    # The current row read at the call is the range's whole coverage.
+    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_T0)]), Write(times=2)))
     db_for(BALANCE, port).transact(
         lambda tx: tx.replace_if(
             mm.Balance(id=1, acct_num="B", value=Decimal("7.00")), tx_start=_T0
         ),
         concurrency="locking",
     )
-    acquired, coverage = _reads(port)
+    (acquired,) = _reads(port)
     assert acquired.sql.endswith("where t0.bal_id = %s and t0.out_z = %s for share of t0")
-    assert coverage.sql == acquired.sql
     close, opened = _writes(port)
     assert close.sql.endswith("where bal_id = %s and out_z = %s")
     assert opened.binds[:3] == (1, "B", Decimal("7.00"))
@@ -353,7 +364,7 @@ def test_a_locking_target_reuses_a_held_read_of_exactly_its_start() -> None:
 
 def test_a_held_read_of_a_rectangle_its_start_lies_inside_is_no_exact_hit() -> None:
     held = _rectangle(_JAN, INFINITY_INSTANT)
-    port = ScriptedAdapter(Transact(Read(rows=[held], times=3), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[held], times=2), Write(times=4)))
 
     def fn(tx: Transaction) -> None:
         source = _source(tx, _FEB)
@@ -382,6 +393,213 @@ def test_a_locking_target_reuses_a_pending_observed_write_of_its_start() -> None
     _close, head, middle, tail = _writes(port)
     assert middle.binds[1:5] == ("B", Decimal("150.00"), _MAR, _SEP)
     assert (head.binds[1:3], tail.binds[1:3]) == (("A", Decimal("100.00")),) * 2
+
+
+# --------------------------------------------------------------------------- #
+# Locking: the flush reads only the coverage the acquired starts leave.        #
+# --------------------------------------------------------------------------- #
+def _calendar(*starts: tuple[dt.datetime, str]) -> list[MappingRow]:
+    """Consecutive rectangles at T0, each from its start to the next one's, the
+    last to the open bound."""
+    ends = [start for start, _value in starts[1:]] + [INFINITY_INSTANT]
+    return [_rectangle(start, end, value) for (start, value), end in zip(starts, ends, strict=True)]
+
+
+def test_a_locking_target_reads_only_the_coverage_its_acquired_start_leaves() -> None:
+    first, later = _calendar((_JAN, "100.00"), (_JUN, "200.00"))
+    port = ScriptedAdapter(Transact(Read(rows=[first]), Read(rows=[later]), Write(times=6)))
+    _db(port).transact(lambda tx: _patch(tx, value="150.00"), concurrency="locking")
+    _acquired, coverage = _reads(port)
+    assert coverage.sql.endswith(
+        "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s for share of t0"
+    )
+    assert coverage.binds == (1, _JUN, _SEP, INFINITY_INSTANT)
+    _start, _later, *opened = _writes(port)
+    assert [call.binds[2:5] for call in opened] == [
+        (Decimal("100.00"), _JAN, _MAR),
+        (Decimal("150.00"), _MAR, _JUN),
+        (Decimal("150.00"), _JUN, _SEP),
+        (Decimal("200.00"), _SEP, INFINITY_INSTANT),
+    ]
+
+
+@pytest.mark.parametrize("replaces", [False, True], ids=["amendment", "replacement"])
+def test_a_part_the_coverage_read_finds_empty_is_a_gap_read_once(replaces: bool) -> None:
+    (first,) = _calendar((_JAN, "100.00"))
+    first = {**first, "thru_z": _JUN}
+    port = ScriptedAdapter(Transact(Read(rows=[first]), Read(rows=[]), Write(times=4)))
+
+    def fn(tx: Transaction) -> None:
+        if replaces:
+            _replace(tx, value="150.00")
+        else:
+            _patch(tx, value="150.00")
+
+    _db(port).transact(fn, concurrency="locking")
+    assert len(_reads(port)) == 2
+    windows = [call.binds[3:5] for call in _writes(port) if call.sql.startswith("insert")]
+    # A replacement opens its state over the gap the empty read resolved; an
+    # amendment leaves it.
+    assert windows == [(_JAN, _MAR), (_MAR, _JUN), *([(_JUN, _SEP)] if replaces else [])]
+
+
+_FOUR = (
+    (_JAN, "100.00"),
+    (_MAR, "200.00"),
+    (dt.datetime(2024, 5, 1, tzinfo=dt.UTC), "300.00"),
+    (dt.datetime(2024, 7, 1, tzinfo=dt.UTC), "400.00"),
+)
+
+
+@pytest.mark.parametrize("terms", [2, 1], ids=["one-read", "one-read-per-part"])
+def test_the_parts_two_acquired_starts_leave_are_read_together_up_to_the_term_cap(
+    monkeypatch: pytest.MonkeyPatch, terms: int
+) -> None:
+    monkeypatch.setattr(ranges, "_COVERAGE_TERMS", terms)
+    first, second, third, fourth = _calendar(*_FOUR)
+    coverage = (
+        [Read(rows=[second, fourth])] if terms > 1 else [Read(rows=[second]), Read(rows=[fourth])]
+    )
+    port = ScriptedAdapter(
+        Transact(Read(rows=[first]), Read(rows=[third]), *coverage, Write(times=9))
+    )
+
+    def fn(tx: Transaction) -> None:
+        _window_patch(tx, (_FEB, _MAR), "150.00")
+        _window_patch(tx, (_JUN, _AUG), "175.00")
+
+    _barriered(port).transact(fn, concurrency="locking")
+    reads = _reads(port)[2:]
+    may, jul = _FOUR[2][0], _FOUR[3][0]
+    if terms > 1:
+        (read,) = reads
+        assert read.sql.endswith(
+            "where t0.id = %s and ((t0.thru_z > %s and t0.from_z < %s) or "
+            "(t0.thru_z > %s and t0.from_z < %s)) and t0.out_z = %s for share of t0"
+        )
+        assert read.binds == (1, _MAR, may, jul, _AUG, INFINITY_INSTANT)
+    else:
+        assert [read.binds for read in reads] == [
+            (1, _MAR, may, INFINITY_INSTANT),
+            (1, jul, _AUG, INFINITY_INSTANT),
+        ]
+    # The rectangle between the two windows is read, and left as it stands.
+    closes = [call.binds[2] for call in _writes(port) if " set out_z = " in call.sql]
+    assert closes == [_MAR, jul, "infinity"]
+
+
+def test_a_barrier_follower_reuses_the_acquired_start_no_earlier_unit_changed() -> None:
+    first, kept = _calendar((_JAN, "100.00"), (dt.datetime(2024, 5, 1, tzinfo=dt.UTC), "200.00"))
+    port = ScriptedAdapter(
+        Transact(Read(rows=[first]), Read(rows=[kept]), Write(times=4), Write(), Write(times=4))
+    )
+
+    def fn(tx: Transaction) -> None:
+        _window_patch(tx, _FEB_APR, "150.00")
+        _barrier(tx)
+        _window_patch(tx, _JUN_AUG, "175.00")
+
+    _barriered(port).transact(fn, concurrency="locking")
+    # Each unit binds to the rectangle its own call acquired; the barrier
+    # between them changed neither.
+    assert len(_reads(port)) == 2
+    assert _sql_kinds(port)[-9:] == [
+        "close",
+        "insert",
+        "insert",
+        "insert",
+        "barrier",
+        "close",
+        "insert",
+        "insert",
+        "insert",
+    ]
+
+
+def test_a_barrier_follower_reuses_an_acquired_start_an_earlier_unit_kept_unchanged() -> None:
+    whole = _rectangle(_JAN, INFINITY_INSTANT)
+    port = ScriptedAdapter(Transact(Read(rows=[whole], times=2), Write(), Write(times=4)))
+
+    def fn(tx: Transaction) -> None:
+        _window_patch(tx, _FEB_APR, "100.00")
+        _barrier(tx)
+        _window_patch(tx, _JUN_AUG, "175.00")
+
+    _barriered(port).transact(fn, concurrency="locking")
+    # The first unit keeps the rectangle it found holding its value, so the
+    # rectangle the second call acquired still stands as it was read.
+    assert len(_reads(port)) == 2
+    assert _sql_kinds(port)[-5:] == ["barrier", "close", "insert", "insert", "insert"]
+
+
+def test_an_acquired_start_an_earlier_unit_revised_in_place_is_read_again() -> None:
+    # Both calls acquire the row the attempt opened over [March, September).
+    # The first unit revises that row at its own address and Transaction-Time
+    # start, moving only its Valid-Time start, yet it changed the row: the second
+    # unit binds to what the row now holds rather than to what its call acquired.
+    whole = _rectangle(_JAN, INFINITY_INSTANT)
+    owned = _rectangle(_MAR, _SEP, "150.00", tx_start=FIXED)
+    jul = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    port = ScriptedAdapter(
+        Transact(
+            Read(rows=[whole]),
+            Write(times=4),
+            Read(rows=[]),
+            Read(rows=[owned], times=2),
+            Write(times=2),
+            Write(),
+            Read(rows=[{**owned, "from_z": _APR}]),
+            Write(times=3),
+        )
+    )
+
+    def fn(tx: Transaction) -> None:
+        _patch(tx, value="150.00")
+        tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR))
+        tx.wire.amend_if(
+            "WherePosition",
+            {"id": 1, "acctNum": "B"},
+            valid_from=_MAR,
+            until=_APR,
+            tx_start=FIXED,
+        )
+        _barrier(tx)
+        _window_patch(tx, (_JUN, jul), "180.00", tx_start=FIXED)
+
+    _barriered(port).transact(fn, concurrency="locking")
+    assert _reads(port)[-1].binds == (1, _JUN, jul, INFINITY_INSTANT)
+    inserted = [call.binds[1:5] for call in _writes(port)[-3:] if call.sql.startswith("insert")]
+    assert inserted == [("A", Decimal("150.00"), _APR, _JUN), ("A", Decimal("180.00"), _JUN, jul)]
+
+
+def _retained_alive() -> int:
+    gc.collect()
+    return sum(1 for held in gc.get_objects() if type(held) is RetainedTargetState)
+
+
+class _Abandoned(Exception):
+    pass
+
+
+@pytest.mark.parametrize("ends", ["committed", "abandoned"])
+def test_an_acquired_starting_row_lives_only_while_its_write_is_pending(ends: str) -> None:
+    whole = _rectangle(_JAN, INFINITY_INSTANT)
+    writes = (Write(times=4),) if ends == "committed" else ()
+    port = ScriptedAdapter(Transact(Read(rows=[whole]), *writes))
+    assert _retained_alive() == 0
+
+    def fn(tx: Transaction) -> None:
+        _patch(tx, value="150.00")
+        assert _retained_alive() == 1
+        if ends == "abandoned":
+            raise _Abandoned
+
+    if ends == "abandoned":
+        with raises_contextualized(_Abandoned):
+            _db(port).transact(fn, concurrency="locking")
+    else:
+        _db(port).transact(fn, concurrency="locking")
+    assert _retained_alive() == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -700,9 +918,9 @@ def test_an_equal_temporal_patch_keeps_its_milestone_by_a_guard_on_the_stated_st
 
 
 def test_an_equal_valued_temporal_patch_under_locking_writes_nothing() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)], times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)])))
     _db(port).transact(lambda tx: _patch(tx, value="100.00"), concurrency="locking")
-    assert len(_reads(port)) == 2
+    assert len(_reads(port)) == 1
     assert _writes(port) == []
 
 
@@ -733,10 +951,9 @@ def test_an_equal_patch_keeps_each_rectangle_it_leaves_and_rewrites_the_others()
 def test_a_temporal_target_runs_at_the_configured_isolation_level(
     concurrency: _Concurrency,
 ) -> None:
-    reads = [Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)])] * (
-        2 if concurrency == "locking" else 1
+    port = ScriptedAdapter(
+        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=4))
     )
-    port = ScriptedAdapter(Transact(*reads, Write(times=4)))
     _db(port).transact(lambda tx: _patch(tx, value="150.00"), concurrency=concurrency)
     assert port.calls[0] == BeginCall(isolation="read_committed")
 
@@ -937,20 +1154,22 @@ def test_disjoint_targets_of_one_rectangle_close_it_once_and_open_each_piece(
     concurrency: _Concurrency,
 ) -> None:
     whole = _rectangle(_JAN, INFINITY_INSTANT)
-    acquisitions = [Read(rows=[whole], times=2)] if concurrency == "locking" else []
-    port = ScriptedAdapter(Transact(*acquisitions, Read(rows=[whole]), Write(times=6)))
+    # Under Locking each start is read at its own call, and the one rectangle
+    # both reads found covers the whole range, which reads nothing more.
+    reads = Read(rows=[whole], times=2) if concurrency == "locking" else Read(rows=[whole])
+    port = ScriptedAdapter(Transact(reads, Write(times=6)))
 
     def fn(tx: Transaction) -> None:
         _window_patch(tx, _FEB_APR, "150.00")
         _window_patch(tx, _JUN_AUG, "175.00")
-        # Under Locking each start is read at its own call; neither call runs
-        # the other's pending write.
+        # Neither call runs the other's pending write.
         assert _writes(port) == []
         assert len(_reads(port)) == (2 if concurrency == "locking" else 0)
 
     _barriered(port).transact(fn, concurrency=concurrency)
-    coverage = _reads(port)[-1]
-    assert coverage.binds == (1, _FEB, _AUG, INFINITY_INSTANT)
+    if concurrency == "optimistic":
+        (coverage,) = _reads(port)
+        assert coverage.binds == (1, _FEB, _AUG, INFINITY_INSTANT)
     close, *opened = _writes(port)
     if concurrency == "optimistic":
         assert close.binds[-1] == _T0
@@ -970,10 +1189,12 @@ def test_a_barrier_keeps_each_disjoint_operation_on_its_own_side(
 ) -> None:
     whole = _rectangle(_JAN, INFINITY_INSTANT)
     # Before the flush: the observed source, or each Locking acquisition; then
-    # the first unit's coverage unless its observation already holds it.
+    # the first unit's coverage unless its observation or its own acquisition
+    # already holds it. The later unit's acquisition is of the rectangle the
+    # first unit closed, so it reads the coverage that unit left.
     reads = {
         ("target", "optimistic"): 1,
-        ("target", "locking"): 3,
+        ("target", "locking"): 2,
         ("observed", "optimistic"): 1,
         ("observed", "locking"): 2,
     }[first, concurrency]
@@ -1057,10 +1278,11 @@ def test_a_proof_never_outlives_its_flush_so_a_later_call_restates_its_start(
     concurrency: _Concurrency,
 ) -> None:
     whole = _rectangle(_JAN, INFINITY_INSTANT)
-    acquisition = [Read(rows=[whole])] if concurrency == "locking" else []
-    later = [Read(rows=[_owned(_APR)])]
+    # The first read is the Locking acquisition at the call, which the flush
+    # reuses as coverage, or the Optimistic flush's own coverage read; the last
+    # is the second call's acquisition, or the commit flush's coverage read.
     port = ScriptedAdapter(
-        Transact(*acquisition, Read(rows=[whole]), Write(times=4), Read(rows=[]), *later)
+        Transact(Read(rows=[whole]), Write(times=4), Read(rows=[]), Read(rows=[_owned(_APR)]))
     )
 
     def fn(tx: Transaction) -> None:
