@@ -51,7 +51,9 @@ from parallax.core.unit_work.materialized import (
     VersionedEvidence,
 )
 from parallax.core.unit_work.ranges import (
+    DeferredGroupRange,
     DeferredTemporalRange,
+    defer_group,
     range_claims,
     settle_opening,
     settle_range,
@@ -77,7 +79,7 @@ from parallax.core.write_plan.plan import (
     CombinedSourceAuthority,
     ExecutionUnit,
     Openings,
-    PlannedSteps,
+    PlannedWrites,
     SourceAuthority,
     StepSegment,
     TemporalWriteOwnership,
@@ -256,8 +258,16 @@ class WritePlanCompiler:
             if isinstance(item, MaterializedWriteGroup):
                 flush_pending()
                 segment = self._settle_group(
-                    item, concurrency, transaction_instant, ownership, audit
+                    item,
+                    concurrency,
+                    transaction_instant,
+                    ownership,
+                    audit,
+                    guards=counts_unchanged_rows,
                 )
+                if isinstance(segment, DeferredGroupRange):
+                    units.append(ExecutionUnit(end=count, deferred=segment))
+                    continue
                 if len(segment):
                     segments.append(segment)
                     count += len(segment)
@@ -314,7 +324,7 @@ class WritePlanCompiler:
                 )
             )
         flush_pending()
-        return WritePlan(steps=PlannedSteps(tuple(segments)), units=tuple(units))
+        return WritePlan(steps=PlannedWrites(tuple(segments)), units=tuple(units))
 
     def _carrier_shape(self, item: OrderedWrite) -> TemporalShape | None:
         """The Temporal Shape of a buffered carrier's target, read once at
@@ -741,8 +751,11 @@ class WritePlanCompiler:
         tx_instant: TransactionInstant,
         ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
-    ) -> NonTemporalGroupSegment | TemporalGroupSegment:
-        """One Materialized Write Group as one already-settled segment.
+        *,
+        guards: bool,
+    ) -> NonTemporalGroupSegment | TemporalGroupSegment | DeferredGroupRange:
+        """One Materialized Write Group as one already-settled segment, or as
+        the deferred range a Bitemporal amendment settles at execution.
 
         Every group-wide semantic fact — the temporal expansion, the gate and
         concurrency decision, the affected-row policy, the assignment shape,
@@ -752,9 +765,26 @@ class WritePlanCompiler:
         the Transaction Instant, or a strategy object: its ``step`` rebuilds
         one row's Planned Write from these already-decided facts and the
         group's own compact evidence alone.
+
+        A Bitemporal amendment selected each object by the row current at its
+        ``valid_from`` and reaches the object's later coverage too, which no
+        planning input holds: each object settles at execution as a range from
+        that row (:func:`~parallax.core.unit_work.ranges.defer_group`), whose
+        unchanged milestones ``guards`` lets an Optimistic guard prove.
         """
         entity = group.mutation.selection.target
         shape = self._temporal_facet.shape(entity.identity)
+        if isinstance(shape, Bitemporal) and group.mutation.mutation in AMEND_MUTATIONS:
+            return defer_group(
+                group,
+                view=entity_view(self._families, entity),
+                shape=shape,
+                gated=self._concurrency.gates(concurrency, self._model, entity.identity),
+                # Reaching a surviving temporal group is what makes the attempt
+                # capture its instant, once for every object it selected.
+                instant=tx_instant.value(),
+                guards=guards,
+            )
         if isinstance(shape, TransactionTimeOnly | Bitemporal):
             return self._settle_temporal_group(
                 group, entity, shape, concurrency, tx_instant, ownership, audit

@@ -62,7 +62,11 @@ on both:
   An observed keyed write whose requested extent reaches rectangles no read of
   it observed therefore reads them inside the flush before changing them
   (`m-temporal-write` *Observed writes span their requested extent*), and under
-  Locking that read takes this same shared lock on every row it selects.
+  Locking that read takes this same shared lock on every row it selects. A
+  Bitemporal predicate-selected amendment locks each selected object's starting
+  rectangle when it selects, at the call, and each later rectangle only when its
+  flush reaches that object's batch (`m-unit-work` *Materialized Write Groups*):
+  later rows are not locked early for it.
 - A temporal observation names **one milestone** and records nothing about the
   read that produced it, so what it says about lock scope is exactly what this
   section says: the read locked that one row. A write under Locking is licensed

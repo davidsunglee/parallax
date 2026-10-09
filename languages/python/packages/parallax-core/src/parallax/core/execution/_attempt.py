@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 from parallax.core import deep_fetch, inheritance
@@ -45,7 +45,11 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._validated import ValidatedObjectQuery, latest_temporal_selections
+from parallax.core.object_query._validated import (
+    ValidatedObjectQuery,
+    latest_temporal_selections,
+    selections_at_valid_time,
+)
 from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery._fetch import entity_read_lock, execute_read
 from parallax.core.read_delivery._page import ABSENT, release_page_rows
@@ -85,9 +89,13 @@ from parallax.core.unit_work.acquisition import (
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, PreparedTargetWrite
 from parallax.core.unit_work.strategy import ActorIdentity
-from parallax.core.unit_work.uow import BindDeferredRange, ReportUnitCompletion
+from parallax.core.unit_work.uow import (
+    BindDeferredRange,
+    DeferredWriteContinuation,
+    ReportUnitCompletion,
+)
 from parallax.core.write_plan import WritePlan
-from parallax.core.write_plan.plan import ExecutionUnit
+from parallax.core.write_plan.plan import BoundRange, ExecutionUnit, UnitEffects
 from parallax.core.write_plan.steps import PlannedInsert
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
@@ -492,10 +500,12 @@ class Attempt:
 
     def _selection_read(self, request: SelectionReadRequest) -> CompiledRead:
         """The predicate's resolving read, at Latest on every declared temporal
-        axis: a mutation-compatible Object Query carries no as-of term, so the
-        internal authoring boundary adds one per dimension and routes the read
-        through the same root canonicalization every other read takes, rather
-        than matching every historical milestone too.
+        axis — or, where the request selects at a Valid-Time instant, as of that
+        instant on Valid Time and Latest on Transaction Time: a
+        mutation-compatible Object Query carries no as-of term, so the internal
+        authoring boundary adds one per dimension and routes the read through
+        the same root canonicalization every other read takes, rather than
+        matching every historical milestone too.
 
         Its projection follows the evidence it becomes: a temporal target's
         rows are complete Predecessor Rows, so every declared document is
@@ -505,11 +515,15 @@ class Attempt:
         meta = self._write.model.meta
         entity = request.entity
         predecessors = request.predecessors
+        root = inheritance.root_metadata(inheritance.view(meta), meta, entity.identity)
+        valid_from = request.valid_from
         query = deep_fetch.plan_mutation_read(
             request.write,
             model=meta,
-            temporal=latest_temporal_selections(
-                inheritance.root_metadata(inheritance.view(meta), meta, entity.identity)
+            temporal=(
+                latest_temporal_selections(root)
+                if valid_from is None
+                else selections_at_valid_time(root, valid_from)
             ),
             projection=deep_fetch.ReadProjectionRequest(
                 "all" if predecessors else "none", predecessors
@@ -539,8 +553,7 @@ class Attempt:
             request.entity,
             model=self._write.model.meta,
             key=request.key_attribute.name,
-            key_value=request.key_value,
-            valid_time_windows=request.valid_time_windows,
+            terms=tuple((term.key_value, term.valid_time_windows) for term in request.terms),
         )
         return self._row_read(query, "locking" if request.locking else None)
 
@@ -597,7 +610,9 @@ class Attempt:
         unit of work reads its coverage and binds the range
         (``bind_deferred``), and the bound steps execute and are enforced
         exactly as planned ones are before the unit is reported with what it
-        bound.
+        bound. Where binding answers a continuation, each round it prepares
+        executes the same way before the next is prepared, and the unit is
+        reported once, with what the continuation finishes with, after the last.
 
         This performs NO classification of its own: the adopted Write Planner
         already spent the concurrency mode while settling each step, and this
@@ -624,20 +639,23 @@ class Attempt:
         units = iter(plan.units)
         unit = next(units, None)
         executed = 0
-        allocated: tuple[object, ...] = ()
+        allocated: list[object] = []
         while True:
             while unit is not None and unit.end == executed:
-                self._complete(unit, bind_deferred, completed, allocated)
-                allocated = ()
+                self._complete(unit, bind_deferred, completed, tuple(allocated))
+                allocated.clear()
                 unit = next(units, None)
             lowered_step = next(statements, None)
             if lowered_step is None:
                 return
             step, statement = lowered_step
             if unit is not None and unit.opened.allocated and returns_rows(step):
-                allocated = (*allocated, *self._run_returning(step, statement))
+                allocated.extend(self._run_returning(step, statement))
             else:
                 self._run(step, statement)
+            # A unit reached next may be prepared in rounds, which must not
+            # find an executed step still held here.
+            lowered_step = step = statement = None
             executed += 1
 
     def _complete(
@@ -652,12 +670,47 @@ class Attempt:
             completed(unit, None, allocated=allocated)
             return
         bound = bind_deferred(deferred)
+        if isinstance(bound, BoundRange):
+            self._run_all(bound.steps)
+            completed(unit, bound)
+            return
+        completed(unit, self._continued(bound))
+
+    def _continued(self, continuation: DeferredWriteContinuation) -> UnitEffects:
+        """Execute every round ``continuation`` prepares, each only once the
+        previous one's steps have all succeeded, and answer what it finishes
+        with; close it however that ends.
+
+        A round's writes are released before the next is pulled, so nothing
+        executed stays reachable from here while later work is prepared. A
+        failure closing the continuation after an earlier failure is noted on
+        the earlier one, which propagates; one with no earlier failure refuses
+        the unit's success itself.
+        """
+        try:
+            writes = continuation.pull()
+            while writes is not None:
+                self._run_all(writes)
+                writes = None
+                writes = continuation.pull()
+            effects = continuation.finish()
+        except BaseException as failure:
+            try:
+                continuation.close()
+            except BaseException as cleanup:
+                failure.add_note(
+                    f"closing the deferred unit's preparation also failed: {cleanup!r}"
+                )
+            raise
+        continuation.close()
+        return effects
+
+    def _run_all(self, steps: Iterable[PlannedStep]) -> None:
         meta = self._write.model.meta
         payloads = self._write.planner.payloads
         dialect = self._connection.dialect
-        for step in bound.steps:
+        for step in steps:
             self._run(step, lowered(step, payloads, meta, dialect))
-        completed(unit, bound)
 
     def _run(self, step: PlannedStep, statement: LoweredStatement) -> None:
         batch = self._batch

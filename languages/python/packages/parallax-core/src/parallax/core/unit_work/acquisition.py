@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Final, Protocol
@@ -18,6 +19,7 @@ __all__ = [
     "AcquireRows",
     "CompletionRequest",
     "CoverageReadRequest",
+    "CoverageTerm",
     "RowConsumer",
     "RowReadRequest",
     "RowRequest",
@@ -42,11 +44,17 @@ class SelectionReadRequest:
     versioned target, its version in the target's member selection. A temporal
     target has no version, and its rows become complete Predecessor Rows, so
     its read projects every declared document (:attr:`predecessors`).
+
+    ``valid_from`` is the Valid-Time instant a Bitemporal amendment selects its
+    objects at, each by the row current there; ``None`` selects at Latest on
+    every axis. A selection at an instant keeps every row it matches
+    (:func:`consume_selection`).
     """
 
     write: PreparedPredicateWrite
     key_position: int
     version_position: int | None
+    valid_from: dt.datetime | None = None
 
     @property
     def entity(self) -> EntityMetadata:
@@ -79,17 +87,26 @@ class TargetReadRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class CoverageReadRequest:
-    """The current coverage a deferred range binds to: one object's current rows
-    overlapping any of ``valid_time_windows`` — sorted, disjoint, and never
-    adjacent — read whole under the shared row lock when ``locking``. A
+class CoverageTerm:
+    """One object's part of a coverage read: its current rows overlapping any
+    of ``valid_time_windows`` — sorted, disjoint, and never adjacent. A
     Transaction-Time-Only object has no Valid Time, so it names no window and
-    its one current row is the coverage."""
+    its one current row is its coverage."""
+
+    key_value: ManagedValue
+    valid_time_windows: tuple[TimeInterval, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageReadRequest:
+    """The current coverage deferred ranges bind to: every row each of
+    ``terms`` names, read whole, in one statement, under the shared row lock
+    when ``locking``. Each row is returned whole however little of it a window
+    reaches, and the rows of several objects are told apart by their keys."""
 
     entity: EntityMetadata
     key_attribute: AttributeIdentity
-    key_value: ManagedValue
-    valid_time_windows: tuple[TimeInterval, ...]
+    terms: tuple[CoverageTerm, ...]
     locking: bool
 
 
@@ -165,10 +182,16 @@ def consume_selection(
 
     A versioned target's evidence is each row's key and observed version; a
     temporal target's is each row whole, its raw document beside it by the
-    row's original position.
+    row's original position. A selection at a Valid-Time instant eliminates
+    nothing: its amendment reaches later coverage too, which equality at the
+    start says nothing about.
     """
     del root_count
-    change = _effective_change(request.write, selection, absent)
+    change = (
+        None
+        if request.valid_from is not None
+        else _effective_change(request.write, selection, absent)
+    )
     version_position = request.version_position
     if version_position is not None:
         versioned = VersionedEvidenceBuilder(

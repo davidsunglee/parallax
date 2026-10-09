@@ -202,6 +202,66 @@ def _temporal_model() -> Metamodel:
 
 
 _OPENED: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_VALID_FROM: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+
+
+def _bitemporal_model() -> Metamodel:
+    """An accepted model of one Entity with both as-of axes: the shape whose
+    amendment selects at its start and settles at execution instead."""
+    entity = identity("Entity0")
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=entity,
+                container=Table("entity0"),
+                attributes=(
+                    key(entity),
+                    attribute(entity, "value"),
+                    timestamp(entity, "validStart"),
+                    timestamp(entity, "validEnd"),
+                    timestamp(entity, "txStart"),
+                    timestamp(entity, "txEnd"),
+                ),
+                as_of_axes=(
+                    AsOfAxisMetadata(
+                        TemporalDimension.VALID_TIME,
+                        AttributeIdentity(entity, "validStart"),
+                        AttributeIdentity(entity, "validEnd"),
+                    ),
+                    AsOfAxisMetadata(
+                        TemporalDimension.TRANSACTION_TIME,
+                        AttributeIdentity(entity, "txStart"),
+                        AttributeIdentity(entity, "txEnd"),
+                    ),
+                ),
+            )
+        )
+    )
+
+
+def _amendment_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
+    """A Bitemporal amendment group of ``rows`` objects, each selected by the
+    row current at the write's start."""
+    return temporal_group(
+        PredicateWrite(
+            "amend",
+            PredicateSelection("Entity0", Comparison("lessThan", "Entity0.value", 1_000_000)),
+            (WriteAssignment("Entity0.value", 1_000_001),),
+            _VALID_FROM,
+        ),
+        model,
+        [
+            {
+                "id": row + 1,
+                "value": row,
+                "validStart": _OPENED,
+                "validEnd": INFINITY,
+                "txStart": _OPENED,
+                "txEnd": INFINITY,
+            }
+            for row in range(rows)
+        ],
+    )
 
 
 def _temporal_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
@@ -373,14 +433,32 @@ def _temporal_settlement(rows: int) -> _Settlement:
     )
 
 
+def _deferred_settlement(rows: int) -> _Settlement:
+    """Finalizing a Bitemporal amendment group of ``rows`` objects, which
+    planning defers whole to its unit's turn."""
+    model = _bitemporal_model()
+    return _Settlement(
+        planner=build_write_planner(model),
+        request=WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=(_amendment_group(model, rows),),
+        ),
+    )
+
+
 _MATERIALIZED_SHAPES: Final = (
     ("a versioned group", _versioned_settlement),
     ("a temporal group", _temporal_settlement),
+    ("a deferred group", _deferred_settlement),
 )
 """Both arms a Materialized Write Group settles into, under the same readings.
 
 A resolved row is a resolved row whether its step assigns an advanced version or
 closes a predecessor, so a reading taken of one arm says nothing about the other.
+A deferred group's plan holds its selected rows only by reference, for the
+continuation that settles them.
 """
 
 

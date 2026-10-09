@@ -107,6 +107,7 @@ from parallax.snapshot import Database, ScopedDatabase, Transaction, WireEntity
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit import _leaf_type_support as leaf_support
 from tests.unit import _predicate_acquisition_support as acquisition_support
+from tests.unit import _predicate_flush_support as flush_support
 from tests.unit import _structural_geometry_support as geometry_support
 
 __all__ = [
@@ -921,6 +922,7 @@ def write_lowering_digest() -> str:
         Path(__file__),
         Path(geometry_support.__file__),
         Path(acquisition_support.__file__),
+        Path(flush_support.__file__),
         Path(leaf_support.__file__),
     ):
         digest.update(module.read_bytes())

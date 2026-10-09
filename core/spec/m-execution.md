@@ -166,7 +166,7 @@ stopped early, never started, or raised. The request kind decides the bracket:
 |---|---|
 | Selection of a predicate write | its own Read under the attempt, after the unit of work has flushed pending writes through its read gate |
 | Target of a Locking caller-addressed write | its own Read under the attempt, with no force-flush |
-| Coverage of a deferred range | a read Database Call inside the current Write Batch, opening no Read; one per bounded statement its uncovered parts need |
+| Coverage of a deferred range or a deferred group's batch | a read Database Call inside the current Write Batch, opening no Read; one per bounded statement its uncovered parts need |
 | Completion of retained rows | none: no statement, Database Call, or activity, before the range's coverage is read |
 
 A row whose stored data is invalid is refused with the same judgement and
@@ -185,10 +185,16 @@ what the statement about to run stores, and `m-sql` renders it — executes them
 through the port, and has the unit of work enforce each step's affected rows. A
 deferred unit is bound first: the runtime asks the unit of work to complete the
 retained rows it reuses, acquire the coverage they leave, and bind both against
-the ownership earlier units published, then executes the bound steps. After a unit's steps all succeed — including a unit
-with no steps — the runtime reports it to the unit of work, which publishes its
-effects before the next unit binds (`m-unit-work` *Execution units complete
-before later work runs*). No later unit's statement is prepared or lowered
+the ownership earlier units published, then executes the bound steps. Where
+binding answers a continuation instead (`m-unit-work` *Write Plan and Planned
+Writes*), the runtime asks it for one round of Planned Writes at a time,
+executes and enforces every step of a round before asking for the next, and
+holds nothing of a round once it has run; when no round remains it takes the
+unit's effects from the continuation, and it releases the continuation however
+the unit ended, keeping an earlier failure as the one raised. After a unit's
+steps all succeed — including a unit with no steps — the runtime reports it to
+the unit of work, once, which publishes its effects before the next unit binds
+(`m-unit-work` *Execution units complete before later work runs*). No later unit's statement is prepared or lowered
 before the earlier unit completes, so a later step's lowering failure cannot
 overtake it. A unit that fails is never reported, and the failure dooms the
 attempt.

@@ -37,12 +37,12 @@ from parallax.core.unit_work import (
     buffered_write,
     instructions,
 )
-from parallax.core.unit_work.acquisition import CoverageReadRequest
+from parallax.core.unit_work.acquisition import CoverageReadRequest, CoverageTerm
 from parallax.core.unit_work.instructions import KeyedWrite, PreparedKeyedWrite
 from parallax.core.unit_work.write_planner import compose_writes
 from parallax.core.write_plan import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.keys import ObjectKey, VersionedStateKey
-from parallax.core.write_plan.plan import PlannedSteps
+from parallax.core.write_plan.plan import PlannedWrites
 from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 
 POSITION = models.load_models()["position"]
@@ -158,7 +158,7 @@ def test_an_axis_start_that_is_not_a_finite_instant_is_refused(valid_start: obje
 
 def _planned(
     entity_name: str, members: dict[str, object], *, valid_from: str, at: str
-) -> PlannedSteps:
+) -> PlannedWrites:
     """The Write Plan an insert of ``members`` produces, through the SAME
     ``build_write_planner`` factory the engine's own write lanes plan with — so
     what the ledger tracks is what a flush would actually write."""
@@ -325,7 +325,7 @@ def test_two_tracked_milestones_of_one_key_sharing_an_edge_are_refused() -> None
 
 def _rectangles(
     *spans: tuple[int, str, str | None, str],
-) -> PlannedSteps:
+) -> PlannedWrites:
     """The plan opening one rectangle per ``(id, validFrom, until, value)``."""
     entries: list[PreparedKeyedWrite] = []
     for key, valid_from, until, value in spans:
@@ -361,8 +361,7 @@ def _acquisition(valid_from: dt.datetime, until: dt.datetime | None) -> Coverage
     return CoverageReadRequest(
         entity=POSITION_ENTITY,
         key_attribute=key,
-        key_value=1,
-        valid_time_windows=(TimeInterval(valid_from, INFINITY if until is None else until),),
+        terms=(CoverageTerm(1, (TimeInterval(valid_from, INFINITY if until is None else until),)),),
         locking=False,
     )
 
@@ -481,8 +480,7 @@ def test_coverage_answers_a_tracked_milestones_value_objects_positionally() -> N
         CoverageReadRequest(
             entity=entity,
             key_attribute=AttributeIdentity(entity.identity, "id"),
-            key_value=7,
-            valid_time_windows=(),
+            terms=(CoverageTerm(7, ()),),
             locking=False,
         ),
     )

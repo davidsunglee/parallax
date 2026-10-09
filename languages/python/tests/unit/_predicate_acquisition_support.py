@@ -13,13 +13,13 @@ The window opens immediately before the verb receives the caller's target and
 changes documents, and closes once the Unit of Work has buffered the
 Materialized Write Group: document capture, instruction deserialization and
 preparation, read planning and compilation, row publication and
-materialization, per-row no-op selection, predecessor ownership establishment,
-aligned column construction, and buffering are inside it. The flush and driver
-serialization are outside it, and the transaction is abandoned after the
-checkpoint so no flush runs at all.
+materialization, predecessor ownership establishment, aligned column
+construction, and buffering are inside it. The flush and driver serialization
+are outside it, and the transaction is abandoned after the checkpoint so no
+flush runs at all.
 
-Every assignment is genuinely changed against every resolved row, so no-op
-elimination retains them all. The port composes each row when the statement
+A Bitemporal amendment selects at its ``valid_from`` and eliminates no row
+there, so every resolved row is retained. The port composes each row when the statement
 runs and keeps none, and the Database and the caller's documents are composed
 once outside the window, so what a retained checkpoint sees is what production
 kept.

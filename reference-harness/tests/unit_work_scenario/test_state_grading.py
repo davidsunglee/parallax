@@ -370,3 +370,63 @@ def test_a_golden_graded_scenarios_table_state_is_graded(
     damaged.then["tableState"]["order_item"][0]["sku"] = "B-200"
     with pytest.raises(CaseFailure, match="state after the scenario"):
         assert_unit_work_scenario(damaged, ScriptedProvider(script=stated))
+
+
+# --- a materializing predicate submission flushes where it stands ----------
+
+_SELECTED = (
+    "m-temporal-write-055-a-predicate-amendment-selects-at-its-start-layout-twin-columns.yaml"
+)
+_PRECEDED = (
+    "m-temporal-write-057-a-predicate-amendment-flushes-what-precedes-it-layout-twin-columns.yaml"
+)
+
+
+@pytest.mark.parametrize("name", [_SELECTED, _PRECEDED])
+def test_a_state_graded_predicate_amendment_is_graded_on_the_rows_it_leaves(
+    corpus_case: CaseLoader, name: str
+) -> None:
+    case = corpus_case(name)
+    db = _grade(case)
+    assert not [call for call in db.chronology if isinstance(call, (Opened, Executed))]
+
+
+def test_a_failure_flushing_what_a_predicate_submission_follows_is_its_steps(
+    damaged_case: CaseLoader,
+) -> None:
+    # The caller-addressed write before the amendment is what the amendment's
+    # verb flushes, so the failure it raises is reported at that step; at
+    # commit only the amendment itself is pending.
+    case = damaged_case(_PRECEDED)
+    _grade(case)
+    case.then["units"]["stale"]["flushFailure"]["at"] = "commit"
+    with pytest.raises(CaseFailure, match="no submission pending at that flush writes it"):
+        _grade(case)
+
+
+def _refused_after_the_amendment() -> dict[str, Any]:
+    return {
+        "mutation": "amend",
+        "entity": "parallax.compatibility.SequenceSpan",
+        "rows": [{"id": 1, "amount": 7}],
+        "validFrom": "2024-02-01T00:00:00.000000Z",
+        "at": "2024-11-01T00:00:00.000000Z",
+        "expectError": "write-evidence-already-claimed",
+    }
+
+
+def test_a_pending_amendment_of_an_entity_may_hold_any_of_its_objects(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_SELECTED)
+    case.when["scenario"][0]["write"].append(_refused_after_the_amendment())
+    _grade(case)
+
+
+def test_a_find_after_the_amendment_leaves_nothing_to_hold_a_claim(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_SELECTED)
+    case.when["scenario"].insert(2, {"uow": "opened", "write": [_refused_after_the_amendment()]})
+    with pytest.raises(CaseFailure, match="no earlier write of its object is pending"):
+        _grade(case)

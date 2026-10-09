@@ -24,7 +24,7 @@ __all__ = [
     "ExecutionUnit",
     "Openings",
     "OwnedEndpoint",
-    "PlannedSteps",
+    "PlannedWrites",
     "SourceAuthority",
     "StepSegment",
     "TemporalWriteOwnership",
@@ -35,7 +35,7 @@ __all__ = [
 
 
 class StepSegment(Protocol):
-    """One homogeneous, positive-length run of a Write Plan's Planned Steps.
+    """One homogeneous, positive-length run of a Write Plan's Planned Writes.
 
     A segment exposes only its length and a materialize-on-demand accessor;
     nothing about how it is backed is part of the contract.
@@ -68,7 +68,7 @@ def eager_segment(steps: Sequence[PlannedWrite]) -> StepSegment:
 
 
 @dataclass(frozen=True, slots=True)
-class PlannedSteps:
+class PlannedWrites:
     """The immutable ordered logical sequence of Planned Writes a Write Plan exposes.
 
     Backed by segments rather than one flat tuple: a large materialized run
@@ -107,13 +107,13 @@ class PlannedSteps:
         return self.segments[segment_index].step(resolved - self._offsets[segment_index])
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, PlannedSteps):
+        if not isinstance(other, PlannedWrites):
             return NotImplemented
         return len(self) == len(other) and all(a == b for a, b in zip(self, other, strict=True))
 
     # Equality reads the logical sequence, not the segmentation, so two
-    # Planned Steps values packed differently can compare equal — the same
-    # reason no meaningful `__hash__` exists (Planned Steps is a value never
+    # Planned Writes values packed differently can compare equal — the same
+    # reason no meaningful `__hash__` exists (Planned Writes is a value never
     # used as a mapping/set key).
     __hash__ = None  # pyright: ignore[reportAssignmentType] - deliberately unhashable
 
@@ -349,7 +349,7 @@ class ExecutionUnit(UnitEffects):
 class WritePlan:
     """One flush's finalized, execution-ordered steps.
 
-    An empty :class:`PlannedSteps` is the one canonical result for complete
+    An empty :class:`PlannedWrites` is the one canonical result for complete
     cancellation or known no-op elimination; there is no empty-plan sentinel and
     no second result variant.
 
@@ -358,7 +358,7 @@ class WritePlan:
     publishes nothing.
     """
 
-    steps: PlannedSteps = PlannedSteps()
+    steps: PlannedWrites = PlannedWrites()
     units: tuple[ExecutionUnit, ...] = ()
 
     def __post_init__(self) -> None:

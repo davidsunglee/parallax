@@ -1094,6 +1094,22 @@ the predecessor projection and the read-lock suffix:
 | Bitemporal | `… where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? for share of t0` | `[pk, validFrom, validFrom, infinity]` |
 | Transaction-Time-Only | `… where t0.bal_id = ? and t0.out_z = ? for share of t0` | `[pk, infinity]` |
 
+A Bitemporal predicate-selected amendment (`m-temporal-write` *Predicate-selected
+amendments span their requested extent*) resolves its objects as of its
+`validFrom` — `… where <predicate> and t0.from_z <= ? and t0.thru_z > ? and
+t0.out_z = ?`, binding `[…, validFrom, validFrom, infinity]` — and its flush
+reads, batch by batch, the parts of each selected object's extent its starting
+rectangle leaves, several objects to a statement, each object's parts beside
+its key:
+
+| Objects | Golden read | Binds |
+|---|---|---|
+| two, one bounded part each | `… where ((t0.pos_id = ? and t0.thru_z > ? and t0.from_z < ?) or (t0.pos_id = ? and t0.thru_z > ?)) and t0.out_z = ?` | `[pk₁, from₁, until₁, pk₂, from₂, infinity]` |
+
+A statement names a bounded number of key/part terms, so many objects take
+several such reads, every one for a batch before that batch settles. Each
+object's steps follow the order above, objects in resolution order.
+
 ## Transactional SQL fragments
 
 The unit-of-work layer (`m-unit-work`) is expressed in operations and object

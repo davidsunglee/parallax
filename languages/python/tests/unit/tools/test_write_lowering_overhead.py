@@ -19,6 +19,7 @@ from parallax.core.unit_work import BufferItem, MaterializedWriteGroup, UnitOfWo
 from parallax.core.write_plan import PredecessorRows
 from tests.unit import _leaf_type_support as leaf_support
 from tests.unit import _predicate_acquisition_support as acquisition_support
+from tests.unit import _predicate_flush_support as flush_support
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.tools._provenance_support import pin_dirty_tree
 
@@ -72,6 +73,7 @@ def test_the_matrix_names_every_keyed_acquisition_and_model_case_once() -> None:
     acquisition = [case.name for case in acquisition_support.CASES]
     leaf_acquisition = [case.name for case in acquisition_support.LEAF_CASES]
     response = [case.name for case in lowering_support.RESPONSE_CASES]
+    flush = [case.name for case in flush_support.CASES]
     assert (
         *keyed,
         *acquisition,
@@ -79,7 +81,12 @@ def test_the_matrix_names_every_keyed_acquisition_and_model_case_once() -> None:
         *response,
         report.MODEL_CASE,
         report.MODEL_FAMILY_CASE,
+        *flush,
     ) == report.CASE_NAMES
+    assert tuple(flush) == report.FLUSH_CASE_NAMES
+    assert tuple(name for name in report.CASE_NAMES if name not in flush) == (
+        report.BEFORE_FLUSH_CASE_NAMES
+    )
     assert len(set(report.CASE_NAMES)) == len(report.CASE_NAMES)
     assert (*response, report.MODEL_FAMILY_CASE) == report.CONTROL_CASE_NAMES
     assert (*leaf_keyed, *leaf_acquisition) == report.LEAF_TYPE_CASE_NAMES
@@ -105,6 +112,7 @@ def test_the_matrix_names_every_keyed_acquisition_and_model_case_once() -> None:
     assert (*before_leaf_types, *acquisition, report.MODEL_CASE) == report.LEGACY_CASE_NAMES
     assert report.CASE_COVERAGES == {
         "current": report.CASE_NAMES,
+        "before predicate flush": report.BEFORE_FLUSH_CASE_NAMES,
         "before target writes": report.BEFORE_TARGET_CASE_NAMES,
         "before leaf types": report.BEFORE_LEAF_TYPE_CASE_NAMES,
         "legacy": report.LEGACY_CASE_NAMES,
@@ -602,6 +610,7 @@ def test_envelope_carries_every_address_with_its_window_runtime_and_unit() -> No
     assert set(cast("Mapping[str, str]", envelope.provenance.sampling["windows"])) == {
         report.KEYED_WINDOW,
         report.ACQUISITION_WINDOW,
+        report.FLUSH_WINDOW,
         report.RESPONSE_WINDOW,
         report.MODEL_WINDOW,
     }
@@ -951,9 +960,24 @@ def test_the_leaf_type_cases_are_the_difference_the_leaf_type_coverage_tier_adds
     )
 
 
-def test_the_target_cases_are_the_difference_between_the_two_latest_case_coverages() -> None:
+def test_the_flush_cases_are_the_difference_the_latest_case_coverage_adds() -> None:
     runtimes = supported_minors()
     current = report.expected_addresses(runtimes)
+    before_flush = report.expected_addresses(
+        runtimes, report.CALL_NAMES, report.BEFORE_FLUSH_CASE_NAMES
+    )
+    assert before_flush < current
+    assert current - before_flush == {
+        (runtime, case, metric)
+        for runtime in runtimes
+        for case in report.FLUSH_CASE_NAMES
+        for metric in report.METRICS
+    }
+
+
+def test_the_target_cases_are_the_difference_between_the_two_coverages_before_the_flush() -> None:
+    runtimes = supported_minors()
+    current = report.expected_addresses(runtimes, report.CALL_NAMES, report.BEFORE_FLUSH_CASE_NAMES)
     before_targets = report.expected_addresses(
         runtimes, report.CALL_NAMES, report.BEFORE_TARGET_CASE_NAMES
     )

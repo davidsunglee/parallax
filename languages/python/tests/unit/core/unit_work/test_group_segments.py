@@ -3,7 +3,9 @@ Write Groups*, `m-temporal-write` *Temporal expansion*), settled through the
 production planner: one step built per index from the group's evidence and its
 settled backing, rows the attempt opened revised or removed at their address,
 the effective members a surviving row overlays, and agreement with the same
-row written by a keyed write."""
+row written by a keyed write. A Bitemporal amendment group settles at
+execution instead, each object a range from the row it was selected by, and is
+driven here as execution drives it."""
 
 from __future__ import annotations
 
@@ -54,11 +56,13 @@ from parallax.core.unit_work import (
     object_key,
 )
 from parallax.core.unit_work import group_segments as group_segments_module
+from parallax.core.unit_work.acquisition import CoverageReadRequest
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     prepare_typed_write,
 )
+from parallax.core.unit_work.ranges import DeferredGroupRange
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
     ObjectKey,
@@ -83,6 +87,7 @@ from parallax.core.write_plan.plan import (
     ExecutionUnit,
     OwnedEndpoint,
     TemporalWriteOwnership,
+    UnitEffects,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import (
@@ -105,6 +110,7 @@ from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._positional_row_support import positional_row
 from tests.unit._temporal_group_support import temporal_group
+from tests.unit.core.unit_work._acquired_rows_support import drive_group
 from tests.unit.core.unit_work._audit_support import RecordingAudit
 from tests.unit.core.unit_work._ownership_support import OpenedRows
 
@@ -139,6 +145,34 @@ def _plan(
             buffered_writes=observed_buffer(buffer, model, observations),
         )
     )
+
+
+def _executed(
+    plan: WritePlan,
+    model: Metamodel,
+    *,
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
+    rows: Sequence[PredecessorRow] = (),
+) -> tuple[list[PlannedWrite], list[ExecutionUnit | object]]:
+    """Every step ``plan`` executes, in order, beside what each unit's success
+    publishes: a deferred group driven as execution drives it, under
+    ``ownership``, its coverage reads finding the rows of ``rows`` they reach."""
+    planned = list(plan.steps)
+    steps: list[PlannedWrite] = []
+    effects: list[ExecutionUnit | object] = []
+    position = 0
+    for unit in plan.units:
+        steps.extend(planned[position : unit.end])
+        position = unit.end
+        if isinstance(unit.deferred, DeferredGroupRange):
+            driven = drive_group(
+                model, unit, rows, transaction_instant=_INSTANT, ownership=ownership
+            )
+            steps.extend(driven.steps)
+            effects.append(driven.effects)
+        else:
+            effects.append(unit)
+    return steps, effects
 
 
 def _row_values(row: PlannedRow) -> dict[str, object]:
@@ -424,9 +458,7 @@ class _Constructions:
     [
         ("Balance", "amend", 2),
         ("Balance", "terminate", 1),
-        ("Position", "amend", 3),
         ("Position", "terminate", 2),
-        ("Position", "amendUntil", 4),
         ("Position", "terminateUntil", 3),
     ],
 )
@@ -547,24 +579,20 @@ def _position_update(*assignments: WriteAssignment, account: str) -> Materialize
     )
 
 
-def test_a_surviving_multi_assignment_row_executes_the_member_it_restores(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Selection eliminates a row every assignment restores; one that survives
-    # because another assignment changes it executes all of them, as a keyed
+def test_a_surviving_multi_assignment_row_executes_the_member_it_restores() -> None:
+    # A milestone one assignment changes executes all of them, as a keyed
     # write does, so the restored member is stated rather than carried.
-    _refuse_member_comparison(monkeypatch)
     group = _position_update(
         WriteAssignment("Position.acctNum", "ACC-1"),
         WriteAssignment("Position.value", Decimal("9.00")),
         account="".join(("ACC", "-1")),
     )
     assert isinstance(group.evidence, PredecessorRows)
-    plan = _plan([group], _POSITION)
+    steps, _ = _executed(_plan([group], _POSITION), _POSITION)
 
     changed = [
         entry
-        for step in plan.steps
+        for step in steps
         if isinstance(step, PlannedInsert)
         for entry in step.entries
         if isinstance(entry.origin, ChangedFrom)
@@ -683,9 +711,18 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
             for statement in (lowered(step, payloads, model, POSTGRES) for step in plan.steps)
         ]
 
+    def statements_of_steps(steps: Iterable[PlannedWrite]) -> list[tuple[str, tuple[object, ...]]]:
+        payloads = LayoutPayloadPreparer(model)
+        return [
+            (statement.sql, tuple(statement.binds))
+            for statement in (lowered(step, payloads, model, POSTGRES) for step in steps)
+        ]
+
     eager = statements_of(_plan([keyed], model, observations={key_: observation}))
-    materialized = statements_of(
-        _plan([MaterializedWriteGroup(mutation=mutation, evidence=sealed)], model)
+    materialized = statements_of_steps(
+        _executed(
+            _plan([MaterializedWriteGroup(mutation=mutation, evidence=sealed)], model), model
+        )[0]
     )
     assert materialized == eager
     for statements in (eager, materialized):
@@ -820,7 +857,7 @@ def test_a_surviving_row_executes_a_restored_leaf_beside_an_effective_value_obje
     assert len(group) == 1
     (changed,) = (
         entry
-        for step in _plan([group], branch).steps
+        for step in _executed(_plan([group], branch), branch)[0]
         if isinstance(step, PlannedInsert)
         for entry in step.entries
         if isinstance(entry.origin, ChangedFrom)
@@ -849,6 +886,32 @@ def _open_ends(entity: str) -> tuple[TemporalUpperBound, ...]:
     return (OPEN_END, OPEN_END) if entity == "Position" else (OPEN_END,)
 
 
+def _ownership(
+    entity: str, *, owned: tuple[int, ...] = (), inserted: tuple[int, ...] = ()
+) -> OpenedRows:
+    return OpenedRows(
+        frozenset(_endpoint(entity, key, *_open_ends(entity)) for key in owned),
+        frozenset(_endpoint(entity, key, *_open_ends(entity)) for key in inserted),
+    )
+
+
+def _group_steps(
+    entity: str,
+    mutation: PredicateMutation,
+    *,
+    owned: tuple[int, ...] = (),
+    inserted: tuple[int, ...] = (),
+) -> tuple[list[PlannedWrite], list[ExecutionUnit | object]]:
+    """The steps a group of ``mutation`` executes over three rows and what its
+    success publishes, settled at planning or driven at execution alike."""
+    model = _POSITION if entity == "Position" else _BALANCE
+    return _executed(
+        _planned_group(entity, mutation, owned=owned, inserted=inserted),
+        model,
+        ownership=_ownership(entity, owned=owned, inserted=inserted),
+    )
+
+
 def _planned_group(
     entity: str,
     mutation: PredicateMutation,
@@ -857,10 +920,7 @@ def _planned_group(
     inserted: tuple[int, ...] = (),
 ) -> WritePlan:
     model = _POSITION if entity == "Position" else _BALANCE
-    ownership = OpenedRows(
-        frozenset(_endpoint(entity, key, *_open_ends(entity)) for key in owned),
-        frozenset(_endpoint(entity, key, *_open_ends(entity)) for key in inserted),
-    )
+    ownership = _ownership(entity, owned=owned, inserted=inserted)
     return build_write_planner(model).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
@@ -886,16 +946,14 @@ def _planned_group(
 def test_a_group_rewrites_only_the_selected_rows_the_attempt_opened(
     entity: str, mutation: PredicateMutation, row_two: list[str]
 ) -> None:
-    uniform = [type(step).__name__ for step in _planned_group(entity, mutation).steps]
+    uniform = [type(step).__name__ for step in _group_steps(entity, mutation)[0]]
     per_row = len(uniform) // 3
-    plan = _planned_group(entity, mutation, owned=(2,))
-    assert [type(step).__name__ for step in plan.steps] == [
+    steps, _ = _group_steps(entity, mutation, owned=(2,))
+    assert [type(step).__name__ for step in steps] == [
         *uniform[:per_row],
         *row_two,
         *uniform[2 * per_row :],
     ]
-    for index in range(len(plan.steps)):
-        assert plan.steps[index] == list(plan.steps)[index]
 
 
 def test_a_group_unit_records_what_its_rows_remove_and_open() -> None:
@@ -926,10 +984,11 @@ def test_a_transaction_time_group_unit_opens_one_current_row_per_rewritten_row()
     assert list(unit.opened.fresh) == [_endpoint("Balance", key, OPEN_END) for key in (1, 3)]
 
 
-def test_a_group_of_rows_the_attempt_never_opened_keeps_its_uniform_layout() -> None:
-    (unit,) = _planned_group("Position", "amend").units
-    assert list(unit.removed) == []
-    assert len(list(unit.opened.fresh)) == 6
+def test_a_bitemporal_amendment_of_rows_the_attempt_never_opened_opens_every_successor() -> None:
+    _steps, (effects,) = _group_steps("Position", "amend")
+    assert isinstance(effects, UnitEffects)
+    assert list(effects.removed) == []
+    assert len(list(effects.opened.fresh)) == 6
 
 
 def test_a_group_never_opens_a_successor_that_covers_no_valid_time() -> None:
@@ -966,7 +1025,7 @@ def test_a_group_never_opens_a_successor_that_covers_no_valid_time() -> None:
         )
     )
     # Row 1 starts where the update does, so it has no head; row 2 keeps one.
-    assert [type(step).__name__ for step in plan.steps] == [
+    assert [type(step).__name__ for step in _executed(plan, model)[0]] == [
         "PlannedClose",
         "PlannedInsert",
         "PlannedClose",
@@ -1044,73 +1103,139 @@ def _windows(steps: Iterable[PlannedWrite]) -> list[tuple[str, object, object]]:
     return windows
 
 
-def test_each_selected_row_is_clipped_to_its_own_coverage() -> None:
-    # One `updateUntil` over [Mar, Sep): a row starting before the window keeps a
-    # head, one starting at or inside it opens none and its changed successor
-    # starts where the row does, and one starting past the window's end is not
-    # reached at all — no step, and no change to its state.
-    plan = _finalized(
-        _POSITION, _position_group("amendUntil", _OPENED_AT, _WINDOW_FROM, _MAY, _OCT)
+def _position_row(
+    key: int,
+    start: dt.datetime,
+    end: dt.datetime | object = INFINITY,
+    *,
+    tx: dt.datetime = _OPENED_AT,
+) -> dict[str, object]:
+    return {
+        "id": key,
+        "acctNum": "A",
+        "value": Decimal("1.00"),
+        "validStart": start,
+        "validEnd": end,
+        "txStart": tx,
+        "txEnd": INFINITY,
+    }
+
+
+def _selected(mutation: PredicateMutation, *rows: dict[str, object]) -> MaterializedWriteGroup:
+    bounded = mutation.endswith("Until")
+    return temporal_group(
+        PredicateWrite(
+            mutation,
+            PredicateSelection(
+                "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
+            ),
+            (WriteAssignment("Position.value", Decimal("9.00")),),
+            *((_WINDOW_FROM, _WINDOW_UNTIL) if bounded else (_WINDOW_FROM,)),
+        ),
+        _POSITION,
+        rows,
     )
-    assert _windows(plan.steps) == [
+
+
+def test_each_selected_object_is_amended_from_its_start_through_its_later_coverage() -> None:
+    # One `amendUntil` over [Mar, Sep), each object selected by the row current
+    # at March: a row covering the window opens a head, the changed part, and a
+    # tail and reads nothing; one ending inside the window reads the rest of it
+    # once, and the later row it finds changes from its own start; one starting
+    # at the window's start opens no head.
+    later = _position_row(2, _MAY, _OCT)
+    group = _selected(
+        "amendUntil",
+        _position_row(1, _OPENED_AT),
+        _position_row(2, _OPENED_AT, _MAY),
+        _position_row(3, _WINDOW_FROM),
+    )
+    plan = _finalized(_POSITION, group)
+    assert len(plan.steps) == 0
+    (unit,) = plan.units
+    driven = drive_group(
+        _POSITION,
+        unit,
+        [PredecessorRow(members=later)],
+        transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    )
+    assert _windows(driven.steps) == [
         ("PlannedClose", None, None),
         ("CarriedFrom", _OPENED_AT, _WINDOW_FROM),
         ("ChangedFrom", _WINDOW_FROM, _WINDOW_UNTIL),
         ("CarriedFrom", _WINDOW_UNTIL, INFINITY),
         ("PlannedClose", None, None),
+        ("PlannedClose", None, None),
+        ("CarriedFrom", _OPENED_AT, _WINDOW_FROM),
+        ("ChangedFrom", _WINDOW_FROM, _MAY),
+        ("ChangedFrom", _MAY, _WINDOW_UNTIL),
+        ("CarriedFrom", _WINDOW_UNTIL, _OCT),
+        ("PlannedClose", None, None),
         ("ChangedFrom", _WINDOW_FROM, _WINDOW_UNTIL),
         ("CarriedFrom", _WINDOW_UNTIL, INFINITY),
-        ("PlannedClose", None, None),
-        ("ChangedFrom", _MAY, _WINDOW_UNTIL),
-        ("CarriedFrom", _WINDOW_UNTIL, INFINITY),
     ]
-    (unit,) = plan.units
-    assert [state.object for state in unit.changed] == [
-        corpus_object_key("Position", ("id", key)) for key in (1, 2, 3)
+    (read,) = driven.reads
+    assert isinstance(read, CoverageReadRequest)
+    assert [(term.key_value, term.valid_time_windows) for term in read.terms] == [
+        (2, (TimeInterval(_MAY, _WINDOW_UNTIL),))
+    ]
+    assert [state.object for state in driven.effects.changed] == [
+        corpus_object_key("Position", ("id", key)) for key in (1, 2, 2, 3)
     ]
     head, tail = Finite(instant=_WINDOW_FROM), Finite(instant=_WINDOW_UNTIL)
-    assert list(unit.opened.fresh) == [
+    assert list(driven.effects.opened.fresh) == [
         _endpoint("Position", 1, head, OPEN_END),
         _endpoint("Position", 1, tail, OPEN_END),
         _endpoint("Position", 1, OPEN_END, OPEN_END),
+        _endpoint("Position", 2, head, OPEN_END),
+        _endpoint("Position", 2, Finite(instant=_MAY), OPEN_END),
         _endpoint("Position", 2, tail, OPEN_END),
-        _endpoint("Position", 2, OPEN_END, OPEN_END),
+        _endpoint("Position", 2, Finite(instant=_OCT), OPEN_END),
         _endpoint("Position", 3, tail, OPEN_END),
         _endpoint("Position", 3, OPEN_END, OPEN_END),
     ]
-    assert list(unit.removed) == []
+    assert list(driven.effects.removed) == []
 
 
-def test_a_selected_row_the_attempt_opened_is_clipped_to_its_own_coverage() -> None:
-    # The same window over rows the attempt opened: the one starting inside it
-    # is revised in place into its carried tail and opens only the changed part
-    # from its own start, and the one starting at the window's end is not reached.
+def test_a_later_row_the_attempt_opened_is_revised_from_its_own_start() -> None:
+    # The later row the window reaches is the attempt's own: it is revised in
+    # place into its carried tail, keeping its address, and opens only the
+    # changed part from its own start.
+    later = _position_row(1, _MAY, tx=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
+    ownership = OpenedRows(frozenset({_endpoint("Position", 1, OPEN_END, OPEN_END)}))
     plan = _finalized(
         _POSITION,
-        _position_group("amendUntil", _MAY, _WINDOW_UNTIL),
-        ownership=OpenedRows(
-            frozenset(_endpoint("Position", key, OPEN_END, OPEN_END) for key in (1, 2))
-        ),
+        _selected("amendUntil", _position_row(1, _OPENED_AT, _MAY)),
+        ownership=ownership,
     )
-    assert _windows(plan.steps) == [
+    (unit,) = plan.units
+    driven = drive_group(
+        _POSITION,
+        unit,
+        [PredecessorRow(members=later)],
+        transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+        ownership=ownership,
+    )
+    assert _windows(driven.steps) == [
+        ("PlannedClose", None, None),
         ("PlannedTemporalRevision", None, None),
+        ("CarriedFrom", _OPENED_AT, _WINDOW_FROM),
+        ("ChangedFrom", _WINDOW_FROM, _MAY),
         ("ChangedFrom", _MAY, _WINDOW_UNTIL),
     ]
-    revision = plan.steps[0]
+    revision = driven.steps[1]
     assert isinstance(revision, PlannedTemporalRevision)
     assert {
         identity.name: value for identity, value in revision.assignments.attributes.items()
     } == {"validStart": _WINDOW_UNTIL}
-    (unit,) = plan.units
-    assert [state.object for state in unit.changed] == [corpus_object_key("Position", ("id", 1))]
-    assert list(unit.removed) == []
+    assert list(driven.effects.removed) == []
 
 
 @pytest.mark.parametrize(
     ("group", "uniform"),
     [
-        (_position_group("amendUntil", _OPENED_AT, _OPENED_AT, _OPENED_AT), True),
-        (_position_group("amendUntil", _OPENED_AT, _WINDOW_FROM, _OPENED_AT), False),
+        (_position_group("terminateUntil", _OPENED_AT, _OPENED_AT, _OPENED_AT), True),
+        (_position_group("terminateUntil", _OPENED_AT, _WINDOW_FROM, _OPENED_AT), False),
     ],
     ids=["uniform", "clipped"],
 )
@@ -1192,7 +1317,7 @@ def test_an_owned_row_a_group_reaches_is_revised_with_what_it_already_holds() ->
 
 
 def test_a_group_no_row_of_which_takes_a_step_adds_no_segment_but_still_completes() -> None:
-    plan = _finalized(_POSITION, _position_group("amendUntil", _OCT, _OCT))
+    plan = _finalized(_POSITION, _position_group("terminateUntil", _OCT, _OCT))
     assert len(plan.steps) == 0
     assert plan.steps.segments == ()
     (unit,) = plan.units
@@ -1252,7 +1377,7 @@ class _LiveOwnership:
         return None
 
 
-def _effects(unit: ExecutionUnit) -> tuple[list[object], ...]:
+def _effects(unit: UnitEffects) -> tuple[list[object], ...]:
     return (
         list(unit.changed),
         list(unit.removed),
@@ -1261,7 +1386,7 @@ def _effects(unit: ExecutionUnit) -> tuple[list[object], ...]:
     )
 
 
-@pytest.mark.parametrize("mutation", ["terminate", "amendUntil"])
+@pytest.mark.parametrize("mutation", ["terminate", "terminateUntil"])
 def test_steps_and_effects_stay_as_settled_when_the_attempts_ownership_changes(
     mutation: PredicateMutation,
 ) -> None:
@@ -1364,11 +1489,13 @@ def test_an_owned_row_settles_identically_through_a_keyed_write_and_a_group(
         model,
         [row],
     )
-    materialized = _finalized(model, group, ownership=ownership)
-    assert list(materialized.steps) == list(eager.steps)
+    materialized, (group_effects,) = _executed(
+        _finalized(model, group, ownership=ownership), model, ownership=ownership
+    )
+    assert materialized == list(eager.steps)
     (eager_unit,) = eager.units
-    (group_unit,) = materialized.units
-    assert _effects(group_unit)[1:] == _effects(eager_unit)[1:]
+    assert isinstance(group_effects, UnitEffects)
+    assert _effects(group_effects)[1:] == _effects(eager_unit)[1:]
 
 
 # --------------------------------------------------------------------------- #
@@ -1429,8 +1556,8 @@ def test_settling_a_bitemporal_group_builds_none_of_its_steps(
     # neither builds an interval, a successor, an expansion result, a planned
     # row, or a predecessor to find out. The group's one window is the only
     # interval, whatever the row count; the steps arise when they are asked for.
-    small = _position_group("amendUntil", *(_OPENED_AT, _WINDOW_FROM) * 2)
-    large = _position_group("amendUntil", *(_OPENED_AT, _WINDOW_FROM) * 8)
+    small = _position_group("terminateUntil", *(_OPENED_AT, _WINDOW_FROM) * 2)
+    large = _position_group("terminateUntil", *(_OPENED_AT, _WINDOW_FROM) * 8)
     ownership = OpenedRows(
         frozenset(_endpoint("Position", key, OPEN_END, OPEN_END) for key in owned)
     )
@@ -1450,7 +1577,9 @@ def test_settling_a_bitemporal_group_builds_none_of_its_steps(
     inserts = sum(isinstance(step, PlannedInsert) for step in settled)
     assert accessed["PlannedInsert"] == inserts
     assert accessed["WriteRow"] == inserts + revisions
-    assert accessed["PredecessorRow"] == 16 + revisions
+    # Each row reads its cells once: an owned row its revision keeping its
+    # address, every other one the successors it opens.
+    assert accessed["PredecessorRow"] == 16
 
 
 def test_an_unowned_transaction_time_group_reads_no_row_while_it_settles(
@@ -1482,11 +1611,31 @@ def test_an_unowned_transaction_time_group_reads_no_row_while_it_settles(
 # Documents: one immutable view per row, shared by its sibling successors and #
 # released after the last; effects and cell-only steps freeze none.           #
 # --------------------------------------------------------------------------- #
+def _acquisition_terminate_until(model: Metamodel) -> PreparedPredicateWrite:
+    """The acquisition workload's interior ``terminateUntil`` over its
+    Relational Document family."""
+    entity = acquisition_support.case_named("acquisition.rows-8.document").entity.identity.canonical
+    prepared = prepare_typed_write(
+        PredicateWrite(
+            "terminateUntil",
+            PredicateSelection(
+                entity, predicate_algebra.Comparison("greaterThanEquals", f"{entity}.id", 1)
+            ),
+            (),
+            acquisition_support.INTERIOR_FROM,
+            acquisition_support.INTERIOR_UNTIL,
+        ),
+        model,
+    )
+    assert isinstance(prepared, PreparedPredicateWrite)
+    return prepared
+
+
 def _document_group(
     *titles: str,
 ) -> tuple[Metamodel, MaterializedWriteGroup, list[dict[str, object]]]:
     model = model_of(acquisition_support.MODEL)
-    mutation = _acquisition_update_until(model)
+    mutation = _acquisition_terminate_until(model)
     layout = LayoutCatalog(model).entity(mutation.selection.target.identity)
     selection = layout.member_selection
     evidence = PredecessorRowsBuilder(
@@ -1548,23 +1697,23 @@ def test_a_rows_successors_share_one_view_of_its_document_released_after_the_las
     # The completion effects and every close read cells alone.
     (unit,) = plan.units
     _effects(unit)
-    closes = [plan.steps[index] for index in (0, 4)]
+    closes = [plan.steps[index] for index in (0, 3)]
     assert all(isinstance(close, PlannedClose) for close in closes)
     assert frozen == []
-    # In order: one frozen view per row, shared by its head, middle and tail,
-    # and let go once the row's tail is built.
-    first = [plan.steps[index] for index in range(1, 4)]
+    # In order: one frozen view per row, shared by its head and tail, and let
+    # go once the row's tail is built.
+    first = [plan.steps[index] for index in range(1, 3)]
     assert frozen == [stored[0]]
     assert cast("Any", segment)._bindable is None
-    head, middle, tail = (_bound_document(step) for step in first)
-    assert head is middle is tail
+    head, tail = (_bound_document(step) for step in first)
+    assert head is tail
     assert type(head) is FrozenMap
     assert head == stored[0]  # an undeclared raw key rides through unchanged
-    second = [plan.steps[index] for index in range(5, 8)]
+    second = [plan.steps[index] for index in range(4, 6)]
     assert frozen == stored
     assert _bound_document(second[0]) is not head
     # Out of order: an equal step, though its row's view is prepared again.
-    assert plan.steps[3] == first[2]
+    assert plan.steps[2] == first[1]
     assert plan.steps[1] == first[0]
     assert frozen == [*stored, stored[0], stored[0]]
 
@@ -1573,9 +1722,9 @@ def test_many_small_groups_each_keep_their_own_view() -> None:
     model, one, _stored = _document_group("title-1")
     _model, two, _other = _document_group("title-2")
     plan = _finalized(model, one, two)
-    assert [len(segment) for segment in plan.steps.segments] == [4, 4]
+    assert [len(segment) for segment in plan.steps.segments] == [3, 3]
     settled = list(plan.steps)
-    assert _bound_document(settled[1]) is not _bound_document(settled[5])
+    assert _bound_document(settled[1]) is not _bound_document(settled[4])
     assert all(cast("Any", segment)._bindable is None for segment in plan.steps.segments)
     assert [plan.steps[index] for index in range(len(settled))] == settled
 
@@ -1645,12 +1794,10 @@ def test_an_owned_row_revised_by_a_group_assigns_the_occurrence_and_the_leaf_it_
             }
         ],
     )
-    plan = _finalized(
-        branch,
-        group,
-        ownership=OpenedRows(frozenset({_endpoint("Branch", 1, OPEN_END, OPEN_END)})),
+    ownership = OpenedRows(frozenset({_endpoint("Branch", 1, OPEN_END, OPEN_END)}))
+    (revision,), _ = _executed(
+        _finalized(branch, group, ownership=ownership), branch, ownership=ownership
     )
-    (revision,) = plan.steps
     assert isinstance(revision, PlannedTemporalRevision)
     assert {
         identity.name: value for identity, value in revision.assignments.attributes.items()
@@ -1683,8 +1830,6 @@ def _stamped_like(audited: PlannedWrite, plain: PlannedWrite, stamp: AttributeId
     [
         ("Balance", "terminate"),
         ("Balance", "amend"),
-        ("Position", "amend"),
-        ("Position", "amendUntil"),
         ("Position", "terminateUntil"),
     ],
 )
@@ -1709,11 +1854,32 @@ def test_an_audited_group_steps_as_its_neutral_twin_plus_what_audit_added(
         _stamped_like(step, twin, stamp)
 
 
+@pytest.mark.parametrize("mutation", ["amend", "amendUntil"])
+def test_a_driven_group_audits_each_row_it_produces_and_close_it_emits_once(
+    monkeypatch: pytest.MonkeyPatch, mutation: PredicateMutation
+) -> None:
+    plain, _plain_effects = _group_steps("Position", mutation, owned=(2,))
+    stamp = AttributeIdentity(corpus_entity("Position"), "acctNum")
+    audit = RecordingAudit(stamps={stamp: "audited"})
+    monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
+    audited, _ = _group_steps("Position", mutation, owned=(2,))
+    produced = sum(
+        len(step.entries) if isinstance(step, PlannedInsert) else 1
+        for step in plain
+        if isinstance(step, PlannedInsert | PlannedTemporalRevision)
+    )
+    closes = sum(isinstance(step, PlannedClose) for step in plain)
+    assert (len(audit.rows), len(audit.closes)) == (produced, closes)
+    assert len(audited) == len(plain)
+    for step, twin in zip(audited, plain, strict=True):
+        _stamped_like(step, twin, stamp)
+
+
 def test_a_row_the_window_never_reaches_is_not_audited(monkeypatch: pytest.MonkeyPatch) -> None:
     stamp = AttributeIdentity(corpus_entity("Position"), "acctNum")
     audit = RecordingAudit(stamps={stamp: "audited"})
     monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
-    plan = _finalized(_POSITION, _position_group("amendUntil", _OPENED_AT, _OCT))
+    plan = _finalized(_POSITION, _position_group("terminateUntil", _OPENED_AT, _OCT))
 
     steps = list(plan.steps)
 

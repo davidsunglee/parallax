@@ -1,7 +1,7 @@
 """Compact private storage of materialized write planning (m-unit-work, Docker-free).
 
 Covers a Materialized Write Group's versioned evidence and the state keys its
-temporal evidence answers, then Planned Steps' segmented backing — stable view
+temporal evidence answers, then Planned Writes' segmented backing — stable view
 equality with no object-identity promise, and no mutable flyweight reused across
 iterations — and structural sharing carried all the way through temporal
 expansion and lowering. Bounded wrapper allocation is a separate invariant from
@@ -92,6 +92,7 @@ from tests.unit._corpus_identity_support import corpus_entity
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._temporal_group_support import temporal_group
 from tests.unit.core import _milestone_rows_support as milestone_rows
+from tests.unit.core.unit_work._acquired_rows_support import drive_group
 from tests.unit.core.unit_work._audit_support import RecordingAudit
 from tests.unit.core.unit_work._ownership_support import OpenedRows
 
@@ -152,7 +153,7 @@ def _prepared(instruction: PredicateWrite, model: object) -> PreparedPredicateWr
 
 
 # --------------------------------------------------------------------------- #
-# Planned Steps: a Materialized Write Group settles into a lazily            #
+# Planned Writes: a Materialized Write Group settles into a lazily            #
 # materialized segment — stable, structurally-equal, non-flyweight views.     #
 # --------------------------------------------------------------------------- #
 def _version_group(
@@ -583,6 +584,16 @@ def _value_update(entity: str, valid_from: dt.datetime | None) -> PredicateWrite
     )
 
 
+def _terminate(entity: str, valid_from: dt.datetime) -> PredicateWrite:
+    return PredicateWrite(
+        "terminate",
+        PredicateSelection(
+            entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", "1000000.00")
+        ),
+        valid_from=valid_from,
+    )
+
+
 @pytest.mark.parametrize(
     ("model", "entity", "axes", "valid_from"),
     [
@@ -619,16 +630,18 @@ def test_packed_temporal_steps_consult_no_producer_on_repeated_access(
         }
         for row_id in (1, 2, 3)
     ]
+    # A Bitemporal amendment settles at execution; a termination packs.
+    write = _value_update(entity, None) if valid_from is None else _terminate(entity, valid_from)
     plan = build_write_planner(model).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
             concurrency="optimistic",
-            buffered_writes=[temporal_group(_value_update(entity, valid_from), model, rows)],
+            buffered_writes=[temporal_group(write, model, rows)],
         )
     )
     settled = list(plan.steps)
-    assert len(settled) == len(rows) * (3 if valid_from is not None else 2)
+    assert len(settled) == len(rows) * 2
     _refuse_producers(monkeypatch, model)
     assert [plan.steps[index] for index in reversed(range(len(settled)))] == settled[::-1]
     assert [plan.steps[index] for index in range(len(settled))] == settled
@@ -758,15 +771,18 @@ def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predec
     )
     assert isinstance(group.evidence, PredecessorRows)
     retained = group.evidence.rows[0]
+    instant = inert_instant()
     plan = build_write_planner(_BRANCH).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=inert_instant(),
+            transaction_instant=instant,
             concurrency="optimistic",
             buffered_writes=[group],
         )
     )
-    changed = cast("PlannedInsert", plan.steps[2])
+    (unit,) = plan.units
+    steps = drive_group(_BRANCH, unit, transaction_instant=instant).steps
+    changed = cast("PlannedInsert", steps[2])
     (entry,) = changed.entries
     assert isinstance(entry.origin, ChangedFrom)
     address_identity = next(iter(entry.row.value_objects))
@@ -796,9 +812,9 @@ def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predec
     with pytest.raises(TypeError):
         cast("dict[str, object]", predecessor_address)["city"] = "Espoo"
 
-    assert plan.steps[2] == changed
+    assert steps[2] == changed
     *_carried, statement = (
-        lowered(step, LayoutPayloadPreparer(_BRANCH), _BRANCH, POSTGRES) for step in plan.steps
+        lowered(step, LayoutPayloadPreparer(_BRANCH), _BRANCH, POSTGRES) for step in steps
     )
     assert statement.binds[-1] == JsonDocument(
         {

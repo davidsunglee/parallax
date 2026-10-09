@@ -396,8 +396,9 @@ or a gap an amendment passes over, and both commits can leave overlapping curren
 coverage; no isolation level is raised to prevent it. A write binds to the rows
 it already holds — the rectangles it observed, unless an ordering barrier
 follows earlier writes of its object; the starting rectangles a Locking
-acquisition retained that are still current; and a pending insertion's own
-window — and reads only the coverage of its extent those leave. A rectangle
+acquisition retained that are still current; the starting rectangle a
+predicate selected each object by; and a pending insertion's own window — and
+reads only the coverage of its extent those leave. A rectangle
 created concurrently inside a held row's Valid-Time interval is therefore not
 reached: the write neither reads nor inactivates it, and it stays current
 beside the write's own pieces.
@@ -407,6 +408,42 @@ deployment introduces no trigger or cascade that replaces or changes a tracked
 current row outside the framework's own writes while leaving its address and
 `in_z` as they were. Nothing here detects such a change; audit-only side effects
 and effects on unrelated data are unaffected.
+
+## Predicate-selected amendments span their requested extent
+
+A Bitemporal `amend` or `amendUntil` a predicate selects (`m-unit-work`
+*Materialized Write Groups*) has the requested extent `[validFrom, until)`,
+through infinity when unbounded, and reaches each object its predicate matched
+as an observed write reaches its object. Membership is decided once, at the
+call, after the transaction's pending writes flush: an object is selected when
+its rectangle current at `validFrom`, current on Transaction Time, matches the
+predicate, and that rectangle is the object's starting rectangle, held as a
+read holds it. The predicate never judges a later rectangle: one whose values
+no longer match is amended like any other the extent reaches, and an object
+whose only matching rectangle starts after `validFrom` is not selected.
+
+Each selected object's extent is applied as an observed write's is (*Observed
+writes span their requested extent*). Under Optimistic the starting rectangle
+gates on the `in_z` the selection observed, and a shortfall there is an ordinary
+conflict; a later rectangle is read inside the flush that writes it — under the
+shared lock under Locking (`m-read-lock`) — and gates on its own `in_z`. Gaps
+stay gaps. Every rectangle is judged for itself (*Unchanged milestones*): a
+starting rectangle already holding every assigned value keeps its milestone,
+and the same amendment still writes the later coverage it changes.
+
+```text
+Stored:   [January, April) 100 | [April, July) 200
+Amend where value = 100 from February until June, assigning 150
+Selected: the object, by [January, April)
+Final:    [January, February) 100 | [February, April) 150
+          | [April, June) 150 | [June, July) 200
+```
+
+The objects settle in batches when the flush reaches the write (`m-unit-work`
+*Materialized Write Groups*): a later rectangle is read when its object's batch
+is reached, after earlier batches executed, so it reflects their effects and
+whatever committed meanwhile, while the starting rectangle keeps the proof the
+selection observed.
 
 ## Rectangles the attempt opened
 
@@ -515,15 +552,20 @@ predecessors holding a caller's start first, in the order the callers stated
 them, then validated observations, then every other predecessor; its successors
 follow, and a replacement's Coverage Gaps come last. A predicate-selected
 mutation is expanded once for the mutation, never once per resolved row, and
-applied to each selected row in resolution order.
+applied to each selected object in resolution order; a Bitemporal amendment's
+object is a range over its rectangles, every effect before any opening.
 
-Each selected row is a predecessor like any other, transformed over its own
-Valid-Time coverage alone. The rows a predicate selects are not confined to the
-mutation's window, so a Bitemporal row can start inside it or beyond it. One
-starting after `validFrom` has no `head`: its first successor starts where the
-row starts, never earlier, and the row is disposed of by ownership as any
-reached predecessor is. One starting at or after `until` is not reached and is
-left alone, with no statement and no change to its state.
+A row a termination or a Transaction-Time-Only write selects is a predecessor
+like any other, transformed over its own Valid-Time coverage alone. The rows
+such a predicate selects are not confined to the mutation's window, so a
+Bitemporal row can start inside it or beyond it. One starting after `validFrom`
+has no `head`: its first successor starts where the row starts, never earlier,
+and the row is disposed of by ownership as any reached predecessor is. One
+starting at or after `until` is not reached and is left alone, with no
+statement and no change to its state. A Bitemporal amendment instead selects
+each object by the rectangle current at its `validFrom` and reaches the
+object's later coverage too (*Predicate-selected amendments span their
+requested extent*).
 
 A row opening a **new lineage** — an `insert`'s, each surviving part of a pending
 insert (`m-unit-work` *Same-transaction write coalescing*), and each Coverage
@@ -582,10 +624,11 @@ gap a replacement opens. It is by declared value: a replacement whose complete
 stated state a milestone already holds keeps that milestone whole, stored
 content no member declares included, although executing the same replacement on
 a changed milestone replaces that content where it assigns (`m-write-plan`
-*Write Rows*). A kept milestone is not a successor the write produced. A
-predicate-selected row is instead eliminated before planning when every
-assigned member is restored (`m-unit-work` *Comparing an assigned member with
-its persisted value*).
+*Write Rows*). A kept milestone is not a successor the write produced. A row a
+Transaction-Time-Only predicate-selected amendment selects is instead
+eliminated before planning when every assigned member is restored
+(`m-unit-work` *Comparing an assigned member with its persisted value*); every
+milestone a Bitemporal one reaches is judged here.
 
 ### Ownership disposal
 

@@ -146,6 +146,7 @@ class _Recorder:
             deferred = unit.deferred
             bound = None if deferred is None else bind_deferred(deferred)
             if bound is not None:
+                assert isinstance(bound, BoundRange)  # no group reaches this recorder
                 self.bound.append(bound)
             completed(unit, bound)
 
@@ -1652,7 +1653,9 @@ def _bind(
     deferred = unit.deferred
     assert deferred is not None
     held.rows = [_position_row(start, _FIXED)]
-    return bind_deferred(deferred)
+    bound = bind_deferred(deferred)
+    assert isinstance(bound, BoundRange)
+    return bound
 
 
 def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetWrite:

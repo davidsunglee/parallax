@@ -21,8 +21,8 @@ carries exactly one row), and that framework provenance — are the harness
 validator's. These DB-free probes pin both halves: the general keyed shapes — a
 single write, a mixed multi-object flush, a buffer over different entities /
 different keys, and the three same-transaction coalescing witnesses — are
-ACCEPTED; a predicate entry is REJECTED in a golden-graded case (schema) and
-wherever it would materialize (harness); and a row naming a non-member, a plural
+ACCEPTED; a predicate entry is REJECTED in a golden-graded case (schema), and a
+materializing one outside a state-graded case (harness); and a row naming a non-member, a plural
 temporal entry, or a marker entry sharing its buffer or its group, is REJECTED
 (harness).
 """
@@ -203,12 +203,13 @@ def test_buffer_over_different_primary_keys_is_accepted() -> None:
     assert _accepted(probe, _ACCOUNT)
 
 
-# --- a predicate submission is a readless barrier, and only state-graded --------
+# --- a materializing predicate submission is state-graded only --------------
 
 
-def test_a_buffered_predicate_submission_must_be_readless() -> None:
+def test_a_materializing_predicate_submission_is_refused_outside_state_grading() -> None:
     # A versioned target's predicate write materializes through a resolving read,
-    # which would flush the very buffer it stands in.
+    # which flushes the buffer it stands in, so only a state-graded buffer, whose
+    # flush no golden lowers, carries one.
     probe = [
         {
             "mutation": "insert",
@@ -219,8 +220,11 @@ def test_a_buffered_predicate_submission_must_be_readless() -> None:
     ]
     errors: list[str] = []
     _validate_buffered_write(probe, _ACCOUNT, _OP, "probe", errors)
-    assert any("would materialize" in error for error in errors)
+    assert any("materializes" in error for error in errors)
     assert not _accepted(probe, _ACCOUNT)
+    state_graded: list[str] = []
+    _validate_buffered_write(probe, _ACCOUNT, _OP, "probe", state_graded, state_graded=True)
+    assert state_graded == []
 
 
 def _scenario_document(write: list[Any], **top: Any) -> dict[str, Any]:

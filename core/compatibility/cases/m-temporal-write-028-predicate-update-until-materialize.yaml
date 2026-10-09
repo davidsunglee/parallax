@@ -27,13 +27,14 @@ when:
           transaction-time:
             asOf: latest
           valid-time:
-            asOf: latest
+            asOf: "2024-07-01T00:00:00.000000Z"
       roundTrips: 1
+      note: the amendment selects its objects by the rectangle current at its validFrom
       statements:
         - sql:
-            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.val = ? and t0.thru_z = ? and t0.out_z = ?
-          binds: [1, "200.00", infinity, infinity]
-      referenceSql: select pos_id, acct_num, val, from_z, thru_z, in_z, out_z from position where pos_id = 1 and val = 200.00 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.val = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [1, "200.00", "2024-07-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity]
+      referenceSql: "select pos_id, acct_num, val, from_z, thru_z, in_z, out_z from position where pos_id = 1 and val = 200.00 and from_z <= '2024-07-01T00:00:00+00:00'::timestamptz and thru_z > '2024-07-01T00:00:00+00:00'::timestamptz and out_z = 'infinity'::timestamptz"
       expectRows:
         - { pos_id: 1, acct_num: A, val: "200.00", from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2024-04-01T00:00:00.000000Z", out_z: infinity }
     - write:

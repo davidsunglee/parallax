@@ -137,7 +137,7 @@ def _windows(bound: BoundRange) -> list[tuple[object, object, object]]:
 
 def _coverage_windows(held: HeldRows) -> list[tuple[TimeInterval, ...]]:
     return [
-        request.valid_time_windows
+        request.terms[0].valid_time_windows
         for request in held.requests
         if isinstance(request, CoverageReadRequest)
     ]

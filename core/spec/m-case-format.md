@@ -1144,7 +1144,10 @@ state:
 
 A **grouped** scenario write step owes none of its own: its group's find steps
 are what publish the values it settles against, and those finds already declare
-their own `roundTrips`.
+their own `roundTrips`. A materializing predicate submission is the exception:
+its verb runs its own selection and its flush the coverage reads its amendment
+needs, inside the step, and only a state-graded case carries one, which grades
+no round trip.
 
 A **conflict attempt** owes one, and a `when.attempts` sequence owes one PER
 attempt, because every attempt settles against a state of its own (*Conflict
@@ -1479,7 +1482,14 @@ round trip and one authored golden read statement, plus `expectRows`. An empty
 `expectRows` is valid only as that real zero-match resolution (`1 + 0`); a
 zero-round-trip/no-SQL step cannot materialize a predicate write. An unversioned,
 non-temporal `amend` or `delete` is the sole readless exception. The read is not
-inferred from its SQL and the write is not inferred from the read.
+inferred from its SQL and the write is not inferred from the read. A Bitemporal
+amendment's resolving read is the selection its verb makes: as of the write's
+`validFrom` on Valid Time and at Latest on Transaction Time (`m-temporal-write`
+*Predicate-selected amendments span their requested extent*). Such a write step
+states only selections whose rows cover the write's whole window; one reaching
+coverage past them is state-graded, because its flush reads that coverage. A
+materializing predicate submission of a state-graded buffer resolves through its
+own verb instead, with no authored find (*Buffered keyed write instructions*).
 
 For every resolved materialized row, the projection is descriptor-derived rather
 than inferred from golden SQL. It MUST include identity, an explicit observed
@@ -1515,8 +1525,12 @@ never a source-authorized `replace` / `replaceUntil`. A state-graded case's
 buffer MAY also carry such a replacement, whose coverage depends on what its
 flush reads, a **caller-addressed** submission
 (`row` with `ifVersion` or `ifTxStart`, the `targetWriteInstruction`) and a
-readless **predicate** write, which is an ordering barrier inside the buffer
-(*State-graded scenarios*, below). The step's golden SQL (`statements`) is the **independent expected
+**predicate** write (*State-graded scenarios*, below). A readless predicate
+write is an ordering barrier inside the buffer. A materializing one's verb
+flushes every submission of its unit of work still pending — those before it in
+its own buffer included — and then resolves its own selection, so its position
+in the buffer is a flush point, and what it selects is the stored state that
+flush leaves. The step's golden SQL (`statements`) is the **independent expected
 lowering of that flush**, never the source an adapter deduces the writes from, so
 the step encodes **every** requested mutation explicitly and an adapter exercises
 the flush from the instructions themselves. Valid-Time bounds are `validFrom` and
@@ -1649,7 +1663,12 @@ Shortfall can arise from. The document's own rules are
 refused before any database: a submission's `on` resolves as *Settling against a
 grouped find* states, every `then.units` label names a group, a flush failure is
 reported where the group last flushes, and one group's submissions state one
-Transaction Instant. For a committed group the independent evidence that the
+Transaction Instant. A find and a materializing predicate submission each flush
+what their group has pending, so neither an already-claimed refusal's earlier
+write nor a failing flush's submissions are separated from them by either; a
+materializing Bitemporal amendment, which reaches every state of each object it
+selects, may be the earlier write of an object of its Entity, and of any object
+of its Entity a failing flush names. For a committed group the independent evidence that the
 stated rows are right is each language runner's real-database run against them.
 
 An adapter runs a state-graded case through its public verbs alone and reports
@@ -1665,8 +1684,9 @@ fate a golden-graded group stating none takes — or `rolledBack`: the group rol
 back after its last step instead. A rolled-back group stating no flush failure is
 one its callback abandons once its last step has run. A group stating a
 **`flushFailure`** is one a flush ended: `at` is where that flush ran — the
-group's last step, where that is a find with writes pending before it, or
-`commit`, where the group's last step leaves writes pending — and `entity`, `key`,
+group's last step, where that is a find, or a write step whose materializing
+predicate submission flushes, with writes pending before it, or `commit`, where
+the group's last step leaves writes pending — and `entity`, `key`,
 and `shortfall` are the object the failure reports and its Shortfall
 (`missingTarget` / `staleWrite` / `optimisticConflict` / `failedPrecondition`,
 `m-write-plan` *Affected Rows Policy*), matching the error's own payload rather

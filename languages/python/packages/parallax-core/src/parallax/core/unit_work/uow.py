@@ -33,6 +33,7 @@ from parallax.core.unit_work.acquisition import (
 )
 from parallax.core.unit_work.claims import (
     SELECTION_INTENT,
+    SPANNING_SELECTION_INTENT,
     ClaimScope,
     ClaimTable,
     SettledEvidence,
@@ -42,6 +43,7 @@ from parallax.core.unit_work.claims import (
 from parallax.core.unit_work.clock import Clock, TransactionInstant
 from parallax.core.unit_work.effects import CardinalityCorruptionError, WritePreconditionError
 from parallax.core.unit_work.instructions import (
+    AMEND_MUTATIONS,
     DESTRUCTIVE_MUTATIONS,
     INSERT_MUTATIONS,
     ExpectedTxStart,
@@ -65,6 +67,7 @@ from parallax.core.unit_work.materialized import (
     target_write,
 )
 from parallax.core.unit_work.ranges import (
+    DeferredGroupRange,
     DeferredTemporalRange,
     coverage_reads,
     retained_completion,
@@ -99,6 +102,7 @@ from parallax.core.write_plan.plan import (
     ExecutionUnit,
     Openings,
     OwnedEndpoint,
+    PlannedWrites,
     TemporalWriteOwnership,
     UnitEffects,
     WritePlan,
@@ -111,6 +115,7 @@ __all__ = [
     "BindDeferredRange",
     "BufferOutcome",
     "Concurrency",
+    "DeferredWriteContinuation",
     "ExecuteFlush",
     "NoInsertionAuthority",
     "OpenWriteBatch",
@@ -146,27 +151,47 @@ trigger goes through.
 
 class ReportUnitCompletion(Protocol):
     """How a :class:`ExecuteFlush` reports one execution unit it completed:
-    with the range its coverage bound, if deferred, and the key each of its
-    inserts answered for a row whose key the database allocated, in step
-    order."""
+    with the effects its deferred range's binding produced, if deferred, and
+    the key each of its inserts answered for a row whose key the database
+    allocated, in step order."""
 
     def __call__(
         self,
         unit: ExecutionUnit,
-        bound: BoundRange | None,
+        bound: UnitEffects | None,
         /,
         *,
         allocated: tuple[object, ...] = (),
     ) -> None: ...
 
 
+class DeferredWriteContinuation(Protocol):
+    """A deferred unit's preparation, run in successive rounds at its turn:
+    each :meth:`pull` acquires and settles the next writes only after every
+    write the previous one answered has executed and been enforced.
+
+    ``None`` means no round remains; an empty collection is a round that
+    executes nothing. :meth:`finish` is legal only after that, and hands over
+    what the whole unit's success publishes without preparing anything more.
+    :meth:`close` releases whatever preparation still holds, however the unit
+    ended, without preparing or publishing anything.
+    """
+
+    def pull(self) -> PlannedWrites | None: ...
+
+    def finish(self) -> UnitEffects: ...
+
+    def close(self) -> None: ...
+
+
 class BindDeferredRange(Protocol):
     """How a :class:`ExecuteFlush` has the unit of work bind a deferred range
     at its unit's turn, once every earlier unit of the flush has completed: the
     unit of work reads the range's coverage through its :class:`AcquireRows`
-    and binds the range to it."""
+    and binds the range to it, or answers the continuation that prepares it in
+    rounds."""
 
-    def __call__(self, description: DeferredRange, /) -> BoundRange: ...
+    def __call__(self, description: DeferredRange, /) -> BoundRange | DeferredWriteContinuation: ...
 
 
 class ExecuteFlush(Protocol):
@@ -183,7 +208,10 @@ class ExecuteFlush(Protocol):
     before any step of a later unit executes. A unit with a deferred range is
     reached with no step: the executor binds it through ``bind_deferred`` once,
     executes and enforces every bound step, and reports the unit with that
-    bound range; every other unit is reported with ``None``.
+    bound range — or, where binding answers a continuation, executes and
+    enforces each round it pulls until none remains and reports the unit with
+    what it finishes with, closing it however the unit ends. Every other unit
+    is reported with ``None``.
     A unit opening rows whose keys the database allocates is reported with
     those keys. A normal return reports every unit not yet reported; an
     exception reports none after it.
@@ -1051,6 +1079,11 @@ class UnitOfWork:
         becomes the evidence of one Materialized Write Group buffered at the
         call position. A selection leaving no row buffers nothing, and a
         stored-data refusal while reading leaves nothing buffered.
+
+        A Bitemporal amendment selects its objects at its ``valid_from``, by
+        the row current there, and keeps every one its predicate matches: its
+        amendment reaches each object's later coverage when its flush reaches
+        it, so equality at the start eliminates nothing.
         """
         entity = prepared.selection.target
         version = self._planner.version_attribute(entity.identity)
@@ -1060,10 +1093,18 @@ class UnitOfWork:
             return
         view = self._family(entity)
         selection = view.member_selection
+        window = prepared.valid_time_window
         request = SelectionReadRequest(
             prepared,
             key_position=selection.position(view.primary_key.identity),
             version_position=None if version is None else selection.position(version),
+            valid_from=(
+                window.start
+                if window is not None
+                and isinstance(shape, Bitemporal)
+                and prepared.mutation in AMEND_MUTATIONS
+                else None
+            ),
         )
         evidence = self.read(lambda: self.acquire_rows(request, consume_selection))
         if evidence is not None:
@@ -1403,7 +1444,7 @@ class UnitOfWork:
             scope = None if item.claim is None else item.claim.key
         assert key is not None  # such a write names one object
         if not self._pending.admits_temporal(item, key) or (
-            scope is not None and self._claims.held(scope) is not None
+            scope is not None and (self._claims.held(scope) is not None or self._claims.spans(key))
         ):
             raise _already_claimed(instruction.target, key)
 
@@ -1412,13 +1453,26 @@ class UnitOfWork:
         # hold a state the group selected; a collision is a caller defect, and
         # rollback re-derives only the admitted prefix rather than retaining
         # every key on the success path.
+        mutation = group.mutation
+        # A Bitemporal amendment reaches each object's coverage past the row it
+        # selected when its flush reaches it, so a write observing any other
+        # state of such an object would settle against coverage the group
+        # changes first.
+        intent = (
+            SPANNING_SELECTION_INTENT
+            if mutation.mutation in AMEND_MUTATIONS
+            and isinstance(
+                temporal_read.view(self.meta).shape(mutation.selection.target.identity), Bitemporal
+            )
+            else SELECTION_INTENT
+        )
         admitted = 0
         try:
             for state in group_state_keys(group, self.meta):
                 verdict = (
                     "incompatible"
                     if self._pending.holds(state)
-                    else self._claims.claim(state, SELECTION_INTENT)
+                    else self._claims.claim(state, intent)
                 )
                 if verdict != "admit":
                     raise UnitOfWorkError(
@@ -1610,15 +1664,20 @@ class UnitOfWork:
             self._flush_buffer(trigger)
 
     def _flush_buffer(self, trigger: WriteBatchReason) -> None:
-        request = WritePlanningRequest(
-            actor_identity=self._actor_identity,
-            transaction_instant=self._transaction_instant,
-            concurrency=self.settings.concurrency,
-            buffered_writes=self._pending.writes(),
-            ownership=self._targets,
-            counts_unchanged_rows=self.settings.counts_unchanged_rows,
+        # The planning request is the flush's last reference to the writes it
+        # planned, so it ends with the call: once planning succeeds and the
+        # buffer clears, what a plan's deferred unit took over is released as
+        # that unit executes rather than held until the flush ends.
+        plan = self._planner.finalize(
+            WritePlanningRequest(
+                actor_identity=self._actor_identity,
+                transaction_instant=self._transaction_instant,
+                concurrency=self.settings.concurrency,
+                buffered_writes=self._pending.writes(),
+                ownership=self._targets,
+                counts_unchanged_rows=self.settings.counts_unchanged_rows,
+            )
         )
-        plan = self._planner.finalize(request)
         sources = self._pending.sources()
         removed = self._pending.removals()
         self._pending.clear()
@@ -1645,10 +1704,21 @@ class UnitOfWork:
             self._reporting = ()
             self._targets.release_continuity()
 
-    def _bind_deferred(self, description: DeferredRange, /) -> BoundRange:
+    def _bind_deferred(
+        self, description: DeferredRange, /
+    ) -> BoundRange | DeferredWriteContinuation:
         """Bind a deferred range of the running flush under this attempt's
         current ownership and continuity proofs — those every earlier unit
-        published — and its configured audit."""
+        published — and its configured audit; a deferred group answers the
+        continuation that settles it in batches."""
+        if isinstance(description, DeferredGroupRange):
+            return self._planner.continue_group(
+                description,
+                acquire_rows=self.acquire_rows,
+                ownership=self._targets,
+                actor_identity=self._actor_identity,
+                transaction_instant=self._transaction_instant,
+            )
         return bind_deferred_range(
             description,
             acquire_rows=self.acquire_rows,
@@ -1662,7 +1732,7 @@ class UnitOfWork:
     def _report(
         self,
         unit: ExecutionUnit,
-        bound: BoundRange | None,
+        bound: UnitEffects | None,
         /,
         *,
         allocated: tuple[object, ...] = (),
@@ -1675,8 +1745,8 @@ class UnitOfWork:
             )
         if (unit.deferred is None) != (bound is None):
             raise UnitOfWorkError(
-                "a deferred range is reported with the range its coverage bound, and no other "
-                "unit is"
+                "a deferred range is reported with the effects its binding produced, and no "
+                "other unit is"
             )
         if len(allocated) != len(unit.opened.allocated):
             raise UnitOfWorkError(

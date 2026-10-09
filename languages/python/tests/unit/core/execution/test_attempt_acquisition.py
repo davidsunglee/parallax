@@ -45,6 +45,7 @@ from parallax.core.unit_work import CardinalityCorruptionError, TargetWrite
 from parallax.core.unit_work.acquisition import (
     CompletionRequest,
     CoverageReadRequest,
+    CoverageTerm,
     TargetReadRequest,
     consume_target,
 )
@@ -439,7 +440,10 @@ def test_a_completed_retained_row_is_judged_as_a_coverage_read_judges_it(
 
     def fn(tx: Attempt) -> None:
         coverage = CoverageReadRequest(
-            metadata, key_attribute, 1, (TimeInterval(_JAN, INFINITY),), locking=True
+            metadata,
+            key_attribute,
+            (CoverageTerm(1, (TimeInterval(_JAN, INFINITY),)),),
+            locking=True,
         )
         seen.append(_judged(lambda: tx.uow.acquire_rows(coverage, _member_rows)))
         count, retained, document = tx.uow.acquire_rows(
@@ -467,7 +471,10 @@ def test_a_non_object_structured_column_is_refused_alike_by_a_retaining_read() -
 
     def fn(tx: Attempt) -> None:
         coverage = CoverageReadRequest(
-            metadata, key_attribute, 1, (TimeInterval(_JAN, INFINITY),), locking=True
+            metadata,
+            key_attribute,
+            (CoverageTerm(1, (TimeInterval(_JAN, INFINITY),)),),
+            locking=True,
         )
         seen.append(_judged(lambda: tx.uow.acquire_rows(coverage, _member_rows)))
         seen.append(

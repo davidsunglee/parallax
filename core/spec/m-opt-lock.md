@@ -290,6 +290,17 @@ not necessarily the number resolved. A per-object gate or temporal close that
 matches zero rows is the `updatedRows != 1` conflict signal and **MUST** abort the
 whole unit of work; a later row is never silently continued after that conflict.
 
+A **Bitemporal amendment** is the exception to elimination at selection. It
+resolves each object by the rectangle current at its `validFrom` and reaches the
+object's later coverage when its flush reaches it (`m-temporal-write`
+*Predicate-selected amendments span their requested extent*), so equality at the
+start eliminates nothing: every rectangle it reaches is judged unchanged for
+itself, and one kept unchanged under Optimistic is proven by its guard. Its
+starting rectangle gates on the `in_z` its selection observed, every later
+rectangle on the `in_z` its own read inside the flush observed, and a later read
+never refreshes the starting proof. Its cost adds those coverage reads, and its
+DML is the statements its rectangles take, guards included.
+
 This materialization rule also applies to Transaction-Time Entities. Their
 observed `txStart` (`in_z`) is the per-row optimistic version analogue; the
 temporal modules own close/chain and rectangle-split SQL, while this module owns

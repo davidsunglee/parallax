@@ -1,0 +1,154 @@
+model: models/buffered-sequence-layout-twin-document.yaml
+tags: [m-temporal-write, m-unit-work, m-read-lock, m-storage-layout, scenario, materialize, predicate-write, insertion, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: a predicate amendment's selection and the coverage its flush reads decide its statements, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - uow: opened
+      write:
+        - mutation: insertUntil
+          entity: parallax.compatibility.SequenceSpan
+          rows:
+            - { id: 9, amount: 100, label: c, memo: { note: n9 } }
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          until: "2024-04-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+        - mutation: amendUntil
+          target:
+            entity: parallax.compatibility.SequenceSpan
+            predicate:
+              and:
+                operands:
+                  - { eq: { attr: parallax.compatibility.SequenceSpan.label, value: c } }
+                  - { eq: { attr: parallax.compatibility.SequenceSpan.amount, value: 100 } }
+          assignments:
+            - { attr: parallax.compatibility.SequenceSpan.amount, value: 150 }
+          validFrom: "2024-02-01T00:00:00.000000Z"
+          until: "2024-08-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+      note: "the amendment flushes span 9's insertion, then selects in February the row span 9 just opened and span 3's stored [January, June) at 100; span 3's [June, infinity) at 200 no longer matches and is amended too, while span 9's coverage ends in April and its gap stays a gap"
+    - uow: opened
+      objectQuery:
+        target: parallax.compatibility.SequenceSpan
+        predicate: { eq: { attr: parallax.compatibility.SequenceSpan.id, value: 3 } }
+        temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-07-01T00:00:00.000000Z" } }
+      note: "the find flushes the amendment and reads span 3 in July through the same transaction"
+      expectRows:
+        - id: 3
+          amount: 150
+          label: c
+          memo: { note: n3 }
+          from_z: "2024-06-01T00:00:00.000000Z"
+          thru_z: "2024-08-01T00:00:00.000000Z"
+          in_z: "2024-11-01T00:00:00.000000Z"
+          out_z: infinity
+    - uow: equal
+      write:
+        - mutation: amendUntil
+          target:
+            entity: parallax.compatibility.SequenceSpan
+            predicate: { eq: { attr: parallax.compatibility.SequenceSpan.label, value: c } }
+          assignments:
+            - { attr: parallax.compatibility.SequenceSpan.amount, value: 150 }
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          until: "2024-09-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+      note: "in March spans 3 and 9 already hold 150: each keeps every rectangle holding 150, and only span 3's [August, infinity) at 200 changes"
+then:
+  units:
+    opened: { outcome: committed }
+    equal: { outcome: committed }
+  tableState:
+    sequence_span:
+      - id: 1
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: a, memo: { note: n1 } }
+      - id: 2
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: b, memo: { note: n2 } }
+      - id: 3
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-06-01T00:00:00.000000Z"
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-11-01T00:00:00.000000Z"
+        payload: { amount: 100, label: c, memo: { note: n3 } }
+      - id: 3
+        from_z: "2024-06-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: "2024-11-01T00:00:00.000000Z"
+        payload: { amount: 200, label: c, memo: { note: n3 } }
+      - id: 3
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-02-01T00:00:00.000000Z"
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: c, memo: { note: n3 } }
+      - id: 3
+        from_z: "2024-02-01T00:00:00.000000Z"
+        thru_z: "2024-06-01T00:00:00.000000Z"
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 150, label: c, memo: { note: n3 } }
+      - id: 3
+        from_z: "2024-06-01T00:00:00.000000Z"
+        thru_z: "2024-08-01T00:00:00.000000Z"
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 150, label: c, memo: { note: n3 } }
+      - id: 3
+        from_z: "2024-08-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: "2024-11-02T00:00:00.000000Z"
+        payload: { amount: 200, label: c, memo: { note: n3 } }
+      - id: 3
+        from_z: "2024-08-01T00:00:00.000000Z"
+        thru_z: "2024-09-01T00:00:00.000000Z"
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 150, label: c, memo: { note: n3 } }
+      - id: 3
+        from_z: "2024-09-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 200, label: c, memo: { note: n3 } }
+      - id: 4
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2023-12-15T00:00:00.000000Z"
+        payload: { amount: 90, label: d, memo: { note: n4 } }
+      - id: 4
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: d, memo: { note: n4 } }
+      - id: 9
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-02-01T00:00:00.000000Z"
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 100, label: c, memo: { note: n9 } }
+      - id: 9
+        from_z: "2024-02-01T00:00:00.000000Z"
+        thru_z: "2024-04-01T00:00:00.000000Z"
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 150, label: c, memo: { note: n9 } }

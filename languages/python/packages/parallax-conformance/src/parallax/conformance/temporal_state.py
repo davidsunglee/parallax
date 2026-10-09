@@ -410,14 +410,17 @@ class TemporalShadow:
         """The tracked current milestones ``request`` reads, each positional
         over its target's member selection."""
         entity = request.entity
-        identity = (entity.identity.name, (request.key_value,))
-        windows = request.valid_time_windows
+        windows_of: dict[tuple[str, tuple[object, ...]], tuple[temporal_read.TimeInterval, ...]] = {
+            (entity.identity.name, (term.key_value,)): term.valid_time_windows
+            for term in request.terms
+        }
         shape = temporal_read.view(model).shape(entity.identity)
         assert shape is not None  # the facet covers every accepted Entity
         members = _member_selection(model, entity).shape
         rows: list[tuple[object, ...]] = []
         for slot, observation in self._current.items():
-            if slot[:2] != identity:
+            windows = windows_of.get((slot[0], slot[1]))
+            if windows is None:
                 continue
             predecessor = observation.predecessor
             if windows:

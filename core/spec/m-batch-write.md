@@ -91,7 +91,9 @@ key shape, aligned key and observation columns. Batching treats that group as
 **indivisible**: it is never split across steps, never merged with an unrelated
 buffered instruction, and never regrouped by statement kind, and it survives no
 further than finalization. It is an input to planning, not a member of a Write
-Plan, so no group wrapper or identifier reaches the flush.
+Plan, so no group wrapper or identifier reaches the flush. A Bitemporal
+amendment's group finalizes to one deferred unit whose objects settle in batches
+when the flush reaches it (`m-unit-work` *Materialized Write Groups*).
 
 ## Predicate-selected readless forms
 
