@@ -69,8 +69,9 @@ ORDER_ON_TO_ONE: Final[IssueCode] = "relationship-order-on-to-one"
 direction reaching at most one Entity has nothing to order."""
 
 ORDER_ATTRIBUTE_INVALID: Final[IssueCode] = "relationship-order-attribute-invalid"
-"""An ordering term names no Attribute of the direction's target Entity. A term
-orders the Entities the direction reaches, so its scope is that target."""
+"""An ordering term names no single-valued Attribute of the direction's target
+Entity. A term orders the Entities the direction reaches, so its scope is that
+target, and a scalar collection has no whole-collection ordering."""
 
 ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
     {
@@ -111,28 +112,32 @@ def _order_issues(
     target: EntityIdentity,
     positions: AttributePositions,
 ) -> list[MetamodelIssue]:
-    """The ordering terms of one direction that name no Attribute of its target.
+    """The ordering terms of one direction that name no Attribute of its target,
+    or name a scalar collection there.
 
-    Several terms may name one unreachable Attribute, and that is one defect
+    Several terms may name one unorderable Attribute, and that is one defect
     about one Attribute, so each is reported once.
     """
     issues: list[MetamodelIssue] = []
     reported: set[AttributeIdentity] = set()
     for term in order_by:
-        if endpoint(target, term.attribute, positions) is not None:
+        ordered = endpoint(target, term.attribute, positions)
+        if ordered is not None and ordered.multiplicity is Multiplicity.ONE:
             continue
         if term.attribute in reported:
             continue
         reported.add(term.attribute)
+        reason = (
+            f"names no Attribute of {target.canonical!r}"
+            if ordered is None
+            else "names a scalar collection, which has no whole-collection ordering"
+        )
         issues.append(
             MetamodelIssue(
                 ORDER_ATTRIBUTE_INVALID,
                 location,
                 (AttributeLocation(term.attribute),),
-                message=(
-                    f"ordering term {term.attribute.name!r} names no Attribute of "
-                    f"{target.canonical!r}"
-                ),
+                message=f"ordering term {term.attribute.name!r} {reason}",
             )
         )
     return issues

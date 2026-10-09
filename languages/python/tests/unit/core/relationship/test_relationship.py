@@ -37,6 +37,7 @@ from parallax.core.metamodel import (
     IssueCode,
     Metamodel,
     MetamodelIssue,
+    Multiplicity,
     NullPlacement,
     PersistenceMode,
     PrimaryKey,
@@ -1114,6 +1115,58 @@ def test_an_ordering_term_naming_no_target_attribute_is_rejected() -> None:
     (issue,) = RULE_SET.validate(_candidate(order, item))
     assert issue.code == ORDER_ATTRIBUTE_INVALID
     assert issue.related == (AttributeLocation(stray),)
+
+
+def _tags(entity: EntityIdentity) -> AttributeMetadata:
+    return AttributeMetadata(
+        identity=AttributeIdentity(entity, "tags"),
+        type=STRING,
+        storage=Column("tags"),
+        multiplicity=Multiplicity.MANY,
+    )
+
+
+def test_an_ordering_term_naming_a_scalar_collection_is_rejected_in_either_direction() -> None:
+    order = _Declared(
+        identity=_ORDER,
+        attributes=(key(_ORDER), _tags(_ORDER)),
+        relationships=(
+            DefiningRelationshipDeclaration(
+                identity=RelationshipIdentity(_ORDER, "items"),
+                cardinality=Cardinality.ONE_TO_MANY,
+                join=RelationshipJoin(
+                    source=AttributeIdentity(_ORDER, "id"),
+                    target=AttributeIdentity(_ITEM, "orderId"),
+                ),
+                order_by=(RelationshipOrder(AttributeIdentity(_ITEM, "tags")),),
+            ),
+            DefiningRelationshipDeclaration(
+                identity=RelationshipIdentity(_ORDER, "lead"),
+                cardinality=Cardinality.MANY_TO_ONE,
+                join=RelationshipJoin(
+                    source=AttributeIdentity(_ORDER, "id"),
+                    target=AttributeIdentity(_ITEM, "id"),
+                ),
+            ),
+        ),
+    )
+    item = _Declared(
+        identity=_ITEM,
+        attributes=(key(_ITEM), attribute(_ITEM, "orderId"), _tags(_ITEM)),
+        relationships=(
+            ReverseRelationshipDeclaration(
+                identity=RelationshipIdentity(_ITEM, "leads"),
+                reverse_of=RelationshipIdentity(_ORDER, "lead"),
+                order_by=(RelationshipOrder(AttributeIdentity(_ORDER, "tags")),),
+            ),
+        ),
+    )
+    issues = RULE_SET.validate(_candidate(order, item))
+    assert [(issue.code, issue.related) for issue in issues] == [
+        (ORDER_ATTRIBUTE_INVALID, (AttributeLocation(AttributeIdentity(_ITEM, "tags")),)),
+        (ORDER_ATTRIBUTE_INVALID, (AttributeLocation(AttributeIdentity(_ORDER, "tags")),)),
+    ]
+    assert all("scalar collection" in issue.message for issue in issues)
 
 
 def test_a_reverse_directions_ordering_is_scoped_to_the_defining_declarers_entity() -> None:

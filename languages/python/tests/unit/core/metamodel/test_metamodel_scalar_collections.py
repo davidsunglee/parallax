@@ -62,6 +62,12 @@ def test_a_single_attribute_keeps_its_single_leaf() -> None:
     assert attribute.definition == Leaf("name", STRING, False)
 
 
+def test_a_nullable_many_leaf_is_unconstructible() -> None:
+    assert Leaf("note", STRING, True).nullable
+    with pytest.raises(ValueError, match="never nullable"):
+        Leaf("tags", STRING, True, _MANY)
+
+
 @pytest.mark.parametrize(
     "construct",
     [

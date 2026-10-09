@@ -41,6 +41,22 @@ _HISTORY_GRAPHS = "m-snapshot-read-013-history-edge-pinned-graphs.yaml"
 _ABSTRACT_ROOT_GRAPH = "m-inheritance-106-tph-abstract-root-read-graph.yaml"
 _VALUE_OBJECT_GRAPH = "m-value-object-023-graph-nested-materialization.yaml"
 _FILTERED_VALUE_OBJECT_GRAPH = "m-value-object-024-graph-filtered-materialization.yaml"
+_COLLECTION_COLUMNS = "m-storage-layout-035-scalar-collection-read-layout-twin-columns.yaml"
+_COLLECTION_DOCUMENT = "m-storage-layout-036-scalar-collection-read-layout-twin-document.yaml"
+_COLLECTIONS = (
+    "flags",
+    "smalls",
+    "counts",
+    "ratios",
+    "scores",
+    "amounts",
+    "tags",
+    "blobs",
+    "days",
+    "clocks",
+    "instants",
+    "tokens",
+)
 
 _ORDER_ONE: list[dict[str, Any]] = [
     {
@@ -619,6 +635,62 @@ def test_the_milestone_reference_oracle_cross_checks_the_whole_set(
 
     with pytest.raises(CaseFailure, match="referenceSql rows != then.statements milestone rows"):
         assert_case_read(case, reads)
+
+
+# --- scalar collections in row form -------------------------------------------
+
+
+def _as_row_form(case: Case, rows: list[dict[str, Any]]) -> Case:
+    """*case* reading its target in row form, published as *rows*."""
+    del case.then["graph"]
+    case.then["rows"] = rows
+    return case
+
+
+def test_a_row_form_read_publishes_a_columns_collection_as_its_elements(
+    damaged_case: CaseLoader,
+) -> None:
+    """MariaDB hands a structured Column back as JSON text, and the published row
+    carries the decoded elements under either driver, so `then.rows` and the
+    independent oracle both compare logical collections."""
+    expected = {"id": 1, "tags": ["b", "a", "b"], "blobs": ["0aff", ""]}
+    case = _as_row_form(damaged_case(_COLLECTION_COLUMNS), [expected])
+    stored = {"id": 1, "tags": json.dumps(["b", "a", "b"]), "blobs": ["0aff", ""]}
+    reads = ScriptedReads("mariadb", results=[[stored]])
+
+    assert_case_read(case, reads)
+
+    (published,) = oracle_materialize.materialize_read(case, [stored])
+    assert published["tags"] == ["b", "a", "b"]
+
+
+def test_a_row_form_read_publishes_an_omitted_document_collection_as_empty(
+    damaged_case: CaseLoader,
+) -> None:
+    expected = {"id": 2, **{name: [] for name in _COLLECTIONS}} | {"tags": ["z"]}
+    case = _as_row_form(damaged_case(_COLLECTION_DOCUMENT), [expected])
+    reads = ScriptedReads(results=[[{"id": 2, "payload": {"tags": ["z"], "flags": None}}]])
+
+    assert_case_read(case, reads)
+
+
+@pytest.mark.parametrize(
+    ("name", "stored"),
+    [(_COLLECTION_COLUMNS, {"id": 1, "tags": '"b"'}), (_COLLECTION_DOCUMENT, None)],
+    ids=["columns", "document"],
+)
+def test_a_malformed_collection_leaves_its_published_row_unhydratable(
+    corpus_case: CaseLoader, name: str, stored: dict[str, Any] | None
+) -> None:
+    case = corpus_case(name)
+    row = stored if stored is not None else {"id": 1, "payload": {"tags": ["b", None]}}
+
+    (published,) = oracle_materialize.materialize_read(case, [row])
+
+    assert published["tags"] == oracle_materialize.UnavailableLeaf(
+        "b" if stored is not None else ["b", None]
+    )
+    assert oracle_materialize.is_unavailable(published)
 
 
 # --- single-statement graphs --------------------------------------------------

@@ -54,13 +54,18 @@ class Leaf:
 
     ``type`` is the scalar element type under either multiplicity: a ``MANY``
     leaf holds an ordered, duplicate-preserving sequence of non-null values of
-    that type and is itself never null.
+    that type and is itself never null, so a nullable ``MANY`` leaf raises
+    :class:`ValueError`.
     """
 
     name: str
     type: NeutralType
     nullable: bool
     multiplicity: Multiplicity = Multiplicity.ONE
+
+    def __post_init__(self) -> None:
+        if self.nullable and self.multiplicity is Multiplicity.MANY:
+            raise ValueError(f"{self.name}: a many leaf is never nullable")
 
 
 @dataclass(frozen=True, slots=True)
