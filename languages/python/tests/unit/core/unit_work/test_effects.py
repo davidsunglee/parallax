@@ -62,10 +62,10 @@ from parallax.core.write_plan.steps import (
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedUpdate,
+    ResolvedMutationSelection,
     Shortfall,
     TemporalConcurrency,
     TemporalGate,
-    ValidatedMutationSelection,
     Versioned,
     VersionGate,
     WriteRow,
@@ -322,7 +322,7 @@ def test_a_key_answered_twice_is_a_result_invariant_failure() -> None:
 def test_any_count_accepts_every_nonnegative_result(actual: int) -> None:
     step = PlannedUpdate(
         entity=_ACCOUNT,
-        target=ValidatedMutationSelection(
+        target=ResolvedMutationSelection(
             _ACCOUNT_META, validate_predicate(_ACCOUNT_META, All(), _ACCOUNT_MODEL)
         ),
         assignments=_RENAME,

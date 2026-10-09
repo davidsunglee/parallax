@@ -38,9 +38,11 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import TemporalSelection
 from parallax.core.object_query._nodes import TemporalDimension
-from parallax.core.predicate._validated import (
-    ValidatedOperands,
-    ValidatedPredicate,
+from parallax.core.predicate._resolved import (
+    ResolvedComparison,
+    ResolvedConstant,
+    ResolvedPredicate,
+    ResolvedQuantifier,
     conjunction,
     deferred_membership,
     managed_comparison,
@@ -69,90 +71,40 @@ PAYMENT = model("payment")
 DOCUMENT_LAYOUT = model("document-layout")
 
 
-def _compile_validated_product(
-    product: ValidatedPredicate, meta: Metamodel = ACCOUNT
+def _compile_resolved_product(
+    product: ResolvedPredicate, meta: Metamodel = ACCOUNT
 ) -> CompiledRead:
     entity = target(meta, "Account") if meta is ACCOUNT else target(meta, "Customer")
-    query = deep_fetch.ValidatedEntityQuery(
+    query = deep_fetch.ResolvedEntityQuery(
         target=entity.identity,
         entity=entity,
-        validated_predicate=product,
+        predicate=product,
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
     return compile_entity_query(query, meta, POSTGRES)
 
 
-def test_sql_lowering_rejects_incomplete_validated_scalar_products() -> None:
-    balance = target(ACCOUNT, "Account").attribute("balance")
-    assert balance is not None
+def test_an_element_scope_refuses_entity_predicates_and_attribute_subjects() -> None:
+    customer = target(CUSTOMER, "Customer")
+    position = inheritance.view(CUSTOMER).entity(customer.identity)
+    assert position is not None
+    address = position.applicable_value_object("address")
+    assert address is not None
+    phones = address.value_object("phones")
+    name = customer.attribute("name")
+    assert phones is not None and name is not None
 
-    with pytest.raises(SqlGenError, match="carries no resolved Attribute"):
-        _compile_validated_product(
-            ValidatedPredicate(
-                oa.Comparison(op="eq", attr="Account.balance", value="1.00"),
-                operands=ValidatedOperands((1,), balance.type),
-            )
+    with pytest.raises(SqlGenError, match="not a legal nestedExists/nestedNotExists element"):
+        _compile_resolved_product(
+            ResolvedQuantifier("any", phones, ResolvedConstant(True)), CUSTOMER
         )
-    with pytest.raises(SqlGenError, match="carries no validated operands"):
-        _compile_validated_product(
-            ValidatedPredicate(
-                oa.Comparison(op="eq", attr="Account.balance", value="1.00"),
-                member=balance,
-            )
-        )
-    with pytest.raises(SqlGenError, match="carries no validated operands"):
-        _compile_validated_product(
-            ValidatedPredicate(
-                oa.Membership(op="in", attr="Account.balance", values=("1.00",)),
-                member=balance,
-            )
-        )
-    with pytest.raises(SqlGenError, match="has no declared neutral type"):
-        _compile_validated_product(
-            ValidatedPredicate(
-                oa.Comparison(op="eq", attr="Account.balance", value="1.00"),
-                operands=ValidatedOperands((1,), None),
-                member=balance,
-            )
+    with pytest.raises(SqlGenError, match="is not read from a Value Object element"):
+        _compile_resolved_product(
+            ResolvedQuantifier("any", phones, ResolvedComparison("eq", name, "Ada")), CUSTOMER
         )
 
 
-def test_sql_lowering_rejects_incomplete_validated_structural_products() -> None:
-    with pytest.raises(SqlGenError, match="no resolved effective position"):
-        _compile_validated_product(
-            ValidatedPredicate(
-                oa.Narrow(to=("Account",), operand=oa.All()),
-                children=(ValidatedPredicate(oa.All()),),
-            )
-        )
-    with pytest.raises(SqlGenError, match="no resolved relationship join"):
-        _compile_validated_product(ValidatedPredicate(oa.Exists(rel="Account.missing")))
-    with pytest.raises(SqlGenError, match="no resolved nested leaf"):
-        _compile_validated_product(
-            ValidatedPredicate(
-                oa.NestedComparison(op="nestedEq", path="Customer.address.city", value="Berlin")
-            ),
-            CUSTOMER,
-        )
-    with pytest.raises(SqlGenError, match="no resolved container"):
-        _compile_validated_product(
-            ValidatedPredicate(oa.NestedExists(path="Customer.address.phones")), CUSTOMER
-        )
-
-
-def test_inheritance_plan_may_select_but_never_replace_a_validated_occurrence() -> None:
-    operand = oa.All()
-    product = ValidatedPredicate(
-        oa.Narrow(to=("Account",), operand=operand),
-        children=(ValidatedPredicate(operand),),
-    )
-
-    assert sql_compile._planned_inner(product, operand) is product.children[0]  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(SqlGenError, match="replaced rather than selected"):
-        sql_compile._planned_inner(product, object())  # pyright: ignore[reportPrivateUsage]
-
-
-def test_sql_lowering_rejects_inconsistent_validated_value_object_products() -> None:
+def test_sql_lowering_rejects_inconsistent_resolved_value_object_products() -> None:
     customer = target(CUSTOMER, "Customer")
     position = inheritance.view(CUSTOMER).entity(customer.identity)
     assert position is not None
@@ -172,18 +124,9 @@ def test_sql_lowering_rejects_inconsistent_validated_value_object_products() -> 
             ),
         ),
     )
-    child = ValidatedPredicate(
-        oa.NestedComparison(op="nestedEq", path="other.city", value="Berlin"),
-        operands=ValidatedOperands(("Berlin",), city.type),
-        member=outside_leaf,
-    )
     with pytest.raises(SqlGenError, match="outside its resolved container"):
-        _compile_validated_product(
-            ValidatedPredicate(
-                oa.NestedExists(path="Customer.address.phones", where=child.authored),
-                children=(child,),
-                container=phones,
-            ),
+        _compile_resolved_product(
+            ResolvedQuantifier("any", phones, ResolvedComparison("eq", outside_leaf, "Berlin")),
             CUSTOMER,
         )
 
@@ -197,33 +140,7 @@ def test_sql_lowering_rejects_inconsistent_validated_value_object_products() -> 
         ),
     )
     with pytest.raises(SqlGenError, match="is absent from the active position"):
-        _compile_validated_product(
-            ValidatedPredicate(
-                oa.NestedComparison(op="nestedEq", path="Customer.missing.city", value="Berlin"),
-                operands=ValidatedOperands(("Berlin",), city.type),
-                member=absent_leaf,
-            ),
-            CUSTOMER,
-        )
-
-    array_leaf = cast(
-        "ValueObjectAttributeMetadata",
-        dataclasses.replace(
-            cast("Any", city),
-            identity=ValueObjectAttributeIdentity(
-                ValueObjectIdentity(customer.identity, ("address",)), "phones"
-            ),
-        ),
-    )
-    with pytest.raises(SqlGenError, match="ends on the `many` array itself"):
-        _compile_validated_product(
-            ValidatedPredicate(
-                oa.NestedComparison(op="nestedEq", path="Customer.address.phones", value="Berlin"),
-                operands=ValidatedOperands(("Berlin",), city.type),
-                member=array_leaf,
-            ),
-            CUSTOMER,
-        )
+        _compile_resolved_product(ResolvedComparison("eq", absent_leaf, "Berlin"), CUSTOMER)
 
     absent_container = cast(
         "NestedValueObjectMetadata",
@@ -233,13 +150,7 @@ def test_sql_lowering_rejects_inconsistent_validated_value_object_products() -> 
         ),
     )
     with pytest.raises(SqlGenError, match="is absent from the active position"):
-        _compile_validated_product(
-            ValidatedPredicate(
-                oa.NestedExists(path="Customer.missing.phones"),
-                container=absent_container,
-            ),
-            CUSTOMER,
-        )
+        _compile_resolved_product(ResolvedQuantifier("any", absent_container), CUSTOMER)
 
 
 def test_all_projects_scalar_columns() -> None:
@@ -535,13 +446,10 @@ def _child_template(
     entity = target(meta, name)
     member = entity.attribute(attr)
     assert member is not None
-    query = deep_fetch.ValidatedEntityQuery(
+    query = deep_fetch.ResolvedEntityQuery(
         target=entity.identity,
         entity=entity,
-        validated_predicate=deferred_membership(
-            attr=f"{name}.{attr}",
-            member=member,
-        ),
+        predicate=deferred_membership(member=member),
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
     return sql_compile.compile_template(query, meta, dialect)
@@ -607,10 +515,10 @@ def test_child_template_refuses_an_empty_set_that_should_issue_no_statement() ->
 @pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
 def test_child_template_refuses_a_query_without_one_deferred_key_set(dialect: Dialect) -> None:
     entity = target(ACCOUNT, "Account")
-    query = deep_fetch.ValidatedEntityQuery(
+    query = deep_fetch.ResolvedEntityQuery(
         target=entity.identity,
         entity=entity,
-        validated_predicate=ValidatedPredicate(oa.All()),
+        predicate=ResolvedConstant(True),
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
 
@@ -625,12 +533,12 @@ def test_child_template_refuses_distinct_markers_even_when_their_types_match(
     entity = target(ORDERS, "OrderItem")
     member = entity.attribute("orderId")
     assert member is not None
-    query = deep_fetch.ValidatedEntityQuery(
+    query = deep_fetch.ResolvedEntityQuery(
         target=entity.identity,
         entity=entity,
-        validated_predicate=conjunction(
-            deferred_membership(attr="OrderItem.orderId", member=member),
-            deferred_membership(attr="OrderItem.orderId", member=member),
+        predicate=conjunction(
+            deferred_membership(member=member),
+            deferred_membership(member=member),
         ),
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
@@ -648,13 +556,13 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
     member = entity.attribute("folderId")
     title = entity.attribute("title")
     assert member is not None and title is not None
-    query = deep_fetch.ValidatedEntityQuery(
+    query = deep_fetch.ResolvedEntityQuery(
         target=entity.identity,
         entity=entity,
-        validated_predicate=conjunction(
-            managed_comparison(op="eq", attr="Document.title", member=title, value="before"),
-            deferred_membership(attr="Document.folderId", member=member),
-            managed_comparison(op="notEq", attr="Document.title", member=title, value="after"),
+        predicate=conjunction(
+            managed_comparison(op="eq", member=title, value="before"),
+            deferred_membership(member=member),
+            managed_comparison(op="notEq", member=title, value="after"),
         ),
         narrow_to=(target(meta, "Invoice").identity,) if narrow else None,
         limit=7,

@@ -45,8 +45,10 @@ for the same key share one build and its success or failure; failures are not
 cached, while unrelated keys can build concurrently.
 
 Cache identity includes the exact model edition, cataloged model and dialect,
-authored query structure and ordinary predicate values, result form, and
-concurrency preference. Exact container and scalar types remain distinct.
+the resolved query's structure and its ordinary managed predicate and temporal
+values, result form, and concurrency preference. Values of distinct exact types,
+and Decimals of distinct exponents, remain distinct; two spellings of one
+managed value share an entry.
 The first stream page and each continuation-coordinate NULL pattern use distinct
 entries; the coordinate values and page limits are execution values rendered
 into their cached template, not cache identity. Plans retain immutable planning and

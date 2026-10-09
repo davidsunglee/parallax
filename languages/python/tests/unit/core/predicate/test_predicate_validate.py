@@ -66,10 +66,19 @@ from parallax.core.predicate import (
     validate_predicate,
 )
 from parallax.core.predicate import validate as predicate_validation
-from parallax.core.predicate._validated import (
-    ValidatedOperands,
-    ValidatedPredicate,
+from parallax.core.predicate._resolved import (
+    ResolvedAnd,
+    ResolvedComparison,
+    ResolvedConstant,
+    ResolvedGroup,
+    ResolvedMembership,
+    ResolvedNullCheck,
+    ResolvedOr,
+    ResolvedQuantifier,
+    ResolvedSemiJoin,
+    ResolvedStringMatch,
     conjunction,
+    disjunction,
     framework_comparison,
     managed_comparison,
 )
@@ -839,10 +848,10 @@ def test_nested_string_predicate_on_a_string_member_accepts(tag: NestedStringOp)
     )
 
 
-def test_string_patterns_retain_non_codec_operands_in_every_scope() -> None:
+def test_string_patterns_retain_their_text_and_member_in_every_scope() -> None:
     # String-pattern syntax is not a serialized typed literal, so top-level,
-    # nested-path, and nested-element occurrences retain their text without a
-    # declared codec type while still retaining the resolved String member.
+    # nested-path, and nested-element occurrences retain their text verbatim
+    # beside the resolved String member, and an omitted flag folds nothing.
     orders = formed(_ORDERS)
     scalar = validate_predicate(
         _root(orders, "Order"),
@@ -852,7 +861,9 @@ def test_string_patterns_retain_non_codec_operands_in_every_scope() -> None:
     customer = formed(_CUSTOMER)
     nested = validate_predicate(
         _root(customer, "Customer"),
-        NestedStringMatch(op="nestedContains", path="Customer.address.city", value="sl"),
+        NestedStringMatch(
+            op="nestedContains", path="Customer.address.city", value="sl", case_insensitive=True
+        ),
         customer,
     )
     elements = validate_predicate(
@@ -863,9 +874,116 @@ def test_string_patterns_retain_non_codec_operands_in_every_scope() -> None:
         ),
         customer,
     )
-    for product in (scalar, nested, elements.only_child()):
-        assert product.operands is not None
-        assert product.operands.neutral_type is None
+    assert isinstance(elements, ResolvedQuantifier)
+    assert isinstance(scalar, ResolvedStringMatch)
+    assert isinstance(nested, ResolvedStringMatch)
+    assert isinstance(elements.where, ResolvedStringMatch)
+    assert (scalar.op, scalar.pattern, scalar.case_insensitive) == ("startsWith", "A", False)
+    assert (nested.op, nested.pattern, nested.case_insensitive) == ("contains", "sl", True)
+    assert (elements.where.op, elements.where.pattern) == ("endsWith", "55")
+    assert scalar.member.identity.name == "name"
+    assert nested.member.identity.name == "city"
+    assert elements.where.member.identity.name == "number"
+
+
+def test_nested_operators_resolve_to_the_shared_scalar_operators_over_their_leaf() -> None:
+    customer = formed(_CUSTOMER)
+    root = _root(customer, "Customer")
+
+    inequality = validate_predicate(
+        root,
+        NestedComparison(op="nestedNotEq", path="Customer.address.city", value="Oslo"),
+        customer,
+    )
+    absence = validate_predicate(
+        root, NestedNullCheck(op="nestedIsNull", path="Customer.address.geo.elevation"), customer
+    )
+    excluded = validate_predicate(
+        root,
+        NestedMembership(op="nestedNotIn", path="Customer.address.city", values=("Oslo",)),
+        customer,
+    )
+
+    assert isinstance(inequality, ResolvedComparison)
+    assert (inequality.op, inequality.value) == ("notEq", "Oslo")
+    assert inequality.member.identity.name == "city"
+    assert isinstance(absence, ResolvedNullCheck)
+    assert absence.op == "isNull"
+    assert isinstance(excluded, ResolvedMembership)
+    assert (excluded.op, excluded.values) == ("notIn", ("Oslo",))
+
+
+def test_a_flat_nested_operation_through_a_many_binds_the_first_crossed_element() -> None:
+    customer = formed(_CUSTOMER)
+    root = _root(customer, "Customer")
+
+    through_many = validate_predicate(
+        root,
+        NestedComparison(op="nestedEq", path="Customer.address.phones.type", value="home"),
+        customer,
+    )
+    single = validate_predicate(
+        root,
+        NestedComparison(op="nestedEq", path="Customer.address.city", value="Oslo"),
+        customer,
+    )
+
+    assert isinstance(through_many, ResolvedQuantifier)
+    assert through_many.kind == "any"
+    assert through_many.occurrence.identity.path == ("address", "phones")
+    assert isinstance(through_many.where, ResolvedComparison)
+    assert through_many.where.member.identity.name == "type"
+    assert isinstance(single, ResolvedComparison)
+
+
+def test_value_object_existence_resolves_to_a_quantifier_over_its_occurrence() -> None:
+    customer = formed(_CUSTOMER)
+    root = _root(customer, "Customer")
+
+    present = validate_predicate(root, NestedExists(path="Customer.address.geo"), customer)
+    empty = validate_predicate(root, NestedNotExists(path="Customer.address.phones"), customer)
+
+    assert isinstance(present, ResolvedQuantifier)
+    assert (present.kind, present.occurrence.identity.path, present.where) == (
+        "any",
+        ("address", "geo"),
+        None,
+    )
+    assert isinstance(empty, ResolvedQuantifier)
+    assert (empty.kind, empty.occurrence.identity.path, empty.where) == (
+        "none",
+        ("address", "phones"),
+        None,
+    )
+
+
+def test_relationship_existence_resolves_to_a_semi_join_with_its_join_members() -> None:
+    model = formed(_CUSTOMER)
+    root = _root(model, "Customer")
+
+    navigated = validate_predicate(root, Navigate(rel="Customer.locations"), model)
+    absent = validate_predicate(root, NotExists(rel="Customer.locations"), model)
+
+    assert isinstance(navigated, ResolvedSemiJoin)
+    assert isinstance(absent, ResolvedSemiJoin)
+    assert (navigated.negated, absent.negated) == (False, True)
+    assert navigated.relationship == absent.relationship
+    assert navigated.relationship.name == "locations"
+    assert navigated.where is None
+    assert navigated.target is absent.target
+
+
+def test_constants_resolve_without_an_operation() -> None:
+    orders = formed(_ORDERS)
+    root = _root(orders, "Order")
+
+    assert validate_predicate(root, All(), orders) == ResolvedConstant(True)
+    assert validate_predicate(root, NoneOp(), orders) == ResolvedConstant(False)
+
+
+def test_a_null_check_on_an_undeclared_attribute_is_refused_at_validation() -> None:
+    with pytest.raises(ValueError, match="names no declared attribute"):
+        _validate("Order", NullCheck(op="isNull", attr="Order.bogus"), _ORDERS)
 
 
 def test_generated_predicate_products_reject_missing_or_mistyped_semantics() -> None:
@@ -874,12 +992,10 @@ def test_generated_predicate_products_reject_missing_or_mistyped_semantics() -> 
     member = root.attribute("id")
     assert member is not None
 
-    with pytest.raises(ValueError, match="exactly one child"):
-        ValidatedPredicate(All()).only_child()
     with pytest.raises(ValueError, match="outside"):
-        managed_comparison(op="eq", attr="Order.id", member=member, value=cast("Any", "1"))
+        managed_comparison(op="eq", member=member, value=cast("Any", "1"))
     with pytest.raises(ValueError, match="at least one term"):
-        conjunction(ValidatedPredicate(All()))
+        conjunction(ResolvedConstant(True))
 
     with pytest.raises(ValueError, match="no resolved relationship direction"):
         predicate_validation._resolved_relationship("Missing.items", model)  # pyright: ignore[reportPrivateUsage]
@@ -887,26 +1003,33 @@ def test_generated_predicate_products_reject_missing_or_mistyped_semantics() -> 
         predicate_validation._direction_join(  # pyright: ignore[reportPrivateUsage]
             RelationshipIdentity(root.identity, "missing"), model
         )
-    with pytest.raises(AssertionError, match="managed bounds"):
-        predicate_validation._check_managed_bound_ordering(  # pyright: ignore[reportPrivateUsage]
-            "Order.price", None
-        )
 
 
-def test_a_framework_comparison_authors_managed_infinity_by_its_canonical_literal() -> None:
+def test_generated_compositions_group_alternatives_and_drop_identity_terms() -> None:
+    model = formed(_ORDERS)
+    root = _root(model, "Order")
+    member = root.attribute("id")
+    assert member is not None
+    one, two, three = (managed_comparison(op="eq", member=member, value=n) for n in (1, 2, 3))
+
+    either = disjunction(conjunction(one, two), three)
+    composed = conjunction(ResolvedConstant(True), either, conjunction(two, three))
+
+    assert disjunction(one) is one
+    assert conjunction(ResolvedConstant(True), one) is one
+    assert either == ResolvedOr((ResolvedGroup(ResolvedAnd((one, two))), three))
+    assert composed == ResolvedAnd((ResolvedGroup(either), two, three))
+
+
+def test_a_framework_comparison_binds_its_sentinel_as_is() -> None:
     root = _root(formed(_POSITION), "Position")
     end = root.attribute("txEnd")
     assert end is not None
-    attr = f"{root.identity.canonical}.txEnd"
 
-    current = framework_comparison(op="eq", attr=attr, member=end, value=INFINITY)
-    other = framework_comparison(op="eq", attr=attr, member=end, value=7)
+    current = framework_comparison(op="eq", member=end, value=INFINITY)
 
-    assert current.authored == Comparison(op="eq", attr=attr, value="infinity")
-    assert current.operands == ValidatedOperands((INFINITY,), None, "framework")
+    assert current == ResolvedComparison("eq", end, INFINITY, framework=True)
     assert current.member is end
-    assert other.authored == Comparison(op="eq", attr=attr, value="7")
-    assert other.operands == ValidatedOperands((7,), None, "framework")
 
 
 def test_string_predicate_rejects_a_non_string_member() -> None:
@@ -1025,11 +1148,12 @@ def test_nested_null_check_rejects_a_non_nullable_leaf() -> None:
 
 
 def test_null_checks_accept_nullable_leaves_in_top_level_and_nested_scopes() -> None:
-    for op in (
-        NullCheck(op="isNull", attr="Customer.contact"),
+    _validate("Order", NullCheck(op="isNull", attr="Order.sku"), _ORDERS)
+    _validate(
+        "Customer",
         NestedNullCheck(op="nestedIsNotNull", path="Customer.address.geo.elevation"),
-    ):
-        _validate("Customer", op, _CUSTOMER)
+        _CUSTOMER,
+    )
 
 
 def test_nested_exists_value_object_terminated_path_accepts() -> None:
@@ -1174,7 +1298,7 @@ def test_boolean_combinators_walk_every_operand() -> None:
         operands=(
             Comparison(op="eq", attr="Customer.name", value="Ada"),
             Between(attr="Customer.id", lower=1, upper=10),
-            NullCheck(op="isNotNull", attr="Customer.contact"),
+            NestedNullCheck(op="nestedIsNotNull", path="Customer.address.geo.elevation"),
             StringMatch(op="startsWith", attr="Customer.name", value="A"),
             Membership(op="in", attr="Customer.id", values=(1, 2, 3)),
         )

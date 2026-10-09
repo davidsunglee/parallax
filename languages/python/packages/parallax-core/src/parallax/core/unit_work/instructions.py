@@ -46,7 +46,7 @@ from parallax.core.unit_work.write_validate import WriteRejectedError, validate_
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.core.write_plan.columns import freeze_retained_value
 from parallax.core.write_plan.planned_rows import PreparedAssignment
-from parallax.core.write_plan.steps import UNVERSIONED, Unversioned, ValidatedMutationSelection
+from parallax.core.write_plan.steps import UNVERSIONED, ResolvedMutationSelection, Unversioned
 
 __all__ = [
     "AMEND_MUTATIONS",
@@ -335,7 +335,7 @@ class PreparedPredicateWrite:
     """
 
     mutation: PredicateMutation
-    selection: ValidatedMutationSelection
+    selection: ResolvedMutationSelection
     managed_assignments: tuple[PreparedAssignment, ...]
     valid_time_window: TimeInterval | None
 
@@ -403,7 +403,7 @@ def _prepared_keyed_write(
 
 def _prepared_predicate_write(
     mutation: PredicateMutation,
-    selection: ValidatedMutationSelection,
+    selection: ResolvedMutationSelection,
     managed_assignments: tuple[PreparedAssignment, ...],
     valid_time_window: TimeInterval | None,
 ) -> PreparedPredicateWrite:
@@ -1634,7 +1634,7 @@ def _prepare_predicate_payload(
         prepared.append(PreparedAssignment(member, authored.value))
     return _prepared_predicate_write(
         instruction.mutation,
-        ValidatedMutationSelection(entity, validated),
+        ResolvedMutationSelection(entity, validated),
         tuple(prepared),
         valid_time_window,
     )

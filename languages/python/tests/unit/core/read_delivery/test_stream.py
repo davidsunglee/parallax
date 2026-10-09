@@ -25,7 +25,7 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.object_query import ObjectQueryNode, deserialize, validate_object_query
-from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery import InvalidData, InvalidDataError, StoredDataIssue
 from parallax.core.read_delivery._page import Page, PageBuilder, ViewSchema
 from parallax.core.read_delivery._page_reader import (
@@ -116,7 +116,7 @@ class _Scope:
     def begin(self) -> _Read:
         return self._read
 
-    def validated(self, read: _Read, node: ObjectQueryNode, /) -> ValidatedObjectQuery:
+    def resolved(self, read: _Read, node: ObjectQueryNode, /) -> ResolvedObjectQuery:
         del read
         return validate_object_query(entity_of(ORDERS, "Order"), node, ORDERS)
 

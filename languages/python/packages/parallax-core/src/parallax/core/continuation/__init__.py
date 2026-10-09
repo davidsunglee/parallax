@@ -9,20 +9,18 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
     Metamodel,
-    entity_by_name,
 )
-from parallax.core.object_query import OrderKey
-from parallax.core.object_query._validated import (
+from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
     ContinuationTerm,
     Paging,
-    ValidatedObjectQuery,
-    ValidatedOrderTerm,
-    ValidatedSeek,
+    ResolvedObjectQuery,
+    ResolvedOrderTerm,
+    ResolvedSeek,
     derive_page,
     resolved_order_term,
 )
-from parallax.core.temporal_read import ranked_axes, scans_validated_axis
+from parallax.core.temporal_read import ranked_axes, scans_resolved_axis
 from parallax.core.temporal_read import view as temporal_view
 
 __all__ = ["ContinuationError", "ContinuationPlan", "ordered", "plan"]
@@ -43,7 +41,7 @@ class _Term:
     """
 
     member: AttributeMetadata
-    resolved: ValidatedOrderTerm
+    resolved: ResolvedOrderTerm
     portable: ContinuationTerm
 
     @property
@@ -64,13 +62,13 @@ class ContinuationPlan:
     __slots__ = ("_model", "_query", "_terms")
 
     def __init__(
-        self, model: Metamodel, query: ValidatedObjectQuery, terms: tuple[_Term, ...]
+        self, model: Metamodel, query: ResolvedObjectQuery, terms: tuple[_Term, ...]
     ) -> None:
         self._model = model
         self._query = query
         self._terms = terms
 
-    def first(self, *, limit: int) -> ValidatedObjectQuery:
+    def first(self, *, limit: int) -> ResolvedObjectQuery:
         """The first page: the caller's query, ordered and capped at ``limit``.
 
         It carries paging without a seek, which is what makes it capture the
@@ -79,7 +77,7 @@ class ContinuationPlan:
         """
         return self._page(Paging(), limit=limit)
 
-    def after(self, coordinate: ContinuationCoordinate, *, limit: int) -> ValidatedObjectQuery:
+    def after(self, coordinate: ContinuationCoordinate, *, limit: int) -> ResolvedObjectQuery:
         """The page following the root that stood at ``coordinate``.
 
         The coordinate is the whole Continuation Order's worth of carriers the
@@ -94,14 +92,14 @@ class ContinuationPlan:
                 f"the Continuation Order has {len(self._terms)} term(s) and the coordinate "
                 f"carries {len(coordinate.carriers)}"
             )
-        seek = ValidatedSeek(tuple(term.portable for term in self._terms), coordinate)
+        seek = ResolvedSeek(tuple(term.portable for term in self._terms), coordinate)
         return self._page(Paging(seek=seek), limit=limit)
 
-    def ordered(self) -> ValidatedObjectQuery:
+    def ordered(self) -> ResolvedObjectQuery:
         """The query in Continuation Order without paging capture or a cap."""
         return replace(self._query, order_by=tuple(term.resolved for term in self._terms))
 
-    def _page(self, paging: Paging, *, limit: int) -> ValidatedObjectQuery:
+    def _page(self, paging: Paging, *, limit: int) -> ResolvedObjectQuery:
         return derive_page(
             self._query,
             paging=paging,
@@ -110,7 +108,7 @@ class ContinuationPlan:
         )
 
 
-def plan(query: ValidatedObjectQuery, model: Metamodel) -> ContinuationPlan:
+def plan(query: ResolvedObjectQuery, model: Metamodel) -> ContinuationPlan:
     """``query``'s page plan against ``model``, in its Continuation Order.
 
     The Continuation Order is the query's authored Sort Keys in the precedence it
@@ -131,11 +129,15 @@ def plan(query: ValidatedObjectQuery, model: Metamodel) -> ContinuationPlan:
     terms = [_term_from_resolved(term) for term in query.order_by]
     for identity in (key, *_milestone_edge(entity, model, query)):
         if all(term.identity != identity for term in terms):
-            terms.append(_term(OrderKey(attr=_reference(identity), direction="asc"), model))
+            terms.append(
+                _term_from_resolved(
+                    resolved_order_term(_attribute(identity, model), direction="asc", nulls="last")
+                )
+            )
     return ContinuationPlan(model, query, tuple(terms))
 
 
-def ordered(query: ValidatedObjectQuery, model: Metamodel) -> ValidatedObjectQuery:
+def ordered(query: ResolvedObjectQuery, model: Metamodel) -> ResolvedObjectQuery:
     """``query`` ordered by its Continuation Order without making it a page.
 
     Eager milestone-set delivery needs the same deterministic root sequence as a
@@ -145,7 +147,7 @@ def ordered(query: ValidatedObjectQuery, model: Metamodel) -> ValidatedObjectQue
 
 
 def _milestone_edge(
-    entity: EntityMetadata, model: Metamodel, query: ValidatedObjectQuery
+    entity: EntityMetadata, model: Metamodel, query: ResolvedObjectQuery
 ) -> tuple[AttributeIdentity, ...]:
     """The Attributes a milestone-set read's roots stand at, in canonical axis rank.
 
@@ -156,7 +158,7 @@ def _milestone_edge(
     half-open interval and so distinguishes it from every other milestone of the
     same key.
     """
-    if not scans_validated_axis(query.temporal):
+    if not scans_resolved_axis(query.temporal):
         return ()
     shape = temporal_view(model).shape(entity.identity)
     if shape is None:  # pragma: no cover - the Temporal Facet covers every accepted Entity
@@ -164,19 +166,7 @@ def _milestone_edge(
     return tuple(axis.start_attribute for axis in ranked_axes(shape))
 
 
-def _term(key: OrderKey, model: Metamodel) -> _Term:
-    """One appended term from the generated Sort Key naming it.
-
-    An appended key omits `direction` and `nulls` nowhere else, so the schema
-    defaults are applied here rather than left for a reader to infer.
-    """
-    attribute = _attribute(key.attr, model)
-    direction = key.direction or "asc"
-    nulls = key.nulls or "last"
-    return _term_from_resolved(resolved_order_term(attribute, direction=direction, nulls=nulls))
-
-
-def _term_from_resolved(term: ValidatedOrderTerm) -> _Term:
+def _term_from_resolved(term: ResolvedOrderTerm) -> _Term:
     member = term.member
     return _Term(
         member=member,
@@ -190,18 +180,13 @@ def _term_from_resolved(term: ValidatedOrderTerm) -> _Term:
     )
 
 
-def _attribute(reference: str, model: Metamodel) -> AttributeMetadata:
-    """The Attribute a Sort Key's ``Entity.member`` reference addresses.
-
-    Resolved through the addressed Entity's own position, so a Sort Key naming a
-    family member through a subtype spelling answers the family root's Attribute
-    — the same identity the primary-key comparison below is made against.
-    """
-    class_name, _, name = reference.rpartition(".")
-    entity = entity_by_name(model, class_name)
-    attribute = None if entity is None else _applicable(entity, name, model)
-    if attribute is None:
-        raise ContinuationError(f"{reference}: the model declares no such Attribute")
+def _attribute(identity: AttributeIdentity, model: Metamodel) -> AttributeMetadata:
+    """The Attribute an appended term orders by, resolved at its declaring
+    Entity's own position."""
+    entity = model.entity(identity.entity)
+    attribute = None if entity is None else _applicable(entity, identity.name, model)
+    if attribute is None:  # pragma: no cover - the term's identity names an accepted member
+        raise ContinuationError(f"{identity}: the model declares no such Attribute")
     return attribute
 
 
@@ -209,17 +194,6 @@ def _applicable(entity: EntityMetadata, name: str, model: Metamodel) -> Attribut
     position = inheritance_view(model).entity(entity.identity)
     inherited = None if position is None else position.applicable_attribute(name)
     return inherited or entity.attribute(name)
-
-
-def _reference(identity: AttributeIdentity) -> str:
-    """``identity`` as the member reference a query clause names it by.
-
-    A clause addresses a member by the reference spelling every validator and
-    lowering site resolves — the addressed Entity's canonical name and the
-    member's own — rather than by the Identity, which no serialized query
-    carries.
-    """
-    return f"{identity.entity.canonical}.{identity.name}"
 
 
 def _family_view(entity: EntityMetadata, model: Metamodel) -> InheritanceEntityView:

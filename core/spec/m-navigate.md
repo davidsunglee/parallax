@@ -78,12 +78,11 @@ contexts, and a view materialized from a `history` read (edge-pinned at its
 milestone's from-instant, `m-temporal-read`) dereferences at its own edge.
 
 Propagated coordinates are managed Timestamp values. Navigation appends them to
-the resolved child read through `m-predicate`'s generated-term operations. The
-producer calls `encodeWire` once to create each ordinary authored comparison and
-adopts the managed value in the validated occurrence without decoding its output.
-Generated relationship-key membership follows the same rule: gathered managed
-keys reach `m-predicate` as one managed tuple, and no consumer constructs a
-validated predicate term directly.
+the resolved child read, and conjoins them into each relationship semi-join's
+interior, through `m-predicate`'s generated-term operations, which adopt each
+managed value directly without encoding or decoding a literal. Generated
+relationship-key membership follows the same rule, and no consumer resolves a
+generated term's member or operand again.
 
 ## Polymorphic navigation
 

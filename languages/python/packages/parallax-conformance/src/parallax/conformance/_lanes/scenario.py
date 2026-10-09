@@ -53,7 +53,6 @@ from parallax.core import (
     batch_write,
     inheritance,
     opt_lock,
-    predicate,
     read_delivery,
     storage_layout,
 )
@@ -91,6 +90,7 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.predicate import (
     CanonicalDocumentError,
+    PredicateNode,
 )
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.temporal_read import TemporalReadError, TimeInterval
@@ -1471,8 +1471,8 @@ def _compile_find(
 def step_query(step: Mapping[str, object], model: AcceptedMetamodel) -> ObjectQueryNode:
     """A scenario or coherence read step's own canonical Object Query.
 
-    The query travels as authored. Root as-of injection and per-hop navigation
-    canonicalization are `deep_fetch.plan`'s own first step on every production
+    The query travels as authored. Root as-of injection and per-hop temporal
+    propagation are `deep_fetch.plan`'s own first step on every production
     read path, the compile lane's :func:`_compile_find` included, so applying
     them here would apply them twice.
     """
@@ -2378,6 +2378,15 @@ def is_materializing_write_step(
     return None
 
 
+def _canonical_write_predicate(step: Mapping[str, object]) -> PredicateNode:
+    """The canonical predicate a materializing write step selects by."""
+    instruction = instructions.deserialize(
+        case_document.canonical_predicate_doc(cast("Mapping[str, object]", step["write"]))
+    )
+    assert isinstance(instruction, PredicateWrite)  # the caller established this
+    return instruction.target.predicate
+
+
 def _run_materializing_pair(
     port: CaseDatabase,
     context: CaseContext,
@@ -2425,7 +2434,7 @@ def _run_materializing_pair(
     find = step_query(find_step, model)
     target = find.target.canonical
     write_target = instruction.selection.target.identity.canonical
-    write_predicate = instruction.selection.predicate.authored
+    write_predicate = _canonical_write_predicate(write_step)
     if not _names_one_entity(model, target, write_target):
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} is not preceded by "
@@ -2438,13 +2447,10 @@ def _run_materializing_pair(
     # concrete target AND canonical predicate — same entity alone is not enough
     # (a resolving find over a DIFFERENT predicate would silently observe the
     # wrong rows). The read's own Temporal Selection is a sibling clause and the
-    # write target remains the bare predicate, so the two predicates compare
-    # directly; planning the read would additionally inject interval
+    # write target remains the bare predicate, so the two canonical predicates
+    # compare directly; planning the read would additionally inject interval
     # predicates and is therefore still not the apples-to-apples form.
-    comparable_find = predicate.validate_predicate(
-        instruction.selection.target, find.predicate, model
-    ).authored
-    if comparable_find != write_predicate:
+    if find.predicate != write_predicate:
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} is not preceded by "
             "a resolving find over the SAME canonical predicate as the write's own target "

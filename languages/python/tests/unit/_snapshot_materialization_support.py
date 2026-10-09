@@ -89,7 +89,7 @@ from parallax.core.metamodel import (
     Multiplicity,
     entity_by_name,
 )
-from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery._page import ABSENT, Page, page_rows
 from parallax.core.read_delivery._page_reader import (
     EagerPageResult,
@@ -250,7 +250,7 @@ def metamodel(layout: Layout) -> Metamodel:
     return model_of(workload(layout))
 
 
-def query(layout: Layout, model: Metamodel) -> ValidatedObjectQuery:
+def query(layout: Layout, model: Metamodel) -> ResolvedObjectQuery:
     """The read every batch runs: three includes off the root and one
     back-reference revisiting it."""
     return preflight(
@@ -260,7 +260,7 @@ def query(layout: Layout, model: Metamodel) -> ValidatedObjectQuery:
     )
 
 
-def read_plan(model: CatalogedModel, validated: ValidatedObjectQuery) -> ReadPlan:
+def read_plan(model: CatalogedModel, validated: ResolvedObjectQuery) -> ReadPlan:
     """``validated``'s instance-form read plan for a read no unit of work owns,
     compiled afresh on every call."""
     return UNCACHED_READ_PLANNER.plan(
@@ -564,7 +564,7 @@ _MATERIALIZER: Final = PageReader()
 
 
 def read_root(
-    model: CatalogedModel, validated: ValidatedObjectQuery, plan: ReadPlan, port: StressPort
+    model: CatalogedModel, validated: ResolvedObjectQuery, plan: ReadPlan, port: StressPort
 ) -> _RootRead:
     """``plan``'s root statement executed on ``port`` and held for one Page build."""
     return _MATERIALIZER._read_root(  # pyright: ignore[reportPrivateUsage]
@@ -593,7 +593,7 @@ def build_page(
 
 
 def batch(
-    model: CatalogedModel, validated: ValidatedObjectQuery, plan: ReadPlan, port: StressPort
+    model: CatalogedModel, validated: ResolvedObjectQuery, plan: ReadPlan, port: StressPort
 ) -> EagerPageResult[ReadOrigin]:
     """One whole standalone find of ``validated`` over ``port``."""
     return build_page(model, read_root(model, validated, plan, port), port)

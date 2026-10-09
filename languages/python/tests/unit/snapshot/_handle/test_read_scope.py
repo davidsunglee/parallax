@@ -59,7 +59,7 @@ from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node
-from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.object_query.serde import ObjectQueryError
 from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery import _delivery as delivery
@@ -302,7 +302,7 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
         return deliver_find(request, publication)
 
     def recording_deliver_history(
-        query: ValidatedObjectQuery,
+        query: ResolvedObjectQuery,
         model: CatalogedModel,
         port: DatabaseConnection,
         *,
@@ -325,7 +325,7 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
         )
 
     def recording_find_rows(
-        query: ValidatedObjectQuery,
+        query: ResolvedObjectQuery,
         model: CatalogedModel,
         port: DatabaseConnection,
         *,

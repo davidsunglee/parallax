@@ -7,7 +7,7 @@ from typing import Any, cast
 from parallax.core import deep_fetch, inheritance
 from parallax.core.base import ManagedValue
 from parallax.core.db_port import DatabaseConnection
-from parallax.core.deep_fetch import ValidatedEntityQuery
+from parallax.core.deep_fetch import ResolvedEntityQuery
 from parallax.core.dialect import LockMode
 from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
@@ -26,7 +26,7 @@ from parallax.core.execution._read_policy import (
     read_graph,
     read_page,
     read_rows,
-    validated,
+    resolved,
 )
 from parallax.core.execution._write_lowering import lowered, stream_lowered
 from parallax.core.execution_lifecycle import ReadInterface
@@ -45,8 +45,8 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._validated import (
-    ValidatedObjectQuery,
+from parallax.core.object_query._resolved import (
+    ResolvedObjectQuery,
     latest_temporal_selections,
     selections_at_valid_time,
 )
@@ -275,8 +275,8 @@ class Attempt:
         """The read a participating delivery is begun as: this attempt itself."""
         return self
 
-    def validated(self, read: Attempt, node: ObjectQueryNode, /) -> ValidatedObjectQuery:
-        return validated(read, node)
+    def resolved(self, read: Attempt, node: ObjectQueryNode, /) -> ResolvedObjectQuery:
+        return resolved(read, node)
 
     def page(
         self,
@@ -557,7 +557,7 @@ class Attempt:
         )
         return self._row_read(query, "locking" if request.locking else None)
 
-    def _row_read(self, query: ValidatedEntityQuery, lock: LockMode | None) -> CompiledRead:
+    def _row_read(self, query: ResolvedEntityQuery, lock: LockMode | None) -> CompiledRead:
         return compile_read(
             query, self._write.model.meta, self._connection.dialect, result_form="row", lock=lock
         )

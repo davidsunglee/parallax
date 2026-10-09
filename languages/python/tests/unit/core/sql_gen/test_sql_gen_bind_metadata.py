@@ -4,18 +4,15 @@ import dataclasses
 import datetime as dt
 import math
 from decimal import Decimal
-from typing import Any, cast
 
 import pytest
 
 from parallax.core import deep_fetch, inheritance, storage_layout
-from parallax.core import predicate as predicate_algebra
 from parallax.core.base import DATE, FLOAT32, INFINITY, INT64, STRING, TIMESTAMP, ManagedValue
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
-from parallax.core.predicate._validated import DeferredKeySet, ValidatedPredicate
+from parallax.core.predicate._resolved import DeferredKeySet, ResolvedConstant
 from parallax.core.sql_gen import _compile as sql_compile
-from parallax.core.sql_gen import _predicate as sql_predicate
 from parallax.core.sql_gen._compile import CompiledTemplate, compile_read
 from parallax.core.sql_gen._context import (
     LoweredStatement,
@@ -46,10 +43,10 @@ def _builder() -> StatementBuilder:
 def _template(statement: LoweredStatement, *, postgres_array: bool) -> CompiledTemplate:
     entity = WALLET.entities[0]
     compiled = compile_read(
-        deep_fetch.ValidatedEntityQuery(
+        deep_fetch.ResolvedEntityQuery(
             target=entity.identity,
             entity=entity,
-            validated_predicate=ValidatedPredicate(predicate_algebra.All()),
+            predicate=ResolvedConstant(True),
             projection=deep_fetch.ResolvedReadProjection((), False),
         ),
         WALLET,
@@ -78,21 +75,6 @@ def test_entity_scope_reference_front_doors_resolve_direct_members() -> None:
     assert scope.subject_for(
         scope.entity_attribute(f"{entity.identity.canonical}.id")
     ).compared == ("t0.id")
-
-
-def test_nested_lowering_helpers_reject_the_wrong_validated_node_family() -> None:
-    product = ValidatedPredicate(predicate_algebra.All())
-    entity = WALLET.entities[0]
-    view = storage_layout.view(WALLET).entity(entity.identity)
-    assert view is not None
-    scope = EntityScope(_builder(), entity, view.layout)
-
-    with pytest.raises(AssertionError, match="wrong authored node"):
-        sql_predicate._lower_nested(product, scope)  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(AssertionError, match="wrong authored node"):
-        sql_predicate._lower_element_nested(  # pyright: ignore[reportPrivateUsage]
-            product, cast("Any", object())
-        )
 
 
 def test_statement_metadata_preserves_ranges_gaps_forms_offsets_and_overrides() -> None:

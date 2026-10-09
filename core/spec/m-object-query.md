@@ -308,32 +308,32 @@ different dimensions.
 `validateObjectQuery(authoredQuery, acceptedModel)` is the mandatory semantic
 boundary for every supported read entry point. It resolves and validates every
 clause, invokes Predicate elaboration, and returns one private immutable
-`ValidatedObjectQuery`. That product retains the unchanged authored query and
-carries the exact resolved target, `ValidatedPredicate`, temporal selections,
-Sort Keys, Include Paths, result narrowing, and row cap. Every name is an exact
+`ResolvedObjectQuery`. That product carries the exact resolved target,
+`ResolvedPredicate`, temporal selections, Sort Keys, Include Paths, result
+narrowing, and row cap; it retains no authored query. Every name is an exact
 canonical identity, every typed coordinate or operand is managed, collections are
 deeply immutable, and no public constructor or serialization contract exists.
 
 The product is the complete resolved meaning of one authored Object Query, not a
 lowered SQL request and not a wrapper rebuilt from selected clauses. A producer-
-owned page-derivation operation accepts a validated base plus a paging state,
-resolved effective order, and cap, and returns another `ValidatedObjectQuery`
-without re-resolving or decoding the base. The base's own Predicate is carried
+owned page-derivation operation accepts a resolved base plus a paging state,
+resolved effective order, and cap, and returns another `ResolvedObjectQuery`
+without re-resolving or decoding the base or rebuilding authored Sort Keys. The base's own Predicate is carried
 through unchanged: a page's seek is not an authored comparison.
 
 ### Paging state
 
-A validated query MAY carry a producer-owned paging state. Its presence means the
+A resolved query MAY carry a producer-owned paging state. Its presence means the
 read is one page of a streamed delivery and MUST capture one coordinate per
 Continuation Order term; its absence means the read captures none. Two independent
 flags are forbidden — capturing nothing while continuing from somewhere is not a
 representable state.
 
-A paging state carries at most one `ValidatedSeek`. Absence is the first page,
+A paging state carries at most one `ResolvedSeek`. Absence is the first page,
 which admits every result the caller's own Predicate does.
 
 ```text
-ValidatedSeek
+ResolvedSeek
   terms       ContinuationTerm[]        the WHOLE Continuation Order, in precedence
   coordinate  ContinuationCoordinate    positionally aligned with terms
 
@@ -360,10 +360,10 @@ product. It cannot be settled without knowing where the dialect placed a NULL in
 the ordering clause that was emitted, which is `m-sql`'s own answer.
 
 `m-deep-fetch` is the mandatory next phase. It consumes
-`ValidatedObjectQuery` and produces the resolved flat-read products for the root
-and each non-empty child level. Each such private `ValidatedEntityQuery` may
+`ResolvedObjectQuery` and produces the resolved flat-read products for the root
+and each non-empty child level. Each such private `ResolvedEntityQuery` may
 exist without an authored Object Query behind it, but consumers never substitute
-one for the complete validated parent at the public preflight boundary.
+one for the complete resolved parent at the public preflight boundary.
 
 Every supported read entry point validates and classifies the Object Query before
 SQL generation, connection acquisition or port access, participating unit-of-work

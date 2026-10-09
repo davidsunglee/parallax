@@ -173,7 +173,7 @@ the planner resolves every caller-supplied value before a step is settled.
 ### Write Target
 
 ```text
-WriteTarget = KeyTarget | ValidatedMutationSelection | MilestoneTarget
+WriteTarget = KeyTarget | ResolvedMutationSelection | MilestoneTarget
 ```
 
 A **Write Target** is the semantic row selection of a Planned Write. It is
@@ -185,9 +185,9 @@ KeyTarget(
     key_values:     NonEmpty[complete concrete non-null value tuples],
 )
 
-ValidatedMutationSelection(
+ResolvedMutationSelection(
     target:    EntityIdentity,
-    predicate: ValidatedPredicate,
+    predicate: ResolvedPredicate,
 )
 
 MilestoneTarget(
@@ -206,9 +206,9 @@ TemporalUpperBound = Finite(Instant) | Infinity
   than silently deduplicated. A singleton and a compatible multi-key selection
   are cardinalities of one target kind, not two — there is no separate key-set
   target.
-- A **Validated Mutation Selection** is legal only for a **readless** unversioned
+- A **Resolved Mutation Selection** is legal only for a **readless** unversioned
   Non-Temporal Planned Update or Planned Delete. It carries the exact target and
-  producer-owned validated Predicate and nothing else — no materialized keys,
+  producer-owned resolved Predicate and nothing else — no materialized keys,
   observation, pin, concurrency data, or barrier flag. Its presence already
   implies `Unversioned`, `AnyCount`, and barrier behavior; mutation lowering never
   fabricates an Object Query around it.

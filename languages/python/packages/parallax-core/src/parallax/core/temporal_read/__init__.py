@@ -16,23 +16,23 @@ from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
 from parallax.core.metamodel import TemporalDimension as AcceptedDimension
 from parallax.core.object_query import LATEST, Latest
-from parallax.core.object_query._validated import (
-    ValidatedAsOfSelection,
-    ValidatedHistorySelection,
-    ValidatedLatestSelection,
-    ValidatedRangeSelection,
-    ValidatedTemporalSelection,
+from parallax.core.object_query._resolved import (
+    ResolvedAsOfSelection,
+    ResolvedHistorySelection,
+    ResolvedLatestSelection,
+    ResolvedRangeSelection,
+    ResolvedTemporalSelection,
 )
-from parallax.core.predicate._validated import (
-    ValidatedPredicate,
+from parallax.core.predicate._resolved import (
+    ResolvedPredicate,
 )
-from parallax.core.predicate._validated import (
-    conjunction as _validated_conjunction,
+from parallax.core.predicate._resolved import (
+    conjunction as _conjunction,
 )
-from parallax.core.predicate._validated import (
+from parallax.core.predicate._resolved import (
     framework_comparison as _framework_comparison,
 )
-from parallax.core.predicate._validated import (
+from parallax.core.predicate._resolved import (
     managed_comparison as _managed_comparison,
 )
 from parallax.core.temporal_read._compile import MODEL_COMPILER
@@ -68,11 +68,11 @@ __all__ = [
     "inject_resolved_as_of",
     "milestone_edge",
     "ranked_axes",
+    "resolved_hop_as_of_terms",
     "resolved_pinned_instants",
-    "scans_validated_axis",
+    "resolved_query_pin",
+    "scans_resolved_axis",
     "valid_time_coverage",
-    "validated_hop_as_of_terms",
-    "validated_query_pin",
     "view",
 ]
 
@@ -417,75 +417,60 @@ def _not_an_endpoint(attribute: AttributeIdentity) -> TemporalReadError:
 
 
 def inject_resolved_as_of(
-    predicate: ValidatedPredicate,
-    selections: tuple[ValidatedTemporalSelection, ...],
+    predicate: ResolvedPredicate,
+    selections: tuple[ResolvedTemporalSelection, ...],
     entity: EntityMetadata,
-) -> ValidatedPredicate:
+) -> ResolvedPredicate:
     """Append temporal terms from managed, resolved selections."""
-    terms: list[ValidatedPredicate] = []
+    terms: list[ResolvedPredicate] = []
     for selection in selections:
         start = entity.attribute(selection.axis.start_attribute.name)
         end = entity.attribute(selection.axis.end_attribute.name)
         if start is None or end is None:
             raise TemporalReadError(f"{entity.identity.name}: temporal axis member is undeclared")
-        start_ref = f"{entity.identity.canonical}.{start.identity.name}"
-        end_ref = f"{entity.identity.canonical}.{end.identity.name}"
         match selection:
-            case ValidatedHistorySelection():
+            case ResolvedHistorySelection():
                 continue
-            case ValidatedLatestSelection():
-                terms.append(
-                    _framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY)
-                )
-            case ValidatedAsOfSelection(coordinate=coordinate):
+            case ResolvedLatestSelection():
+                terms.append(_framework_comparison(op="eq", member=end, value=INFINITY))
+            case ResolvedAsOfSelection(coordinate=coordinate):
                 terms.extend(
                     (
-                        _managed_comparison(
-                            op="lessThanEquals",
-                            attr=start_ref,
-                            member=start,
-                            value=coordinate,
-                        ),
-                        _managed_comparison(
-                            op="greaterThan", attr=end_ref, member=end, value=coordinate
-                        ),
+                        _managed_comparison(op="lessThanEquals", member=start, value=coordinate),
+                        _managed_comparison(op="greaterThan", member=end, value=coordinate),
                     )
                 )
-            case ValidatedRangeSelection(start=window_start, end=window_end):
+            case ResolvedRangeSelection(start=window_start, end=window_end):
                 terms.extend(
                     (
-                        _managed_comparison(
-                            op="lessThan", attr=start_ref, member=start, value=window_end
-                        ),
-                        _managed_comparison(
-                            op="greaterThan", attr=end_ref, member=end, value=window_start
-                        ),
+                        _managed_comparison(op="lessThan", member=start, value=window_end),
+                        _managed_comparison(op="greaterThan", member=end, value=window_start),
                     )
                 )
             case _:
                 assert_never(selection)
-    return predicate if not terms else _validated_conjunction(predicate, *terms)
+    return predicate if not terms else _conjunction(predicate, *terms)
 
 
 def resolved_pinned_instants(
-    selections: tuple[ValidatedTemporalSelection, ...],
+    selections: tuple[ResolvedTemporalSelection, ...],
 ) -> dict[AcceptedDimension, ManagedValue]:
     return {
         selection.axis.dimension: selection.coordinate
         for selection in selections
-        if isinstance(selection, ValidatedAsOfSelection)
+        if isinstance(selection, ResolvedAsOfSelection)
     }
 
 
-def validated_query_pin(selections: tuple[ValidatedTemporalSelection, ...]) -> Pin:
+def resolved_query_pin(selections: tuple[ResolvedTemporalSelection, ...]) -> Pin:
     """Return the pin already decoded by Object Query validation."""
     tx_time: _dt.datetime | Latest | None = None
     valid_time: _dt.datetime | Latest | None = None
     for selection in selections:
         value: _dt.datetime | Latest
-        if isinstance(selection, ValidatedLatestSelection):
+        if isinstance(selection, ResolvedLatestSelection):
             value = LATEST
-        elif isinstance(selection, ValidatedAsOfSelection):
+        elif isinstance(selection, ResolvedAsOfSelection):
             if not isinstance(selection.coordinate, _dt.datetime):
                 raise TemporalReadError("a temporal coordinate is not a managed datetime")
             value = selection.coordinate
@@ -498,18 +483,18 @@ def validated_query_pin(selections: tuple[ValidatedTemporalSelection, ...]) -> P
     return Pin(tx_time=tx_time, valid_time=valid_time)
 
 
-def scans_validated_axis(selections: tuple[ValidatedTemporalSelection, ...]) -> bool:
+def scans_resolved_axis(selections: tuple[ResolvedTemporalSelection, ...]) -> bool:
     return any(
-        isinstance(selection, ValidatedHistorySelection | ValidatedRangeSelection)
+        isinstance(selection, ResolvedHistorySelection | ResolvedRangeSelection)
         for selection in selections
     )
 
 
-def validated_hop_as_of_terms(
+def resolved_hop_as_of_terms(
     target: EntityMetadata,
     model: Metamodel,
     root_pins: Mapping[AcceptedDimension, ManagedValue],
-) -> tuple[ValidatedPredicate, ...]:
+) -> tuple[ResolvedPredicate, ...]:
     """Build managed per-hop terms; an absent pin means the framework Latest sentinel."""
     shape = view(model).shape(target.identity)
     if shape is None:  # pragma: no cover - accepted metadata is total
@@ -518,42 +503,24 @@ def validated_hop_as_of_terms(
     if not axes:
         return ()
     declarer = root_metadata(inheritance_view(model), model, target.identity)
-    terms: list[ValidatedPredicate] = []
+    terms: list[ResolvedPredicate] = []
     for axis in axes:
         instant = root_pins.get(axis.dimension)
+        end = declarer.attribute(axis.end_attribute.name)
         if instant is None:
-            end = declarer.attribute(axis.end_attribute.name)
             if end is None:
                 raise TemporalReadError(
                     f"{declarer.identity.name}: temporal axis member is undeclared"
                 )
-            terms.append(
-                _framework_comparison(
-                    op="eq",
-                    attr=f"{declarer.identity.canonical}.{end.identity.name}",
-                    member=end,
-                    value=INFINITY,
-                )
-            )
+            terms.append(_framework_comparison(op="eq", member=end, value=INFINITY))
             continue
         start = declarer.attribute(axis.start_attribute.name)
-        end = declarer.attribute(axis.end_attribute.name)
         if start is None or end is None:
             raise TemporalReadError(f"{declarer.identity.name}: temporal axis member is undeclared")
         terms.extend(
             (
-                _managed_comparison(
-                    op="lessThanEquals",
-                    attr=f"{declarer.identity.canonical}.{start.identity.name}",
-                    member=start,
-                    value=instant,
-                ),
-                _managed_comparison(
-                    op="greaterThan",
-                    attr=f"{declarer.identity.canonical}.{end.identity.name}",
-                    member=end,
-                    value=instant,
-                ),
+                _managed_comparison(op="lessThanEquals", member=start, value=instant),
+                _managed_comparison(op="greaterThan", member=end, value=instant),
             )
         )
     return tuple(terms)

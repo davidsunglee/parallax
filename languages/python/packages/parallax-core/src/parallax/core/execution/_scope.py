@@ -18,7 +18,7 @@ from parallax.core.execution._read_policy import (
     read_graph,
     read_page,
     read_rows,
-    validated,
+    resolved,
 )
 from parallax.core.execution._runner import TransactionRunner
 from parallax.core.execution_authority._authority import ExecutionCapture
@@ -28,7 +28,7 @@ from parallax.core.execution_lifecycle._activity import (
     refuse_reentry,
 )
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery._page_reader import StreamPageResult
 from parallax.core.read_delivery._paging import At, PagingPlan
@@ -169,8 +169,8 @@ class ExecutionScope:
         selected = read_projection(adopted.adopt())
         return StandaloneRead(self._lifecycle, adopted, selected, self._capture)
 
-    def validated(self, read: StandaloneRead, node: ObjectQueryNode, /) -> ValidatedObjectQuery:
-        return validated(read, node)
+    def resolved(self, read: StandaloneRead, node: ObjectQueryNode, /) -> ResolvedObjectQuery:
+        return resolved(read, node)
 
     def page(
         self,

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, assert_never, cast
+from typing import Literal, assert_never
 
-from parallax.core.base import STRING, Bytes, NeutralType
+from parallax.core.base import STRING, Bytes, ManagedValue, NeutralType
 from parallax.core.dialect import Dialect, projection_result_key
 from parallax.core.document_codec import comparison_text, is_text_compared
 from parallax.core.inheritance import InheritanceFacet
@@ -15,39 +15,29 @@ from parallax.core.metamodel import (
     Metamodel,
     Multiplicity,
     OccurrenceMetadata,
-    ValueObjectAttributeIdentity,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     entity_by_name,
 )
-from parallax.core.predicate import (
-    All,
-    And,
-    Between,
-    Comparison,
-    Exists,
-    Group,
-    Membership,
-    MembershipOp,
-    Narrow,
-    Navigate,
-    NestedComparison,
-    NestedExists,
-    NestedMembership,
-    NestedNotExists,
-    NestedNullCheck,
-    NestedRange,
-    NestedStringMatch,
-    NestedStringOp,
-    NoneOp,
-    Not,
-    NotExists,
-    NullCheck,
-    Or,
-    StringMatch,
-    StringOp,
+from parallax.core.predicate import MembershipOp, StringOp
+from parallax.core.predicate._resolved import (
+    DeferredKeySet,
+    ResolvedAnd,
+    ResolvedComparison,
+    ResolvedConstant,
+    ResolvedGroup,
+    ResolvedMembership,
+    ResolvedNarrow,
+    ResolvedNot,
+    ResolvedNullCheck,
+    ResolvedOr,
+    ResolvedPredicate,
+    ResolvedPredicateMember,
+    ResolvedQuantifier,
+    ResolvedRange,
+    ResolvedSemiJoin,
+    ResolvedStringMatch,
 )
-from parallax.core.predicate._validated import DeferredKeySet, ValidatedPredicate
 from parallax.core.sql_gen._context import SqlGenError, StatementBuilder
 from parallax.core.sql_gen._context import table_layout as _table_layout
 
@@ -56,14 +46,14 @@ from parallax.core.sql_gen._context import table_layout as _table_layout
 # spelling, so a use site below never confuses the two.
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.sql_gen._inheritance import (
-    plan_validated_branch_narrow as _plan_validated_branch_narrow,
+    plan_resolved_branch_narrow as _plan_resolved_branch_narrow,
 )
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
 # The navigation LANE: hop plans in, one correlated `EXISTS` (or a grouped `or`
 # of them) out. Same aliasing-down convention as the family lane above.
 from parallax.core.sql_gen._navigation import open_branch as _open_branch
-from parallax.core.sql_gen._navigation import plan_validated_hop as _plan_validated_hop
+from parallax.core.sql_gen._navigation import plan_resolved_hop as _plan_resolved_hop
 from parallax.core.storage_layout import (
     ColumnContributor,
     DirectColumn,
@@ -79,24 +69,6 @@ _COMPARATORS: dict[str, str] = {
     "greaterThanEquals": ">=",
     "lessThan": "<",
     "lessThanEquals": "<=",
-}
-_NESTED_COMPARATORS: dict[str, str] = {
-    "nestedEq": "=",
-    "nestedNotEq": "<>",
-    "nestedGt": ">",
-    "nestedGte": ">=",
-    "nestedLt": "<",
-    "nestedLte": "<=",
-}
-# Each nested string predicate's scalar twin. The pattern grammar, the escaping, and
-# the case folding are the SAME rule at both levels (m-predicate), so the nested
-# family is rendered by mapping onto the scalar kind rather than by a second table.
-_NESTED_STRING_KINDS: dict[NestedStringOp, StringOp] = {
-    "nestedLike": "like",
-    "nestedNotLike": "notLike",
-    "nestedStartsWith": "startsWith",
-    "nestedEndsWith": "endsWith",
-    "nestedContains": "contains",
 }
 
 
@@ -355,10 +327,10 @@ class ElementScope:
     """A predicate resolving against ONE UNNESTED value-object array element
     (m-value-object same-element semantics).
 
-    Every leaf under a scoped `nestedExists` / `nestedNotExists` `where` is
-    element-relative (`type`, `geo.country` — no leading `Class.valueObject`)
-    and resolves against :attr:`container`, the same array element they all
-    share, extracted through the alias the unnest declared. There is no
+    Every leaf a quantifier's `where` reads is element-relative (`type`,
+    `geo.country` — no leading `Class.valueObject`) and resolves against
+    :attr:`container`, the same array element they all share, extracted through
+    the alias the unnest declared. There is no
     ``unaliased`` here and there cannot be one: that alias is this statement's
     own declaration, so it qualifies in a write's predicate exactly as it does
     in a read's.
@@ -379,199 +351,176 @@ class ElementScope:
 
 ResolutionScope = EntityScope | ElementScope
 
-# The node kinds only an entity scope admits: everything outside the shared
-# sub-grammar of boolean combinators and the flat `nested*` family.
-type _EntityNode = (
-    All
-    | NoneOp
-    | Comparison
-    | Between
-    | NullCheck
-    | StringMatch
-    | Membership
-    | NestedExists
-    | NestedNotExists
-    | Narrow
-    | Navigate
-    | Exists
-    | NotExists
+type _Operation = (
+    ResolvedComparison
+    | ResolvedRange
+    | ResolvedMembership
+    | ResolvedStringMatch
+    | ResolvedNullCheck
 )
+type _EntityPredicate = ResolvedConstant | ResolvedNarrow | ResolvedQuantifier | ResolvedSemiJoin
 
 
-def lower_predicate(product: ValidatedPredicate, scope: ResolutionScope) -> str:
-    """Lower one predicate node to a SQL fragment, appending binds in order.
+def lower_predicate(predicate: ResolvedPredicate, scope: ResolutionScope) -> str:
+    """Lower one resolved predicate to a SQL fragment, appending binds in order.
 
-    The arms are grouped by which SCOPES admit them, which is the only thing the
-    two vocabularies differ by (the node patterns are disjoint, so the grouping
-    changes no dispatch outcome):
-
-    1. The shared sub-grammar — boolean combinators and the flat `nested*`
-       family — is legal in either scope. Only the `nested*` RESOLUTION differs:
-       an entity scope walks `Class.valueObject.attribute` from its own document
-       column, an element scope walks an element-relative path from the unnested
-       alias.
-    2. Everything else is entity vocabulary, lowered by
-       :func:`_lower_entity_predicate`. An element scope refuses all of it with
-       one message, deliberately NOT the entity dispatcher's differentiated ones:
-       `m-predicate`'s `elementPredicate` grammar is a single named production,
-       so what an element `where` gets wrong is always the same thing.
+    Boolean structure and scalar operations are legal in either scope; an
+    operation reads its member from the scope's current position. Everything
+    else needs an Entity position, which an element scope refuses with one
+    message: `m-predicate`'s `elementPredicate` grammar is a single named
+    production, so what an element `where` gets wrong is always the same thing.
     """
-    op = product.authored
-    match op:
-        # -- the shared sub-grammar: legal in EITHER scope ---------------------
-        case And(operands=operands):
-            del operands
-            return " and ".join(lower_predicate(child, scope) for child in product.children)
-        case Or(operands=operands):
-            del operands
-            return " or ".join(lower_predicate(child, scope) for child in product.children)
-        case Not(operand=operand):
-            del operand
-            return f"not {lower_predicate(product.only_child(), scope)}"
-        case Group(operand=operand):
-            del operand
-            return f"({lower_predicate(product.only_child(), scope)})"
+    match predicate:
+        case ResolvedAnd(operands=operands):
+            return " and ".join(lower_predicate(operand, scope) for operand in operands)
+        case ResolvedOr(operands=operands):
+            return " or ".join(lower_predicate(operand, scope) for operand in operands)
+        case ResolvedNot(operand=operand):
+            return f"not {lower_predicate(operand, scope)}"
+        case ResolvedGroup(operand=operand):
+            return f"({lower_predicate(operand, scope)})"
         case (
-            NestedComparison()
-            | NestedRange()
-            | NestedMembership()
-            | NestedStringMatch()
-            | NestedNullCheck()
+            ResolvedComparison()
+            | ResolvedRange()
+            | ResolvedMembership()
+            | ResolvedStringMatch()
+            | ResolvedNullCheck()
         ):
-            if isinstance(scope, ElementScope):
-                return _lower_element_nested(product, scope)
-            return _lower_nested(product, scope)
-        case _ if isinstance(scope, ElementScope):
-            raise SqlGenError(
-                f"{op!r} is not a legal nestedExists/nestedNotExists element predicate "
-                "(m-predicate elementPredicate)"
-            )
+            return _lower_operation(predicate, scope)
         case _:
-            return _lower_entity_predicate(op, product, scope)
+            if isinstance(scope, ElementScope):
+                raise SqlGenError(
+                    f"{type(predicate).__name__} is not a legal nestedExists/nestedNotExists "
+                    "element predicate (m-predicate elementPredicate)"
+                )
+            return _lower_entity_predicate(predicate, scope)
 
 
-# An exhaustive dispatcher over the closed entity predicate node union: one arm per node
-# kind, each lowering in place or through that kind's own lowering.
-def _lower_entity_predicate(  # noqa: C901
-    op: _EntityNode, product: ValidatedPredicate, scope: EntityScope
-) -> str:
-    match op:
-        case All():
-            return ""
-        case NoneOp():
-            return "1 = 0"
-        case Comparison(op=tag, value=value):
-            # The subject resolves FIRST: a document-resident member's path
-            # segments bind ahead of the compared value, which is the order the
-            # emitted text puts their holes in.
-            subject = scope.subject_for(_attribute_member(product))
-            del value
-            _bind_member_literal(product, 0, subject, scope)
-            return f"{subject.compared} {_COMPARATORS[tag]} ?"
-        case Between(lower=lower, upper=upper):
-            subject = scope.subject_for(_attribute_member(product))
-            del lower, upper
-            _bind_member_literal(product, 0, subject, scope)
-            _bind_member_literal(product, 1, subject, scope)
-            return f"{subject.compared} between ? and ?"
-        case NullCheck(op=tag):
-            col = scope.subject_for(_attribute_member(product)).extraction
-            return f"{col} is null" if tag == "isNull" else f"not {col} is null"
-        case StringMatch():
-            return _lower_string(product, scope)
-        case Membership(op=tag, values=values):
-            return _lower_membership(product, tag, len(values), scope)
-        case NestedExists() | NestedNotExists():
-            return _lower_nested_exists(product, scope)
-        case Narrow():
-            return _lower_branch_narrow(product, scope)
-        case Navigate() | Exists() | NotExists():
-            return _lower_navigation(product, scope)
+def _lower_entity_predicate(predicate: _EntityPredicate, scope: EntityScope) -> str:
+    match predicate:
+        case ResolvedConstant(truth=truth):
+            return "" if truth else "1 = 0"
+        case ResolvedNarrow():
+            return _lower_branch_narrow(predicate, scope)
+        case ResolvedQuantifier():
+            return _lower_quantifier(predicate, scope)
+        case ResolvedSemiJoin():
+            return _lower_semi_join(predicate, scope)
         case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(op)
+            assert_never(predicate)
+
+
+def _lower_operation(operation: _Operation, scope: ResolutionScope) -> str:
+    """One scalar operation over its member's subject expression.
+
+    The subject resolves FIRST: a document-resident member's path segments bind
+    ahead of the compared values, which is the order the emitted text puts their
+    holes in.
+    """
+    subject = _subject(operation.member, scope)
+    match operation:
+        case ResolvedComparison(op=tag, value=value, framework=framework):
+            _bind_operand(value, subject, scope, framework=framework)
+            # A Value Object leaf's inequality keeps its negated-equality form.
+            if tag == "notEq" and not isinstance(operation.member, AttributeMetadata):
+                return f"not {subject.compared} = ?"
+            return f"{subject.compared} {_COMPARATORS[tag]} ?"
+        case ResolvedRange(lower=lower, upper=upper):
+            _bind_operand(lower, subject, scope)
+            _bind_operand(upper, subject, scope)
+            return f"{subject.compared} between ? and ?"
+        case ResolvedMembership(op=tag, values=values):
+            return _lower_membership(tag, values, subject, scope)
+        case ResolvedStringMatch(op=tag, pattern=pattern, case_insensitive=folded):
+            return _lower_like(tag, pattern, folded, subject.extraction, scope)
+        case ResolvedNullCheck(op=tag):
+            column = subject.extraction
+            return f"{column} is null" if tag == "isNull" else f"not {column} is null"
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(operation)
+
+
+def _subject(member: ResolvedPredicateMember, scope: ResolutionScope) -> MemberSubject:
+    """``member`` as read from ``scope``'s current position.
+
+    An Attribute is read through its Member Placement. A Value Object leaf is a
+    document extraction: from the Entity's document through single occurrences,
+    or from the element a quantifier binds, relative to its occurrence.
+    """
+    if isinstance(member, AttributeMetadata):
+        if isinstance(scope, ElementScope):
+            raise SqlGenError(f"{member.identity} is not read from a Value Object element")
+        return scope.subject_for(member)
+    if isinstance(scope, EntityScope):
+        vo, segments = _resolved_vo_path(member, scope)
+        document, prefix = scope.document_root(vo)
+        reference, path = document, (*prefix, *segments)
+    else:
+        base = scope.container.identity.path
+        leaf_path = member.identity.value_object.path
+        if leaf_path[: len(base)] != base:
+            raise SqlGenError("resolved element leaf is outside its resolved container")
+        reference, path = scope.element_reference(), (*leaf_path[len(base) :], member.identity.name)
+    extraction, path_binds = scope.dialect.nested_extract(reference, path)
+    scope.ctx.bind_structural_all(path_binds)
+    return MemberSubject(
+        extraction,
+        scope.dialect.nested_cast(extraction, member.type),
+        member.type,
+        document_resident=True,
+        text_compared=is_text_compared(member.type),
+    )
 
 
 def _lower_membership(
-    product: ValidatedPredicate, tag: MembershipOp, hole_count: int, scope: EntityScope
+    tag: MembershipOp,
+    values: tuple[ManagedValue, ...] | DeferredKeySet,
+    subject: MemberSubject,
+    scope: ResolutionScope,
 ) -> str:
-    subject = scope.subject_for(_attribute_member(product))
-    operands = _operands(product)
-    if len(operands) == 1 and isinstance(operands[0], DeferredKeySet):
+    if isinstance(values, DeferredKeySet):
         if tag != "in":  # pragma: no cover - generated child reads are positive
             raise SqlGenError("a deferred key set supports only positive membership")
-        key_set = operands[0]
         if scope.dialect.name == "postgres":
-            scope.ctx.bind_managed_array(key_set, key_set.neutral_type)
+            scope.ctx.bind_managed_array(values, values.neutral_type)
             return f"{subject.compared} = any(?)"
-        scope.ctx.bind_managed(key_set, key_set.neutral_type)
+        scope.ctx.bind_managed(values, values.neutral_type)
         return f"{subject.compared} in (__parallax_deferred_keys__)"
-    holes = ", ".join("?" for _ in range(hole_count))
-    for index in range(len(operands)):
-        _bind_member_literal(product, index, subject, scope)
+    holes = ", ".join("?" for _ in values)
+    for value in values:
+        _bind_operand(value, subject, scope)
     fragment = f"{subject.compared} in ({holes})"
     return fragment if tag == "in" else f"not {fragment}"
 
 
-def _lower_string(product: ValidatedPredicate, scope: EntityScope) -> str:
-    # The subject resolves as an ARGUMENT, so a document-resident member's path
-    # segments bind before `_lower_like` pushes the pattern — the same
-    # extraction-then-comparator order every other arm keeps.
-    op = product.authored
-    if not isinstance(op, StringMatch):  # pragma: no cover
-        raise AssertionError("validated string product has the wrong authored node")
-    subject = scope.subject_for(_attribute_member(product))
-    return _lower_like(
-        op.op, str(_operand(product, 0)), op.case_insensitive, subject.extraction, scope
-    )
-
-
-def _attribute_member(product: ValidatedPredicate) -> AttributeMetadata:
-    if not isinstance(product.member, AttributeMetadata):
-        raise SqlGenError(f"{type(product.authored).__name__} carries no resolved Attribute")
-    return product.member
-
-
-def _operands(product: ValidatedPredicate) -> tuple[object, ...]:
-    if product.operands is None:
-        raise SqlGenError(f"{type(product.authored).__name__} carries no validated operands")
-    return product.operands.values
-
-
-def _operand(product: ValidatedPredicate, index: int) -> object:
-    return _operands(product)[index]
-
-
-def _bind_member_literal(
-    product: ValidatedPredicate, index: int, subject: MemberSubject, scope: EntityScope
+def _bind_operand(
+    value: object, subject: MemberSubject, scope: ResolutionScope, *, framework: bool = False
 ) -> None:
-    """Bind one compared literal in the form ``subject``'s expression compares.
+    """Bind one compared operand in the form ``subject``'s expression compares.
 
-    A direct Column is compared in the engine's own column type, so its literal
-    crosses the seam as its managed value with explicit neutral-type metadata. A
-    document-resident member is compared through an
-    extraction, so it takes the same split the conventional nested vocabulary
-    does: the comparison text where the extraction compares as text, the managed
-    value in its declared Neutral Type where the extraction casts.
+    A direct Column is compared in the engine's own column type, so its operand
+    crosses the seam as its managed value with explicit neutral-type metadata,
+    or as itself when it is a framework sentinel. A document-resident member is
+    compared through an extraction: the codec-owned comparison text where the
+    extraction compares as text, the managed value in its declared Neutral Type
+    where the extraction casts. Wire decoding already occurred in predicate
+    validation.
     """
-    operands = product.operands
-    if operands is None:
-        raise SqlGenError(f"{type(product.authored).__name__} carries no validated operands")
-    value = operands.values[index]
     if not subject.document_resident:
-        if operands.form == "framework":
+        if framework:
             scope.ctx.bind_framework(value)
         else:
-            if operands.neutral_type is None:
-                raise SqlGenError("a managed Predicate operand has no declared neutral type")
-            scope.ctx.bind_managed(value, operands.neutral_type)
-        return
-    _bind_nested_operand(value, subject.type, scope)
+            scope.ctx.bind_managed(value, subject.type)
+    elif subject.text_compared:
+        scope.ctx.bind_comparison_text(comparison_text(subject.type, value), subject.type)
+    else:
+        scope.ctx.bind_managed(value, subject.type)
 
 
 def _lower_like(
     kind: StringOp,
     value: str,
-    case_insensitive: bool | None,
+    case_insensitive: bool,
     subject_sql: str,
     scope: ResolutionScope,
 ) -> str:
@@ -624,33 +573,23 @@ def _affix_pattern(kind: _AffixOp, value: str) -> tuple[str, bool]:
     assert_never(kind)  # pragma: no cover - exhaustiveness guard
 
 
-def _lower_branch_narrow(product: ValidatedPredicate, scope: EntityScope) -> str:
-    """A `narrow` node reached MID-predicate (nested inside and/or/not/group) — a
+def _lower_branch_narrow(narrow: ResolvedNarrow, scope: EntityScope) -> str:
+    """A `narrow` reached MID-predicate (nested inside and/or/not/group) — a
     **grouped branch predicate** (m-sql "Grouped branch predicates"): the
     branch's own operand composes with its own tag guard via `and`, and the
     composition is wrapped in parens whenever there is a branch predicate to
     disambiguate against a sibling branch joined by `or` (`m-inheritance-015`).
-    A single narrow with a branch predicate and nothing to combine against
-    needs no grouping — but that is the **top-level** narrow shape, intercepted
-    before this dispatcher ever runs (`_compile._compile_tph_read`); every narrow
-    this function receives is nested, so it always groups when it has two terms.
     """
-    narrow = product.authored
-    if not isinstance(narrow, Narrow):  # pragma: no cover
-        raise AssertionError("validated narrow product has the wrong authored node")
-    if product.position is None:
-        raise SqlGenError("validated narrow carries no resolved effective position")
-    plan = _plan_validated_branch_narrow(scope.facet, scope.storage, scope.entity, product.position)
-    operand = product.only_child()
+    plan = _plan_resolved_branch_narrow(scope.facet, scope.storage, scope.entity, narrow.position)
     if scope.variant is not None:
         if scope.variant not in plan.position:
             return "1 = 0"
-        return lower_predicate(operand, scope) or "1 = 1"
+        return lower_predicate(narrow.operand, scope) or "1 = 1"
     if plan.tag is None:  # pragma: no cover - TPCS union branches always carry a variant
         raise SqlGenError("a TPCS branch narrow requires a concrete branch scope")
     # Branch predicate first, THEN the guard's binds — the same explicit ordering
     # the top-level read states, for the same reason.
-    branch_sql = lower_predicate(operand, scope)
+    branch_sql = lower_predicate(narrow.operand, scope)
     tag_sql, tag_binds = _tph_tag_guard(scope, scope.facet, plan.tag)
     scope.ctx.bind_framework_all(tag_binds)
     if not branch_sql:
@@ -658,32 +597,21 @@ def _lower_branch_narrow(product: ValidatedPredicate, scope: EntityScope) -> str
     return f"({branch_sql} and {tag_sql})"
 
 
-# resolves the hop and hands back an immutable plan; this is its only consumer. #
+def _lower_semi_join(join: ResolvedSemiJoin, scope: EntityScope) -> str:
+    """One correlated `EXISTS` per planned branch of the reached Entity.
 
-
-def _lower_navigation(product: ValidatedPredicate, scope: EntityScope) -> str:
-    op = product.authored
-    if not isinstance(op, (Navigate, Exists, NotExists)):  # pragma: no cover
-        raise AssertionError("validated navigation product has the wrong authored node")
-    if (
-        product.relationship_target is None
-        or product.relationship_source is None
-        or product.relationship_member is None
-    ):
-        raise SqlGenError("validated navigation carries no resolved relationship join")
-    inner_product = None if not product.children else product.only_child()
-    position = (
-        inner_product.position
-        if inner_product is not None and isinstance(inner_product.authored, Narrow)
-        else None
-    )
-    plan = _plan_validated_hop(
-        product.relationship_target,
-        product.relationship_source,
-        product.relationship_member,
-        position=position,
+    A `where` that is itself a `narrow` selects the branches the hop plans
+    rather than lowering as a guard inside each of them.
+    """
+    narrowed = join.where if isinstance(join.where, ResolvedNarrow) else None
+    inner = join.where if narrowed is None else narrowed.operand
+    plan = _plan_resolved_hop(
+        join.target,
+        join.source,
+        join.related,
+        position=None if narrowed is None else narrowed.position,
         scope=scope,
-        negate=isinstance(op, NotExists),
+        negate=join.negated,
     )
     fragments: list[str] = []
     for branch in plan.branches:
@@ -694,9 +622,6 @@ def _lower_navigation(product: ValidatedPredicate, scope: EntityScope) -> str:
         # interior itself navigates.
         opened = _open_branch(branch, scope)
         child_scope = scope.child(opened.entity, opened.alias)
-        inner = None if not product.children else product.only_child()
-        if isinstance(op.op, Narrow) and inner is not None:
-            inner = inner.only_child()
         where = _hop_where(inner, opened.correlation, child_scope, *opened.tag_fragment)
         # AFTER the interior: the plan carried the guard's bind VALUES precisely so
         # this push is the caller's own visible statement (`_navigation` holds no
@@ -707,7 +632,7 @@ def _lower_navigation(product: ValidatedPredicate, scope: EntityScope) -> str:
 
 
 def _hop_where(
-    inner: ValidatedPredicate | None,
+    inner: ResolvedPredicate | None,
     correlation: str,
     child_scope: EntityScope,
     *extra: str,
@@ -725,253 +650,44 @@ def _hop_where(
     return " and ".join(terms)
 
 
-# self-identifying accepted Metadata with its own expected-O(1) member lookup, #
-
-
-def _lower_nested(product: ValidatedPredicate, scope: EntityScope) -> str:
-    """Lower a flat `nested*` predicate (m-predicate "Nested value-object
-    predicates"): a scalar extraction against the scope's own alias when the path
-    stays within `one`-multiplicity members, or — when it crosses a `multiplicity:
-    many` member — the any-element array-traversal form (m-sql "To-many — exists /
-    notExists and any-element predicates"; `m-value-object-017/-018/-021`)."""
-    op = product.authored
-    if not isinstance(
-        op,
-        (NestedComparison, NestedRange, NestedMembership, NestedStringMatch, NestedNullCheck),
-    ):
-        raise AssertionError("validated nested product has the wrong authored node")
-    leaf = _value_object_leaf(product)
-    vo, segments = _resolved_vo_path(leaf, scope)
-    crossing = _split_at_many(vo, segments)
-    if crossing is not None:
-        return _lower_any_element(product, vo, crossing, scope)
-    # The document column is the TARGET's own, so it renders through `own_column`
-    # and goes bare in a write's unaliased predicate (m-sql rule 1). Under
-    # Relational Document Layout the occurrence is a subtree of the Table's
-    # shared column, so its own placement prefixes every path walked below it.
-    document, prefix = scope.document_root(vo)
-    extraction, path_binds = scope.dialect.nested_extract(document, (*prefix, *segments))
-    scope.ctx.bind_structural_all(path_binds)
-    return _lower_comparator(product, extraction, leaf.type, scope)
-
-
-def _lower_element_nested(product: ValidatedPredicate, scope: ElementScope) -> str:
-    """The same flat `nested*` family, resolved ELEMENT-relatively (m-predicate
-    `elementPredicate`; m-value-object same-element semantics): the path carries
-    no `Class.valueObject` prefix, resolves against the scope's container, and
-    extracts from the unnested element every predicate in this `where` shares —
-    never by re-descending through the owner's document column."""
-    op = product.authored
-    if not isinstance(
-        op,
-        (NestedComparison, NestedRange, NestedMembership, NestedStringMatch, NestedNullCheck),
-    ):
-        raise AssertionError("validated nested product has the wrong authored node")
-    leaf = _value_object_leaf(product)
-    base = scope.container.identity.path
-    leaf_path = leaf.identity.value_object.path
-    if leaf_path[: len(base)] != base:
-        raise SqlGenError("validated element leaf is outside its resolved container")
-    segments = (*leaf_path[len(base) :], leaf.identity.name)
-    extraction, path_binds = scope.dialect.nested_extract(scope.element_reference(), segments)
-    scope.ctx.bind_structural_all(path_binds)
-    return _lower_comparator(product, extraction, leaf.type, scope)
-
-
-def _value_object_leaf(product: ValidatedPredicate) -> ValueObjectAttributeMetadata:
-    member = product.member
-    if member is None or not isinstance(member.identity, ValueObjectAttributeIdentity):
-        raise SqlGenError(f"{type(product.authored).__name__} carries no resolved nested leaf")
-    return cast("ValueObjectAttributeMetadata", member)
-
-
 def _resolved_vo_path(
     leaf: ValueObjectAttributeMetadata, scope: EntityScope
 ) -> tuple[ValueObjectMetadata, tuple[str, ...]]:
     identity = leaf.identity.value_object
     vo = _entity_view(scope.facet, identity.entity).applicable_value_object(identity.path[0])
     if vo is None:
-        raise SqlGenError(f"validated Value Object {identity} is absent from the active position")
+        raise SqlGenError(f"resolved Value Object {identity} is absent from the active position")
     return vo, (*identity.path[1:], leaf.identity.name)
 
 
-def _lower_comparator(
-    product: ValidatedPredicate,
-    extraction: str,
-    leaf_type: NeutralType,
-    scope: ResolutionScope,
-) -> str:
-    """Render one resolved extraction's comparator fragment (m-sql "valueObject
-    — structured-column read and filter" / "The flat `nested*` operator
-    family"), binding extraction-then-comparator in that order. Shared by the
-    plain scalar path, the flat any-element lowering, and the same-element
-    scoped `where` lowering — only how `extraction` was resolved differs, which
-    is why this takes either scope.
-    """
-    op = product.authored
-    if isinstance(op, NestedComparison):
-        casted = scope.dialect.nested_cast(extraction, leaf_type)
-        _bind_nested_operand(_operand(product, 0), leaf_type, scope)
-        # nestedNotEq lowers to `not <ext> = ?` (the corpus form), not `<ext> <> ?`.
-        if op.op == "nestedNotEq":
-            return f"not {casted} = ?"
-        return f"{casted} {_NESTED_COMPARATORS[op.op]} ?"
-    if isinstance(op, NestedRange):
-        casted = scope.dialect.nested_cast(extraction, leaf_type)
-        _bind_nested_operand(_operand(product, 0), leaf_type, scope)
-        _bind_nested_operand(_operand(product, 1), leaf_type, scope)
-        # One `between`, never two comparisons: through a `many` member the flat
-        # family is any-element, so a lowered pair could be satisfied by two
-        # DIFFERENT elements (m-predicate).
-        return f"{casted} between ? and ?"
-    if isinstance(op, NestedMembership):
-        casted = scope.dialect.nested_cast(extraction, leaf_type)
-        holes = ", ".join("?" for _ in op.values)
-        for operand in _operands(product):
-            _bind_nested_operand(operand, leaf_type, scope)
-        # nestedNotIn lowers to a LEADING `not` (the corpus form), adding no bind.
-        fragment = f"{casted} in ({holes})"
-        return fragment if op.op == "nestedIn" else f"not {fragment}"
-    if isinstance(op, NestedStringMatch):
-        # No cast: the leaf is a `String` member by the non-string-member rule
-        # (m-predicate), so the text extraction IS what the pattern matches.
-        return _lower_like(
-            _NESTED_STRING_KINDS[op.op],
-            str(_operand(product, 0)),
-            op.case_insensitive,
-            extraction,
-            scope,
-        )
-    if isinstance(op, NestedNullCheck) and op.op == "nestedIsNull":
-        return f"{extraction} is null"
-    return f"not {extraction} is null"
+def _lower_quantifier(quantifier: ResolvedQuantifier, scope: EntityScope) -> str:
+    """A bare quantifier is a non-empty / empty-or-absent test over the guarded
+    unnest; its `where` composes on the SAME unnested alias (same-element
+    semantics, m-value-object), so separate quantifiers never share an alias.
+    Postgres `EXISTS` is never NULL, so `none` needs no `coalesce` wrap:
+    `not exists (...)` over zero unnested elements is already true (m-sql,
+    explicit). MariaDB's containment form DOES need one — but this claim is
+    Postgres-only and that form is not implemented here.
 
-
-def _bind_nested_operand(value: object, leaf_type: NeutralType, scope: ResolutionScope) -> None:
-    """Bind one managed document operand in the form its extraction compares.
-
-    Typed extraction binds the managed value directly; text extraction derives the
-    codec-owned comparison text. Wire decoding already occurred in predicate validation.
-    """
-
-    if is_text_compared(leaf_type):
-        scope.ctx.bind_comparison_text(comparison_text(leaf_type, value), leaf_type)
-    else:
-        scope.ctx.bind_managed(value, leaf_type)
-
-
-def _split_at_many(
-    vo: ValueObjectMetadata, segments: Sequence[str]
-) -> tuple[OccurrenceMetadata, tuple[str, ...], tuple[str, ...]] | None:
-    """Split a flat predicate's path at the first `multiplicity: many` hop
-    crossed while walking from `vo` (m-predicate "Flat predicates through a
-    `many` segment mean any element matches"). Returns ``(the many container,
-    the segments reaching it from vo's own document column, the remaining
-    segments addressing a field WITHIN the element)`` — or ``None`` when the
-    walk never crosses a `many` member (the plain scalar-extraction case
-    :func:`_lower_nested` handles directly).
-    """
-    if vo.multiplicity is Multiplicity.MANY:
-        return vo, (), tuple(segments)
-    container: OccurrenceMetadata = vo
-    for index, segment in enumerate(segments):
-        member = container.value_object(segment)
-        if member is None:
-            return None  # reached a scalar leaf (or an unresolved segment) uncrossed
-        if member.multiplicity is Multiplicity.MANY:
-            return member, tuple(segments[: index + 1]), tuple(segments[index + 1 :])
-        container = member
-    return None
-
-
-def _lower_any_element(
-    product: ValidatedPredicate,
-    vo: ValueObjectMetadata,
-    crossing: tuple[OccurrenceMetadata, tuple[str, ...], tuple[str, ...]],
-    scope: EntityScope,
-) -> str:
-    """Any-element lowering for a flat `nested*` predicate crossing a `many`
-    member (m-sql "To-many — exists / notExists and any-element predicates"):
-    an independent correlated `EXISTS` over the guarded unnest, the field
-    resolved against the SAME unnested element alias (never against `t0`).
-    Each such predicate self-guards and self-aliases — two ANDed flat
-    predicates through the same array open TWO independent subqueries
-    (`m-value-object-018`'s any-element-independence witness), never one
-    shared alias (that would be the same-element `nestedExists`/`where` form
-    below).
-    """
-    container, pre, post = crossing
-    if not post:
-        authored = product.authored
-        path = (
-            authored.path
-            if isinstance(
-                authored,
-                (
-                    NestedComparison,
-                    NestedRange,
-                    NestedMembership,
-                    NestedStringMatch,
-                    NestedNullCheck,
-                ),
-            )
-            else "?"
-        )
-        raise SqlGenError(
-            f"nested path {path!r} ends on the `many` array itself, not a field within its elements"
-        )
-    leaf = _value_object_leaf(product)
-    # The owning document column is the target's own (bare under `unaliased`); the
-    # unnested ELEMENT is not, and stays alias-qualified either way — this very
-    # subquery declares `array_alias`, so there is no alias here to leak.
-    document, prefix = scope.document_root(vo)
-    guard_sql, guard_binds = scope.dialect.array_guard(document, (*prefix, *pre))
-    scope.ctx.bind_framework_all(guard_binds)
-    element = ElementScope(ctx=scope.ctx, container=container, alias=scope.next_alias())
-    extraction, path_binds = scope.dialect.nested_extract(element.element_reference(), post)
-    scope.ctx.bind_structural_all(path_binds)
-    comparator = _lower_comparator(product, extraction, leaf.type, scope)
-    return (
-        f"exists (select 1 from jsonb_array_elements({guard_sql}) "
-        f"{element.alias} where {comparator})"
-    )
-
-
-def _lower_nested_exists(product: ValidatedPredicate, scope: EntityScope) -> str:
-    """A bare form is a non-empty / empty-or-absent test over the guarded
-    unnest; a scoped `where` composes its element predicate on the SAME
-    unnested alias (same-element semantics, m-value-object — as opposed to the
-    any-element flat form above, which never shares an alias across
-    predicates). Postgres `EXISTS` is never NULL, so the negated forms need no
-    `coalesce` wrap: `not exists (...)` over zero unnested elements is already
-    true (m-sql, explicit). MariaDB's containment form DOES need one — but this
-    claim is Postgres-only and that form is not implemented here.
-
-    The scoped `where` is handed back to :func:`lower_predicate` under an
+    The `where` is handed back to :func:`lower_predicate` under an
     :class:`ElementScope`; there is no second dispatcher for it.
     """
-    op = product.authored
-    if not isinstance(op, (NestedExists, NestedNotExists)):  # pragma: no cover
-        raise AssertionError("validated nested-exists product has the wrong authored node")
-    container = product.container
-    if container is None:
-        raise SqlGenError("validated nested-exists carries no resolved container")
-    identity = container.identity
+    occurrence = quantifier.occurrence
+    identity = occurrence.identity
     vo = _entity_view(scope.facet, identity.entity).applicable_value_object(identity.path[0])
     if vo is None:
-        raise SqlGenError(f"validated Value Object {identity} is absent from the active position")
-    pre = tuple(identity.path[1:])
-    if container.multiplicity is not Multiplicity.MANY:
+        raise SqlGenError(f"resolved Value Object {identity} is absent from the active position")
+    if occurrence.multiplicity is not Multiplicity.MANY:
         raise SqlGenError(
             f"nestedExists/nestedNotExists over a `one`-multiplicity value object "
-            f"({op.path!r}) has no goldened lowering yet"
+            f"({identity}) has no goldened lowering yet"
         )
     document, prefix = scope.document_root(vo)
-    guard_sql, guard_binds = scope.dialect.array_guard(document, (*prefix, *pre))
+    guard_sql, guard_binds = scope.dialect.array_guard(document, (*prefix, *identity.path[1:]))
     scope.ctx.bind_framework_all(guard_binds)
-    element = ElementScope(ctx=scope.ctx, container=container, alias=scope.next_alias())
+    element = ElementScope(ctx=scope.ctx, container=occurrence, alias=scope.next_alias())
     inner = f"select 1 from jsonb_array_elements({guard_sql}) {element.alias}"
-    if op.where is not None:
-        inner = f"{inner} where {lower_predicate(product.only_child(), element)}"
-    keyword = "not exists" if isinstance(op, NestedNotExists) else "exists"
+    if quantifier.where is not None:
+        inner = f"{inner} where {lower_predicate(quantifier.where, element)}"
+    keyword = "not exists" if quantifier.kind == "none" else "exists"
     return f"{keyword} ({inner})"

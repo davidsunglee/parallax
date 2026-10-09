@@ -24,16 +24,26 @@ from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata, TemporalDimension
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    AttributeMetadata,
+    EntityMetadata,
+    TemporalDimension,
+)
 from parallax.core.object_query import LATEST
 from parallax.core.object_query._nodes import TemporalDimension as QueryTemporalDimension
-from parallax.core.object_query._validated import (
-    ValidatedAsOfSelection,
-    ValidatedLatestSelection,
-    ValidatedObjectQuery,
+from parallax.core.object_query._resolved import (
+    ResolvedAsOfSelection,
+    ResolvedLatestSelection,
+    ResolvedObjectQuery,
 )
 from parallax.core.predicate import ModelRejectedError
-from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.predicate._resolved import (
+    ResolvedAnd,
+    ResolvedComparison,
+    ResolvedConstant,
+    ResolvedGroup,
+)
 from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import (
     FACET_KEY,
@@ -43,10 +53,10 @@ from parallax.core.temporal_read import (
     TimeInterval,
     inject_resolved_as_of,
     milestone_edge,
-    scans_validated_axis,
+    resolved_hop_as_of_terms,
+    resolved_query_pin,
+    scans_resolved_axis,
     valid_time_coverage,
-    validated_hop_as_of_terms,
-    validated_query_pin,
 )
 from parallax.core.temporal_read import view as temporal_view
 from parallax.core.write_plan import PredecessorRow
@@ -88,12 +98,18 @@ def _query(
     )
 
 
+def _attribute(entity: EntityMetadata, name: str) -> AttributeMetadata:
+    attribute = entity.attribute(name)
+    assert attribute is not None
+    return attribute
+
+
 def _validated(
     entity: EntityMetadata,
     temporal: dict[QueryTemporalDimension, oq.TemporalSelection] | None = None,
     predicate: oa.PredicateNode | None = None,
     **clauses: object,
-) -> ValidatedObjectQuery:
+) -> ResolvedObjectQuery:
     return oq.validate_object_query(
         entity,
         _query(entity, temporal, predicate, **clauses),
@@ -133,15 +149,15 @@ def test_temporal_injection_rejects_incomplete_resolved_products() -> None:
 
     with pytest.raises(TemporalReadError, match="temporal axis member is undeclared"):
         inject_resolved_as_of(
-            ValidatedPredicate(oa.All()),
-            (ValidatedLatestSelection(axis),),
+            ResolvedConstant(True),
+            (ResolvedLatestSelection(axis),),
             without_end,
         )
     with pytest.raises(TemporalReadError, match="not a managed datetime"):
-        validated_query_pin((ValidatedAsOfSelection(axis, 1),))
+        resolved_query_pin((ResolvedAsOfSelection(axis, 1),))
     with pytest.raises(AssertionError):
         inject_resolved_as_of(
-            ValidatedPredicate(oa.All()),
+            ResolvedConstant(True),
             (cast("Any", type("UnknownSelection", (), {"axis": axis})()),),
             POSITION,
         )
@@ -183,9 +199,9 @@ def test_hop_temporal_injection_rejects_axes_with_missing_members() -> None:
     malformed_model = cast("Any", Model())
 
     with pytest.raises(TemporalReadError, match="temporal axis member is undeclared"):
-        validated_hop_as_of_terms(without_end, malformed_model, {})
+        resolved_hop_as_of_terms(without_end, malformed_model, {})
     with pytest.raises(TemporalReadError, match="temporal axis member is undeclared"):
-        validated_hop_as_of_terms(
+        resolved_hop_as_of_terms(
             without_end,
             malformed_model,
             {axis.dimension: dt.datetime(2024, 1, 1, tzinfo=dt.UTC)},
@@ -219,7 +235,7 @@ def test_hop_terms_at_an_inherited_position_come_from_the_family_shape(
     )
     _undeclared_axes(monkeypatch, deposit_rate)
 
-    terms = validated_hop_as_of_terms(deposit_rate, model, pins)
+    terms = resolved_hop_as_of_terms(deposit_rate, model, pins)
 
     members = [
         attribute
@@ -228,11 +244,12 @@ def test_hop_terms_at_an_inherited_position_come_from_the_family_shape(
             (axis.start_attribute, axis.end_attribute) if pinned else (axis.end_attribute,)
         )
     ]
-    assert [cast("oa.Comparison", term.authored).attr for term in terms] == [
-        f"{root.identity.canonical}.{member.name}" for member in members
+    assert all(isinstance(term, ResolvedComparison) for term in terms)
+    assert [cast("ResolvedComparison", term).member for term in terms] == [
+        root.attribute(member.name) for member in members
     ]
     assert all(
-        term.member is root.attribute(member.name)
+        cast("ResolvedComparison", term).member is root.attribute(member.name)
         for term, member in zip(terms, members, strict=True)
     )
 
@@ -273,8 +290,8 @@ def test_result_narrowing_survives_temporal_selection_lowering() -> None:
     )
     plan = deep_fetch.plan(query, model, projection=deep_fetch.ReadProjectionRequest("all", True))
     assert plan.root.narrow_to == (BALANCE.identity,)
-    assert plan.root.validated_predicate.authored == oa.Comparison(
-        op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
+    assert plan.root.predicate == ResolvedComparison(
+        "eq", _attribute(BALANCE, "txEnd"), INFINITY, framework=True
     )
 
 
@@ -362,13 +379,13 @@ def test_latest_terms_bind_managed_infinity_and_publish_its_canonical_literal() 
     model = _ACCEPTED["Position"]
     query = _validated(POSITION, _bitemporal("latest", "latest"))
     injected = inject_resolved_as_of(query.predicate, query.temporal, POSITION)
-    hop_terms = validated_hop_as_of_terms(POSITION, model, {})
+    hop_terms = resolved_hop_as_of_terms(POSITION, model, {})
 
-    for term in (*injected.children, *hop_terms):
-        assert cast("oa.Comparison", term.authored).value == "infinity"
-        assert term.operands is not None
-        assert term.operands.form == "framework"
-        assert term.operands.values == (INFINITY,)
+    assert isinstance(injected, ResolvedAnd)
+    for term in (*injected.operands, *hop_terms):
+        assert isinstance(term, ResolvedComparison)
+        assert term.framework
+        assert term.value is INFINITY
 
     root = deep_fetch.plan(
         query, model, projection=deep_fetch.ReadProjectionRequest("all", True)
@@ -436,8 +453,8 @@ def test_result_directives_survive_injection() -> None:
     ).root
     assert root.limit == 2
     assert root.order_by[0].member.identity.name == "id"
-    assert root.validated_predicate.authored == oa.Comparison(
-        op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
+    assert root.predicate == ResolvedComparison(
+        "eq", _attribute(BALANCE, "txEnd"), INFINITY, framework=True
     )
 
 
@@ -454,16 +471,23 @@ def test_a_user_predicate_conjoins_with_the_injected_as_of_terms() -> None:
     pin: dict[QueryTemporalDimension, oq.TemporalSelection] = {
         "transaction-time": oq.AsOf("latest")
     }
-    as_of = oa.Comparison(op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity")
+    as_of = ResolvedComparison("eq", _attribute(BALANCE, "txEnd"), INFINITY, framework=True)
 
-    def injected(authored: oa.PredicateNode) -> oa.PredicateNode:
+    def resolved(authored: oa.PredicateNode) -> object:
+        return oa.validate_predicate(BALANCE, authored, _ACCEPTED["Balance"])
+
+    def injected(authored: oa.PredicateNode) -> object:
         query = _validated(BALANCE, pin, authored)
-        return inject_resolved_as_of(query.predicate, query.temporal, BALANCE).authored
+        return inject_resolved_as_of(query.predicate, query.temporal, BALANCE)
 
+    resolved_conjunction = resolved(conjunction)
+    assert isinstance(resolved_conjunction, ResolvedAnd)
     assert injected(oa.All()) == as_of
-    assert injected(predicate) == oa.And(operands=(predicate, as_of))
-    assert injected(conjunction) == oa.And(operands=(*conjunction.operands, as_of))
-    assert injected(disjunction) == oa.And(operands=(oa.Group(operand=disjunction), as_of))
+    assert injected(predicate) == ResolvedAnd((cast("Any", resolved(predicate)), as_of))
+    assert injected(conjunction) == ResolvedAnd((*resolved_conjunction.operands, as_of))
+    assert injected(disjunction) == ResolvedAnd(
+        (ResolvedGroup(cast("Any", resolved(disjunction))), as_of)
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -628,7 +652,7 @@ def test_pin_reports_only_pinned_axes() -> None:
 
 
 def test_query_pin_reads_both_bitemporal_axes() -> None:
-    pin = validated_query_pin(_validated(POSITION, _bitemporal(_B, "latest")).temporal)
+    pin = resolved_query_pin(_validated(POSITION, _bitemporal(_B, "latest")).temporal)
     assert pin.tx_time is LATEST
     assert pin.valid_time == dt.datetime.fromisoformat(_B)
 
@@ -639,8 +663,8 @@ def test_the_temporal_readers_are_unaffected_by_result_narrowing() -> None:
         {"transaction-time": oq.History(), "valid-time": oq.AsOf(_B)},
         narrow_to=("Position",),
     )
-    assert validated_query_pin(query.temporal).valid_time == dt.datetime.fromisoformat(_B)
-    assert scans_validated_axis(query.temporal)
+    assert resolved_query_pin(query.temporal).valid_time == dt.datetime.fromisoformat(_B)
+    assert scans_resolved_axis(query.temporal)
 
 
 def test_query_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> None:
@@ -648,10 +672,10 @@ def test_query_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> None:
     # though the pin is still read off them (ahead of the milestone-set /
     # pinned-read branch decision).
     ranged = _validated(BALANCE, {"transaction-time": oq.AsOfRange(start=_P, end=_D)})
-    assert validated_query_pin(ranged.temporal) == Pin()
+    assert resolved_query_pin(ranged.temporal) == Pin()
 
     scanned = _validated(BALANCE, {"transaction-time": oq.History()})
-    assert validated_query_pin(scanned.temporal) == Pin()
+    assert resolved_query_pin(scanned.temporal) == Pin()
 
 
 def test_a_scan_is_seen_beside_a_pinned_dimension() -> None:
@@ -661,17 +685,17 @@ def test_a_scan_is_seen_beside_a_pinned_dimension() -> None:
     pinned_over_history = _validated(
         POSITION, {"transaction-time": oq.History(), "valid-time": oq.AsOf(_B)}
     )
-    assert scans_validated_axis(pinned_over_history.temporal)
+    assert scans_resolved_axis(pinned_over_history.temporal)
 
     pinned_over_range = _validated(
         POSITION,
         {"transaction-time": oq.AsOfRange(start=_P, end=_D), "valid-time": oq.AsOf("latest")},
     )
-    assert scans_validated_axis(pinned_over_range.temporal)
+    assert scans_resolved_axis(pinned_over_range.temporal)
 
     both_pinned = _validated(POSITION, _bitemporal(_B, "latest"))
-    assert not scans_validated_axis(both_pinned.temporal)
-    assert not scans_validated_axis(_validated(ORDERS).temporal)
+    assert not scans_resolved_axis(both_pinned.temporal)
+    assert not scans_resolved_axis(_validated(ORDERS).temporal)
 
 
 def test_result_directives_never_hide_a_scan() -> None:
@@ -683,7 +707,7 @@ def test_result_directives_never_hide_a_scan() -> None:
         order_by=(oq.OrderKey(attr="Position.id"),),
         limit=5,
     )
-    assert scans_validated_axis(query.temporal)
+    assert scans_resolved_axis(query.temporal)
 
 
 # Reading a `Pin` or an `Edge` OFF a materialized node is the producing

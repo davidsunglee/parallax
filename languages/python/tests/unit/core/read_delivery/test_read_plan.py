@@ -8,9 +8,10 @@ import threading
 import time
 import types
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from decimal import Decimal
 from typing import Any, Literal, cast
 
 import pytest
@@ -22,14 +23,17 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution._page_origins import ObservedPageProjections
 from parallax.core.execution._preflight import preflight
+from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import deserialize
-from parallax.core.object_query._validated import ContinuationCoordinate, ValidatedObjectQuery
+from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
+from parallax.core.predicate._resolved import ResolvedComparison
 from parallax.core.read_delivery import _read_plan
 from parallax.core.read_delivery._delivery import find
 from parallax.core.read_delivery._read_plan import ReadPlanCache
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot import Database
 from tests._support.db_port import Read, ScriptedAdapter, Transact
+from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._transact_support import db_for
 
 _META = model_of(ORDERS_MODEL)
@@ -57,7 +61,7 @@ def _reaches(root: object, target: object) -> bool:
     return False
 
 
-def _query(value: object = 1) -> ValidatedObjectQuery:
+def _query(value: object = 1) -> ResolvedObjectQuery:
     return preflight(
         deserialize(
             {
@@ -70,8 +74,8 @@ def _query(value: object = 1) -> ValidatedObjectQuery:
     )
 
 
-def _name_query(value: str) -> ValidatedObjectQuery:
-    return preflight(
+def _name_query(value: str) -> ResolvedObjectQuery:
+    query = preflight(
         deserialize(
             {
                 "target": "Order",
@@ -81,11 +85,15 @@ def _name_query(value: str) -> ValidatedObjectQuery:
         model=_META,
         form="graph",
     )
+    # Decoding yields a plain `str`; the caller's own carrier is kept instead,
+    # so a probe observes exactly what the key and the plan retain of it.
+    assert isinstance(query.predicate, ResolvedComparison)
+    return replace(query, predicate=replace(query.predicate, value=value))
 
 
 def _plan(
     planner: ReadPlanCache,
-    query: ValidatedObjectQuery,
+    query: ResolvedObjectQuery,
     *,
     edition: str = "edition-a",
     model: CatalogedModel = _MODEL,
@@ -128,14 +136,213 @@ def test_equal_dialect_values_with_distinct_identities_do_not_share_a_read_plan(
     assert planner._statistics().misses == 2
 
 
-def test_query_key_freezing_normalizes_order_without_erasing_container_types() -> None:
-    frozen = cast("Callable[[object], object]", vars(_read_plan)["_frozen_query_value"])
+def test_operand_key_material_keeps_exact_types_and_decimal_exponents() -> None:
+    operand_key = cast("Callable[[object], object]", vars(_read_plan)["_operand_key"])
 
-    assert frozen({"values": {3, 1, 2}}) == frozen({"values": {2, 3, 1}})
-    assert frozen({"values": {3, 1, 2}}) != frozen({"values": frozenset((2, 3, 1))})
-    assert frozen([1, 2]) != frozen((1, 2))
-    assert frozen(True) != frozen(1)
-    assert frozen(1) != frozen(1.0)
+    assert operand_key(True) != operand_key(1)
+    assert operand_key(1) != operand_key(1.0)
+    assert operand_key(Decimal("1.5")) != operand_key(Decimal("1.50"))
+    assert operand_key(Decimal("1.50")) == operand_key(Decimal("1.50"))
+    assert operand_key("1") == operand_key("1")
+
+
+_ORDERS = corpus_model("orders")
+_CUSTOMER = corpus_model("customer")
+_ANIMAL = corpus_model("animal")
+_BALANCE = corpus_model("balance")
+_LATEST: dict[str, object] = {"transaction-time": {"asOf": "latest"}}
+
+
+def _resolved_key(meta: Metamodel, document: Mapping[str, object]) -> object:
+    query_key = cast("Callable[[object], object]", vars(_read_plan)["_query_key"])
+    return query_key(preflight(deserialize(dict(document)), model=meta, form="graph"))
+
+
+def _order_query(predicate: Mapping[str, object], **clauses: object) -> dict[str, object]:
+    return {"target": "Order", "predicate": predicate} | clauses
+
+
+def _customer_query(predicate: Mapping[str, object], **clauses: object) -> dict[str, object]:
+    return {"target": "Customer", "predicate": predicate} | clauses
+
+
+def _animal_query(predicate: Mapping[str, object], **clauses: object) -> dict[str, object]:
+    return {"target": "Animal", "predicate": predicate} | clauses
+
+
+def _balance_query(temporal: Mapping[str, object]) -> dict[str, object]:
+    return {"target": "Balance", "predicate": {"all": {}}, "temporal": temporal}
+
+
+_PHONE_HOME = {"nestedEq": {"path": "type", "value": "home"}}
+_ID_ONE = {"eq": {"attr": "Order.id", "value": 1}}
+_NAMED_A = {"eq": {"attr": "Order.name", "value": "A"}}
+
+# Pairs of resolved queries that compile to different SQL or binds: each pair
+# differs in exactly one SQL-relevant fact, so a key that ignored it would share
+# one cached plan between them.
+_DISTINCT_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, object]], ...] = (
+    ("constant", _ORDERS, _order_query({"all": {}}), _order_query({"none": {}})),
+    (
+        "range-bound",
+        _ORDERS,
+        _order_query({"between": {"attr": "Order.qty", "lower": 1, "upper": 5}}),
+        _order_query({"between": {"attr": "Order.qty", "lower": 1, "upper": 6}}),
+    ),
+    (
+        "membership-values",
+        _ORDERS,
+        _order_query({"in": {"attr": "Order.id", "values": [1, 2]}}),
+        _order_query({"in": {"attr": "Order.id", "values": [1, 3]}}),
+    ),
+    (
+        "membership-polarity",
+        _ORDERS,
+        _order_query({"in": {"attr": "Order.id", "values": [1, 2]}}),
+        _order_query({"notIn": {"attr": "Order.id", "values": [1, 2]}}),
+    ),
+    (
+        "string-folding",
+        _ORDERS,
+        _order_query({"startsWith": {"attr": "Order.name", "value": "A"}}),
+        _order_query({"startsWith": {"attr": "Order.name", "value": "A", "caseInsensitive": True}}),
+    ),
+    (
+        "null-check",
+        _CUSTOMER,
+        _customer_query({"nestedIsNull": {"path": "Customer.address.geo.elevation"}}),
+        _customer_query({"nestedIsNotNull": {"path": "Customer.address.geo.elevation"}}),
+    ),
+    (
+        "boolean-connective",
+        _ORDERS,
+        _order_query({"and": {"operands": [_ID_ONE, _NAMED_A]}}),
+        _order_query({"or": {"operands": [_ID_ONE, _NAMED_A]}}),
+    ),
+    (
+        "grouping",
+        _ORDERS,
+        _order_query({"not": {"operand": _ID_ONE}}),
+        _order_query({"group": {"operand": _ID_ONE}}),
+    ),
+    (
+        "predicate-narrowing",
+        _ANIMAL,
+        _animal_query({"narrow": {"to": ["Dog"], "operand": {"all": {}}}}),
+        _animal_query({"narrow": {"to": ["Cat"], "operand": {"all": {}}}}),
+    ),
+    (
+        "quantifier-kind",
+        _CUSTOMER,
+        _customer_query({"nestedExists": {"path": "Customer.address.phones"}}),
+        _customer_query({"nestedNotExists": {"path": "Customer.address.phones"}}),
+    ),
+    (
+        "quantifier-scope",
+        _CUSTOMER,
+        _customer_query({"nestedExists": {"path": "Customer.address.phones"}}),
+        _customer_query(
+            {"nestedExists": {"path": "Customer.address.phones", "where": _PHONE_HOME}}
+        ),
+    ),
+    (
+        "semi-join-polarity",
+        _CUSTOMER,
+        _customer_query({"exists": {"rel": "Customer.locations"}}),
+        _customer_query({"notExists": {"rel": "Customer.locations"}}),
+    ),
+    (
+        "semi-join-interior",
+        _CUSTOMER,
+        _customer_query({"exists": {"rel": "Customer.locations"}}),
+        _customer_query(
+            {
+                "exists": {
+                    "rel": "Customer.locations",
+                    "op": {"eq": {"attr": "Location.label", "value": "home"}},
+                }
+            }
+        ),
+    ),
+    (
+        "temporal-selection",
+        _BALANCE,
+        _balance_query(_LATEST),
+        _balance_query({"transaction-time": {"history": {}}}),
+    ),
+    (
+        "temporal-coordinate",
+        _BALANCE,
+        _balance_query({"transaction-time": {"asOf": "2024-06-15T00:00:00.000000Z"}}),
+        _balance_query({"transaction-time": {"asOf": "2024-06-16T00:00:00.000000Z"}}),
+    ),
+    (
+        "temporal-window",
+        _BALANCE,
+        _balance_query(
+            {
+                "transaction-time": {
+                    "asOfRange": {
+                        "start": "2024-06-15T00:00:00.000000Z",
+                        "end": "2024-07-01T00:00:00.000000Z",
+                    }
+                }
+            }
+        ),
+        _balance_query(
+            {
+                "transaction-time": {
+                    "asOfRange": {
+                        "start": "2024-06-15T00:00:00.000000Z",
+                        "end": "2024-07-02T00:00:00.000000Z",
+                    }
+                }
+            }
+        ),
+    ),
+    (
+        "ordering",
+        _ORDERS,
+        _order_query({"all": {}}, orderBy=[{"attr": "Order.id", "direction": "asc"}]),
+        _order_query({"all": {}}, orderBy=[{"attr": "Order.id", "direction": "desc"}]),
+    ),
+    (
+        "includes",
+        _CUSTOMER,
+        _customer_query({"all": {}}),
+        _customer_query({"all": {}}, includes=[{"segments": [{"rel": "Customer.locations"}]}]),
+    ),
+    (
+        "result-narrowing",
+        _ANIMAL,
+        _animal_query({"all": {}}),
+        _animal_query({"all": {}}, narrowTo=["Dog"]),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("meta", "first", "second"),
+    [case[1:] for case in _DISTINCT_QUERIES],
+    ids=[case[0] for case in _DISTINCT_QUERIES],
+)
+def test_query_keys_separate_every_sql_relevant_resolved_fact(
+    meta: Metamodel, first: dict[str, object], second: dict[str, object]
+) -> None:
+    key = _resolved_key(meta, first)
+
+    assert key == _resolved_key(meta, first)
+    assert hash(key) == hash(_resolved_key(meta, first))
+    assert key != _resolved_key(meta, second)
+
+
+def test_a_flat_nested_predicate_through_a_many_keys_like_its_same_element_quantifier() -> None:
+    flat = _customer_query({"nestedEq": {"path": "Customer.address.phones.type", "value": "home"}})
+    scoped = _customer_query(
+        {"nestedExists": {"path": "Customer.address.phones", "where": _PHONE_HOME}}
+    )
+
+    assert _resolved_key(_CUSTOMER, flat) == _resolved_key(_CUSTOMER, scoped)
 
 
 class _HashCountingString(str):
@@ -146,7 +353,7 @@ class _HashCountingString(str):
         return str.__hash__(self)
 
 
-def _key(query: ValidatedObjectQuery, **fields: Any) -> _read_plan._ReadPlanKey:
+def _key(query: ResolvedObjectQuery, **fields: Any) -> _read_plan._ReadPlanKey:
     values: dict[str, Any] = {
         "edition": "edition-a",
         "model": _MODEL,
@@ -158,18 +365,15 @@ def _key(query: ValidatedObjectQuery, **fields: Any) -> _read_plan._ReadPlanKey:
     return _read_plan._read_plan_key(**(values | fields))
 
 
-def _counting_authored_freezes(
-    monkeypatch: pytest.MonkeyPatch, authored_type: type
-) -> dict[str, int]:
-    frozen = cast("Callable[[object], object]", vars(_read_plan)["_frozen_query_value"])
-    counts = {"authored": 0}
+def _counting_query_keys(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    query_key = cast("Callable[[object], object]", vars(_read_plan)["_query_key"])
+    counts = {"projected": 0}
 
     def counting(value: object) -> object:
-        if type(value) is authored_type:
-            counts["authored"] += 1
-        return frozen(value)
+        counts["projected"] += 1
+        return query_key(value)
 
-    monkeypatch.setattr(_read_plan, "_frozen_query_value", counting)
+    monkeypatch.setattr(_read_plan, "_query_key", counting)
     return counts
 
 
@@ -186,7 +390,7 @@ def _counting_family_comparisons(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
     return verdicts
 
 
-def test_a_read_plan_key_hashes_its_frozen_query_once() -> None:
+def test_a_read_plan_key_hashes_its_query_key_once() -> None:
     literal = _HashCountingString("counted")
     selected = _name_query(literal)
     _HashCountingString.hashes = 0
@@ -228,7 +432,7 @@ def test_same_family_ignores_only_the_delivery_discriminator() -> None:
 
 
 def test_an_unpaged_query_keeps_its_authored_limit_in_its_family() -> None:
-    def selected(**clauses: object) -> ValidatedObjectQuery:
+    def selected(**clauses: object) -> ResolvedObjectQuery:
         authored = {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
         return preflight(deserialize(authored | clauses), model=_META, form="graph")
 
@@ -238,7 +442,7 @@ def test_an_unpaged_query_keeps_its_authored_limit_in_its_family() -> None:
 
 
 @pytest.mark.parametrize("paged", [False, True])
-def test_hits_and_cold_builds_freeze_the_authored_query_once_per_lookup(
+def test_hits_and_cold_builds_project_the_resolved_query_once_per_lookup(
     monkeypatch: pytest.MonkeyPatch,
     paged: bool,
 ) -> None:
@@ -247,17 +451,17 @@ def test_hits_and_cold_builds_freeze_the_authored_query_once_per_lookup(
         if paged
         else _query()
     )
-    counts = _counting_authored_freezes(monkeypatch, type(selected.authored))
+    counts = _counting_query_keys(monkeypatch)
     cache = ReadPlanCache()
 
     _plan(cache, selected)
-    assert counts["authored"] == 1
+    assert counts["projected"] == 1
     _plan(cache, selected)
-    assert counts["authored"] == 2
+    assert counts["projected"] == 2
     assert cache._statistics().hits == 1
 
 
-def test_a_warm_hit_hashes_its_frozen_query_only_at_key_construction() -> None:
+def test_a_warm_hit_hashes_its_query_key_only_at_key_construction() -> None:
     cache = ReadPlanCache()
     _plan(cache, _name_query(_HashCountingString("counted")))
     warm = _name_query(_HashCountingString("counted"))
@@ -384,9 +588,9 @@ def test_capacity_zero_does_no_key_work(monkeypatch: pytest.MonkeyPatch) -> None
     for name in (
         "_read_plan_key",
         "_ReadPlanKey",
-        "_FrozenQuery",
+        "_QueryKey",
         "_Identity",
-        "_frozen_query_value",
+        "_query_key",
         "null_pattern",
     ):
         monkeypatch.setattr(_read_plan, name, reject)

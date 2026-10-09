@@ -24,7 +24,7 @@ import pytest
 from parallax.core import continuation
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import object_query, validate_object_query
-from parallax.core.object_query._validated import ContinuationCoordinate
+from parallax.core.object_query._resolved import ContinuationCoordinate
 from parallax.core.predicate import All
 from parallax.core.read_delivery._page_reader import PageReader
 from parallax.core.read_delivery._paging import PagingParameters, PagingPlan, page_decision

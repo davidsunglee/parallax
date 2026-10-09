@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import dataclasses
+from collections.abc import Iterator
 from typing import Any, cast
 
 import pytest
 
-from parallax.core.object_query import IncludeSegment
+from parallax.core.object_query import IncludeSegment, deserialize
 from parallax.core.object_query import validate as query_validation
 from parallax.core.object_query._nodes import IncludePath
 from parallax.core.predicate import root_position
 from tests.unit._corpus_model_support import formed, records
+from tests.unit._corpus_model_support import model as corpus_model
 
 
 def _orders_model() -> Any:
@@ -59,3 +62,90 @@ def test_include_validation_rejects_a_segment_disconnected_from_the_previous_tar
             model,
             root_position(model, root),
         )
+
+
+_CANONICAL_MODULES = frozenset(
+    {"parallax.core.predicate._nodes", "parallax.core.object_query._nodes"}
+)
+_RESOLVED_MODULES = frozenset(
+    {"parallax.core.predicate._resolved", "parallax.core.object_query._resolved"}
+)
+
+
+def _within_resolved_products(value: object) -> Iterator[object]:
+    """``value`` and everything reachable from it through resolved products,
+    stopping at the accepted metadata they borrow."""
+    yield value
+    if isinstance(value, tuple):
+        for item in cast("tuple[object, ...]", value):
+            yield from _within_resolved_products(item)
+    elif type(value).__module__ in _RESOLVED_MODULES and dataclasses.is_dataclass(value):
+        for field in dataclasses.fields(value):
+            yield from _within_resolved_products(getattr(value, field.name))
+
+
+_RESOLVED_QUERIES: tuple[tuple[str, dict[str, object]], ...] = (
+    (
+        "customer",
+        {
+            "target": "Customer",
+            "predicate": {
+                "and": {
+                    "operands": [
+                        {"nestedEq": {"path": "Customer.address.phones.type", "value": "x"}},
+                        {
+                            "nestedNotExists": {
+                                "path": "Customer.address.phones",
+                                "where": {"nestedIsNotNull": {"path": "number"}},
+                            }
+                        },
+                        {"not": {"operand": {"exists": {"rel": "Customer.locations"}}}},
+                        {"startsWith": {"attr": "Customer.name", "value": "A"}},
+                    ]
+                }
+            },
+            "orderBy": [{"attr": "Customer.name", "direction": "desc"}],
+            "includes": [{"segments": [{"rel": "Customer.locations"}]}],
+            "limit": 3,
+        },
+    ),
+    (
+        "animal",
+        {
+            "target": "Animal",
+            "predicate": {
+                "or": {
+                    "operands": [
+                        {"narrow": {"to": ["Dog"], "operand": {"all": {}}}},
+                        {"group": {"operand": {"in": {"attr": "Animal.id", "values": [1]}}}},
+                    ]
+                }
+            },
+            "narrowTo": ["Pet"],
+        },
+    ),
+    (
+        "balance",
+        {
+            "target": "Balance",
+            "predicate": {"between": {"attr": "Balance.id", "lower": 1, "upper": 2}},
+            "temporal": {"transaction-time": {"asOf": "2024-06-15T00:00:00.000000Z"}},
+        },
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("stem", "document"),
+    _RESOLVED_QUERIES,
+    ids=["value-objects-and-relationships", "narrowing", "temporal"],
+)
+def test_a_resolved_query_retains_no_canonical_node(stem: str, document: dict[str, object]) -> None:
+    model = corpus_model(stem)
+    query = deserialize(document)
+    resolved = query_validation.validate_object_query(_root(model, query.target.name), query, model)
+
+    reached = tuple(_within_resolved_products(resolved))
+
+    assert len(reached) > 1
+    assert not [value for value in reached if type(value).__module__ in _CANONICAL_MODULES]

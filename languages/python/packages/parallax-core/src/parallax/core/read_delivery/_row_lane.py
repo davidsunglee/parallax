@@ -11,7 +11,7 @@ from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.metamodel import Metamodel
-from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery._convert import complete_occurrences
 from parallax.core.read_delivery._fetch import execute_read
 from parallax.core.read_delivery._page import (
@@ -38,7 +38,7 @@ from parallax.core.read_delivery._page import (
 from parallax.core.read_delivery._page_reader import FlatPageRequest, FlatPageResult, PageReader
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanner
 from parallax.core.read_delivery._row_converter import RowPublisher
-from parallax.core.temporal_read import validated_query_pin
+from parallax.core.temporal_read import resolved_query_pin
 from parallax.core.unit_work import Concurrency
 
 __all__ = [
@@ -76,7 +76,7 @@ class RowsResult:
 
 
 def find_rows(
-    query: ValidatedObjectQuery,
+    query: ResolvedObjectQuery,
     model: CatalogedModel,
     port: DatabaseConnection,
     *,
@@ -118,7 +118,7 @@ def find_rows(
             model,
             compiled,
             lambda: execute_read(port, compiled, read),
-            validated_query_pin(query.temporal),
+            resolved_query_pin(query.temporal),
             converter,
         )
     )

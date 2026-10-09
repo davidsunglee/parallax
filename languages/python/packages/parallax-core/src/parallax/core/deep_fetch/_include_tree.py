@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Final, cast
 
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
-from parallax.core.object_query._validated import ValidatedIncludePath
+from parallax.core.object_query._resolved import ResolvedIncludePath
 
 __all__ = [
     "IncludeTree",
@@ -196,7 +196,7 @@ class IncludeTree:
         multi = tuple(nonempty)
         return self._multi.setdefault(multi, multi)
 
-    def requested_position(self, path: ValidatedIncludePath) -> PositionId | None:
+    def requested_position(self, path: ResolvedIncludePath) -> PositionId | None:
         """The exact requested position denoted by ``path``, if one exists."""
         current = (ROOT_POSITION,)
         for index, segment in enumerate(path.segments):

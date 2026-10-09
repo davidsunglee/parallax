@@ -44,7 +44,6 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
-from parallax.core.predicate import PredicateNode
 from parallax.core.sql_gen._context import ColumnScope as _ColumnScope
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -1061,7 +1060,6 @@ class TphPlan:
     resolved: InheritancePositionView
     layout: PositionLayoutView
     columns: tuple[ProjectedColumn, ...]
-    inner: PredicateNode
     tag: TagPredicate | None
     stages: RowStages
 
@@ -1102,7 +1100,6 @@ class TpcsSinglePlan:
     resolved: InheritancePositionView
     layout: PositionLayoutView
     columns: tuple[ProjectedColumn, ...]
-    inner: PredicateNode
     stages: RowStages
 
     @property
@@ -1240,7 +1237,7 @@ class TpcsUnionPlan:
     <type>)` placeholders for columns it does not own, plus its own
     `familyVariant` subtype-name literal.
 
-    ``inner`` is the SAME predicate for every branch — each branch lowers it
+    The read's predicate is the SAME for every branch — each branch lowers it
     against its own fresh context, which is what restarts the aliases and keeps
     the per-branch binds separable for concatenation in branch order.
 
@@ -1255,7 +1252,6 @@ class TpcsUnionPlan:
     resolved: InheritancePositionView
     layout: PositionLayoutView
     columns: tuple[TpcsUnionColumn, ...]
-    inner: PredicateNode
     stages: RowStages
 
     @property
@@ -1310,7 +1306,7 @@ class BranchNarrowPlan:
     """A `narrow` reached MID-predicate (nested inside and/or/not/group) — a
     **grouped branch predicate** (m-sql "Grouped branch predicates"). Carries the
     resolved effective position and the inputs its tag guard needs; the caller
-    lowers the validated child FIRST, then guards.
+    lowers the resolved operand FIRST, then guards.
     """
 
     position: tuple[EntityIdentity, ...]
@@ -1319,7 +1315,6 @@ class BranchNarrowPlan:
 
 def plan_inheritance_read(
     entity: EntityMetadata,
-    predicate: PredicateNode,
     narrow_to: tuple[EntityIdentity, ...] | None,
     model: Metamodel,
     facet: InheritanceFacet,
@@ -1341,36 +1336,31 @@ def plan_inheritance_read(
     own outer select rather than to any branch.
     """
     view = entity_view(facet, entity.identity)
-    position, inner, narrowed = _read_position(view, predicate, narrow_to, facet)
+    position, narrowed = _read_position(view, narrow_to, facet)
     if isinstance(view.strategy, TablePerHierarchy):
-        return _plan_tph_read(
-            entity, view, position, inner, facet, storage, instance_form, narrowed
-        )
-    return _plan_tpcs_read(position, inner, facet, storage, instance_form, lock)
+        return _plan_tph_read(entity, view, position, facet, storage, instance_form, narrowed)
+    return _plan_tpcs_read(position, facet, storage, instance_form, lock)
 
 
 def _read_position(
     view: InheritanceEntityView,
-    predicate: PredicateNode,
     narrow_to: tuple[EntityIdentity, ...] | None,
     facet: InheritanceFacet,
-) -> tuple[InheritancePositionView, PredicateNode, bool]:
-    """The read's queried position, the predicate left to lower under it, and
-    whether a top-level `narrow` produced it.
+) -> tuple[InheritancePositionView, bool]:
+    """The read's queried position, and whether result narrowing produced it.
 
     Entity Query narrowing replaces the target's own position with its resolved
-    identity set. The predicate is already separate and is lowered whole.
+    identity set. The predicate is separate and is lowered whole.
     """
     if narrow_to is not None:
-        return query_narrow_position(facet, narrow_to), predicate, True
-    return view, predicate, False
+        return query_narrow_position(facet, narrow_to), True
+    return view, False
 
 
 def _plan_tph_read(
     entity: EntityMetadata,
     view: InheritanceEntityView,
     position: InheritancePositionView,
-    inner: PredicateNode,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     instance_form: bool,
@@ -1409,7 +1399,6 @@ def _plan_tph_read(
         resolved=position,
         layout=position_layout(storage, position.concrete_subtypes),
         columns=columns,
-        inner=inner,
         tag=TagPredicate(tag_col, tuple(position.concrete_subtypes)) if guarded else None,
         stages=RowStages(
             ByTag(
@@ -1461,7 +1450,6 @@ def _projects_document_slot(
 
 def _plan_tpcs_read(
     position: InheritancePositionView,
-    inner: PredicateNode,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     instance_form: bool,
@@ -1504,7 +1492,6 @@ def _plan_tpcs_read(
             resolved=position,
             layout=position_layout(storage, concretes),
             columns=columns,
-            inner=inner,
             # A single resolved concrete projects neither a tag column nor a
             # variant literal — the settled asymmetry with table-per-hierarchy,
             # whose abstract target keeps its tag however narrow the position
@@ -1683,7 +1670,6 @@ def _plan_tpcs_read(
         resolved=position,
         layout=layout_position,
         columns=union_columns,
-        inner=inner,
         stages=stages,
     )
 
@@ -1744,13 +1730,13 @@ def _result_aliases(spellings: Sequence[str]) -> tuple[str, ...]:
     return tuple(aliases)
 
 
-def plan_validated_branch_narrow(
+def plan_resolved_branch_narrow(
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     entity: EntityMetadata,
     position: tuple[EntityIdentity, ...],
 ) -> BranchNarrowPlan:
-    """Plan a mid-predicate narrow from its validated effective position."""
+    """Plan a mid-predicate narrow from its resolved effective position."""
     view = entity_view(facet, entity.identity)
     if not isinstance(view.strategy, TablePerHierarchy):
         return BranchNarrowPlan(position, None)

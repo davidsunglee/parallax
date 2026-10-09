@@ -25,6 +25,7 @@ from parallax.core.deep_fetch._include_tree import EMPTY_RENDER, IncludePosition
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
     AttributeIdentity,
+    AttributeMetadata,
     EntityIdentity,
     Metamodel,
     RelationshipIdentity,
@@ -38,17 +39,23 @@ from parallax.core.object_query import (
 )
 from parallax.core.object_query._canonical import canonical_includes
 from parallax.core.object_query._nodes import IncludePath, TemporalDimension
-from parallax.core.object_query._validated import ValidatedOrderTerm
+from parallax.core.object_query._resolved import ResolvedOrderTerm
 from parallax.core.predicate import (
     All,
-    And,
     Comparison,
-    Membership,
     ModelRejectedError,
     Narrow,
     PredicateNode,
+    validate_predicate,
 )
-from parallax.core.predicate._validated import DeferredKeySet
+from parallax.core.predicate._resolved import (
+    DeferredKeySet,
+    ResolvedAnd,
+    ResolvedComparison,
+    ResolvedMembership,
+    framework_comparison,
+    managed_comparison,
+)
 from parallax.core.sql_gen._compile import compile_read, compile_template
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
@@ -60,6 +67,12 @@ ORDERS = accepted_model("orders")
 ANIMAL = accepted_model("animal")
 POLICY = accepted_model("policy")
 RATE = accepted_model("rate")
+
+
+def _rate(name: str) -> AttributeMetadata:
+    attribute = entity_of(RATE, "Rate").attribute(name)
+    assert attribute is not None
+    return attribute
 
 
 def _seg(rel: str, narrow: tuple[str, ...] = ()) -> IncludeSegment:
@@ -81,7 +94,7 @@ _BITEMPORAL_LATEST: dict[TemporalDimension, TemporalSelection] = {
 
 
 def _order_attr(term: object) -> str:
-    member = cast("ValidatedOrderTerm", term).member
+    member = cast("ResolvedOrderTerm", term).member
     return f"{member.identity.entity.canonical}.{member.identity.name}"
 
 
@@ -393,9 +406,12 @@ def test_child_query_is_a_plain_in_membership() -> None:
     step = _query_step(plan)
     query = step.query_template()
     assert query.target == EntityIdentity("parallax.compatibility", "OrderStatus")
-    assert isinstance(query.validated_predicate.authored, Membership)
-    assert query.validated_predicate.authored.op == "in"
-    assert query.validated_predicate.authored.attr == "parallax.compatibility.OrderStatus.orderId"
+    assert isinstance(query.predicate, ResolvedMembership)
+    assert query.predicate.op == "in"
+    assert query.predicate.member.identity == AttributeIdentity(
+        EntityIdentity("parallax.compatibility", "OrderStatus"), "orderId"
+    )
+    assert isinstance(query.predicate.values, DeferredKeySet)
     assert _rendered_keys(ORDERS, step, [1, 2, 3]) == [1, 2, 3]
 
 
@@ -405,7 +421,7 @@ def test_child_query_carries_declared_relationship_order_by() -> None:
     assert query.target == EntityIdentity("parallax.compatibility", "OrderItem")
     assert _order_attr(query.order_by[0]) == "parallax.compatibility.OrderItem.id"
     assert query.order_by[0].direction == "desc"
-    assert isinstance(query.validated_predicate.authored, Membership)
+    assert isinstance(query.predicate, ResolvedMembership)
 
 
 def test_child_query_multi_key_order_by_preserves_declared_sequence() -> None:
@@ -435,16 +451,16 @@ def test_child_query_has_no_order_by_when_relationship_declares_none() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),))
     query = _query_step(plan).query_template()
     assert query.order_by == ()
-    assert isinstance(query.validated_predicate.authored, Membership)
+    assert isinstance(query.predicate, ResolvedMembership)
 
 
 def test_child_query_appends_propagated_as_of_after_the_in_membership() -> None:
     plan = _plan(POLICY, "Policy", (_path(_seg("Policy.coverages")),), _BITEMPORAL_LATEST)
     step = _query_step(plan)
     child_query = step.query_template()
-    assert isinstance(child_query.validated_predicate.authored, And)
-    membership, *as_of_terms = child_query.validated_predicate.authored.operands
-    assert isinstance(membership, Membership)
+    assert isinstance(child_query.predicate, ResolvedAnd)
+    membership, *as_of_terms = child_query.predicate.operands
+    assert isinstance(membership, ResolvedMembership)
     assert _rendered_keys(POLICY, step, [1, 2]) == [1, 2]
     assert len(as_of_terms) == 2  # Valid Time then Transaction Time (AXIS_ORDER)
 
@@ -466,8 +482,8 @@ def test_single_concrete_narrow_targets_the_concrete_directly_no_narrow_node() -
     assert level.child_target == EntityIdentity("parallax.compatibility", "Dog")
     assert level.narrow_to is None
     query = level.query_template()
-    assert isinstance(query.validated_predicate.authored, Membership)
-    assert query.validated_predicate.authored.attr == "parallax.compatibility.Dog.ownerId"
+    assert isinstance(query.predicate, ResolvedMembership)
+    assert query.predicate.member.identity.name == "ownerId"
 
 
 def test_multi_concrete_narrow_wraps_a_narrow_node() -> None:
@@ -480,7 +496,7 @@ def test_multi_concrete_narrow_wraps_a_narrow_node() -> None:
     )
     query = level.query_template()
     assert query.narrow_to == level.narrow_to
-    assert isinstance(query.validated_predicate.authored, Membership)
+    assert isinstance(query.predicate, ResolvedMembership)
 
 
 def test_broad_polymorphic_hop_targets_the_relationship_position_no_narrow() -> None:
@@ -1014,7 +1030,9 @@ def test_a_to_one_revisit_over_another_association_is_an_ordinary_queried_level(
     assert all(isinstance(step, deep_fetch.QueryFetchStep) for step in plan.fetch_steps)
     order = _query_step(plan, 2)
     assert order.child_target == EntityIdentity("parallax.compatibility", "Order")
-    assert order.related.reference == "parallax.compatibility.Order.id"
+    assert order.related.identity == AttributeIdentity(
+        EntityIdentity("parallax.compatibility", "Order"), "id"
+    )
 
 
 def test_ordinary_deeper_level_is_not_flagged_a_back_reference() -> None:
@@ -1070,7 +1088,7 @@ def test_a_query_with_no_includes_plans_zero_levels_and_keeps_its_predicate() ->
     literal = Comparison(op="eq", attr="Order.id", value=1)
     plan = _plan(ORDERS, "Order", (), predicate=literal)
     assert plan.fetch_steps == ()
-    assert plan.root.validated_predicate.authored == literal
+    assert plan.root.predicate == validate_predicate(entity_of(ORDERS, "Order"), literal, ORDERS)
 
 
 def test_plan_resolves_result_narrowing_and_leaves_a_predicate_narrow_alone() -> None:
@@ -1082,7 +1100,9 @@ def test_plan_resolves_result_narrowing_and_leaves_a_predicate_narrow_alone() ->
         narrow_to=("Order",),
     )
     assert plan.root.narrow_to == (entity_of(ORDERS, "Order").identity,)
-    assert plan.root.validated_predicate.authored == Narrow(to=("Order",), operand=All())
+    assert plan.root.predicate == validate_predicate(
+        entity_of(ORDERS, "Order"), Narrow(to=("Order",), operand=All()), ORDERS
+    )
 
 
 def test_plan_rejects_an_unknown_result_narrowing_target() -> None:
@@ -1102,10 +1122,10 @@ def test_concrete_target_root_query_injects_explicit_latest_on_every_axis() -> N
     plan = _plan(RATE, "DepositRate", (), _BITEMPORAL_LATEST)
     # Valid-Time-first (m-temporal-read), both explicitly select the current
     # milestone: `thru_z = infinity`, `out_z = infinity`.
-    assert plan.root.validated_predicate.authored == And(
-        operands=(
-            Comparison(op="eq", attr="parallax.compatibility.Rate.validEnd", value="infinity"),
-            Comparison(op="eq", attr="parallax.compatibility.Rate.txEnd", value="infinity"),
+    assert plan.root.predicate == ResolvedAnd(
+        (
+            framework_comparison(op="eq", member=_rate("validEnd"), value=INFINITY),
+            framework_comparison(op="eq", member=_rate("txEnd"), value=INFINITY),
         )
     )
 
@@ -1127,16 +1147,13 @@ def test_an_acquisition_read_selects_current_transaction_time_by_managed_infinit
         else deep_fetch.plan_target_read(rate, model=RATE, key="id", key_value=1, valid_from=jan)
     )
 
+    assert isinstance(query.predicate, ResolvedAnd)
     (current,) = (
         term
-        for term in query.validated_predicate.children
-        if term.operands is not None and term.operands.form == "framework"
+        for term in query.predicate.operands
+        if isinstance(term, ResolvedComparison) and term.framework
     )
-    assert current.authored == Comparison(
-        op="eq", attr="parallax.compatibility.Rate.txEnd", value="infinity"
-    )
-    assert current.operands is not None
-    assert current.operands.values == (INFINITY,)
+    assert current == framework_comparison(op="eq", member=_rate("txEnd"), value=INFINITY)
     statement = compile_read(query, RATE, POSTGRES).statement
     assert statement.binds[-1] is INFINITY
     assert statement.wire_binds()[-1] == "infinity"
@@ -1149,22 +1166,21 @@ def test_a_coverage_read_bounds_valid_time_by_the_endpoints_of_the_window_it_is_
     jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     jun = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
-    def valid_time_terms(window: TimeInterval) -> dict[str, tuple[object, ...]]:
+    def valid_time_terms(window: TimeInterval) -> dict[str, object]:
         query = deep_fetch.plan_coverage_read(rate, model=RATE, key="id", terms=((1, (window,)),))
-        terms: dict[str, tuple[object, ...]] = {}
-        for term in query.validated_predicate.children:
-            authored = term.authored
-            if not isinstance(authored, Comparison) or term.operands is None:
-                continue
-            if authored.attr.endswith((".validStart", ".validEnd")):
-                terms[f"{authored.attr.rpartition('.')[2]} {authored.op}"] = term.operands.values
-        return terms
+        assert isinstance(query.predicate, ResolvedAnd)
+        return {
+            f"{term.member.identity.name} {term.op}": term.value
+            for term in query.predicate.operands
+            if isinstance(term, ResolvedComparison)
+            and term.member.identity.name in ("validStart", "validEnd")
+        }
 
     bounded = valid_time_terms(TimeInterval(jan, jun))
-    assert bounded == {"validEnd greaterThan": (jan,), "validStart lessThan": (jun,)}
-    assert bounded["validEnd greaterThan"][0] is jan
-    assert bounded["validStart lessThan"][0] is jun
-    assert valid_time_terms(TimeInterval(jan, INFINITY)) == {"validEnd greaterThan": (jan,)}
+    assert bounded == {"validEnd greaterThan": jan, "validStart lessThan": jun}
+    assert bounded["validEnd greaterThan"] is jan
+    assert bounded["validStart lessThan"] is jun
+    assert valid_time_terms(TimeInterval(jan, INFINITY)) == {"validEnd greaterThan": jan}
 
 
 def test_a_coverage_read_of_several_windows_selects_rows_overlapping_any_of_them() -> None:
@@ -1232,20 +1248,13 @@ def test_concrete_target_root_query_injects_a_pinned_axis() -> None:
         "valid-time": AsOf("latest"),
     }
     plan = _plan(RATE, "DepositRate", (), pinned)
-    assert plan.root.validated_predicate.authored == And(
-        operands=(
+    pin = dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
+    assert plan.root.predicate == ResolvedAnd(
+        (
             # Valid Time explicitly selects latest.
-            Comparison(op="eq", attr="parallax.compatibility.Rate.validEnd", value="infinity"),
+            framework_comparison(op="eq", member=_rate("validEnd"), value=INFINITY),
             # Transaction Time is pinned to the past instant (containment)
-            Comparison(
-                op="lessThanEquals",
-                attr="parallax.compatibility.Rate.txStart",
-                value="2024-01-15T00:00:00.000000Z",
-            ),
-            Comparison(
-                op="greaterThan",
-                attr="parallax.compatibility.Rate.txEnd",
-                value="2024-01-15T00:00:00.000000Z",
-            ),
+            managed_comparison(op="lessThanEquals", member=_rate("txStart"), value=pin),
+            managed_comparison(op="greaterThan", member=_rate("txEnd"), value=pin),
         )
     )

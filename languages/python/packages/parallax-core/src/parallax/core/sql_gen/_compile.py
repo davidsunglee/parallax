@@ -13,7 +13,7 @@ from parallax.core.base import (
     inert_scalar,
 )
 from parallax.core.db_port import Row
-from parallax.core.deep_fetch import ValidatedEntityQuery
+from parallax.core.deep_fetch import ResolvedEntityQuery
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
 from parallax.core.document_codec import DocumentFinding, MemberShape, is_text_compared
 from parallax.core.inheritance import InheritanceFacet
@@ -27,13 +27,12 @@ from parallax.core.metamodel import (
     Multiplicity,
     ValueObjectMetadata,
 )
-from parallax.core.object_query._validated import (
+from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
     Paging,
-    ValidatedSeek,
+    ResolvedSeek,
 )
-from parallax.core.predicate import Narrow, Or
-from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.predicate._resolved import ResolvedOr, ResolvedPredicate
 from parallax.core.sql_gen._context import (
     LoweredStatement,
     SqlGenError,
@@ -394,7 +393,7 @@ class CompiledTemplate:
 
 
 def compile_template(
-    query: ValidatedEntityQuery,
+    query: ResolvedEntityQuery,
     model: Metamodel,
     dialect: Dialect,
     *,
@@ -513,7 +512,7 @@ def _scalar_read_contracts(
 
 
 def compile_read(
-    query: ValidatedEntityQuery,
+    query: ResolvedEntityQuery,
     model: Metamodel,
     dialect: Dialect,
     *,
@@ -585,7 +584,7 @@ def compile_read(
     return replace(compiled, statement=_normalize(statement))
 
 
-def _needs_null_tail(seek: ValidatedSeek, storage: _StorageLayoutFacet, dialect: Dialect) -> bool:
+def _needs_null_tail(seek: ResolvedSeek, storage: _StorageLayoutFacet, dialect: Dialect) -> bool:
     """Whether a continuing page needs a NULL-tail arm, with the leading term
     counted as document-resident unless every Table placing it gives it a Column."""
     if not seek.terms:  # pragma: no cover - validated continuations always order by a term
@@ -645,7 +644,7 @@ def _locking_base_join(
 
 
 def _compile_read_arm(
-    query: ValidatedEntityQuery,
+    query: ResolvedEntityQuery,
     model: Metamodel,
     dialect: Dialect,
     terms: tuple[_LoweredTerm, ...],
@@ -659,7 +658,7 @@ def _compile_read_arm(
     target = query.entity
     facet = _inheritance_view(model)
     storage = _storage_view(model)
-    predicate = query.validated_predicate
+    predicate = query.predicate
     paging = query.paging
     limit = query.limit
     narrow_to = query.narrow_to
@@ -743,7 +742,7 @@ def _compile_read_arm(
 
 
 def compile_write_predicate(
-    op: ValidatedPredicate, model: Metamodel, dialect: Dialect, target: EntityMetadata
+    op: ResolvedPredicate, model: Metamodel, dialect: Dialect, target: EntityMetadata
 ) -> CompiledPredicate:
     """Render an unaliased, already-validated write predicate."""
     facet = _inheritance_view(model)
@@ -824,14 +823,14 @@ def _sought(
     )
 
 
-def _beside_a_seek(predicate: ValidatedPredicate, where_sql: str, seek_sql: str) -> str:
+def _beside_a_seek(predicate: ResolvedPredicate, where_sql: str, seek_sql: str) -> str:
     """The authored `where` fragment as a conjunct standing beside a seek.
 
     An `or` binds looser than the enclosing `and`, so a top-level disjunction
     conjoined with a seek would silently re-associate the caller's own predicate
     into the seek's first branch.
     """
-    if seek_sql and where_sql and isinstance(predicate.authored, Or):
+    if seek_sql and where_sql and isinstance(predicate, ResolvedOr):
         return f"({where_sql})"
     return where_sql
 
@@ -881,7 +880,7 @@ def _append_result_shape(
 
 def _compile_inheritance_read(
     entity: EntityMetadata,
-    predicate: ValidatedPredicate,
+    predicate: ResolvedPredicate,
     narrow_to: tuple[EntityIdentity, ...] | None,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -910,7 +909,6 @@ def _compile_inheritance_read(
     """
     plan = _plan_inheritance_read(
         entity,
-        predicate.authored,
         narrow_to,
         model,
         facet,
@@ -982,7 +980,7 @@ def _compile_inheritance_read(
 
 def _compile_tph_read(
     plan: _TphPlan,
-    predicate: ValidatedPredicate,
+    predicate: ResolvedPredicate,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -1016,10 +1014,9 @@ def _compile_tph_read(
         f"from {plan.table} {scope.alias}",
     ]
 
-    inner = _planned_inner(predicate, plan.inner)
-    inner_sql = _lower_predicate(inner, scope)
+    inner_sql = _lower_predicate(predicate, scope)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
-    where_terms = [_beside_a_seek(inner, inner_sql, seek_sql), seek_sql]
+    where_terms = [_beside_a_seek(predicate, inner_sql, seek_sql), seek_sql]
     if plan.tag is not None:
         # Planned, then bound HERE — after the user predicate and the seek above
         # have pushed their own binds (m-sql "Grouped branch predicates":
@@ -1054,7 +1051,7 @@ def _compile_tph_read(
 
 def _compile_tph_partitioned(
     plan: _TphPlan,
-    predicate: ValidatedPredicate,
+    predicate: ResolvedPredicate,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -1110,7 +1107,7 @@ def _compile_tph_partitioned(
             branch_ctx.bind_structural_all(projection_binds)
         branch_ctx.bind_framework_all(tag_binds)
         branch_ctx.bind_framework_all(fence_binds)
-        inner = _lower_predicate(_planned_inner(predicate, plan.inner), branch_scope)
+        inner = _lower_predicate(predicate, branch_scope)
         parts = [f"select {projection}", f"from ({tagged}) {tagged_alias}"]
         if inner:
             parts.append(f"where {inner}")
@@ -1197,7 +1194,7 @@ def _compile_tph_partitioned(
 
 def _compile_tpcs_read(
     plan: _TpcsUnionPlan,
-    predicate: ValidatedPredicate,
+    predicate: ResolvedPredicate,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -1246,7 +1243,7 @@ def _compile_tpcs_read(
             raise SqlGenError("table-per-concrete-subtype branches disagree on document ordinals")
         branch_ctx.bind_structural_all(proj_binds)
         parts = [f"select {proj_sql}", f"from {branch.table} {branch_scope.alias}"]
-        where_sql = _lower_predicate(_planned_inner(predicate, plan.inner), branch_scope)
+        where_sql = _lower_predicate(predicate, branch_scope)
         if where_sql:
             parts.append(f"where {where_sql}")
         branch_sql = " ".join(parts)
@@ -1357,7 +1354,7 @@ def _tpcs_order_subject(
 
 def _compile_tpcs_single(
     plan: _TpcsSinglePlan,
-    predicate: ValidatedPredicate,
+    predicate: ResolvedPredicate,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
@@ -1390,22 +1387,12 @@ def _compile_tpcs_single(
         f"select {proj_sql}{_captured(terms, scope.subject_for, paging)}",
         f"from {plan.table} {scope.alias}",
     ]
-    inner = _planned_inner(predicate, plan.inner)
-    where_sql = _lower_predicate(inner, scope)
+    where_sql = _lower_predicate(predicate, scope)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
-    _append_where(parts, _beside_a_seek(inner, where_sql, seek_sql), seek_sql)
+    _append_where(parts, _beside_a_seek(predicate, where_sql, seek_sql), seek_sql)
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
     statement = _normalize(ctx.finish(" ".join(parts)))
     return statement, document_reads, plan.stages
-
-
-def _planned_inner(predicate: ValidatedPredicate, planned: object) -> ValidatedPredicate:
-    """Map a plan's top-level narrow interception back to its occurrence product."""
-    if planned is predicate.authored:
-        return predicate
-    if isinstance(predicate.authored, Narrow) and planned is predicate.authored.operand:
-        return predicate.only_child()
-    raise SqlGenError("an inheritance plan replaced rather than selected its validated predicate")
 
 
 def _normalize(statement: LoweredStatement) -> LoweredStatement:
