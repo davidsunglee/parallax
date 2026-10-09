@@ -20,7 +20,6 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 
-import jsonschema
 import pytest
 
 from parallax.conformance import adapter, case_format, sweep
@@ -29,9 +28,8 @@ from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from tests._support.corpus import case_document
 from tests._support.db_port import ConnectsAsItself
-from tests._support.repo import adapter_schema
+from tests._support.repo import validate_adapter_envelope
 
-_SCHEMA = adapter_schema()
 # The declared profile an evolution `run` is requested under, read off the one
 # roster. Nothing here provisions it: the refusing port below stands in for the
 # container the shape never needs, and the envelope still names the profile the
@@ -74,7 +72,7 @@ def _expected_schema(case: case_format.Case) -> dict[str, Any] | None:
 )
 def test_evolution_sweep(case: case_format.Case) -> None:
     envelope = adapter.run_case(case.path, _PROFILE.on_stand_in(_RefusingPort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
 
     assert envelope["status"] == "ok", envelope
     assert envelope["emissions"] == []
@@ -139,6 +137,6 @@ def test_an_evolution_case_compiles_as_run_only() -> None:
     # No golden SQL exists to compile, so `compile` answers the shape-intrinsic
     # run-only envelope rather than deriving emissions from nothing.
     envelope = adapter.compile_case(_REACHABLE_EVOLUTION[0].path, "postgres")
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "run-only"
     assert envelope["diagnostics"][0]["code"] == "compile-run-only"

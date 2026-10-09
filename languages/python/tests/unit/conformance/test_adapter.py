@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, cast
 from unittest import mock
 
-import jsonschema
 import pytest
 
 from parallax.conformance import _case_ingress, adapter, case_format, engine, models
@@ -43,10 +42,9 @@ from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPredicateWrite
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
-from tests._support.repo import adapter_schema, canonical_snapshot_claim
+from tests._support.repo import canonical_snapshot_claim, validate_adapter_envelope
 from tests.unit._second_dialect import BACKTICKED
 
-_SCHEMA = adapter_schema()
 # The declared profile these suites run under, read off the one roster rather than
 # spelled as a label. Nothing here provisions it: each run is built over the port the
 # test stands in for a database, and says so by naming the substitution.
@@ -546,7 +544,7 @@ def _case(
 
 def test_describe_matches_canonical_claim_except_adapter() -> None:
     envelope = adapter.describe()
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     canonical = canonical_snapshot_claim()
     assert envelope["capabilities"] == canonical["capabilities"]
     assert envelope["command"] == "describe"
@@ -604,7 +602,7 @@ def test_describe_uses_the_supplied_claim() -> None:
 
 def test_compile_case_emits_for_a_claimed_read() -> None:
     envelope = adapter.compile_case(_READ_CASE, "postgres")
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["command"] == "compile"
     assert envelope["status"] == "ok"
     assert envelope["caseShape"] == "read"
@@ -614,7 +612,7 @@ def test_compile_case_emits_for_a_claimed_read() -> None:
 
 def test_compile_case_unsupported_for_an_out_of_claim_dialect() -> None:
     envelope = adapter.compile_case(_READ_CASE, "mariadb")
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "unsupported"
     assert envelope["diagnostics"][0]["code"] == "unsupported-dialect"
 
@@ -630,7 +628,7 @@ def test_run_case_unsupported_for_an_out_of_claim_dialect() -> None:
     # filters on is the one the PORT will execute in — a run cannot be classified
     # against a spelling other than the one it would have produced.
     envelope = adapter.run_case(_READ_CASE, _PROFILE.on_stand_in(_UnclaimedDialectPort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "unsupported"
     assert envelope["diagnostics"][0]["code"] == "unsupported-dialect"
 
@@ -642,7 +640,7 @@ def test_run_case_unsupported_for_a_profile_the_roster_does_not_declare() -> Non
     # the case is read or the port is touched.
     undeclared = Profile("invented-profile", Provisioner)
     envelope = adapter.run_case(_READ_CASE, undeclared.on_stand_in(_FakePort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "unsupported"
     assert envelope["diagnostics"][0]["code"] == "unsupported-profile"
     assert "invented-profile" in envelope["diagnostics"][0]["message"]
@@ -650,7 +648,7 @@ def test_run_case_unsupported_for_a_profile_the_roster_does_not_declare() -> Non
 
 def test_compile_case_run_only_for_a_declared_run_only_case() -> None:
     envelope = adapter.compile_case(_RUN_ONLY_CASE, "postgres")
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "run-only"
     assert envelope["caseShape"] == "conflict"
     assert envelope["diagnostics"][0]["code"] == "compile-run-only"
@@ -669,7 +667,7 @@ def test_compile_dispatch_refuses_a_conflict_case_missing_its_run_only_declarati
 
 def test_run_case_ok_through_a_fake_port() -> None:
     envelope = adapter.run_case(_VO_READ_CASE, _PROFILE.on_stand_in(_FakePort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     # The envelope answers two different questions: which adapter configuration
     # was asked for, and which spelling actually executed. The second is read off
@@ -722,7 +720,7 @@ def test_run_case_conflict_reports_affected_rows_and_table_state() -> None:
     # `tableState` when the case authors it.
     case_path = case_format.default_cases_dir() / "m-opt-lock-006-success.yaml"
     envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_AccountWritePort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["affectedRows"] == 1
     assert "account" in envelope["observations"]["tableState"]
@@ -739,7 +737,7 @@ def test_run_case_scenario_reports_round_trips_and_the_rows_its_read_step_publis
     # never the write step's, and carrying the row the find published rather than
     # anything the write buffered.
     envelope = adapter.run_case(_SCENARIO_CASE, _PROFILE.on_stand_in(_WritePort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
         "roundTrips": 2,
@@ -762,7 +760,7 @@ def test_run_case_write_sequence_reports_table_state_and_round_trips() -> None:
     # port answers every read with its canned row, so every orders-model table
     # reports it here — the run sweep grades real state against then.tableState.
     envelope = adapter.run_case(_WRITE_SEQUENCE_CASE, _PROFILE.on_stand_in(_WritePort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
         "tableState": {
@@ -831,7 +829,7 @@ def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
     # the conformance boundary renders them to canonical wire form so the run
     # envelope is JSON-serializable (m-core-001 previously broke `json.dumps`).
     envelope = adapter.run_case(_SCALAR_READ_CASE, _PROFILE.on_stand_in(_ManagedPort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     (row,) = envelope["observations"]["rows"]
     assert row == {
@@ -855,7 +853,7 @@ def test_run_case_error_on_an_engine_gap() -> None:
     # mishandling it (a real port drives this case successfully, `test_run_
     # sweep.py::test_write_run_sweep`, Docker-gated).
     envelope = adapter.run_case(_ENGINE_GAP_CASE, _PROFILE.on_stand_in(_FakePort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "error"
     assert envelope["diagnostics"][0]["code"] == "run-failed"
 
@@ -906,7 +904,7 @@ class _PositionPort(ConnectsAsItself):
 
 def test_run_case_grades_a_scenario_expect_error_through_the_errors_observation() -> None:
     envelope = adapter.run_case(_PIN_READ_ONLY_CASE, _PROFILE.on_stand_in(_PositionPort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["roundTrips"] == 1
     assert envelope["observations"]["errors"] == [
@@ -916,7 +914,7 @@ def test_run_case_grades_a_scenario_expect_error_through_the_errors_observation(
 
 def test_compile_case_compiles_an_expect_error_scenarios_find_steps() -> None:
     envelope = adapter.compile_case(_PIN_READ_ONLY_CASE, "postgres")
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
     assert envelope["roundTrips"] == 1
     assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/objectQuery"]
@@ -983,7 +981,7 @@ def test_run_case_grades_the_managed_pin_case_end_to_end_under_a_scoped_claim() 
         _PROFILE.on_stand_in(_BalancePort()),
         claim=_TX_PAST_READ_ONLY_CLAIM,
     )
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
     assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/objectQuery"]
     assert envelope["observations"]["roundTrips"] == 1
@@ -998,7 +996,7 @@ def test_the_public_snapshot_claim_still_classifies_the_managed_pin_case_out() -
     # lifecycle is graded only through the scoped test claim above, never by
     # widening `SNAPSHOT_CLAIM`.
     envelope = adapter.run_case(_TX_PAST_READ_ONLY_CASE, _PROFILE.on_stand_in(_BalancePort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "unsupported"
     assert envelope["diagnostics"][0]["code"] == "unsupported-module"
 
@@ -1041,13 +1039,13 @@ def test_scenario_actions_all_mutate_guards_malformed_and_action_free_documents(
 
 def test_unsupported_helper_envelope() -> None:
     envelope = adapter.unsupported("compile", adapter.Diagnostic("unsupported-dialect", "nope"))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "unsupported"
 
 
 def test_unsupported_command_envelope() -> None:
     envelope = adapter.unsupported_command("benchmark")
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["command"] == "benchmark"
     assert envelope["status"] == "unsupported"
     assert envelope["diagnostics"][0]["code"] == "unsupported-command"
@@ -1055,7 +1053,7 @@ def test_unsupported_command_envelope() -> None:
 
 def test_error_envelope() -> None:
     envelope = adapter.error("compile", adapter.Diagnostic("unreadable-case", "boom"))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "error"
     assert envelope["diagnostics"][0]["message"] == "boom"
 
@@ -1106,7 +1104,7 @@ def test_run_case_error_reports_the_classification() -> None:
     # category + preserved native code (the schema amendment this increment adds).
     port = _TriggerPort(raise_on=2, failure=_unique_violation())
     envelope = adapter.run_case(_ERROR_CASE, _PROFILE.on_stand_in(port))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
         "errorClass": "uniqueViolation",
@@ -1213,7 +1211,7 @@ def test_compile_case_rejected_shape_is_shape_intrinsic_run_only() -> None:
     # run-only status is shape-intrinsic, not authored per-case) yet still
     # answers the defined run-only envelope.
     envelope = adapter.compile_case(_REJECTED_QUERY_CASE, "postgres")
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "run-only"
     assert envelope["caseShape"] == "rejected"
     assert envelope["diagnostics"][0]["code"] == "compile-run-only"
@@ -1222,7 +1220,7 @@ def test_compile_case_rejected_shape_is_shape_intrinsic_run_only() -> None:
 
 def test_run_case_rejected_query_reports_the_classified_rule() -> None:
     envelope = adapter.run_case(_REJECTED_QUERY_CASE, _PROFILE.on_stand_in(_NeverCalledPort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert envelope["emissions"] == []
     assert envelope["observations"] == {
@@ -1245,7 +1243,7 @@ def test_run_case_rejected_query_normalizes_case_decimal_bounds_before_validatio
 
 def test_run_case_rejected_model_reports_the_classified_rule() -> None:
     envelope = adapter.run_case(_REJECTED_MODEL_CASE, _PROFILE.on_stand_in(_NeverCalledPort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
         "rejectedRule": "inheritance-unknown-parent",
@@ -1255,7 +1253,7 @@ def test_run_case_rejected_model_reports_the_classified_rule() -> None:
 
 def test_run_case_rejected_write_reports_the_classified_rule() -> None:
     envelope = adapter.run_case(_REJECTED_WRITE_CASE, _PROFILE.on_stand_in(_NeverCalledPort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert envelope["emissions"] == []
     assert envelope["observations"] == {
@@ -1330,7 +1328,7 @@ def test_run_case_graph_observation_reports_the_assembled_graph() -> None:
         ]
     )
     envelope = adapter.run_case(_GRAPH_CASE, _PROFILE.on_stand_in(port))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert envelope["observations"]["roundTrips"] == 2
     assert envelope["observations"]["graph"]["Order"][0]["id"] == 1
@@ -1360,7 +1358,7 @@ def test_run_case_graph_observation_reports_the_positions_a_read_classified() ->
         ]
     )
     envelope = adapter.run_case(_GRAPH_CASE_CLASSIFIED, _PROFILE.on_stand_in(port))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     (record,) = envelope["observations"]["storedDataIssues"]
     assert record["ordinal"] == 0
@@ -1395,7 +1393,7 @@ def test_run_case_graph_observation_omits_classification_when_every_position_con
         ]
     )
     envelope = adapter.run_case(_GRAPH_CASE_CONFORMING, _PROFILE.on_stand_in(port))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert "storedDataIssues" not in envelope["observations"]
     assert json.loads(json.dumps(envelope)) == envelope
@@ -1436,7 +1434,7 @@ def test_run_case_streamed_observation_reports_the_delivered_roots() -> None:
         ]
     )
     envelope = adapter.run_case(_STREAM_CASE, _PROFILE.on_stand_in(port))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert [emission["binds"] for emission in envelope["emissions"]] == [
         [1, 2, 3, 42, 3],
@@ -1475,7 +1473,7 @@ def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> N
         ]
     )
     envelope = adapter.run_case(_GRAPHS_CASE, _PROFILE.on_stand_in(port))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert envelope["observations"]["roundTrips"] == 1
     graphs = envelope["observations"]["graphs"]
@@ -1591,7 +1589,7 @@ class _AccountPort(ConnectsAsItself):
 def test_a_case_authoring_the_oracle_gets_the_stream_its_run_delivered() -> None:
     case_path = case_format.default_cases_dir() / "m-execution-lifecycle-001-standalone-read.yaml"
     envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_AccountPort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["executionLifecycle"] == {
         "roots": [
@@ -1748,7 +1746,7 @@ def test_run_case_scenario_reports_a_step_graph_for_an_access_step() -> None:
     # `stepGraphs` entry at its own pointer, beside `roundTrips`, and the envelope
     # still validates against the adapter schema.
     envelope = adapter.run_case(_INCLUDE_SCENARIO_CASE, _PROFILE.on_stand_in(_OrderWithItemsPort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["roundTrips"] == 2
     step_graphs = envelope["observations"]["stepGraphs"]
@@ -1774,7 +1772,7 @@ def test_a_state_graded_run_reports_its_unit_fates_and_table_state() -> None:
     run = engine.ScenarioRun([], 1, [], [], [], units, table_state)
     with mock.patch.object(engine, "run_scenario_case", return_value=run):
         envelope = adapter.run_case(_SCENARIO_CASE, _PROFILE.on_stand_in(_WritePort()))
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["observations"] == {
         "roundTrips": 1,
         "units": units,

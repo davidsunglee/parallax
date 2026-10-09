@@ -16,6 +16,7 @@ records the answer in a metadata sidecar beside its envelope.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import platform
@@ -43,6 +44,7 @@ _COVERAGE_VARIABLES: Final = frozenset(
 )
 
 
+@functools.cache
 def supported_minors() -> tuple[str, ...]:
     """Every CPython minor the workspace declares, oldest first.
 

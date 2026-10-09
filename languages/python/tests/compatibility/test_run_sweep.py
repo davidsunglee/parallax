@@ -19,7 +19,6 @@ from collections.abc import Callable, Sequence
 from copy import deepcopy
 from typing import Any, Final, cast
 
-import jsonschema
 import pytest
 
 from parallax.conformance import adapter, case_format, concurrency_runner, engine
@@ -43,7 +42,7 @@ from tests._support.graph_residuals import (
     CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
     classify_child_graph_shape_residuals,
 )
-from tests._support.repo import adapter_schema
+from tests._support.repo import validate_adapter_envelope
 from tests._support.sweep_goldens import (
     COMPILE_EXERCISED,
     WRITE_EXERCISED,
@@ -107,7 +106,6 @@ def _reachable_run_cases() -> list[case_format.Case]:
 
 
 _CASES = _reachable_run_cases()
-_SCHEMA = adapter_schema()
 
 
 def _read_golden_statements(
@@ -237,7 +235,7 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
     profile_run.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
     envelope = adapter.run_case(case.path, profile_run)
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
     # The envelope names the profile this lane declares and reports the dialect the
     # container's own adapter executed in — the same key the goldens below resolve.
@@ -557,7 +555,7 @@ def _grade_write_run(
     managed ``-0.0`` as ``0.0``, so a scalar float write's sign is graded on the
     driver bind recorded before the database stored it.
     """
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
     if case.document.get("grading") == "state":
         _grade_state_run(case, model, envelope)
@@ -1175,7 +1173,7 @@ def test_edit_occurrence_run_grades_each_derived_copy(
 
     envelope = adapter.run_case(case.path, profile_run)
 
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
     steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
@@ -1215,7 +1213,7 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     profile_run.reset(model, fixtures)
 
     envelope = adapter.run_case(case.path, profile_run)
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
 
     then = doc["then"]
@@ -1309,7 +1307,7 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
     profile_run.reset(model, case_fixtures(case))
 
     envelope = adapter.run_case(case.path, profile_run)
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
 
     doc = case_document(case)
@@ -1396,7 +1394,7 @@ def test_run_only_write_sequence_run_sweep(
     profile_run.reset(model, case_fixtures(case))
 
     envelope = adapter.run_case(case.path, profile_run)
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
 
     golden_statements = write_golden_statements(case)
