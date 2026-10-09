@@ -164,10 +164,10 @@ def test_only_the_coverage_a_retained_row_leaves_is_read() -> None:
     bound, held = _bind(unit, [_START, _LATER])
     assert isinstance(held.requests[0], CompletionRequest)
     assert _coverage_windows(held) == [(TimeInterval(JUN, SEP),)]
+    # The equal changed parts of the reused row and the row read merge.
     assert [window[:2] for window in _windows(bound)] == [
         (JAN, MAR),
-        (MAR, JUN),
-        (JUN, SEP),
+        (MAR, SEP),
         (SEP, INFINITY),
     ]
 
@@ -211,7 +211,9 @@ def test_a_part_a_read_finds_empty_is_a_gap_and_is_read_once(replaces: bool) -> 
     bound, held = _bind(unit, [_START])
     assert len(_coverage_windows(held)) == 1
     windows = [window[:2] for window in _windows(bound)]
-    assert windows == [(JAN, MAR), (MAR, JUN), *([(JUN, SEP)] if replaces else [])]
+    # A replacement's gap opens its complete state, which the changed part
+    # before it already holds, so the two are one row.
+    assert windows == [(JAN, MAR), (MAR, SEP if replaces else JUN)]
 
 
 _EARLY = rectangle(JAN, MAR, "100.00")

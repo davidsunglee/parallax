@@ -64,7 +64,7 @@ when:
           validFrom: "2024-03-01T00:00:00.000000Z"
           until: "2024-09-01T00:00:00.000000Z"
           at: "2024-11-03T00:00:00.000000Z"
-      note: "the observed source replaces [March, September): both rectangles it reaches take its complete state, and both gaps of its window open with it"
+      note: "the observed source replaces [March, September): both rectangles it reaches take its complete state, and both gaps of its window open with it, all of it one state and so one row"
     - uow: pending
       write:
         - mutation: insertUntil
@@ -82,7 +82,7 @@ when:
           validFrom: "2024-01-01T00:00:00.000000Z"
           until: "2024-06-01T00:00:00.000000Z"
           at: "2024-11-04T00:00:00.000000Z"
-      note: "a still-pending insertion of span 8 is replaced through June: its own window, the gap before the stored rectangle, and the part of that rectangle the window reaches take the replacement, and no state of the insert itself is ever stored"
+      note: "a still-pending insertion of span 8 is replaced through June: its own window, the gap before the stored rectangle, and the part of that rectangle the window reaches take the replacement as one row, and no state of the insert itself is ever stored"
 then:
   units:
     seed: { outcome: committed }
@@ -152,22 +152,6 @@ then:
         label: r
         memo: { note: rr }
         from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: "2024-04-01T00:00:00.000000Z"
-        in_z: "2024-11-04T00:00:00.000000Z"
-        out_z: infinity
-      - id: 8
-        amount: 300
-        label: r
-        memo: { note: rr }
-        from_z: "2024-04-01T00:00:00.000000Z"
-        thru_z: "2024-05-01T00:00:00.000000Z"
-        in_z: "2024-11-04T00:00:00.000000Z"
-        out_z: infinity
-      - id: 8
-        amount: 300
-        label: r
-        memo: { note: rr }
-        from_z: "2024-05-01T00:00:00.000000Z"
         thru_z: "2024-06-01T00:00:00.000000Z"
         in_z: "2024-11-04T00:00:00.000000Z"
         out_z: infinity
@@ -208,30 +192,6 @@ then:
         label: r
         memo: { note: rr }
         from_z: "2024-03-01T00:00:00.000000Z"
-        thru_z: "2024-04-01T00:00:00.000000Z"
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-      - id: 9
-        amount: 300
-        label: r
-        memo: { note: rr }
-        from_z: "2024-04-01T00:00:00.000000Z"
-        thru_z: "2024-06-01T00:00:00.000000Z"
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-      - id: 9
-        amount: 300
-        label: r
-        memo: { note: rr }
-        from_z: "2024-06-01T00:00:00.000000Z"
-        thru_z: "2024-08-01T00:00:00.000000Z"
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-      - id: 9
-        amount: 300
-        label: r
-        memo: { note: rr }
-        from_z: "2024-08-01T00:00:00.000000Z"
         thru_z: "2024-09-01T00:00:00.000000Z"
         in_z: "2024-11-03T00:00:00.000000Z"
         out_z: infinity

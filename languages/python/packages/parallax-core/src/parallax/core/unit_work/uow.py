@@ -474,6 +474,10 @@ def _window_start(window: TimeInterval | None) -> dt.datetime | None:
 
 type _Address = tuple[EntityIdentity, tuple[object, ...]]
 
+type _Tag = tuple[InsertionIdentity, tuple[TimeInterval, ...] | None]
+"""The admission an owned row continues, and the parts of the row it
+contributed in order, ``None`` where it contributed the whole row."""
+
 
 class _TargetWriteState:
     """The attempt's write-owned facts about the objects it writes.
@@ -481,10 +485,11 @@ class _TargetWriteState:
     Each target's admitted insertion, and every current temporal row the
     attempt successfully opened, by complete physical address. A row of a
     Bitemporal object that continues an admission standing when it opens — the
-    admission's own insert, or a successor of a row tagged with an admission —
-    is tagged with that admission's identity; a successor of a row no
-    admission opened is not. Reads never add to it, so its size follows what
-    the attempt wrote rather than what it read.
+    admission's own insert, or a successor of the part of a row an admission
+    contributed — is tagged with that admission's identity, and with the parts
+    of it the admission contributed where that is not the whole row; a
+    successor of coverage no admission opened is not. Reads never add to it,
+    so its size follows what the attempt wrote rather than what it read.
     """
 
     __slots__ = ("_addresses", "_continuity", "_endpoints", "_owning", "_records", "_tags")
@@ -495,7 +500,7 @@ class _TargetWriteState:
         # object with, so tagging a row needs no key of its own.
         self._addresses: dict[_Address, _TargetRecord] = {}
         self._endpoints: set[OwnedEndpoint] = set()
-        self._tags: dict[OwnedEndpoint, InsertionIdentity] = {}
+        self._tags: dict[OwnedEndpoint, _Tag] = {}
         # Every Entity some owned row has been an object of, so a group of an
         # Entity the attempt never opened a row of is planned without a
         # per-row check. It only grows; an Entity whose rows were all removed
@@ -515,6 +520,21 @@ class _TargetWriteState:
     def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
         return endpoint in self._tags
 
+    def insertion_coverage(
+        self, endpoint: OwnedEndpoint, valid_time_coverage: TimeInterval | None, /
+    ) -> tuple[TimeInterval | None, ...]:
+        tag = self._tags.get(endpoint) if self._tags else None
+        if tag is None:
+            return ()
+        parts = tag[1]
+        if parts is None or valid_time_coverage is None:
+            return (valid_time_coverage,)
+        return tuple(
+            part
+            for part in (part.intersection(valid_time_coverage) for part in parts)
+            if part is not None
+        )
+
     def proven(self, original: ObservedStateKey, /) -> Derivation | None:
         continuity = self._continuity
         proofs = None if continuity is None else continuity.proofs.get(original.object)
@@ -526,13 +546,11 @@ class _TargetWriteState:
         continuity = self._continuity
         assert continuity is not None  # a proven original's rows are kept
         descents = continuity.descents
-        for endpoint in continuity.lineage[original].reaching(valid_time_window):
-            descent = descents[endpoint]
-            coverage = descent.valid_time_coverage
+        for endpoint, contributed in continuity.lineage[original].reaching(valid_time_window):
             if valid_time_window is None or (
-                coverage is not None and coverage.overlaps(valid_time_window)
+                contributed is not None and contributed.overlaps(valid_time_window)
             ):
-                yield endpoint, descent
+                yield endpoint, descents[endpoint]
 
     def descent(self, endpoint: OwnedEndpoint, /) -> Descent | None:
         continuity = self._continuity
@@ -605,17 +623,23 @@ class _TargetWriteState:
         return removal
 
     def _latest_end(self, record: _TargetRecord) -> dt.datetime | Literal[TemporalBound.INFINITY]:
-        """The latest Valid-Time end among the owned rows ``record``'s
-        admissions opened, each physical end read as its managed endpoint; the
-        open bound where one runs on, or where none is tagged."""
+        """The latest Valid-Time end among the coverage ``record``'s admissions
+        contributed to owned rows — a whole row's physical end read as its
+        managed endpoint, a contributed part's own end — the open bound where
+        one runs on, or where none is tagged."""
         latest: dt.datetime | None = None
-        for endpoint in self._tags:
+        for endpoint, (_identity, parts) in self._tags.items():
             if self._addresses.get((endpoint.entity, endpoint.key)) is not record:
                 continue
-            end = endpoint.ends[0]
-            if not isinstance(end, Finite):
-                return INFINITY
-            instant = end.instant
+            if parts is None:
+                end = endpoint.ends[0]
+                if not isinstance(end, Finite):
+                    return INFINITY
+                instant = end.instant
+            else:
+                instant = parts[-1].end
+                if instant is INFINITY:
+                    return INFINITY
             assert isinstance(instant, dt.datetime)  # a finite Valid-Time end is an instant
             if latest is None or instant > latest:
                 latest = instant
@@ -649,27 +673,27 @@ class _TargetWriteState:
         concludes: ObjectKey | None = None,
     ) -> None:
         """Retire the owned rows one execution unit removed, then register the
-        rows it opened. An admission whose last tagged row the unit removed is
-        retired only if no row the unit opened continues it.
+        rows it opened, each tagged with the parts an admission contributed to
+        it, or no longer tagged where it names a row again that none did. An
+        admission whose last tagged row the unit removed or untagged is retired
+        only if no row the unit opened continues it.
 
         Each original the unit ``derived`` rows from that stood before the
         flush began is proven until the object's last consumer — the unit that
         ``concludes`` it — completes, or the flush ends, and each row it derived
-        descends from it; a row derived from one an earlier unit of the flush
-        derived descends from what that one did."""
+        descends from it over the part it contributed; a row derived from one
+        an earlier unit of the flush derived descends from the originals that
+        one did, each over the part of the row that came from its own
+        contribution."""
         continuity = self._continuity
         if derived and continuity is None:
             continuity = self._continuity = _Continuity()
         inherited = continuity.inherited(derived) if continuity is not None else ()
         drained = self._retire(removed, continuity)
-        for endpoint in opened.fresh:
-            self._register(endpoint)
-        for endpoint in opened.continued:
-            self._register(endpoint)
-            self._tag(endpoint)
+        self._open(opened, drained)
         for record, tag in drained:
             if not record.live and record.identity is tag and not record.pending_insert:
-                # The last row this admission opened is gone: it was removed
+                # Nothing this admission contributed is left: it was removed
                 # completely, and its authority ends with it.
                 record.identity = None
         if continuity is not None:
@@ -678,6 +702,22 @@ class _TargetWriteState:
                 continuity.release(concludes)
                 if not continuity.proofs:
                     self._continuity = None
+
+    def _open(
+        self, opened: Openings, drained: list[tuple[_TargetRecord, InsertionIdentity]]
+    ) -> None:
+        """Register each row ``opened`` names, tagged with what an admission
+        contributed to it and with nothing where it names none."""
+        for endpoint in opened.fresh:
+            self._register(endpoint)
+            if self._tags:
+                self._untag(endpoint, drained)
+        for endpoint in opened.continued:
+            self._register(endpoint)
+            self._tag(endpoint, None, drained)
+        for endpoint, parts in opened.shared:
+            self._register(endpoint)
+            self._tag(endpoint, parts, drained)
 
     def _retire(
         self, removed: Iterable[OwnedEndpoint], continuity: _Continuity | None
@@ -689,14 +729,8 @@ class _TargetWriteState:
             self._endpoints.remove(endpoint)  # planning removes only a row this attempt owns
             if continuity is not None:
                 continuity.forget(endpoint)
-            tag = self._tags.pop(endpoint, None) if self._tags else None
-            if tag is None:
-                continue
-            record = self._addresses[(endpoint.entity, endpoint.key)]
-            record.live -= 1
-            record.removal = _UNCOMPUTED
-            if not record.live:
-                drained.append((record, tag))
+            if self._tags:
+                self._untag(endpoint, drained)
         return drained
 
     def release_continuity(self) -> None:
@@ -707,12 +741,43 @@ class _TargetWriteState:
         self._endpoints.add(endpoint)
         self._owning.add(endpoint.entity)
 
-    def _tag(self, endpoint: OwnedEndpoint) -> None:
+    def _tag(
+        self,
+        endpoint: OwnedEndpoint,
+        parts: tuple[TimeInterval, ...] | None,
+        drained: list[tuple[_TargetRecord, InsertionIdentity]],
+    ) -> None:
+        """Tag ``endpoint`` with the standing admission of its object over
+        ``parts`` of it, the whole row where ``None``, replacing any tag it
+        held."""
         record = self._addresses.get((endpoint.entity, endpoint.key))
-        if record is not None and record.identity is not None:
-            self._tags[endpoint] = record.identity
+        if record is None or record.identity is None:
+            if self._tags:
+                self._untag(endpoint, drained)
+            return
+        if endpoint not in self._tags:
             record.live += 1
-            record.removal = _UNCOMPUTED
+        self._tags[endpoint] = (record.identity, parts)
+        record.removal = _UNCOMPUTED
+
+    def _untag(
+        self, endpoint: OwnedEndpoint, drained: list[tuple[_TargetRecord, InsertionIdentity]]
+    ) -> None:
+        tag = self._tags.pop(endpoint, None)
+        if tag is not None:
+            self._drain(endpoint, tag[0], drained)
+
+    def _drain(
+        self,
+        endpoint: OwnedEndpoint,
+        identity: InsertionIdentity,
+        drained: list[tuple[_TargetRecord, InsertionIdentity]],
+    ) -> None:
+        record = self._addresses[(endpoint.entity, endpoint.key)]
+        record.live -= 1
+        record.removal = _UNCOMPUTED
+        if not record.live:
+            drained.append((record, identity))
 
     def clear(self) -> None:
         self._records.clear()
@@ -728,7 +793,7 @@ def _with_allocated(opened: Openings, allocated: tuple[object, ...]) -> Openings
         _allocated_endpoint(opening, key)
         for opening, key in zip(opened.allocated, allocated, strict=True)
     )
-    return Openings(fresh=(*opened.fresh, *named), continued=opened.continued)
+    return Openings(fresh=(*opened.fresh, *named), continued=opened.continued, shared=opened.shared)
 
 
 def _allocated_endpoint(opening: AllocatedOpening, key: object) -> OwnedEndpoint:
@@ -738,8 +803,9 @@ def _allocated_endpoint(opening: AllocatedOpening, key: object) -> OwnedEndpoint
 class _Continuity:
     """What the running flush's units proved for later units of the same
     objects: each original transformed under protection that stood before the
-    flush began, which current row derives from which of them, and each one's
-    current rows in Valid-Time order."""
+    flush began, which current row descends from which of them over which part
+    of it, and each one's contributed parts of current rows in Valid-Time
+    order."""
 
     __slots__ = ("descents", "lineage", "proofs")
 
@@ -748,84 +814,159 @@ class _Continuity:
         self.descents: dict[OwnedEndpoint, Descent] = {}
         self.lineage: dict[ObservedStateKey, _Lineage] = {}
 
-    def inherited(self, derived: tuple[Derivation, ...]) -> tuple[ObservedStateKey | None, ...]:
-        """The original each one in ``derived`` was itself derived from earlier
-        in the flush, if any, read before the unit's removals retire it."""
+    def inherited(
+        self, derived: tuple[Derivation, ...]
+    ) -> tuple[tuple[tuple[ObservedStateKey, TimeInterval | None], ...] | None, ...]:
+        """The originals, each over its part, each one in ``derived`` was itself
+        derived from earlier in the flush, if any, read before the unit's
+        removals retire it."""
         descents = self.descents
-        inherited: list[ObservedStateKey | None] = []
+        inherited: list[tuple[tuple[ObservedStateKey, TimeInterval | None], ...] | None] = []
         for derivation in derived:
             owned = derivation.owned
             descent = None if owned is None else descents.get(owned)
-            inherited.append(None if descent is None else descent.original)
+            inherited.append(None if descent is None else descent.contributions)
         return tuple(inherited)
 
     def derive(
-        self, derived: tuple[Derivation, ...], inherited: tuple[ObservedStateKey | None, ...]
+        self,
+        derived: tuple[Derivation, ...],
+        inherited: tuple[tuple[tuple[ObservedStateKey, TimeInterval | None], ...] | None, ...],
     ) -> None:
+        """Record each row ``derived`` names as descending from its originals.
+
+        A row derived from an original no earlier unit derived descends from
+        that original over the part it contributed. One derived from a row an
+        earlier unit derived descends from that row's own originals, each over
+        the part of the contribution that came from its own part, never over
+        the rest. A row revised in place, or derived from several originals, is
+        re-derived at its own address, so what it descended from is forgotten
+        before any row is added again."""
+        for derivation in derived:
+            for row in derivation.rows:
+                self.forget(row.endpoint)
+        contributions: dict[OwnedEndpoint, list[tuple[ObservedStateKey, TimeInterval | None]]] = {}
+        coverages: dict[OwnedEndpoint, TimeInterval | None] = {}
         for derivation, earlier in zip(derived, inherited, strict=True):
             original = derivation.original
             if earlier is None:
                 self.proofs.setdefault(original.object, {})[original] = derivation
+                sources: tuple[tuple[ObservedStateKey, TimeInterval | None], ...] = (
+                    (original, derivation.valid_time_coverage),
+                )
             else:
-                original = earlier
-            rows = self.lineage.get(original)
-            if rows is None:
-                rows = self.lineage[original] = _Lineage()
-            # A row revised in place is re-derived at its own address, so what
-            # it descended from is forgotten before any row is added again.
-            for endpoint, _coverage in derivation.rows:
-                self.forget(endpoint)
-            for endpoint, coverage in derivation.rows:
-                self.descents[endpoint] = Descent(coverage, original)
-                rows.add(endpoint, coverage)
+                sources = earlier
+            for row in derivation.rows:
+                coverages[row.endpoint] = row.valid_time_coverage
+                _contribute(contributions.setdefault(row.endpoint, []), row.contributed, sources)
+        for endpoint, parts in contributions.items():
+            if not parts:  # only coverage no proven original held, such as a gap opened
+                continue
+            joined = _joined(parts)
+            self.descents[endpoint] = Descent(coverages[endpoint], joined)
+            for source, contributed in joined:
+                rows = self.lineage.get(source)
+                if rows is None:
+                    rows = self.lineage[source] = _Lineage()
+                rows.add(endpoint, contributed)
 
     def forget(self, endpoint: OwnedEndpoint) -> None:
         descent = self.descents.pop(endpoint, None)
         if descent is not None:
-            self.lineage[descent.original].discard(endpoint, descent.valid_time_coverage)
+            for original, contributed in descent.contributions:
+                self.lineage[original].discard(endpoint, contributed)
 
     def release(self, target: ObjectKey) -> None:
         """Drop everything proven about ``target``: its last consumer is done."""
         descents = self.descents
+        lineage = self.lineage
         for original in self.proofs.pop(target, ()):
-            for endpoint in self.lineage.pop(original).rows:
-                del descents[endpoint]
+            for endpoint, _contributed in lineage.pop(original).rows:
+                descents.pop(endpoint, None)
+
+
+def _contribute(
+    parts: list[tuple[ObservedStateKey, TimeInterval | None]],
+    contributed: TimeInterval | None,
+    sources: tuple[tuple[ObservedStateKey, TimeInterval | None], ...],
+) -> None:
+    """Add to ``parts`` each of ``sources`` over the part of ``contributed`` its
+    own part shares — every one on a Transaction-Time-Only object, where both
+    are ``None`` — and none over Valid Time it does not share."""
+    for source, part in sources:
+        if contributed is None or part is None:
+            parts.append((source, None))
+            continue
+        shared = contributed.intersection(part)
+        if shared is not None:
+            parts.append((source, shared))
+
+
+def _joined(
+    parts: list[tuple[ObservedStateKey, TimeInterval | None]],
+) -> tuple[tuple[ObservedStateKey, TimeInterval | None], ...]:
+    """``parts`` in Valid-Time order, each original's adjacent parts one."""
+    if len(parts) < 2:
+        return tuple(parts)
+    parts.sort(key=_part_start)
+    joined: list[tuple[ObservedStateKey, TimeInterval | None]] = []
+    for original, contributed in parts:
+        if joined:
+            previous, earlier = joined[-1]
+            if (
+                previous == original
+                and earlier is not None
+                and contributed is not None
+                and earlier.meets(contributed)
+            ):
+                joined[-1] = (original, TimeInterval(earlier.start, contributed.end))
+                continue
+        joined.append((original, contributed))
+    return tuple(joined)
+
+
+def _part_start(part: tuple[ObservedStateKey, TimeInterval | None]) -> dt.datetime:
+    return _lineage_key(part[1])
 
 
 class _Lineage:
-    """The current rows derived from one proven original, in Valid-Time order.
+    """The parts of current rows one proven original contributed, in
+    Valid-Time order.
 
     They are pieces of one original's coverage and so never overlap, which is
     what lets a range find the ones its window may reach by their starts alone
-    rather than by visiting every row the original's units left. An original
-    without Valid Time has one current row at a time, keyed at the earliest
-    instant.
+    rather than by visiting every row the original's units left. A row that
+    merged several contributors appears once per part this original
+    contributed. An original without Valid Time has one current row at a time,
+    keyed at the earliest instant.
     """
 
     __slots__ = ("_keys", "_rows")
 
     def __init__(self) -> None:
         self._keys: list[dt.datetime] = []
-        self._rows: list[OwnedEndpoint] = []
+        self._rows: list[tuple[OwnedEndpoint, TimeInterval | None]] = []
 
-    def add(self, endpoint: OwnedEndpoint, coverage: TimeInterval | None) -> None:
-        key = _lineage_key(coverage)
+    def add(self, endpoint: OwnedEndpoint, contributed: TimeInterval | None) -> None:
+        key = _lineage_key(contributed)
         position = bisect.bisect_right(self._keys, key)
         self._keys.insert(position, key)
-        self._rows.insert(position, endpoint)
+        self._rows.insert(position, (endpoint, contributed))
 
-    def discard(self, endpoint: OwnedEndpoint, coverage: TimeInterval | None) -> None:
-        position = bisect.bisect_left(self._keys, _lineage_key(coverage))
-        assert self._rows[position] == endpoint  # no two current pieces share a start
+    def discard(self, endpoint: OwnedEndpoint, contributed: TimeInterval | None) -> None:
+        position = bisect.bisect_left(self._keys, _lineage_key(contributed))
+        assert self._rows[position][0] == endpoint  # no two contributed parts share a start
         del self._keys[position]
         del self._rows[position]
 
     @property
-    def rows(self) -> list[OwnedEndpoint]:
+    def rows(self) -> list[tuple[OwnedEndpoint, TimeInterval | None]]:
         return self._rows
 
-    def reaching(self, window: TimeInterval | None) -> Iterator[OwnedEndpoint]:
-        """The rows that may overlap ``window``, every one where it is
+    def reaching(
+        self, window: TimeInterval | None
+    ) -> Iterator[tuple[OwnedEndpoint, TimeInterval | None]]:
+        """The parts that may overlap ``window``, every one where it is
         ``None``: those starting before its end, from the last one starting at
         or before its start."""
         rows = self._rows

@@ -181,6 +181,7 @@ class WritePlanner:
             concurrency=concurrency,
             audit=audit,
             settled=self._settled,
+            payloads=payloads,
         )
 
     @property
@@ -258,6 +259,7 @@ class WritePlanner:
             acquired,
             ownership=ownership,
             audit=AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled),
+            payloads=self._payloads,
         )
 
     def continue_group(
@@ -281,6 +283,7 @@ class WritePlanner:
             acquire_rows=acquire_rows,
             ownership=ownership,
             audit=AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled),
+            payloads=self._payloads,
         )
 
     def version_attribute(self, entity: EntityIdentity) -> AttributeIdentity | None:

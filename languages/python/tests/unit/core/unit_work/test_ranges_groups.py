@@ -239,14 +239,15 @@ def test_objects_settle_in_complete_batches_in_the_order_they_were_selected(
 ) -> None:
     # Two objects a batch: every object of a batch is read in one statement
     # before any of them settles, an object needing no read still counts, and
-    # each object's history settles whole inside its batch.
+    # each object's history settles whole inside its batch, an object read
+    # further opening its two equal changed parts as one row.
     monkeypatch.setattr(ranges_module, "_GROUP_OBJECTS", 2)
     starts = [_row(key, _JAN, _MAR if key % 2 else INFINITY) for key in range(1, 6)]
     later = [_row(key, _MAR, _JUL) for key in range(1, 6, 2)]
     driven = drive_group(
         _POSITION, _unit(_group(*starts)), _later(*later), transaction_instant=_INSTANT
     )
-    assert [len(writes) for writes in driven.rounds] == [4 + 6, 6 + 4, 6]
+    assert [len(writes) for writes in driven.rounds] == [4 + 5, 5 + 4, 5]
     assert [
         [term.key_value for term in read.terms]
         for read in driven.reads
@@ -410,3 +411,37 @@ def test_an_inserted_row_the_amendment_reaches_continues_its_insertion() -> None
     ]
     assert list(driven.effects.opened.fresh) == []
     assert list(driven.effects.removed) == []
+
+
+def test_an_owned_row_whose_changed_part_merges_with_a_later_rows_is_removed() -> None:
+    # The selected row is the attempt's own [January, April); the later stored
+    # row [April, July) takes the same value through June, so both changed
+    # parts are one row, opened whole, and the owned row is removed.
+    owned = OwnedEndpoint(corpus_entity("Position"), (1,), (Finite(instant=_APR), OPEN_END))
+    ownership = OpenedRows(frozenset({owned}))
+    row = {**_row(1, _JAN, _APR), "txStart": dt.datetime(2024, 6, 1, tzinfo=dt.UTC)}
+    plan = build_write_planner(_POSITION).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=_INSTANT,
+            concurrency="locking",
+            buffered_writes=[_group(row)],
+            ownership=ownership,
+        )
+    )
+    (unit,) = plan.units
+    driven = drive_group(
+        _POSITION,
+        unit,
+        _later(_row(1, _APR, _JUL, value="200.00")),
+        transaction_instant=_INSTANT,
+        ownership=ownership,
+    )
+    assert _windows(driven.steps) == [
+        ("PlannedTemporalRemoval", None, None, None),
+        ("PlannedClose", None, None, None),
+        ("CarriedFrom", _JAN, _FEB, Decimal("100.00")),
+        ("ChangedFrom", _FEB, _JUN, Decimal("150.00")),
+        ("CarriedFrom", _JUN, _JUL, Decimal("200.00")),
+    ]
+    assert list(driven.effects.removed) == [owned]

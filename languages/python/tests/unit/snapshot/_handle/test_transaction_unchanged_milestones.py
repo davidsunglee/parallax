@@ -206,12 +206,14 @@ def test_a_range_guards_its_unchanged_rectangles_where_it_would_have_closed_them
 def test_a_read_of_a_rectangle_the_range_kept_stays_writable(value: str, kept: bool) -> None:
     # The range spends only its own source. A rectangle it rewrote is a state
     # this attempt changed, so an earlier read of it is stale; one it kept is not.
+    # Rewritten, its three closes precede four openings: [May, August) and
+    # [August, October) now hold one value and open as one row.
     port = ScriptedAdapter(
         Transact(
             Read(rows=[_COVERAGE[0]]),
             Read(rows=[_COVERAGE[2]]),
             Read(rows=_COVERAGE),
-            Write(times=4 if kept else 8),
+            Write(times=4 if kept else 7),
             Read(rows=[]),
             *((Write(times=3),) if kept else ()),
         )

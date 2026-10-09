@@ -26,6 +26,7 @@ from parallax.core.temporal_write.expansion import (
     opening,
 )
 from parallax.core.unit_work.strategy import NO_AUDIT, AuditDecoration
+from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import ObjectKey, PredecessorRow, observe
 from parallax.core.write_plan.keys import TemporalStateKey
 from parallax.core.write_plan.plan import (
@@ -34,6 +35,7 @@ from parallax.core.write_plan.plan import (
     TRANSACTION_TIME_ENDS,
     BoundRange,
     Derivation,
+    DerivedRow,
     OwnedEndpoint,
     TemporalWriteOwnership,
 )
@@ -83,6 +85,7 @@ def _facts(meta: Metamodel, entity: EntityIdentity) -> TemporalFacts:
 
 _SPAN_FACTS = _facts(_SPANS, _SPAN)
 _BALANCE_FACTS = _facts(_BALANCES, _BALANCE)
+_PAYLOADS = {_SPAN: LayoutPayloadPreparer(_SPANS), _BALANCE: LayoutPayloadPreparer(_BALANCES)}
 
 
 def _span(
@@ -133,6 +136,7 @@ def _expansion(
         derives=derives,
         ownership=ownership,
         audit=AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, inert_instant(), ()),
+        payloads=_PAYLOADS[facts.entity.identity],
     )
 
 
@@ -379,7 +383,9 @@ def test_an_equal_bounded_assignment_keeps_the_rectangle_across_carried_head_and
 
 def test_an_unchanged_rectangle_is_closed_where_no_guard_can_prove_it() -> None:
     expanded = _expand(_expansion(_SPAN_FACTS, _RESTATING, guards=False), _SPAN_FACTS, _STORED)
-    assert _kinds(expanded.steps) == [PlannedClose, PlannedInsert, PlannedInsert, PlannedInsert]
+    # Its equal head, middle, and tail merge into the one equal successor.
+    assert _kinds(expanded.steps) == [PlannedClose, PlannedInsert]
+    assert _windows(expanded.steps) == [(_JAN, INFINITY, 100)]
 
 
 @pytest.mark.parametrize(
@@ -415,18 +421,23 @@ def test_an_earlier_milestone_at_an_address_the_attempt_reopened_keeps_its_gate(
     role: ExpansionRole, shortfall: object
 ) -> None:
     reopened = OpenedRows(frozenset({_endpoint(INFINITY)}))
-    revision, *opened = _expand(
+    expanded = _expand(
         _expansion(_SPAN_FACTS, _RESTATING, guards=True, ownership=reopened),
         _SPAN_FACTS,
         _STORED,
         role,
-    ).steps
-    assert isinstance(revision, PlannedTemporalRevision)
-    assert _kinds(opened) == [PlannedInsert, PlannedInsert]
-    assert revision.concurrency == TemporalGate(
+    )
+    # Its equal pieces merge back into its own state over its own coverage,
+    # which no revision expresses, so it is removed under its gate and the
+    # merged row opened.
+    removal, *opened = expanded.steps
+    assert isinstance(removal, PlannedTemporalRemoval)
+    assert _windows(opened) == [(_JAN, INFINITY, 100)]
+    assert removal.concurrency == TemporalGate(
         start_attribute=_SPAN_FACTS.shape.transaction_time.start_attribute, observed_start=_T0
     )
-    assert revision.affected_rows.on_shortfall == shortfall
+    assert removal.affected_rows.on_shortfall == shortfall
+    assert tuple(expanded.removed) == (_endpoint(INFINITY),)
 
 
 def test_the_guard_keeping_a_callers_start_fails_as_that_callers_precondition() -> None:
@@ -448,7 +459,7 @@ def test_an_unprovable_starting_rectangle_is_closed_as_its_callers_precondition(
     ).steps
     assert isinstance(closing, PlannedClose)
     assert closing.affected_rows.on_shortfall == FAILED_PRECONDITION
-    assert _kinds(opened) == [PlannedInsert, PlannedInsert, PlannedInsert]
+    assert _windows(opened) == [(_JAN, INFINITY, 100)]
 
 
 def test_a_replacements_complete_state_is_compared_by_its_declared_values() -> None:
@@ -474,7 +485,9 @@ def test_a_rectangle_part_of_which_is_destroyed_is_changed_whatever_else_holds()
     transform = _RESTATING.followed_by(TimeInterval(_SEP, _OCT), None, replaces=False)
     expanded = _expand(_expansion(_SPAN_FACTS, transform, guards=True), _SPAN_FACTS, _STORED)
     assert expanded.steps[0].cause is SUPERSEDED  # type: ignore[union-attr]
-    assert _windows(expanded.steps) == [(_JAN, _MAR, 100), (_MAR, _SEP, 100), (_OCT, INFINITY, 100)]
+    # The equal pieces either side of [March, September) merge; the destroyed
+    # [September, October) is a gap no merge crosses.
+    assert _windows(expanded.steps) == [(_JAN, _SEP, 100), (_OCT, INFINITY, 100)]
 
 
 # --------------------------------------------------------------------------- #
@@ -530,9 +543,11 @@ def test_a_deriving_expansion_records_each_successor_by_address_and_coverage() -
         valid_time_coverage=TimeInterval(_JAN, INFINITY),
         owned=None,
         rows=(
-            (_endpoint(_MAR), TimeInterval(_JAN, _MAR)),
-            (_endpoint(_SEP), TimeInterval(_MAR, _SEP)),
-            (_endpoint(INFINITY), TimeInterval(_SEP, INFINITY)),
+            DerivedRow(_endpoint(_MAR), TimeInterval(_JAN, _MAR), TimeInterval(_JAN, _MAR)),
+            DerivedRow(_endpoint(_SEP), TimeInterval(_MAR, _SEP), TimeInterval(_MAR, _SEP)),
+            DerivedRow(
+                _endpoint(INFINITY), TimeInterval(_SEP, INFINITY), TimeInterval(_SEP, INFINITY)
+            ),
         ),
     )
     (validated,) = _expand(expansion, _SPAN_FACTS, _span(_JAN, _JUN), "validation").derived
@@ -658,16 +673,24 @@ def test_a_pending_insertion_opens_only_the_parts_of_its_window_that_survive(
         for attribute in _SPAN_FACTS.view.member_selection.attributes
         if attribute.identity.name == "amount"
     )
-    inserts = _expansion(_SPAN_FACTS, transform).lineage(({key: 1, amount: 100}, {}), window)
+    settled = _expansion(_SPAN_FACTS, transform).settle(
+        (), lineage=(({key: 1, amount: 100}, {}), window)
+    )
+    inserts = settled.steps
     assert _windows(inserts) == [(_JAN, _MAR, 100), (_MAR, _JUN, 300), (_JUN, _SEP, 100)]
-    assert {insert.entries[0].origin for insert in inserts} == {NEW_LINEAGE}
+    assert {insert.entries[0].origin for insert in inserts} == {NEW_LINEAGE}  # type: ignore[union-attr]
     assert {_cells(insert)["txStart"] for insert in inserts} == {_NOW}
+    assert tuple(settled.opened.continued) == (_endpoint(_MAR), _endpoint(_JUN), _endpoint(_SEP))
 
 
 def test_a_replacement_gap_opens_its_complete_state_at_the_ranges_key() -> None:
     gap = CoverageGap(TimeInterval(_MAR, _JUN), {"amount": 300, "label": "b", "memo": None})
-    entry = _expansion(_SPAN_FACTS, NO_TRANSFORM).gap(gap)
+    settled = _expansion(_SPAN_FACTS, NO_TRANSFORM).settle((), gaps=(gap,))
+    (insert,) = settled.steps
+    assert isinstance(insert, PlannedInsert)
+    (entry,) = insert.entries
     assert entry.origin is NEW_LINEAGE
+    assert tuple(settled.opened.fresh) == (_endpoint(_JUN),)
     cells = {identity.name: value for identity, value in entry.row.attributes.items()}
     assert (cells["id"], cells["amount"], cells["validStart"], cells["validEnd"]) == (
         1,

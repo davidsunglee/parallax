@@ -172,13 +172,15 @@ def test_each_batch_executes_before_the_next_is_read(monkeypatch: pytest.MonkeyP
         Transact(
             Read(rows=_two_objects()),
             Read(rows=[_row(1, _APR, _JUL, "200.00")]),
-            Write(times=6),
+            Write(times=5),
             Read(rows=[_row(2, _APR, _JUL, "200.00")]),
-            Write(times=6),
+            Write(times=5),
         )
     )
     _transact(port, concurrency="locking", fn=_amend)
-    batch = ["read", "update", "update", "insert", "insert", "insert", "insert"]
+    # Each object's two closes, its head, its two equal changed parts as one
+    # row, and its tail.
+    batch = ["read", "update", "update", "insert", "insert", "insert"]
     assert _kinds(port) == ["read", *batch, *batch, "CommitCall"]
 
 
@@ -191,7 +193,7 @@ def test_a_later_batchs_failure_rolls_back_what_earlier_batches_executed(
         Transact(
             Read(rows=_two_objects()),
             Read(rows=[_row(1, _APR, _JUL, "200.00")]),
-            Write(times=6),
+            Write(times=5),
             Read(raises=failure),
         )
     )
@@ -203,7 +205,6 @@ def test_a_later_batchs_failure_rolls_back_what_earlier_batches_executed(
         "read",
         "update",
         "update",
-        "insert",
         "insert",
         "insert",
         "insert",
@@ -350,9 +351,9 @@ def test_planning_hands_the_selected_rows_over_and_each_batch_releases_its_own(
         Transact(
             Read(rows=_two_objects()),
             Read(rows=[_row(1, _APR, _JUL, "200.00")]),
-            Write(times=6),
+            Write(times=5),
             Read(rows=[_row(2, _APR, _JUL, "200.00")]),
-            Write(times=6),
+            Write(times=5),
         )
     )
     _transact(port, concurrency="locking", fn=_amend)

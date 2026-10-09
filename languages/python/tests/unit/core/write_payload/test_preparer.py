@@ -40,6 +40,7 @@ from parallax.core.write_plan.steps import (
     PlannedRow,
     RowOrigin,
     WriteRow,
+    adopt_planned_row,
 )
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import PERSON, columns_model, document_model
@@ -426,3 +427,50 @@ def test_a_subtypes_rows_store_and_compare_its_discriminator() -> None:
     assert "car" in payload.values
     assert len(payload.contributors) == 5
     assert preparer.equal_non_interval(payload, preparer.row(car, write_row))
+
+
+# --------------------------------------------------------------------------- #
+# Rebinding prepared cells to another interval                                 #
+# --------------------------------------------------------------------------- #
+def _moved(write_row: WriteRow, in_z: dt.datetime, **changed: object) -> WriteRow:
+    """``write_row`` at Transaction-Time start ``in_z`` with ``changed`` members,
+    its origin, executed selection, and occurrences its own."""
+    row = write_row.row
+    attributes = dict(row.attributes)
+    attributes[_IN] = in_z
+    for name, value in changed.items():
+        attributes[AttributeIdentity(_EXPEDITION, name)] = value
+    return WriteRow(
+        row=adopt_planned_row(attributes, row.value_objects),
+        origin=write_row.origin,
+        executed=write_row.executed,
+    )
+
+
+def test_prepared_cells_rebind_to_a_row_stating_the_same_state_over_another_interval() -> None:
+    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    source = _successor(CarriedFrom(_predecessor()))
+    payload = preparer.row(_EXPEDITION, source)
+    moved = WriteRow(
+        row=adopt_planned_row({**source.row.attributes, _IN: _JAN}, source.row.value_objects),
+        origin=source.origin,
+        executed=source.executed,
+    )
+    rebound = preparer.rebound(payload, moved)
+    assert rebound.prepared_from(moved)
+    assert rebound.values == tuple(
+        _JAN if contributor == _IN else value
+        for contributor, value in zip(payload.contributors, payload.values, strict=True)
+    )
+    # The document cell is the one already prepared, not prepared again.
+    assert _document(rebound) is _document(payload)
+
+
+def test_prepared_cells_never_rebind_to_a_row_stating_other_state() -> None:
+    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    source = _successor(CarriedFrom(_predecessor()))
+    payload = preparer.row(_EXPEDITION, source)
+    with pytest.raises(WritePlanningError, match="rebind only"):
+        preparer.rebound(payload, _moved(source, _JAN, title="Inland Run"))
+    with pytest.raises(WritePlanningError, match="rebind only"):
+        preparer.rebound(payload, _successor(NEW_LINEAGE, in_z=_JAN))

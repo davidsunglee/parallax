@@ -825,11 +825,12 @@ def test_an_update_beyond_its_observed_rectangle_reads_the_coverage_it_reaches(
     # through infinity, so the flush reads the object's current coverage from
     # where the observed rectangle ends — once, inside the write batch, under
     # the shared lock only when the effective strategy is Locking — and binds
-    # the observed rectangle together with each row it finds.
+    # the observed rectangle together with each row it finds; the equal changed
+    # parts of both open as one row.
     jan, mar, jun = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 6))
     head = _rectangle(jan, jun, "100.00")
     tail = _rectangle(jun, INFINITY_INSTANT, "200.00")
-    port = ScriptedAdapter(Transact(Read(rows=[head]), Read(rows=[tail]), Write(times=5)))
+    port = ScriptedAdapter(Transact(Read(rows=[head]), Read(rows=[tail]), Write(times=4)))
 
     def fn(tx: Transaction) -> None:
         source = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)).result()
@@ -847,12 +848,11 @@ def test_an_update_beyond_its_observed_rectangle_reads_the_coverage_it_reaches(
     )
     assert coverage.binds == (1, jun, INFINITY_INSTANT)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
-    assert [call.sql.split(" ", 1)[0] for call in writes] == ["update"] * 2 + ["insert"] * 3
+    assert [call.sql.split(" ", 1)[0] for call in writes] == ["update"] * 2 + ["insert"] * 2
     assert [call.binds[2] for call in writes[:2]] == [jun, "infinity"]
     assert [call.binds[2:5] for call in writes[2:]] == [
         (Decimal("100.00"), jan, mar),
-        (Decimal("150.00"), mar, jun),
-        (Decimal("150.00"), jun, INFINITY_INSTANT),
+        (Decimal("150.00"), mar, INFINITY_INSTANT),
     ]
 
 
@@ -860,7 +860,7 @@ def test_a_bounded_update_reads_coverage_only_up_to_its_bound() -> None:
     jan, mar, jun, sep = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 6, 9))
     head = _rectangle(jan, jun, "100.00")
     tail = _rectangle(jun, INFINITY_INSTANT, "200.00")
-    port = ScriptedAdapter(Transact(Read(rows=[head]), Read(rows=[tail]), Write(times=6)))
+    port = ScriptedAdapter(Transact(Read(rows=[head]), Read(rows=[tail]), Write(times=5)))
 
     def fn(tx: Transaction) -> None:
         source = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=mar)).result()
@@ -876,11 +876,10 @@ def test_a_bounded_update_reads_coverage_only_up_to_its_bound() -> None:
     )
     assert coverage.binds == (1, jun, sep, INFINITY_INSTANT)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
-    assert [call.binds[2:4] for call in writes[2:]] == [
-        (Decimal("100.00"), jan),
-        (Decimal("150.00"), mar),
-        (Decimal("150.00"), jun),
-        (Decimal("200.00"), sep),
+    assert [call.binds[2:5] for call in writes[2:]] == [
+        (Decimal("100.00"), jan, mar),
+        (Decimal("150.00"), mar, sep),
+        (Decimal("200.00"), sep, INFINITY_INSTANT),
     ]
 
 

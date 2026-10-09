@@ -72,6 +72,7 @@ from parallax.core.write_plan.keys import (
 )
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import TemporalObservation, WriteObservation
+from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     AllocatedOpening,
@@ -146,8 +147,10 @@ class WritePlanCompiler:
     unit boundaries, claims, and proposed effects.
 
     Constructed once per accepted Metamodel by the planner that owns it, with
-    that model, the Inheritance and Temporal facets it compiled, and the
-    concurrency and audit strategies the composition layer wired.
+    that model, the Inheritance and Temporal facets it compiled, the
+    concurrency and audit strategies the composition layer wired, and the
+    model's write payload preparer, which judges whether produced temporal
+    rows merge.
     :meth:`compile` is its entire surface: no caller settles one item, packs a
     segment, audits a row or step, or collects a claim by hand.
     """
@@ -157,6 +160,7 @@ class WritePlanCompiler:
         "_concurrency",
         "_families",
         "_model",
+        "_payloads",
         "_settled",
         "_temporal_facet",
     )
@@ -170,6 +174,7 @@ class WritePlanCompiler:
         concurrency: ConcurrencyStrategy,
         audit: AuditStrategy,
         settled: Container[object],
+        payloads: WritePayloadPreparer,
     ) -> None:
         self._model = model
         self._families = families
@@ -177,6 +182,7 @@ class WritePlanCompiler:
         self._concurrency = concurrency
         self._audit = audit
         self._settled = settled
+        self._payloads = payloads
 
     def compile(
         self,
@@ -526,6 +532,7 @@ class WritePlanCompiler:
             instant=tx_instant.value(),
             ownership=ownership,
             audit=audit,
+            payloads=self._payloads,
             guards=guards,
         )
         claim = range_claims(item)
@@ -690,6 +697,7 @@ class WritePlanCompiler:
             instant=tx_instant.value(),
             ownership=ownership,
             audit=audit,
+            payloads=self._payloads,
             guards=guards,
         )
         if isinstance(ranged, DeferredTemporalRange):
@@ -900,6 +908,7 @@ class WritePlanCompiler:
             gated=self._concurrency.gates(concurrency, self._model, entity.identity),
             ownership=ownership,
             audit=audit,
+            payloads=self._payloads,
         )
         return TemporalGroupSegment(
             expansion.settle_group(evidence, mutation.managed_assignments), evidence

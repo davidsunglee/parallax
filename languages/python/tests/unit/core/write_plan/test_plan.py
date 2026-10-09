@@ -81,6 +81,7 @@ def test_an_attempt_that_opened_nothing_owns_nothing_an_insertion_opened() -> No
     endpoint = OwnedEndpoint(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
     assert not NO_TEMPORAL_WRITE_OWNERSHIP.owns(endpoint)
     assert not NO_TEMPORAL_WRITE_OWNERSHIP.continues_insertion(endpoint)
+    assert NO_TEMPORAL_WRITE_OWNERSHIP.insertion_coverage(endpoint, None) == ()
 
 
 def test_an_attempt_that_opened_nothing_has_proved_and_derived_nothing() -> None:

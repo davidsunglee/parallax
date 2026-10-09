@@ -299,7 +299,9 @@ def expected_outcome(cell: Cell) -> Outcome:
     if isinstance(cell, AlgorithmCell):
         size = cell.size
         if cell.algorithm == "replacement-gaps":
-            return Outcome(statements=2 * size, reads=1)
+            # Each stored interval closes, its first replacement opens, and the
+            # second's part of it and the gap after it open as one row.
+            return Outcome(statements=3 * size // 2, reads=1)
         if cell.algorithm == "destruction-merge":
             return Outcome(statements=size + 1, reads=size // 2 + size, admitted=1)
         return Outcome(statements=size + 4, reads=size // 2 + 4, refused=2 * _REFUSALS_PER_WINDOW)
@@ -307,7 +309,9 @@ def expected_outcome(cell: Cell) -> Outcome:
         case "source-keyed" | "target-patch":
             return Outcome(statements=4, reads=1)
         case "target-replace":
-            return Outcome(statements=10, reads=1)
+            # Three closes, the head and tail, and one row over the replaced
+            # intervals and the gaps between them.
+            return Outcome(statements=6, reads=1)
         case "predicate":
             return Outcome(statements=4 * _PREDICATE_TARGETS, reads=1)
         case "read-eager":

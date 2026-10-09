@@ -13,6 +13,7 @@ from parallax.core.base import (
     SqlNull,
     adopt_frozen_map,
     detach_json_container,
+    frozen_map_json_backing,
     retain_document_value,
 )
 from parallax.core.document_codec._leaf import (
@@ -646,7 +647,10 @@ def apply_prepared_patches(
     return cast("FrozenMap[str, object]", _adopt_document_builder(current))
 
 
-def persisted_document_equal(left: object, right: object) -> bool:
+# Strings and object members are compared inline in the per-node loop the
+# predicate-flush window's merging rows time; a helper per node would add a call
+# to every one.
+def persisted_document_equal(left: object, right: object) -> bool:  # noqa: C901
     """Whether two stored documents hold the same persisted content.
 
     Every member participates, keys no shape declares included, and so does key
@@ -658,11 +662,50 @@ def persisted_document_equal(left: object, right: object) -> bool:
     serialized.
     """
     pending: list[tuple[object, object]] = [(left, right)]
+    pop = pending.pop
+    queue = pending.append
     while pending:
-        first, second = pending.pop()
-        if first is not second and not _alike(first, second, pending):
+        first, second = pop()
+        if first is second:
+            continue
+        kind = type(first)
+        if kind is str:
+            if not isinstance(second, str) or first != second:
+                return False
+        elif kind is FrozenMap or kind is dict:
+            other_kind = type(second)
+            if other_kind is not FrozenMap and other_kind is not dict:
+                return False
+            members = (
+                frozen_map_json_backing(cast("FrozenMap[str, object]", first))
+                if kind is FrozenMap
+                else cast("dict[str, object]", first)
+            )
+            others = (
+                frozen_map_json_backing(cast("FrozenMap[str, object]", second))
+                if other_kind is FrozenMap
+                else cast("dict[str, object]", second)
+            )
+            if len(members) != len(others):
+                return False
+            for name, value in members.items():
+                other = others.get(name, _MISSING_MEMBER)
+                if value is other:
+                    continue
+                if other is _MISSING_MEMBER:
+                    return False
+                if type(value) is str:
+                    if not isinstance(other, str) or value != other:
+                        return False
+                else:
+                    queue((value, other))
+        elif not _alike(first, second, pending):
             return False
     return True
+
+
+_MISSING_MEMBER: Final = object()
+"""What :func:`persisted_document_equal` reads for a key one object lacks."""
 
 
 def _alike(first: object, second: object, pending: list[tuple[object, object]]) -> bool:

@@ -1521,6 +1521,78 @@ def test_a_bounded_bitemporal_update_expands_in_place_between_unrelated_writes()
     assert len(middle) >= 2  # a close plus at least one chained successor
 
 
+def _position_value_and_valid_time(step: PlannedWrite) -> list[tuple[object, ...]]:
+    return [(row["value"], row["validStart"], row["validEnd"]) for row in _insert_rows(step)]
+
+
+def _amendments_assigning_one_value_from_march() -> list[KeyedWrite]:
+    return [
+        KeyedWrite(
+            "amendUntil",
+            "Position",
+            ({"id": 5, "value": Decimal("2.0")},),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            until=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+        ),
+        KeyedWrite(
+            "amend",
+            "Position",
+            ({"id": 5, "value": Decimal("2.0")},),
+            valid_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+        ),
+    ]
+
+
+def test_composed_amendments_leaving_one_state_open_one_row_after_their_close() -> None:
+    amendments = _amendments_assigning_one_value_from_march()
+    key_ = object_key(amendments[0], _POSITION)
+    assert key_ is not None
+    plan = _plan(
+        amendments,
+        _POSITION,
+        observations={key_: _bitemporal_observation()},
+        tx_instant=instant_at("2024-07-01T00:00:00+00:00"),
+    )
+    close, *inserts = plan.steps
+    assert isinstance(close, PlannedClose)
+    assert [_position_value_and_valid_time(step) for step in inserts] == [
+        [
+            (
+                Decimal("1.0"),
+                dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            )
+        ],
+        [(Decimal("2.0"), dt.datetime(2024, 3, 1, tzinfo=dt.UTC), INFINITY)],
+    ]
+
+
+def test_a_pending_insertion_amended_into_one_state_opens_one_row_for_it() -> None:
+    plan = _plan(
+        [
+            KeyedWrite(
+                "insert",
+                "Position",
+                ({"id": 5, "acctNum": "P5", "value": Decimal("1.0")},),
+                valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            ),
+            *_amendments_assigning_one_value_from_march(),
+        ],
+        _POSITION,
+        tx_instant=instant_at("2024-07-01T00:00:00+00:00"),
+    )
+    assert [_position_value_and_valid_time(step) for step in plan.steps] == [
+        [
+            (
+                Decimal("1.0"),
+                dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            )
+        ],
+        [(Decimal("2.0"), dt.datetime(2024, 3, 1, tzinfo=dt.UTC), INFINITY)],
+    ]
+
+
 def _bitemporal_observation() -> WriteObservation:
     return TemporalObservation(
         predecessor=PredecessorRow(

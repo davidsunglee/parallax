@@ -168,7 +168,9 @@ def adopt_frozen_map[K, V](values: dict[K, V]) -> FrozenMap[K, V]:
 
 
 def frozen_map_json_backing[K, V](value: FrozenMap[K, V]) -> dict[K, V]:
-    """Return exact carrier storage for Wire's synchronous document serializer."""
+    """Return exact carrier storage for a synchronous read-only traversal —
+    Wire's document serializer and the codec's persisted comparison — which
+    neither keeps nor changes it."""
     if type(value) is not FrozenMap:
         raise TypeError("only the core FrozenMap carrier exposes serializer backing")
     return cast("dict[K, V]", object.__getattribute__(value, "_FrozenMap__values"))
