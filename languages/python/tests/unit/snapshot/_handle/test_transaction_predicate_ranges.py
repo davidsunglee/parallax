@@ -18,6 +18,7 @@ from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.unit_work import (
+    CardinalityCorruptionError,
     Concurrency,
     MaterializedWriteGroup,
     OptimisticLockConflictError,
@@ -43,8 +44,8 @@ from tests._support.db_port import (
 from tests._support.root_ownership import own_root
 from tests.unit._where_position_model import WHERE_POSITION_META, WherePosition
 
-_JAN, _FEB, _APR, _JUN, _JUL = (
-    dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 2, 4, 6, 7)
+_JAN, _FEB, _APR, _MAY, _JUN, _JUL = (
+    dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 2, 4, 5, 6, 7)
 )
 _FIXED: Final = dt.datetime(2024, 10, 1, tzinfo=dt.UTC)
 
@@ -133,6 +134,32 @@ def test_an_unchanged_start_is_proven_by_a_guard_under_optimistic_concurrency() 
     assert "set in_z = in_z" in guard.sql
     assert _APR in guard.binds and _JAN in guard.binds
     assert "set out_z" in close.sql and _JUL in close.binds
+
+
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_an_object_selected_by_two_starting_rows_is_cardinality_corruption(
+    concurrency: Concurrency,
+) -> None:
+    # Object 1's overlapping [January, April) and [February, May) both hold
+    # February; object 2 between them in resolution order does not hide it.
+    port = ScriptedAdapter(
+        Transact(
+            Read(
+                rows=[
+                    _row(1, _JAN, _APR, "100.00"),
+                    _row(2, _JAN, _APR, "100.00"),
+                    _row(1, _FEB, _MAY, "100.00"),
+                ]
+            ),
+            Read(rows=[_row(1, _MAY, _JUL, "100.00")]),
+            Write(times=12),
+        )
+    )
+    with raises_contextualized(CardinalityCorruptionError) as raised:
+        _transact(port, concurrency=concurrency, fn=_amend)
+    assert (raised.value.expected, raised.value.actual) == (1, 2)
+    assert raised.value.target.key_values == ((1,),)
+    assert _kinds(port) == ["read", "RollbackCall"]
 
 
 def _two_objects() -> list[MappingRow]:

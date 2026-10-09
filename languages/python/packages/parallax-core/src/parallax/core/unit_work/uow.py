@@ -1083,7 +1083,9 @@ class UnitOfWork:
         A Bitemporal amendment selects its objects at its ``valid_from``, by
         the row current there, and keeps every one its predicate matches: its
         amendment reaches each object's later coverage when its flush reaches
-        it, so equality at the start eliminates nothing.
+        it, so equality at the start eliminates nothing. An object selected by
+        more than one row is :class:`CardinalityCorruptionError`, raised once
+        the selection is read and before anything is buffered.
         """
         entity = prepared.selection.target
         version = self._planner.version_attribute(entity.identity)
@@ -1107,8 +1109,12 @@ class UnitOfWork:
             ),
         )
         evidence = self.read(lambda: self.acquire_rows(request, consume_selection))
-        if evidence is not None:
-            self.buffer(MaterializedWriteGroup(mutation=prepared, evidence=evidence))
+        if evidence is None:
+            return
+        if request.valid_from is not None:
+            assert isinstance(evidence, PredecessorRows)  # a temporal selection's rows are whole
+            _require_one_start(entity.identity, view, evidence)
+        self.buffer(MaterializedWriteGroup(mutation=prepared, evidence=evidence))
 
     def buffer_target(self, prepared: PreparedTargetWrite) -> None:
         """Admit a caller-addressed write and buffer it — all of it, or nothing.
@@ -1923,6 +1929,26 @@ def bind_deferred_range(
 def _never_current(state: ObservedStateKey, read_at: int) -> bool:
     del state, read_at
     return False
+
+
+def _require_one_start(
+    entity: EntityIdentity, view: InheritanceEntityView, selected: PredecessorRows
+) -> None:
+    """Refuse the first object, in resolution order, that more than one
+    selected row starts."""
+    seen: set[object] = set()
+    for index in range(len(selected)):
+        key = selected.key(index)
+        if key not in seen:
+            seen.add(key)
+            continue
+        count = sum(1 for other in range(len(selected)) if selected.key(other) == key)
+        raise CardinalityCorruptionError(
+            entity,
+            KeyTarget(key_attributes=(view.primary_key.identity,), key_values=((key,),)),
+            1,
+            count,
+        )
 
 
 def _already_claimed(target: EntityMetadata, key: ObjectKey) -> WriteEvidenceError:
