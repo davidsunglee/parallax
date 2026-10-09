@@ -11,7 +11,7 @@ from parallax.core.metamodel import (
     EntityMetadata,
     ValueObjectIdentity,
 )
-from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.predicate._resolved import ResolvedPredicate
 from parallax.core.write_plan.observe import PredecessorRow
 
 if TYPE_CHECKING:
@@ -54,6 +54,7 @@ __all__ = [
     "PlannedUpdate",
     "PlannedValue",
     "PlannedWrite",
+    "ResolvedMutationSelection",
     "RowOrigin",
     "SelfIncrement",
     "Shortfall",
@@ -61,7 +62,6 @@ __all__ = [
     "TemporalConcurrency",
     "TemporalGate",
     "TemporalUpperBound",
-    "ValidatedMutationSelection",
     "VersionGate",
     "Versioned",
     "WriteRow",
@@ -404,17 +404,17 @@ class KeyTarget:
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedMutationSelection:
+class ResolvedMutationSelection:
     """A resolved mutation target and its occurrence-local semantic predicate.
 
     It carries the predicate and nothing else: the enclosing step already names
-    the Entity, and a Validated Mutation Selection's presence already implies an unversioned
+    the Entity, and a Resolved Mutation Selection's presence already implies an unversioned
     Non-Temporal step, an unbounded expected effect, and ordering-barrier
     behavior.
     """
 
     target: EntityMetadata
-    predicate: ValidatedPredicate
+    predicate: ResolvedPredicate
 
 
 @dataclass(frozen=True, slots=True)
@@ -483,7 +483,7 @@ class MilestoneTarget:
             )
 
 
-type WriteTarget = KeyTarget | ValidatedMutationSelection | MilestoneTarget
+type WriteTarget = KeyTarget | ResolvedMutationSelection | MilestoneTarget
 """The semantic row selection of a Planned Write, distinct from observed
 predecessor state and from any concurrency condition."""
 
@@ -699,10 +699,10 @@ def _settle(
                 "belongs to a Planned Close, a Planned Temporal Revision, Removal, or Guard — "
                 "never to a Non-Temporal update or delete"
             )
-        case ValidatedMutationSelection():
+        case ResolvedMutationSelection():
             if not isinstance(concurrency, Unversioned) or not isinstance(affected_rows, AnyCount):
                 raise ValueError(
-                    f"{entity.canonical}: a Validated Mutation Selection is readless, "
+                    f"{entity.canonical}: a Resolved Mutation Selection is readless, "
                     "so it implies "
                     "Unversioned concurrency and an unbounded expected effect"
                 )

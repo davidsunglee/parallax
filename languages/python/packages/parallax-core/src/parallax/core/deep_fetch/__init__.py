@@ -19,31 +19,31 @@ from parallax.core.metamodel import (
     TemporalDimension,
     ValueObjectMetadata,
 )
-from parallax.core.object_query._validated import (
+from parallax.core.object_query._resolved import (
     Paging,
-    ValidatedIncludePath,
-    ValidatedIncludeSegment,
-    ValidatedObjectQuery,
-    ValidatedOrderTerm,
-    ValidatedTemporalSelection,
+    ResolvedIncludePath,
+    ResolvedIncludeSegment,
+    ResolvedObjectQuery,
+    ResolvedOrderTerm,
+    ResolvedTemporalSelection,
     resolved_order_term,
 )
-from parallax.core.predicate._validated import (
-    ValidatedPredicate,
+from parallax.core.predicate._resolved import (
+    ResolvedPredicate,
 )
-from parallax.core.predicate._validated import (
-    conjunction as _validated_conjunction,
+from parallax.core.predicate._resolved import (
+    conjunction as _conjunction,
 )
-from parallax.core.predicate._validated import deferred_membership as _deferred_membership
-from parallax.core.predicate._validated import disjunction as _validated_disjunction
-from parallax.core.predicate._validated import framework_comparison as _framework_comparison
-from parallax.core.predicate._validated import managed_comparison as _managed_comparison
+from parallax.core.predicate._resolved import deferred_membership as _deferred_membership
+from parallax.core.predicate._resolved import disjunction as _disjunction
+from parallax.core.predicate._resolved import framework_comparison as _framework_comparison
+from parallax.core.predicate._resolved import managed_comparison as _managed_comparison
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import (
     TimeInterval,
     inject_resolved_as_of,
+    resolved_hop_as_of_terms,
     resolved_pinned_instants,
-    validated_hop_as_of_terms,
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite
 
@@ -67,8 +67,8 @@ __all__ = [
     "ReadProjectionRequest",
     "RelationshipViewKey",
     "RenderToken",
+    "ResolvedEntityQuery",
     "RootRef",
-    "ValidatedEntityQuery",
     "plan",
     "plan_coverage_read",
     "plan_mutation_read",
@@ -130,20 +130,19 @@ class QueryCorrelationMember:
 
     identity: AttributeIdentity
     column: str
-    reference: str
     member: AttributeMetadata
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedEntityQuery:
+class ResolvedEntityQuery:
     """One resolved flat read accepted by the private SQL compiler."""
 
     target: EntityIdentity
     entity: EntityMetadata
-    validated_predicate: ValidatedPredicate
+    predicate: ResolvedPredicate
     projection: ResolvedReadProjection
     narrow_to: tuple[EntityIdentity, ...] | None = None
-    order_by: tuple[ValidatedOrderTerm, ...] = ()
+    order_by: tuple[ResolvedOrderTerm, ...] = ()
     limit: int | None = None
     paging: Paging | None = None
 
@@ -158,22 +157,20 @@ class QueryFetchStep:
     child_target: EntityIdentity
     child: EntityMetadata
     related: QueryCorrelationMember
-    as_of_terms: tuple[ValidatedPredicate, ...] = ()
-    order_terms: tuple[ValidatedOrderTerm, ...] = ()
+    as_of_terms: tuple[ResolvedPredicate, ...] = ()
+    order_terms: tuple[ResolvedOrderTerm, ...] = ()
     narrow_to: tuple[EntityIdentity, ...] | None = None
 
-    def query_template(self) -> ValidatedEntityQuery:
+    def query_template(self) -> ResolvedEntityQuery:
         """Build this level's child query with its gathered key set deferred."""
-        membership = _deferred_membership(attr=self.related.reference, member=self.related.member)
+        membership = _deferred_membership(member=self.related.member)
         predicate = (
-            membership
-            if not self.as_of_terms
-            else _validated_conjunction(membership, *self.as_of_terms)
+            membership if not self.as_of_terms else _conjunction(membership, *self.as_of_terms)
         )
-        return ValidatedEntityQuery(
+        return ResolvedEntityQuery(
             target=self.child.identity,
             entity=self.child,
-            validated_predicate=predicate,
+            predicate=predicate,
             narrow_to=self.narrow_to,
             order_by=self.order_terms,
             projection=_projection_for(self.child, None, ReadProjectionRequest("all", True)),
@@ -197,13 +194,13 @@ type FetchStep = QueryFetchStep | BackReferenceFetchStep
 class ObjectQueryPlan:
     """A root query, one logical include tree, and execution-only fetch steps."""
 
-    root: ValidatedEntityQuery
+    root: ResolvedEntityQuery
     includes: IncludeTree
     fetch_steps: tuple[FetchStep, ...]
 
 
 def plan(
-    query: ValidatedObjectQuery,
+    query: ResolvedObjectQuery,
     model: Metamodel,
     *,
     projection: ReadProjectionRequest,
@@ -214,14 +211,14 @@ def plan(
     family_root = inheritance.root_metadata(families, model, entity.identity)
     root_pins = resolved_pinned_instants(query.temporal)
     root_injected = inject_resolved_as_of(query.predicate, query.temporal, family_root)
-    predicate = navigate.canonicalize_validated(root_injected, model, entity, root_pins)
+    predicate = navigate.propagate_hop_terms(root_injected, model, root_pins)
     narrow_to = (
         None if query.narrow_to is None else tuple(item.identity for item in query.narrow_to)
     )
-    root = ValidatedEntityQuery(
+    root = ResolvedEntityQuery(
         target=entity.identity,
         entity=entity,
-        validated_predicate=predicate,
+        predicate=predicate,
         narrow_to=narrow_to,
         order_by=query.order_by,
         projection=_projection_for(entity, families, projection),
@@ -248,16 +245,16 @@ def plan_mutation_read(
     write: PreparedPredicateWrite,
     *,
     model: Metamodel,
-    temporal: tuple[ValidatedTemporalSelection, ...],
+    temporal: tuple[ResolvedTemporalSelection, ...],
     projection: ReadProjectionRequest,
-) -> ValidatedEntityQuery:
+) -> ResolvedEntityQuery:
     """Produce the one resolved flat read required to materialize a predicate write."""
     entity = write.selection.target
     families = inheritance.view(model)
     family_root = inheritance.root_metadata(families, model, entity.identity)
     root_pins = resolved_pinned_instants(temporal)
     injected = inject_resolved_as_of(write.selection.predicate, temporal, family_root)
-    predicate = navigate.canonicalize_validated(injected, model, entity, root_pins)
+    predicate = navigate.propagate_hop_terms(injected, model, root_pins)
     assigned = frozenset(
         assignment.member.identity.path[-1]
         for assignment in write.managed_assignments
@@ -275,10 +272,10 @@ def plan_mutation_read(
         families,
         ReadProjectionRequest(value_objects, projection.observe_structured_document),
     )
-    return ValidatedEntityQuery(
+    return ResolvedEntityQuery(
         target=entity.identity,
         entity=entity,
-        validated_predicate=predicate,
+        predicate=predicate,
         projection=resolved_projection,
     )
 
@@ -289,7 +286,7 @@ def plan_coverage_read(
     model: Metamodel,
     key: str,
     terms: Sequence[tuple[ManagedValue, tuple[TimeInterval, ...]]],
-) -> ValidatedEntityQuery:
+) -> ResolvedEntityQuery:
     """The one flat read of the current coverage execution-bound ranges
     transform: for each object ``terms`` names by its ``key`` value, its rows
     overlapping any of the Valid-Time windows named beside it, each window
@@ -309,77 +306,63 @@ def plan_coverage_read(
     root = inheritance.root_metadata(families, model, entity.identity)
     view = _entity_view(families, entity.identity)
     key_member = _declared_attribute(view, key)
-    key_ref = f"{entity.identity.canonical}.{key}"
     # Each axis in declared order: Transaction Time's current-row term, or
     # ``None`` where the object's own Valid-Time windows stand.
-    axes: list[ValidatedPredicate | None] = []
-    valid: tuple[AttributeMetadata, str, AttributeMetadata, str] | None = None
+    axes: list[ResolvedPredicate | None] = []
+    valid: tuple[AttributeMetadata, AttributeMetadata] | None = None
     for axis in root.declared_as_of_axes:
         start = _declared_attribute(view, axis.start_attribute.name)
         end = _declared_attribute(view, axis.end_attribute.name)
-        start_ref = f"{root.identity.canonical}.{start.identity.name}"
-        end_ref = f"{root.identity.canonical}.{end.identity.name}"
         if axis.dimension is TemporalDimension.TRANSACTION_TIME:
-            axes.append(_framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY))
+            axes.append(_framework_comparison(op="eq", member=end, value=INFINITY))
             continue
-        valid = (start, start_ref, end, end_ref)
+        valid = (start, end)
         axes.append(None)
 
-    def overlapping(intervals: tuple[TimeInterval, ...]) -> ValidatedPredicate:
+    def overlapping(intervals: tuple[TimeInterval, ...]) -> ResolvedPredicate:
         assert valid is not None and intervals  # a Valid-Time axis bounds every range over it
-        start, start_ref, end, end_ref = valid
-        return _validated_disjunction(
-            *(
-                _overlapping(interval, start=start, start_ref=start_ref, end=end, end_ref=end_ref)
-                for interval in intervals
-            )
+        start, end = valid
+        return _disjunction(
+            *(_overlapping(interval, start=start, end=end) for interval in intervals)
         )
 
-    def keyed(key_value: ManagedValue) -> ValidatedPredicate:
-        return _managed_comparison(op="eq", attr=key_ref, member=key_member, value=key_value)
+    def keyed(key_value: ManagedValue) -> ResolvedPredicate:
+        return _managed_comparison(op="eq", member=key_member, value=key_value)
 
     if len(terms) == 1:
         ((key_value, intervals),) = terms
-        conjunction = _validated_conjunction(
+        conjunction = _conjunction(
             keyed(key_value),
             *(overlapping(intervals) if term is None else term for term in axes),
         )
     else:
-        conjunction = _validated_conjunction(
-            _validated_disjunction(
+        conjunction = _conjunction(
+            _disjunction(
                 *(
-                    _validated_conjunction(keyed(key_value), overlapping(intervals))
+                    _conjunction(keyed(key_value), overlapping(intervals))
                     for key_value, intervals in terms
                 )
             ),
             *(term for term in axes if term is not None),
         )
-    predicate = navigate.canonicalize_validated(conjunction, model, entity, {})
-    return ValidatedEntityQuery(
+    return ResolvedEntityQuery(
         target=entity.identity,
         entity=entity,
-        validated_predicate=predicate,
+        predicate=conjunction,
         projection=_projection_for(entity, families, ReadProjectionRequest("all", True)),
     )
 
 
 def _overlapping(
-    window: TimeInterval,
-    *,
-    start: AttributeMetadata,
-    start_ref: str,
-    end: AttributeMetadata,
-    end_ref: str,
-) -> ValidatedPredicate:
+    window: TimeInterval, *, start: AttributeMetadata, end: AttributeMetadata
+) -> ResolvedPredicate:
     """The rows whose Valid Time overlaps ``window``: ending after its start
     and, where it is bounded, starting before its end."""
-    after = _managed_comparison(op="greaterThan", attr=end_ref, member=end, value=window.start)
+    after = _managed_comparison(op="greaterThan", member=end, value=window.start)
     until = window.end
     if until is INFINITY:
         return after
-    return _validated_conjunction(
-        after, _managed_comparison(op="lessThan", attr=start_ref, member=start, value=until)
-    )
+    return _conjunction(after, _managed_comparison(op="lessThan", member=start, value=until))
 
 
 def plan_target_read(
@@ -390,7 +373,7 @@ def plan_target_read(
     key_value: ManagedValue,
     valid_from: ManagedValue | None = None,
     whole: bool = False,
-) -> ValidatedEntityQuery:
+) -> ResolvedEntityQuery:
     """The one flat point read of the stored row a caller-addressed write starts
     from: the object ``key`` names — on a temporal object its current row, at
     Valid-Time ``valid_from`` on a Bitemporal one — projected with no document,
@@ -399,35 +382,20 @@ def plan_target_read(
     families = inheritance.view(model)
     root = inheritance.root_metadata(families, model, entity.identity)
     view = _entity_view(families, entity.identity)
-    terms = [
-        _managed_comparison(
-            op="eq",
-            attr=f"{entity.identity.canonical}.{key}",
-            member=_declared_attribute(view, key),
-            value=key_value,
-        )
-    ]
+    terms = [_managed_comparison(op="eq", member=_declared_attribute(view, key), value=key_value)]
     for axis in root.declared_as_of_axes:
         start = _declared_attribute(view, axis.start_attribute.name)
         end = _declared_attribute(view, axis.end_attribute.name)
-        start_ref = f"{root.identity.canonical}.{start.identity.name}"
-        end_ref = f"{root.identity.canonical}.{end.identity.name}"
         if axis.dimension is TemporalDimension.TRANSACTION_TIME:
-            terms.append(_framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY))
+            terms.append(_framework_comparison(op="eq", member=end, value=INFINITY))
             continue
         assert valid_from is not None  # a Bitemporal target states its start
-        terms.append(
-            _managed_comparison(op="lessThanEquals", attr=start_ref, member=start, value=valid_from)
-        )
-        terms.append(
-            _managed_comparison(op="greaterThan", attr=end_ref, member=end, value=valid_from)
-        )
-    return ValidatedEntityQuery(
+        terms.append(_managed_comparison(op="lessThanEquals", member=start, value=valid_from))
+        terms.append(_managed_comparison(op="greaterThan", member=end, value=valid_from))
+    return ResolvedEntityQuery(
         target=entity.identity,
         entity=entity,
-        validated_predicate=navigate.canonicalize_validated(
-            _validated_conjunction(*terms), model, entity, {}
-        ),
+        predicate=_conjunction(*terms),
         projection=_projection_for(
             entity,
             families,
@@ -513,7 +481,7 @@ class _PlanBuilder:
     ) -> tuple[EntityIdentity, ...]:
         return self._root_position if narrowed is None else narrowed
 
-    def add_path(self, path: ValidatedIncludePath) -> None:
+    def add_path(self, path: ResolvedIncludePath) -> None:
         source = path.source_position
         parent_id = _ROOT_ID
         for segment in path.segments:
@@ -522,7 +490,7 @@ class _PlanBuilder:
     def _add_segment(
         self,
         parent_id: int,
-        segment: ValidatedIncludeSegment,
+        segment: ResolvedIncludeSegment,
         root_source: tuple[EntityIdentity, ...],
     ) -> int:
         if parent_id != _ROOT_ID and isinstance(self.steps[parent_id], BackReferenceFetchStep):
@@ -597,10 +565,9 @@ class _PlanBuilder:
                 related=QueryCorrelationMember(
                     identity=direction.join.target,
                     column=_attribute_column(self.families, direction.join.target),
-                    reference=f"{child_target.canonical}.{direction.join.target.name}",
                     member=_attribute_metadata(self.families, direction.join.target),
                 ),
-                as_of_terms=validated_hop_as_of_terms(related_entity, self.model, self.root_pins),
+                as_of_terms=resolved_hop_as_of_terms(related_entity, self.model, self.root_pins),
                 order_terms=_resolved_order_terms(direction, child, self.families),
                 narrow_to=narrow_to,
             )
@@ -649,9 +616,9 @@ def _resolved_order_terms(
     direction: RelationshipMetadata,
     child: EntityMetadata,
     families: InheritanceFacet,
-) -> tuple[ValidatedOrderTerm, ...]:
+) -> tuple[ResolvedOrderTerm, ...]:
     view = _entity_view(families, child.identity)
-    terms: list[ValidatedOrderTerm] = []
+    terms: list[ResolvedOrderTerm] = []
     for order in direction.order_by:
         member = view.applicable_attribute(order.attribute.name)
         if member is None:

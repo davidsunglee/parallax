@@ -138,8 +138,8 @@ _TEMPORAL_MODEL: Final[Metamodel] = formed(
 _GRANT_BOUND: Final = frozenset(
     {
         "parallax.core.object_query.validate:_validate_temporal_selections",
-        "parallax.core.object_query._validated:latest_temporal_selections",
-        "parallax.core.object_query._validated:selections_at_valid_time",
+        "parallax.core.object_query._resolved:latest_temporal_selections",
+        "parallax.core.object_query._resolved:selections_at_valid_time",
     }
 )
 

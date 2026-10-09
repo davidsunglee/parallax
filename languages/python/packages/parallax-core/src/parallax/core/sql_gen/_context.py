@@ -19,7 +19,7 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.predicate._validated import DeferredKeySet
+from parallax.core.predicate._resolved import DeferredKeySet
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
 from parallax.core.wire import (
     WireDecodingError,

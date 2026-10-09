@@ -68,7 +68,7 @@ def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
     return entity
 
 
-def plan_validated_hop(
+def plan_resolved_hop(
     target: EntityMetadata,
     source: AttributeMetadata,
     related: AttributeMetadata,

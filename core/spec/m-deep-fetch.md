@@ -299,20 +299,19 @@ graph is closed-world and never issues SQL after materialization.
 
 ## Resolved flat reads and generated key membership
 
-The deep-fetch planner consumes only the validated products of
-`m-object-query`. A root or child `ValidatedEntityQuery` is the private
-**resolved flat read**: it carries exact modeled identities, a validated
+The deep-fetch planner consumes only the resolved products of
+`m-object-query`. A root or child `ResolvedEntityQuery` is the private
+**resolved flat read**: it carries exact modeled identities, a resolved
 Predicate containing managed values, resolved temporal coordinates, resolved
 ordering and projection, and compact result metadata. It contains no authored
 path, raw literal, or public predicate node requiring another semantic pass.
 
-For a child level, the planner gathers managed parent key values from the
-materialized parents, deduplicates them in encounter order, and freezes one
-managed tuple. It passes that tuple and the already-resolved child correlation
-Attribute to `m-predicate`'s generated-membership operation. The producer checks
-managed membership, calls `encodeWire` once per key to create the ordinary
-authored `in` node, and adopts the same managed tuple in the validated occurrence
-without decoding its own output. Every gathered key MUST already satisfy the
+For a child level, the planner passes the already-resolved child correlation
+Attribute to `m-predicate`'s generated-membership operation, which yields a
+membership over a deferred key set (`m-sql`). The planner gathers managed
+parent key values from the materialized parents and deduplicates them in
+encounter order; they are bound into the compiled child read as they are,
+neither encoded nor decoded. Every gathered key MUST already satisfy the
 resolved Attribute's neutral type; violating that invariant is an internal
 framework error rather than `neutral-literal-*` rejection.
 

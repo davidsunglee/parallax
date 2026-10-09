@@ -2,19 +2,41 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, fields, is_dataclass, replace
-from typing import Final, Literal, NamedTuple, Protocol, cast
+from dataclasses import dataclass, replace
+from decimal import Decimal
+from typing import Final, Literal, NamedTuple, Protocol, assert_never, cast
 
 from parallax.core import deep_fetch
 from parallax.core.base import ManagedValue
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import AttributeIdentity
-from parallax.core.object_query._validated import (
+from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
     Paging,
-    ValidatedObjectQuery,
+    ResolvedAsOfSelection,
+    ResolvedHistorySelection,
+    ResolvedLatestSelection,
+    ResolvedObjectQuery,
+    ResolvedRangeSelection,
+    ResolvedTemporalSelection,
+)
+from parallax.core.predicate._resolved import (
+    DeferredKeySet,
+    ResolvedAnd,
+    ResolvedComparison,
+    ResolvedConstant,
+    ResolvedGroup,
+    ResolvedMembership,
+    ResolvedNarrow,
+    ResolvedNot,
+    ResolvedNullCheck,
+    ResolvedOr,
+    ResolvedPredicate,
+    ResolvedQuantifier,
+    ResolvedRange,
+    ResolvedSemiJoin,
+    ResolvedStringMatch,
 )
 from parallax.core.read_delivery._fetch import correlation_table, entity_read_lock, slot_table
 from parallax.core.read_delivery._page import PageBuilder, ViewSchema
@@ -26,7 +48,7 @@ from parallax.core.sql_gen._compile import (
     compile_template,
 )
 from parallax.core.sql_gen._seek import null_pattern
-from parallax.core.temporal_read import scans_validated_axis
+from parallax.core.temporal_read import scans_resolved_axis
 from parallax.core.unit_work import Concurrency
 
 __all__ = [
@@ -125,7 +147,7 @@ class ReadPlanner(Protocol):
         edition: str,
         model: CatalogedModel,
         dialect: Dialect,
-        query: ValidatedObjectQuery,
+        query: ResolvedObjectQuery,
         result_form: ResultForm,
         preference: Concurrency | None,
     ) -> ReadPlan: ...
@@ -137,7 +159,7 @@ class _CachedDelivery:
     coordinate_positions: tuple[tuple[int, int], ...] = ()
     limit_positions: tuple[int, ...] = ()
 
-    def render(self, query: ValidatedObjectQuery) -> ReadPlan:
+    def render(self, query: ResolvedObjectQuery) -> ReadPlan:
         if not self.coordinate_positions and not self.limit_positions:
             return self.plan
         paging = query.paging
@@ -170,18 +192,20 @@ class _Identity:
         return isinstance(other, _Identity) and self.value is other.value
 
 
-class _FrozenQuery:
+class _QueryKey:
+    """A resolved query's SQL-relevant structure, hashed once."""
+
     __slots__ = ("_hash", "value")
 
-    def __init__(self, authored: object) -> None:
-        self.value = _frozen_query_value(authored)
-        self._hash = hash(self.value)
+    def __init__(self, value: tuple[object, ...]) -> None:
+        self.value = value
+        self._hash = hash(value)
 
     def __hash__(self) -> int:
         return self._hash
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, _FrozenQuery) and (
+        return isinstance(other, _QueryKey) and (
             self is other or (self._hash == other._hash and self.value == other.value)
         )
 
@@ -190,7 +214,7 @@ class _ReadPlanKey(NamedTuple):
     edition: str
     model: _Identity
     dialect: _Identity
-    query: _FrozenQuery
+    query: _QueryKey
     result_form: ResultForm
     concurrency: Concurrency | None
     delivery: object
@@ -213,50 +237,20 @@ class _Pending:
     error: BaseException | None = None
 
 
-def _frozen_query_value(value: object) -> object:
-    value_type = type(value)
-    if isinstance(value, Mapping):
-        mapping = cast("Mapping[object, object]", value)
-        return (
-            value_type,
-            frozenset(
-                (_frozen_query_value(key), _frozen_query_value(item))
-                for key, item in mapping.items()
-            ),
-        )
-    if isinstance(value, tuple | list):
-        return (
-            value_type,
-            tuple(_frozen_query_value(item) for item in cast("Sequence[object]", value)),
-        )
-    if isinstance(value, set | frozenset):
-        values = cast("set[object] | frozenset[object]", value)
-        return value_type, frozenset(_frozen_query_value(item) for item in values)
-    if is_dataclass(value) and not isinstance(value, type):
-        return (
-            value_type,
-            tuple(
-                (item.name, _frozen_query_value(getattr(value, item.name)))
-                for item in fields(value)
-            ),
-        )
-    return value_type, value
-
-
 def _read_plan_key(
     *,
     edition: str,
     model: CatalogedModel,
     dialect: Dialect,
-    query: ValidatedObjectQuery,
+    query: ResolvedObjectQuery,
     result_form: ResultForm,
     preference: Concurrency | None,
 ) -> _ReadPlanKey:
     paging = query.paging
+    delivery: tuple[object, ...]
     if paging is None:
-        authored, delivery = query.authored, (query.limit, None)
+        delivery = (query.limit, None)
     else:
-        authored = replace(query.authored, limit=None)
         delivery = (
             None,
             "first" if paging.seek is None else ("after", null_pattern(paging.seek.coordinate)),
@@ -265,16 +259,111 @@ def _read_plan_key(
         edition,
         _Identity(model),
         _Identity(dialect),
-        _FrozenQuery(authored),
+        _QueryKey(_query_key(query)),
         result_form,
         preference,
-        _frozen_query_value(delivery),
+        delivery,
     )
 
 
+def _query_key(query: ResolvedObjectQuery) -> tuple[object, ...]:
+    """Everything about ``query`` its compiled plan depends on.
+
+    A plan captures its ordinary binds, so the predicate's and the temporal
+    selections' managed operands are part of the key; a page's cap and seek
+    coordinate are substituted at render time and are not. Members and
+    positions are named by identity: the model the key also names fixes the
+    metadata behind each.
+    """
+    return (
+        query.root.identity,
+        _predicate_key(query.predicate),
+        tuple(_temporal_key(selection) for selection in query.temporal),
+        tuple((term.member.identity, term.direction, term.nulls) for term in query.order_by),
+        tuple(
+            (
+                path.source_position,
+                tuple(
+                    (segment.relationship, segment.position, segment.authored_narrow)
+                    for segment in path.segments
+                ),
+            )
+            for path in query.includes
+        ),
+        None if query.narrow_to is None else tuple(item.identity for item in query.narrow_to),
+        query.limit if query.paging is None else None,
+    )
+
+
+def _operand_key(value: object) -> object:
+    """``value`` as plan key material that two binds share only if they are the
+    same bind: equal values of different exact types, and Decimals spelling
+    one number at different exponents, stay apart."""
+    if isinstance(value, Decimal):
+        return Decimal, value.as_tuple()
+    return type(value), value
+
+
+def _predicate_key(predicate: ResolvedPredicate) -> object:  # noqa: C901 - exhaustive dispatcher
+    match predicate:
+        case ResolvedConstant(truth=truth):
+            return ResolvedConstant, truth
+        case ResolvedComparison(op=op, member=member, value=value, framework=framework):
+            return ResolvedComparison, op, member.identity, _operand_key(value), framework
+        case ResolvedRange(member=member, lower=lower, upper=upper):
+            return ResolvedRange, member.identity, _operand_key(lower), _operand_key(upper)
+        case ResolvedMembership(op=op, member=member, values=values):
+            operands = (
+                values
+                if isinstance(values, DeferredKeySet)
+                else tuple(_operand_key(value) for value in values)
+            )
+            return ResolvedMembership, op, member.identity, operands
+        case ResolvedStringMatch(
+            op=op, member=member, pattern=pattern, case_insensitive=case_insensitive
+        ):
+            return ResolvedStringMatch, op, member.identity, _operand_key(pattern), case_insensitive
+        case ResolvedNullCheck(op=op, member=member):
+            return ResolvedNullCheck, op, member.identity
+        case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands):
+            return type(predicate), tuple(_predicate_key(operand) for operand in operands)
+        case ResolvedNot(operand=operand) | ResolvedGroup(operand=operand):
+            return type(predicate), _predicate_key(operand)
+        case ResolvedNarrow(position=position, operand=operand):
+            return ResolvedNarrow, position, _predicate_key(operand)
+        case ResolvedQuantifier(kind=kind, occurrence=occurrence, where=where):
+            return (
+                ResolvedQuantifier,
+                kind,
+                occurrence.identity,
+                None if where is None else _predicate_key(where),
+            )
+        case ResolvedSemiJoin(relationship=relationship, negated=negated, where=where):
+            return (
+                ResolvedSemiJoin,
+                relationship,
+                negated,
+                None if where is None else _predicate_key(where),
+            )
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(predicate)
+
+
+def _temporal_key(selection: ResolvedTemporalSelection) -> object:
+    match selection:
+        case ResolvedLatestSelection(axis=axis) | ResolvedHistorySelection(axis=axis):
+            return type(selection), axis.dimension
+        case ResolvedAsOfSelection(axis=axis, coordinate=coordinate):
+            return ResolvedAsOfSelection, axis.dimension, _operand_key(coordinate)
+        case ResolvedRangeSelection(axis=axis, start=start, end=end):
+            return ResolvedRangeSelection, axis.dimension, _operand_key(start), _operand_key(end)
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(selection)
+
+
 def _template_query(
-    query: ValidatedObjectQuery,
-) -> tuple[ValidatedObjectQuery, tuple[object | None, ...], object | None]:
+    query: ResolvedObjectQuery,
+) -> tuple[ResolvedObjectQuery, tuple[object | None, ...], object | None]:
     paging = query.paging
     if paging is None:
         return query, (), None
@@ -303,7 +392,7 @@ def _plan_uncached(
     *,
     model: CatalogedModel,
     dialect: Dialect,
-    query: ValidatedObjectQuery,
+    query: ResolvedObjectQuery,
     result_form: ResultForm,
     preference: Concurrency | None,
     reusable: ReadPlan | None = None,
@@ -372,7 +461,7 @@ def _plan_uncached(
                 slot_table(planned),
                 (model.layouts.entity(entity.identity) for entity in model.meta.entities),
             )
-            if result_form == "instance" and not scans_validated_axis(query.temporal)
+            if result_form == "instance" and not scans_resolved_axis(query.temporal)
             else ViewSchema.of()
         ),
         correlations,
@@ -429,7 +518,7 @@ class ReadPlanCache:
         edition: str,
         model: CatalogedModel,
         dialect: Dialect,
-        query: ValidatedObjectQuery,
+        query: ResolvedObjectQuery,
         result_form: ResultForm,
         preference: Concurrency | None,
     ) -> ReadPlan:

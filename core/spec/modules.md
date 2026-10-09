@@ -350,7 +350,7 @@ construction it may reference any behavioral module it harnesses.
   attribute, an Include Path's relationships) and resolve their shared Subtype
   Selection through the effective-concrete-set rules `m-inheritance` owns.
   Predicate elaboration decodes serialized typed literals exactly once through
-  `m-wire`, and Object Query owns the mandatory validated-product boundary.
+  `m-wire`, and Object Query owns the mandatory resolved-product boundary.
 - **`m-temporal-read --> m-object-query`, `m-deep-fetch --> m-object-query`,
   `m-sql --> m-object-query`.** The three modules that REALIZE a clause depend on
   the query that states it, never the reverse: **a clause's value belongs to the
@@ -475,7 +475,7 @@ construction it may reference any behavioral module it harnesses.
   m-inheritance`, `--> m-document-codec`.** The Planned Write algebra and the
   evidence it retains are stated in resolved model terms: managed values and
   retained documents (`m-core`), member and Entity Identities (`m-metamodel`),
-  the validated predicate a Validated Mutation Selection carries
+  the resolved predicate a Resolved Mutation Selection carries
   (`m-predicate`), predecessor state aligned to a family-effective member
   selection (`m-inheritance`), and whether an assigned member already holds its
   value, which is the codec's effective-change classification

@@ -14,7 +14,7 @@ from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import EntityMetadata, entity_by_name
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.temporal_read import scans_validated_axis
+from parallax.core.temporal_read import scans_resolved_axis
 
 __all__ = [
     "case_edition",
@@ -197,4 +197,4 @@ def gate_read(query: ObjectQueryNode, model: AcceptedMetamodel) -> None:
 def read_scans(query: ObjectQueryNode, model: AcceptedMetamodel) -> bool:
     """Whether ``query`` scans any temporal dimension — a milestone-set read — as
     production's own gate (`execution._preflight.preflight`) validates it."""
-    return scans_validated_axis(preflight(query, model=model, form="graph").temporal)
+    return scans_resolved_axis(preflight(query, model=model, form="graph").temporal)

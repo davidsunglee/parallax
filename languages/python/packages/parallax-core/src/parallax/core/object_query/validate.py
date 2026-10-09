@@ -22,16 +22,16 @@ from parallax.core.object_query._nodes import (
     ObjectQueryNode,
     TemporalDimension,
 )
-from parallax.core.object_query._validated import (
-    ValidatedAsOfSelection,
-    ValidatedHistorySelection,
-    ValidatedIncludePath,
-    ValidatedIncludeSegment,
-    ValidatedLatestSelection,
-    ValidatedObjectQuery,
-    ValidatedOrderTerm,
-    ValidatedRangeSelection,
-    ValidatedTemporalSelection,
+from parallax.core.object_query._resolved import (
+    ResolvedAsOfSelection,
+    ResolvedHistorySelection,
+    ResolvedIncludePath,
+    ResolvedIncludeSegment,
+    ResolvedLatestSelection,
+    ResolvedObjectQuery,
+    ResolvedOrderTerm,
+    ResolvedRangeSelection,
+    ResolvedTemporalSelection,
 )
 from parallax.core.predicate import (
     ModelRejectedError,
@@ -52,7 +52,7 @@ __all__ = ["validate_include_path", "validate_object_query"]
 
 def validate_object_query(
     root: EntityMetadata, query: ObjectQueryNode, model: Metamodel
-) -> ValidatedObjectQuery:
+) -> ResolvedObjectQuery:
     """Validate ``query`` against ``model``, raising :class:`ModelRejectedError`.
 
     ``root`` is the queried position, already resolved to accepted Metadata by
@@ -65,13 +65,13 @@ def validate_object_query(
     queried = root_position(model, root)
     result = _narrowed_position(query, queried, model)
     predicate = validate_predicate(root, query.predicate, model, position=result)
-    order_terms: list[ValidatedOrderTerm] = []
+    order_terms: list[ResolvedOrderTerm] = []
     for key in query.order_by:
         member = check_attribute_reference(key.attr, model, result)
         if member is None:
             raise ValueError(f"{key.attr!r} names no declared ordering attribute")
         require_single_scalar(key.attr, member)
-        order_terms.append(ValidatedOrderTerm(member, key.direction or "asc", key.nulls or "last"))
+        order_terms.append(ResolvedOrderTerm(member, key.direction or "asc", key.nulls or "last"))
     includes = tuple(validate_include_path(path, model, queried) for path in query.includes)
     narrowed = (
         None
@@ -80,8 +80,7 @@ def validate_object_query(
             entity for entity in model.entities if entity.identity.canonical in result.effective
         )
     )
-    return ValidatedObjectQuery(
-        authored=query,
+    return ResolvedObjectQuery(
         root=root,
         predicate=predicate,
         temporal=temporal,
@@ -102,7 +101,7 @@ def _narrowed_position(
 
 def validate_include_path(
     path: IncludePath, model: Metamodel, queried: PositionScope
-) -> ValidatedIncludePath:
+) -> ResolvedIncludePath:
     """Resolve ``path`` relative to the model's active queried position.
 
     The source guard is constrained by ``queried`` and each segment is resolved
@@ -116,7 +115,7 @@ def validate_include_path(
         queried if path.applies_to is None else validate_narrow(path.applies_to, queried, model)
     )
     source = _scope_identities(model, source_scope)
-    segments: list[ValidatedIncludeSegment] = []
+    segments: list[ResolvedIncludeSegment] = []
     active_scope = source_scope
     for segment in path.segments:
         target = relationship_target(
@@ -151,7 +150,7 @@ def validate_include_path(
                 )
             target_scope = PositionScope(effective=resolved)
         segments.append(
-            ValidatedIncludeSegment(
+            ResolvedIncludeSegment(
                 direction,
                 target,
                 _scope_identities(model, target_scope),
@@ -159,7 +158,7 @@ def validate_include_path(
             )
         )
         active_scope = target_scope
-    return ValidatedIncludePath(source, tuple(segments))
+    return ResolvedIncludePath(source, tuple(segments))
 
 
 def _scope_identities(model: Metamodel, scope: PositionScope) -> tuple[EntityIdentity, ...]:
@@ -170,7 +169,7 @@ def _scope_identities(model: Metamodel, scope: PositionScope) -> tuple[EntityIde
 
 def _validate_temporal_selections(
     root: EntityMetadata, query: ObjectQueryNode, model: Metamodel
-) -> tuple[ValidatedTemporalSelection, ...]:
+) -> tuple[ResolvedTemporalSelection, ...]:
     # `m-object-query` cannot reach the Temporal Facet, so the family's axes are
     # read from its root's accepted declaration.
     declarer = inheritance.root_metadata(inheritance.view(model), model, root.identity)
@@ -195,7 +194,7 @@ def _validate_temporal_selections(
             f"{root.identity.canonical}: temporal read selections are invalid ({details}); "
             "a canonical Object Query names exactly one selection per declared dimension",
         )
-    products: list[ValidatedTemporalSelection] = []
+    products: list[ResolvedTemporalSelection] = []
     for dimension, axis in sorted(declared.items(), key=lambda item: item[1].dimension.value):
         selection = query.temporal[dimension]
         start = declarer.attribute(axis.start_attribute.name)
@@ -203,7 +202,7 @@ def _validate_temporal_selections(
             raise ValueError(f"{axis.start_attribute} names no declared temporal Attribute")
         try:
             if isinstance(selection, History):
-                product = ValidatedHistorySelection(axis)
+                product = ResolvedHistorySelection(axis)
             elif isinstance(selection, AsOfRange):
                 managed_start = cast("dt.datetime", decode_wire(start.type, selection.start))
                 managed_end = cast("dt.datetime", decode_wire(start.type, selection.end))
@@ -213,17 +212,15 @@ def _validate_temporal_selections(
                         f"{root.identity.canonical}.{dimension}: asOfRange scans [start, end), "
                         "so start < end",
                     )
-                product = ValidatedRangeSelection(
+                product = ResolvedRangeSelection(
                     axis,
                     managed_start,
                     managed_end,
                 )
             elif selection.coordinate == "latest":
-                product = ValidatedLatestSelection(axis)
+                product = ResolvedLatestSelection(axis)
             else:
-                product = ValidatedAsOfSelection(
-                    axis, decode_wire(start.type, selection.coordinate)
-                )
+                product = ResolvedAsOfSelection(axis, decode_wire(start.type, selection.coordinate))
         except WireDecodingError as error:
             raise ModelRejectedError(
                 f"neutral-literal-{error.reason}",

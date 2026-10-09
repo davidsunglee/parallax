@@ -106,9 +106,9 @@ from parallax.core.write_plan.steps import (
     PlannedDelete,
     PlannedRow,
     PlannedUpdate,
+    ResolvedMutationSelection,
     SelfIncrement,
     Ungated,
-    ValidatedMutationSelection,
     Versioned,
     VersionGate,
     WriteRow,
@@ -1274,8 +1274,8 @@ def test_finalization_gives_a_readless_predicate_write_an_unbounded_expectation(
     assert steps is not None
     (step,) = steps
     assert isinstance(step, PlannedDelete)
-    assert isinstance(step.target, ValidatedMutationSelection)
-    assert step.target.predicate.authored == predicate
+    assert isinstance(step.target, ResolvedMutationSelection)
+    assert step.target.predicate == oa.validate_predicate(step.target.target, predicate, WALLET)
     assert step.affected_rows == ANY_COUNT
 
 

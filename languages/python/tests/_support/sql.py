@@ -16,7 +16,7 @@ from parallax.core.object_query import (
     validate_object_query,
 )
 from parallax.core.object_query._nodes import TemporalDimension
-from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.predicate import PredicateNode, validate_predicate
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER
 from parallax.core.sql_gen._compile import CompiledPredicate, CompiledRead
@@ -93,7 +93,7 @@ def _validated(
     order_by: tuple[OrderKey, ...] = (),
     limit: int | None = None,
     temporal: Mapping[TemporalDimension, TemporalSelection] | None = None,
-) -> ValidatedObjectQuery:
+) -> ResolvedObjectQuery:
     query = object_query(
         target.identity,
         predicate,

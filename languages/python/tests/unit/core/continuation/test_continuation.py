@@ -4,7 +4,7 @@ Exercises `parallax.core.continuation.plan` with no port and no database, the
 way `test_deep_fetch.py` exercises its neighbour: the Continuation Order a page
 node carries, the seek `after` composes onto the caller's own predicate, and the
 query shape a page plan refuses outright. Most assertions here are over the
-returned `ObjectQueryNode` alone.
+returned resolved page query alone.
 
 The algebra is graded as a table, because that is what it is: direction, Null
 Placement, term count, whether an authored key already named the primary key, and
@@ -56,11 +56,12 @@ from parallax.core.object_query import (
     validate_object_query,
 )
 from parallax.core.object_query._nodes import TemporalDimension
-from parallax.core.object_query._validated import (
+from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
-    ValidatedObjectQuery,
+    ResolvedObjectQuery,
 )
-from parallax.core.predicate import All, Comparison, Or, PredicateNode
+from parallax.core.predicate import All, Comparison, Or, PredicateNode, validate_predicate
+from parallax.core.predicate._resolved import ResolvedConstant
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._context import LoweredStatement
 from parallax.descriptor import _records
@@ -127,6 +128,26 @@ def _identity(model: Metamodel, reference: str) -> AttributeIdentity:
     return attribute.identity
 
 
+def _order(node: ResolvedObjectQuery) -> tuple[OrderKey, ...]:
+    """The Continuation Order ``node`` carries, as fully spelled Sort Keys."""
+    return tuple(
+        OrderKey(
+            attr=f"{term.member.identity.entity.canonical}.{term.member.identity.name}",
+            direction=term.direction,
+            nulls=term.nulls,
+        )
+        for term in node.order_by
+    )
+
+
+def _normalized(order: Sequence[OrderKey]) -> tuple[OrderKey, ...]:
+    """``order`` with every omitted direction and Null Placement defaulted."""
+    return tuple(
+        OrderKey(attr=key.attr, direction=key.direction or "asc", nulls=key.nulls or "last")
+        for key in order
+    )
+
+
 def _active(model: Metamodel, target: str) -> Comparison:
     canonical = entity_of(model, target).identity.canonical
     return Comparison(op="eq", attr=f"{canonical}.name", value="A")
@@ -140,7 +161,7 @@ def test_an_undeclared_ordering_pages_by_the_primary_key_ascending() -> None:
     # the primary key, ascending, which is total, immutable, and non-nullable, so
     # every page seeks and no write moves a root across a page boundary.
     node = _planned(ORDERS, "Order").first(limit=50)
-    assert node.authored.order_by == (OrderKey(attr=_ORDER_ID, direction="asc"),)
+    assert _order(node) == _normalized((OrderKey(attr=_ORDER_ID, direction="asc"),))
     assert node.limit == 50
 
 
@@ -152,7 +173,7 @@ def test_the_first_page_carries_the_callers_query_unchanged_but_ordered_and_capp
     plan = _planned(ORDERS, "Order", predicate=predicate)
     node = plan.first(limit=2)
     assert node.root.identity == entity_of(ORDERS, "Order").identity
-    assert node.predicate.authored == predicate
+    assert node.predicate == validate_predicate(entity_of(ORDERS, "Order"), predicate, ORDERS)
     assert node.includes == ()
 
 
@@ -176,13 +197,14 @@ def test_the_continuation_order_is_not_readable_off_the_plan() -> None:
 
 def test_an_authored_ordering_is_carried_verbatim_with_the_key_appended() -> None:
     # The composition rule, on the shape that shows both halves: the authored
-    # keys keep their own spelling — an omitted direction stays omitted, which
-    # round-trips distinctly from an authored `asc` — and the key is appended
-    # after them, ascending, because nothing else makes the order total.
+    # keys keep their resolved direction and Null Placement, and the key is
+    # appended after them, ascending, because nothing else makes the order total.
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU, nulls="first"),))
-    assert plan.first(limit=2).authored.order_by == (
-        OrderKey(attr=_ORDER_SKU, nulls="first"),
-        OrderKey(attr=_ORDER_ID, direction="asc"),
+    assert _order(plan.first(limit=2)) == _normalized(
+        (
+            OrderKey(attr=_ORDER_SKU, nulls="first"),
+            OrderKey(attr=_ORDER_ID, direction="asc"),
+        )
     )
 
 
@@ -195,7 +217,7 @@ def test_an_authored_key_naming_the_primary_key_is_not_appended_a_second_time() 
         OrderKey(attr=_ORDER_ID, direction="desc"),
     )
     plan = _planned(ORDERS, "Order", order_by=order)
-    assert plan.first(limit=2).authored.order_by == order
+    assert _order(plan.first(limit=2)) == _normalized(order)
 
 
 def test_an_authored_key_naming_the_primary_key_keeps_the_authors_direction() -> None:
@@ -204,7 +226,7 @@ def test_an_authored_key_naming_the_primary_key_keeps_the_authors_direction() ->
     # follows it.
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_ID, direction="desc"),))
     node = plan.after(ContinuationCoordinate((5,)), limit=3)
-    assert node.authored.order_by == (OrderKey(attr=_ORDER_ID, direction="desc"),)
+    assert _order(node) == _normalized((OrderKey(attr=_ORDER_ID, direction="desc"),))
     assert _where(_lowered(ORDERS, node).sql) == "t0.id <= ? and t0.id < ?"
 
 
@@ -219,7 +241,7 @@ def test_a_subtype_position_pages_by_its_family_roots_key() -> None:
     ]
     query = validate_object_query(dog, object_query(dog.identity, All()), ANIMAL)
     node = continuation.plan(query, ANIMAL).first(limit=5)
-    assert node.authored.order_by == (OrderKey(attr=_ANIMAL_ID, direction="asc"),)
+    assert _order(node) == _normalized((OrderKey(attr=_ANIMAL_ID, direction="asc"),))
 
 
 def test_a_narrowed_reads_sort_key_is_measured_at_the_narrowed_position() -> None:
@@ -235,9 +257,11 @@ def test_a_narrowed_reads_sort_key_is_measured_at_the_narrowed_position() -> Non
     )
     plan = continuation.plan(validate_object_query(animal, query, ANIMAL), ANIMAL)
     node = plan.first(limit=1)
-    assert node.authored.order_by == (
-        OrderKey(attr=_DOG_BARK, direction="desc"),
-        OrderKey(attr=_ANIMAL_ID, direction="asc"),
+    assert _order(node) == _normalized(
+        (
+            OrderKey(attr=_DOG_BARK, direction="desc"),
+            OrderKey(attr=_ANIMAL_ID, direction="asc"),
+        )
     )
     assert tuple(entity.identity.canonical for entity in node.narrow_to or ()) == (
         "parallax.compatibility.Dog",
@@ -392,7 +416,7 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
 _PROJECTION: Final = deep_fetch.ReadProjectionRequest("none", False)
 
 
-def _lowered(model: Metamodel, node: ValidatedObjectQuery) -> LoweredStatement:
+def _lowered(model: Metamodel, node: ResolvedObjectQuery) -> LoweredStatement:
     """One page node as m-sql lowers it: the statement, and its binds in order."""
     return compile_entity_query(
         deep_fetch.plan(node, model, projection=_PROJECTION).root, model, POSTGRES
@@ -445,9 +469,9 @@ def test_the_seek_matrix(case: _SeekCase) -> None:
     # is a cross-language golden: two targets that lowered different SQL would
     # admit different roots for the same page.
     plan = _planned(ORDERS, "Order", order_by=case.order_by)
-    assert plan.first(limit=2).authored.order_by == case.order
+    assert _order(plan.first(limit=2)) == _normalized(case.order)
     node = plan.after(ContinuationCoordinate(case.coordinate), limit=3)
-    assert node.authored.order_by == case.order
+    assert _order(node) == _normalized(case.order)
     assert node.limit == 3
     statement = _lowered(ORDERS, node)
     assert _where(statement) == case.where
@@ -491,7 +515,7 @@ def test_an_eager_read_of_the_same_query_captures_nothing() -> None:
 def test_null_placement_over_a_non_nullable_key_changes_no_seek() -> None:
     # Placement is observable only on a nullable key (m-dialect), so the two
     # spellings over `Order.name` order the same rows AND seek the same way —
-    # while the page node still carries each one as authored.
+    # while the page node still carries each one as resolved.
     coordinate = ContinuationCoordinate(("Ada", 1))
     seeks = {
         placement: _where(
@@ -683,9 +707,11 @@ def test_a_milestone_set_read_orders_by_the_key_then_its_one_axis_start(
     # so the key alone is not total there. What separates two milestones of one
     # key is the milestone each stands at, which is the axis's own start.
     plan = _planned(BALANCE, "Balance", temporal={"transaction-time": selection})
-    assert plan.first(limit=2).authored.order_by == (
-        OrderKey(attr=_BALANCE_ID, direction="asc"),
-        OrderKey(attr=_BALANCE_TX_START, direction="asc"),
+    assert _order(plan.first(limit=2)) == _normalized(
+        (
+            OrderKey(attr=_BALANCE_ID, direction="asc"),
+            OrderKey(attr=_BALANCE_TX_START, direction="asc"),
+        )
     )
 
 
@@ -701,10 +727,12 @@ def test_a_bitemporal_scan_appends_both_axis_starts_valid_time_first(
     # ONE axis still appends both: a milestone is a rectangle, and two rectangles
     # of one key may differ on the axis the read pinned.
     plan = _planned(POSITION, "Position", temporal={"transaction-time": selection})
-    assert plan.first(limit=2).authored.order_by == (
-        OrderKey(attr=_POSITION_ID, direction="asc"),
-        OrderKey(attr=_POSITION_VALID_START, direction="asc"),
-        OrderKey(attr=_POSITION_TX_START, direction="asc"),
+    assert _order(plan.first(limit=2)) == _normalized(
+        (
+            OrderKey(attr=_POSITION_ID, direction="asc"),
+            OrderKey(attr=_POSITION_VALID_START, direction="asc"),
+            OrderKey(attr=_POSITION_TX_START, direction="asc"),
+        )
     )
 
 
@@ -712,7 +740,9 @@ def test_a_single_instant_temporal_read_appends_no_edge() -> None:
     # A pin is not a scan: one milestone per key reaches the result, so the key
     # is total by itself and the order is what every non-temporal read's is.
     plan = _planned(POSITION, "Position", temporal={"transaction-time": AsOf("latest")})
-    assert plan.first(limit=2).authored.order_by == (OrderKey(attr=_POSITION_ID, direction="asc"),)
+    assert _order(plan.first(limit=2)) == _normalized(
+        (OrderKey(attr=_POSITION_ID, direction="asc"),)
+    )
 
 
 def test_an_authored_sort_key_naming_an_axis_start_is_not_appended_twice() -> None:
@@ -725,10 +755,12 @@ def test_an_authored_sort_key_naming_an_axis_start_is_not_appended_twice() -> No
         temporal={"transaction-time": History()},
         order_by=(OrderKey(attr=_POSITION_TX_START, direction="desc"),),
     )
-    assert plan.first(limit=2).authored.order_by == (
-        OrderKey(attr=_POSITION_TX_START, direction="desc"),
-        OrderKey(attr=_POSITION_ID, direction="asc"),
-        OrderKey(attr=_POSITION_VALID_START, direction="asc"),
+    assert _order(plan.first(limit=2)) == _normalized(
+        (
+            OrderKey(attr=_POSITION_TX_START, direction="desc"),
+            OrderKey(attr=_POSITION_ID, direction="asc"),
+            OrderKey(attr=_POSITION_VALID_START, direction="asc"),
+        )
     )
 
 
@@ -769,10 +801,12 @@ def test_an_inherited_milestone_set_read_orders_by_the_family_owners_key_and_edg
 
     root = entity_of(RATE, "Rate").identity.canonical
     assert node.root.identity == deposit_rate.identity
-    assert node.authored.order_by == (
-        OrderKey(attr=f"{root}.id", direction="asc"),
-        OrderKey(attr=f"{root}.{shape.valid_time.start_attribute.name}", direction="asc"),
-        OrderKey(attr=f"{root}.{shape.transaction_time.start_attribute.name}", direction="asc"),
+    assert _order(node) == _normalized(
+        (
+            OrderKey(attr=f"{root}.id", direction="asc"),
+            OrderKey(attr=f"{root}.{shape.valid_time.start_attribute.name}", direction="asc"),
+            OrderKey(attr=f"{root}.{shape.transaction_time.start_attribute.name}", direction="asc"),
+        )
     )
 
 
@@ -837,7 +871,7 @@ def test_a_milestone_delivery_pages_through_every_boundary_offset_without_skip_o
     # above are graded by, over instants rather than scalars.
     plan = _planned(POSITION, "Position", temporal={"transaction-time": History()})
     delivered = _delivered(POSITION, "Position", plan, _milestones(), batch_size=batch_size)
-    ranked = _ranked(POSITION, plan.first(limit=1).authored.order_by)
+    ranked = _ranked(POSITION, _order(plan.first(limit=1)))
     assert delivered == sorted(_milestones(), key=ranked)
 
 
@@ -978,7 +1012,7 @@ def _delivered(
     values.
     """
     columns = _columns(model, target)
-    order = plan.first(limit=1).authored.order_by
+    order = _order(plan.first(limit=1))
     ranked = _ranked(model, order)
     terms = [_identity(model, key.attr) for key in order]
     delivered: list[_Row] = []
@@ -1046,7 +1080,7 @@ def test_paging_reproduces_the_whole_result_in_the_order_the_first_page_declares
     # delivers it twice.
     rows = _dataset()
     plan = _planned(ORDERS, "Order", order_by=order_by)
-    ranked = _ranked(ORDERS, plan.first(limit=1).authored.order_by)
+    ranked = _ranked(ORDERS, _order(plan.first(limit=1)))
     assert _delivered(ORDERS, "Order", plan, rows, batch_size=batch_size) == sorted(
         rows, key=ranked
     )
@@ -1080,7 +1114,7 @@ def _delivered_under_writes(
     rows = [dict(row) for row in _dataset()]
     plan = _planned(ORDERS, "Order", order_by=order_by)
     columns = _columns(ORDERS, "Order")
-    order = plan.first(limit=1).authored.order_by
+    order = _order(plan.first(limit=1))
     ranked = _ranked(ORDERS, order)
     terms = [_identity(ORDERS, key.attr) for key in order]
     identity = _identity(ORDERS, _ORDER_ID)
@@ -1255,6 +1289,6 @@ def test_the_page_node_is_a_fresh_value_rather_than_a_mutated_query() -> None:
     assert query.order_by == ()
     assert query.limit is None
     assert first is not later
-    assert first.predicate.authored == All()
+    assert first.predicate == ResolvedConstant(True)
     assert first.paging is not None
     assert first.paging.seek is None

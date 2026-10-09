@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from parallax.core.continuation import ContinuationPlan
 from parallax.core.metamodel import AttributeIdentity
-from parallax.core.object_query._validated import ContinuationCoordinate
+from parallax.core.object_query._resolved import ContinuationCoordinate
 
 __all__ = [
     "At",

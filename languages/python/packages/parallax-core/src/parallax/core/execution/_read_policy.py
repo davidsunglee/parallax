@@ -26,7 +26,7 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery._delivery import deliver_find, deliver_history
 from parallax.core.read_delivery._page_reader import (
@@ -40,7 +40,7 @@ from parallax.core.read_delivery._publication import Publication
 from parallax.core.read_delivery._read_plan import ReadPlanner
 from parallax.core.read_delivery._row_lane import find_rows
 from parallax.core.read_delivery._stream import StreamRead
-from parallax.core.temporal_read import scans_validated_axis
+from parallax.core.temporal_read import scans_resolved_axis
 from parallax.core.unit_work import Concurrency, ReadOrigin
 
 __all__ = [
@@ -50,7 +50,7 @@ __all__ = [
     "read_graph",
     "read_page",
     "read_rows",
-    "validated",
+    "resolved",
 ]
 
 
@@ -122,7 +122,7 @@ def read_graph[Eager](
     checked = preflight(node, model=selected.model.meta, form="graph")
 
     def published(activity: ReadActivity, inputs: ReadInputs) -> Eager:
-        if scans_validated_axis(checked.temporal):
+        if scans_resolved_axis(checked.temporal):
             return deliver_history(
                 checked,
                 selected.model,
@@ -176,7 +176,7 @@ def read_rows(read: BegunRead, node: ObjectQueryNode, planner: ReadPlanner) -> R
     return read.eager(node.target, "rows", published)
 
 
-def validated(read: BegunRead, node: ObjectQueryNode, /) -> ValidatedObjectQuery:
+def resolved(read: BegunRead, node: ObjectQueryNode, /) -> ResolvedObjectQuery:
     """``node`` through the shared read gate, under the model ``read`` serves."""
     return preflight(node, model=read.meta, form="graph")
 

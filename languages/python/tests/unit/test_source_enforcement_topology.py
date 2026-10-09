@@ -39,11 +39,11 @@ from pathlib import Path
 from typing import get_type_hints
 
 from parallax.core import sql_gen
-from parallax.core.deep_fetch import ValidatedEntityQuery
+from parallax.core.deep_fetch import ResolvedEntityQuery
 from parallax.core.deep_fetch import plan as plan_deep_fetch
 from parallax.core.execution._preflight import preflight
-from parallax.core.object_query._validated import ValidatedObjectQuery
-from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.object_query._resolved import ResolvedObjectQuery
+from parallax.core.predicate._resolved import ResolvedPredicate
 from parallax.core.sql_gen._compile import compile_read, compile_write_predicate
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import WritePlanner
@@ -145,10 +145,10 @@ def test_carrier_neutral_private_sql_reaches_match_the_language_contract() -> No
 
 
 def test_carrier_neutral_lowering_requires_producer_owned_semantic_products() -> None:
-    assert get_type_hints(preflight)["return"] is ValidatedObjectQuery
-    assert get_type_hints(plan_deep_fetch)["query"] is ValidatedObjectQuery
-    assert get_type_hints(compile_read)["query"] is ValidatedEntityQuery
-    assert get_type_hints(compile_write_predicate)["op"] is ValidatedPredicate
+    assert get_type_hints(preflight)["return"] is ResolvedObjectQuery
+    assert get_type_hints(plan_deep_fetch)["query"] is ResolvedObjectQuery
+    assert get_type_hints(compile_read)["query"] is ResolvedEntityQuery
+    assert get_type_hints(compile_write_predicate)["op"] is ResolvedPredicate
     assert get_type_hints(prepare_typed_write)["return"] == PreparedWrite | PreparedTargetWrite
     assert get_type_hints(prepare_wire_write)["return"] == PreparedWrite | PreparedTargetWrite
     assert get_type_hints(compile_write_step)["step"] == PlannedWrite

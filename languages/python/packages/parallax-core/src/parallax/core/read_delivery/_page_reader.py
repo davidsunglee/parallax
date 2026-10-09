@@ -14,10 +14,10 @@ from parallax.core.execution_lifecycle._activity import (
     DatabaseCallScope,
 )
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.object_query._validated import (
+from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
-    ValidatedObjectQuery,
-    ValidatedTemporalSelection,
+    ResolvedObjectQuery,
+    ResolvedTemporalSelection,
 )
 from parallax.core.read_delivery._fetch import (
     attach_back_reference,
@@ -43,7 +43,7 @@ from parallax.core.read_delivery._read_plan import ReadPlan, ReadPlanner
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.temporal_read import Pin, TemporalShape, validated_query_pin
+from parallax.core.temporal_read import Pin, TemporalShape, resolved_query_pin
 from parallax.core.unit_work import Concurrency
 
 __all__ = [
@@ -83,7 +83,7 @@ class PageOrigins[Origin](PageProjectionObserver, Protocol):
 class EagerPageRequest[Origin]:
     """Inputs for one eager Page read."""
 
-    query: ValidatedObjectQuery
+    query: ResolvedObjectQuery
     model: CatalogedModel
     port: DatabaseConnection
     preference: Concurrency | None
@@ -183,7 +183,7 @@ class _RootRead:
     converter: ReadRowConverter
     rows: list[Row]
     coordinates: tuple[ContinuationCoordinate | None, ...]
-    temporal: tuple[ValidatedTemporalSelection, ...]
+    temporal: tuple[ResolvedTemporalSelection, ...]
     observer: MaterializationObserver = INERT_OBSERVER
 
     def take_rows(self) -> list[Row]:
@@ -331,7 +331,7 @@ class PageReader:
 
     def _read_root(
         self,
-        query: ValidatedObjectQuery,
+        query: ResolvedObjectQuery,
         model: CatalogedModel,
         port: DatabaseConnection,
         *,
@@ -433,7 +433,7 @@ class PageReader:
                 fetch_refs[fetch.index] = child_refs
                 completed.add(fetch.index)
 
-        page = builder.finish(root_refs, validated_query_pin(root_read.temporal))
+        page = builder.finish(root_refs, resolved_query_pin(root_read.temporal))
         return EagerPageResult(page=page, includes=includes, sources=origins.origins_for(page))
 
     def _read_stream_page[Origin](

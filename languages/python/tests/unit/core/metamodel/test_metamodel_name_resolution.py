@@ -8,7 +8,7 @@ bare name two namespaces share is a miss rather than a silent first match. The
 seams resolve through the same ``entity_by_name`` helper, and so — the second
 suite below — do the three lowering seams an accepted query reaches next:
 ``m-sql``'s family reads and hops, ``m-deep-fetch``'s levels, and
-``m-navigate``'s hop canonicalization. One rule across validation and lowering is
+``m-navigate``'s hop-term propagation. One rule across validation and lowering is
 what makes "preflight accepted this reference" imply "lowering resolves it".
 """
 
@@ -330,18 +330,18 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
     ] == ["den"]
 
 
-def test_navigation_canonicalization_resolves_a_hop_from_another_namespace() -> None:
+def test_hop_term_propagation_resolves_a_hop_from_another_namespace() -> None:
     # The hop's `Class` prefix names the family ROOT while the queried position is
     # the ownerless concrete subtype, so the owner-relative rule looked for a
     # `Beast` that does not exist. There is no as-of term to inject on this model,
-    # so canonicalization returning the query unchanged is the whole proof that
+    # so propagation returning the predicate unchanged is the whole proof that
     # the reference resolved.
     model = _cross_namespace_model()
     wolf = _named(model, "Wolf")
 
     op = oa.Exists(rel="Beast.den")
     product = validate_predicate(wolf, op, model)
-    assert navigate.canonicalize_validated(product, model, wolf).authored == op
+    assert navigate.propagate_hop_terms(product, model) is product
 
 
 def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
@@ -378,4 +378,4 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
 
     navigation = oa.Exists(rel="zoo.Beast.den")
     product = validate_predicate(wolf, navigation, model)
-    assert navigate.canonicalize_validated(product, model, wolf).authored == navigation
+    assert navigate.propagate_hop_terms(product, model) is product

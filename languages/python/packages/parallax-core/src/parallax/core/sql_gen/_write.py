@@ -55,10 +55,10 @@ from parallax.core.write_plan.steps import (
     PlannedTemporalRevision,
     PlannedUpdate,
     PlannedWrite,
+    ResolvedMutationSelection,
     SelfIncrement,
     TemporalConcurrency,
     TemporalGate,
-    ValidatedMutationSelection,
     Versioned,
     VersionGate,
     WriteTarget,
@@ -430,7 +430,7 @@ def _target_predicate(
     bounds after that guard, so the whole address renders before any gate.
     """
     match target:
-        case ValidatedMutationSelection(predicate=predicate):
+        case ResolvedMutationSelection(predicate=predicate):
             compiled = compile_write_predicate(predicate, meta, dialect, entity)
             if compiled.lowered is None:  # pragma: no cover - compiler always retains proof
                 raise SqlGenError("compiled predicate carries no lowered statement")

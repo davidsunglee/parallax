@@ -7,11 +7,11 @@ from typing import Final, Literal
 from parallax.core.base import INFINITY
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import AttributeMetadata
-from parallax.core.object_query._validated import (
+from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
     ContinuationTerm,
-    ValidatedOrderTerm,
-    ValidatedSeek,
+    ResolvedOrderTerm,
+    ResolvedSeek,
 )
 from parallax.core.sql_gen._context import SqlGenError, StatementBuilder
 from parallax.core.sql_gen._predicate import MemberSubject
@@ -58,7 +58,7 @@ class LoweredTerm:
     was allocated rather than through its position.
     """
 
-    term: ValidatedOrderTerm
+    term: ResolvedOrderTerm
     alias: str
 
     @property
@@ -67,7 +67,7 @@ class LoweredTerm:
 
 
 def lowered_terms(
-    order_by: Sequence[ValidatedOrderTerm], reserved: Set[str] = frozenset()
+    order_by: Sequence[ResolvedOrderTerm], reserved: Set[str] = frozenset()
 ) -> tuple[LoweredTerm, ...]:
     """``order_by`` with each term's capture alias allocated outside ``reserved``.
 
@@ -99,7 +99,7 @@ def null_pattern(coordinate: ContinuationCoordinate) -> NullPattern:
     return tuple(carrier is None for carrier in coordinate.carriers)
 
 
-def emits_null_tail(seek: ValidatedSeek, dialect: Dialect, *, leading_resident: bool) -> bool:
+def emits_null_tail(seek: ResolvedSeek, dialect: Dialect, *, leading_resident: bool) -> bool:
     """Whether this continuing page needs a second arm for the leading NULL tail."""
     return (
         bool(seek.terms)
@@ -140,7 +140,7 @@ def order_clause(terms: Sequence[LoweredTerm], subject: TermSubject, dialect: Di
 
 
 def lower_seek(
-    seek: ValidatedSeek,
+    seek: ResolvedSeek,
     terms: Sequence[LoweredTerm],
     subject: TermSubject,
     ctx: StatementBuilder,
@@ -234,7 +234,7 @@ def _refuse_a_crossed_term(term: ContinuationTerm, lowered: LoweredTerm) -> None
     Every field the two spellings share is compared, not the member alone: the
     order clause reads direction, Null Placement, and nullability off
     :class:`LoweredTerm`, while every branch of the seek reads them off
-    :class:`~parallax.core.object_query._validated.ContinuationTerm`. Agreeing on
+    :class:`~parallax.core.object_query._resolved.ContinuationTerm`. Agreeing on
     the member while disagreeing on any of the three would emit an opposite
     comparator, or measure a branch against a placement the clause did not
     take.

@@ -5,7 +5,7 @@ from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.metamodel import EntityMetadata, Metamodel
-from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery._fetch import execute_read
 from parallax.core.read_delivery._page import INERT_OBSERVER, MaterializationObserver
 from parallax.core.read_delivery._page_reader import (
@@ -31,7 +31,7 @@ __all__ = [
 
 
 def find[Origin](
-    query: ValidatedObjectQuery,
+    query: ResolvedObjectQuery,
     model: CatalogedModel,
     port: DatabaseConnection,
     *,
@@ -73,7 +73,7 @@ def find[Origin](
 
 
 def find_history(
-    query: ValidatedObjectQuery,
+    query: ResolvedObjectQuery,
     model: CatalogedModel,
     port: DatabaseConnection,
     *,
@@ -141,7 +141,7 @@ def deliver_find[Origin, Eager](
 
 
 def deliver_history[Origin, Eager](
-    query: ValidatedObjectQuery,
+    query: ResolvedObjectQuery,
     model: CatalogedModel,
     port: DatabaseConnection,
     *,

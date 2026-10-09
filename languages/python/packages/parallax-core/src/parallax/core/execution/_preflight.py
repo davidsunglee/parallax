@@ -6,7 +6,7 @@ from parallax.core.execution._features import DeferredFeatureError, deferred_fea
 from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.object_query import ObjectQueryNode, validate_object_query
-from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.predicate import ModelRejectedError
 
 __all__ = ["QueryTargetError", "preflight"]
@@ -31,7 +31,7 @@ class QueryTargetError(RuntimeError):
 
 def preflight(
     query: ObjectQueryNode, *, model: Metamodel, form: Literal["rows", "graph"]
-) -> ValidatedObjectQuery:
+) -> ResolvedObjectQuery:
     """Resolve and validate ``query`` against ``model``, and do no I/O.
 
     Target resolution follows the reference-position rule every validator and
@@ -60,7 +60,7 @@ def preflight(
             "the connected model declares no Entity for this read's target "
             "(query-target-not-in-model)"
         )
-    validated = validate_object_query(root, query, model)
+    resolved = validate_object_query(root, query, model)
     deferred = deferred_features(query)
     if deferred:
         raise DeferredFeatureError(deferred)
@@ -69,7 +69,7 @@ def preflight(
             "a row-form read materializes no relationships, so it carries no deep-fetch "
             "levels; request the graph form to materialize a related level"
         )
-    return validated
+    return resolved
 
 
 def fetches_relationships(query: ObjectQueryNode) -> bool:

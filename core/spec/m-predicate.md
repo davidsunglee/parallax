@@ -613,21 +613,36 @@ is fixed by `m-sql`.
 
 Public Wire predicate nodes are untrusted serialized syntax. Predicate
 elaboration consumes that syntax plus the accepted model and returns one private
-immutable `ValidatedPredicate` whose variants mirror the authored Predicate union
-one for one. The product is not a second public AST and has no serialization
-contract. Construction is restricted to this module so illegal
-subject/operator/literal combinations are not representable downstream.
+immutable `ResolvedPredicate`: a closed union of Boolean constants and
+composition, scalar operations, subtype narrowing, Value Object quantifiers, and
+relationship semi-joins. It is the sole execution representation of a predicate,
+not a second public AST, and has no serialization contract. Construction is
+restricted to this module so illegal subject/operator/literal combinations are
+not representable downstream.
 
-Every validated occurrence retains its corresponding authored node for
-diagnostics. A typed value occurrence additionally retains the exact resolved
-leaf Attribute and its complete managed operand shape: one value for comparison,
-two ordered bounds for `between`, or one managed tuple for membership rather than
-one wrapper per element. Recursive variants retain validated children,
-string-pattern variants retain their existing non-codec facts, and no variant
-carries storage placement, bind form, or precomputed SQL text. Reusing one
-authored node at two semantic positions creates two validated occurrences;
-repeating one validated occurrence across physical SQL branches reuses that
-occurrence.
+Each variant retains only its resolved facts, never its authored node. A scalar
+operation retains its operator, the exact resolved member it reads from the
+current position — an Attribute, or a Value Object leaf — and its complete
+managed operand shape: one value for comparison, two ordered bounds for
+`between`, or one managed tuple for membership rather than one wrapper per
+element. A string match retains its pattern text and whether it folds case, and a
+null check its member alone. The nested operator family resolves to the same
+operators as the attribute family; which family it was authored in is not a
+retained fact. Recursive variants retain resolved children, and no variant
+carries storage placement or precomputed SQL text. Reusing one authored node at
+two semantic positions creates two resolved occurrences; repeating one resolved
+occurrence across physical SQL branches reuses that occurrence.
+
+Elaboration interprets existence and many-crossing grammar directly into
+resolved scopes. `nestedExists` / `nestedNotExists` resolve to an `any` / `none`
+quantifier over the occurrence at their path, with the elaborated element
+`where` bound to its element. A flat nested predicate whose path crosses a
+`many` occurrence resolves to an `any` quantifier over the first such
+occurrence, binding the operation to that occurrence's element — exactly the
+any-element reading above. A relationship `exists`, `notExists`, or `navigate`
+resolves to a semi-join retaining the relationship direction, its target, both
+join endpoints, its polarity, and its optional interior predicate resolved at the
+target's position.
 
 Elaboration dispatches exhaustively over the closed authored union. For each
 typed literal it resolves the subject and operator first, calls
@@ -635,12 +650,14 @@ typed literal it resolves the subject and operator first, calls
 the authored node. A new authored variant therefore requires both an elaboration
 arm and a lowering arm rather than falling through a default.
 
-This module also owns private generated-node operations. A generated scalar term
-receives an exact resolved Attribute and managed value, checks managed membership,
-calls `m-wire.encodeWire` once to construct the ordinary authored node, and adopts
-the managed value directly in the corresponding validated occurrence. Generated
-membership does the same for one already-owned managed tuple. Neither operation
-decodes its own output, and no consumer constructs validated variants directly.
+This module also owns private generated-term operations. A generated scalar term
+receives an exact resolved Attribute and managed value, checks managed
+membership, and adopts the value directly in a resolved comparison; a framework
+sentinel such as the `m-core` infinity bound is adopted as a framework operand
+instead. Generated membership adopts one already-owned managed tuple, or a
+deferred key set bound after compilation. Neither operation encodes or decodes a
+literal. Consumers compose and rewrite only already-resolved occurrences; none
+resolves a member or admits an operand again.
 
 `m-object-query` stores this elaborated product. `m-sql` and `m-deep-fetch`
 compile it without resolving paths, inferring types, decoding literals, or

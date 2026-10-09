@@ -61,11 +61,11 @@ from parallax.core.write_plan.steps import (
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedUpdate,
+    ResolvedMutationSelection,
     SelfIncrement,
     Shortfall,
     TemporalConcurrency,
     TemporalGate,
-    ValidatedMutationSelection,
     Versioned,
     VersionGate,
     WriteRow,
@@ -262,9 +262,9 @@ def test_a_predicate_target_implies_unversioned_and_an_unbounded_effect(
 ) -> None:
     # A readless predicate resolves no rows, so it can carry no per-row observed
     # version and can promise no row count: a zero-row match succeeds.
-    with pytest.raises(ValueError, match="Validated Mutation Selection is readless"):
+    with pytest.raises(ValueError, match="Resolved Mutation Selection is readless"):
         _delete(
-            ValidatedMutationSelection(
+            ResolvedMutationSelection(
                 _ACCOUNT_META, validate_predicate(_ACCOUNT_META, All(), _ACCOUNT_MODEL)
             ),
             concurrency,

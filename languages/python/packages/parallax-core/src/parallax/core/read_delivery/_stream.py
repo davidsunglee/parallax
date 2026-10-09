@@ -13,7 +13,7 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._validated import ContinuationCoordinate, ValidatedObjectQuery
+from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
 from parallax.core.read_delivery._delivery import temporal_shape
 from parallax.core.read_delivery._page import EXCEPTION_MACHINERY, InvalidData, InvalidDataError
 from parallax.core.read_delivery._page_reader import StreamPageResult
@@ -22,8 +22,8 @@ from parallax.core.read_delivery._publication import Publication
 from parallax.core.temporal_read import (
     Pin,
     TemporalShape,
-    scans_validated_axis,
-    validated_query_pin,
+    resolved_query_pin,
+    scans_resolved_axis,
 )
 
 __all__ = [
@@ -83,7 +83,7 @@ class StreamScope[R, Origin](Protocol):
 
     def begin(self) -> R: ...
 
-    def validated(self, read: R, node: ObjectQueryNode, /) -> ValidatedObjectQuery: ...
+    def resolved(self, read: R, node: ObjectQueryNode, /) -> ResolvedObjectQuery: ...
 
     def page(
         self,
@@ -300,15 +300,15 @@ class StreamDelivery[R: StreamRead[Any], P: Publication[Any, Any]]:
         self._publication = publication
         try:
             meta = read.meta
-            validated = self._scope.validated(read, self._node)
+            resolved = self._scope.resolved(read, self._node)
             self._paging = PagingPlan(
-                continuation.plan(validated, meta), self._batch_size, self._node.limit
+                continuation.plan(resolved, meta), self._batch_size, self._node.limit
             )
-            if scans_validated_axis(validated.temporal):
-                self._milestones = temporal_shape(meta, validated.root)
+            if scans_resolved_axis(resolved.temporal):
+                self._milestones = temporal_shape(meta, resolved.root)
                 self._pin = Pin()
             else:
-                self._pin = validated_query_pin(validated.temporal)
+                self._pin = resolved_query_pin(resolved.temporal)
             self._read = read
             self._activity = read.open_stream(
                 self._node.target, publication.interface, self._batch_size

@@ -21,12 +21,12 @@ from parallax.core.dialect import POSTGRES, LockMode
 from parallax.core.metamodel import Metamodel
 from parallax.core.metamodel import TemporalDimension as AxisKind
 from parallax.core.object_query import AsOf, OrderKey, object_query, validate_object_query
-from parallax.core.object_query._validated import (
+from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
     ContinuationTerm,
     Paging,
-    ValidatedObjectQuery,
-    ValidatedSeek,
+    ResolvedObjectQuery,
+    ResolvedSeek,
 )
 from parallax.core.predicate import All
 from parallax.core.sql_gen import SqlGenError
@@ -70,7 +70,7 @@ def _planned(model: Metamodel, target: str, *keys: OrderKey) -> continuation.Con
 
 
 def _lowered(
-    model: Metamodel, node: ValidatedObjectQuery, *, lock: LockMode | None = None
+    model: Metamodel, node: ResolvedObjectQuery, *, lock: LockMode | None = None
 ) -> LoweredStatement:
     return compile_entity_query(
         deep_fetch.plan(node, model, projection=_PROJECTION).root,
@@ -110,9 +110,9 @@ def test_a_text_compared_resident_carrier_crosses_as_the_text_it_already_is() ->
     assert statement.wire_binds()[2] == "2024-01-05"
 
 
-def _crossed(node: ValidatedObjectQuery, terms: tuple[ContinuationTerm, ...]) -> object:
+def _crossed(node: ResolvedObjectQuery, terms: tuple[ContinuationTerm, ...]) -> object:
     coordinate = ContinuationCoordinate(tuple(range(len(terms))))
-    return replace(node, paging=Paging(seek=ValidatedSeek(terms, coordinate)))
+    return replace(node, paging=Paging(seek=ResolvedSeek(terms, coordinate)))
 
 
 def test_a_seek_over_more_terms_than_the_page_orders_by_is_refused_by_count() -> None:
@@ -205,7 +205,7 @@ def test_a_coordinate_carried_at_another_width_than_the_order_is_refused() -> No
     crossed = replace(
         node,
         paging=Paging(
-            seek=ValidatedSeek(
+            seek=ResolvedSeek(
                 (ContinuationTerm(key.member.identity, "asc", "last", False),),
                 ContinuationCoordinate((1, 2)),
             )

@@ -272,7 +272,7 @@ member, and an inadmissible window before both.
 
 `PreparedKeyedWrite` carries the exact target, deeply owned managed rows, and
 prepared temporal bounds. `PreparedPredicateWrite` carries its
-`ValidatedMutationSelection`, ordered managed assignments, and prepared temporal
+`ResolvedMutationSelection`, ordered managed assignments, and prepared temporal
 bounds. `PreparedTargetWrite` carries the exact target, its one owned managed row,
 prepared temporal bounds, whether it replaces, and its validated starting
 expectation — an expected version, an expected Transaction-Time start, or the

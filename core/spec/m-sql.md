@@ -1,6 +1,6 @@
 # m-sql — SQL Generation & Equivalence Contract
 
-`m-sql` is the contract that turns validated read and planned-write products
+`m-sql` is the contract that turns resolved read and planned-write products
 into per-dialect SQL, and the rules that make "equivalent SQL per database"
 **testable**. `m-sql` depends on `m-object-query` and `m-deep-fetch` (resolved
 flat reads), `m-predicate` (elaborated selections), `m-write-plan` (planned
@@ -10,8 +10,8 @@ It reads canonical model identities from `m-metamodel`, family and
 discriminator semantics from `m-inheritance`, physical Tables and slots from
 `m-storage-layout`, and compiled relationship directions from `m-relationship`.
 
-The read compiler accepts one `ValidatedEntityQuery`: the exact target Entity
-Identity, a validated predicate with temporal terms already injected, optional
+The read compiler accepts one `ResolvedEntityQuery`: the exact target Entity
+Identity, a resolved predicate with temporal terms already injected, optional
 query-wide narrowing, ordered result keys, resolved projection, and an optional
 row cap. Compilation lowers those already-resolved fields; it does not discover
 them by peeling query-wide clauses out of a public query and does not receive an
@@ -22,14 +22,14 @@ accepted model to perform another resolution pass.
 SQL compilation is private behind two closed entry points:
 
 ```text
-compileResolvedRead(ValidatedEntityQuery, Dialect) -> CompiledRead
+compileResolvedRead(ResolvedEntityQuery, Dialect) -> CompiledRead
 compilePlannedWrite(PlannedWrite, StepPayload, Dialect) -> LoweredStatement
 
 StepPayload = [RowPayload] | AssignmentPayload | none
 ```
 
 Neither entry point accepts a public Object Query, Predicate, Write Instruction,
-authored member name, or raw serialized literal. A `ValidatedEntityQuery` carries
+authored member name, or raw serialized literal. A `ResolvedEntityQuery` carries
 exact target/member identities, an elaborated predicate of managed values,
 resolved temporal terms and ordering, and compact result metadata sufficient for
 row decoding and deep-fetch key gathering. A `PlannedWrite` carries the closed
@@ -583,7 +583,7 @@ the inheritance discriminator is lifted, and carries it as the read's
 `ContinuationCoordinate`. Byte-like carriers are copied at capture, so a coordinate
 never holds a buffer the provider still owns.
 
-**Seek.** A paging state's `ValidatedSeek` lowers to the lexicographic branch tree,
+**Seek.** A paging state's `ResolvedSeek` lowers to the lexicographic branch tree,
 conjoined after the caller's own predicate:
 
 ```text

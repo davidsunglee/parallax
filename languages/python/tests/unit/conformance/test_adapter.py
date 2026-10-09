@@ -38,6 +38,7 @@ from parallax.core.predicate import (
     NestedExists,
 )
 from parallax.core.predicate import serialize as serialize_predicate
+from parallax.core.predicate._resolved import ResolvedComparison
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPredicateWrite
@@ -128,8 +129,8 @@ assignments:
     )
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
     assert isinstance(prepared, PreparedPredicateWrite)
-    assert prepared.selection.predicate.operands is not None
-    assert prepared.selection.predicate.operands.values == (decimal.Decimal("200.00"),)
+    assert isinstance(prepared.selection.predicate, ResolvedComparison)
+    assert prepared.selection.predicate.value == decimal.Decimal("200.00")
     assert prepared.managed_assignments[0].value == decimal.Decimal("0.00")
 
 
@@ -418,9 +419,9 @@ temporal:
         "2024-03-01T00:00:00.000000Z",
     )
     root = model_facts.case_entity(model, normalized.target.canonical)
-    validated = validate_object_query(root, normalized, model)
-    assert validated.predicate.operands is not None
-    assert validated.predicate.operands.values == (decimal.Decimal("200.00"),)
+    resolved = validate_object_query(root, normalized, model)
+    assert isinstance(resolved.predicate, ResolvedComparison)
+    assert resolved.predicate.value == decimal.Decimal("200.00")
 
 
 def test_case_query_adapter_does_not_widen_the_timestamp_string_grammar() -> None:

@@ -1,12 +1,12 @@
-"""Relationship-navigation canonicalization unit tests (m-navigate).
+"""Relationship-navigation hop-term propagation unit tests (m-navigate).
 
-Exercises `parallax.core.navigate.canonicalize_validated` independently of the
+Exercises `parallax.core.navigate.propagate_hop_terms` independently of the
 Docker-gated compile/run sweeps: per-hop as-of propagation (declared-axis
 matching, the latest default, a non-temporal hop carrying no term, a temporal
 hop reached from a polymorphic position resolving through the family root),
 multi-hop propagation of the SAME root pin, and the strict-identity rule for a
 navigation-free predicate. The as-of assertions read the `where` clause the
-validated planning path lowers each read to.
+resolved planning path lowers each read to.
 """
 
 from __future__ import annotations
@@ -21,9 +21,10 @@ from parallax.core import predicate as oa
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel
-from parallax.core.navigate import canonicalize_validated
+from parallax.core.navigate import propagate_hop_terms
 from parallax.core.object_query import AsOf, TemporalSelection
 from parallax.core.object_query._nodes import TemporalDimension as QueryTemporalDimension
+from parallax.core.predicate._resolved import ResolvedPredicate, ResolvedSemiJoin
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target
@@ -38,15 +39,17 @@ _B_MANAGED = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 _P_MANAGED = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 
 # A hop's bare `Class.relationship` reference resolves relative to the Entity the
-# reference is written against, so every canonicalization names the read's own
-# queried Entity alongside its model.
+# reference is written against, so every resolution names the read's own queried
+# Entity alongside its model.
 ORDER = target(ORDERS, "Order")
 LEASE_ENTITY = target(LEASE, "Lease")
 
 
-def _canonical(op: oa.PredicateNode, model: Metamodel, entity: EntityMetadata) -> oa.PredicateNode:
-    """``op`` validated against ``entity`` and canonicalized, as authored."""
-    return canonicalize_validated(oa.validate_predicate(entity, op, model), model, entity).authored
+def _propagated(
+    op: oa.PredicateNode, model: Metamodel, entity: EntityMetadata
+) -> ResolvedPredicate:
+    """``op`` resolved against ``entity`` with its hop terms propagated."""
+    return propagate_hop_terms(oa.validate_predicate(entity, op, model), model)
 
 
 def _where(
@@ -84,9 +87,9 @@ def _where(
     ],
     ids=["navigation-free", "unfiltered"],
 )
-def test_canonicalization_is_identity_without_any_navigation_node(op: oa.PredicateNode) -> None:
+def test_propagation_is_identity_without_any_navigation_node(op: oa.PredicateNode) -> None:
     product = oa.validate_predicate(ORDER, op, ORDERS)
-    assert canonicalize_validated(product, ORDERS, ORDER) is product
+    assert propagate_hop_terms(product, ORDERS) is product
 
 
 def test_walk_recurses_through_predicate_combinators_only() -> None:
@@ -99,37 +102,27 @@ def test_walk_recurses_through_predicate_combinators_only() -> None:
     ]
     for op in wrapped_ops:
         product = oa.validate_predicate(ORDER, op, ORDERS)
-        canonical = canonicalize_validated(product, ORDERS, ORDER)
-        assert canonical is not product
-        assert type(canonical.authored) is type(op), op
-
-
-def test_validated_walk_rebuilds_not_and_group_wrappers_around_navigation() -> None:
-    for authored in (
-        oa.Not(operand=oa.Exists(rel="Order.items")),
-        oa.Group(operand=oa.Exists(rel="Order.items")),
-    ):
-        product = oa.validate_predicate(ORDER, authored, ORDERS)
-
-        canonical = canonicalize_validated(product, ORDERS, ORDER, {})
-
-        assert type(canonical.authored) is type(authored)
+        propagated = propagate_hop_terms(product, ORDERS)
+        assert propagated is not product
+        assert type(propagated) is type(product), op
+        assert propagated == product, op
 
 
 # --------------------------------------------------------------------------- #
 # Non-temporal relationship target: no as-of term at all.                     #
 # --------------------------------------------------------------------------- #
 def test_non_temporal_target_carries_no_as_of_term() -> None:
-    inner = oa.Comparison(op="eq", attr="OrderItem.sku", value="A-100")
-    canonical = _canonical(oa.Exists(rel="Order.items", op=inner), ORDERS, ORDER)
-    assert isinstance(canonical, oa.Exists)
-    assert canonical.op == inner
+    op = oa.Exists(
+        rel="Order.items", op=oa.Comparison(op="eq", attr="OrderItem.sku", value="A-100")
+    )
+    product = oa.validate_predicate(ORDER, op, ORDERS)
+    assert propagate_hop_terms(product, ORDERS) is product
 
 
-def test_non_temporal_bare_hop_stays_op_none() -> None:
-    canonical = _canonical(oa.Exists(rel="Order.items"), ORDERS, ORDER)
-    assert isinstance(canonical, oa.Exists)
-    assert canonical.op is None
+def test_non_temporal_bare_hop_stays_without_an_interior() -> None:
+    propagated = _propagated(oa.Exists(rel="Order.items"), ORDERS, ORDER)
+    assert isinstance(propagated, ResolvedSemiJoin)
+    assert propagated.where is None
 
 
 # --------------------------------------------------------------------------- #
@@ -147,10 +140,11 @@ def test_non_temporal_root_reaching_a_temporal_target_defaults_every_axis_to_lat
 
 
 def test_temporal_root_reaching_a_non_temporal_target_carries_no_as_of_term() -> None:
-    inner = oa.Comparison(op="eq", attr="LeaseNote.text", value="renewed")
-    canonical = _canonical(oa.Exists(rel="Lease.notes", op=inner), LEASE, LEASE_ENTITY)
-    assert isinstance(canonical, oa.Exists)
-    assert canonical.op == inner
+    op = oa.Exists(
+        rel="Lease.notes", op=oa.Comparison(op="eq", attr="LeaseNote.text", value="renewed")
+    )
+    product = oa.validate_predicate(LEASE_ENTITY, op, LEASE)
+    assert propagate_hop_terms(product, LEASE) is product
 
 
 # --------------------------------------------------------------------------- #
@@ -277,7 +271,7 @@ def test_multi_hop_propagates_the_same_root_pin_to_every_hop() -> None:
 
 # --------------------------------------------------------------------------- #
 # Polymorphic relationship target: the family ROOT declares the as-of axes,   #
-# so canonicalization resolves through it even when the relationship names    #
+# so propagation resolves through it even when the relationship names        #
 # an abstract subtype or a concrete leaf (m-inheritance "temporal axes are    #
 # declared on the family's abstract root and inherited by every concrete").   #
 # No corpus model combines a polymorphic target with a temporal family, so    #

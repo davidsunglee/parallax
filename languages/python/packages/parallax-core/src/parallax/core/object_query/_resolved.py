@@ -13,63 +13,62 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     TemporalDimension,
 )
-from parallax.core.object_query._nodes import ObjectQueryNode, OrderKey
-from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.predicate._resolved import ResolvedPredicate
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedLatestSelection:
+class ResolvedLatestSelection:
     axis: AsOfAxisMetadata
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedHistorySelection:
+class ResolvedHistorySelection:
     axis: AsOfAxisMetadata
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedAsOfSelection:
+class ResolvedAsOfSelection:
     axis: AsOfAxisMetadata
     coordinate: ManagedValue
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedRangeSelection:
+class ResolvedRangeSelection:
     axis: AsOfAxisMetadata
     start: ManagedValue
     end: ManagedValue
 
 
-type ValidatedTemporalSelection = (
-    ValidatedLatestSelection
-    | ValidatedHistorySelection
-    | ValidatedAsOfSelection
-    | ValidatedRangeSelection
+type ResolvedTemporalSelection = (
+    ResolvedLatestSelection
+    | ResolvedHistorySelection
+    | ResolvedAsOfSelection
+    | ResolvedRangeSelection
 )
 
 
 def latest_temporal_selections(
     root: EntityMetadata,
-) -> tuple[ValidatedTemporalSelection, ...]:
+) -> tuple[ResolvedTemporalSelection, ...]:
     """Produce resolved Latest selections for an internal mutation read."""
-    return tuple(ValidatedLatestSelection(axis) for axis in root.declared_as_of_axes)
+    return tuple(ResolvedLatestSelection(axis) for axis in root.declared_as_of_axes)
 
 
 def selections_at_valid_time(
     root: EntityMetadata, instant: ManagedValue
-) -> tuple[ValidatedTemporalSelection, ...]:
+) -> tuple[ResolvedTemporalSelection, ...]:
     """Produce resolved selections for an internal mutation read as of
     ``instant`` on Valid Time and at Latest on every other axis."""
     return tuple(
-        ValidatedAsOfSelection(axis, instant)
+        ResolvedAsOfSelection(axis, instant)
         if axis.dimension is TemporalDimension.VALID_TIME
-        else ValidatedLatestSelection(axis)
+        else ResolvedLatestSelection(axis)
         for axis in root.declared_as_of_axes
     )
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedOrderTerm:
+class ResolvedOrderTerm:
     member: AttributeMetadata
     direction: Literal["asc", "desc"]
     nulls: Literal["first", "last"]
@@ -119,7 +118,7 @@ class ContinuationCoordinate:
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedSeek:
+class ResolvedSeek:
     """The roots a page admits: everything strictly after ``coordinate``.
 
     ``terms`` is the WHOLE Continuation Order — the authored Sort Keys, the
@@ -144,11 +143,11 @@ class Paging:
     and an eager read carries no ``Paging`` at all.
     """
 
-    seek: ValidatedSeek | None = None
+    seek: ResolvedSeek | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedIncludeSegment:
+class ResolvedIncludeSegment:
     relationship: RelationshipIdentity
     target: EntityMetadata
     position: tuple[EntityIdentity, ...]
@@ -156,21 +155,20 @@ class ValidatedIncludeSegment:
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedIncludePath:
+class ResolvedIncludePath:
     source_position: tuple[EntityIdentity, ...]
-    segments: tuple[ValidatedIncludeSegment, ...]
+    segments: tuple[ResolvedIncludeSegment, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedObjectQuery:
-    """The complete resolved meaning of one accepted authored query."""
+class ResolvedObjectQuery:
+    """The complete resolved meaning of one accepted query."""
 
-    authored: ObjectQueryNode
     root: EntityMetadata
-    predicate: ValidatedPredicate
-    temporal: tuple[ValidatedTemporalSelection, ...]
-    order_by: tuple[ValidatedOrderTerm, ...]
-    includes: tuple[ValidatedIncludePath, ...]
+    predicate: ResolvedPredicate
+    temporal: tuple[ResolvedTemporalSelection, ...]
+    order_by: tuple[ResolvedOrderTerm, ...]
+    includes: tuple[ResolvedIncludePath, ...]
     narrow_to: tuple[EntityMetadata, ...] | None
     limit: int | None
     paging: Paging | None = None
@@ -181,39 +179,23 @@ def resolved_order_term(
     *,
     direction: Literal["asc", "desc"],
     nulls: Literal["first", "last"],
-) -> ValidatedOrderTerm:
+) -> ResolvedOrderTerm:
     """Produce a generated resolved order term inside the owner module."""
-    return ValidatedOrderTerm(member, direction, nulls)
+    return ResolvedOrderTerm(member, direction, nulls)
 
 
 def derive_page(
-    base: ValidatedObjectQuery,
+    base: ResolvedObjectQuery,
     *,
     paging: Paging,
-    order_by: tuple[ValidatedOrderTerm, ...],
+    order_by: tuple[ResolvedOrderTerm, ...],
     limit: int,
-) -> ValidatedObjectQuery:
+) -> ResolvedObjectQuery:
     """Derive one page without re-resolving any accepted clause.
 
     The seek rides on ``paging`` rather than on the predicate: a coordinate is a
-    physical carrier the database evaluated, while an authored predicate admits
+    physical carrier the database evaluated, while a resolved predicate holds
     only managed operands. A page's own predicate is therefore the caller's,
     untouched.
     """
-    authored_order = tuple(
-        base.authored.order_by[index]
-        if index < len(base.order_by) and term == base.order_by[index]
-        else OrderKey(
-            attr=f"{term.member.identity.entity.canonical}.{term.member.identity.name}",
-            direction=term.direction,
-            nulls=None,
-        )
-        for index, term in enumerate(order_by)
-    )
-    return replace(
-        base,
-        authored=replace(base.authored, order_by=authored_order, limit=limit),
-        order_by=order_by,
-        limit=limit,
-        paging=paging,
-    )
+    return replace(base, order_by=order_by, limit=limit, paging=paging)

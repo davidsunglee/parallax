@@ -101,7 +101,7 @@ from parallax.core.write_plan.steps import (
     PlannedRow,
     PlannedUpdate,
     PlannedWrite,
-    ValidatedMutationSelection,
+    ResolvedMutationSelection,
     Versioned,
     VersionGate,
 )
@@ -808,9 +808,9 @@ def test_no_keyed_write_crosses_a_readless_predicate_write_in_either_direction()
     ]
     predicate_step = plan.steps[1]
     assert isinstance(predicate_step, PlannedUpdate)
-    assert isinstance(predicate_step.target, ValidatedMutationSelection)
-    assert predicate_step.target.predicate.authored == predicate_algebra.Comparison(
-        "eq", "Order.id", 1
+    assert isinstance(predicate_step.target, ResolvedMutationSelection)
+    assert predicate_step.target.predicate == predicate_algebra.validate_predicate(
+        predicate_step.target.target, predicate_algebra.Comparison("eq", "Order.id", 1), _ORDERS
     )
 
 
@@ -1320,9 +1320,11 @@ def test_batching_never_touches_a_predicate_write() -> None:
     plan = _plan([predicate], _WALLET)
     (step,) = plan.steps
     assert isinstance(step, PlannedDelete)
-    assert isinstance(step.target, ValidatedMutationSelection)
-    assert step.target.predicate.authored == predicate_algebra.Comparison(
-        "lessThan", "Wallet.balance", "1.00"
+    assert isinstance(step.target, ResolvedMutationSelection)
+    assert step.target.predicate == predicate_algebra.validate_predicate(
+        step.target.target,
+        predicate_algebra.Comparison("lessThan", "Wallet.balance", "1.00"),
+        _WALLET,
     )
 
 
