@@ -44,6 +44,7 @@ from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
     Derivation,
+    DerivedRow,
     Descent,
     ExecutionUnit,
     OwnedEndpoint,
@@ -177,10 +178,10 @@ def test_a_target_range_reads_its_window_and_gates_its_start_on_the_callers_revi
     first, second = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert first.affected_rows.on_shortfall == FAILED_PRECONDITION
     assert second.affected_rows.on_shortfall != FAILED_PRECONDITION
+    # Each rectangle's changed part holds the same complete state: one row.
     assert _windows(bound) == [
         (JAN, MAR, Decimal("100.00")),
-        (MAR, JUN, Decimal("150.00")),
-        (JUN, SEP, Decimal("150.00")),
+        (MAR, SEP, Decimal("150.00")),
         (SEP, INFINITY, Decimal("200.00")),
     ]
 
@@ -209,12 +210,11 @@ def test_a_replacement_fills_the_gaps_of_its_extent_once_and_a_destruction_fills
         _deferred_unit(addressed_write(replaces=True, until=None, acctNum="Z", value="9.00")),
         coverage,
     )
+    # Every replaced part and every gap holds the one complete state, so the
+    # whole extent opens as one row.
     assert _windows(replaced) == [
         (JAN, MAR, Decimal("100.00")),
-        (MAR, MAR + dt.timedelta(days=30), Decimal("9.00")),
-        (JUN, DEC, Decimal("9.00")),
-        (MAR + dt.timedelta(days=30), JUN, Decimal("9.00")),
-        (DEC, INFINITY, Decimal("9.00")),
+        (MAR, INFINITY, Decimal("9.00")),
     ]
     # The destruction observed [January, June), so the flush reads only the
     # coverage from June on.
@@ -242,15 +242,14 @@ def test_a_patch_after_a_replacement_keeps_its_extent_and_overlays_its_gaps() ->
     )
     assert _windows(bound) == [
         (JAN, MAR, Decimal("100.00")),
-        (MAR, JUN, Decimal("7.00")),
-        (JUN, SEP, Decimal("7.00")),
+        (MAR, SEP, Decimal("7.00")),
     ]
     opened = [
         {identity.name: value for identity, value in step.entries[0].row.attributes.items()}
         for step in bound.steps
         if isinstance(step, PlannedInsert)
     ]
-    assert [cells["acctNum"] for cells in opened] == ["A", "Y", "Y"]
+    assert [cells["acctNum"] for cells in opened] == ["A", "Y"]
 
 
 def test_a_locking_target_range_reads_its_coverage_under_the_shared_lock_ungated() -> None:
@@ -287,7 +286,7 @@ def test_an_equal_start_is_kept_by_a_guard_on_its_callers_revision_beside_later_
     ("concurrency", "guards", "kinds"),
     [
         ("locking", False, []),
-        ("optimistic", False, [PlannedClose, PlannedInsert, PlannedInsert]),
+        ("optimistic", False, [PlannedClose, PlannedInsert]),
     ],
     ids=["locking", "no-matched-row-count"],
 )
@@ -401,9 +400,7 @@ def test_a_replacement_fills_only_its_own_window_beside_a_disjoint_destruction()
     bound = _bound(unit, gapped)
     assert sorted(_windows(bound), key=lambda window: window[0]) == [  # type: ignore[arg-type, return-value]
         (JAN, FEB, Decimal("100.00")),
-        (FEB, MAR, Decimal("9.00")),
-        (MAR, APR, Decimal("9.00")),
-        (APR, JUN, Decimal("9.00")),
+        (FEB, JUN, Decimal("9.00")),
         (JUN, JUL, Decimal("200.00")),
         (SEP, INFINITY, Decimal("200.00")),
     ]
@@ -447,12 +444,22 @@ def _lineage(
     return tuple((_endpoint(end), TimeInterval(start, end)) for start, end in left)
 
 
+def _derived(rows: tuple[tuple[OwnedEndpoint, TimeInterval], ...]) -> tuple[DerivedRow, ...]:
+    return tuple(DerivedRow(endpoint, coverage, coverage) for endpoint, coverage in rows)
+
+
 def _proven(original: RetainedObservation = WHOLE) -> OpenedRows:
     rows = _lineage(_LEFT)
     return OpenedRows(
         endpoints=frozenset(endpoint for endpoint, _coverage in rows),
-        proofs={original.key: Derivation(original.key, TimeInterval(JAN, INFINITY), None, rows)},
-        descents={endpoint: Descent(coverage, original.key) for endpoint, coverage in rows},
+        proofs={
+            original.key: Derivation(
+                original.key, TimeInterval(JAN, INFINITY), None, _derived(rows)
+            )
+        },
+        descents={
+            endpoint: Descent(coverage, ((original.key, coverage),)) for endpoint, coverage in rows
+        },
     )
 
 
@@ -562,7 +569,7 @@ def test_a_leading_range_records_what_it_derived_from_each_original() -> None:
     (derivation,) = bound.derived
     assert derivation.original == WHOLE.key
     assert derivation.owned is None
-    assert derivation.rows == _lineage(_LEFT)
+    assert derivation.rows == _derived(_lineage(_LEFT))
     assert derivation.valid_time_coverage == TimeInterval(JAN, INFINITY)
     plain = _deferred_unit(addressed_write(valid_from=FEB, until=APR, value="150.00"))
     assert _bound(plain, [WHOLE.evidence.predecessor]).derived == ()  # type: ignore[union-attr]
@@ -587,8 +594,10 @@ def _short_proof() -> OpenedRows:
     rows = _lineage(_LEFT)
     return OpenedRows(
         endpoints=frozenset(endpoint for endpoint, _coverage in rows),
-        proofs={WHOLE.key: Derivation(WHOLE.key, TimeInterval(JAN, MAY), None, rows)},
-        descents={endpoint: Descent(coverage, WHOLE.key) for endpoint, coverage in rows},
+        proofs={WHOLE.key: Derivation(WHOLE.key, TimeInterval(JAN, MAY), None, _derived(rows))},
+        descents={
+            endpoint: Descent(coverage, ((WHOLE.key, coverage),)) for endpoint, coverage in rows
+        },
     )
 
 
@@ -615,8 +624,12 @@ def test_a_following_range_fails_where_another_row_derived_from_its_original_is_
     rows = _lineage(left)
     ownership = OpenedRows(
         endpoints=frozenset(endpoint for endpoint, _coverage in rows),
-        proofs={WHOLE.key: Derivation(WHOLE.key, TimeInterval(JAN, INFINITY), None, rows)},
-        descents={endpoint: Descent(coverage, WHOLE.key) for endpoint, coverage in rows},
+        proofs={
+            WHOLE.key: Derivation(WHOLE.key, TimeInterval(JAN, INFINITY), None, _derived(rows))
+        },
+        descents={
+            endpoint: Descent(coverage, ((WHOLE.key, coverage),)) for endpoint, coverage in rows
+        },
     )
     unit = _chained_unit(addressed_write(valid_from=JUN, until=AUG, value="175.00"))
     # The start stands, but [July, infinity), derived from the same original
@@ -658,3 +671,128 @@ def test_a_callers_start_is_guarded_ahead_of_an_overlapped_observation_it_valida
         T1,
         T0,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Continuation through a merged row: each original proves its own part only.   #
+# --------------------------------------------------------------------------- #
+_SECOND = retained(rectangle(JUN, INFINITY, "200.00", tx_start=T1))
+
+
+def _merged() -> OpenedRows:
+    """What an earlier unit left after amending START [January, June) at T0
+    and _SECOND [June, infinity) at T1 from March until September into one
+    merged row over [March, September)."""
+    head, merged, tail = _endpoint(MAR), _endpoint(SEP), _endpoint(INFINITY)
+    middle = TimeInterval(MAR, SEP)
+    return OpenedRows(
+        endpoints=frozenset({head, merged, tail}),
+        proofs={
+            START.key: Derivation(
+                START.key,
+                TimeInterval(JAN, JUN),
+                None,
+                (
+                    DerivedRow(head, TimeInterval(JAN, MAR), TimeInterval(JAN, MAR)),
+                    DerivedRow(merged, middle, TimeInterval(MAR, JUN)),
+                ),
+            ),
+            _SECOND.key: Derivation(
+                _SECOND.key,
+                TimeInterval(JUN, INFINITY),
+                None,
+                (
+                    DerivedRow(merged, middle, TimeInterval(JUN, SEP)),
+                    DerivedRow(tail, TimeInterval(SEP, INFINITY), TimeInterval(SEP, INFINITY)),
+                ),
+            ),
+        },
+        descents={
+            head: Descent(TimeInterval(JAN, MAR), ((START.key, TimeInterval(JAN, MAR)),)),
+            merged: Descent(
+                middle,
+                ((START.key, TimeInterval(MAR, JUN)), (_SECOND.key, TimeInterval(JUN, SEP))),
+            ),
+            tail: Descent(
+                TimeInterval(SEP, INFINITY), ((_SECOND.key, TimeInterval(SEP, INFINITY)),)
+            ),
+        },
+    )
+
+
+_MERGED_ROW = rectangle(MAR, SEP, "150.00", tx_start=T)
+
+
+@pytest.mark.parametrize(
+    ("valid_from", "until", "tx_start"),
+    [(APR, MAY, T0), (JUL, AUG, T1)],
+    ids=["first-originals-part", "second-originals-part"],
+)
+def test_a_follower_reaches_a_merged_row_through_the_original_whose_part_holds_its_start(
+    valid_from: dt.datetime, until: dt.datetime, tx_start: dt.datetime
+) -> None:
+    unit = _chained_unit(
+        addressed_write(valid_from=valid_from, until=until, tx_start=tx_start, value="175.00")
+    )
+    bound = _bound(unit, [_MERGED_ROW], ownership=_merged())
+    # The merged row is the attempt's own and is revised in place, gated on
+    # nothing the caller stated.
+    assert not any(isinstance(step, PlannedClose) for step in bound.steps)
+    assert any(isinstance(step, PlannedTemporalRevision) for step in bound.steps)
+
+
+@pytest.mark.parametrize(
+    ("valid_from", "until", "tx_start"),
+    [(JUL, AUG, T0), (APR, MAY, T1)],
+    ids=["first-originals-proof-over-the-second-part", "second-originals-proof-over-the-first"],
+)
+def test_one_originals_proof_never_stands_for_another_merged_into_the_same_row(
+    valid_from: dt.datetime, until: dt.datetime, tx_start: dt.datetime
+) -> None:
+    # Both originals share the merged row's address, but the caller's start lies
+    # in the part the other original contributed, whose revision it did not
+    # state.
+    unit = _chained_unit(
+        addressed_write(valid_from=valid_from, until=until, tx_start=tx_start, value="175.00")
+    )
+    with pytest.raises(WritePreconditionError):
+        _bound(unit, [_MERGED_ROW], ownership=_merged())
+
+
+def test_a_follower_fails_where_its_original_lost_a_row_though_its_merged_row_stands() -> None:
+    # The second original's tail [September, infinity) is gone; its merged
+    # part alone does not prove a start the caller states there.
+    unit = _chained_unit(
+        addressed_write(valid_from=JUL, until=OCT, tx_start=T1, value="175.00"),
+    )
+    with pytest.raises(WritePreconditionError):
+        _bound(
+            unit,
+            [_MERGED_ROW, rectangle(SEP, INFINITY, "200.00", tx_start=T1)],
+            ownership=_merged(),
+        )
+
+
+def test_a_start_in_a_merged_part_no_original_contributed_is_the_callers_precondition() -> None:
+    # Only the first original contributed to the merged row; its later part
+    # opened over a gap, so nothing proves a start stated there.
+    head, merged = _endpoint(MAR), _endpoint(SEP)
+    ownership = OpenedRows(
+        endpoints=frozenset({head, merged}),
+        proofs={
+            START.key: Derivation(
+                START.key,
+                TimeInterval(JAN, JUN),
+                None,
+                (DerivedRow(merged, TimeInterval(MAR, SEP), TimeInterval(MAR, JUN)),),
+            )
+        },
+        descents={
+            merged: Descent(TimeInterval(MAR, SEP), ((START.key, TimeInterval(MAR, JUN)),)),
+        },
+    )
+    unit = _chained_unit(
+        addressed_write(valid_from=JUL, until=AUG, tx_start=T0, value="175.00"),
+    )
+    with pytest.raises(WritePreconditionError):
+        _bound(unit, [_MERGED_ROW], ownership=ownership)

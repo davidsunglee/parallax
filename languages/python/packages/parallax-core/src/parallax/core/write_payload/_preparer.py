@@ -59,12 +59,13 @@ class LayoutPayloadPreparer:
     answers. Nothing here chooses authority, preservation, or topology.
     """
 
-    __slots__ = ("_intervals", "_layouts", "_residences")
+    __slots__ = ("_comparisons", "_intervals", "_layouts", "_residences")
 
     def __init__(self, model: Metamodel) -> None:
         self._layouts = storage_layout.view(model)
         self._intervals: dict[EntityIdentity, frozenset[AttributeIdentity]] = {}
         self._residences: dict[EntityIdentity, _Residence | None] = {}
+        self._comparisons: dict[EntityIdentity, _Comparison] = {}
 
     def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
         view = self._view(entity)
@@ -92,16 +93,16 @@ class LayoutPayloadPreparer:
         generated values, members only one row states, and occurrences decide
         nothing here.
         """
-        view = self._view(entity)
-        intervals = self._interval_members(entity, view)
+        documented = self._comparison(entity).scalars
         right_attributes = right.row.attributes
         for identity, value in left.row.attributes.items():
-            if identity in intervals:
+            json = documented.get(identity)
+            if json is None:  # an interval member
                 continue
             other = right_attributes.get(identity, _UNSTATED)
             if other is _UNSTATED or _generated(value) or _generated(other):
                 continue
-            if _scalar_differs(_attribute_type(view, identity), value, other):
+            if _scalar_differs(json, value, other):
                 return True
         return False
 
@@ -114,25 +115,57 @@ class LayoutPayloadPreparer:
         """
         if left.entity != right.entity:
             return False
-        view = self._view(left.entity)
-        columns = view.columns
-        if len(left.values) != len(columns) or len(right.values) != len(columns):
+        cells = self._comparison(left.entity).cells
+        if len(left.values) != len(cells) or len(right.values) != len(cells):
             return False
-        for slot, contributor, other_contributor, value, other in zip(
-            columns,
+        for (slot, kind), contributor, other_contributor, value, other in zip(
+            cells,
             left.contributors,
             right.contributors,
             left.values,
             right.values,
             strict=True,
         ):
-            if contributor != other_contributor or contributor != slot.contributor:
-                return False
-            if slot.tier is ColumnTier.TEMPORAL:
-                continue
-            if not _cell_equal(view, contributor, value, other):
+            if (
+                contributor != other_contributor
+                or contributor != slot
+                or not _cell_equal(kind, value, other)
+            ):
                 return False
         return True
+
+    def rebound(self, payload: RowPayload, write_row: WriteRow) -> RowPayload:
+        source = payload.source
+        entity = payload.entity
+        intervals = self._interval_members(entity, self._view(entity))
+        row = write_row.row
+        before = source.row
+        if (
+            write_row.origin is not source.origin
+            or write_row.executed is not source.executed
+            or row.value_objects is not before.value_objects
+            or len(row.attributes) != len(before.attributes)
+            or any(
+                identity not in intervals and row.attributes.get(identity, _UNSTATED) is not value
+                for identity, value in before.attributes.items()
+            )
+        ):
+            raise WritePlanningError(
+                f"{entity.name!r}: prepared cells rebind only to a row stating what they were "
+                "prepared from outside its temporal interval"
+            )
+        attributes = row.attributes
+        return RowPayload(
+            entity=entity,
+            source=write_row,
+            contributors=payload.contributors,
+            values=tuple(
+                attributes[contributor]
+                if isinstance(contributor, AttributeIdentity) and contributor in intervals
+                else value
+                for contributor, value in zip(payload.contributors, payload.values, strict=True)
+            ),
+        )
 
     def _view(self, entity: EntityIdentity) -> EntityLayoutView:
         view = self._layouts.entity(entity)
@@ -147,6 +180,12 @@ class LayoutPayloadPreparer:
         residence = None if resident is None else _Residence(resident)
         self._residences[entity] = residence
         return residence
+
+    def _comparison(self, entity: EntityIdentity) -> _Comparison:
+        comparison = self._comparisons.get(entity)
+        if comparison is None:
+            comparison = self._comparisons[entity] = _Comparison(self._view(entity))
+        return comparison
 
     def _interval_members(
         self, entity: EntityIdentity, view: EntityLayoutView
@@ -164,6 +203,37 @@ class LayoutPayloadPreparer:
 
 
 type _Cells = tuple[tuple[Hashable, ...], tuple[object, ...]]
+
+_INTERVAL, _DOCUMENT, _JSON, _SCALAR, _EXACT = range(5)
+
+
+class _Comparison:
+    """How one Table's persisted cells compare, resolved once per preparer:
+    each slot's contributor and how its cell compares, and whether each
+    non-interval Attribute stores a ``json`` document."""
+
+    __slots__ = ("cells", "scalars")
+
+    def __init__(self, view: EntityLayoutView) -> None:
+        cells: list[tuple[Hashable, int]] = []
+        scalars: dict[AttributeIdentity, bool] = {}
+        for slot in view.columns:
+            contributor = slot.contributor
+            if slot.tier is ColumnTier.TEMPORAL:
+                kind = _INTERVAL
+            elif isinstance(contributor, RelationalDocument | ValueObjectIdentity):
+                kind = _DOCUMENT
+            elif isinstance(contributor, AttributeIdentity):
+                kind = _JSON if isinstance(_attribute_type(view, contributor), Json) else _SCALAR
+            else:
+                kind = _EXACT
+            cells.append((contributor, kind))
+        intervals = {slot for slot, kind in cells if kind == _INTERVAL}
+        for binding in view.member_selection.bindings:
+            if isinstance(binding, AttributeMetadata) and binding.identity not in intervals:
+                scalars[binding.identity] = isinstance(binding.type, Json)
+        self.cells = tuple(cells)
+        self.scalars = scalars
 
 
 class _Residence:
@@ -434,19 +504,21 @@ def _generated(value: object) -> bool:
     return isinstance(value, MaxPlusOne | SelfIncrement)
 
 
-def _scalar_differs(neutral_type: object, value: object, other: object) -> bool:
-    if value is None or other is None:
-        return value is not other
-    if isinstance(neutral_type, Json):
-        return not persisted_document_equal(value, other)
-    return value != other
-
-
-def _cell_equal(view: EntityLayoutView, contributor: object, value: object, other: object) -> bool:
+def _cell_equal(kind: int, value: object, other: object) -> bool:
+    if kind == _INTERVAL:
+        return True
     if _generated(value) or _generated(other):
         return False
-    if isinstance(contributor, RelationalDocument | ValueObjectIdentity):
+    if kind == _DOCUMENT:
         return persisted_document_equal(value, other)
-    if isinstance(contributor, AttributeIdentity):
-        return not _scalar_differs(_attribute_type(view, contributor), value, other)
-    return value == other
+    if kind == _EXACT:
+        return value == other
+    return not _scalar_differs(kind == _JSON, value, other)
+
+
+def _scalar_differs(json: bool, value: object, other: object) -> bool:
+    if value is None or other is None:
+        return value is not other
+    if json:
+        return not persisted_document_equal(value, other)
+    return value != other

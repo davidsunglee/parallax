@@ -23,7 +23,7 @@ when:
           validFrom: "2024-03-01T00:00:00.000000Z"
           until: "2024-09-01T00:00:00.000000Z"
           at: "2024-10-01T00:00:00.000000Z"
-      note: "position 1 is selected by [January, June) at 100 in March; the window also reaches [June, infinity) at 200, which the predicate does not match and the amendment changes all the same"
+      note: "position 1 is selected by [January, June) at 100 in March; the window also reaches [June, infinity) at 200, which the predicate does not match and the amendment changes all the same, so March through September holds one state and is one row"
     - uow: unmatched
       write:
         - mutation: amendUntil
@@ -45,7 +45,7 @@ when:
         - pos_id: 1
           acct_num: A
           val: "300.00"
-          from_z: "2024-06-01T00:00:00.000000Z"
+          from_z: "2024-03-01T00:00:00.000000Z"
           thru_z: "2024-09-01T00:00:00.000000Z"
           in_z: "2024-10-01T00:00:00.000000Z"
           out_z: infinity
@@ -87,13 +87,6 @@ then:
         acct_num: A
         val: "300.00"
         from_z: "2024-03-01T00:00:00.000000Z"
-        thru_z: "2024-06-01T00:00:00.000000Z"
-        in_z: "2024-10-01T00:00:00.000000Z"
-        out_z: infinity
-      - pos_id: 1
-        acct_num: A
-        val: "300.00"
-        from_z: "2024-06-01T00:00:00.000000Z"
         thru_z: "2024-09-01T00:00:00.000000Z"
         in_z: "2024-10-01T00:00:00.000000Z"
         out_z: infinity

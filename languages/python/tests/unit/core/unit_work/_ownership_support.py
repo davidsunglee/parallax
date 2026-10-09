@@ -34,6 +34,11 @@ class OpenedRows:
     def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
         return endpoint in self.inserted
 
+    def insertion_coverage(
+        self, endpoint: OwnedEndpoint, valid_time_coverage: TimeInterval | None, /
+    ) -> tuple[TimeInterval | None, ...]:
+        return (valid_time_coverage,) if endpoint in self.inserted else ()
+
     def proven(self, original: ObservedStateKey, /) -> Derivation | None:
         return self.proofs.get(original)
 
@@ -41,13 +46,13 @@ class OpenedRows:
         self, original: ObservedStateKey, valid_time_window: TimeInterval | None, /
     ) -> Iterator[tuple[OwnedEndpoint, Descent]]:
         for endpoint, descent in self.descents.items():
-            coverage = descent.valid_time_coverage
-            if descent.original == original and (
-                valid_time_window is None
-                or coverage is None
-                or coverage.overlaps(valid_time_window)
-            ):
-                yield endpoint, descent
+            for contributor, contributed in descent.contributions:
+                if contributor == original and (
+                    valid_time_window is None
+                    or contributed is None
+                    or contributed.overlaps(valid_time_window)
+                ):
+                    yield endpoint, descent
 
     def descent(self, endpoint: OwnedEndpoint, /) -> Descent | None:
         return self.descents.get(endpoint)

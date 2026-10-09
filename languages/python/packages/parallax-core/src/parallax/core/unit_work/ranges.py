@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from operator import attrgetter
 from typing import Final, cast
 
@@ -16,14 +16,12 @@ from parallax.core.temporal_read import (
     milestone_edge,
     valid_time_coverage,
 )
-from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageGap, CoverageTransform
+from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform
 from parallax.core.temporal_write.expansion import (
     ExpansionRole,
     PredecessorExpander,
     TemporalFacts,
     bitemporal_ends,
-    entry_endpoint,
-    openings,
 )
 from parallax.core.unit_work.acquisition import (
     AcquireRows,
@@ -56,12 +54,12 @@ from parallax.core.write_plan.columns import ChunkedColumnBuilder
 from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, TemporalStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
+from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
     TRANSACTION_TIME_ENDS,
     BoundRange,
     CombinedSourceAuthority,
     DeferredRange,
-    Derivation,
     Descent,
     Openings,
     OwnedEndpoint,
@@ -72,7 +70,7 @@ from parallax.core.write_plan.plan import (
     eager_segment,
 )
 from parallax.core.write_plan.planned_rows import assigned_name, resolve_row
-from parallax.core.write_plan.steps import TERMINATED, KeyTarget, PlannedInsert, PlannedValue
+from parallax.core.write_plan.steps import TERMINATED, KeyTarget, PlannedValue
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 __all__ = [
@@ -308,46 +306,31 @@ def _physical(original: _Original) -> tuple[ObservedStateKey, object | None]:
     return original.state, _valid_end(original)
 
 
+def _expansions(
+    starts: Sequence[_Original], validations: Sequence[_Original], originals: Sequence[_Original]
+) -> Iterator[tuple[PredecessorRow, ExpansionRole, ObservedStateKey, TimeInterval | None]]:
+    """Each original in the role it settles in, in the order its own effect
+    runs: the starts, the validations, then every other original."""
+    for original in starts:
+        yield _expanded(original, "starting")
+    for original in validations:
+        yield _expanded(original, "validation")
+    for original in originals:
+        if not starts or all(original is not start for start in starts):
+            yield _expanded(original, "coverage")
+
+
+def _expanded(
+    original: _Original, role: ExpansionRole
+) -> tuple[PredecessorRow, ExpansionRole, ObservedStateKey, TimeInterval | None]:
+    return original.predecessor, role, original.state, original.valid_time_coverage
+
+
 def _valid_end(original: _Original) -> object | None:
     """The Valid-Time end cell ``original`` covers to, which its physical address
     holds; ``None`` on a Transaction-Time-Only object."""
     coverage = original.valid_time_coverage
     return None if coverage is None else coverage.end
-
-
-@dataclass(slots=True)
-class _BoundRangeBuilder:
-    """What binding one range accumulates: every original's own effect before
-    any opening, and the facts its unit publishes, appended as each original
-    settles rather than copied whole each time."""
-
-    effects: list[PlannedStep] = field(default_factory=list[PlannedStep])
-    openings: list[PlannedStep] = field(default_factory=list[PlannedStep])
-    changed: list[ObservedStateKey] = field(default_factory=list[ObservedStateKey])
-    removed: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
-    fresh: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
-    continued: list[OwnedEndpoint] = field(default_factory=list[OwnedEndpoint])
-    derived: list[Derivation] = field(default_factory=list[Derivation])
-
-    def take(self, expansion: BoundRange) -> None:
-        for step in expansion.steps:
-            (self.openings if isinstance(step, PlannedInsert) else self.effects).append(step)
-        self.changed.extend(expansion.changed)
-        self.removed.extend(expansion.removed)
-        opened = expansion.opened
-        self.fresh.extend(opened.fresh)
-        self.continued.extend(opened.continued)
-        self.derived.extend(expansion.derived)
-
-    def range(self, concludes: ObjectKey | None) -> BoundRange:
-        return BoundRange(
-            steps=(*self.effects, *self.openings),
-            changed=tuple(self.changed),
-            removed=tuple(self.removed),
-            opened=Openings(tuple(self.fresh), tuple(self.continued)),
-            derived=tuple(self.derived),
-            concludes=concludes,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,9 +399,10 @@ class _TemporalRangeBinder:
 
         Every original's own effect — a validation, a close, a same-address
         revision, or a removal — runs before any successor opens, so a lost
-        source condition fails before the range writes anything new. Each
-        original expands through the range's one :class:`PredecessorExpander`,
-        and each successor derives from its own original alone.
+        source condition fails before the range writes anything new. The
+        object settles whole through the range's one
+        :class:`PredecessorExpander`, so equal adjacent rows it produces merge
+        while each original keeps its own effect and proof.
 
         A range one of whose writes an insertion authorized requires current
         coverage at that insertion's anchor and fails as a missing target
@@ -438,8 +422,8 @@ class _TemporalRangeBinder:
         extent then opens its complete state over every gap the originals leave.
 
         A pending insertion the range settles with opens what the transform
-        leaves of its own window as new lineages, and its window is coverage no
-        gap opening refills.
+        leaves of its own window as new lineages, ahead of the originals'
+        successors, and its window is coverage no gap opening refills.
         """
         meaning = self.meaning
         self._require_anchor(originals)
@@ -451,63 +435,11 @@ class _TemporalRangeBinder:
             if transform.replaces and isinstance(meaning.facts.shape, Bitemporal)
             else ()
         )
-        concluded = meaning.object_key if concludes else None
-        if seed is not None:
-            return self._settled_with(seed, originals, gaps, concluded)
-        if not starts and not validations and not gaps and len(originals) == 1:
-            # One original's expansion already orders its own effect first.
-            (original,) = originals
-            expansion = self._expanded(original, "coverage")
-            return expansion if concluded is None else replace(expansion, concludes=concluded)
-        bound = _BoundRangeBuilder()
-        for original in starts:
-            bound.take(self._expanded(original, "starting"))
-        for original in validations:
-            bound.take(self._expanded(original, "validation"))
-        for original in originals:
-            if all(original is not start for start in starts):
-                bound.take(self._expanded(original, "coverage"))
-        for gap in gaps:
-            self._open(bound, gap)
-        return bound.range(concluded)
-
-    def _settled_with(
-        self,
-        seed: _OpeningSeed,
-        originals: Sequence[_Original],
-        gaps: Sequence[CoverageGap],
-        concluded: ObjectKey | None,
-    ) -> BoundRange:
-        """The pending insertion ``seed`` settled as one unit with the stored
-        ``originals`` its replacement reaches and the ``gaps`` it establishes:
-        every original's own effect first, then the insertion's surviving
-        parts, the originals' successors, and the gap openings."""
-        bound = _BoundRangeBuilder()
-        inserts = self.expansion.lineage(seed.state, seed.window)
-        bound.openings.extend(inserts)
-        bound.continued.extend(openings(self.meaning.facts, inserts))
-        for original in originals:
-            bound.take(self._expanded(original, "coverage"))
-        for gap in gaps:
-            self._open(bound, gap)
-        return bound.range(concluded)
-
-    def _open(self, bound: _BoundRangeBuilder, gap: CoverageGap) -> None:
-        """Open a replacement's new lineage over ``gap``, after every original's
-        own effect."""
-        facts = self.meaning.facts
-        entry = self.expansion.gap(gap)
-        bound.openings.append(PlannedInsert(entity=facts.entity.identity, entries=(entry,)))
-        endpoint = entry_endpoint(facts, entry)
-        if endpoint is not None:
-            bound.fresh.append(endpoint)
-
-    def _expanded(self, original: _Original, role: ExpansionRole) -> BoundRange:
-        return self.expansion.expand(
-            original.predecessor,
-            role=role,
-            state=original.state,
-            coverage=original.valid_time_coverage,
+        return self.expansion.settle(
+            _expansions(starts, validations, originals),
+            lineage=None if seed is None else (seed.state, seed.window),
+            gaps=gaps,
+            concludes=meaning.object_key if concludes else None,
         )
 
     def _require_anchor(self, originals: Sequence[_Original]) -> None:
@@ -698,14 +630,18 @@ class _TemporalRangeBinder:
         descent = self._opened_here(start)
         if descent is None:
             return False
-        original = descent.original
+        window = condition.valid_time_window
+        # The row holds the caller's start in the part one original contributed;
+        # only that original's proof can stand for the caller's condition there.
+        original = descent.original_at(None if window is None else window.start)
+        if original is None:
+            return False
         proof = self.ownership.proven(original)
         if proof is None or not isinstance(original, TemporalStateKey):
             return False
         milestone = original.milestone
         if milestone.tx_time != condition.expected:
             return False
-        window = condition.valid_time_window
         coverage = proof.valid_time_coverage
         if window is not None and (coverage is None or not coverage.contains(window.start)):
             return False
@@ -762,6 +698,7 @@ def settle_range(
     instant: dt.datetime,
     ownership: TemporalWriteOwnership,
     audit: AuditDecoration,
+    payloads: WritePayloadPreparer,
     guards: bool = False,
 ) -> BoundRange | DeferredTemporalRange:
     """One temporal object's pending writes as a range over its current
@@ -834,7 +771,7 @@ def settle_range(
         )
     for state in retained:
         state.take()
-    return _binding(meaning, ownership, audit).bind(originals, validations)
+    return _binding(meaning, ownership, audit, payloads).bind(originals, validations)
 
 
 def settle_opening(
@@ -846,6 +783,7 @@ def settle_opening(
     instant: dt.datetime,
     ownership: TemporalWriteOwnership,
     audit: AuditDecoration,
+    payloads: WritePayloadPreparer,
     guards: bool = False,
 ) -> BoundRange | DeferredTemporalRange:
     """A pending Bitemporal insertion and the writes its insertion authorized
@@ -871,15 +809,15 @@ def settle_opening(
     key_value = attributes.get(key_attribute)
     transform = opening.transform
     if opening.beyond is None:
-        inserts = PredecessorExpander(
+        return PredecessorExpander(
             facts,
             transform,
             key_attribute=key_attribute,
             gated=gated,
             ownership=ownership,
             audit=audit,
-        ).lineage((attributes, value_objects), window)
-        return BoundRange(steps=inserts, opened=Openings(continued=openings(facts, inserts)))
+            payloads=payloads,
+        ).settle((), lineage=((attributes, value_objects), window))
     meaning = _RangeMeaning(
         facts=facts,
         transform=transform,
@@ -1089,13 +1027,14 @@ def bind_deferred(
     *,
     ownership: TemporalWriteOwnership,
     audit: AuditDecoration,
+    payloads: WritePayloadPreparer,
 ) -> BoundRange:
     """``description`` bound to the current rows its window holds — the
     starting rows it ``reused`` and the coverage ``acquired`` beside them —
     through the same binding a range known at planning takes, under the
     attempt's current ``ownership``, every produced row finalized and every
     emitted close decorated once."""
-    binding = _binding(description.meaning, ownership, audit)
+    binding = _binding(description.meaning, ownership, audit, payloads)
     current = binding.read(acquired if reused is None else (reused, *acquired))
     if description.continued:
         originals, discharged = binding.continued(
@@ -1106,7 +1045,10 @@ def bind_deferred(
 
 
 def _binding(
-    meaning: _RangeMeaning, ownership: TemporalWriteOwnership, audit: AuditDecoration
+    meaning: _RangeMeaning,
+    ownership: TemporalWriteOwnership,
+    audit: AuditDecoration,
+    payloads: WritePayloadPreparer,
 ) -> _TemporalRangeBinder:
     return _TemporalRangeBinder(
         meaning,
@@ -1121,6 +1063,7 @@ def _binding(
             derives=meaning.derives,
             ownership=ownership,
             audit=audit,
+            payloads=payloads,
         ),
     )
 
@@ -1229,8 +1172,10 @@ class GroupContinuation:
         "_meaning",
         "_next",
         "_ownership",
+        "_removed",
         "_rows",
         "_selection",
+        "_shared",
     )
 
     def __init__(
@@ -1240,6 +1185,7 @@ class GroupContinuation:
         acquire_rows: AcquireRows,
         ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
+        payloads: WritePayloadPreparer,
     ) -> None:
         evidence = description.starting.take()
         if evidence is None:
@@ -1266,10 +1212,13 @@ class GroupContinuation:
             guards=meaning.guards,
             ownership=ownership,
             audit=audit,
+            payloads=payloads,
         )
         self._changed: ChunkedColumnBuilder[ObservedStateKey] = ChunkedColumnBuilder()
+        self._removed: ChunkedColumnBuilder[OwnedEndpoint] = ChunkedColumnBuilder()
         self._fresh: ChunkedColumnBuilder[OwnedEndpoint] = ChunkedColumnBuilder()
         self._continued: ChunkedColumnBuilder[OwnedEndpoint] = ChunkedColumnBuilder()
+        self._shared: list[tuple[OwnedEndpoint, tuple[TimeInterval, ...]]] = []
 
     def pull(self) -> PlannedWrites | None:
         """The next batch's steps, settled once its coverage is read, or
@@ -1294,11 +1243,14 @@ class GroupContinuation:
         """What every batch's success publishes, once no batch remains."""
         if not self._exhausted:
             raise ValueError("a deferred group's effects are final only once every batch ran")
-        # An amendment leaves every row it reaches a successor ending where the
-        # row ends, so no row it reaches is removed.
         return UnitEffects(
             changed=self._changed.build(),
-            opened=Openings(fresh=self._fresh.build(), continued=self._continued.build()),
+            removed=self._removed.build(),
+            opened=Openings(
+                fresh=self._fresh.build(),
+                continued=self._continued.build(),
+                shared=tuple(self._shared),
+            ),
         )
 
     def close(self) -> None:
@@ -1308,8 +1260,10 @@ class GroupContinuation:
         self._rows = []
         self._documents = None
         self._changed = ChunkedColumnBuilder()
+        self._removed = ChunkedColumnBuilder()
         self._fresh = ChunkedColumnBuilder()
         self._continued = ChunkedColumnBuilder()
+        self._shared = []
 
     def _start(self, index: int) -> tuple[object, _Original]:
         """The ``index``-th selected object's key beside the row it was
@@ -1368,11 +1322,14 @@ class GroupContinuation:
     def _record(self, bound: BoundRange) -> None:
         for state in bound.changed:
             self._changed.append(state)
+        for endpoint in bound.removed:
+            self._removed.append(endpoint)
         opened = bound.opened
         for endpoint in opened.fresh:
             self._fresh.append(endpoint)
         for endpoint in opened.continued:
             self._continued.append(endpoint)
+        self._shared.extend(opened.shared)
 
 
 def _distinct(reads: Sequence[list[_Original]]) -> list[_Original]:

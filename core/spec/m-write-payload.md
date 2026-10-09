@@ -20,6 +20,7 @@ WritePayloadPreparer(model)
   row(entity, WriteRow)                   -> RowPayload
   proven_unequal_non_interval(entity, WriteRow, WriteRow) -> Boolean
   equal_non_interval(RowPayload, RowPayload)              -> Boolean
+  rebound(RowPayload, WriteRow)                           -> RowPayload
 ```
 
 The interface and its result vocabulary are `m-write-plan`'s; this module
@@ -92,3 +93,15 @@ exact managed values at their Neutral Type, without preparing any document.
 `true` proves the persisted states differ; `false` proves nothing, and a caller
 needing equality must compare the prepared rows. Interval members, generated
 values, members only one row states, and occurrences decide nothing here.
+
+## Rebinding prepared cells to a merged interval
+
+`rebound` answers a Row Payload's cells for a Write Row that states exactly what
+the payload was prepared from outside its temporal interval — the same origin,
+executed selection, occurrences, and every other Attribute value — and a
+different interval: the prepared values stay, and only the interval cells take
+the row's own. That is how a row merged from identical produced rows
+(`m-temporal-write` *Merging produced successors*) stores the cells its
+comparison already prepared, without finalizing, encoding, or comparing them
+again. A row stating anything else outside its interval is refused rather than
+given cells prepared from other inputs.

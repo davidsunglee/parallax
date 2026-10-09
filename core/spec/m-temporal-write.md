@@ -279,8 +279,9 @@ coordinated*):
   replacement does (*Caller-addressed writes span their requested extent*).
   Its authority is its source's: a source whose evidence or insertion
   authority fails licenses no opening, so a replacement is never an upsert;
-- a rectangle outside the extent is untouched, and adjacent pieces are never
-  merged across two rectangles;
+- a rectangle outside the extent is untouched; adjacent pieces the write opens
+  merge where their stored state is identical (*Merging produced successors*),
+  never with an untouched or unchanged rectangle;
 - every rectangle's inactivation precedes every opening (`m-sql`).
 
 The observed rectangle is addressed and gated as an inactivation always is. A
@@ -303,7 +304,8 @@ write's other rectangles are inactivated and reopened as above, so a range
 assigning 100 over `[March, October)` to `[January, April) 100 | gap |
 [May, August) 180 | [August, December) 100` keeps the first and last rectangles
 as they were and rewrites only `[May, August)`. Without the guard's proof every
-reached rectangle is inactivated, equal pieces included.
+reached rectangle is inactivated, equal pieces included, and an unchanged
+rectangle's equal pieces reopen as one row (*Merging produced successors*).
 
 A write an insertion of the same attempt authorized observed no rectangle, so
 the coverage it reaches is read from its anchor inside the flush that writes it,
@@ -317,7 +319,8 @@ at the call and no intermediate insertion is written. The stored coverage past
 the opening's window is read inside the write batch, each rectangle the composed
 writes reach is transformed under its own proof, the opening's surviving pieces
 open as new lineages, and every remaining part of the replacement's extent opens
-with its complete state. The opening's own window is coverage, so a part of it an
+with its complete state; pieces of identical stored state among them open as one
+row (*Merging produced successors*). The opening's own window is coverage, so a part of it an
 earlier composed write destroyed is not reopened.
 
 ## Caller-addressed writes span their requested extent
@@ -440,9 +443,12 @@ and the same amendment still writes the later coverage it changes.
 Stored:   [January, April) 100 | [April, July) 200
 Amend where value = 100 from February until June, assigning 150
 Selected: the object, by [January, April)
-Final:    [January, February) 100 | [February, April) 150
-          | [April, June) 150 | [June, July) 200
+Final:    [January, February) 100 | [February, June) 150 | [June, July) 200
 ```
+
+Both stored rectangles are inactivated under their own proofs; the parts the
+window changes hold one state and so are one row (*Merging produced
+successors*).
 
 The objects settle in batches when the flush reaches the write (`m-unit-work`
 *Materialized Write Groups*): a later rectangle is read when its object's batch
@@ -513,7 +519,9 @@ milestone's **Successors**: the nonempty intervals it becomes, in Valid-Time
 order. A successor derives from exactly one predecessor — the existing milestone
 it is part of — and is `CarriedFrom` it where no segment assigns there, or
 `ChangedFrom` it, carrying the assigned members over the predecessor's own
-unassigned ones. A gap in coverage stays a gap, except inside a replacement's
+unassigned ones. A row the unit opens may merge adjacent successors of several
+predecessors and new lineages (*Merging produced successors*); each successor
+still derives from its own predecessor alone, which keeps its own proof. A gap in coverage stays a gap, except inside a replacement's
 extent, where each uncovered stretch is a **Coverage Gap**: a new lineage opened
 with the complete stated state, never a successor of anything.
 
@@ -555,7 +563,8 @@ with no unrelated step interleaved and no surviving group or identifier. A range
 over several predecessors runs every predecessor's effect before any opening:
 predecessors holding a caller's start first, in the order the callers stated
 them, then validated observations, then every other predecessor; its successors
-follow, and a replacement's Coverage Gaps come last. A predicate-selected
+follow, and a replacement's Coverage Gaps come last. A row merged from several
+produced rows opens where the first of them would have. A predicate-selected
 mutation is expanded once for the mutation, never once per resolved row, and
 applied to each selected object in resolution order; a Bitemporal amendment's
 object is a range over its rectangles, every effect before any opening.
@@ -659,7 +668,60 @@ successor it realizes (`m-write-plan` *Write Rows*), whatever value the row
 already holds there, plus a moved Valid-Time start; it never assigns the key, an
 axis end, or the Transaction-Time start. Closing, revising, or removing a
 predecessor changes its observed state; a kept address whose successor executes
-nothing and keeps its start leaves it as it was.
+nothing and keeps its start leaves it as it was. Where successors merge, the row
+that keeps an address is the merged one, so a revision or removal of an owned
+predecessor is chosen only once they have (*Merging produced successors*).
+
+### Merging produced successors
+
+Once every predecessor of one object is decided, the rows the unit produces for
+that object — its successors, a pending insertion's surviving pieces, and a
+replacement's Coverage Gaps — merge before any of them is given an address. Two
+of them are one row when, in Valid-Time order, one starts where the other ends,
+both stand at the same Transaction-Time interval, and their complete stored
+state outside their Valid-Time interval is identical: every directly stored
+value, every final audit value, and every document they store, compared by
+`m-write-payload`'s persisted equality, so unknown keys, presence, array order,
+JSON kinds, and exact numeric meaning all count. A row whose state is not known
+until the database writes it — a generated value, or a Column left to its
+default — merges with nothing. Only rows one settled write produces for one
+object merge: a kept unchanged milestone, an untouched neighbour, a validated
+observation, another object, and a gap no replacement fills are never part of a
+merge, and nothing is read, closed, or rewritten in order to merge. There is no
+transaction-wide or later normalization of coverage.
+
+```text
+Stored:   P1 [January, April) 100 | P2 [April, July) 200, all else equal
+Amend [February, June) assigning 150
+Final:    [January, February) 100 | [February, June) 150 | [June, July) 200
+History:  P1 and P2 each inactivated under its own proof
+```
+
+Had P1 and P2 differed in a member the amendment does not assign, the two
+changed parts would differ too and four rows would stand. A replacement states
+the same complete state over every part of its extent, so its pieces and gaps
+merge wherever the rest of their stored state — undeclared document content
+outside the replaced members, say — agrees.
+
+Merging changes no proof and no effect order. Every predecessor is still
+inactivated, guarded, revised, or removed under its own gate, in the order
+*Predecessor Expansion* gives, before anything opens; fewer openings never drop
+an original's condition. A merged row is opened once, where the first row it
+merges would have opened. Where the attempt owns a predecessor whose own
+successor ends a merged row where the predecessor ends, that row is revised in
+place into the whole merged row — its own successor's assignments, with its
+Valid-Time start moved to the merged row's — and every other owned predecessor
+whose kept successor the merged row absorbed is removed. A revision whose
+successor assigns nothing and whose start does not move expresses no merge, so
+that predecessor is removed under its gate and the merged row opened. Equal
+stored state does not make one predecessor's assignments stand for another's:
+only the predecessor ending the merged row is revised, and only by its own.
+
+Every original's part of a merged row is recorded with the unit's effects
+(`m-unit-work` *Execution units complete before later work runs*): writes the
+flush admitted before a barrier follow each original to the merged row over the
+part it contributed, never over the rest, and an insertion keeps only the part
+of the row its own coverage became.
 
 ### An overlapped observation is retired, not transformed
 

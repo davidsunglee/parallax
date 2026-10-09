@@ -197,11 +197,11 @@ def test_an_original_part_of_which_the_composition_destroys_is_changed() -> None
         ),
     )
     # The first original only takes its own amount; the second loses
-    # [October, December) as well, so it is closed and reopened around the hole.
+    # [October, December) as well, so it is closed and reopened around the hole,
+    # its equal [June, September) and [September, October) as one row.
     assert step_kinds(plan.steps) == [
         "PlannedTemporalGuard",
         "PlannedClose",
-        "PlannedInsert",
         "PlannedInsert",
         "PlannedInsert",
     ]

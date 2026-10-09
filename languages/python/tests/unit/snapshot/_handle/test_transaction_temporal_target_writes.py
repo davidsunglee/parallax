@@ -164,7 +164,7 @@ def test_an_optimistic_transaction_time_target_reads_its_current_row_only_at_flu
 
 def test_an_optimistic_bitemporal_target_binds_every_interval_its_window_reaches() -> None:
     later = _rectangle(_JUN, INFINITY_INSTANT, "200.00", tx_start=_T1)
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, _JUN), later]), Write(times=6)))
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, _JUN), later]), Write(times=5)))
 
     def fn(tx: Transaction) -> None:
         _patch(tx, value="150.00")
@@ -177,13 +177,13 @@ def test_an_optimistic_bitemporal_target_binds_every_interval_its_window_reaches
     )
     assert coverage.binds == (1, _MAR, _SEP, INFINITY_INSTANT)
     start, later_close, *opened = _writes(port)
-    # The start's gate binds the caller's milestone, a later row's its own.
+    # The start's gate binds the caller's milestone, a later row's its own; the
+    # equal changed parts of both open as one row.
     assert (start.binds[2], start.binds[-1]) == (_JUN, _T0)
     assert (later_close.binds[2], later_close.binds[-1]) == ("infinity", _T1)
     assert [call.binds[2:5] for call in opened] == [
         (Decimal("100.00"), _JAN, _MAR),
-        (Decimal("150.00"), _MAR, _JUN),
-        (Decimal("150.00"), _JUN, _SEP),
+        (Decimal("150.00"), _MAR, _SEP),
         (Decimal("200.00"), _SEP, INFINITY_INSTANT),
     ]
 
@@ -407,7 +407,7 @@ def _calendar(*starts: tuple[dt.datetime, str]) -> list[MappingRow]:
 
 def test_a_locking_target_reads_only_the_coverage_its_acquired_start_leaves() -> None:
     first, later = _calendar((_JAN, "100.00"), (_JUN, "200.00"))
-    port = ScriptedAdapter(Transact(Read(rows=[first]), Read(rows=[later]), Write(times=6)))
+    port = ScriptedAdapter(Transact(Read(rows=[first]), Read(rows=[later]), Write(times=5)))
     _db(port).transact(lambda tx: _patch(tx, value="150.00"), concurrency="locking")
     _acquired, coverage = _reads(port)
     assert coverage.sql.endswith(
@@ -417,8 +417,7 @@ def test_a_locking_target_reads_only_the_coverage_its_acquired_start_leaves() ->
     _start, _later, *opened = _writes(port)
     assert [call.binds[2:5] for call in opened] == [
         (Decimal("100.00"), _JAN, _MAR),
-        (Decimal("150.00"), _MAR, _JUN),
-        (Decimal("150.00"), _JUN, _SEP),
+        (Decimal("150.00"), _MAR, _SEP),
         (Decimal("200.00"), _SEP, INFINITY_INSTANT),
     ]
 
@@ -438,9 +437,9 @@ def test_a_part_the_coverage_read_finds_empty_is_a_gap_read_once(replaces: bool)
     _db(port).transact(fn, concurrency="locking")
     assert len(_reads(port)) == 2
     windows = [call.binds[3:5] for call in _writes(port) if call.sql.startswith("insert")]
-    # A replacement opens its state over the gap the empty read resolved; an
-    # amendment leaves it.
-    assert windows == [(_JAN, _MAR), (_MAR, _JUN), *([(_JUN, _SEP)] if replaces else [])]
+    # A replacement opens its state over the gap the empty read resolved, as one
+    # row with the part it replaced before it; an amendment leaves the gap.
+    assert windows == [(_JAN, _MAR), (_MAR, _SEP if replaces else _JUN)]
 
 
 _FOUR = (

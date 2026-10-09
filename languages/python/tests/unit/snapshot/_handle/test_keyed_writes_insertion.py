@@ -1141,15 +1141,13 @@ def _replace_opening(tx: Transaction, representation: str, until: dt.datetime) -
 def test_a_pending_replacement_reaching_past_its_opening_fills_the_gap_it_finds(
     representation: str,
 ) -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[]), Write(times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=[]), Write()))
     _transact(port, lambda tx: _replace_opening(tx, representation, _JUN))
     (coverage,) = [call for call in port.calls if isinstance(call, ReadCall)]
     assert coverage.binds == (1, _MAR, _JUN, INFINITY_INSTANT)
-    assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == ["insert", "insert"]
-    assert _opened(port) == [
-        (Decimal("300.00"), _JAN, _MAR),
-        (Decimal("300.00"), _MAR, _JUN),
-    ]
+    # The opening's own part and the gap it fills hold one state: one row.
+    assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == ["insert"]
+    assert _opened(port) == [(Decimal("300.00"), _JAN, _JUN)]
 
 
 @pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
@@ -1157,7 +1155,7 @@ def test_a_pending_replacement_transforms_the_stored_coverage_it_reaches(
     concurrency: str,
 ) -> None:
     stored = _stored(_MAY, _AUG)
-    port = ScriptedAdapter(Transact(Read(rows=[stored]), Write(times=5)))
+    port = ScriptedAdapter(Transact(Read(rows=[stored]), Write(times=3)))
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(
@@ -1173,12 +1171,12 @@ def test_a_pending_replacement_transforms_the_stored_coverage_it_reaches(
     assert close.sql == (
         "update where_position set out_z = %s where id = %s and thru_z = %s and out_z = %s" + gate
     )
-    assert [call.sql.split(" ", 1)[0] for call in openings] == ["insert"] * 4
+    # The opening's part, the gap, and the stored row's replaced part hold one
+    # state and open as one row; the stored row's tail keeps its own.
+    assert [call.sql.split(" ", 1)[0] for call in openings] == ["insert"] * 2
     assert _opened(port) == [
-        (Decimal("300.00"), _JAN, _MAR),
-        (Decimal("300.00"), _MAY, _JUN),
+        (Decimal("300.00"), _JAN, _JUN),
         (Decimal("200.00"), _JUN, _AUG),
-        (Decimal("300.00"), _MAR, _MAY),
     ]
 
 
@@ -1251,7 +1249,7 @@ def test_a_destruction_of_all_a_pending_replacement_reached_admits_a_reinsertion
 def test_a_pending_amendment_reaches_only_as_far_as_the_replacement(
     replaced_first: bool,
 ) -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_stored(_MAY, _AUG)]), Write(times=5)))
+    port = ScriptedAdapter(Transact(Read(rows=[_stored(_MAY, _AUG)]), Write(times=3)))
 
     def fn(tx: Transaction) -> None:
         opened = _position()
@@ -1266,12 +1264,7 @@ def test_a_pending_amendment_reaches_only_as_far_as_the_replacement(
     (coverage,) = [call for call in port.calls if isinstance(call, ReadCall)]
     assert coverage.binds == (1, _MAR, _JUN, INFINITY_INSTANT)
     final = Decimal("150.00") if replaced_first else Decimal("300.00")
-    assert _opened(port) == [
-        (final, _JAN, _MAR),
-        (final, _MAY, _JUN),
-        (Decimal("200.00"), _JUN, _AUG),
-        (final, _MAR, _MAY),
-    ]
+    assert _opened(port) == [(final, _JAN, _JUN), (Decimal("200.00"), _JUN, _AUG)]
 
 
 def test_a_replacement_over_coverage_a_pending_destruction_removed_is_refused() -> None:

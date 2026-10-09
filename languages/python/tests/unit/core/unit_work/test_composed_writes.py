@@ -195,7 +195,8 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
 def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() -> None:
     # Two reads of one object observed two disjoint rectangles that together
     # cover everything both writes request, so the composition binds at
-    # planning: each rectangle closes once, then every piece opens.
+    # planning: each rectangle closes once, then every piece opens, the equal
+    # 150 pieces either side of June as one row.
     model = formed(corpus_records()["position"])
     jun, aug = dt.datetime(2024, 6, 1, tzinfo=dt.UTC), dt.datetime(2024, 8, 1, tzinfo=dt.UTC)
 
@@ -235,6 +236,6 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
             buffered_writes=writes,
         )
     )
-    assert [type(step) for step in plan.steps] == [PlannedClose] * 2 + [PlannedInsert] * 4
+    assert [type(step) for step in plan.steps] == [PlannedClose] * 2 + [PlannedInsert] * 3
     (unit,) = plan.units
     assert unit.deferred is None

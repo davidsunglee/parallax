@@ -58,8 +58,8 @@ when:
             - { id: 1, value: "150.00" }
           validFrom: "2024-03-01T00:00:00.000000Z"
           at: "2024-10-01T00:00:00.000000Z"
-      roundTrips: 6
-      note: correct the value the step-0 read returned from its pin through infinity — the close addresses R2 by its finite end (thru_z 2024-06-01), the flush reads the coverage beyond it and closes R3 under its own start, and the three successors carry R2's head, set R2's tail, and set R3 over R3's own unassigned members
+      roundTrips: 5
+      note: correct the value the step-0 read returned from its pin through infinity — the close addresses R2 by its finite end (thru_z 2024-06-01), the flush reads the coverage beyond it and closes R3 under its own start; R2's head carries its value, and R2's set tail and R3 set over its own unassigned members hold one complete state, so they open as one successor
       statements:
         - sql:
             postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
@@ -72,12 +72,9 @@ when:
           binds: [1, A, "100.00", "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity]
         - sql:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [1, A, "150.00", "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity]
-        - sql:
-            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [1, A, "150.00", "2024-06-01T00:00:00.000000Z", infinity, "2024-10-01T00:00:00.000000Z", infinity]
+          binds: [1, A, "150.00", "2024-03-01T00:00:00.000000Z", infinity, "2024-10-01T00:00:00.000000Z", infinity]
 then:
-  roundTrips: 8
+  roundTrips: 7
   tableState:
     position:
       - pos_id: 1
@@ -112,13 +109,6 @@ then:
         acct_num: A
         val: "150.00"
         from_z: "2024-03-01T00:00:00.000000Z"
-        thru_z: "2024-06-01T00:00:00.000000Z"
-        in_z: "2024-10-01T00:00:00.000000Z"
-        out_z: infinity
-      - pos_id: 1
-        acct_num: A
-        val: "150.00"
-        from_z: "2024-06-01T00:00:00.000000Z"
         thru_z: infinity
         in_z: "2024-10-01T00:00:00.000000Z"
         out_z: infinity

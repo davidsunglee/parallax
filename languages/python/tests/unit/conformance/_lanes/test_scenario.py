@@ -1254,7 +1254,8 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     # the same node's own milestone — so the close addresses R2's `thru_z`, which
     # a store keyed by identity alone could not have chosen between. The write
     # runs from its source's pin through infinity, so the flush reads the
-    # coverage beyond R2 and closes R3 too.
+    # coverage beyond R2 and closes R3 too; R2's changed part and R3's are one
+    # row.
     r2 = {
         "pos_id": 1,
         "acct_num": "A",
@@ -1272,11 +1273,11 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     }
     port = FakeWritePort(read_script=[[r2], [r3], [r2, r3]])
     run = scenario.run_scenario_case(_load_case("m-unit-work-015"), port)
-    assert run.round_trips == 8
+    assert run.round_trips == 7
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/objectQuery",
-        *["/scenario/2/write"] * 5,
+        *["/scenario/2/write"] * 4,
     ]
     close = run.emissions[2]
     assert close.sql.startswith("update position set out_z = ?")
@@ -1383,10 +1384,10 @@ def test_a_range_beyond_its_observation_binds_the_coverage_the_tracker_reads() -
 
     (unit,) = executed.plan.units
     assert unit.deferred is not None and len(executed.plan.steps) == 0
+    # The head's changed part and the tail's hold one state: one row.
     assert [type(step).__name__ for step in executed.steps] == [
         "PlannedClose",
         "PlannedClose",
-        "PlannedInsert",
         "PlannedInsert",
         "PlannedInsert",
     ]

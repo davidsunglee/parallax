@@ -895,13 +895,19 @@ published effects.
 
 A unit that a later unit of the same flush follows across an ordering barrier
 (*Observed-State Coalescing*) also records, for each original it transformed,
-the current rows it derived from that original. Its guarded effect, or the
-shared lock it held, has then **proven** the original: a condition the later
-unit was admitted with on that original holds for it, provided every row
-derived from the original inside the later unit's window still stands as it
-was opened — at its owned address, at the attempt's Transaction Instant, from
-the Valid-Time start it was opened with — and rows a later unit derives from
-such a row descend from the same original. Spending and invalidation apply to
+the current rows it derived from that original and the part of each the
+original contributed — the whole row, or only its own part of a row merged from
+several originals' successors (`m-temporal-write` *Merging produced
+successors*). Its guarded effect, or the shared lock it held, has then
+**proven** the original: a condition the later unit was admitted with on that
+original holds for it, provided every row derived from the original whose part
+lies inside the later unit's window still stands as it was opened — at its
+owned address, at the attempt's Transaction Instant, from the Valid-Time start
+it was opened with. A caller's start on such a row is proven only by the
+original whose part holds that start, never by another original merged into the
+same row. A row a later unit derives from such a row descends from each of the
+same originals over the part of it that came from that original's part, and
+from none over the rest. Spending and invalidation apply to
 the earlier unit's sources as usual: a proof serves only the writes admitted
 before the flush began, never a later submission, and it ends with the flush,
 however the flush ends.
@@ -1096,7 +1102,8 @@ pending insert.
   its own window. Every edit starts at the insertion's anchor (*Insertion
   authority*). The flush opens only the pieces that survive, each at the one
   Transaction Instant, carrying the opening's values with the edits' assignments
-  overlaid. A replacement reaching past the opening establishes its complete
+  overlaid; adjacent pieces of identical stored state open as one row
+  (`m-temporal-write` *Merging produced successors*). A replacement reaching past the opening establishes its complete
   state over its whole window there too, as it would once the insertion had
   executed: still without a flush at the call or an intermediate insertion, the
   opening settles as one unit at the normal flush that reads the stored coverage
@@ -1367,8 +1374,8 @@ publish the group's effects once, after the last batch
 
 An object with nothing left to read still takes its place in a batch, and a read
 finding nothing in a part settles that part as a gap. A batch boundary never
-divides an object's history, its effects before its openings, or the proof of
-any of its rectangles. Batch and statement bounds are private: neither is a
+divides an object's history, its effects before its openings, the merging of
+the rows it produces, or the proof of any of its rectangles. Batch and statement bounds are private: neither is a
 caller option, and neither bounds the rows or bytes a read returns.
 
 The group is still one execution unit. No other unit's step runs between its
@@ -1443,11 +1450,15 @@ caller-addressed write of the object is refused on that admission alone
 (*Caller-addressed writes*).
 The record survives flushes and joined scopes, ends at commit or rollback, and
 starts empty on retry. The row an admitted insertion's own insert opens is
-tagged with that insertion in the record, and so is every successor of a row
-tagged with it; a successor of a row that existed before the attempt, or of any other
-untagged row, is untagged, so rewriting other coverage of the object beside an
-insertion adds nothing to what the insertion opened. The insertion's coverage is
-completely removed once no row tagged with it remains (*Insertion authority*).
+tagged with that insertion in the record, and so is every successor of the part
+of a row the insertion contributed, over that part; a successor of a row that
+existed before the attempt, or of any other untagged coverage, is untagged, so
+rewriting other coverage of the object beside an insertion adds nothing to what
+the insertion opened. A row merged from an insertion's coverage and other
+coverage (`m-temporal-write` *Merging produced successors*) is tagged over the
+insertion's parts alone, and a row revised in place takes the tag its new
+extent leaves. The insertion's coverage is completely removed once no part of
+any row tagged with it remains (*Insertion authority*).
 Address and instant carry no tag: a reinsertion's row opened where a removed row
 stood is tagged with the reinsertion, never with the insertion that row was
 tagged with.

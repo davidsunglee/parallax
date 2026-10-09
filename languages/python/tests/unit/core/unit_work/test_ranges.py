@@ -73,6 +73,7 @@ from parallax.core.write_plan.steps import (
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedWrite,
+    WriteRow,
 )
 from tests._support.clock_probes import CountingClock, instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
@@ -214,10 +215,12 @@ def test_a_range_binds_alike_whether_planning_knew_its_coverage_or_execution_rea
     bound = _bind(read, [_TAIL])
 
     assert bound.steps == tuple(known.steps)
+    # The changed parts of both originals hold the same complete state, so
+    # they merge into one row; each original is still closed under its own
+    # proof.
     assert _windows(bound.steps) == [
         (_JAN, _MAR, 100),
-        (_MAR, _JUN, 300),
-        (_JUN, _SEP, 300),
+        (_MAR, _SEP, 300),
         (_SEP, INFINITY, 200),
     ]
     assert tuple(bound.changed) == tuple(planned.changed) == (head.key, tail.key)
@@ -300,9 +303,10 @@ def test_every_produced_row_and_close_is_audited_once_whether_the_range_bound_no
     assert sorted(map(id, audit.closes)) == sorted(
         id(step) for step in known.steps if isinstance(step, PlannedClose)
     )
-    assert sorted(map(id, audit.rows)) == sorted(
-        id(step.entries[0]) for step in known.steps if isinstance(step, PlannedInsert)
-    )
+    # Every produced row is finalized once, the two that then merge included,
+    # and the merged row is not finalized again.
+    assert [_row_window(row) for row in audit.rows] == _PRODUCED
+    assert _windows(tuple(known.steps)) == _MERGED
 
     audit.rows.clear()
     audit.closes.clear()
@@ -312,9 +316,17 @@ def test_every_produced_row_and_close_is_audited_once_whether_the_range_bound_no
     assert sorted(map(id, audit.closes)) == sorted(
         id(step) for step in bound.steps if isinstance(step, PlannedClose)
     )
-    assert sorted(map(id, audit.rows)) == sorted(
-        id(step.entries[0]) for step in bound.steps if isinstance(step, PlannedInsert)
-    )
+    assert [_row_window(row) for row in audit.rows] == _PRODUCED
+    assert _windows(bound.steps) == _MERGED
+
+
+_PRODUCED = [(_JAN, _MAR, 100), (_MAR, _JUN, 300), (_JUN, _SEP, 300), (_SEP, INFINITY, 200)]
+_MERGED = [(_JAN, _MAR, 100), (_MAR, _SEP, 300), (_SEP, INFINITY, 200)]
+
+
+def _row_window(row: WriteRow) -> tuple[object, object, object]:
+    cells = {identity.name: value for identity, value in row.row.attributes.items()}
+    return cells["validStart"], cells["validEnd"], cells["amount"]
 
 
 def test_a_deferred_range_its_planner_did_not_finalize_is_refused_before_any_read() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bisect
+import datetime as dt
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Protocol
@@ -20,6 +21,7 @@ __all__ = [
     "CombinedSourceAuthority",
     "DeferredRange",
     "Derivation",
+    "DerivedRow",
     "Descent",
     "ExecutionUnit",
     "Openings",
@@ -141,6 +143,18 @@ OPEN_BITEMPORAL_ENDS: Final[tuple[TemporalUpperBound, ...]] = (INFINITY, INFINIT
 
 
 @dataclass(frozen=True, slots=True)
+class DerivedRow:
+    """One current row a unit left of an original: its address, the Valid Time
+    the row covers, and the part of it the original contributed — the whole
+    row unless the row merged successors of several contributors. Both are
+    ``None`` on a Transaction-Time-Only object."""
+
+    endpoint: OwnedEndpoint
+    valid_time_coverage: TimeInterval | None
+    contributed: TimeInterval | None
+
+
+@dataclass(frozen=True, slots=True)
 class Derivation:
     """One original an execution unit transformed under protection — a guarded
     effect that succeeded, or the shared lock the unit held — and the current
@@ -149,25 +163,37 @@ class Derivation:
     ``original`` is the exact state the unit found, ``valid_time_coverage`` the
     Valid Time it covered (``None`` on a Transaction-Time-Only object), and
     ``owned`` its own address where the attempt had opened it. ``rows`` holds
-    each nonempty row the unit derived from it, by address and the Valid Time
-    it covers, a row revised in place among them.
+    each nonempty row the unit derived from it, a row revised in place among
+    them, with the part of each the original contributed.
     """
 
     original: ObservedStateKey
     valid_time_coverage: TimeInterval | None
     owned: OwnedEndpoint | None
-    rows: tuple[tuple[OwnedEndpoint, TimeInterval | None], ...]
+    rows: tuple[DerivedRow, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class Descent:
     """What one current row the attempt opened derives from within the running
     flush: the Valid Time it covers as opened (``None`` on a
-    Transaction-Time-Only object), and the protected original that stood before
-    the flush began, through however many of its units."""
+    Transaction-Time-Only object), and each protected original that stood
+    before the flush began, through however many of its units, beside the
+    disjoint part of the row it contributed. A row merged from several
+    originals' successors names each; any other names one, over the whole
+    row."""
 
     valid_time_coverage: TimeInterval | None
-    original: ObservedStateKey
+    contributions: tuple[tuple[ObservedStateKey, TimeInterval | None], ...]
+
+    def original_at(self, instant: dt.datetime | None) -> ObservedStateKey | None:
+        """The original whose contribution holds ``instant`` — ``None`` on a
+        Transaction-Time-Only object, whose row has one — or ``None`` where
+        none does."""
+        for original, contributed in self.contributions:
+            if contributed is None or (instant is not None and contributed.contains(instant)):
+                return original
+        return None
 
 
 class TemporalWriteOwnership(Protocol):
@@ -186,8 +212,18 @@ class TemporalWriteOwnership(Protocol):
         ...
 
     def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
-        """Whether the owned row ``endpoint`` is coverage an admitted insertion
-        opened, so that its successors are too."""
+        """Whether an admitted insertion contributed any part of the owned row
+        ``endpoint`` (:meth:`insertion_coverage`)."""
+        ...
+
+    def insertion_coverage(
+        self, endpoint: OwnedEndpoint, valid_time_coverage: TimeInterval | None, /
+    ) -> tuple[TimeInterval | None, ...]:
+        """The parts of the owned row ``endpoint``, which covers
+        ``valid_time_coverage``, that an admitted insertion standing when it
+        opened contributed, in order — the whole row, or only some of a row
+        that merged other coverage — so that the same parts of its successors
+        continue it. Empty where no insertion contributed any."""
         ...
 
     def proven(self, original: ObservedStateKey, /) -> Derivation | None:
@@ -199,7 +235,7 @@ class TemporalWriteOwnership(Protocol):
         self, original: ObservedStateKey, valid_time_window: TimeInterval | None, /
     ) -> Iterable[tuple[OwnedEndpoint, Descent]]:
         """The current rows the running flush derived from ``original``, which
-        it proved (:meth:`proven`), whose Valid Time overlaps
+        it proved (:meth:`proven`), whose part ``original`` contributed overlaps
         ``valid_time_window`` — every one of them where it is ``None`` — in
         Valid-Time order. The traversal is consumed before ownership changes."""
         ...
@@ -223,6 +259,12 @@ class _NoTemporalWriteOwnership:
     def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
         del endpoint
         return False
+
+    def insertion_coverage(
+        self, endpoint: OwnedEndpoint, valid_time_coverage: TimeInterval | None, /
+    ) -> tuple[TimeInterval | None, ...]:
+        del endpoint, valid_time_coverage
+        return ()
 
     def proven(self, original: ObservedStateKey, /) -> Derivation | None:
         del original
@@ -273,13 +315,17 @@ class AllocatedOpening:
 @dataclass(frozen=True, slots=True)
 class Openings:
     """The owned rows an execution unit opens, by what each derives from:
-    ``continued`` holds an insert's row and every successor of a row an
-    admitted insertion opened, and ``fresh`` every other row. ``allocated``
-    holds, in step order, each row whose key its insert answers."""
+    ``continued`` holds an insert's row and every row an admitted insertion
+    contributed whole, ``shared`` each row it contributed only some parts of,
+    with those parts in order, and ``fresh`` every other row. A row the unit
+    revised in place into a merged extent, or whose insertion's parts it
+    narrowed, is among them again under its own address. ``allocated`` holds,
+    in step order, each row whose key its insert answers."""
 
     fresh: Iterable[OwnedEndpoint] = ()
     continued: Iterable[OwnedEndpoint] = ()
     allocated: tuple[AllocatedOpening, ...] = ()
+    shared: Iterable[tuple[OwnedEndpoint, tuple[TimeInterval, ...]]] = ()
 
 
 NO_OPENINGS: Final[Openings] = Openings()

@@ -108,6 +108,15 @@ it. An update verb produces `Superseded`; a terminate verb produces `Terminated`
 even when Bitemporal head or tail successors survive — those survivors are
 independently `CarriedFrom`.
 
+A row merged from several adjacent produced rows of identical persisted state
+(`m-temporal-write` *Merging produced successors*) is one Write Row over the
+merged Valid Time. Its origin is the origin of the produced row whose prepared
+state it stores, which describes how that state is assembled, not which
+predecessors it covers: every merged row's contributions, each an original over
+the part of the row it contributed, belong to the effects its unit publishes
+(`m-unit-work` *Execution units complete before later work runs*), never to a
+second origin or a list of predecessors on the row.
+
 An implementation **MUST NOT** introduce a generic disposition field, a parallel
 mutation-kind tag, or any free-floating label that a variant could contradict.
 Row Origin exists only on a Write Row and Close Cause only on a close, so
@@ -406,6 +415,7 @@ WritePayloadPreparer
   row(entity, WriteRow)                   -> RowPayload
   proven_unequal_non_interval(entity, WriteRow, WriteRow) -> Boolean
   equal_non_interval(RowPayload, RowPayload)              -> Boolean
+  rebound(RowPayload, WriteRow)                           -> RowPayload
 
 RowPayload(entity, source: WriteRow, cells: [PayloadCell])
 AssignmentPayload(entity, assignments: PlannedAssignments, cells: [PayloadCell])

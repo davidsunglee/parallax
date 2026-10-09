@@ -1141,8 +1141,9 @@ def test_each_selected_object_is_amended_from_its_start_through_its_later_covera
     # One `amendUntil` over [Mar, Sep), each object selected by the row current
     # at March: a row covering the window opens a head, the changed part, and a
     # tail and reads nothing; one ending inside the window reads the rest of it
-    # once, and the later row it finds changes from its own start; one starting
-    # at the window's start opens no head.
+    # once, and the later row it finds changes from its own start, the two
+    # equal changed parts opening as one row; one starting at the window's
+    # start opens no head.
     later = _position_row(2, _MAY, _OCT)
     group = _selected(
         "amendUntil",
@@ -1167,8 +1168,7 @@ def test_each_selected_object_is_amended_from_its_start_through_its_later_covera
         ("PlannedClose", None, None),
         ("PlannedClose", None, None),
         ("CarriedFrom", _OPENED_AT, _WINDOW_FROM),
-        ("ChangedFrom", _WINDOW_FROM, _MAY),
-        ("ChangedFrom", _MAY, _WINDOW_UNTIL),
+        ("ChangedFrom", _WINDOW_FROM, _WINDOW_UNTIL),
         ("CarriedFrom", _WINDOW_UNTIL, _OCT),
         ("PlannedClose", None, None),
         ("ChangedFrom", _WINDOW_FROM, _WINDOW_UNTIL),
@@ -1188,7 +1188,6 @@ def test_each_selected_object_is_amended_from_its_start_through_its_later_covera
         _endpoint("Position", 1, tail, OPEN_END),
         _endpoint("Position", 1, OPEN_END, OPEN_END),
         _endpoint("Position", 2, head, OPEN_END),
-        _endpoint("Position", 2, Finite(instant=_MAY), OPEN_END),
         _endpoint("Position", 2, tail, OPEN_END),
         _endpoint("Position", 2, Finite(instant=_OCT), OPEN_END),
         _endpoint("Position", 3, tail, OPEN_END),
@@ -1199,8 +1198,9 @@ def test_each_selected_object_is_amended_from_its_start_through_its_later_covera
 
 def test_a_later_row_the_attempt_opened_is_revised_from_its_own_start() -> None:
     # The later row the window reaches is the attempt's own: it is revised in
-    # place into its carried tail, keeping its address, and opens only the
-    # changed part from its own start.
+    # place into its carried tail, keeping its address, and its changed part
+    # from its own start opens as one row with the equal changed part of the
+    # row the object was selected by.
     later = _position_row(1, _MAY, tx=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
     ownership = OpenedRows(frozenset({_endpoint("Position", 1, OPEN_END, OPEN_END)}))
     plan = _finalized(
@@ -1220,8 +1220,7 @@ def test_a_later_row_the_attempt_opened_is_revised_from_its_own_start() -> None:
         ("PlannedClose", None, None),
         ("PlannedTemporalRevision", None, None),
         ("CarriedFrom", _OPENED_AT, _WINDOW_FROM),
-        ("ChangedFrom", _WINDOW_FROM, _MAY),
-        ("ChangedFrom", _MAY, _WINDOW_UNTIL),
+        ("ChangedFrom", _WINDOW_FROM, _WINDOW_UNTIL),
     ]
     revision = driven.steps[1]
     assert isinstance(revision, PlannedTemporalRevision)
@@ -1361,6 +1360,11 @@ class _LiveOwnership:
 
     def continues_insertion(self, endpoint: OwnedEndpoint, /) -> bool:
         return endpoint in self.inserted
+
+    def insertion_coverage(
+        self, endpoint: OwnedEndpoint, valid_time_coverage: TimeInterval | None, /
+    ) -> tuple[TimeInterval | None, ...]:
+        return (valid_time_coverage,) if endpoint in self.inserted else ()
 
     def proven(self, original: ObservedStateKey, /) -> Derivation | None:
         del original
@@ -1885,3 +1889,67 @@ def test_a_row_the_window_never_reaches_is_not_audited(monkeypatch: pytest.Monke
 
     assert len(audit.closes) == 1
     assert [step.target.key_values for step in steps if isinstance(step, PlannedClose)] == [(1,)]
+
+
+_FEB = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+_APR = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+
+
+@dataclass(frozen=True)
+class _PartlyInserted(OpenedRows):
+    """An attempt whose admitted insertion contributed only ``parts`` of the
+    rows it tags, as a merged row it opened holds."""
+
+    parts: tuple[TimeInterval, ...] = ()
+
+    def insertion_coverage(
+        self, endpoint: OwnedEndpoint, valid_time_coverage: TimeInterval | None, /
+    ) -> tuple[TimeInterval | None, ...]:
+        return self.parts if endpoint in self.inserted else ()
+
+
+@pytest.mark.parametrize(
+    ("parts", "continued", "shared", "fresh"),
+    [
+        ((TimeInterval(_OPENED_AT, _APR),), ("head",), (), ("tail",)),
+        (
+            (TimeInterval(_FEB, _OCT),),
+            (),
+            (
+                ("head", TimeInterval(_FEB, _WINDOW_FROM)),
+                ("tail", TimeInterval(_WINDOW_UNTIL, _OCT)),
+            ),
+            (),
+        ),
+    ],
+    ids=["head-only", "part-of-each"],
+)
+def test_a_group_continues_an_insertion_only_into_the_parts_it_contributed(
+    parts: tuple[TimeInterval, ...],
+    continued: tuple[str, ...],
+    shared: tuple[tuple[str, TimeInterval], ...],
+    fresh: tuple[str, ...],
+) -> None:
+    owned = _endpoint("Position", 2, OPEN_END, OPEN_END)
+    ownership = _PartlyInserted(frozenset({owned}), frozenset({owned}), parts=parts)
+    plan = build_write_planner(_POSITION).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+            concurrency="locking",
+            buffered_writes=[_temporal_topology_group(_POSITION, "Position", "terminateUntil")],
+            ownership=ownership,
+        )
+    )
+    (unit,) = plan.units
+    ends = {
+        "head": _endpoint("Position", 2, Finite(instant=_WINDOW_FROM), OPEN_END),
+        "tail": _endpoint("Position", 2, OPEN_END, OPEN_END),
+    }
+    assert list(unit.opened.continued) == [ends[name] for name in continued]
+    assert list(unit.opened.shared) == [(ends[name], (part,)) for name, part in shared]
+    unrelated = [endpoint for endpoint in unit.opened.fresh if endpoint.key != (2,)]
+    assert [endpoint for endpoint in unit.opened.fresh if endpoint.key == (2,)] == [
+        ends[name] for name in fresh
+    ]
+    assert len(unrelated) == 4

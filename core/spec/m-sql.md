@@ -1052,7 +1052,10 @@ counted in that step's round trips, and a case authors no golden for it
 (`m-case-format`). Once the rectangles are known, every rectangle's inactivation,
 revision, or removal is emitted before any successor is inserted — rectangles in
 Valid-Time order, each rectangle's successors in Valid-Time order — so a lost
-condition fails before the range writes anything new.
+condition fails before the range writes anything new. A row merged from several
+successors or gaps of identical stored state (`m-temporal-write` *Merging
+produced successors*) is one insert, emitted where the first of them would have
+been.
 
 A rectangle the write leaves unchanged (`m-temporal-write` *Unchanged milestones*) is
 neither inactivated nor reopened. Under Optimistic, where the dialect's write

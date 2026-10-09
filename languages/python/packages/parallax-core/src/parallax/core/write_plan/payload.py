@@ -110,3 +110,11 @@ class WritePayloadPreparer(Protocol):
         """Whether the two prepared rows persist the same state outside their
         temporal interval cells."""
         ...
+
+    def rebound(self, payload: RowPayload, write_row: WriteRow) -> RowPayload:
+        """``payload``'s cells for ``write_row``, which states exactly what
+        ``payload`` was prepared from outside its temporal interval: the same
+        prepared values, with ``write_row``'s own interval cells. A row stating
+        anything else outside its interval is refused rather than given cells
+        prepared from other inputs."""
+        ...

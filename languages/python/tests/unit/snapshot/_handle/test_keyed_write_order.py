@@ -374,11 +374,12 @@ def _over_a_buffered_insert(scenario: Scenario) -> Answer:
     The opening's inserts are the only statements: an assignment merges into the
     row the insert opens, and a `delete` or a `terminate` cancels the pair
     outright. A bounded write reaches only part of an unbounded opening, so a
-    bounded update splits it into two inserts at its bound, and a bounded
-    termination leaves its tail to insert.
+    bounded update splits it into two inserts at its bound — one, where it
+    assigns what the opening already holds, since the two parts then hold one
+    state — and a bounded termination leaves its tail to insert.
     """
     if scenario.verb == "bounded_update":
-        return _wrote(2)
+        return _wrote(1 if scenario.change == "net_zero" else 2)
     if scenario.verb == "bounded_terminate":
         return _wrote(1)
     if scenario.verb in _UPDATE_VERBS:

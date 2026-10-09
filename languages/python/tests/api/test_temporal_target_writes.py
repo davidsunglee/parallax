@@ -301,13 +301,11 @@ def test_a_replacement_states_its_complete_state_over_gaps_and_after_termination
     db = _seeded_spans(profile_run, entity, _TA)
     db.transact(lambda tx: _span_replace(tx, entity, representation), concurrency=concurrency)
     replaced: _SpanRow = (300, "r", None, [])
+    # Both rectangles' replaced parts and both gaps hold one complete state.
     assert _span_rows(profile_run, entity) == [
         *_SEED_HISTORY,
         (_TA, None, _JAN, _MAR, 100, "a", _S1, _M),
-        (_TA, None, _MAR, _APR, *replaced),
-        (_TA, None, _APR, _JUN, *replaced),
-        (_TA, None, _JUN, _AUG, *replaced),
-        (_TA, None, _AUG, None, *replaced),
+        (_TA, None, _MAR, None, *replaced),
     ]
 
 
@@ -322,10 +320,7 @@ def test_a_bounded_replacement_fills_only_up_to_its_exclusive_end(
     assert _span_rows(profile_run, entity) == [
         *_SEED_HISTORY,
         (_TA, None, _JAN, _MAR, 100, "a", _S1, _M),
-        (_TA, None, _MAR, _APR, *replaced),
-        (_TA, None, _APR, _JUN, *replaced),
-        (_TA, None, _JUN, _AUG, *replaced),
-        (_TA, None, _AUG, _SEP, *replaced),
+        (_TA, None, _MAR, _SEP, *replaced),
     ]
 
 
@@ -755,8 +750,7 @@ _PEER_ROWS: dict[str, list[tuple[object, ...]]] = {
         (_T0, _TP, _JAN, _JUN, 100, "a"),
         (_T1, _TP, _JUN, None, 200, "b"),
         (_TP, None, _JAN, _APR, 100, "a"),
-        (_TP, None, _APR, _JUN, 900, "peer"),
-        (_TP, None, _JUN, None, 900, "peer"),
+        (_TP, None, _APR, None, 900, "peer"),
     ],
 }
 
@@ -984,13 +978,11 @@ def test_a_source_replacement_establishes_its_window_across_gaps(
     db = _seeded_spans(profile_run, entity, _TA)
     db.transact(lambda tx: _source_replace(tx, entity, representation), concurrency=concurrency)
     replaced: _SpanRow = (300, "r", _S1, _M)
+    # The replaced parts of both rectangles and both gaps hold one state.
     assert _span_rows(profile_run, entity) == [
         *_SEED_HISTORY,
         (_TA, None, _JAN, _MAR, 100, "a", _S1, _M),
-        (_TA, None, _MAR, _APR, *replaced),
-        (_TA, None, _APR, _JUN, *replaced),
-        (_TA, None, _JUN, _AUG, *replaced),
-        (_TA, None, _AUG, _SEP, *replaced),
+        (_TA, None, _MAR, _SEP, *replaced),
     ]
 
 
@@ -1067,11 +1059,11 @@ def test_an_insertion_replacement_reaches_later_coverage_whether_or_not_it_flush
 
     db.transact(fn, concurrency=concurrency)
     replaced: _SpanRow = (300, "r", _S1, [])
+    # The insertion's own window, the gap, and the stored row's replaced part
+    # hold one state and are one row, whether or not the insertion flushed.
     assert _span_rows(profile_run, entity) == [
         (_T0, _TA, _MAY, _JUL, 200, "b", _S2, []),
-        (_TA, None, _JAN, _APR, *replaced),
-        (_TA, None, _APR, _MAY, *replaced),
-        (_TA, None, _MAY, _JUN, *replaced),
+        (_TA, None, _JAN, _JUN, *replaced),
         (_TA, None, _JUN, _JUL, 200, "b", _S2, []),
     ]
 
@@ -1307,10 +1299,7 @@ def test_a_locking_target_reads_only_the_coverage_past_its_acquired_start(
     assert _span_rows(profile_run, entity) == [
         *_SEED_HISTORY,
         (_TA, None, _JAN, _MAR, 100, "a", _S1, _M),
-        (_TA, None, _MAR, _APR, *replaced),
-        (_TA, None, _APR, _JUN, *replaced),
-        (_TA, None, _JUN, _AUG, *replaced),
-        (_TA, None, _AUG, None, *replaced),
+        (_TA, None, _MAR, None, *replaced),
     ]
 
 

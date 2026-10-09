@@ -98,6 +98,7 @@ from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
     Derivation,
+    DerivedRow,
     ExecutionUnit,
     Openings,
     OwnedEndpoint,
@@ -1991,7 +1992,16 @@ def test_a_proven_originals_descendants_are_exactly_those_overlapping_the_window
     for endpoint, _coverage in rows:
         targets.complete((), Openings(fresh=(endpoint,)))
     targets.complete(
-        (), NO_OPENINGS, (Derivation(original, TimeInterval(_JAN, INFINITY), None, rows),)
+        (),
+        NO_OPENINGS,
+        (
+            Derivation(
+                original,
+                TimeInterval(_JAN, INFINITY),
+                None,
+                tuple(DerivedRow(endpoint, coverage, coverage) for endpoint, coverage in rows),
+            ),
+        ),
     )
     # [Feb, Sep) starts where the first row ends: the start index still
     # reaches that row, which the window does not overlap.
@@ -2016,3 +2026,268 @@ def _barriered_shape() -> temporal_read.TemporalShape:
     )
     assert shape is not None
     return shape
+
+
+_SECOND_START = dt.datetime(2023, 12, 15, tzinfo=dt.UTC)
+
+
+def _original(start: dt.datetime, tx_start: dt.datetime) -> ObservedStateKey:
+    key = corpus_object_key("WherePosition", ("id", 1))
+    return observed_state_key(
+        key, TemporalObservation(predecessor=_position_row(start, tx_start)), _barriered_shape()
+    )
+
+
+def _merged_derivations(
+    first: ObservedStateKey, second: ObservedStateKey, merged: OwnedEndpoint
+) -> tuple[Derivation, Derivation]:
+    """P1 over [January, June) and P2 over [June, infinity), both amended from
+    April through August into one row over [April, August)."""
+    whole = TimeInterval(_APR, _AUG)
+    return (
+        Derivation(
+            first,
+            TimeInterval(_JAN, _JUN),
+            None,
+            (
+                DerivedRow(
+                    _position_endpoint(_APR), TimeInterval(_JAN, _APR), TimeInterval(_JAN, _APR)
+                ),
+                DerivedRow(merged, whole, TimeInterval(_APR, _JUN)),
+            ),
+        ),
+        Derivation(
+            second,
+            TimeInterval(_JUN, INFINITY),
+            None,
+            (
+                DerivedRow(merged, whole, TimeInterval(_JUN, _AUG)),
+                DerivedRow(
+                    _position_endpoint(None),
+                    TimeInterval(_AUG, INFINITY),
+                    TimeInterval(_AUG, INFINITY),
+                ),
+            ),
+        ),
+    )
+
+
+def test_a_merged_row_descends_from_each_original_over_its_own_part_only() -> None:
+    first, second = _original(_JAN, _T0), _original(_JUN, _SECOND_START)
+    merged = _position_endpoint(_AUG)
+    targets = _TargetWriteState()
+    targets.complete(
+        (),
+        Openings(fresh=(_position_endpoint(_APR), merged, _position_endpoint(None))),
+        _merged_derivations(first, second, merged),
+    )
+    descent = targets.descent(merged)
+    assert descent is not None
+    assert descent.valid_time_coverage == TimeInterval(_APR, _AUG)
+    assert descent.contributions == (
+        (first, TimeInterval(_APR, _JUN)),
+        (second, TimeInterval(_JUN, _AUG)),
+    )
+    assert (descent.original_at(_FEB), descent.original_at(_APR)) == (None, first)
+    assert descent.original_at(dt.datetime(2024, 7, 1, tzinfo=dt.UTC)) == second
+    # Only the original whose part a window overlaps reaches the merged row.
+    assert [endpoint for endpoint, _ in targets.descendants(first, TimeInterval(_JUN, _SEP))] == []
+    assert [endpoint for endpoint, _ in targets.descendants(second, TimeInterval(_FEB, _JUN))] == []
+    assert [endpoint for endpoint, _ in targets.descendants(second, TimeInterval(_JUN, _SEP))] == [
+        merged,
+        _position_endpoint(None),
+    ]
+
+
+def test_a_row_derived_from_a_merged_row_inherits_each_original_by_intersection() -> None:
+    first, second = _original(_JAN, _T0), _original(_JUN, _SECOND_START)
+    merged = _position_endpoint(_AUG)
+    targets = _TargetWriteState()
+    targets.complete(
+        (),
+        Openings(fresh=(_position_endpoint(_APR), merged, _position_endpoint(None))),
+        _merged_derivations(first, second, merged),
+    )
+    # A later unit splits the merged row at May: its head [April, May) came
+    # from the first original alone, its tail [May, August) from both.
+    may = dt.datetime(2024, 5, 1, tzinfo=dt.UTC)
+    revised = _original(_APR, _FIXED)
+    head = _position_endpoint(may)
+    targets.complete(
+        (),
+        Openings(fresh=(head,)),
+        (
+            Derivation(
+                revised,
+                TimeInterval(_APR, _AUG),
+                merged,
+                (
+                    DerivedRow(head, TimeInterval(_APR, may), TimeInterval(_APR, may)),
+                    DerivedRow(merged, TimeInterval(may, _AUG), TimeInterval(may, _AUG)),
+                ),
+            ),
+        ),
+    )
+    split_head = targets.descent(head)
+    tail = targets.descent(merged)
+    assert split_head is not None and tail is not None
+    assert split_head.contributions == ((first, TimeInterval(_APR, may)),)
+    assert tail.contributions == (
+        (first, TimeInterval(may, _JUN)),
+        (second, TimeInterval(_JUN, _AUG)),
+    )
+    # The revised row is no proven original of its own.
+    assert targets.proven(revised) is None
+
+
+def test_an_insertion_keeps_only_its_own_part_of_a_merged_row_and_ends_with_it() -> None:
+    key = corpus_object_key("WherePosition", ("id", 1))
+    targets = _TargetWriteState()
+    identity = targets.open_insert(key, None, TimeInterval(_JAN, _APR), bitemporal=True)
+    targets.end_flush(())
+    record = targets.record(key)
+    assert record is not None
+    merged = _position_endpoint(_JUN)
+    targets.complete((), Openings(shared=((merged, (TimeInterval(_JAN, _APR),)),)))
+    assert targets.continues_insertion(merged)
+    assert targets.insertion_coverage(merged, TimeInterval(_JAN, _JUN)) == (
+        TimeInterval(_JAN, _APR),
+    )
+    # Its removal window ends where its own part does, not the merged row.
+    assert targets.removal_window(record) == TimeInterval(_JAN, _APR)
+    assert record.identity is identity
+    # Revised in place to [April, June), the row holds none of its part.
+    targets.complete((), Openings(fresh=(merged,)))
+    assert not targets.continues_insertion(merged)
+    assert targets.owns(merged)
+    assert record.identity is None
+
+
+def test_a_row_still_holding_part_of_an_insertion_keeps_it_standing() -> None:
+    key = corpus_object_key("WherePosition", ("id", 1))
+    targets = _TargetWriteState()
+    identity = targets.open_insert(key, None, TimeInterval(_JAN, _APR), bitemporal=True)
+    targets.end_flush(())
+    record = targets.record(key)
+    assert record is not None
+    merged = _position_endpoint(_JUN)
+    targets.complete((), Openings(shared=((merged, (TimeInterval(_JAN, _APR),)),)))
+    narrowed = (TimeInterval(_FEB, _APR),)
+    targets.complete((), Openings(shared=((merged, narrowed),)))
+    assert targets.insertion_coverage(merged, TimeInterval(_FEB, _JUN)) == narrowed
+    assert record.identity is identity
+    # Whole again once a successor lies inside the part it contributed.
+    head = _position_endpoint(_FEB)
+    targets.complete((merged,), Openings(continued=(head,)))
+    assert targets.insertion_coverage(head, TimeInterval(_JAN, _FEB)) == (TimeInterval(_JAN, _FEB),)
+    assert record.identity is identity
+
+
+def test_an_insertions_part_running_on_without_end_leaves_its_removal_window_open() -> None:
+    key = corpus_object_key("WherePosition", ("id", 1))
+    targets = _TargetWriteState()
+    targets.open_insert(key, None, TimeInterval(_JAN, _APR), bitemporal=True)
+    targets.end_flush(())
+    record = targets.record(key)
+    assert record is not None
+    merged = _position_endpoint(None)
+    untagged = _position_endpoint(_JAN)
+    targets.complete(
+        (), Openings(fresh=(untagged,), shared=((merged, (TimeInterval(_APR, INFINITY),)),))
+    )
+    assert targets.insertion_coverage(untagged, TimeInterval(_JAN, _FEB)) == ()
+    assert targets.removal_window(record) == TimeInterval(_JAN, INFINITY)
+
+
+def test_a_row_named_again_after_its_insertion_ended_is_no_longer_tagged() -> None:
+    key = corpus_object_key("WherePosition", ("id", 1))
+    targets = _TargetWriteState()
+    targets.open_insert(key, None, TimeInterval(_JAN, _APR), bitemporal=True)
+    targets.end_flush(())
+    row = _position_endpoint(_APR)
+    targets.complete((), Openings(continued=(row,)))
+    targets.cancel_insert(key)
+    targets.complete((), Openings(continued=(row,)))
+    assert not targets.continues_insertion(row)
+    assert targets.owns(row)
+
+
+def test_a_row_merged_from_one_originals_adjacent_parts_names_it_once() -> None:
+    first = _original(_JAN, _T0)
+    targets = _TargetWriteState()
+    left, right = _position_endpoint(_APR), _position_endpoint(_JUN)
+    targets.complete(
+        (),
+        Openings(fresh=(left, right)),
+        (
+            Derivation(
+                first,
+                TimeInterval(_JAN, _JUN),
+                None,
+                (
+                    DerivedRow(left, TimeInterval(_JAN, _APR), TimeInterval(_JAN, _APR)),
+                    DerivedRow(right, TimeInterval(_APR, _JUN), TimeInterval(_APR, _JUN)),
+                ),
+            ),
+        ),
+    )
+    # A later unit merges both rows the original left, revising the second
+    # into [January, June); each part inherits the original over its own
+    # Valid Time, and the two parts are one.
+    revised_left, revised_right = _original(_JAN, _FIXED), _original(_APR, _FIXED)
+    merged = TimeInterval(_JAN, _JUN)
+    targets.complete(
+        (left,),
+        NO_OPENINGS,
+        (
+            Derivation(
+                revised_left,
+                TimeInterval(_JAN, _APR),
+                left,
+                (DerivedRow(right, merged, TimeInterval(_JAN, _APR)),),
+            ),
+            Derivation(
+                revised_right,
+                TimeInterval(_APR, _JUN),
+                right,
+                (DerivedRow(right, merged, TimeInterval(_APR, _JUN)),),
+            ),
+        ),
+    )
+    descent = targets.descent(right)
+    assert descent is not None
+    assert descent.contributions == ((first, merged),)
+
+
+def test_a_part_of_a_row_no_proven_original_held_descends_from_none() -> None:
+    first = _original(_JAN, _T0)
+    targets = _TargetWriteState()
+    merged = _position_endpoint(_JUN)
+    # The original contributed [January, April) of the merged row; a gap
+    # opened the rest.
+    targets.complete(
+        (),
+        Openings(fresh=(merged,)),
+        (
+            Derivation(
+                first,
+                TimeInterval(_JAN, _APR),
+                None,
+                (DerivedRow(merged, TimeInterval(_JAN, _JUN), TimeInterval(_JAN, _APR)),),
+            ),
+        ),
+    )
+    tail = _position_endpoint(_AUG)
+    targets.complete(
+        (),
+        Openings(fresh=(tail,)),
+        (
+            Derivation(
+                _original(_JAN, _FIXED),
+                TimeInterval(_JAN, _JUN),
+                merged,
+                (DerivedRow(tail, TimeInterval(_APR, _AUG), TimeInterval(_APR, _JUN)),),
+            ),
+        ),
+    )
+    assert targets.descent(tail) is None

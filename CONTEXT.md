@@ -36,6 +36,7 @@ contract owners; this index does not add requirements.
 | Coverage Transform / Coverage Segment | What an object's composed writes do to its existing coverage, and one requested window of it | [Temporal writes](core/spec/m-temporal-write.md) |
 | Coverage Gap | Part of a replacement's extent no existing coverage holds, opened as a new lineage rather than a successor | [Temporal writes](core/spec/m-temporal-write.md) |
 | Predecessor Expansion | The per-milestone rules that settle one predecessor's effect and successors | [Temporal writes](core/spec/m-temporal-write.md) |
+| Merged row / contribution | One opened row covering adjacent produced rows of identical stored state, and the part of it each original or insertion contributed | [Temporal writes](core/spec/m-temporal-write.md) |
 | Unchanged Milestone / Guard | A milestone a write leaves exactly as it was and keeps, versus the write that proves it still stands as observed | [Temporal writes](core/spec/m-temporal-write.md) |
 | Concurrency Preference / Strategy | Requested policy versus the strategy resolved for an entity | [Read locks](core/spec/m-read-lock.md) |
 | Transaction Time / Valid Time | Audit history versus effective-world history | [Temporal reads](core/spec/m-temporal-read.md) |
