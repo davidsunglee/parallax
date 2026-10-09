@@ -20,11 +20,11 @@ then:
       - operation: {kind: AttributeRemoved, attribute: parallax.compatibility.Parcel.legacy}
         reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
       - operation: {kind: AttributeAdded, attribute: parallax.compatibility.Parcel.tags}
-        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+        reasons: [DatabaseMigrationRequired]
       - operation:
           kind: ValueObjectAttributeAdded
           valueObjectAttribute: parallax.compatibility.Parcel.origin.codes
-        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+        reasons: [DatabaseMigrationRequired]
       - operation:
           kind: ValueObjectAttributeRemoved
           valueObjectAttribute: parallax.compatibility.Parcel.origin.zones

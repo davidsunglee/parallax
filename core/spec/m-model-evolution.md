@@ -286,8 +286,10 @@ ancestry makes applicable.
   are never nullable, so each arrives and leaves as a required member: reading
   an absent collection as empty, or authoring one as empty by default, is no
   default and backfill contract. Where an insert the caller could author
-  carries the value it needs the authoring surface too, because every previously
-  valid insert omits an input the later model demands. A framework-owned member
+  carries the value, a single member needs the authoring surface too, because
+  every previously valid insert omits an input the later model demands; an
+  omitted collection is completed as empty, so a collection's arrival leaves
+  every such insert valid and needs the database alone. A framework-owned member
   needs the database alone, since no caller ever supplied it, and so does any
   member arriving on an Entity whose family was already effectively `ReadOnly`,
   which has no previously valid insert to invalidate. A wholly new Entity may

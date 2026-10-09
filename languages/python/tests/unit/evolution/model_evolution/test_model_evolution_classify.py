@@ -379,9 +379,11 @@ def test_a_rowless_position_changing_multiplicity_needs_the_authoring_surface_al
 def test_a_scalar_collection_arrives_and_leaves_as_a_required_member() -> None:
     # A collection is never nullable, and reading an absent one as empty is no
     # default and backfill contract, so it follows the required-member rule in
-    # both directions; a position storing no shape asks nothing of either.
+    # both directions; an insert omitting it is completed as empty, so its
+    # arrival withdraws no write shape. A position storing no shape asks
+    # nothing of either.
     tags = _member(multiplicity=Multiplicity.MANY)
-    assert _verdict(_holding(), _holding(tags)) == _Verdict(_BOTH, False)
+    assert _verdict(_holding(), _holding(tags)) == _Verdict((_MIGRATION,), False)
     assert _verdict(_holding(tags), _holding()) == _Verdict(_BOTH, False)
     rowless = dataclasses.replace(
         attribute(_BRANCH, "issuer", type=STRING), multiplicity=Multiplicity.MANY
@@ -535,6 +537,34 @@ def test_an_interposed_position_hands_its_required_members_down() -> None:
     assert _verdict_on(attributes, _altered(attributes)) == _Verdict(_BOTH, False)
     occurrences = _interposing(value_objects=(_TERMS,))
     assert _verdict_on(occurrences, _altered(occurrences)) == _Verdict(_BOTH, False)
+
+
+def test_an_arriving_collection_withdraws_no_insert() -> None:
+    # An insert omitting a collection is completed as empty, so a `many`
+    # occurrence or scalar collection reaches the database alone, whether it is
+    # declared here or handed down by an interposed position.
+    many = dataclasses.replace(_TERMS, multiplicity=Multiplicity.MANY)
+
+    def holding(*occurrences: ValueObjectOccurrenceDeclaration) -> Metamodel:
+        return form_metamodel(
+            source(
+                Declaration(
+                    identity=_WIDGET,
+                    container=Table("widget"),
+                    attributes=(key(_WIDGET),),
+                    value_objects=occurrences,
+                )
+            )
+        )
+
+    assert _verdict(holding(), holding(many)) == _Verdict((_MIGRATION,), False)
+    occurrences = _interposing(value_objects=(many,))
+    assert _verdict_on(occurrences, _altered(occurrences)) == _Verdict((_MIGRATION,), False)
+    collection = dataclasses.replace(
+        attribute(_BRANCH, "issuer", type=STRING), multiplicity=Multiplicity.MANY
+    )
+    attributes = _interposing(attributes=(collection,))
+    assert _verdict_on(attributes, _altered(attributes)) == _Verdict((_MIGRATION,), False)
 
 
 def test_an_inheritance_change_is_classified_by_its_effective_consequences() -> None:
