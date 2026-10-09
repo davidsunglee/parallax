@@ -583,15 +583,12 @@ def _attribute_alteration(
                 reasons |= {_AUTHORING, _MIGRATION}
             case StorageChanged():
                 reasons.add(_MIGRATION)
+            case MultiplicityChanged():
+                reasons |= _multiplicity_reasons(position)
             case PrimaryKeyChanged(earlier_key, later_key):
                 reasons |= _primary_key_reasons(earlier_key, later_key)
-            case NullabilityChanged(_, nullable):
-                if nullable:
-                    overlap_visible = position.writes_after
-                else:
-                    reasons |= _domain_contraction(position)
-            case MaximumLengthChanged(earlier_length, later_length):
-                if _bound_relaxed(earlier_length, later_length):
+            case NullabilityChanged() | MaximumLengthChanged():
+                if _expands(delta):
                     overlap_visible = position.writes_after
                 else:
                     reasons |= _domain_contraction(position)
@@ -626,10 +623,7 @@ def _occurrence_alteration(
             case StorageChanged():
                 reasons.add(_MIGRATION)
             case MultiplicityChanged():
-                # An authored path changes between one object and a collection,
-                # whatever the position stores, and each stored document the
-                # position keeps carries the shape it left behind.
-                reasons |= {_AUTHORING} | _domain_contraction(position)
+                reasons |= _multiplicity_reasons(position)
             case NullabilityChanged(_, nullable):
                 if nullable:
                     overlap_visible = position.writes_after
@@ -638,17 +632,31 @@ def _occurrence_alteration(
     return Classification(reasons=_in_fixed_order(reasons), overlap_visible=overlap_visible)
 
 
+def _multiplicity_reasons(position: _Position) -> set[CoordinationReason]:
+    """The reasons a member moving between one value and an ordered collection carries.
+
+    An authored path changes between one value and a collection whatever the
+    position stores — one scalar and a scalar collection, one object and a
+    collection of objects — and each stored shape the position keeps still holds
+    the value in the form it was written in. No wrapping or unwrapping is
+    inferred to carry it across.
+    """
+    return {_AUTHORING} | _domain_contraction(position)
+
+
 def _value_object_attribute_alteration(
     operation: ValueObjectAttributeAltered, position: _Position
 ) -> Classification:
-    """A scalar leaf owns no Column, key, bound, or locking fact, so its two
-    deltas classify exactly as the same two do on a scalar Attribute."""
+    """A scalar leaf owns no Column, key, bound, or locking fact, so its three
+    deltas classify exactly as the same three do on a scalar Attribute."""
     reasons: set[CoordinationReason] = set()
     overlap_visible = False
     for delta in operation.deltas:
         match delta:
             case TypeChanged():
                 reasons |= {_AUTHORING, _MIGRATION}
+            case MultiplicityChanged():
+                reasons |= _multiplicity_reasons(position)
             case NullabilityChanged(_, nullable):
                 if nullable:
                     overlap_visible = position.writes_after
@@ -703,6 +711,13 @@ def _withdraws_caller_input(earlier: AttributeMetadata, later: AttributeMetadata
     return CALLER_INPUT_ORDER.index(attribute_write_capability(later)) < CALLER_INPUT_ORDER.index(
         attribute_write_capability(earlier)
     )
+
+
+def _expands(delta: NullabilityChanged | MaximumLengthChanged) -> bool:
+    """Whether a value-domain delta admits every value the earlier domain did."""
+    if isinstance(delta, NullabilityChanged):
+        return delta.later
+    return _bound_relaxed(delta.earlier, delta.later)
 
 
 def _bound_relaxed(earlier: int | None, later: int | None) -> bool:

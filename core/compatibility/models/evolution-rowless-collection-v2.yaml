@@ -1,0 +1,25 @@
+# Folio (v2): the later endpoint of the ROWLESS SCALAR COLLECTION scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-rowless-collection-v1.yaml with the rowless `Sketch`
+# declaring the scalar collection `strokes`; nothing else differs. No concrete
+# subtype composes that position, so no stored shape carries the collection and
+# no insert names it, while the family's shared Table still materializes its
+# Structured Column.
+entities:
+  - name: Folio
+    namespace: parallax.compatibility
+    table: evolution_folio
+    inheritance: {role: root, strategy: table-per-hierarchy, tag: {column: kind}}
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+  - name: Sketch
+    namespace: parallax.compatibility
+    inheritance: {role: abstract-subtype, parent: parallax.compatibility.Folio}
+    attributes:
+      - {name: strokes, type: "decimal(12,2)", multiplicity: many}
+  - name: Page
+    namespace: parallax.compatibility
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.Folio, tagValue: page}
+    attributes:
+      - {name: words, type: int32}

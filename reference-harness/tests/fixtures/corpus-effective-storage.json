@@ -847,6 +847,118 @@
       "valueObject": {}
     }
   },
+  "models/evolution-collection-members-v1.yaml": {
+    "parallax.compatibility.Parcel": {
+      "attribute": {
+        "id": "id",
+        "legacy": "legacy"
+      },
+      "documentPath": {
+        "origin.city": "origin:city",
+        "origin.zones": "origin:zones"
+      },
+      "valueObject": {
+        "origin": "origin"
+      }
+    }
+  },
+  "models/evolution-collection-members-v2.yaml": {
+    "parallax.compatibility.Parcel": {
+      "attribute": {
+        "id": "id",
+        "tags": "tags"
+      },
+      "documentPath": {
+        "origin.city": "origin:city",
+        "origin.codes": "origin:codes"
+      },
+      "valueObject": {
+        "origin": "origin"
+      }
+    }
+  },
+  "models/evolution-collection-tables-v1.yaml": {
+    "parallax.compatibility.Anchor": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-collection-tables-v2.yaml": {
+    "parallax.compatibility.Anchor": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Bag": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Bike": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Box": {
+      "attribute": {
+        "sizes": "sizes"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Bundle": {
+      "attribute": {
+        "id": "id",
+        "tags": "tags"
+      },
+      "documentPath": {
+        "tags": "payload:tags"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Fleet": {
+      "attribute": {
+        "id": "id",
+        "routes": "routes"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Hamper": {
+      "attribute": {
+        "codes": "codes",
+        "id": "id",
+        "label": "label",
+        "weights": "weights"
+      },
+      "documentPath": {
+        "seal.marks": "seal:marks"
+      },
+      "valueObject": {
+        "seal": "seal"
+      }
+    },
+    "parallax.compatibility.Kit": {
+      "attribute": {
+        "id": "id",
+        "parts": "parts"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Van": {
+      "attribute": {
+        "stops": "stops"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/evolution-concrete-subtype-tables-v1.yaml": {
     "parallax.compatibility.Barge": {
       "attribute": {
@@ -1414,6 +1526,98 @@
     "parallax.compatibility.Warded": {
       "attribute": {
         "seal": "seal"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-inherited-multiplicity-v1.yaml": {
+    "parallax.compatibility.Drill": {
+      "attribute": {
+        "sizes": "sizes"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Gear": {
+      "attribute": {
+        "id": "id",
+        "labels": "labels"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Lathe": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Prototype": {
+      "attribute": {
+        "marks": "marks"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Saw": {
+      "attribute": {
+        "teeth": "teeth"
+      },
+      "documentPath": {
+        "teeth": "payload:teeth"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Tool": {
+      "attribute": {
+        "id": "id",
+        "tags": "tags"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-inherited-multiplicity-v2.yaml": {
+    "parallax.compatibility.Drill": {
+      "attribute": {
+        "sizes": "sizes"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Gear": {
+      "attribute": {
+        "id": "id",
+        "labels": "labels"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Lathe": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Prototype": {
+      "attribute": {
+        "marks": "marks"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Saw": {
+      "attribute": {
+        "teeth": "teeth"
+      },
+      "documentPath": {
+        "teeth": "payload:teeth"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Tool": {
+      "attribute": {
+        "id": "id",
+        "tags": "tags"
       },
       "documentPath": {},
       "valueObject": {}
@@ -2126,6 +2330,50 @@
       "valueObject": {}
     }
   },
+  "models/evolution-rowless-collection-v1.yaml": {
+    "parallax.compatibility.Folio": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Page": {
+      "attribute": {
+        "words": "words"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Sketch": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-rowless-collection-v2.yaml": {
+    "parallax.compatibility.Folio": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Page": {
+      "attribute": {
+        "words": "words"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Sketch": {
+      "attribute": {
+        "strokes": "strokes"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/evolution-rowless-domain-v1.yaml": {
     "parallax.compatibility.Draft": {
       "attribute": {
@@ -2262,6 +2510,68 @@
       },
       "documentPath": {},
       "valueObject": {}
+    }
+  },
+  "models/evolution-scalar-multiplicity-v1.yaml": {
+    "parallax.compatibility.Register": {
+      "attribute": {
+        "id": "id",
+        "marks": "marks",
+        "title": "title"
+      },
+      "documentPath": {
+        "marks": "payload:marks",
+        "title": "payload:title"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Roster": {
+      "attribute": {
+        "codes": "codes",
+        "id": "id",
+        "note": "note",
+        "tag": "tag"
+      },
+      "documentPath": {
+        "detail.label": "detail:label",
+        "detail.scores": "detail:scores",
+        "lines.flags": "lines:flags"
+      },
+      "valueObject": {
+        "detail": "detail",
+        "lines": "lines"
+      }
+    }
+  },
+  "models/evolution-scalar-multiplicity-v2.yaml": {
+    "parallax.compatibility.Register": {
+      "attribute": {
+        "id": "id",
+        "marks": "marks",
+        "title": "title"
+      },
+      "documentPath": {
+        "marks": "payload:marks",
+        "title": "payload:title"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Roster": {
+      "attribute": {
+        "codes": "codes",
+        "id": "id",
+        "note": "note",
+        "tag": "tag"
+      },
+      "documentPath": {
+        "detail.label": "detail:label",
+        "detail.scores": "detail:scores",
+        "lines.flags": "lines:flags"
+      },
+      "valueObject": {
+        "detail": "detail",
+        "lines": "lines"
+      }
     }
   },
   "models/evolution-sealed-domain-v1.yaml": {

@@ -1,0 +1,47 @@
+# Scalar collections arriving with their Tables (m-schema-delta): under
+# `Columns` each top-level collection is a Structured Column of its own, never a
+# Column of its element type, and a nested one stays inside its Value Object's
+# Structured Column; under Relational Document Layout every collection rides in
+# the shared document. A table-per-hierarchy subtype's collection is optional in
+# the shared Table; a table-per-concrete-subtype root's collection repeats in
+# every concrete Table.
+tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-collection-tables-v1.yaml
+    later: models/evolution-collection-tables-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - {kind: ConcreteSubtypeAdded, entity: parallax.compatibility.Bag}
+      - {kind: ConcreteSubtypeAdded, entity: parallax.compatibility.Bike}
+      - {kind: ConcreteSubtypeAdded, entity: parallax.compatibility.Box}
+      - {kind: EntityAdded, entity: parallax.compatibility.Bundle}
+      - {kind: EntityAdded, entity: parallax.compatibility.Fleet}
+      - {kind: EntityAdded, entity: parallax.compatibility.Hamper}
+      - {kind: EntityAdded, entity: parallax.compatibility.Kit}
+      - {kind: ConcreteSubtypeAdded, entity: parallax.compatibility.Van}
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create table evolution_bag (id bigint not null, parts jsonb not null, primary key (id))
+          - create table evolution_box (id bigint not null, parts jsonb not null, sizes jsonb not null, primary key (id))
+          - create table evolution_bundle (id bigint not null, payload jsonb not null, primary key (id))
+          - create table evolution_fleet (id bigint not null, kind varchar(32) not null, routes jsonb not null, stops jsonb, primary key (id))
+          - create table evolution_hamper (id bigint not null, label varchar(16) not null, weights jsonb not null, codes jsonb not null, seal jsonb, primary key (id))
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - create table evolution_bag (id bigint not null, parts json not null, primary key (id))
+          - create table evolution_box (id bigint not null, parts json not null, sizes json not null, primary key (id))
+          - create table evolution_bundle (id bigint not null, payload json not null, primary key (id))
+          - create table evolution_fleet (id bigint not null, kind varchar(32) not null, routes json not null, stops json, primary key (id))
+          - create table evolution_hamper (id bigint not null, label varchar(16) not null, weights json not null, codes json not null, seal json, primary key (id))
+        createdIndices: []

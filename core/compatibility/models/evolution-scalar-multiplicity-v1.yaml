@@ -1,0 +1,33 @@
+# Roster (v1): the earlier endpoint of the SCALAR MULTIPLICITY scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Every
+# scalar member below sits at one end of the ONE/MANY boundary, so one evolution
+# moves each across it in the opposite direction: top-level members under
+# `Columns`, members of a `one` and of a `many` Value Object, and top-level
+# members of a Relational Document Layout owner.
+entities:
+  - name: Roster
+    namespace: parallax.compatibility
+    table: evolution_roster
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: codes, type: int32, multiplicity: many}
+      - {name: note, type: string, nullable: true}
+      - {name: tag, type: string}
+    valueObjects:
+      - name: detail
+        attributes:
+          - {name: label, type: string}
+          - {name: scores, type: int32, multiplicity: many}
+      - name: lines
+        multiplicity: many
+        attributes:
+          - {name: flags, type: boolean}
+  - name: Register
+    namespace: parallax.compatibility
+    table: evolution_register
+    layout: {document: {column: payload}}
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: marks, type: int32, multiplicity: many}
+      - {name: title, type: string}

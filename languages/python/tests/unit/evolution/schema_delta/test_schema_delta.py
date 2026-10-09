@@ -34,7 +34,12 @@ from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, I
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.storage_layout import ColumnSlot
-from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve
+from parallax.evolution.model_evolution import (
+    ABSENT,
+    CoordinatedEvolution,
+    UnilateralEvolution,
+    evolve,
+)
 from parallax.evolution.schema_delta import (
     PhysicalLocation,
     SchemaDelta,
@@ -399,6 +404,47 @@ def test_a_domain_is_restated_downward_only_where_no_shape_stores_the_column() -
     )
     stored = evolve(_MODELS["evolution-widened-domain-v2"], _MODELS["evolution-widened-domain-v1"])
     assert not isinstance(stored, UnilateralEvolution)
+
+
+def _with_single_strokes(stem: str) -> AcceptedMetamodel:
+    """The rowless-collection model ``stem`` with ``Sketch.strokes`` declared single."""
+    model = _RECORDS[stem]
+    return formed(
+        dataclasses.replace(
+            model,
+            entities=tuple(
+                dataclasses.replace(
+                    entity,
+                    attributes=tuple(
+                        dataclasses.replace(member, multiplicity="one")
+                        for member in entity.attributes
+                    ),
+                )
+                if entity.name == "Sketch"
+                else entity
+                for entity in model.entities
+            ),
+        )
+    )
+
+
+def test_a_scalar_multiplicity_change_never_reaches_the_generator() -> None:
+    # Under `Columns` the move would turn a scalar Column into a Structured
+    # Column, which no restatement shape admits over a stored value — and the
+    # rowless `Sketch` shows the classification, not the restatement arm, is what
+    # keeps it out: its Column stores no shape, so restating it would destroy
+    # nothing, yet an authored path still changes between one value and a
+    # collection.
+    stored = (
+        _MODELS["evolution-scalar-multiplicity-v1"],
+        _MODELS["evolution-scalar-multiplicity-v2"],
+    )
+    rowless = (
+        _with_single_strokes("evolution-rowless-collection-v2"),
+        _MODELS["evolution-rowless-collection-v2"],
+    )
+    for earlier, later in (stored, stored[::-1], rowless, rowless[::-1]):
+        assert isinstance(evolve(earlier, later), CoordinatedEvolution)
 
 
 def test_no_statement_is_idempotent() -> None:

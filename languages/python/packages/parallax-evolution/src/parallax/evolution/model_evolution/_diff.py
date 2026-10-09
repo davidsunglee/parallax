@@ -278,6 +278,8 @@ def _attribute_deltas(
         deltas.append(TypeChanged(earlier.type, later.type))
     if earlier.storage != later.storage:
         deltas.append(StorageChanged(earlier.storage, later.storage))
+    if earlier.multiplicity != later.multiplicity:
+        deltas.append(MultiplicityChanged(earlier.multiplicity, later.multiplicity))
     if earlier.primary_key != later.primary_key:
         deltas.append(PrimaryKeyChanged(earlier.primary_key, later.primary_key))
     if earlier.nullable != later.nullable:
@@ -321,6 +323,8 @@ def _value_object_attribute_deltas(
     deltas: list[ValueObjectAttributeDelta] = []
     if earlier.type != later.type:
         deltas.append(TypeChanged(earlier.type, later.type))
+    if earlier.multiplicity != later.multiplicity:
+        deltas.append(MultiplicityChanged(earlier.multiplicity, later.multiplicity))
     if earlier.nullable != later.nullable:
         deltas.append(NullabilityChanged(earlier.nullable, later.nullable))
     return tuple(deltas)

@@ -1,0 +1,17 @@
+# Parcel (v1): the earlier endpoint of the SCALAR COLLECTION MEMBERS scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. One
+# top-level scalar collection and one inside a Value Object are cut out by the
+# later endpoint, which adds one of each in their place.
+entity:
+  name: Parcel
+  namespace: parallax.compatibility
+  table: evolution_parcel
+  attributes:
+    - {name: id, type: int64, primaryKey: true}
+    - {name: legacy, type: string, multiplicity: many}
+  valueObjects:
+    - name: origin
+      attributes:
+        - {name: city, type: string}
+        - {name: zones, type: int32, multiplicity: many}

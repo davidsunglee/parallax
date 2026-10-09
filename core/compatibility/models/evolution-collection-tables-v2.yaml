@@ -1,0 +1,67 @@
+# Anchor and its new neighbours (v2): the later endpoint of the SCALAR
+# COLLECTION TABLES scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-collection-tables-v1.yaml beside four arriving owners of
+# scalar collections: a standalone Entity under `Columns`, one under Relational
+# Document Layout, a table-per-hierarchy family whose root and one concrete
+# subtype declare collections, and a table-per-concrete-subtype family whose
+# root and one concrete subtype declare collections. Every declared element type
+# is one whose single scalar would take a native Column.
+entities:
+  - name: Anchor
+    namespace: parallax.compatibility
+    table: evolution_anchor
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+  - name: Hamper
+    namespace: parallax.compatibility
+    table: evolution_hamper
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: label, type: string, maxLength: 16}
+      - {name: weights, type: "decimal(12,2)", multiplicity: many}
+      - {name: codes, type: bytes, multiplicity: many}
+    valueObjects:
+      - name: seal
+        nullable: true
+        attributes:
+          - {name: marks, type: int32, multiplicity: many}
+  - name: Bundle
+    namespace: parallax.compatibility
+    table: evolution_bundle
+    layout: {document: {column: payload}}
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: tags, type: string, multiplicity: many}
+  - name: Fleet
+    namespace: parallax.compatibility
+    table: evolution_fleet
+    inheritance: {role: root, strategy: table-per-hierarchy, tag: {column: kind}}
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: routes, type: string, multiplicity: many}
+  - name: Van
+    namespace: parallax.compatibility
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.Fleet, tagValue: van}
+    attributes:
+      - {name: stops, type: int32, multiplicity: many}
+  - name: Bike
+    namespace: parallax.compatibility
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.Fleet, tagValue: bike}
+  - name: Kit
+    namespace: parallax.compatibility
+    inheritance: {role: root, strategy: table-per-concrete-subtype}
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: parts, type: uuid, multiplicity: many}
+  - name: Box
+    namespace: parallax.compatibility
+    table: evolution_box
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.Kit}
+    attributes:
+      - {name: sizes, type: float64, multiplicity: many}
+  - name: Bag
+    namespace: parallax.compatibility
+    table: evolution_bag
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.Kit}

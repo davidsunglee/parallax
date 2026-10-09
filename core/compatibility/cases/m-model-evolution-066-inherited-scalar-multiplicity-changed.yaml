@@ -1,0 +1,69 @@
+# Changing an inherited scalar member between ONE and MANY (m-model-evolution):
+# a member declared on a root or a concrete subtype, under table-per-hierarchy
+# with `Columns` and table-per-concrete-subtype with Relational Document Layout,
+# needs both reasons because a shape stored under its position survives. The
+# rowless `Prototype` stores no value to carry across, so its member's move
+# needs the authoring surface alone.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-inherited-multiplicity-v1.yaml
+    later: models/evolution-inherited-multiplicity-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Drill.sizes
+        deltas:
+          - {kind: MultiplicityChanged, earlier: one, later: many}
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Gear.labels
+        deltas:
+          - {kind: MultiplicityChanged, earlier: many, later: one}
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Prototype.marks
+        deltas:
+          - {kind: MultiplicityChanged, earlier: one, later: many}
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Saw.teeth
+        deltas:
+          - {kind: MultiplicityChanged, earlier: many, later: one}
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Tool.tags
+        deltas:
+          - {kind: MultiplicityChanged, earlier: one, later: many}
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Drill.sizes
+          deltas:
+            - {kind: MultiplicityChanged, earlier: one, later: many}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Gear.labels
+          deltas:
+            - {kind: MultiplicityChanged, earlier: many, later: one}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Prototype.marks
+          deltas:
+            - {kind: MultiplicityChanged, earlier: one, later: many}
+        reasons: [AuthoringSurfaceChangeRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Saw.teeth
+          deltas:
+            - {kind: MultiplicityChanged, earlier: many, later: one}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Tool.tags
+          deltas:
+            - {kind: MultiplicityChanged, earlier: one, later: many}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]

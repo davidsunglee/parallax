@@ -1,0 +1,29 @@
+# Adding a scalar collection to a position that denotes no stored shape
+# (m-model-evolution): unilateral like any required member there, and the
+# family's shared Table gains a Structured Column for it however its elements
+# are typed (m-schema-delta).
+tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-rowless-collection-v1.yaml
+    later: models/evolution-rowless-collection-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - {kind: AttributeAdded, attribute: parallax.compatibility.Sketch.strokes}
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - alter table evolution_folio add column strokes jsonb
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - alter table evolution_folio add column strokes json
+        createdIndices: []

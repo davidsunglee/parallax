@@ -100,6 +100,14 @@ unilateral, so the same fact that makes the evolution unilateral makes restating
 the Column destroy nothing. Narrowing a domain that rows ARE stored against is
 never unilateral and therefore never reaches this module — the distinction to
 draw is whether the Column stores a shape, never whether the domain grew.
+Moving a scalar member between `ONE` and `MANY` never reaches it either: under
+`Columns` it would move the member's slot between a scalar Column and a
+Structured Column, and `m-model-evolution` classifies every multiplicity change
+as coordinated, so no statement here wraps or unwraps a stored value. Under
+`Columns` a scalar collection arriving in a unilateral evolution brings a
+Structured Column of its own (`m-storage-layout`), whatever element type it
+declares, because its declared Neutral Type names its elements rather than its
+Column.
 
 Each physical operation carries its **causal Evolution Operations** — all and
 only the operations whose changed facts asked for it, in canonical operation

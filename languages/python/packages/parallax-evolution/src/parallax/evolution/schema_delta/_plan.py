@@ -580,8 +580,10 @@ def _moves_declared_domain(operation: EvolutionOperation, slot: ColumnSlot) -> b
 
     A physical Column holds a Neutral Type, a String bound, and a nullability and
     nothing else, so altering the same declaration's write flag, key membership,
-    storage location, or occurrence multiplicity moved no stored domain. The
-    question is which FACT moved, never which declaration the operation names.
+    or storage location moved no stored domain. A multiplicity change does move
+    a scalar slot's Column between a scalar and a Structured Column, but it is
+    never unilateral and so never reaches here. The question is which FACT moved,
+    never which declaration the operation names.
     """
     match operation:
         case AttributeAltered():

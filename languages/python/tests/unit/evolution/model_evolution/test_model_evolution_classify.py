@@ -36,6 +36,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     ExactEntityReference,
     Metamodel,
+    Multiplicity,
     PersistenceMode,
     PkGeneration,
     PrimaryKey,
@@ -51,13 +52,18 @@ from parallax.evolution.model_evolution import (
     AsOfAxisAdded,
     AsOfAxisAltered,
     AsOfAxisRemoved,
+    AttributeAltered,
     ConcreteSubtypeAdded,
     CoordinationReason,
     EntityAdded,
     EntityAltered,
     Evolution,
     EvolutionOperation,
+    MultiplicityChanged,
+    NullabilityChanged,
+    StorageChanged,
     UnilateralEvolution,
+    ValueObjectAttributeAltered,
     evolve,
 )
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
@@ -297,6 +303,90 @@ def test_member_ownership_is_directional_in_who_supplies_the_value() -> None:
     owned = dataclasses.replace(version, optimistic_locking=True, framework_owned=True)
     assert _verdict(_holding(version), _holding(owned)) == _Verdict((_AUTHORING,), False)
     assert _verdict(_holding(owned), _holding(version)) == _Verdict(_UNILATERAL, False)
+
+
+def test_a_scalar_multiplicity_change_needs_both_in_either_direction() -> None:
+    # An authored value moves between one scalar and an ordered collection, and
+    # the rows the Entity keeps still hold it in the form it was written in; no
+    # wrapping or unwrapping is inferred to carry them across.
+    single, collection = _member(), _member(multiplicity=Multiplicity.MANY)
+    assert _verdict(_holding(single), _holding(collection)) == _Verdict(_BOTH, False)
+    assert _verdict(_holding(collection), _holding(single)) == _Verdict(_BOTH, False)
+
+
+def test_a_scalar_multiplicity_change_is_a_field_delta_of_its_own() -> None:
+    # The declared type names a collection's elements, so a move across the
+    # boundary is no type change, and it sits between the storage location and
+    # the key in the fixed field order — beside the contraction a collection's
+    # required-ness brings to a member that was nullable.
+    earlier = _holding(_member(nullable=True, storage=Column("label")))
+    later = _holding(_member(multiplicity=Multiplicity.MANY, storage=Column("labels")))
+    (altered,) = evolve(earlier, later).operations
+    assert isinstance(altered, AttributeAltered)
+    assert altered.deltas == (
+        StorageChanged(Column("label"), Column("labels")),
+        MultiplicityChanged(Multiplicity.ONE, Multiplicity.MANY),
+        NullabilityChanged(earlier=True, later=False),
+    )
+    assert _verdict(earlier, later) == _Verdict(_BOTH, False)
+
+
+def _leaf_holding(leaf: ValueObjectAttributeDeclaration) -> Metamodel:
+    """``_holding``'s Entity carrying one Value Object whose only leaf is ``leaf``."""
+    terms = dataclasses.replace(_TERMS, shape=dataclasses.replace(_TERMS.shape, attributes=(leaf,)))
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_WIDGET,
+                container=Table("widget"),
+                attributes=(key(_WIDGET),),
+                value_objects=(terms,),
+            )
+        )
+    )
+
+
+def test_a_leaf_multiplicity_change_classifies_as_the_attribute_one_does() -> None:
+    # Inside a document the member moves between a scalar and an array while its
+    # Structured Column stays, and the stored documents still carry the old form.
+    single = ValueObjectAttributeDeclaration("tenor", type=STRING)
+    collection = ValueObjectAttributeDeclaration(
+        "tenor", type=STRING, multiplicity=Multiplicity.MANY
+    )
+    evolution = evolve(_leaf_holding(single), _leaf_holding(collection))
+    (altered,) = evolution.operations
+    assert isinstance(altered, ValueObjectAttributeAltered)
+    assert altered.deltas == (MultiplicityChanged(Multiplicity.ONE, Multiplicity.MANY),)
+    assert _verdict_on(evolution, altered) == _Verdict(_BOTH, False)
+    assert _verdict(_leaf_holding(collection), _leaf_holding(single)) == _Verdict(_BOTH, False)
+
+
+def test_a_rowless_position_changing_multiplicity_needs_the_authoring_surface_alone() -> None:
+    # No stored shape holds a value to carry across, but every authored path
+    # through the member still changes between one value and a collection.
+    single = attribute(_BRANCH, "issuer", type=STRING)
+    collection = dataclasses.replace(single, multiplicity=Multiplicity.MANY)
+    assert _verdict(_rowless_branch(single), _rowless_branch(collection)) == _Verdict(
+        (_AUTHORING,), False
+    )
+    leaf = ValueObjectAttributeDeclaration("tenor", type=STRING, multiplicity=Multiplicity.MANY)
+    many = dataclasses.replace(_TERMS, shape=dataclasses.replace(_TERMS.shape, attributes=(leaf,)))
+    assert _verdict(_rowless_branch(holds=(_TERMS,)), _rowless_branch(holds=(many,))) == _Verdict(
+        (_AUTHORING,), False
+    )
+
+
+def test_a_scalar_collection_arrives_and_leaves_as_a_required_member() -> None:
+    # A collection is never nullable, and reading an absent one as empty is no
+    # default and backfill contract, so it follows the required-member rule in
+    # both directions; a position storing no shape asks nothing of either.
+    tags = _member(multiplicity=Multiplicity.MANY)
+    assert _verdict(_holding(), _holding(tags)) == _Verdict(_BOTH, False)
+    assert _verdict(_holding(tags), _holding()) == _Verdict(_BOTH, False)
+    rowless = dataclasses.replace(
+        attribute(_BRANCH, "issuer", type=STRING), multiplicity=Multiplicity.MANY
+    )
+    assert _verdict(_rowless_branch(), _rowless_branch(rowless)) == _Verdict(_UNILATERAL, False)
 
 
 def test_an_alteration_reports_the_reasons_of_every_delta_it_carries() -> None:

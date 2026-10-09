@@ -267,8 +267,8 @@ def _value_admissibility(analysis: _Analysis) -> Iterator[_Located]:
 
     Member addition and removal stay their own operations rather than becoming
     admissibility impacts, so only surviving positions are compared, and an
-    occurrence admits only the presence of a value: its multiplicity is
-    structural rather than a value domain.
+    occurrence admits only the presence of a value. Multiplicity, a scalar
+    member's or an occurrence's, is structural rather than a value domain.
     """
     for identity, (earlier, later) in analysis.matching.attributes.surviving.items():
         before, after = _scalar(earlier), _scalar(later)

@@ -32,6 +32,7 @@ import pytest
 
 from reference_harness.case import Case, discover_cases
 from reference_harness.corpus_yaml import read_corpus_yaml
+from reference_harness.evolution_validate import FIELD_DELTA_ORDER
 from reference_harness.temporality import (
     TEMPORAL_MEMBERS,
     TEMPORALITY_PROFILES,
@@ -267,6 +268,26 @@ def test_persistence_is_witnessed_withdrawn_and_granted() -> None:
 
 def test_multiplicity_is_witnessed_in_both_directions() -> None:
     assert _directions("MultiplicityChanged") == {("one", "many"), ("many", "one")}
+
+
+@pytest.mark.parametrize(
+    "alteration",
+    [kind for kind, order in FIELD_DELTA_ORDER.items() if "MultiplicityChanged" in order],
+)
+def test_multiplicity_is_witnessed_in_both_directions_on_every_member_carrying_it(
+    alteration: str,
+) -> None:
+    # A scalar member and an occurrence each cross the ONE/MANY boundary on an
+    # alteration of their own, so a corpus witnessing one kind of member grades
+    # nothing about the others.
+    moves = {
+        (delta.get("earlier"), delta.get("later"))
+        for operation in _operations()
+        if operation.get("kind") == alteration
+        for delta in operation.get("deltas") or []
+        if isinstance(delta, Mapping) and delta.get("kind") == "MultiplicityChanged"
+    }
+    assert moves == {("one", "many"), ("many", "one")}
 
 
 _ADDITIONS: Final[tuple[str, ...]] = (
