@@ -785,3 +785,17 @@ def test_a_golden_bitemporal_amendments_selection_covers_its_window() -> None:
     )
     with pytest.raises(PredicateWriteValidationError, match="ends before the amendment's window"):
         validate_predicate_write_materialization(entity, [find], instruction)
+
+
+def test_a_bitemporal_amendment_resolves_through_a_selection_at_its_valid_from() -> None:
+    entity = _position_entity()
+    instruction = _position_amendment("2024-03-01T00:00:00+00:00", "2024-05-01T00:00:00+00:00")
+    covering = "2024-06-01T00:00:00+00:00"
+    validate_predicate_write_materialization(
+        entity,
+        [
+            _selection_at(entity, instruction, "2024-02-01T00:00:00+00:00", covering),
+            _selection_at(entity, instruction, "2024-03-01T00:00:00+00:00", covering),
+        ],
+        instruction,
+    )
