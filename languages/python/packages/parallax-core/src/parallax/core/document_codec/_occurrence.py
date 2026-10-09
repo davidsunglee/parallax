@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TypeVar, cast
 
 from parallax.core.base import NeutralType
-from parallax.core.document_codec._shape import Leaf, MemberShape, Occurrence
+from parallax.core.document_codec._shape import Leaf, MemberShape
 from parallax.core.metamodel import Multiplicity
 
 Encoded = TypeVar("Encoded")
@@ -68,11 +68,21 @@ def _encode_object[Encoded](
         values = iter(carrier.values(record, shape))
         for member, value in zip(shape.members, values, strict=True):
             if value is carrier.absent:
-                if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
+                if member.multiplicity is Multiplicity.MANY:
                     yield member.name, build_array(())
                 continue
             if isinstance(member, Leaf):
-                yield member.name, encode_leaf(member.type, value)
+                if member.multiplicity is Multiplicity.MANY:
+                    element_type = member.type
+                    yield (
+                        member.name,
+                        build_array(
+                            encode_leaf(element_type, element)
+                            for element in carrier.elements(value)
+                        ),
+                    )
+                else:
+                    yield member.name, encode_leaf(member.type, value)
                 continue
             yield (
                 member.name,

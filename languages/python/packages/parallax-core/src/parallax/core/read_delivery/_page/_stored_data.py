@@ -101,8 +101,10 @@ class StoredDataIssue:
     ``path`` is the entity-relative logical path of the rejected occurrence,
     keeping declared member names distinct from integer array positions. It is
     empty where the member identity already locates the occurrence exactly: a
-    direct Entity Attribute under either Storage Layout, an unresolved family
-    tag, and a whole stored document read in a kind it cannot be read as.
+    single-valued Entity Attribute under either Storage Layout, an unresolved
+    family tag, and a whole stored document read in a kind it cannot be read as.
+    A scalar collection keeps its own logical path, ending at the rejected
+    element's position or at the collection itself for a malformed array.
 
     ``stored_value`` is the provider-normalized logical value that was judged
     and rejected, immutable and detached from every provider carrier: arrays

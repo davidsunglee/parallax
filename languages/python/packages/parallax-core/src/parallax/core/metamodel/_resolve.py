@@ -47,6 +47,7 @@ from parallax.core.metamodel._values import (
     DefiningRelationshipDeclaration,
     IndexMetadata,
     InheritanceMetadata,
+    Multiplicity,
     PersistenceMode,
     PrimaryKey,
     RelationshipDeclaration,
@@ -667,13 +668,13 @@ def _axis_endpoint_issues(
                 message=f"axis Attribute {endpoint.name!r} does not exist",
             )
         ]
-    if not isinstance(attribute.type, Timestamp):
+    if not isinstance(attribute.type, Timestamp) or attribute.multiplicity is Multiplicity.MANY:
         return [
             MetamodelIssue(
                 AS_OF_ATTRIBUTE_TYPE,
                 location,
                 related,
-                message=f"axis Attribute {endpoint.name!r} is not a Timestamp",
+                message=f"axis Attribute {endpoint.name!r} is not a single Timestamp",
             )
         ]
     return []

@@ -409,11 +409,12 @@ def _value_object_element(
     nested = {item["name"]: item for item in nested_items if isinstance(item, Mapping)}
     for name, item in value.items():
         if name in attributes:
-            _nullable_literal(
+            _declared_literal(
                 case,
                 item,
                 attributes[name]["type"],
                 f"{where}.{name}",
+                many=attributes[name].get("multiplicity", "one") == "many",
                 canonical=canonical,
             )
         elif name in nested:
@@ -578,7 +579,9 @@ def _relational_document(
 
 def _document_member_value(case: Case, member: DocumentMember, value: object, where: str) -> None:
     if member.type_spelling is not None:
-        _literal(case, value, member.type_spelling, where, canonical=True)
+        _declared_literal(
+            case, value, member.type_spelling, where, many=member.many, canonical=True
+        )
     else:
         _top_level_value_object(case, member.address.owner, member.address.path[0], value, where)
 
@@ -744,7 +747,37 @@ def _attribute_literal(
         return
     neutral_type = attribute.get("type")
     if isinstance(neutral_type, str):
+        _declared_literal(
+            case,
+            value,
+            neutral_type,
+            where,
+            many=attribute.get("multiplicity", "one") == "many",
+            canonical=canonical,
+        )
+
+
+def _declared_literal(
+    case: Case,
+    value: object,
+    neutral_type: str,
+    where: str,
+    *,
+    many: bool,
+    canonical: bool = False,
+) -> None:
+    """One authored scalar member: a single literal, or a collection's array of them.
+
+    A collection whose authored value is not an array is left to the oracle that
+    reads it, exactly as a malformed occurrence is: preflight checks spellings, not
+    stored shapes.
+    """
+    if not many:
         _nullable_literal(case, value, neutral_type, where, canonical=canonical)
+        return
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        for index, element in enumerate(value):
+            _literal(case, element, neutral_type, f"{where}[{index}]", canonical=canonical)
 
 
 def _literal(

@@ -34,9 +34,11 @@ from .portable_literal import AuthoredInteger, AuthoredNumber, DeclaredFloat
 __all__ = [
     "DocumentEncodingError",
     "comparison_text",
+    "decode_collection",
     "decode_leaf",
     "decode_stored",
     "encode_candidate",
+    "encode_collection",
     "encode_document",
     "encode_leaf",
     "is_document",
@@ -121,6 +123,17 @@ def encode_leaf(type_spelling: str, value: Any) -> Any:
     return encoded
 
 
+def encode_collection(type_spelling: str, values: Any) -> Any:
+    """A scalar collection's one document spelling: the ordered array of each
+    element's leaf spelling, empty where the input supplies nothing. A value that is
+    not an array is returned as authored, exactly as a malformed occurrence is."""
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        return values
+    return [encode_leaf(type_spelling, element) for element in values]
+
+
 def decode_leaf(type_spelling: str, value: Any) -> Any:
     """One document leaf as the value a Column of its own would have carried.
 
@@ -184,6 +197,23 @@ def decode_leaf(type_spelling: str, value: Any) -> Any:
         ) from exc
 
 
+def decode_collection(type_spelling: str, value: Any) -> list[Any]:
+    """One stored scalar collection as the elements a read publishes, in order.
+
+    A missing carrier and JSON null are the empty collection. Any other non-array
+    carrier, or any element :func:`decode_leaf` refuses — a null element included,
+    since elements are never nullable — is invalid stored data, and the whole
+    collection is refused rather than shortened.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise DocumentEncodingError(f"{value!r} is not a {type_spelling!r} array")
+    if any(element is None for element in value):
+        raise DocumentEncodingError(f"{value!r} holds a null {type_spelling!r} element")
+    return [decode_leaf(type_spelling, element) for element in value]
+
+
 def comparison_text(type_spelling: str, value: Any) -> str:
     """The exact characters a dialect's text extraction returns for ``value``'s
     encoding — what a predicate binds where the declared type compares as extracted
@@ -229,8 +259,16 @@ def _encode_element(container: dict[str, Any], value: Any) -> Any:
     document: dict[str, Any] = {}
     for attribute in container.get("attributes", []):
         name = attribute["name"]
+        many = attribute.get("multiplicity", "one") == "many"
         if name in element:
-            document[name] = encode_leaf(attribute["type"], element.pop(name))
+            authored = element.pop(name)
+            document[name] = (
+                encode_collection(attribute["type"], authored)
+                if many
+                else encode_leaf(attribute["type"], authored)
+            )
+        elif many:
+            document[name] = []
     for nested in container.get("valueObjects", []):
         name = nested["name"]
         many = nested.get("multiplicity", "one") == "many"

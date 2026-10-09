@@ -312,6 +312,23 @@ def canonicalize(value: Any, neutral_type: str) -> Any:
         return encode(decode(value, neutral_type), neutral_type)
 
 
+def declared_values_equal(
+    left: Any, right: Any, declaration: Mapping[str, Any], tolerance: decimal.Decimal | None
+) -> bool:
+    """Compare one declared scalar member's values: a single scalar through
+    :func:`values_equal`, and a scalar collection (``multiplicity: many``)
+    positionally, element by element under its declared element type."""
+    neutral_type = declaration["type"]
+    if declaration.get("multiplicity", "one") != "many":
+        return values_equal(left, right, neutral_type, tolerance)
+    if not isinstance(left, list) or not isinstance(right, list) or len(left) != len(right):
+        return False
+    return all(
+        values_equal(one, other, neutral_type, tolerance)
+        for one, other in zip(left, right, strict=True)
+    )
+
+
 def values_equal(
     left: Any, right: Any, neutral_type: str, tolerance: decimal.Decimal | None
 ) -> bool:

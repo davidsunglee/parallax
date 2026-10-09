@@ -6,17 +6,18 @@ from typing import Final, cast
 from parallax.core import inheritance
 from parallax.core.metamodel import (
     AttributeMetadata,
+    AuthoringViolation,
     EntityMetadata,
     Metamodel,
     Multiplicity,
     ValueObjectMetadata,
-    VoDocumentViolation,
 )
 
 __all__ = ["WriteRejectedError", "validate_write"]
 
 # The full-document mutations: every declared member must be present, except a
-# `many` Value Object occurrence, which has no absent state to require. Every
+# `many` member — a scalar collection or Value Object occurrence — which has no
+# absent state to require. Every
 # other keyed mutation carries a SPARSE row (the primary key plus whichever
 # members the caller actually touched) -- an absent top-level member there is
 # untouched, never a violation.
@@ -42,7 +43,7 @@ def validate_write(
     model: Metamodel,
     *,
     mutation: str,
-    known_failures: Mapping[int, VoDocumentViolation],
+    known_failures: Mapping[int, AuthoringViolation],
 ) -> None:
     """Validate ``row`` (a neutral write row targeting ``entity``) pre-SQL.
 
@@ -105,11 +106,19 @@ def _check_entity_attribute(
     *,
     required: bool,
     owner: str,
-    known_failure: VoDocumentViolation | None,
+    known_failure: AuthoringViolation | None,
 ) -> None:
     name = attribute.identity.name
     value = row.get(name)
+    many = attribute.multiplicity is Multiplicity.MANY
     if name not in row or value is None:
+        if many:
+            if name in row:
+                raise WriteRejectedError(
+                    "write-required-attribute-missing",
+                    f"{owner}.{name}: a `many` attribute is never null",
+                )
+            return
         if required and not attribute.nullable:
             raise WriteRejectedError(
                 "write-required-attribute-missing",
@@ -119,6 +128,8 @@ def _check_entity_attribute(
     if _is_scalar_write_marker(value):
         return
     if known_failure is not None:
+        if many:
+            raise _rejected_error(known_failure, base=f"{owner}.{name}", many_scalar=True)
         raise WriteRejectedError(
             "write-value-type-mismatch",
             f"{owner}.{name}: value {value!r} does not match the declared type {attribute.type!r}",
@@ -136,7 +147,7 @@ def _check_value_object_member(
     *,
     required: bool,
     owner: str,
-    known_violation: VoDocumentViolation | None,
+    known_violation: AuthoringViolation | None,
 ) -> None:
     name = vo.identity.path[-1]
     value = row.get(name)
@@ -159,13 +170,16 @@ def _check_value_object_member(
 
 
 # error-neutral document-codec finding, which owns no policy text of its own. #
-def _rejected_error(violation: VoDocumentViolation, *, base: str) -> WriteRejectedError:
+def _rejected_error(
+    violation: AuthoringViolation, *, base: str, many_scalar: bool = False
+) -> WriteRejectedError:
     path = _joined(base, violation.path)
     if violation.reason == "not-a-list":
+        expected = "a list of scalar values" if many_scalar else "a list of documents"
+        kind = "attribute" if many_scalar else "value object"
         return WriteRejectedError(
             "write-value-type-mismatch",
-            f"{path}: a `many` value object must bind a list of documents, got "
-            f"{type(violation.value).__name__}",
+            f"{path}: a `many` {kind} must bind {expected}, got {type(violation.value).__name__}",
         )
     if violation.reason == "not-a-document":
         return WriteRejectedError(

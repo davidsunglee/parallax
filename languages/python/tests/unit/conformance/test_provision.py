@@ -407,3 +407,27 @@ def test_an_axis_naming_an_unknown_attribute_never_reaches_provisioning() -> Non
     )
     with pytest.raises(MetamodelValidationError, match="metamodel-as-of-attribute"):
         formed(Metamodel(entities=(malformed,)))
+
+
+def test_fixture_statements_spell_every_collection_element_and_keep_a_malformed_carrier() -> None:
+    fixtures = {
+        "parallax.compatibility.CollectionTwinItem": [
+            {"id": 1, "amounts": ["1.50", "7.00"], "tags": "not-an-array", "parts": []}
+        ]
+    }
+
+    ((_sql, columns_binds),) = provision.fixture_statements(
+        _MODELS["scalar-collection-layout-twin-columns"], fixtures
+    )
+    ((_sql, document_binds),) = provision.fixture_statements(
+        _MODELS["scalar-collection-layout-twin-document"], fixtures
+    )
+
+    amounts, tags = (cast("JsonDocument", bind).value for bind in columns_binds[1:3])
+    assert (amounts, tags) == (("1.50", "7.00"), "not-an-array")
+    document = cast("dict[str, object]", cast("JsonDocument", document_binds[1]).value)
+    assert (document["amounts"], document["tags"], document["flags"]) == (
+        ("1.50", "7.00"),
+        "not-an-array",
+        (),
+    )

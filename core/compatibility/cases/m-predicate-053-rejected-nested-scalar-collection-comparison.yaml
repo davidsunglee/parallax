@@ -1,0 +1,16 @@
+# Negative (m-predicate scalar collection rule): a nested path ending at a scalar
+# collection inside a Value Object names no single scalar either, so a nested
+# comparison over `detail.labels` is refused before SQL rather than matching any
+# one of its elements.
+model: models/scalar-collection-layout-twin-columns.yaml
+tags: [m-predicate, m-value-object, rejected, negative, nested, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  objectQuery:
+    target: parallax.compatibility.CollectionTwinItem
+    predicate:
+      nestedEq:
+        path: parallax.compatibility.CollectionTwinItem.detail.labels
+        value: x
+then:
+  rejectedRule: scalar-collection-unquantified

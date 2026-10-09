@@ -41,8 +41,9 @@ from (`m-write-plan` *Write payloads*).
 ## Row assembly
 
 A row stores every member it names at the slot the model's Storage Layout gives
-it. A Value Object occurrence with a Column of its own stores its whole encoded
-document there, and an unnamed `many` stores `[]` (`m-value-object`). Every
+it. A Value Object occurrence or a scalar collection with a Column of its own
+stores its whole encoded document there — a collection's encoded array — and an
+unnamed `many` of either kind stores `[]` (`m-value-object`, `m-document-codec`). Every
 document-resident member collapses into the Table's one shared Structured
 Column, which every row stores, the empty object included (`m-storage-layout`).
 A table-per-hierarchy row stores its concrete subtype's discriminator.
@@ -69,10 +70,10 @@ own object.
 ## Assignment assembly
 
 A revising step writes only what it assigns. A directly stored member takes its
-own slot. The shared Structured Column takes the ordered patches of its assigned
+own slot; a scalar collection there takes its whole encoded array. The shared Structured Column takes the ordered patches of its assigned
 paths, prepared once by the codec (`m-document-codec` *Patching*): an assigned
-leaf's encoded value or JSON null, and an assigned occurrence's complete encoded
-document or JSON null, so every key the step does not name survives. Within one
+leaf's encoded value or JSON null, an assigned scalar collection's encoded array,
+and an assigned occurrence's complete encoded document or JSON null, so every key the step does not name survives. Within one
 preparation, the same prepared values are what a document patched from them
 holds and what the statement assigns; nothing encodes them a second time. A
 revising step whose successor was also prepared whole for a comparison retains
@@ -83,8 +84,9 @@ again.
 
 `equal_non_interval` answers whether two prepared rows persist identical cells
 outside their temporal interval. Scalars compare as stored at their Neutral
-Type; documents — the shared Structured Column, Value Object columns, and `json`
-members — compare by the codec's exact persisted equality, so unknown keys,
+Type; documents — the shared Structured Column, Value Object columns, scalar
+collection columns, and `json` members — compare by the codec's exact persisted
+equality, so unknown keys,
 presence, array order, JSON kinds, and exact numeric meaning all participate. A
 row that leaves some Column to the database's default, or holds a generated
 value, establishes no known state and equals nothing. Object identity and
@@ -92,7 +94,8 @@ Transaction-Time bounds are the caller's eligibility questions, not this one.
 
 `proven_unequal_non_interval` is a cheap, sound inequality check over two
 finalized Write Rows: it compares scalar members both rows state, which are
-exact managed values at their Neutral Type, without preparing any document.
+exact managed values at their Neutral Type — a scalar collection element by
+element in order — without preparing any document.
 `true` proves the persisted states differ; `false` proves nothing, and a caller
 needing equality must compare the prepared rows. Interval members, generated
 values, members only one row states, and occurrences decide nothing here.

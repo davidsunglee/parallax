@@ -478,7 +478,10 @@ slot's `effectiveNullable` answer (`m-storage-layout`), rendered here.
 
 A conventional Value Object Structured Column keeps its existing derivation: the
 `json` neutral type through the mapping table above, with the occurrence's own
-declared nullability. A read projects `m-sql`'s adjacent SQL presence and raw-value
+declared nullability. A top-level scalar collection's own Structured Column under
+`Columns` derives the same way: its `Document`-tier slot (`m-storage-layout`)
+renders the `json` type, never its element type, with the slot's effective
+nullability. A read projects `m-sql`'s adjacent SQL presence and raw-value
 cells. The concrete adapter supplies both raw cells to the dialect's paired
 document-read parser and returns its provider-neutral `m-core` `DocumentRead`.
 The parser returns `SqlNull` when the SQL discriminator is false and MUST NOT

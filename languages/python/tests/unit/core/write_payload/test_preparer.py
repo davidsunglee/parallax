@@ -488,3 +488,54 @@ def test_prepared_cells_never_rebind_to_a_row_stating_other_state() -> None:
         preparer.rebound(payload, _moved(source, _JAN, title="Inland Run"))
     with pytest.raises(WritePlanningError, match="rebind only"):
         preparer.rebound(payload, _successor(NEW_LINEAGE, in_z=_JAN))
+
+
+# --------------------------------------------------------------------------- #
+# Scalar collections                                                           #
+# --------------------------------------------------------------------------- #
+_COLLECTIONS: Metamodel = corpus_model("scalar-collection-layout-twin-columns")
+_ITEM = EntityIdentity("parallax.compatibility", "CollectionTwinItem")
+_ITEM_ID, _AMOUNTS, _TAGS = (AttributeIdentity(_ITEM, name) for name in ("id", "amounts", "tags"))
+
+
+def _collection_row(**attributes: object) -> WriteRow:
+    row = PlannedRow(
+        attributes={_ITEM_ID: 1, **{AttributeIdentity(_ITEM, k): v for k, v in attributes.items()}},
+        value_objects={ValueObjectIdentity(_ITEM, ("detail",)): None},
+    )
+    return WriteRow(row=row, origin=NEW_LINEAGE)
+
+
+def test_a_collections_own_column_stores_its_encoded_array_and_empty_when_unnamed() -> None:
+    payload = LayoutPayloadPreparer(_COLLECTIONS).row(
+        _ITEM, _collection_row(amounts=(Decimal("1.5"), Decimal(7)))
+    )
+
+    cells = dict(zip(payload.contributors, payload.values, strict=True))
+    assert cells[_AMOUNTS] == ("1.50", "7.00")
+    assert cells[_TAGS] == ()
+
+
+def test_an_assignment_encodes_a_whole_collection_and_reads_null_as_empty() -> None:
+    payload = LayoutPayloadPreparer(_COLLECTIONS).assignments(
+        _ITEM,
+        PlannedAssignments(attributes={_TAGS: ("b", "b"), _AMOUNTS: None}, value_objects={}),
+    )
+
+    assert dict(zip(payload.contributors, payload.values, strict=True)) == {
+        _AMOUNTS: (),
+        _TAGS: ("b", "b"),
+    }
+
+
+def test_collection_cells_compare_as_persisted_arrays_in_order() -> None:
+    preparer = LayoutPayloadPreparer(_COLLECTIONS)
+    left = preparer.row(_ITEM, _collection_row(tags=("a", "b")))
+
+    assert preparer.equal_non_interval(left, preparer.row(_ITEM, _collection_row(tags=("a", "b"))))
+    assert not preparer.equal_non_interval(
+        left, preparer.row(_ITEM, _collection_row(tags=("b", "a")))
+    )
+    assert preparer.proven_unequal_non_interval(
+        _ITEM, _collection_row(tags=("a", "b")), _collection_row(tags=("b", "a"))
+    )

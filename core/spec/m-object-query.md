@@ -166,6 +166,10 @@ A Sort Key addresses the RESULT position, so ordering an abstract position by a
 concrete subtype's attribute is rejected while ordering that same position
 narrowed to that subtype is not.
 
+A Sort Key orders by one scalar value, so a key naming a scalar collection is
+refused before SQL with the `m-predicate` rule `scalar-collection-unquantified`;
+a collection has no whole-collection ordering.
+
 ## `limit` — the row cap
 
 `limit` is an optional positive integer capping the number of **root objects**

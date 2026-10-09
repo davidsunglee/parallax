@@ -1597,6 +1597,7 @@
           "enum": [
             "between-bounds-inverted",
             "null-check-non-nullable-member",
+            "scalar-collection-unquantified",
             "nested-path-first-segment-not-value-object",
             "nested-path-unknown-member",
             "neutral-literal-type-mismatch",

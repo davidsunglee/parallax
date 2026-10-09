@@ -285,6 +285,8 @@ class _Key:
 
 
 _UNDECLARED: Final = _Key(None, None)
+_SCALAR_COLLECTION: Final = _Key(True, None)
+"""A scalar collection: its elements are scalars, compared in stored order."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,8 +313,20 @@ class _Node:
         occurrence = self._occurrence(name)
         if occurrence is not None:
             return _occurrence_key(self.model, occurrence)
+        if self._collection(name):
+            return _SCALAR_COLLECTION
         related = self._related(name)
         return _UNDECLARED if related is None else _Key(False, related)
+
+    def _collection(self, name: str) -> bool:
+        """Whether ``name`` denotes a scalar collection Attribute, family-wide."""
+        from parallax.core.metamodel import Multiplicity
+
+        attribute = self.view.applicable_attribute(name) or next(
+            (member for member in self.view.superset_attributes if member.identity.name == name),
+            None,
+        )
+        return attribute is not None and attribute.multiplicity is Multiplicity.MANY
 
     def _occurrence(self, name: str) -> ValueObjectMetadata | None:
         """The occurrence ``name`` denotes, family-wide: an abstract position's node
@@ -357,8 +371,15 @@ class _Occurrence:
     declared: OccurrenceMetadata
 
     def key(self, name: str) -> _Key:
+        from parallax.core.metamodel import Multiplicity
+
         nested = self.declared.value_object(name)
-        return _UNDECLARED if nested is None else _occurrence_key(self.model, nested)
+        if nested is not None:
+            return _occurrence_key(self.model, nested)
+        leaf = self.declared.attribute(name)
+        if leaf is not None and leaf.multiplicity is Multiplicity.MANY:
+            return _SCALAR_COLLECTION
+        return _UNDECLARED
 
 
 def _occurrence_key(model: Metamodel, declared: OccurrenceMetadata) -> _Key:

@@ -12,6 +12,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
+    Multiplicity,
     OccurrenceMetadata,
     RelationshipDeclaration,
     RelationshipIdentity,
@@ -60,6 +61,7 @@ __all__ = [
     "check_attribute_reference",
     "effective_set",
     "relationship_target",
+    "require_single_scalar",
     "resolve_subtype_selection",
     "root_position",
     "validate_narrow",
@@ -274,6 +276,7 @@ def _validated_leaf(
     member: ResolvedPredicateMember,
     values: Sequence[object],
 ) -> ValidatedPredicate:
+    require_single_scalar(_subject_of(authored), member)
     return ValidatedPredicate(
         authored,
         operands=ValidatedOperands(
@@ -289,11 +292,27 @@ def _validated_string_pattern(
     member: ResolvedPredicateMember,
     value: str,
 ) -> ValidatedPredicate:
+    require_single_scalar(_subject_of(authored), member)
     return ValidatedPredicate(
         authored,
         operands=ValidatedOperands((value,), None),
         member=member,
     )
+
+
+def require_single_scalar(
+    subject: str, member: AttributeMetadata | ValueObjectAttributeMetadata
+) -> None:
+    """Refuse a scalar collection where one scalar value is required.
+
+    A collection is neither compared, matched, ranged, nor ordered as a whole;
+    nothing here reaches its elements implicitly.
+    """
+    if member.multiplicity is Multiplicity.MANY:
+        raise ModelRejectedError(
+            "scalar-collection-unquantified",
+            f"{subject!r} names a scalar collection, which is not one scalar value",
+        )
 
 
 def _subject_of(op: PredicateNode) -> str:

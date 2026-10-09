@@ -58,6 +58,7 @@ inner field has no column of its own.
 | `name` | attribute name (REQUIRED) |
 | `type` | m-core **scalar** neutral type (REQUIRED) — every variant except `Json`, which `m-core` reserves for the whole-value-object storage type; normative for nested-predicate literal typing, casting, and predicate applicability — a string predicate reads a `String` member only (`m-predicate` / `m-sql`) |
 | `nullable` | bool, default `false` |
+| `multiplicity` | `one` (default) or `many` — a scalar collection: an ordered array of `type` values inside the same document, never nullable (`m-metamodel`, `m-document-codec`) |
 
 A `nestedValueObject` has the same shape as a top-level value object **minus**
 `column`: `name`, `multiplicity`, `nullable`, its own typed `attributes`,

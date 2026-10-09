@@ -17,14 +17,13 @@ from parallax.core.metamodel import (
     IndexMetadata,
     Metamodel,
     Table,
-    ValueObjectIdentity,
     derive_primary_key_index,
     inheritance_parent,
 )
 from parallax.core.storage_layout import (
     ColumnSlot,
+    ColumnTier,
     InheritanceDiscriminator,
-    RelationalDocument,
     StorageLayoutFacet,
     TableLayout,
 )
@@ -617,15 +616,17 @@ def _names_index(operation: EvolutionOperation, index: IndexIdentity) -> bool:
 def _physical_column(model: Metamodel, slot: ColumnSlot) -> PhysicalColumn:
     """One layout slot with the value domain its contributor declares.
 
-    A top-level Value Object occupies one Structured Column and a Relational
-    Document Layout's shared Structured Column carries the document-resident
-    members of every governed row; both are the neutral `json` type, and the
-    dialect maps that to its own structured-document type.
+    Every document-tier slot is a Structured Column of the neutral `json` type,
+    which the dialect maps to its own structured-document type: a top-level
+    Value Object's own Column, a scalar collection's own Column, and a
+    Relational Document Layout's shared Structured Column alike. The tier
+    decides this before an Attribute's declared type is read, because a scalar
+    collection's type names its elements rather than its Column.
     """
     contributor = slot.contributor
     if isinstance(contributor, InheritanceDiscriminator):
         return PhysicalColumn(slot.column, _TAG_TYPE, _TAG_MAX_LENGTH, slot.effective_nullable)
-    if isinstance(contributor, (ValueObjectIdentity, RelationalDocument)):
+    if slot.tier is ColumnTier.DOCUMENT or not isinstance(contributor, AttributeIdentity):
         return PhysicalColumn(slot.column, JSON, None, slot.effective_nullable)
     attribute = _declared_attribute(model, contributor)
     return PhysicalColumn(

@@ -10,9 +10,9 @@ from parallax.conformance._mechanism.model_facts import case_entity, family_decl
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import inheritance, storage_layout
 from parallax.core.db_port import DatabaseConnection, JsonDocument
-from parallax.core.metamodel import EntityMetadata, PrimaryKey, ValueObjectIdentity
+from parallax.core.metamodel import EntityMetadata, PrimaryKey
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.storage_layout import DirectColumn, DocumentPath
+from parallax.core.storage_layout import ColumnTier, DirectColumn, DocumentPath
 from parallax.core.wire import WireValue, decode_wire
 
 __all__ = ["apply_given_apply", "apply_given_corrupt", "seed_shadow_from_fixtures"]
@@ -170,7 +170,8 @@ def _corruption_target(
     name resolves to, because a placement stays keyed by declaration identity
     across every Entity that inherits it (`m-storage-layout`): a document-resident
     member contributes its own Document Path, a top-level Value Object occurrence
-    under `Columns` contributes its own Structured Column, and the nested names
+    or scalar collection under `Columns` contributes its own Structured Column, and
+    the nested names
     and array positions the address carries follow — an address stopping at the
     occurrence itself leaving the whole stored value as the target. A member the
     layout keeps in a Column of its own is refused — only a Structured Column can
@@ -189,9 +190,7 @@ def _corruption_target(
     )
     if isinstance(placement, DocumentPath):
         return placement.slot.column.name, (*placement.path, *member[1:])
-    if isinstance(placement, DirectColumn) and isinstance(
-        placement.slot.contributor, ValueObjectIdentity
-    ):
+    if isinstance(placement, DirectColumn) and placement.slot.tier is ColumnTier.DOCUMENT:
         return placement.slot.column.name, member[1:]
     raise EngineError(
         f"{case.path.name}: given.corrupt addresses {entity.identity.canonical}."

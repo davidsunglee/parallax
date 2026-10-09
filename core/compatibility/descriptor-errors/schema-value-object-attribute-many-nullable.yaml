@@ -1,0 +1,14 @@
+entity:
+  name: Order
+  table: orders
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+  valueObjects:
+    - name: detail
+      attributes:
+        - name: labels
+          type: string
+          multiplicity: many
+          nullable: true

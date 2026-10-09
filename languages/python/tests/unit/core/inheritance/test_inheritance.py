@@ -325,7 +325,7 @@ def _assignment(name: str, value: object) -> None:
         normalize_leaf=normalize,
         path=f"{_VO_METADATA.identity.canonical}.{name}",
     )
-    judge_assignment(member, value, known_vo_violation=failure)
+    judge_assignment(member, value, known_violation=failure)
 
 
 def test_judge_assignment_accepts_a_well_formed_nested_value_object() -> None:

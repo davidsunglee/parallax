@@ -544,9 +544,10 @@ view carries none). A segment `narrowTo` escaping the relationship target's effe
 
 Graph comparison distinguishes collection kinds. Root result sets and
 relationship collections compare as multisets (relationship `orderBy` is graded
-separately), while a Value Object occurrence with `multiplicity: many` compares
-positionally because its document order is semantic. Duplicate Value Object
-elements remain distinct.
+separately), while a Value Object occurrence with `multiplicity: many` and a
+scalar collection — an Attribute or Value Object Attribute with
+`multiplicity: many` — compare positionally because their order is semantic.
+Duplicate Value Object elements and duplicate scalar elements remain distinct.
 
 #### Read result form (row-form vs instance-form)
 
@@ -874,10 +875,12 @@ The address is **logical**, so it names one occurrence under either Storage
 Layout and stops wherever the case means it to. One that stops at a top-level
 Value Object occurrence names the OCCURRENCE, and `value` replaces what the whole
 occurrence is stored as — which is how a case states a wrong-kind verdict at a
-`One` or a `Many`. Under `Columns` such an occurrence keeps a Structured Column of
-its own, whose stored root is the object or the array the occurrence is, so an
-address descending past it indexes that value directly rather than a member of a
-shared document.
+`One` or a `Many`. One that stops at a scalar collection names the whole
+collection in the same way, and one that adds an array position names one
+element. Under `Columns` such an occurrence or top-level scalar collection keeps a
+Structured Column of its own, whose stored root is the object or the array it is,
+so an address descending past it indexes that value directly rather than a member
+of a shared document.
 
 Each adapter realizes the step in its own way — the case states what is wrong
 once, portably. Raw post-load SQL would be authored per dialect, which is
@@ -893,9 +896,10 @@ authored. Canonical fixtures and ordinary writes therefore stay conforming by
 construction, and relaxing the authoring oracle — which protects every fixture —
 is never traded for the few deliberately broken rows.
 
-**An addressed member MUST be document-resident.** A Structured Column holds any
-JSON value, so every corruption a case can state is storable on both dialects
-without touching DDL. A typed, constrained Column can be made to hold a
+**An addressed member MUST be stored in a Structured Column** — document-resident,
+or a top-level scalar collection's own structured Column. A Structured Column
+holds any JSON value, so every corruption a case can state is storable on both
+dialects without touching DDL. A typed, constrained Column can be made to hold a
 non-conforming value only by first removing the constraint that forbids it, and a
 case that altered its schema would no longer be reading the model it declares. Two
 consequences are deliberate and permanent: `stored-data-primary-key-null` and
@@ -2356,6 +2360,9 @@ rules:
 - `null-check-non-nullable-member` — an `isNull` / `isNotNull`, nested null
   check, or element-relative null check resolves to a leaf whose declaration is
   non-nullable, so the model-aware resolver rejects the predicate before SQL.
+- `scalar-collection-unquantified` — a comparison, range, membership, or string
+  predicate, at any scope, or an Object Query Sort Key resolves to a scalar
+  collection rather than one scalar value (`m-predicate`, `m-object-query`).
 - `nested-path-first-segment-not-value-object` — a nested path's first segment names
   no value object declared on the queried entity (`m-predicate`).
 - `nested-path-unknown-member` — an intermediate segment names no declared nested

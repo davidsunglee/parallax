@@ -20,6 +20,7 @@ from parallax.core.document_codec import (
     MemberShape,
     Present,
     decode_occurrence_classified,
+    decode_scalar_many_classified,
     locate_raw_entity_member,
     occurrence_shape,
     prepared_raw_member_classifier,
@@ -412,21 +413,21 @@ class SharedDocument:
 
 @dataclass(frozen=True, slots=True)
 class DirectDocuments:
-    """Classify each projected Value Object occurrence stored in its own Column.
+    """Classify each projected document stored in a Column of its own.
 
     A provider folds every selected document pair before materialization,
-    regardless of whether the carrier is the Table's shared Structured Column or
-    a Value Object's own Column. This stage consumes the latter carriers and
-    decodes each against the shape its occurrence declares, resolved once at
-    compile time rather than per row. It keys on the concrete the row RESOLVED
-    to, so a read whose position holds several concretes classifies the
-    occurrences of the one its row names.
+    regardless of whether the carrier is the Table's shared Structured Column, a
+    Value Object's own Column, or a scalar collection's own Column. This stage
+    consumes the latter two carriers and decodes each against its member's
+    declared definition, resolved once at compile time rather than per row. It
+    keys on the concrete the row RESOLVED to, so a read whose position holds
+    several concretes classifies the documents of the one its row names.
     """
 
     per_entity: tuple[
-        tuple[EntityIdentity, tuple[tuple[ValueObjectMetadata, MemberShape], ...]], ...
+        tuple[EntityIdentity, tuple[AttributeMetadata | ValueObjectMetadata, ...]], ...
     ]
-    by_entity: Mapping[EntityIdentity, tuple[tuple[ValueObjectMetadata, MemberShape], ...]] = field(
+    by_entity: Mapping[EntityIdentity, tuple[AttributeMetadata | ValueObjectMetadata, ...]] = field(
         init=False, compare=False, repr=False
     )
 
@@ -441,22 +442,22 @@ class DirectDocuments:
         build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
         build_many: Callable[[Iterable[object]], object] | None = None,
     ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
-        """The prepared classifier for one direct document occurrence."""
-        occurrence, shape = next(
-            (item for item in self.by_entity.get(resolved, ()) if item[0].storage.name == key),
-            (None, None),
+        """The prepared classifier for one direct document member."""
+        member = next(
+            (item for item in self.by_entity.get(resolved, ()) if item.storage.name == key),
+            None,
         )
-        if occurrence is None or shape is None:
+        if member is None:
             raise KeyError(key)
+        if isinstance(member, AttributeMetadata):
+            return _collection_classifier(member)
+        occurrence = member
+        shape = occurrence_shape(occurrence)
 
         def classify(document_read: object) -> tuple[object, tuple[DocumentFinding, ...]]:
-            if not isinstance(document_read, (SqlNull, PresentDocument)):
-                raise SqlGenError(
-                    f"the database port returned {type(document_read).__name__}, not a DocumentRead"
-                )
             decoded = _classified_occurrence(
                 shape,
-                document_read,
+                _document_read(document_read),
                 multiplicity=occurrence.multiplicity,
                 nullable=occurrence.nullable,
                 build_object=build_object,
@@ -470,6 +471,29 @@ class DirectDocuments:
             return value, findings
 
         return classify
+
+
+def _collection_classifier(
+    attribute: AttributeMetadata,
+) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
+    leaf = attribute.definition
+    name = attribute.identity.name
+
+    def classify(document_read: object) -> tuple[object, tuple[DocumentFinding, ...]]:
+        value, findings = decode_scalar_many_classified(leaf, _document_read(document_read))
+        if findings:
+            findings = tuple(replace(finding, path=(name, *finding.path)) for finding in findings)
+        return value, findings
+
+    return classify
+
+
+def _document_read(document_read: object) -> SqlNull | PresentDocument:
+    if not isinstance(document_read, (SqlNull, PresentDocument)):
+        raise SqlGenError(
+            f"the database port returned {type(document_read).__name__}, not a DocumentRead"
+        )
+    return document_read
 
 
 @dataclass(frozen=True, slots=True)
@@ -503,8 +527,8 @@ class RowStages:
                 if keys:
                     classified[identity] = keys
         if self.direct_documents is not None:
-            for identity, occurrences in self.direct_documents.per_entity:
-                keys = frozenset(occurrence.storage.name for occurrence, _shape in occurrences)
+            for identity, members in self.direct_documents.per_entity:
+                keys = frozenset(member.storage.name for member in members)
                 if keys:
                     classified[identity] = classified.get(identity, frozenset()) | keys
         object.__setattr__(self, "classified_by_entity", classified)
@@ -597,21 +621,41 @@ def observed_document(document_read: object) -> object | None:
 
 
 def direct_documents(
-    candidates: Sequence[tuple[EntityIdentity, TableLayout, Sequence[ValueObjectMetadata]]],
+    candidates: Sequence[
+        tuple[
+            EntityIdentity,
+            TableLayout,
+            Sequence[AttributeMetadata],
+            Sequence[ValueObjectMetadata],
+        ]
+    ],
 ) -> DirectDocuments | None:
-    """The direct-Column occurrence stage, or absence when a read projects none."""
+    """The direct-Column document stage, or absence when a read projects none.
+
+    Each candidate names the Attributes and occurrences one concrete's rows
+    carry; only the scalar collections and occurrences stored in a Column of
+    their own are classified here.
+    """
     per_entity = tuple(
         (
             identity,
-            tuple(
-                (occurrence, occurrence_shape(occurrence))
-                for occurrence in occurrences
-                if isinstance(layout.placement(occurrence.identity), DirectColumn)
+            (
+                *(
+                    attribute
+                    for attribute in attributes
+                    if attribute.multiplicity is Multiplicity.MANY
+                    and isinstance(layout.placement(attribute.identity), DirectColumn)
+                ),
+                *(
+                    occurrence
+                    for occurrence in occurrences
+                    if isinstance(layout.placement(occurrence.identity), DirectColumn)
+                ),
             ),
         )
-        for identity, layout, occurrences in candidates
+        for identity, layout, attributes, occurrences in candidates
     )
-    if not any(occurrences for _identity, occurrences in per_entity):
+    if not any(members for _identity, members in per_entity):
         return None
     return DirectDocuments(per_entity)
 
@@ -931,7 +975,10 @@ def select_projection(
     scalars.
     """
     types: dict[object, tuple[NeutralType | None, bool]] = {
-        attribute.identity: (attribute.type, False) for attribute in attributes
+        attribute.identity: (
+            (None, True) if attribute.multiplicity is Multiplicity.MANY else (attribute.type, False)
+        )
+        for attribute in attributes
     }
     types.update({member.identity: (None, True) for member in value_objects})
     selected: list[ProjectedColumn] = []
@@ -1380,6 +1427,7 @@ def _plan_tph_read(
                     (
                         concrete,
                         layout,
+                        entity_view(facet, concrete).applicable_attributes,
                         entity_view(facet, concrete).applicable_value_objects
                         if instance_form
                         else (),
@@ -1468,6 +1516,7 @@ def _plan_tpcs_read(
                         (
                             concretes[0],
                             layout,
+                            position.superset_attributes,
                             position.superset_value_objects if instance_form else (),
                         ),
                     )
@@ -1615,6 +1664,7 @@ def _plan_tpcs_read(
                 (
                     concrete,
                     _table_layout(storage, facet, concrete),
+                    entity_view(facet, concrete).applicable_attributes,
                     entity_view(facet, concrete).applicable_value_objects if instance_form else (),
                 )
                 for concrete in concretes

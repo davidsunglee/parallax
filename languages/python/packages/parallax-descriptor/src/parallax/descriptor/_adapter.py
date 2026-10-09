@@ -236,6 +236,7 @@ def _attribute(
         max_length=attribute.max_length,
         read_only=attribute.read_only,
         optimistic_locking=attribute.optimistic_locking,
+        multiplicity=_MULTIPLICITIES[attribute.multiplicity],
     )
 
 
@@ -419,6 +420,7 @@ def _shape(
                 name=member.name,
                 type=_neutral_type(member.type, f"{where}.{member.name}"),
                 nullable=member.nullable,
+                multiplicity=_MULTIPLICITIES[member.multiplicity],
             )
             for member in attributes
         ),

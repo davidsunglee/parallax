@@ -20,6 +20,7 @@ from parallax.core.document_codec._leaf import (
     LeafEncodingError,
     decode_leaf,
     encode_leaf,
+    encode_scalar_many,
     is_text_compared,
 )
 from parallax.core.document_codec._shape import (
@@ -46,11 +47,12 @@ __all__ = [
     "DocumentPatch",
     "DocumentPathSegment",
     "PreparedPatch",
-    "SetLeaf",
-    "SetValue",
+    "SetScalar",
+    "SetValueObject",
     "apply_prepared_patches",
     "comparison_text",
     "decode_occurrence_classified",
+    "decode_scalar_many_classified",
     "encode_managed_document",
     "encode_managed_many",
     "locate_raw_entity_member",
@@ -218,6 +220,8 @@ def prepared_raw_member_classifier(
         raise KeyError(f"{member_name!r} names no member of the shape")
     path = (member_name,)
     if isinstance(member, Leaf):
+        if member.multiplicity is Multiplicity.MANY:
+            return _PreparedRawScalarManyClassifier(member, path)
         return _PreparedRawLeafClassifier(member, path)
 
     def classify_occurrence(
@@ -272,6 +276,66 @@ class _PreparedRawLeafClassifier:
             return decode_canonical_wire(self.member.type, cast("WireValue", raw)), ()
         except WireDecodingError:
             return UNAVAILABLE, (DocumentFinding("leaf-undecodable", self.path, raw),)
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedRawScalarManyClassifier:
+    member: Leaf
+    path: tuple[str]
+
+    def __call__(
+        self, located: RawLocatedMemberInput
+    ) -> tuple[object, tuple[DocumentFinding, ...]]:
+        raw = (
+            None
+            if isinstance(located, (SqlNull, Missing)) or located is _PRESENT_JSON_NULL
+            else located
+        )
+        return _interpreted_scalar_many(self.member, raw, self.path)
+
+
+def decode_scalar_many_classified(
+    member: Leaf, located: SqlNull | PresentDocument
+) -> tuple[object, tuple[DocumentFinding, ...]]:
+    """Classify one scalar collection stored in a Structured Column of its own.
+
+    The answer is the ordered managed tuple, or :data:`UNAVAILABLE` with the
+    findings that make the whole collection unavailable; finding paths are
+    relative to the collection, so its own carrier is located at ``()`` and an
+    element at its index.
+    """
+    raw = None if isinstance(located, SqlNull) else located.document
+    return _interpreted_scalar_many(member, raw, ())
+
+
+def _interpreted_scalar_many(
+    member: Leaf, raw: object, path: tuple[DocumentPathSegment, ...]
+) -> tuple[object, tuple[DocumentFinding, ...]]:
+    """The one interpretation of a reachable stored scalar collection.
+
+    An absent carrier and JSON null are the empty collection. Any other
+    non-array carrier, and any element that is not the canonical encoding of the
+    declared element type, leaves the whole collection unavailable: every
+    failing element is reported in element order, and no shortened collection is
+    ever answered.
+    """
+    if raw is None or isinstance(raw, Missing):
+        return (), ()
+    if not _is_document_array(raw):
+        return UNAVAILABLE, (DocumentFinding("leaf-undecodable", path, raw),)
+    element_type = member.type
+    values: list[object] = []
+    findings: list[DocumentFinding] | None = None
+    for index, element in enumerate(raw):
+        try:
+            values.append(decode_canonical_wire(element_type, cast("WireValue", element)))
+        except WireDecodingError:
+            if findings is None:
+                findings = []
+            findings.append(DocumentFinding("leaf-undecodable", (*path, index), element))
+    if findings is not None:
+        return UNAVAILABLE, tuple(findings)
+    return tuple(values), ()
 
 
 def decode_occurrence_classified(
@@ -392,7 +456,11 @@ def _interpreted_members(
         name = member.name
         raw = source.get(name, MISSING)
         if isinstance(member, Leaf):
-            if isinstance(raw, Missing):
+            if member.multiplicity is Multiplicity.MANY:
+                value, many_findings = _interpreted_scalar_many(member, raw, (name,))
+                findings.extend(many_findings)
+                yield value
+            elif isinstance(raw, Missing):
                 if not member.nullable:
                     findings.append(DocumentFinding("required-member-absent", (name,), raw))
                 yield MISSING
@@ -448,12 +516,14 @@ def _interpreted_occurrence(
 
 
 @dataclass(frozen=True, slots=True)
-class SetLeaf:
-    """Write one leaf path and leave every other key untouched.
+class SetScalar:
+    """Write one scalar member's path and leave every other key untouched.
 
-    ``value`` is a leaf presence carrying a ``NeutralValue``: writing a
+    ``value`` is the member's managed presence: a single scalar's
+    ``NeutralValue``, or a scalar collection's whole ordered tuple. Writing a
     :class:`~parallax.core.document_codec.Present` stores that value's encoding,
-    :data:`~parallax.core.document_codec.NULL` stores JSON null, and
+    :data:`~parallax.core.document_codec.NULL` stores JSON null — the empty
+    array for a collection, which has no null — and
     :data:`~parallax.core.document_codec.MISSING` removes the key. The encoding is
     this module's to spell, which is why :func:`prepare_patches` resolves the path
     against a shape rather than taking an already-spelled document value.
@@ -464,8 +534,8 @@ class SetLeaf:
 
 
 @dataclass(frozen=True, slots=True)
-class SetValue:
-    """Replace the occurrence at ``path`` with ``document``, whole.
+class SetValueObject:
+    """Replace the Value Object occurrence at ``path`` with ``document``, whole.
 
     ``document`` is that occurrence's complete stored document — the object a ``one``
     holds, the ordered array a ``many`` holds — or ``None``, which stores JSON null.
@@ -478,13 +548,14 @@ class SetValue:
     document: object
 
 
-type DocumentPatch = SetLeaf | SetValue
-"""The closed patch algebra, and the pairing is exclusive both ways: an occurrence
-is replaced through :class:`SetValue` and never written through :class:`SetLeaf`,
-and a leaf is written through :class:`SetLeaf` and never through
-:class:`SetValue`. Either mismatch is refused rather than applied, because
-applying one produces a document whose own shape would read it back as invalid
-stored data."""
+type DocumentPatch = SetScalar | SetValueObject
+"""The closed patch algebra, named by member kind rather than multiplicity, and
+the pairing is exclusive both ways: an occurrence is replaced through
+:class:`SetValueObject` and never written through :class:`SetScalar`, and a
+scalar leaf of either multiplicity is written through :class:`SetScalar` and
+never through :class:`SetValueObject`. Either mismatch is refused rather than
+applied, because applying one produces a document whose own shape would read it
+back as invalid stored data."""
 
 
 def encode_managed_document(
@@ -494,14 +565,18 @@ def encode_managed_document(
     document: dict[str, object] = {}
     for member in shape.members:
         if member.name not in values:
-            if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
+            if member.multiplicity is Multiplicity.MANY:
                 document[member.name] = ()
             continue
         value = values[member.name]
         if value is None:
             document[member.name] = () if _is_many(member) else None
         elif isinstance(member, Leaf):
-            document[member.name] = retain_document_value(encode_leaf(member.type, value))
+            document[member.name] = (
+                encode_scalar_many(member.type, cast("Iterable[object]", value))
+                if member.multiplicity is Multiplicity.MANY
+                else retain_document_value(encode_leaf(member.type, value))
+            )
         elif member.multiplicity is Multiplicity.MANY:
             document[member.name] = encode_managed_many(
                 member.shape, cast("Sequence[Mapping[str, object]]", value)
@@ -545,10 +620,11 @@ class PreparedPatch:
     """One patch resolved against its shape and encoded, ready to apply anywhere.
 
     ``value`` is the recursively immutable encoded content the path receives: a
-    leaf's spelling or JSON null when ``leaf`` names the leaf's type, and an
-    occurrence's complete document or JSON null when ``leaf`` is ``None``.
-    ``removes`` marks a leaf patch that deletes the key instead, which no SQL
-    assignment expresses.
+    single scalar's spelling or JSON null when ``leaf`` names its type, and
+    composite content — an occurrence's complete document or JSON null, or a
+    scalar collection's encoded array — when ``leaf`` is ``None``. ``removes``
+    marks a scalar patch that deletes the key instead, which no SQL assignment
+    expresses.
     """
 
     path: tuple[str, ...]
@@ -566,8 +642,8 @@ def prepare_patches(
     sequence applies to every document of that shape
     (:func:`apply_prepared_patches`) and supplies the same encoded values to a
     path-patching statement. A path the shape does not declare is refused, and so
-    is a patch whose kind contradicts the member it names — a :class:`SetLeaf` at
-    an occurrence, whatever presence it carries, or a :class:`SetValue` at a
+    is a patch whose kind contradicts the member it names — a :class:`SetScalar` at
+    an occurrence, whatever presence it carries, or a :class:`SetValueObject` at a
     leaf. What a patch *carries* stays the caller's: removing a required member's
     key, writing JSON null over it, or assigning an occurrence a document of some
     other shape all produce a document this same shape then reads back as invalid
@@ -579,16 +655,25 @@ def prepare_patches(
     for patch in patches:
         member = resolve(shape, patch.path)
         dotted = ".".join(patch.path)
-        if isinstance(patch, SetValue):
+        if isinstance(patch, SetValueObject):
             if not isinstance(member, Occurrence):
-                raise ValueError(f"{dotted!r} names a leaf; use SetLeaf")
+                raise ValueError(f"{dotted!r} names a leaf; use SetScalar")
             prepared.append(PreparedPatch(patch.path, retain_document_value(patch.document), None))
             continue
         if not isinstance(member, Leaf):
-            raise ValueError(f"{dotted!r} names an occurrence; use SetValue")
+            raise ValueError(f"{dotted!r} names an occurrence; use SetValueObject")
         presence = patch.value
         if isinstance(presence, Missing):
             prepared.append(PreparedPatch(patch.path, None, member.type, removes=True))
+        elif member.multiplicity is Multiplicity.MANY:
+            elements = (
+                ()
+                if isinstance(presence, ExplicitNull) or presence.value is None
+                else cast("Iterable[object]", presence.value)
+            )
+            prepared.append(
+                PreparedPatch(patch.path, encode_scalar_many(member.type, elements), None)
+            )
         elif isinstance(presence, ExplicitNull):
             prepared.append(PreparedPatch(patch.path, None, member.type))
         else:
@@ -791,16 +876,20 @@ def reduce_declared_members(
 
 def _reduced_member(member: Leaf | Occurrence, raw: object, *, preserve_presence: bool) -> object:
     """``raw`` reduced as ``member`` declares it, failing relative to the member."""
-    if isinstance(member, Leaf):
+    if isinstance(member, Leaf) and member.multiplicity is not Multiplicity.MANY:
         return None if raw is None else decode_leaf(member.type, raw)
     if member.multiplicity is not Multiplicity.MANY:
-        return reduce_declared_members(member.shape, raw, preserve_presence=preserve_presence)
+        return reduce_declared_members(
+            cast("Occurrence", member).shape, raw, preserve_presence=preserve_presence
+        )
     if raw is None:
         values: Sequence[object] = ()
     elif isinstance(raw, (list, tuple)):
         values = cast("Sequence[object]", raw)
     else:
         raise LeafEncodingError(f"expected array, got {type(raw).__name__}")
+    if isinstance(member, Leaf):
+        return [decode_leaf(member.type, value) for value in values]
     return [
         reduce_declared_members(member.shape, value, preserve_presence=preserve_presence)
         for value in values
@@ -808,4 +897,4 @@ def _reduced_member(member: Leaf | Occurrence, raw: object, *, preserve_presence
 
 
 def _is_many(member: Leaf | Occurrence) -> bool:
-    return isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY
+    return member.multiplicity is Multiplicity.MANY

@@ -16,6 +16,7 @@ from parallax.core.document_codec import (
     MemberShape,
     Occurrence,
     encode_leaf,
+    encode_scalar_many,
     occurrence_shape,
 )
 from parallax.core.metamodel import (
@@ -68,6 +69,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ContainerDatabase",
     "Provisioner",
+    "fixture_collection",
     "fixture_document",
     "fixture_literal",
     "fixture_statements",
@@ -143,7 +145,7 @@ def fixture_document(
     """
     document: dict[str, object] = {}
     for member in shape.members:
-        many = isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY
+        many = member.multiplicity is Multiplicity.MANY
         raw = row.get(member.name)
         if raw is None:
             if many:
@@ -151,7 +153,11 @@ def fixture_document(
             elif member.name in row:
                 document[member.name] = None
         elif isinstance(member, Leaf):
-            document[member.name] = encode_leaf(member.type, fixture_literal(member.type, raw))
+            document[member.name] = (
+                fixture_collection(member.type, raw)
+                if many
+                else encode_leaf(member.type, fixture_literal(member.type, raw))
+            )
         else:
             document[member.name] = _fixture_occurrence(member, raw)
     encoded = cast("Mapping[str, object]", retain_document_value(document))
@@ -163,6 +169,17 @@ def fixture_document(
         return encoded
     canonical = encode_wire(JSON, decode_wire(JSON, cast("WireValue", unknown)))
     return {**encoded, **cast("Mapping[str, object]", canonical)}
+
+
+def fixture_collection(element_type: NeutralType, raw: object) -> object:
+    """One fixture scalar collection's stored array, each element spelled by
+    the codec; a value that is not an array is stored as authored."""
+    if not isinstance(raw, Sequence) or isinstance(raw, str | bytes):
+        return raw
+    return encode_scalar_many(
+        element_type,
+        tuple(fixture_literal(element_type, element) for element in cast("Sequence[object]", raw)),
+    )
 
 
 def _fixture_occurrence(member: Occurrence, raw: object) -> object:
@@ -238,6 +255,11 @@ def _fixture_insert(
         value = row[name]
         if value is None:
             binds.append(None)
+        elif (
+            isinstance(projection, AttributeMetadata)
+            and projection.multiplicity is Multiplicity.MANY
+        ):
+            binds.append(JsonDocument(fixture_collection(projection.type, value)))
         elif isinstance(projection, MemberShape):
             binds.append(
                 JsonDocument(

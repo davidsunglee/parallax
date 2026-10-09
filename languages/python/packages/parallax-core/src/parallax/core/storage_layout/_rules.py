@@ -23,6 +23,7 @@ from parallax.core.metamodel import (
     IssueCode,
     MetamodelIssue,
     ModelLocation,
+    Multiplicity,
     Table,
 )
 from parallax.core.model_formation import ModuleIdentity
@@ -50,8 +51,8 @@ not occupy, so the model states two contradictory placements for one member."""
 
 INDEX_OVER_DOCUMENT_MEMBER: Final[IssueCode] = "storage-layout-index-over-document-member"
 """An Index component names a document-resident Attribute, which has no Column to
-index; this contract adds no document-path, expression, or provider-native index
-form."""
+index, or a scalar collection, whose Column holds a structured document; this
+contract adds no document-path, expression, or provider-native index form."""
 
 ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
     {
@@ -215,7 +216,8 @@ def _override_issues(
 def _index_issues(
     candidate: CandidateMetamodel, document_groups: Sequence[_DocumentGroup]
 ) -> list[MetamodelIssue]:
-    """The Index components reaching into a shared Structured Column.
+    """The Index components reaching into structured document storage: a shared
+    Structured Column, or a scalar collection's own structured Column.
 
     Index Metadata is local and never inherited, so the model's declarations are
     walked once and each offending component is reported against the Index that
@@ -230,9 +232,14 @@ def _index_issues(
                 resident.add(contributor.attribute.identity)
     issues: list[MetamodelIssue] = []
     for declaration in candidate.entities:
+        collections = frozenset(
+            attribute.identity
+            for attribute in declaration.attributes
+            if attribute.multiplicity is Multiplicity.MANY
+        )
         for index in declaration.indices:
             for component in index.attributes:
-                if component not in resident:
+                if component not in resident and component not in collections:
                     continue
                 issues.append(
                     MetamodelIssue(
@@ -240,8 +247,8 @@ def _index_issues(
                         IndexLocation(index.identity),
                         (AttributeLocation(component),),
                         message=(
-                            f"Index {index.identity.name!r} names document-resident "
-                            f"Attribute {component.name!r}, which has no Column"
+                            f"Index {index.identity.name!r} names Attribute "
+                            f"{component.name!r}, which is stored as a structured document"
                         ),
                     )
                 )

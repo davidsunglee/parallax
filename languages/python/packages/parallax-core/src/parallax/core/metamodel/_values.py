@@ -384,6 +384,11 @@ class AttributeMetadata:
     :func:`designate_framework_owned`. It carries no local invariant, because
     the fact is a function of the Entity as well as the Attribute and so cannot
     be checked from here.
+
+    ``type`` is the scalar element type under either multiplicity. A ``MANY``
+    Attribute is a scalar collection: it is never nullable, bounds no length,
+    and cannot be a primary key or an optimistic-lock version, each of which
+    raises :class:`ValueError`.
     """
 
     identity: AttributeIdentity
@@ -395,6 +400,7 @@ class AttributeMetadata:
     read_only: bool = False
     optimistic_locking: bool = False
     framework_owned: bool = False
+    multiplicity: Multiplicity = Multiplicity.ONE
     definition: Leaf = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -403,8 +409,15 @@ class AttributeMetadata:
         object.__setattr__(
             self,
             "definition",
-            Leaf(name=self.identity.name, type=self.type, nullable=self.nullable),
+            Leaf(
+                name=self.identity.name,
+                type=self.type,
+                nullable=self.nullable,
+                multiplicity=self.multiplicity,
+            ),
         )
+        if self.multiplicity is Multiplicity.MANY:
+            _check_collection_attribute(self)
         if isinstance(self.primary_key, PrimaryKey):
             if isinstance(self.primary_key.generation, Max | Sequence):
                 if not isinstance(self.type, Int32 | Int64):
@@ -425,6 +438,18 @@ class AttributeMetadata:
             raise ValueError(f"an Attribute maximum length is positive, got {self.max_length}")
         if not isinstance(self.type, String):
             raise ValueError(f"only a String Attribute bounds its length, not {self.type}")
+
+
+def _check_collection_attribute(attribute: AttributeMetadata) -> None:
+    where = f"{attribute.identity.entity.canonical}.{attribute.identity.name}"
+    if attribute.nullable:
+        raise ValueError(f"{where}: a many Attribute is never nullable")
+    if isinstance(attribute.primary_key, PrimaryKey):
+        raise ValueError(f"{where}: a many Attribute cannot be a primary key")
+    if attribute.optimistic_locking:
+        raise ValueError(f"{where}: a many Attribute cannot be an optimistic-lock version")
+    if attribute.max_length is not None:
+        raise ValueError(f"{where}: a many Attribute bounds no length")
 
 
 @dataclass(frozen=True, slots=True)
@@ -596,23 +621,31 @@ class ValueObjectShapeKey:
 
 @dataclass(frozen=True, slots=True)
 class ValueObjectAttributeDeclaration:
-    """One scalar leaf of a Value Object shape; an empty name raises
-    :class:`ValueError`."""
+    """One scalar leaf of a Value Object shape; an empty name, or a nullable
+    ``MANY`` leaf, raises :class:`ValueError`."""
 
     name: str
     type: NeutralType
     nullable: bool = False
+    multiplicity: Multiplicity = Multiplicity.ONE
     definition: Leaf = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("a Value Object Attribute name is nonempty")
+        if self.multiplicity is Multiplicity.MANY and self.nullable:
+            raise ValueError(f"{self.name}: a many Value Object Attribute is never nullable")
         from parallax.core.metamodel._shape import Leaf
 
         object.__setattr__(
             self,
             "definition",
-            Leaf(name=self.name, type=self.type, nullable=self.nullable),
+            Leaf(
+                name=self.name,
+                type=self.type,
+                nullable=self.nullable,
+                multiplicity=self.multiplicity,
+            ),
         )
 
 

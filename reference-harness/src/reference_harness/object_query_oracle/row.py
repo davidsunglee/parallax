@@ -70,7 +70,7 @@ def _value_object_field_equal(
     if left is None or right is None:
         return left is None and right is None
     if attribute is not None:
-        return portable_literal.values_equal(left, right, attribute["type"], None)
+        return portable_literal.declared_values_equal(left, right, attribute, None)
     return scalars_equal(left, right, None)
 
 
@@ -137,7 +137,7 @@ def _cell_equal(
         return scalars_equal(left, right, tolerance)
     if attribute["column"] in temporal_end_columns and (left == "infinity" or right == "infinity"):
         return left == right
-    return portable_literal.values_equal(left, right, attribute["type"], tolerance)
+    return portable_literal.declared_values_equal(left, right, attribute, tolerance)
 
 
 def rows_equal(

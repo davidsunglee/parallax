@@ -624,9 +624,11 @@ def _translate_finding(
 ) -> StoredDataIssueInput:
     """One Entity-document finding as the issue it publishes.
 
-    A finding that resolves to a direct Entity Attribute publishes the empty
-    path its own column would: public translation is fixed by the logical Entity
-    member rather than by the carrier the member was placed in.
+    A finding that resolves to a single-valued Entity Attribute publishes the
+    empty path its own column would, and one inside a scalar collection keeps
+    the collection's own logical path, element index included: public
+    translation is fixed by the logical Entity member rather than by the carrier
+    the member was placed in.
     """
     path = _logical_path(finding.path)
     occurrence = next(
@@ -661,7 +663,9 @@ def _translate_finding(
         code,
         mapping.concrete_entity,
         member,
-        () if attribute is not None else finding.path,
+        ()
+        if attribute is not None and attribute.multiplicity is Multiplicity.ONE
+        else finding.path,
         stored_value=freeze_evidence(finding.stored_value),
     )
 

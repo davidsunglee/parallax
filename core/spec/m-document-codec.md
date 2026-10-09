@@ -50,7 +50,9 @@ Presence =
   | Missing
 
 MemberValue =
-    NeutralValue     # a Leaf member's value, in the member's declared type
+    NeutralValue     # a `One` Leaf member's value, in the member's declared type
+  | ScalarSequence   # a `Many` Leaf member's value: an ordered sequence of
+                     # non-null NeutralValues of the member's declared type
   | Document         # an Occurrence member's own document: one object for
                      # `One`, an ordered array of objects for `Many`
 ```
@@ -76,6 +78,13 @@ top-level root and records the logical prefix used for findings. A `One` has one
 cursor over its object; a `Many` has one cursor over each visited element object.
 Creating a cursor neither inspects nor judges any sibling member.
 
+A scalar collection is a `Leaf` with `Many` multiplicity, never a synthetic
+occurrence: its stored form is one JSON array whose elements are, in order, the
+canonical leaf spellings below of its declared Neutral Type. Every operation
+below that encodes, decodes, patches, reduces, or compares a leaf applies the
+same rule to each element of a scalar collection and composes the ordered array
+around them.
+
 A `Document` is `m-core`'s portable `DocumentValue` — object, array, string,
 number, boolean, or null — and nothing else. Its object and array nodes may be
 fresh parsed containers or recognized recursively immutable owned carriers. It
@@ -98,8 +107,9 @@ replacement of the stored document; the raw carrier remains unchanged for
 observation and writing.
 
 A `Presence` is always classified against one member of a shape, and the member's
-own kind fixes what a `Present` carries. A `Leaf` member carries a `NeutralValue`
-of its declared Neutral Type. An `Occurrence` member carries that occurrence's
+own kind fixes what a `Present` carries. A `One` `Leaf` member carries a
+`NeutralValue` of its declared Neutral Type, and a `Many` `Leaf` member — a scalar
+collection — carries its ordered `ScalarSequence`, duplicates included. An `Occurrence` member carries that occurrence's
 own `Document` — one object for `One`, an ordered array of objects for `Many` —
 and that document is always a codec product: a consumer obtains a `One`'s object
 from `encode` and a `Many`'s array from `encodeMany`, never by assembling a
@@ -167,13 +177,14 @@ persistedDocumentEqual(left: Document,
                        right: Document)               -> boolean
 
 DocumentPatch =
-    SetLeaf(path: nonempty sequence<MemberName>,
-            value: Presence)
-  | SetValue(path: nonempty sequence<MemberName>,
-             document: Document | Null)
+    SetScalar(path: nonempty sequence<MemberName>,
+              value: Presence)
+  | SetValueObject(path: nonempty sequence<MemberName>,
+                   document: Document | Null)
 
 PreparedPatches: nonempty ordered sequence of
-    (path, encoded value or JSON null, leaf type | occurrence, removes)
+    (path, encoded value or JSON null,
+     single leaf type | composite (occurrence or scalar collection), removes)
 ```
 
 `encode` builds one complete document from a shape and one presence-classified
@@ -374,8 +385,9 @@ values is `m-sql`'s and `m-dialect`'s job, and the two MUST agree, which is what
 makes an in-memory successor and a path-patched `UPDATE` interchangeable.
 
 `preparePatches` resolves each path against `shape` for the same reason every other
-operation here takes one. A `SetLeaf` carries a `NeutralValue`, so writing it
-needs that leaf's declared Neutral Type; without the shape the caller would have
+operation here takes one. A `SetScalar` carries managed scalar content — one
+`NeutralValue` or a scalar collection's sequence of them — so writing it needs
+that leaf's declared Neutral Type and multiplicity; without the shape the caller would have
 to spell the encoding itself, which the consumer contract below forbids. The
 shape is also what makes a path the model does not declare a caller error rather
 than a new key, so patching can never introduce one. `comparisonText` is the one
@@ -461,7 +473,14 @@ kind:
 | an explicit null nullable leaf or `One` | the key is present with JSON null |
 | a required member | the key is present with a non-null valid encoding |
 | a member not applicable to this row's concrete subtype | the key is absent |
-| an empty `Many` occurrence | the key is present with `[]` |
+| an empty `Many` occurrence or scalar collection | the key is present with `[]` |
+
+A scalar collection follows the same presence rule as a `Many` occurrence: its
+canonical encoded form is an ordered JSON array of its elements' leaf spellings,
+never null, with `[]` for no elements. An absent key and JSON null — and, for a
+collection stored in a Structured Column of its own, SQL null — are accepted
+stored aliases for `[]` that decode to the empty collection and re-encode as
+`[]`. An element is never null.
 
 A `Many` occurrence's canonical encoded form is an ordered JSON array of
 documents and is never null: its empty array is the only form an encoder produces
@@ -497,8 +516,8 @@ field.
 ## Patching, unknown keys, and occurrence assignments
 
 Patching is two operations. `preparePatches` resolves each patch's path against
-the shape and encodes it once: a `SetLeaf`'s value by its declared leaf type,
-and a `SetValue`'s document retained as immutable content. The preparation is
+the shape and encodes it once: a `SetScalar`'s value by its declared leaf type,
+and a `SetValueObject`'s document retained as immutable content. The preparation is
 independent of any document, so one prepared sequence applies to every document
 of that shape and supplies the very same encoded values to a path-patching
 statement (`m-write-payload`); nothing encodes them again. It is not a second
@@ -509,8 +528,8 @@ prepared values themselves.
 Preparation refuses a path the shape does not declare, and refuses a patch whose
 kind contradicts the member it names. The pairing is exclusive both ways and
 whatever the patch carries: a whole occurrence is written only through
-`SetValue` — its JSON null included — and a leaf only through `SetLeaf`, so a
-`SetLeaf` naming an occurrence is refused even when its presence is
+`SetValueObject` — its JSON null included — and a leaf only through `SetScalar`, so a
+`SetScalar` naming an occurrence is refused even when its presence is
 `ExplicitNull` or `Missing`. What a patch *carries* stays the caller's: removing
 a required member's key, writing JSON null over it, or assigning an occurrence a
 document of some other shape all produce a document the same shape then reads
@@ -521,12 +540,15 @@ That is the whole point of patching rather than re-encoding: an application that
 rebuilt a document from the members it knows would silently drop the rest. What
 it does change is the position each patch names, whole.
 
-- `SetLeaf` writes one leaf path and leaves every other key untouched. Its value
-  is a leaf presence — a `NeutralValue`, `ExplicitNull`, or `Missing`: writing
-  `ExplicitNull` stores JSON null and writing `Missing` removes the key. A
+- `SetScalar` writes one scalar member's path and leaves every other key
+  untouched. The names describe member kind, not multiplicity: its value is a
+  `One` leaf's presence — a `NeutralValue`, `ExplicitNull`, or `Missing` — or a
+  scalar collection's whole `ScalarSequence`, which it writes as one encoded array.
+  Writing `ExplicitNull` stores JSON null for a `One` leaf and `[]` for a scalar
+  collection, and writing `Missing` removes the key. A
   removal has no SQL assignment form; it exists for documents composed in
-  memory. A whole occurrence is stated only through `SetValue`.
-- `SetValue` **replaces** the occurrence at its path with the complete document
+  memory. A whole occurrence is stated only through `SetValueObject`.
+- `SetValueObject` **replaces** the occurrence at its path with the complete document
   it carries — the object a `one` holds, the ordered array a `many` holds — or
   stores JSON null when that document is `Null`. Nothing inside the replaced
   subtree survives, at any depth: an omitted declared member is absent
@@ -537,9 +559,11 @@ it does change is the position each patch names, whole.
 
 The declared-member reduction reads a whole encoded document against its shape,
 where the operations above build a document, read one path, or write the
-positions their patches name. It decodes each leaf by its declared Neutral Type,
-reduces a `one` recursively and a `many` element-wise, and excludes every key the
-shape does not declare.
+positions their patches name. It decodes each leaf by its declared Neutral Type —
+a scalar collection element by element — reduces a `one` recursively and a
+`many` element-wise, and excludes every key the shape does not declare. A scalar
+collection, like a `many`, has no absent state: an omitted or null one reduces to
+its empty collection under either mode.
 
 The reduction takes one option that narrows its result. **Presence preservation**
 asks which members *this document* holds, which the source answers by itself: a
@@ -571,7 +595,7 @@ the rules it applies are stated there once.
 
 Patches apply in the order given, left to right, each over the result of the
 last. `m-storage-layout` fixes that order for a Parallax write: canonical logical
-placement order. Top-level assignments name disjoint subtrees, and a `SetValue`
+placement order. Top-level assignments name disjoint subtrees, and a `SetValueObject`
 reaches no further than the one path it names, so no dependency sort exists
 between them.
 
@@ -603,7 +627,17 @@ The same traversal has a validation-only mode. That mode walks and normalizes th
 same source under the same shape but constructs no success-sized document tree.
 Its evidence is sparse: only failed top-level positions are retained, keyed by
 the canonical `MemberShape` position; a nested failure carries its relative path
-inside that position. Assignment judgement and row validation consume this
+inside that position.
+
+A scalar collection is authored through the same traversal from the frontend's
+sequence carrier. The leaf normalizer runs once per element against the
+collection's own `Many` leaf, never against a synthetic single leaf, and producing
+mode builds the ordered managed sequence once, normalization-created duplicates
+included; validation-only mode builds none. A non-sequence carrier fails at the
+collection, and an element the normalizer refuses — a null element included —
+fails at its index. A null collection is judged by the caller's nullability rule,
+exactly as a null scalar is, and an omitted one is filled with the empty
+collection wherever an omitted `many` occurrence is. Assignment judgement and row validation consume this
 evidence and MUST NOT recursively interpret the authored document again.
 
 ## Managed documents and the effective change set
@@ -632,8 +666,10 @@ document's logical value. Only declared members contribute and an unknown key is
 dropped, exactly as the reduction excludes one. Presence is preserved at every
 containment depth — an omitted member stays omitted and a null one stays null —
 and the same `many` exception applies: an omitted key, a null, and an empty
-collection are one zero value and all three answer the empty collection. A `one`
-is canonicalized recursively and a `many` element-wise in stored order. It is the
+collection are one zero value and all three answer the empty collection — for a
+scalar collection as for a `many` occurrence. A `one` is canonicalized
+recursively and a `many` element-wise in stored order; a scalar collection is
+compared ordered and element by element. It is the
 declared-member reduction's managed counterpart.
 
 `classifyEffectiveChange` is the one operation answering whether an assignment
@@ -722,6 +758,8 @@ At a judged member position, the verdict is closed:
 | `One` occurrence present with a non-null, non-object value | `OneWrongKind` | collapse the occurrence to absent |
 | `Many` occurrence present with a non-null value that is not an array of object documents | `ManyWrongKind` | collapse the whole occurrence to the empty array |
 | non-null leaf value not decodable as its declared Neutral Type | `LeafUndecodable` | `Unavailable` |
+| scalar collection present with a non-null value that is not an array | `LeafUndecodable` at the collection | the whole collection `Unavailable` |
+| scalar collection element — JSON null included — not decodable as the declared Neutral Type | `LeafUndecodable` at the collection path plus the element index, one per failing element in element order | the whole collection `Unavailable` |
 
 The complementary states remain conforming: an absent or JSON-null nullable leaf
 or nullable `One` preserves its exact `Missing` or `ExplicitNull` presence; the
@@ -738,6 +776,14 @@ member. `locateEntityMember` maps it to `Missing` member by member, and
 document-resident Entity member's nullability and multiplicity determine whether
 an existing finding and collapse apply. The carrier creates neither a sixth
 local finding nor an unrequested-member scan.
+
+A scalar collection is judged in one traversal of its array: every failing element
+is reported, and no decoded element is published from a collection with any
+failure, so a collection is never shortened, reordered, or repaired into the
+elements that happened to decode. An absent enclosing occurrence is not entered,
+so a collection below it is neither judged nor invented. The `ManyWrongKind`
+collapse belongs to Value Object occurrences alone and never applies to a scalar
+collection.
 
 This module defines no repair, no defaulting, and no cross-dialect corruption
 error normalization. Classification records the contradiction; it does not make

@@ -33,6 +33,7 @@ from .storage_layout import (
     TableLayout,
     ValueObjectContributor,
     derived_primary_key_index,
+    is_scalar_collection,
 )
 
 # m-core neutral type -> Postgres column type.
@@ -383,9 +384,13 @@ def _declarations(model: Model) -> _Declarations:
         owner = entity.canonical_name
         definition = entity.definition
         for attribute in definition.get("attributes", []) or []:
-            contributors[AttributeContributor(owner, attribute["name"])] = DeclaredContributor(
-                neutral_type=attribute["type"],
-                max_length=attribute.get("maxLength"),
+            contributors[AttributeContributor(owner, attribute["name"])] = (
+                DeclaredContributor(_DOCUMENT_TYPE, element_type=attribute["type"])
+                if is_scalar_collection(attribute)
+                else DeclaredContributor(
+                    neutral_type=attribute["type"],
+                    max_length=attribute.get("maxLength"),
+                )
             )
         for value_object in definition.get("valueObjects", []) or []:
             contributors[ValueObjectContributor(owner, value_object["name"])] = DeclaredContributor(
@@ -416,7 +421,8 @@ def declared_contributors(model: Model) -> Mapping[ColumnContributor, DeclaredCo
     so every consumer that must spell one — a ``CREATE TABLE`` column, a read's
     typed ``NULL`` placeholder — resolves it here. A top-level value object binds
     into one structured document column whatever its inner members declare. The
-    framework-owned discriminator has no declaration and so no entry.
+    framework-owned discriminator has no declaration and so no entry, and a scalar
+    collection binds into one structured document column of its elements.
     """
     return _declarations(model).contributors
 

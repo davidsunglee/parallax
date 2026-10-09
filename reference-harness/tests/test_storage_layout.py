@@ -1579,6 +1579,7 @@ def test_the_harness_consumes_storage_layout_for_validation_reads_and_observatio
         "RelationalDocument",
         "TableLayout",
         "ValueObjectContributor",
+        "is_scalar_collection",
         "member_address",
         "position_projection",
         "position_view",

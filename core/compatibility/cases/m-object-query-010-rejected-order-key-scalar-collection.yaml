@@ -1,0 +1,16 @@
+# Negative (m-object-query Sort Key rule): a Sort Key orders by one scalar value,
+# and a scalar collection holds a sequence of them, so ordering by
+# `CollectionTwinItem.counts` is refused before SQL.
+model: models/scalar-collection-layout-twin-columns.yaml
+tags: [m-object-query, rejected, negative, order-by, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  objectQuery:
+    target: parallax.compatibility.CollectionTwinItem
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.CollectionTwinItem.counts
+        direction: asc
+then:
+  rejectedRule: scalar-collection-unquantified

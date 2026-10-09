@@ -79,6 +79,16 @@ Relationship ordering uses target-local names, with `asc` / `desc` for direction
 and optional single-shot null placement. A bare name is ascending; omitted null
 placement is last in either direction.
 
+`Attr[tuple[T, ...]]` over a scalar `T` declares a scalar collection: its
+element type is `T` after the ordinary type-shaping options (`type=`,
+`precision=`, `scale=`), which apply to each element. It defaults to `()`, is
+never nullable, and accepts exactly a `tuple`, as a Value Object Many does;
+`max_length`, `primary_key`, and `optimistic_locking` are refused, while
+`column` and `read_only` keep their Entity meaning. Value Object scalars use the
+same spelling. Its whole value is assigned through `edit(...)` or `.set(...)`, and
+a scalar comparison, membership, range, string, null-check, or ordering
+expression over it is refused at authoring.
+
 `ValueObject` classes are frozen and discovered through Entity occurrences;
 they are not registered as model candidates. `Attr[VO]`, `Attr[VO | None]`, and
 `Attr[tuple[VO, ...]]` spell One, nullable One, and Many. A Many is never nullable
@@ -101,6 +111,7 @@ These are developer-input choices; serialized literals follow core Wire rules.
 | Timestamp | timezone-aware `datetime`, normalized to UTC at microsecond precision; the UTC instant must be representable |
 | UUID | `uuid.UUID` or canonical UUID string |
 | Value Object | an instance of the declared class, never a raw dictionary |
+| Scalar collection | a `tuple` of the element type's carriers; a read publishes an immutable `tuple` |
 
 Float32 reads use Python's binary64 carrier widened from the actual binary32
 value. A Python `float` written to a Float32 member, as a Typed value or as a

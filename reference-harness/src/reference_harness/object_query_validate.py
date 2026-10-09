@@ -69,6 +69,7 @@ from .value_object_resolve import (
     NAVIGATE_VALUE_OBJECT_TARGET,
     NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
     NULL_CHECK_NON_NULLABLE_MEMBER,
+    SCALAR_COLLECTION_UNQUANTIFIED,
     RejectionError,
     bounds_inverted,
     decode_typed_literal,
@@ -125,6 +126,7 @@ def validate_object_query(entity: Entity, query: Any) -> None:
     for key in query.get("orderBy", []) or []:
         if isinstance(key, dict):
             _check_find_root(entity, key.get("attr"))
+            _check_order_key_scalar(entity, key.get("attr"))
     _check_includes(entity, query.get("includes", []) or [])
 
 
@@ -169,7 +171,9 @@ def _check_attribute_predicate(entity: Entity, tag: str, body: dict[str, Any]) -
     attribute = entity.attribute_by_name(subject.rpartition(".")[2])
     if tag in ("isNull", "isNotNull"):
         _check_null_check(attribute, subject)
-    elif tag in _STRING_TAGS:
+        return
+    _check_single_scalar(attribute, subject)
+    if tag in _STRING_TAGS:
         _check_string_predicate(attribute, body, subject=subject)
     elif tag in ("in", "notIn"):
         for value in body.get("values", []):
@@ -185,6 +189,7 @@ def _check_between(entity: Entity, body: dict[str, Any]) -> None:
     if not isinstance(subject, str):
         return
     attribute = entity.attribute_by_name(subject.rpartition(".")[2])
+    _check_single_scalar(attribute, subject)
     _check_range_predicate(attribute, body, subject=subject)
 
 
@@ -206,6 +211,8 @@ def _check_nested_leaf(
     ``subject`` names the path in a range or string rule's diagnostic, and
     ``label`` names it in a comparison or membership literal's.
     """
+    if tag not in ("nestedIsNull", "nestedIsNotNull"):
+        _check_single_scalar(attribute, subject)
     if tag in _NESTED_COMPARISON_TAGS:
         decode_typed_literal(body.get("value"), attribute.get("type"), label)
     elif tag == "nestedBetween":
@@ -217,6 +224,27 @@ def _check_nested_leaf(
         _check_string_predicate(attribute, body, subject=subject)
     else:
         _check_null_check(attribute, body["path"])
+
+
+def _check_single_scalar(attribute: dict[str, Any], subject: str) -> None:
+    """Refuse a scalar collection where one scalar value is required: nothing
+    reaches its elements implicitly (m-predicate)."""
+    if attribute.get("multiplicity", "one") == "many":
+        raise RejectionError(
+            SCALAR_COLLECTION_UNQUANTIFIED,
+            f"{subject!r} names a scalar collection, which is not one scalar value",
+        )
+
+
+def _check_order_key_scalar(entity: Entity, subject: Any) -> None:
+    """A Sort Key orders by one scalar value, which a scalar collection is not."""
+    if not isinstance(subject, str):
+        return
+    try:
+        attribute = entity.attribute_by_name(subject.rpartition(".")[2])
+    except KeyError:
+        return
+    _check_single_scalar(attribute, subject)
 
 
 def _check_null_check(attribute: dict[str, Any], subject: str) -> None:

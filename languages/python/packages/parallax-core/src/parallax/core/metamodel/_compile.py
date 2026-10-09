@@ -63,6 +63,10 @@ class _ValueObjectAttributeMetadata:
     def nullable(self) -> bool:
         return self.definition.nullable
 
+    @property
+    def multiplicity(self) -> Multiplicity:
+        return self.definition.multiplicity
+
 
 type _BoundMember = ValueObjectAttributeMetadata | NestedValueObjectMetadata
 

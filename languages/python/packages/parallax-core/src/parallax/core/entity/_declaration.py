@@ -1002,6 +1002,18 @@ def _scalar_type(base: object, spec: AttrSpec, where: str) -> NeutralType:
     return neutral
 
 
+def _reject_nullable_collection(shape: _Shape, where: str) -> None:
+    """Refuse a nullable scalar collection, whose empty tuple is its only zero."""
+    if shape.multiplicity is Multiplicity.MANY and shape.nullable:
+        raise EntityDefinitionError(
+            code="entity-annotation-invalid",
+            message=(
+                f"{where}: a scalar collection is never nullable — spell it `tuple[X, ...]`, "
+                "whose empty tuple is the empty collection"
+            ),
+        )
+
+
 def _reject_entity_only_options(spec: AttrSpec, where: str, *, allow_column: bool) -> None:
     """Reject the options a Value Object member has no place for.
 
@@ -1069,16 +1081,13 @@ def _build_value_object(
                 )
             )
             continue
-        if shape.multiplicity is Multiplicity.MANY:
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: only a Value Object occurrence is spelled `tuple[X, ...]`",
-            )
+        _reject_nullable_collection(shape, where)
         attributes.append(
             ValueObjectAttributeDeclaration(
                 name=canonical,
                 type=_scalar_type(shape.base, spec, where),
                 nullable=shape.nullable,
+                multiplicity=shape.multiplicity,
             )
         )
 
@@ -1196,11 +1205,7 @@ def _build_entity(
             occurrences.append(occurrence)
             members[canonical] = value_object_metadata(identity, occurrence)
             continue
-        if shape.multiplicity is Multiplicity.MANY:
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: only a Value Object occurrence is spelled `tuple[X, ...]`",
-            )
+        _reject_nullable_collection(shape, where)
         if attr_spec.primary_key is not NOT_PRIMARY_KEY:
             pk_py.add(py_name)
         attribute = _attribute(identity, canonical, column, attr_spec, shape, where)
@@ -1505,6 +1510,7 @@ def _attribute(
             max_length=spec.max_length,
             read_only=spec.read_only,
             optimistic_locking=spec.optimistic_locking,
+            multiplicity=shape.multiplicity,
         )
     except ValueError as error:
         raise EntityDefinitionError(
@@ -2080,6 +2086,9 @@ def _install_fields(
     for py_name, vo_class in vo_classes.items():
         multiplicity = shapes[py_name].multiplicity
         ns[f"_validate_vo_{py_name}"] = _value_object_validator(py_name, vo_class, multiplicity)
+    for py_name, shape in shapes.items():
+        if shape.multiplicity is Multiplicity.MANY and py_name not in vo_classes:
+            ns[f"_validate_collection_{py_name}"] = _scalar_collection_validator(py_name)
     ns["__annotations__"] = annotations
 
 
@@ -2114,6 +2123,30 @@ def _framework_owned_validator(py_name: str) -> Any:
             f"{py_name}: framework-owned members are supplied by the framework and are never "
             "authored — omit it and let the write path stamp it"
         )
+
+    bound = cast("Any", classmethod(_validate))
+    return field_validator(py_name, mode="before")(bound)
+
+
+def _scalar_collection_validator(py_name: str) -> Any:
+    """A ``mode="before"`` validator enforcing "a scalar collection is a tuple".
+
+    Pydantic would otherwise accept any sequence for a ``tuple[X, ...]`` field;
+    the Python binding's collection input follows the Value Object Many
+    convention instead, so the exact immutable carrier is required here and each
+    element then takes its scalar field's ordinary validation.
+    """
+
+    def _validate(_cls: type, value: object) -> object:
+        # Pydantic distinguishes a `(cls, value)` validator from a `(value, info)`
+        # one only by `isinstance(func, classmethod)`, hence the explicit wrap
+        # below even though this validator never reads `cls`.
+        carrier: type = type(value)
+        if carrier is not tuple:
+            raise TypeError(
+                f"{py_name}: a scalar collection member requires a tuple, not {carrier.__name__!r}"
+            )
+        return value
 
     bound = cast("Any", classmethod(_validate))
     return field_validator(py_name, mode="before")(bound)

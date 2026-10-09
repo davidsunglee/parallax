@@ -222,6 +222,7 @@ ancestor through its ancestry chain (`m-inheritance`).
 | `readOnly` | bool, default `false` — immutable after insert |
 | `optimisticLocking` | bool, default `false` — marks the version attribute (`m-opt-lock`) |
 | `pkGeneration` | optional `application-assigned` \| `max` \| Sequence object; legal only when `primaryKey: true`, omission on a primary key means application-assigned |
+| `multiplicity` | `one` (default) \| `many` — `many` declares a scalar collection whose elements are `type` (`m-metamodel`); it admits no `nullable: true`, `primaryKey: true`, `maxLength`, `optimisticLocking: true`, or `pkGeneration` |
 
 The Sequence object is exactly:
 
@@ -350,9 +351,10 @@ column storage is the only current representation.
 Every occurrence is nonempty across `attributes` and `valueObjects`. A `many`
 occurrence is a non-null ordered collection that may be empty. A `one`
 occurrence is one composite and may be nullable. Inner scalar attributes carry
-only `name`, `type`, and optional `nullable`; they have no column, generation,
-locking, or Entity identity facts. Full recursive semantics belong to
-`m-value-object`.
+only `name`, `type`, optional `nullable`, and optional `multiplicity` (`one` by
+default; `many` declares a non-null scalar collection and admits no
+`nullable: true`); they have no column, generation, locking, or Entity identity
+facts. Full recursive semantics belong to `m-value-object`.
 
 ## `index` — a (possibly unique) index
 

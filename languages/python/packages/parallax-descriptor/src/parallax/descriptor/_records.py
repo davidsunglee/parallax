@@ -80,7 +80,10 @@ class PkGenerator:
 
 @dataclass(frozen=True, slots=True)
 class Attribute:
-    """A scalar entity attribute mapped to one physical column."""
+    """A scalar entity attribute mapped to one physical column.
+
+    ``type`` names the scalar element type under either ``multiplicity``.
+    """
 
     name: str
     type: str
@@ -91,6 +94,7 @@ class Attribute:
     read_only: bool = False
     optimistic_locking: bool = False
     pk_generator: PkGenerator | None = None
+    multiplicity: Multiplicity = "one"
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,11 +181,15 @@ class Inheritance:
 
 @dataclass(frozen=True, slots=True)
 class ValueObjectAttribute:
-    """A typed field of a value object; carries no per-field column."""
+    """A typed field of a value object; carries no per-field column.
+
+    ``type`` names the scalar element type under either ``multiplicity``.
+    """
 
     name: str
     type: str
     nullable: bool = False
+    multiplicity: Multiplicity = "one"
 
 
 @dataclass(frozen=True, slots=True)

@@ -329,6 +329,7 @@ ValueObjectAttributeDeclaration
   name: nonempty string
   type: NeutralType
   nullable: boolean
+  multiplicity: Multiplicity
 
 ValueObjectOccurrenceDeclaration
   name: nonempty string
@@ -479,6 +480,7 @@ AttributeMetadata
   read_only: boolean
   optimistic_locking: boolean
   framework_owned: boolean
+  multiplicity: Multiplicity
 ```
 
 Primary-key
@@ -486,6 +488,16 @@ generation is available only through the `PrimaryKey` branch; a
 non-primary-key attribute cannot carry a meaningless ApplicationAssigned,
 Max, or Sequence value. Frontends normalize an omitted generator on a declared
 primary key to `PrimaryKey(ApplicationAssigned)`.
+
+`multiplicity` defaults to `One`. A `Many` Attribute is a **scalar
+collection**: an ordered, duplicate-preserving sequence of non-null values whose
+element type is `type`, which remains a scalar Neutral Type rather than a
+collection type. A scalar collection is never nullable, bounds no length, and
+holds no primary-key, generation, or optimistic-locking role; each combination
+fails the reference-free Attribute construction invariants below. Its remaining
+roles are refused by their owners: an As-Of Axis endpoint below, a relationship
+join endpoint by `m-relationship`, and an Index component by `m-storage-layout`.
+`column` and `read_only` keep their ordinary meaning for it.
 
 An application-assigned primary key MUST have exactly one of the declared scalar types Int32, Int64, String, or Uuid. Boolean, Float32, Float64, Decimal, Bytes, Date, Time, and Timestamp remain valid ordinary scalar attributes but cannot be primary keys. Structured values and collections cannot be primary keys. Max and Sequence require Int32 or Int64 as specified by [Primary-Key Generation](m-pk-gen.md); Uuid eligibility introduces no framework UUID generator.
 
@@ -528,7 +540,8 @@ MemberShape
 DocumentMember =
     Leaf(name: MemberName,
          type: NeutralType,
-         nullable: boolean)
+         nullable: boolean,
+         multiplicity: Multiplicity)
   | Occurrence(name: MemberName,
                multiplicity: Multiplicity,
                nullable: boolean,
@@ -555,6 +568,7 @@ ValueObjectAttributeMetadata
   identity: ValueObjectAttributeIdentity
   type: NeutralType
   nullable: boolean
+  multiplicity: Multiplicity
 
 IndexMetadata
   identity: IndexIdentity
@@ -586,6 +600,14 @@ single composite. `Many` is an ordered, non-null collection that may be empty;
 `Many + nullable` is invalid. There is no mapping discriminator or separate
 Value Object cardinality algebra.
 
+A `Leaf` carries the same `Multiplicity` algebra. A `One` leaf holds one value
+of its declared Neutral Type, and a `Many` leaf — the definition of a scalar
+collection Attribute or Value Object Attribute — holds an ordered,
+duplicate-preserving sequence of non-null values of that type and is itself
+never null, so a nullable `Many` leaf is unconstructible. A scalar collection is
+not a synthetic Value Object and adds no third member variant: every consumer
+reads its multiplicity from this one definition.
+
 Every Index component is a distinct local Attribute of the Index's Entity and
 preserves declaration order. Indices are not inherited and do not repeat
 physical column names; storage consumers resolve those through Attribute
@@ -610,7 +632,7 @@ AsOfAxisMetadata
 
 The dimension identifies the axis. There is no separate axis name, identity,
 kind, or query-default member. Both attributes belong to the containing Entity,
-have Timestamp Neutral Type, are distinct, and form `[start, end)`. Valid Time
+are single-valued with Timestamp Neutral Type, are distinct, and form `[start, end)`. Valid Time
 conventionally maps `validStart`/`validEnd` to `from_z`/`thru_z`; Transaction
 Time maps `txStart`/`txEnd` to `in_z`/`out_z`. Both endpoint Attributes carry
 the derived `framework_owned` designation, which is where that membership is
@@ -673,7 +695,7 @@ in [`m-model-formation`](m-model-formation.md). No other module may emit a
 | `metamodel-as-of-dimension-duplicate` | One Entity declares the same Temporal Dimension more than once. |
 | `metamodel-as-of-attribute-missing` | An axis start or end Attribute does not exist. |
 | `metamodel-as-of-attribute-owner` | An axis start or end Attribute belongs to another Entity. |
-| `metamodel-as-of-attribute-type` | An axis start or end Attribute is not Timestamp. |
+| `metamodel-as-of-attribute-type` | An axis start or end Attribute is not a single Timestamp. |
 | `metamodel-as-of-attribute-duplicate` | Axis start and end identify the same Attribute. |
 
 An unresolved relationship or inheritance parent uses the relevant

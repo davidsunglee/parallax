@@ -22,6 +22,7 @@ from parallax.core.metamodel import (
     FacetKey,
     MemberIdentity,
     MemberShape,
+    Multiplicity,
     OccurrenceMetadata,
     PrimaryKey,
     Table,
@@ -103,7 +104,8 @@ def classify_attribute_tier(
     """Classify one Attribute with the normative overlap precedence.
 
     The optional audit-designation input creates no declaration, and temporal
-    designation wins over a revision-instant alias.
+    designation wins over a revision-instant alias. A scalar collection holds no
+    role and stores one structured document, so it joins the document tier.
     """
     if isinstance(attribute.primary_key, PrimaryKey):
         return ColumnTier.IDENTITY
@@ -111,6 +113,8 @@ def classify_attribute_tier(
         return ColumnTier.TEMPORAL
     if attribute.identity in audit_designations:
         return ColumnTier.AUDIT
+    if attribute.multiplicity is Multiplicity.MANY:
+        return ColumnTier.DOCUMENT
     return ColumnTier.DOMAIN
 
 

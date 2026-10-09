@@ -32,6 +32,7 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     Metamodel,
+    Multiplicity,
     OccurrenceMetadata,
 )
 from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
@@ -584,7 +585,7 @@ class WireWalk[Node]:
     owner releases that state when its scope ends.
     """
 
-    __slots__ = ("_carrier", "_encode", "_includes", "_memo", "_reader", "_trusted")
+    __slots__ = ("_carrier", "_element", "_encode", "_includes", "_memo", "_reader", "_trusted")
 
     def __init__(
         self,
@@ -598,6 +599,7 @@ class WireWalk[Node]:
         self._includes = includes
         self._encode = encode
         self._trusted = encode is encode_managed_wire or isinstance(encode, _SharedWireEncoder)
+        self._element = _OccurrenceLeafEncoder(encode, self._trusted)
         self._memo = cast("WireMemo[Node]", IndexMemo()) if memo is None else memo
         self._carrier = reader.occurrence_carrier()
 
@@ -630,6 +632,8 @@ class WireWalk[Node]:
                 rendered[attribute.identity.name] = (
                     cast("WireValue", value)
                     if self._trusted and type(value) in (bool, int, str)
+                    else _wire_collection(attribute.type, value, self._element)
+                    if attribute.multiplicity is Multiplicity.MANY
                     else _trusted_wire_scalar(attribute.type, value, self._encode)
                     if self._trusted
                     else _wire_scalar(attribute.type, value, self._encode)
@@ -701,6 +705,15 @@ def _wire_scalar(
     ):
         return cast("WireValue", value)
     return cast("WireValue", encode(neutral_type, cast("ManagedValue", value)))
+
+
+def _wire_collection(
+    element_type: NeutralType, value: object, encode: Callable[[NeutralType, object], WireValue]
+) -> WireValue:
+    """One scalar collection as the canonical immutable Wire array of its elements."""
+    return _frozen_sequence(
+        encode(element_type, element) for element in cast("Iterable[object]", value)
+    )
 
 
 def _trusted_wire_scalar(neutral_type: NeutralType, value: object, encode: _Encoder) -> WireValue:
@@ -861,7 +874,13 @@ def opened_wire_entity(
     for name, value in row.items():
         binding = layout.member_selection.binding(name)
         if isinstance(binding, AttributeMetadata):
-            _put(rendered, name, _wire_scalar(binding.type, value))
+            _put(
+                rendered,
+                name,
+                _wire_collection(binding.type, value, _OccurrenceLeafEncoder(encode_wire, False))
+                if binding.multiplicity is Multiplicity.MANY
+                else _wire_scalar(binding.type, value),
+            )
             continue
         if binding is not None:  # pragma: no branch - the payload names declared members only
             _put(

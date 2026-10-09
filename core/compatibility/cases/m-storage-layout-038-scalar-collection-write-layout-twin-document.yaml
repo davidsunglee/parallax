@@ -1,0 +1,140 @@
+# Relational Document Layout half of the scalar collection write proof: the same
+# insert and amendment leave the same logical rows. Every collection is an array
+# member of the shared `payload` document, so the insert composes one document and
+# the amendment patches only the assigned paths, leaving every other member as
+# stored.
+model: models/scalar-collection-layout-twin-document.yaml
+tags: [m-storage-layout, m-document-codec, m-value-object, m-unit-work, m-opt-lock, m-read-lock, m-sql, scenario, insert, update, json, nested, to-many, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.CollectionTwinItem
+          rows:
+            - id: 10
+              flags: [false, false]
+              amounts: ["0.10", "0.10"]
+              tags: [z, z, a]
+              detail:
+                labels: []
+              parts:
+                - sku: c
+                  marks: [7]
+                  note:
+                    words: [w, w]
+      roundTrips: 1
+      note: name some collections, with duplicates and nested in each occurrence kind, and omit the rest
+      statements:
+        - sql:
+            postgres: insert into collection_twin(id, payload) values (?, ?)
+            mariadb: insert into collection_twin(id, payload) values (?, ?)
+          binds:
+            - 10
+            - flags: [false, false]
+              smalls: []
+              counts: []
+              ratios: []
+              scores: []
+              amounts: ["0.10", "0.10"]
+              tags: [z, z, a]
+              blobs: []
+              days: []
+              clocks: []
+              instants: []
+              tokens: []
+              detail: { labels: [] }
+              parts:
+                - { sku: c, marks: [7], note: { words: [w, w] } }
+    - write:
+        - mutation: amend
+          entity: parallax.compatibility.CollectionTwinItem
+          rows:
+            - id: 1
+              tags: []
+              counts: [5, 5]
+              parts:
+                - sku: d
+                  marks: []
+      roundTrips: 2
+      note: clear one collection, replace another, and replace the `many` occurrence holding nested collections
+      statements:
+        - sql:
+            postgres: update collection_twin set payload = jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+            mariadb: update collection_twin set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
+          binds:
+            postgres:
+              - '{counts}'
+              - [5, 5]
+              - '{tags}'
+              - []
+              - '{parts}'
+              - [{ sku: d, marks: [] }]
+              - 1
+            mariadb:
+              - '$.counts'
+              - [5, 5]
+              - '$.tags'
+              - []
+              - '$.parts'
+              - [{ sku: d, marks: [] }]
+              - 1
+then:
+  roundTrips: 3
+  tableState:
+    collection_twin:
+      - id: 1
+        payload:
+          flags: [true, false, true]
+          smalls: [3, -2, 3]
+          counts: [5, 5]
+          ratios: [1.2, 0.0]
+          scores: [0.1, 2.5, 0.1]
+          amounts: ["1.50", "1.50", "7.00"]
+          tags: []
+          blobs: ["0aff", ""]
+          days: ["2024-02-29"]
+          clocks: ["13:05:07.000250"]
+          instants: ["2024-06-01T10:00:00.000000Z"]
+          tokens: ["12345678-1234-5678-1234-567812345678", "12345678-1234-5678-1234-567812345678"]
+          detail:
+            labels: [x, y, x]
+          parts:
+            - sku: d
+              marks: []
+      - id: 2
+        payload:
+          flags: []
+          smalls: []
+          counts: []
+          ratios: []
+          scores: []
+          amounts: []
+          tags: []
+          blobs: []
+          days: []
+          clocks: []
+          instants: []
+          tokens: []
+          parts: []
+      - id: 10
+        payload:
+          flags: [false, false]
+          smalls: []
+          counts: []
+          ratios: []
+          scores: []
+          amounts: ["0.10", "0.10"]
+          tags: [z, z, a]
+          blobs: []
+          days: []
+          clocks: []
+          instants: []
+          tokens: []
+          detail:
+            labels: []
+          parts:
+            - sku: c
+              marks: [7]
+              note:
+                words: [w, w]
