@@ -851,6 +851,8 @@ class _Continuity:
             original = derivation.original
             if earlier is None:
                 self.proofs.setdefault(original.object, {})[original] = derivation
+                if original not in self.lineage:  # kept even where it contributed no row
+                    self.lineage[original] = _Lineage()
                 sources: tuple[tuple[ObservedStateKey, TimeInterval | None], ...] = (
                     (original, derivation.valid_time_coverage),
                 )
@@ -865,10 +867,7 @@ class _Continuity:
             joined = _joined(parts)
             self.descents[endpoint] = Descent(coverages[endpoint], joined)
             for source, contributed in joined:
-                rows = self.lineage.get(source)
-                if rows is None:
-                    rows = self.lineage[source] = _Lineage()
-                rows.add(endpoint, contributed)
+                self.lineage[source].add(endpoint, contributed)
 
     def forget(self, endpoint: OwnedEndpoint) -> None:
         descent = self.descents.pop(endpoint, None)

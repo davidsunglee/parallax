@@ -1202,6 +1202,8 @@ def test_documents_persisting_the_same_content_are_equal(left: object, right: ob
         ({"a": 1}, {"b": 1}),
         (["a", "b"], ["a", "c"]),
         (["1"], [1]),
+        ({"x": [True]}, {"x": [False]}),
+        ({"x": []}, {"x": {}}),
     ],
     ids=[
         "presence",
@@ -1214,6 +1216,8 @@ def test_documents_persisting_the_same_content_are_equal(left: object, right: ob
         "member-names",
         "array-strings",
         "array-string-number",
+        "booleans",
+        "array-object",
     ],
 )
 def test_documents_differing_in_any_persisted_content_are_unequal(
