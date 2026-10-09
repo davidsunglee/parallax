@@ -20,10 +20,12 @@ from .storage_layout import (
     AttributeContributor,
     ColumnContributor,
     ColumnSlot,
+    ColumnTier,
     DocumentPath,
     EntityLayoutView,
     RelationalDocument,
     ValueObjectContributor,
+    is_scalar_collection,
 )
 from .temporality import temporal_axes
 
@@ -87,7 +89,11 @@ def _fixture_document(
         if occurrence is not None or value is None:
             document[name] = value
             continue
-        document[name] = encode_leaf(attributes[name]["type"], value)
+        attribute = attributes[name]
+        if is_scalar_collection(attribute) and isinstance(value, list):
+            document[name] = [encode_leaf(attribute["type"], element) for element in value]
+            continue
+        document[name] = encode_leaf(attribute["type"], value)
     return document
 
 
@@ -175,8 +181,8 @@ def _corruption_target(
 
     The longest declared prefix of *member* that the Table Layout places answers
     it: a document-resident member contributes its own Document Path, a top-level
-    Value Object occurrence under `Columns` contributes its own Structured Column
-    with an empty path, and whatever the address did not consume — the nested
+    Value Object occurrence or scalar collection under `Columns` contributes its own
+    Structured Column with an empty path, and whatever the address did not consume — the nested
     member names and the array positions a placement never carries — follows.
     An address that stops at a top-level occurrence consumes everything, so the
     empty path that answers it addresses that Structured Column's whole stored
@@ -204,7 +210,7 @@ def _corruption_target(
         rest = member[cut:]
         if isinstance(placement, DocumentPath):
             return placement.slot.column, (*placement.path, *rest)
-        if isinstance(placement.slot.contributor, ValueObjectContributor):
+        if placement.slot.tier is ColumnTier.DOCUMENT:
             return placement.slot.column, rest
         break
     raise ValueError(

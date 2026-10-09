@@ -36,7 +36,12 @@ from typing import Any, NamedTuple
 
 from ..case import Case, Entity, Model
 from ..case_assertions import CaseFailure
-from ..document_codec import DocumentEncodingError, decode_leaf, decode_stored
+from ..document_codec import (
+    DocumentEncodingError,
+    decode_collection,
+    decode_leaf,
+    decode_stored,
+)
 from ..inheritance import (
     STRATEGY_TPCS,
     STRATEGY_TPH,
@@ -52,6 +57,7 @@ from ..storage_layout import (
     PositionLayoutView,
     RelationalDocument,
     TableLayout,
+    is_scalar_collection,
     position_projection,
     position_view,
 )
@@ -496,9 +502,14 @@ def _decoded_leaf(entity: Entity, member: DocumentMember, stored: Any) -> Any:
     SQL `NULL` Column are one logical state, so the document arm may not publish
     a hydratable absence where the Column arm publishes none.
     """
-    if stored is None:
-        return None if _leaf_nullable(entity, member) else UnavailableLeaf(None)
     try:
+        if member.many:
+            # Validated here and left as stored: the owner node decodes a
+            # collection once whichever Column carried it.
+            decode_collection(member.type_spelling or "", stored)
+            return stored
+        if stored is None:
+            return None if _leaf_nullable(entity, member) else UnavailableLeaf(None)
         return decode_leaf(member.type_spelling or "", stored)
     except DocumentEncodingError:
         return UnavailableLeaf(stored)
@@ -886,7 +897,11 @@ def _project_members(occurrence: dict[str, Any], obj: Any) -> dict[str, Any]:
     source = obj if isinstance(obj, dict) else {}
     node: dict[str, Any] = {}
     for attribute in occurrence.get("attributes", []):
-        if attribute["name"] in source:
+        if is_scalar_collection(attribute):
+            node[attribute["name"]] = decode_collection(
+                attribute["type"], source.get(attribute["name"])
+            )
+        elif attribute["name"] in source:
             node[attribute["name"]] = decode_leaf(attribute["type"], source[attribute["name"]])
     for nested in occurrence.get("valueObjects", []):
         if _publishes_when_omitted(nested) or nested["name"] in source:
@@ -907,6 +922,14 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
     the golden SELECT did not project is left untouched (no synthetic null).
     """
     node = dict(row)
+    for attribute in entity.attributes:
+        column = attribute["column"]
+        if (
+            is_scalar_collection(attribute)
+            and column in node
+            and not isinstance(node[column], UnavailableLeaf)
+        ):
+            node[column] = decode_collection(attribute["type"], decode_stored(node[column]))
     for occurrence in entity.value_objects:
         column = occurrence["column"]
         if column not in node:

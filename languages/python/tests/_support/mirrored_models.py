@@ -94,6 +94,8 @@ __all__ = [
     "MIRRORED",
     "PK_MAX_MODEL",
     "PK_SEQUENCE_MODEL",
+    "SCALAR_COLLECTION_COLUMNS_MODEL",
+    "SCALAR_COLLECTION_DOCUMENT_MODEL",
     "TAXPAYER_MODEL",
     "UNMIRRORED",
     "WRITABLE_SCALARS_MODEL",
@@ -270,6 +272,68 @@ class Sample(
 
 
 DOCUMENT_CODEC_MODEL = DomainModel(Sample)
+
+
+class CollectionTwinDetail(ValueObject):
+    labels: Attr[tuple[str, ...]]
+
+
+class CollectionTwinNote(ValueObject):
+    words: Attr[tuple[str, ...]]
+
+
+class CollectionTwinPart(ValueObject):
+    sku: Attr[str]
+    marks: Attr[tuple[int, ...]] = attr(type=Int32)
+    note: Attr[CollectionTwinNote | None]
+
+
+class ColumnsCollectionTwinItem(
+    Entity, name="CollectionTwinItem", table="collection_twin", namespace=_NS
+):
+    id: Attr[int] = attr(primary_key=True)
+    flags: Attr[tuple[bool, ...]]
+    smalls: Attr[tuple[int, ...]] = attr(type=Int32)
+    counts: Attr[tuple[int, ...]]
+    ratios: Attr[tuple[float, ...]] = attr(type=Float32)
+    scores: Attr[tuple[float, ...]]
+    amounts: Attr[tuple[Decimal, ...]] = attr(precision=12, scale=2)
+    tags: Attr[tuple[str, ...]]
+    blobs: Attr[tuple[bytes, ...]]
+    days: Attr[tuple[dt.date, ...]]
+    clocks: Attr[tuple[dt.time, ...]]
+    instants: Attr[tuple[dt.datetime, ...]]
+    tokens: Attr[tuple[uuid.UUID, ...]]
+    detail: Attr[CollectionTwinDetail | None]
+    parts: Attr[tuple[CollectionTwinPart, ...]]
+
+
+class DocumentCollectionTwinItem(
+    Entity,
+    name="CollectionTwinItem",
+    table="collection_twin",
+    namespace=_NS,
+    layout=Document,
+):
+    id: Attr[int] = attr(primary_key=True)
+    flags: Attr[tuple[bool, ...]]
+    smalls: Attr[tuple[int, ...]] = attr(type=Int32)
+    counts: Attr[tuple[int, ...]]
+    ratios: Attr[tuple[float, ...]] = attr(type=Float32)
+    scores: Attr[tuple[float, ...]]
+    amounts: Attr[tuple[Decimal, ...]] = attr(precision=12, scale=2)
+    tags: Attr[tuple[str, ...]]
+    blobs: Attr[tuple[bytes, ...]]
+    days: Attr[tuple[dt.date, ...]]
+    clocks: Attr[tuple[dt.time, ...]]
+    instants: Attr[tuple[dt.datetime, ...]]
+    tokens: Attr[tuple[uuid.UUID, ...]]
+    detail: Attr[CollectionTwinDetail | None]
+    parts: Attr[tuple[CollectionTwinPart, ...]]
+
+
+SCALAR_COLLECTION_COLUMNS_MODEL = DomainModel(ColumnsCollectionTwinItem)
+SCALAR_COLLECTION_DOCUMENT_MODEL = DomainModel(DocumentCollectionTwinItem)
 
 
 class Taxpayer(
@@ -547,6 +611,8 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("writable-scalars", WRITABLE_SCALARS_MODEL),
     ("taxpayer", TAXPAYER_MODEL),
     ("document-codec", DOCUMENT_CODEC_MODEL),
+    ("scalar-collection-layout-twin-columns", SCALAR_COLLECTION_COLUMNS_MODEL),
+    ("scalar-collection-layout-twin-document", SCALAR_COLLECTION_DOCUMENT_MODEL),
     ("document-layout", DOCUMENT_LAYOUT_MODEL),
     ("note", NOTE_MODEL),
 ]

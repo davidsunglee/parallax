@@ -1,0 +1,18 @@
+# Negative (m-storage-layout): under Columns a scalar collection keeps a Column of
+# its own, but that Column holds a structured document, so a Secondary Index naming
+# it is refused exactly as one naming a document-resident Attribute is.
+model: models/member-column-defaults.yaml
+tags: [m-storage-layout, m-model-formation, m-descriptor, rejected, negative, columns, index, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Order
+      table: orders
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+        - { name: tags, type: string, multiplicity: many }
+      indices:
+        - { name: byTags, attributes: [tags] }
+then:
+  rejectedRule: storage-layout-index-over-document-member

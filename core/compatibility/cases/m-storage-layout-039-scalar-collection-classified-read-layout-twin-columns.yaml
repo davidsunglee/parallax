@@ -1,0 +1,52 @@
+# Columns half of the scalar collection classification proof: a collection holding
+# an element its declared type does not admit — a number where a string belongs —
+# leaves the whole collection unavailable and its root invalid, as does a collection
+# inside a `many` occurrence stored as something other than an array. Neither is
+# repaired or shortened. Its twin authors the same corruptions and diagnoses under
+# Relational Document Layout.
+model: models/scalar-collection-layout-twin-columns.yaml
+tags: [m-storage-layout, m-snapshot-read, m-document-codec, read, stored-data, corrupt, layout-twin, columns, graph, slice-snapshot-1]
+shape: read
+given:
+  corrupt:
+    - entity: parallax.compatibility.CollectionTwinItem
+      key: 1
+      member: [tags, 1]
+      value: 5
+    - entity: parallax.compatibility.CollectionTwinItem
+      key: 2
+      member: [parts]
+      value: [{ sku: e, marks: "7" }]
+when:
+  objectQuery:
+    target: parallax.compatibility.CollectionTwinItem
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.CollectionTwinItem.id
+        direction: asc
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, not t0.flags is null, t0.flags, not t0.smalls is null, t0.smalls, not t0.counts is null, t0.counts, not t0.ratios is null, t0.ratios, not t0.scores is null, t0.scores, not t0.amounts is null, t0.amounts, not t0.tags is null, t0.tags, not t0.blobs is null, t0.blobs, not t0.days is null, t0.days, not t0.clocks is null, t0.clocks, not t0.instants is null, t0.instants, not t0.tokens is null, t0.tokens, not t0.detail is null, t0.detail, not t0.parts is null, t0.parts from collection_twin t0 order by t0.id asc
+        mariadb: select t0.id, not t0.flags is null, t0.flags, not t0.smalls is null, t0.smalls, not t0.counts is null, t0.counts, not t0.ratios is null, t0.ratios, not t0.scores is null, t0.scores, not t0.amounts is null, t0.amounts, not t0.tags is null, t0.tags, not t0.blobs is null, t0.blobs, not t0.days is null, t0.days, not t0.clocks is null, t0.clocks, not t0.instants is null, t0.instants, not t0.tokens is null, t0.tokens, not t0.detail is null, t0.detail, not t0.parts is null, t0.parts from collection_twin t0 order by t0.id asc
+  graph:
+    CollectionTwinItem:
+      - null
+      - null
+  storedDataIssues:
+    - ordinal: 0
+      hydrated: false
+      issues:
+        - code: stored-data-leaf-undecodable
+          entity: parallax.compatibility.CollectionTwinItem
+          member: parallax.compatibility.CollectionTwinItem.tags
+          objectKey: { entity: parallax.compatibility.CollectionTwinItem, key: { id: 1 } }
+    - ordinal: 1
+      hydrated: false
+      issues:
+        - code: stored-data-leaf-undecodable
+          entity: parallax.compatibility.CollectionTwinItem
+          member: parallax.compatibility.CollectionTwinItem.parts.marks
+          objectKey: { entity: parallax.compatibility.CollectionTwinItem, key: { id: 2 } }
+  roundTrips: 1

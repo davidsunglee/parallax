@@ -55,6 +55,8 @@ class ActualWireProjection:
             return None
         if value is INFINITY and self._is_temporal_end(member):
             return INFINITY_LITERAL
+        if member.multiplicity is Multiplicity.MANY:
+            return self._typed_collection(member.type, value)
         return self._typed(member.type, value)
 
     def published_row(self, query: ObjectQueryNode, row: Mapping[str, object]) -> MappingRow:
@@ -171,6 +173,8 @@ class ActualWireProjection:
             return None
         if self._is_temporal_end(member) and value == INFINITY_LITERAL:
             return INFINITY_LITERAL
+        if member.multiplicity is Multiplicity.MANY:
+            return self._published_collection(member.type, value)
         managed = decode_canonical_wire(member.type, cast("WireValue", value))
         return encode_wire(member.type, managed)
 
@@ -198,7 +202,12 @@ class ActualWireProjection:
             value = row.get(name)
             contributor = slot.contributor
             if isinstance(contributor, AttributeIdentity):
-                projected[name] = self.scalar(self._attribute(contributor), value)
+                attribute = self._attribute(contributor)
+                projected[name] = (
+                    self._published_collection(attribute.type, value)
+                    if attribute.multiplicity is Multiplicity.MANY
+                    else self.scalar(attribute, value)
+                )
             elif isinstance(contributor, ValueObjectIdentity):
                 projected[name] = self.published_value_object(
                     self._value_object(contributor), value
@@ -236,6 +245,26 @@ class ActualWireProjection:
         """Encode a managed value without repairing a Wire-shaped carrier."""
         return encode_wire(neutral_type, cast("ManagedValue", value))
 
+    def _typed_collection(self, element_type: NeutralType, value: object) -> WireValue:
+        """Encode a managed scalar collection element by element, in order."""
+        if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+            raise ValueError(f"a scalar collection requires a sequence, not {value!r}")
+        return [self._typed(element_type, item) for item in cast("Sequence[object]", value)]
+
+    @classmethod
+    def _published_collection(cls, element_type: NeutralType, value: object) -> WireValue:
+        """A stored or published scalar collection, each canonical element
+        re-spelled and every corrupt carrier or element kept as observed."""
+        if value is None:
+            return None
+        canonical = encode_wire(JSON, decode_canonical_wire(JSON, cast("WireValue", value)))
+        if not isinstance(canonical, Sequence) or isinstance(canonical, (str, bytes, bytearray)):
+            return canonical
+        return [
+            cls._canonical_or_original(element_type, item)
+            for item in cast("Sequence[object]", canonical)
+        ]
+
     def _value_object_element(
         self, occurrence: OccurrenceMetadata, value: object
     ) -> dict[str, object]:
@@ -250,7 +279,13 @@ class ActualWireProjection:
         for name, item in source.items():
             leaf = attributes.get(name)
             if leaf is not None:
-                projected[name] = None if item is None else self._typed(leaf.type, item)
+                projected[name] = (
+                    None
+                    if item is None
+                    else self._typed_collection(leaf.type, item)
+                    if leaf.multiplicity is Multiplicity.MANY
+                    else self._typed(leaf.type, item)
+                )
                 continue
             child = nested.get(name)
             if child is not None:
@@ -276,7 +311,11 @@ class ActualWireProjection:
         for name, item in source.items():
             leaf = attributes.get(name)
             if leaf is not None:
-                projected[name] = self._canonical_or_original(leaf.type, item)
+                projected[name] = (
+                    self._published_collection(leaf.type, item)
+                    if leaf.multiplicity is Multiplicity.MANY
+                    else self._canonical_or_original(leaf.type, item)
+                )
                 continue
             child = nested.get(name)
             if child is not None:
@@ -333,7 +372,11 @@ class ActualWireProjection:
             else:
                 member = None
             if isinstance(member, AttributeMetadata):
-                projected[name] = self._canonical_or_original(member.type, item)
+                projected[name] = (
+                    self._published_collection(member.type, item)
+                    if member.multiplicity is Multiplicity.MANY
+                    else self._canonical_or_original(member.type, item)
+                )
             elif member is not None:
                 projected[name] = self.published_value_object(member, item)
             else:

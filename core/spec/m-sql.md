@@ -256,7 +256,10 @@ For each physical branch, SQL selects from the layout values as follows:
 1. Every applicable Attribute slot is projected. This includes model identity,
    optimistic version, ordinary Domain, Temporal start/end, and future Audit
    slots; a designation changes the slot's tier, not whether the Attribute is
-   readable.
+   readable. A scalar collection's own `Document`-tier slot is projected in both
+   result forms, as the document read pair defined below rather than through a
+   native scalar rendering, and its `DocumentRead` reaches `m-document-codec`'s
+   classified collection decoding exactly as a direct occurrence's does.
 2. A table-per-hierarchy discriminator slot is projected **iff** the read's
    the queried `target` is abstract, regardless of whether result narrowing reduces the
    effective set to one concrete. A concrete target uses the same slot for its

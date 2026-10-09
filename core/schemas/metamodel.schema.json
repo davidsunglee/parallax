@@ -223,9 +223,45 @@
         "maxLength": { "type": "integer", "minimum": 1 },
         "readOnly": { "type": "boolean", "default": false },
         "optimisticLocking": { "type": "boolean", "default": false },
-        "pkGeneration": { "$ref": "#/$defs/pkGeneration" }
+        "pkGeneration": { "$ref": "#/$defs/pkGeneration" },
+        "multiplicity": {
+          "description": "One scalar or an ordered, duplicate-preserving collection of non-null scalars; `type` names the element type either way.",
+          "enum": ["one", "many"],
+          "default": "one"
+        }
       },
       "allOf": [
+        {
+          "$comment": "A scalar collection (m-metamodel) is never nullable, bounds no length, and holds no primary-key, generation, or optimistic-lock role.",
+          "if": {
+            "required": ["multiplicity"],
+            "properties": { "multiplicity": { "const": "many" } }
+          },
+          "then": {
+            "allOf": [
+              {
+                "not": {
+                  "required": ["nullable"],
+                  "properties": { "nullable": { "const": true } }
+                }
+              },
+              {
+                "not": {
+                  "required": ["primaryKey"],
+                  "properties": { "primaryKey": { "const": true } }
+                }
+              },
+              {
+                "not": {
+                  "required": ["optimisticLocking"],
+                  "properties": { "optimisticLocking": { "const": true } }
+                }
+              },
+              { "not": { "required": ["maxLength"] } },
+              { "not": { "required": ["pkGeneration"] } }
+            ]
+          }
+        },
         {
           "$comment": "Primary-key generation is meaningful only for a primary-key Attribute. The normalized PrimaryKey sum type makes every non-key generation state unconstructible.",
           "if": { "required": ["pkGeneration"] },
@@ -468,7 +504,22 @@
       "properties": {
         "name": { "$ref": "#/$defs/identifier" },
         "type": { "$ref": "#/$defs/scalarType" },
-        "nullable": { "type": "boolean", "default": false }
+        "nullable": { "type": "boolean", "default": false },
+        "multiplicity": {
+          "description": "One scalar or an ordered, duplicate-preserving array of non-null scalars inside the containing document; `type` names the element type either way.",
+          "enum": ["one", "many"],
+          "default": "one"
+        }
+      },
+      "if": {
+        "required": ["multiplicity"],
+        "properties": { "multiplicity": { "const": "many" } }
+      },
+      "then": {
+        "not": {
+          "required": ["nullable"],
+          "properties": { "nullable": { "const": true } }
+        }
       }
     },
     "inheritance": {

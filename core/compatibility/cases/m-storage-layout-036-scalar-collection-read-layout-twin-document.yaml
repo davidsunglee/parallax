@@ -1,0 +1,60 @@
+# Relational Document Layout half of the scalar collection read proof: the same
+# production Object Query materializes the same graph. Every top-level collection is
+# an array member of the shared `payload` document, and every nested one an array
+# inside its occurrence's subtree there.
+model: models/scalar-collection-layout-twin-document.yaml
+tags: [m-storage-layout, m-document-codec, m-value-object, m-sql, read, json, nested, to-many, graph, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.CollectionTwinItem
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.CollectionTwinItem.id
+        direction: asc
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, not t0.payload is null, t0.payload from collection_twin t0 order by t0.id asc
+        mariadb: select t0.id, not t0.payload is null, t0.payload from collection_twin t0 order by t0.id asc
+  graph:
+    CollectionTwinItem:
+      - id: 1
+        flags: [true, false, true]
+        smalls: [3, -2, 3]
+        counts: [9007199254740993, 0]
+        ratios: [1.2, 0.0]
+        scores: [0.1, 2.5, 0.1]
+        amounts: ["1.50", "1.50", "7.00"]
+        tags: [b, a, b]
+        blobs: ["0aff", ""]
+        days: ["2024-02-29"]
+        clocks: ["13:05:07.000250"]
+        instants: ["2024-06-01T10:00:00.000000Z"]
+        tokens: ["12345678-1234-5678-1234-567812345678", "12345678-1234-5678-1234-567812345678"]
+        detail:
+          labels: [x, y, x]
+        parts:
+          - sku: a
+            marks: [2, 1, 2]
+            note:
+              words: [deep]
+          - sku: b
+            marks: []
+      - id: 2
+        flags: []
+        smalls: []
+        counts: []
+        ratios: []
+        scores: []
+        amounts: []
+        tags: []
+        blobs: []
+        days: []
+        clocks: []
+        instants: []
+        tokens: []
+        detail: null
+        parts: []
+  roundTrips: 1

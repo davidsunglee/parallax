@@ -3481,6 +3481,80 @@
       "valueObject": {}
     }
   },
+  "models/scalar-collection-layout-twin-columns.yaml": {
+    "parallax.compatibility.CollectionTwinItem": {
+      "attribute": {
+        "amounts": "amounts",
+        "blobs": "blobs",
+        "clocks": "clocks",
+        "counts": "counts",
+        "days": "days",
+        "flags": "flags",
+        "id": "id",
+        "instants": "instants",
+        "ratios": "ratios",
+        "scores": "scores",
+        "smalls": "smalls",
+        "tags": "tags",
+        "tokens": "tokens"
+      },
+      "documentPath": {
+        "detail.labels": "detail:labels",
+        "parts.marks": "parts:marks",
+        "parts.note": "parts:note",
+        "parts.note.words": "parts:note.words",
+        "parts.sku": "parts:sku"
+      },
+      "valueObject": {
+        "detail": "detail",
+        "parts": "parts"
+      }
+    }
+  },
+  "models/scalar-collection-layout-twin-document.yaml": {
+    "parallax.compatibility.CollectionTwinItem": {
+      "attribute": {
+        "amounts": "amounts",
+        "blobs": "blobs",
+        "clocks": "clocks",
+        "counts": "counts",
+        "days": "days",
+        "flags": "flags",
+        "id": "id",
+        "instants": "instants",
+        "ratios": "ratios",
+        "scores": "scores",
+        "smalls": "smalls",
+        "tags": "tags",
+        "tokens": "tokens"
+      },
+      "documentPath": {
+        "amounts": "payload:amounts",
+        "blobs": "payload:blobs",
+        "clocks": "payload:clocks",
+        "counts": "payload:counts",
+        "days": "payload:days",
+        "detail": "payload:detail",
+        "detail.labels": "payload:detail.labels",
+        "flags": "payload:flags",
+        "instants": "payload:instants",
+        "parts": "payload:parts",
+        "parts.marks": "payload:parts.marks",
+        "parts.note": "payload:parts.note",
+        "parts.note.words": "payload:parts.note.words",
+        "parts.sku": "payload:parts.sku",
+        "ratios": "payload:ratios",
+        "scores": "payload:scores",
+        "smalls": "payload:smalls",
+        "tags": "payload:tags",
+        "tokens": "payload:tokens"
+      },
+      "valueObject": {
+        "detail": "detail",
+        "parts": "parts"
+      }
+    }
+  },
   "models/scalars.yaml": {
     "parallax.compatibility.ScalarThing": {
       "attribute": {

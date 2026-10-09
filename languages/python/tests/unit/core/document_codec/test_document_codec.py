@@ -51,8 +51,8 @@ from parallax.core.document_codec import (
     Occurrence,
     OccurrenceCarrier,
     Present,
-    SetLeaf,
-    SetValue,
+    SetScalar,
+    SetValueObject,
     apply_prepared_patches,
     comparison_text,
     decode_occurrence_classified,
@@ -888,7 +888,7 @@ def test_an_unknown_key_never_becomes_a_member_value() -> None:
 
 def test_patch_preserves_every_key_it_is_not_told_to_change() -> None:
     stored = {"flag": True, "unknown": "from a newer writer", "entries": [{"kind": "home"}]}
-    patched = _patched(_SHAPE, stored, [SetLeaf(("day",), Present(dt.date(2026, 1, 15)))])
+    patched = _patched(_SHAPE, stored, [SetScalar(("day",), Present(dt.date(2026, 1, 15)))])
     assert patched == {
         "flag": True,
         "unknown": "from a newer writer",
@@ -899,11 +899,11 @@ def test_patch_preserves_every_key_it_is_not_told_to_change() -> None:
 
 
 def test_a_leaf_patch_spells_its_value_through_the_encoding_table() -> None:
-    assert _patched(_SHAPE, {}, [SetLeaf(("origin", "city"), Present("Oslo"))]) == {
+    assert _patched(_SHAPE, {}, [SetScalar(("origin", "city"), Present("Oslo"))]) == {
         "origin": {"city": "Oslo"}
     }
-    assert _patched(_SHAPE, {"flag": True}, [SetLeaf(("flag",), NULL)]) == {"flag": None}
-    assert _patched(_SHAPE, {"flag": True}, [SetLeaf(("flag",), MISSING)]) == {}
+    assert _patched(_SHAPE, {"flag": True}, [SetScalar(("flag",), NULL)]) == {"flag": None}
+    assert _patched(_SHAPE, {"flag": True}, [SetScalar(("flag",), MISSING)]) == {}
 
 
 def test_an_occurrence_patch_replaces_the_whole_subtree_it_names() -> None:
@@ -911,7 +911,7 @@ def test_an_occurrence_patch_replaces_the_whole_subtree_it_names() -> None:
     replaced = _patched(
         _SHAPE,
         stored,
-        [SetValue(("origin",), encode_managed_document(_ORIGIN.member_shape, {}))],
+        [SetValueObject(("origin",), encode_managed_document(_ORIGIN.member_shape, {}))],
     )
     assert replaced == {"unknown": 1, "origin": {}}
 
@@ -925,15 +925,15 @@ def test_both_cardinalities_replace_their_subtree_and_null_stores_json_null() ->
         _SHAPE,
         stored,
         [
-            SetValue(("origin",), {"city": "Bergen"}),
-            SetValue(("entries",), [{"kind": "new"}]),
+            SetValueObject(("origin",), {"city": "Bergen"}),
+            SetValueObject(("entries",), [{"kind": "new"}]),
         ],
     )
     assert patched == {
         "origin": {"city": "Bergen"},
         "entries": [{"kind": "new"}],
     }
-    assert _patched(_SHAPE, stored, [SetValue(("origin",), None)]) == {
+    assert _patched(_SHAPE, stored, [SetValueObject(("origin",), None)]) == {
         "origin": None,
         "entries": [{"kind": "old", "unknown": 3}],
     }
@@ -959,7 +959,7 @@ def test_replacement_reaches_every_depth_of_the_subtree_it_names() -> None:
             }
         },
         [
-            SetValue(
+            SetValueObject(
                 ("profile",),
                 {"origin": {"city": "Bergen"}, "entries": [{"kind": "new"}]},
             )
@@ -1050,7 +1050,7 @@ def test_patches_apply_left_to_right_each_over_the_result_of_the_last() -> None:
     patched = _patched(
         _SHAPE,
         {},
-        [SetLeaf(("flag",), Present(True)), SetLeaf(("flag",), Present(False))],
+        [SetScalar(("flag",), Present(True)), SetScalar(("flag",), Present(False))],
     )
     assert patched == {"flag": False}
     with pytest.raises(ValueError, match="nonempty"):
@@ -1062,8 +1062,8 @@ def test_nested_and_overlapping_patches_reuse_the_latest_changed_ancestor() -> N
         _SHAPE,
         {"origin": {"city": "Oslo", "unknown": 1}},
         [
-            SetValue(("origin",), {"city": "Bergen", "replacement": True}),
-            SetLeaf(("origin", "city"), Present("Tromso")),
+            SetValueObject(("origin",), {"city": "Bergen", "replacement": True}),
+            SetScalar(("origin", "city"), Present("Tromso")),
         ],
     )
     assert patched == {"origin": {"city": "Tromso", "replacement": True}}
@@ -1072,8 +1072,8 @@ def test_nested_and_overlapping_patches_reuse_the_latest_changed_ancestor() -> N
         _SHAPE,
         {"origin": {"city": "Oslo"}},
         [
-            SetLeaf(("origin", "city"), Present("Tromso")),
-            SetValue(("origin",), {"city": "Alta"}),
+            SetScalar(("origin", "city"), Present("Tromso")),
+            SetValueObject(("origin",), {"city": "Alta"}),
         ],
     )
     assert replaced_last == {"origin": {"city": "Alta"}}
@@ -1082,8 +1082,8 @@ def test_nested_and_overlapping_patches_reuse_the_latest_changed_ancestor() -> N
         _SHAPE,
         {},
         [
-            SetLeaf(("origin", "city"), Present("Oslo")),
-            SetLeaf(("origin", "city"), Present("Bergen")),
+            SetScalar(("origin", "city"), Present("Oslo")),
+            SetScalar(("origin", "city"), Present("Bergen")),
         ],
     )
     assert built_in_order == {"origin": {"city": "Bergen"}}
@@ -1094,7 +1094,7 @@ def test_patch_reuses_safe_untouched_subtrees_and_owns_aliased_replacements() ->
         _SHAPE, {"origin": {"city": "Oslo"}, "entries": ({"kind": "home"},)}
     )
     replacement = {"city": "Bergen"}
-    changed = _patched(_SHAPE, predecessor, [SetValue(("origin",), replacement)])
+    changed = _patched(_SHAPE, predecessor, [SetValueObject(("origin",), replacement)])
 
     replacement["city"] = "Alta"
 
@@ -1104,11 +1104,11 @@ def test_patch_reuses_safe_untouched_subtrees_and_owns_aliased_replacements() ->
 
 
 def test_patch_treats_a_non_object_root_or_intermediate_as_an_empty_object() -> None:
-    assert _patched(_SHAPE, 7, [SetLeaf(("flag",), Present(True))]) == {"flag": True}
+    assert _patched(_SHAPE, 7, [SetScalar(("flag",), Present(True))]) == {"flag": True}
     assert _patched(
         _SHAPE,
         {"origin": "not-an-object"},
-        [SetLeaf(("origin", "city"), Present("Oslo"))],
+        [SetScalar(("origin", "city"), Present("Oslo"))],
     ) == {"origin": {"city": "Oslo"}}
 
 
@@ -1116,19 +1116,19 @@ def test_a_patch_whose_kind_contradicts_its_member_is_refused_both_ways() -> Non
     # The pairing is exclusive both ways. Applying either mismatch would build a
     # document the same shape reads back as invalid stored data — a leaf holding an
     # object, or an occurrence holding a scalar.
-    with pytest.raises(ValueError, match="SetValue"):
-        _patched(_SHAPE, {}, [SetLeaf(("origin",), Present("Oslo"))])
-    with pytest.raises(ValueError, match="SetLeaf"):
-        _patched(_SHAPE, {}, [SetValue(("day",), {})])
+    with pytest.raises(ValueError, match="SetValueObject"):
+        _patched(_SHAPE, {}, [SetScalar(("origin",), Present("Oslo"))])
+    with pytest.raises(ValueError, match="SetScalar"):
+        _patched(_SHAPE, {}, [SetValueObject(("day",), {})])
 
 
 @pytest.mark.parametrize("presence", [NULL, MISSING], ids=["null", "missing"])
 def test_a_leaf_patch_of_any_presence_at_an_occurrence_is_refused(presence: object) -> None:
     # Exclusive pairing holds whatever the leaf patch carries: JSON null and
-    # removal at an occurrence's path are occurrence writes a SetValue states,
+    # removal at an occurrence's path are occurrence writes a SetValueObject states,
     # so neither is applied as if the path named a leaf.
-    with pytest.raises(ValueError, match="names an occurrence; use SetValue"):
-        prepare_patches(_SHAPE, [SetLeaf(("origin",), cast("Any", presence))])
+    with pytest.raises(ValueError, match="names an occurrence; use SetValueObject"):
+        prepare_patches(_SHAPE, [SetScalar(("origin",), cast("Any", presence))])
 
 
 def test_one_prepared_patch_sequence_applies_to_every_document_and_shares_its_values() -> None:
@@ -1138,7 +1138,10 @@ def test_one_prepared_patch_sequence_applies_to_every_document_and_shares_its_va
     replacement = {"city": "Bergen"}
     prepared = prepare_patches(
         _SHAPE,
-        [SetLeaf(("day",), Present(dt.date(2026, 1, 15))), SetValue(("origin",), replacement)],
+        [
+            SetScalar(("day",), Present(dt.date(2026, 1, 15))),
+            SetValueObject(("origin",), replacement),
+        ],
     )
     first = {"flag": True, "origin": {"city": "Oslo", "sealNumber": "S-1"}, "legacy": 1}
     second = {"origin": None, "entries": [{"kind": "home"}]}
@@ -1164,7 +1167,7 @@ def test_one_prepared_patch_sequence_applies_to_every_document_and_shares_its_va
 
 
 def test_a_prepared_removal_deletes_only_its_own_key() -> None:
-    (removal,) = prepare_patches(_SHAPE, [SetLeaf(("flag",), MISSING)])
+    (removal,) = prepare_patches(_SHAPE, [SetScalar(("flag",), MISSING)])
     assert removal.removes
     assert apply_prepared_patches({"flag": True, "legacy": 1}, (removal,)) == {"legacy": 1}
 
@@ -1257,7 +1260,7 @@ def test_equality_walks_documents_deeper_than_the_interpreter_recursion_limit() 
 
 def test_a_returned_document_is_immutable_and_shares_no_mutable_input_state() -> None:
     stored: dict[str, object] = {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]}
-    patched = _patched(_SHAPE, stored, [SetLeaf(("flag",), NULL)])
+    patched = _patched(_SHAPE, stored, [SetScalar(("flag",), NULL)])
     cast("dict[str, object]", stored["origin"])["city"] = "Bergen"
     cast("list[dict[str, object]]", stored["entries"])[0]["kind"] = "work"
     assert patched == {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}], "flag": None}
@@ -1274,7 +1277,7 @@ def test_a_returned_document_is_immutable_and_shares_no_mutable_input_state() ->
     answered, _findings = _read_member(_SHAPE, {"origin": origin}, "origin")
     cast("dict[str, object]", answered)["city"] = "Tromso"
     assert origin == {"city": "Oslo"}
-    replaced = _patched(_SHAPE, {}, [SetValue(("origin",), origin)])
+    replaced = _patched(_SHAPE, {}, [SetValueObject(("origin",), origin)])
     origin["city"] = "Alta"
     assert replaced["origin"] == {"city": "Oslo"}
     assert origin == {"city": "Alta"}
@@ -1299,7 +1302,7 @@ def test_immutable_codec_outputs_compose_through_decode_compare_and_patch() -> N
     assert _decoded(_SHAPE, encoded) == DecodedMember(
         Present({"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]})
     )
-    assert _patched(_SHAPE, encoded, [SetLeaf(("flag",), Present(True))]) == {
+    assert _patched(_SHAPE, encoded, [SetScalar(("flag",), Present(True))]) == {
         "flag": True,
         "origin": {"city": "Oslo"},
         "entries": [{"kind": "home"}],

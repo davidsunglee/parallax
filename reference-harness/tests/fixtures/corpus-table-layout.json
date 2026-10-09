@@ -9874,6 +9874,194 @@
       ]
     }
   },
+  "models/scalar-collection-layout-twin-columns.yaml": {
+    "collection_twin": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.id",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "flags",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.flags",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "smalls",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.smalls",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "counts",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.counts",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "ratios",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.ratios",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "scores",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.scores",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "amounts",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.amounts",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "tags",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.tags",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "blobs",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.blobs",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "days",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.days",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "clocks",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.clocks",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "instants",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.instants",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "tokens",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.tokens",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "detail",
+          "contributor": "valueObject:parallax.compatibility.CollectionTwinItem.detail",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": true,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "parts",
+          "contributor": "valueObject:parallax.compatibility.CollectionTwinItem.parts",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/scalar-collection-layout-twin-document.yaml": {
+    "collection_twin": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.CollectionTwinItem.id",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CollectionTwinItem"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.CollectionTwinItem",
+          "declaringOwner": "parallax.compatibility.CollectionTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/scalars.yaml": {
     "scalar_thing": {
       "columns": [

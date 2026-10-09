@@ -28,12 +28,12 @@ from parallax.core.document_codec._authoring import (
 )
 from parallax.core.metamodel import (
     AttributeMetadata,
+    AuthoringViolation,
     EntityIdentity,
     EntityMetadata,
     Leaf,
     PrimaryKey,
     ValueObjectMetadata,
-    VoDocumentViolation,
     WriteAssignmentError,
     entity_by_name,
     judge_assignment,
@@ -454,7 +454,7 @@ def target_instruction(prepared: PreparedTargetWrite) -> PreparedKeyedWrite:
 @dataclass(frozen=True, slots=True)
 class _TransformedRow:
     row: Mapping[str, object]
-    failures: Mapping[int, VoDocumentViolation]
+    failures: Mapping[int, AuthoringViolation]
 
 
 def derive_keyed_write(
@@ -1386,7 +1386,7 @@ def _assigned_row(
             entity,
             _declared_member(selection, name),
             value,
-            known_vo_violation=failure,
+            known_violation=failure,
             known_value_valid=failure is None,
         )
     validate_write(entity, prepared, model, mutation="amend", known_failures=transformed.failures)
@@ -1535,7 +1535,7 @@ def _prepare_keyed_payload(
                 entity,
                 _declared_member(selection, name),
                 only.row[name],
-                known_vo_violation=failure,
+                known_violation=failure,
                 known_value_valid=failure is None,
             )
     for result in transformed:
@@ -1628,7 +1628,7 @@ def _prepare_predicate_payload(
             entity,
             member,
             authored.value,
-            known_vo_violation=authored.failure,
+            known_violation=authored.failure,
             known_value_valid=authored.failure is None,
         )
         prepared.append(PreparedAssignment(member, authored.value))
@@ -1663,7 +1663,7 @@ def _judge_prepared_assignment(
     member: _DeclaredMember,
     value: object,
     *,
-    known_vo_violation: VoDocumentViolation | None,
+    known_violation: AuthoringViolation | None,
     known_value_valid: bool,
 ) -> None:
     """Judge one already-resolved assignment, as the addressed target's refusal.
@@ -1675,7 +1675,7 @@ def _judge_prepared_assignment(
         judge_assignment(
             member,
             value,
-            known_vo_violation=known_vo_violation,
+            known_violation=known_violation,
             known_value_valid=known_value_valid,
         )
     except WriteAssignmentError as error:
@@ -1846,8 +1846,8 @@ def _transform_row(
 def _member_failure(
     selection: inheritance.EntityMemberSelection,
     name: str,
-    failures: Mapping[int, VoDocumentViolation],
-) -> VoDocumentViolation | None:
+    failures: Mapping[int, AuthoringViolation],
+) -> AuthoringViolation | None:
     position = selection.shape.position(name)
     return None if position is None else failures.get(position)
 

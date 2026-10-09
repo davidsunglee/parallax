@@ -24,6 +24,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
+    Multiplicity,
     ValueObjectMetadata,
 )
 from parallax.core.object_query._validated import (
@@ -455,7 +456,7 @@ def _projection(
         None
         if document is None or fan_out is None
         else _SharedDocument(document.column, ((entity.identity, fan_out),)),
-        _direct_documents(((entity.identity, layout, projected_vos),)),
+        _direct_documents(((entity.identity, layout, entity.declared_attributes, projected_vos),)),
     )
     sql, binds, document_reads = _render_projection(dialect, alias, columns)
     result_keys = tuple(
@@ -487,7 +488,12 @@ def _scalar_read_contracts(
         )
         entity_contracts: list[AttributeReadContract] = []
         for attribute in view.applicable_attributes:
-            direct = isinstance(layout.placement(attribute.identity), _DirectColumn)
+            # A scalar collection's own Column holds a structured document, never
+            # a native scalar lane, so it keeps its storage key.
+            direct = (
+                isinstance(layout.placement(attribute.identity), _DirectColumn)
+                and attribute.multiplicity is Multiplicity.ONE
+            )
             projected_key = projection_result_key(attribute.storage.name, attribute.type)
             entity_contracts.append(
                 AttributeReadContract(

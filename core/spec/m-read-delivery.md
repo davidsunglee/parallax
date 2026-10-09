@@ -183,11 +183,17 @@ have held.
 
 The **place** is the entity-relative logical path of that occurrence, keeping
 declared member names distinct from array positions. It is empty where the
-issue's member already locates the occurrence exactly — a direct Entity
-Attribute under either Storage Layout, an unresolved family tag, and a whole
-stored document read in a kind it cannot be read as — and otherwise names the
-member sequence, with an array position for each element step, that reaches the
-occurrence from the Entity.
+issue's member already locates the occurrence exactly — a single-valued direct
+Entity Attribute under either Storage Layout, an unresolved family tag, and a
+whole stored document read in a kind it cannot be read as — and otherwise names
+the member sequence, with an array position for each element step, that reaches
+the occurrence from the Entity. A scalar collection's issue keeps its own path
+under either Storage Layout: the collection's member sequence for a stored value
+that is not an array, extended by the failing element's position for an
+undecodable element — `("tags",)` and `("tags", 2)` at the top level,
+`("lines", 1, "tags", 2)` inside a `many` occurrence. Its member is the
+collection's own Attribute or Value Object Attribute, and every failing element
+is one issue. Neither a physical Column nor a document name enters the path.
 
 The value and the place are part of an issue's identity: repeated reach to one
 occurrence collapses within a root as before, while the same code at another

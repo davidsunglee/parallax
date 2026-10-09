@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import cast
 
 from parallax.core.base import (
@@ -20,7 +21,13 @@ from parallax.core.wire import (
     encode_wire,
 )
 
-__all__ = ["LeafEncodingError", "decode_leaf", "encode_leaf", "is_text_compared"]
+__all__ = [
+    "LeafEncodingError",
+    "decode_leaf",
+    "encode_leaf",
+    "encode_scalar_many",
+    "is_text_compared",
+]
 
 # The declared types whose document form is a JSON string AND whose SQL comparison is
 # of the extracted text rather than of a cast (`m-dialect`). `decimal(p, s)` is a JSON
@@ -75,6 +82,22 @@ def encode_leaf(neutral_type: NeutralType, value: object) -> object:
         return encode_wire(neutral_type, cast("ManagedValue", value))
     except WireEncodingError as exc:
         raise LeafEncodingError(str(exc)) from exc
+
+
+def encode_scalar_many(element_type: NeutralType, values: Iterable[object]) -> tuple[object, ...]:
+    """A scalar collection's one document spelling: the ordered array of each
+    element's canonical Wire Value, ``()`` for the empty collection.
+
+    Each element crosses the public encoder's own value-space check; a failure is
+    reported at its position and no partial array is answered.
+    """
+    encoded: list[object] = []
+    for index, value in enumerate(values):
+        try:
+            encoded.append(encode_wire(element_type, cast("ManagedValue", value)))
+        except WireEncodingError as exc:
+            raise LeafEncodingError(f"element {index}: {exc}") from exc
+    return tuple(encoded)
 
 
 def decode_leaf(neutral_type: NeutralType, value: object) -> object:

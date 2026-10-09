@@ -30,6 +30,8 @@ class _LeafSource(Protocol):
     @property
     def nullable(self) -> bool: ...
     @property
+    def multiplicity(self) -> Multiplicity: ...
+    @property
     def definition(self) -> Leaf: ...
 
 
@@ -48,11 +50,17 @@ class _OccurrenceSource(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class Leaf:
-    """One scalar member of a document, spelled by its declared Neutral Type."""
+    """One scalar member of a document, spelled by its declared Neutral Type.
+
+    ``type`` is the scalar element type under either multiplicity: a ``MANY``
+    leaf holds an ordered, duplicate-preserving sequence of non-null values of
+    that type and is itself never null.
+    """
 
     name: str
     type: NeutralType
     nullable: bool
+    multiplicity: Multiplicity = Multiplicity.ONE
 
 
 @dataclass(frozen=True, slots=True)

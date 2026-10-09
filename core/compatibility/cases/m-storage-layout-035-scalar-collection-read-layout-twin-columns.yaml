@@ -1,0 +1,63 @@
+# Columns half of the scalar collection read proof: every scalar type's collection,
+# in order and with duplicates, and collections inside a `one`, a `many`, and a `one`
+# nested in that `many`, publish the canonical arrays the fixture stored. Row 2's
+# omitted collections read as the empty collection. Each top-level collection is one
+# structured-document Column, so the instance-form projection reads it as a document
+# pair. Its twin authors the same operation and graph under Relational Document
+# Layout.
+model: models/scalar-collection-layout-twin-columns.yaml
+tags: [m-storage-layout, m-document-codec, m-value-object, m-sql, read, json, nested, to-many, graph, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.CollectionTwinItem
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.CollectionTwinItem.id
+        direction: asc
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, not t0.flags is null, t0.flags, not t0.smalls is null, t0.smalls, not t0.counts is null, t0.counts, not t0.ratios is null, t0.ratios, not t0.scores is null, t0.scores, not t0.amounts is null, t0.amounts, not t0.tags is null, t0.tags, not t0.blobs is null, t0.blobs, not t0.days is null, t0.days, not t0.clocks is null, t0.clocks, not t0.instants is null, t0.instants, not t0.tokens is null, t0.tokens, not t0.detail is null, t0.detail, not t0.parts is null, t0.parts from collection_twin t0 order by t0.id asc
+        mariadb: select t0.id, not t0.flags is null, t0.flags, not t0.smalls is null, t0.smalls, not t0.counts is null, t0.counts, not t0.ratios is null, t0.ratios, not t0.scores is null, t0.scores, not t0.amounts is null, t0.amounts, not t0.tags is null, t0.tags, not t0.blobs is null, t0.blobs, not t0.days is null, t0.days, not t0.clocks is null, t0.clocks, not t0.instants is null, t0.instants, not t0.tokens is null, t0.tokens, not t0.detail is null, t0.detail, not t0.parts is null, t0.parts from collection_twin t0 order by t0.id asc
+  graph:
+    CollectionTwinItem:
+      - id: 1
+        flags: [true, false, true]
+        smalls: [3, -2, 3]
+        counts: [9007199254740993, 0]
+        ratios: [1.2, 0.0]
+        scores: [0.1, 2.5, 0.1]
+        amounts: ["1.50", "1.50", "7.00"]
+        tags: [b, a, b]
+        blobs: ["0aff", ""]
+        days: ["2024-02-29"]
+        clocks: ["13:05:07.000250"]
+        instants: ["2024-06-01T10:00:00.000000Z"]
+        tokens: ["12345678-1234-5678-1234-567812345678", "12345678-1234-5678-1234-567812345678"]
+        detail:
+          labels: [x, y, x]
+        parts:
+          - sku: a
+            marks: [2, 1, 2]
+            note:
+              words: [deep]
+          - sku: b
+            marks: []
+      - id: 2
+        flags: []
+        smalls: []
+        counts: []
+        ratios: []
+        scores: []
+        amounts: []
+        tags: []
+        blobs: []
+        days: []
+        clocks: []
+        instants: []
+        tokens: []
+        detail: null
+        parts: []
+  roundTrips: 1

@@ -38,7 +38,9 @@ Storage Layout is a closed, root-owned mapping policy. `Columns` is the default
 and is the layout of every Entity whose accepted metadata declares none. It is
 the layout this module composed before the `Document` arm existed: each mapped
 Attribute contributes its own direct Column and each top-level Value Object
-occurrence contributes its own Structured Column.
+occurrence contributes its own Structured Column. A scalar collection Attribute
+contributes a direct Column too, but that Column is a Structured Column holding
+the collection's encoded array.
 
 `Document` selects Relational Document Layout. One Structured Column, named by
 the arm's `Column`, carries the document-resident state of every governed row;
@@ -133,7 +135,11 @@ raw carrier has no logical member identity and therefore creates no independent
 stored-data issue or recursive validation work.
 
 For a top-level occurrence under `Columns`, its own Structured Column is the
-occurrence carrier. Under `Document`, classified Entity-member decoding obtains
+occurrence carrier, and a top-level scalar collection's own Structured Column is
+likewise its carrier: its `Document`-tier slot routes it through the same
+`DocumentRead` and classified decoding, never through a native scalar column
+conversion. Under `Document` a scalar collection is located in the shared
+document like any other document-resident Attribute. Under `Document`, classified Entity-member decoding obtains
 the occurrence carrier by passing the Entity's shared Structured Column to
 `locateEntityMember`. The Columns arm supplies the database port's already-tagged
 `m-core` `DocumentRead` as `SqlNull` or `PresentDocument`;
@@ -392,8 +398,9 @@ projection instead.
 
 Placement follows the accepted layout of the member's mapping owner:
 
-- under `Columns`, a top-level Attribute and a top-level Value Object occurrence
-  are placed `DirectColumn(slot)` over the slot their own contributor owns, and
+- under `Columns`, a top-level Attribute — a scalar collection included — and a
+  top-level Value Object occurrence are placed `DirectColumn(slot)` over the
+  slot their own contributor owns, and
   every member *inside* a top-level occurrence — a nested occurrence or a Value
   Object Attribute — is placed `DocumentPath(slot, path)` over that occurrence's
   own Structured Column;
@@ -497,13 +504,15 @@ Every contributor is classified exactly once:
 3. An Attribute designated as the start or end of a temporal axis is
    `Temporal`.
 4. An Attribute designated by accepted Audit Metadata is `Audit`.
-5. Every other Attribute is `Domain`.
-6. A top-level Value Object is `Document`.
-7. The shared Structured Column of a `Document` layout is `Document`.
+5. A scalar collection Attribute (`multiplicity: many`) is `Document`.
+6. Every other Attribute is `Domain`.
+7. A top-level Value Object is `Document`.
+8. The shared Structured Column of a `Document` layout is `Document`.
 
-Under `Document`, rules 1 through 5 classify only the direct-role contributors:
+Under `Document`, rules 1 through 6 classify only the direct-role contributors:
 a document-resident Attribute or top-level Value Object is not a contributor and
-receives no tier. The governed Table's contributors are therefore its direct
+receives no tier. A scalar collection holds no direct role (`m-metamodel`), so
+under `Document` it is always document-resident. The governed Table's contributors are therefore its direct
 Attributes, its table-per-hierarchy tag if any, and exactly one
 `RelationalDocument`, which is the last column of the last tier. Relationship-
 join and explicit optimistic-lock Attributes that are not primary keys remain
@@ -838,7 +847,10 @@ storage-layout-index-over-document-member
 
 Under `Document`, every Index component must be a direct-role Attribute. A
 component naming a document-resident Attribute has no Column to index, and this
-contract adds no document-path, expression, or provider-native index form. The
+contract adds no document-path, expression, or provider-native index form. Under
+either layout a component naming a scalar collection emits the same Issue: under
+`Columns` its Column holds a structured document rather than an indexable
+scalar. The
 Issue location is the Index declaration, `IndexLocation`, because the Index is
 what must change; its related sequence contains the offending Attribute's
 `AttributeLocation`.

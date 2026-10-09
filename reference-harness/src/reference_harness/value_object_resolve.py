@@ -50,6 +50,7 @@ NESTED_STRING_PREDICATE_NON_STRING_MEMBER = "nested-string-predicate-non-string-
 DEEP_FETCH_VALUE_OBJECT_SEGMENT = "deep-fetch-value-object-segment"
 NAVIGATE_VALUE_OBJECT_TARGET = "navigate-value-object-target"
 FIND_ROOT_VALUE_OBJECT = "find-root-value-object"
+SCALAR_COLLECTION_UNQUANTIFIED = "scalar-collection-unquantified"
 
 # Write rules (m-value-object write validation).
 WRITE_REQUIRED_ATTRIBUTE_MISSING = "write-required-attribute-missing"
@@ -69,6 +70,7 @@ REJECTED_RULES: frozenset[str] = frozenset(
         DEEP_FETCH_VALUE_OBJECT_SEGMENT,
         NAVIGATE_VALUE_OBJECT_TARGET,
         FIND_ROOT_VALUE_OBJECT,
+        SCALAR_COLLECTION_UNQUANTIFIED,
         WRITE_REQUIRED_ATTRIBUTE_MISSING,
         WRITE_REQUIRED_VALUE_OBJECT_MISSING,
         WRITE_VALUE_TYPE_MISMATCH,

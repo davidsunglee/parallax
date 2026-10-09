@@ -185,7 +185,20 @@ model-aware resolver **MUST** reject `isNull` / `isNotNull`, `nestedIsNull` /
 `nestedIsNotNull`, and element-relative null checks over a non-nullable leaf
 (`null-check-non-nullable-member`, `m-case-format` rejected vocabulary) before
 emitting SQL. This is checked at the resolved leaf in every scope; physical
-Columns or Document placement does not change the verdict.
+Columns or Document placement does not change the verdict. A scalar collection is
+never nullable, so a null check over one is refused by this rule.
+
+### Scalar collections
+
+A scalar collection (`m-metamodel`) is a sequence of values rather than one
+value, and no predicate here reaches its elements implicitly. A model-aware
+resolver **MUST** reject a comparison, range, membership, or string predicate —
+at the queried entity, through a nested path, or inside an element-scoped
+`where` — whose resolved subject is a scalar collection
+(`scalar-collection-unquantified`, `m-case-format` rejected vocabulary). The
+subject is judged before any literal is decoded, so the rule is named rather than
+a literal mismatch against the element type, and no comparison is read as matching
+some element.
 
 ### String
 

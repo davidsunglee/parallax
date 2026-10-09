@@ -144,7 +144,7 @@
       }
     },
     "writeAssignment": {
-      "description": "One ordered predicate-write assignment. Model-aware elaboration resolves `attr`, then decodes each non-null declared scalar leaf exactly once with m-wire. Nullability and complete Value Object document carriers remain structural rules; this schema intentionally does not duplicate per-type literal grammar. Duplicate and unassignable references are rejected by model-aware validation.",
+      "description": "One ordered predicate-write assignment. Model-aware elaboration resolves `attr`, then decodes each non-null declared scalar leaf exactly once with m-wire — each element of a scalar collection's array alike. Nullability, a scalar collection's whole array, and complete Value Object document carriers remain structural rules; this schema intentionally does not duplicate per-type literal grammar. Duplicate and unassignable references are rejected by model-aware validation.",
       "type": "object",
       "additionalProperties": false,
       "required": ["attr", "value"],
@@ -154,7 +154,7 @@
       }
     },
     "writeRow": {
-      "description": "A flat attribute-named durable write row. Every key is an Entity Attribute or top-level Value Object name, never a physical column. The framework-owned optimistic observations `observedVersion`, `observedTxStart` and `observedValidStart` are attached only at flush and are forbidden here. Scalar fields carry neutral literals or DB-computed markers; Value Object fields carry their complete ordered document value.",
+      "description": "A flat attribute-named durable write row. Every key is an Entity Attribute or top-level Value Object name, never a physical column. The framework-owned optimistic observations `observedVersion`, `observedTxStart` and `observedValidStart` are attached only at flush and are forbidden here. Scalar fields carry neutral literals or DB-computed markers, a scalar collection field its whole ordered array of neutral literals, and Value Object fields their complete ordered document value.",
       "type": "object",
       "not": {
         "description": "The framework-owned optimistic observation is not durable instruction state: neither `observedVersion` nor either half of the observed milestone's own coordinate (`observedTxStart` / `observedValidStart`) may ride on a durable row.",
@@ -172,7 +172,7 @@
         { "type": ["string", "number", "boolean", "null"] },
         { "$ref": "#/$defs/writeComputedMarker" },
         {
-          "description": "A value-object document (m-value-object): a value-object-named field binds the WHOLE embedded composite atomically as one document value in its Storage Layout position — a JSON object for a `one` value object, a JSON array of objects for a `many` one.",
+          "description": "A value-object document (m-value-object): a value-object-named field binds the WHOLE embedded composite atomically as one document value in its Storage Layout position — a JSON object for a `one` value object, a JSON array of objects for a `many` one. A scalar-collection-named field (m-metamodel) binds its whole ordered array of neutral literals the same way, each element decoded once with m-wire.",
           "type": ["object", "array"]
         }
       ]

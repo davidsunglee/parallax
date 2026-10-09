@@ -167,16 +167,22 @@ def _defining_issues(
                 message=(f"the join target names no Attribute of {join.target.entity.canonical!r}"),
             )
         )
-    if source is not None and target is not None and source.type != target.type:
+    if (
+        source is not None
+        and target is not None
+        and (source.type != target.type or source.multiplicity is not target.multiplicity)
+    ):
         issues.append(
             MetamodelIssue(
                 JOIN_TYPE_MISMATCH,
                 location,
                 (AttributeLocation(join.source), AttributeLocation(join.target)),
                 message=(
-                    f"{join.source.entity.canonical}.{join.source.name} ({source.type}) and "
-                    f"{join.target.entity.canonical}.{join.target.name} ({target.type}) "
-                    "have unequal declared neutral types"
+                    f"{join.source.entity.canonical}.{join.source.name} "
+                    f"({source.type}, {source.multiplicity.name.lower()}) and "
+                    f"{join.target.entity.canonical}.{join.target.name} "
+                    f"({target.type}, {target.multiplicity.name.lower()}) "
+                    "have unequal declared neutral types or multiplicities"
                 ),
             )
         )

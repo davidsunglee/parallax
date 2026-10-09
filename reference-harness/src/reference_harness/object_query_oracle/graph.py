@@ -30,6 +30,7 @@ from ..case_assertions import (
     coerce_identity_key,
     scalars_equal,
 )
+from ..document_codec import DocumentEncodingError
 from ..inheritance import Family, resolve_root_source_set
 from ..multiset import multiset_matches
 from . import includes, materialize
@@ -87,7 +88,12 @@ def graph_node(case: Case, entity: Entity, row: materialize.PublishedRow) -> dic
         return None
     model = case.model
     concrete = materialize.variant_entity(model, entity, row)
-    node = materialize.materialize_variant_owner_node(case, entity, row)
+    try:
+        node = materialize.materialize_variant_owner_node(case, entity, row)
+    except DocumentEncodingError:
+        # A stored scalar no value of its declared type spells — a collection
+        # element included — leaves the position unhydratable.
+        return None
     names = {attribute["column"]: attribute["name"] for attribute in concrete.attributes}
     for other in model.entities:
         for attribute in other.attributes:
@@ -253,7 +259,7 @@ def _member_values_equal(
     if temporal_end and (a == "infinity" or b == "infinity"):
         return a == b
     if attribute is not None:
-        return portable_literal.values_equal(a, b, attribute["type"], None)
+        return portable_literal.declared_values_equal(a, b, attribute, None)
     return scalars_equal(a, b, None)
 
 

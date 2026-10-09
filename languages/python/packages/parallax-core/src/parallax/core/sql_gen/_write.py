@@ -30,6 +30,7 @@ from parallax.core.sql_gen._context import (
 )
 from parallax.core.storage_layout import (
     ColumnContributor,
+    ColumnTier,
     EntityLayoutView,
     InheritanceDiscriminator,
     StorageLayoutFacet,
@@ -602,10 +603,10 @@ def _placement(
     """Where each prepared cell lands: the physical Column its contributor's
     slot occupies.
 
-    A document a cell stores — a Value Object occurrence with a Column of its
-    own, or the Table's shared Structured Column — binds as one
-    :class:`~parallax.core.db_port.JsonDocument`, never decomposed. A scalar
-    binds at its Attribute's Neutral Type.
+    A document a cell stores — a Value Object occurrence or a scalar
+    collection with a Column of its own, or the Table's shared Structured
+    Column — binds as one :class:`~parallax.core.db_port.JsonDocument`, never
+    decomposed. A scalar binds at its Attribute's Neutral Type.
     """
     columns: list[str] = []
     types: list[NeutralType | None] = []
@@ -629,7 +630,7 @@ def _placement(
                 "the target's Table Layout"
             )
         columns.append(slot.column.name)
-        if isinstance(contributor, AttributeIdentity):
+        if isinstance(contributor, AttributeIdentity) and slot.tier is not ColumnTier.DOCUMENT:
             binding = selection.bindings[selection.position(contributor)]
             types.append(cast("AttributeMetadata", binding).type)
             documents.append(False)

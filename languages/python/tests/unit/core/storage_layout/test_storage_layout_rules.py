@@ -917,4 +917,5 @@ def test_the_storage_layout_rejection_fixture_set_is_complete() -> None:
         "m-storage-layout-013",
         "m-storage-layout-014",
         "m-storage-layout-015",
+        "m-storage-layout-041",
     ]

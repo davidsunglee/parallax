@@ -5,14 +5,15 @@ from itertools import chain
 from typing import Final, cast
 
 from parallax.core import storage_layout
-from parallax.core.base import Json
+from parallax.core.base import Json, NeutralType
 from parallax.core.document_codec import (
     NULL,
     DocumentPatch,
     Present,
-    SetLeaf,
-    SetValue,
+    SetScalar,
+    SetValueObject,
     apply_prepared_patches,
+    encode_scalar_many,
     persisted_document_equal,
     prepare_patches,
 )
@@ -89,9 +90,10 @@ class LayoutPayloadPreparer:
         Each Attribute both finalized rows hold a resolved value for is
         compared as stored: a managed value is exact at its Neutral Type, so
         values that differ are stored differently whether the member has a
-        Column of its own or lives in the shared document. Interval members,
-        generated values, members only one row states, and occurrences decide
-        nothing here.
+        Column of its own or lives in the shared document. A scalar
+        collection's managed tuple is exact element by element in order, so
+        the same holds for it. Interval members, generated values, members only
+        one row states, and occurrences decide nothing here.
         """
         # A member either row executes is where neighbours usually differ, so it
         # is compared before the rest; an executed occurrence is no scalar and
@@ -224,7 +226,7 @@ class _Comparison:
             contributor = slot.contributor
             if slot.tier is ColumnTier.TEMPORAL:
                 kind = _INTERVAL
-            elif isinstance(contributor, RelationalDocument | ValueObjectIdentity):
+            elif slot.tier is ColumnTier.DOCUMENT:
                 kind = _DOCUMENT
             elif isinstance(contributor, AttributeIdentity):
                 kind = _JSON if isinstance(_attribute_type(view, contributor), Json) else _SCALAR
@@ -241,15 +243,25 @@ class _Comparison:
 
 class _Table:
     """One Entity's Table Layout view, resolved once per preparer: the view, its
-    slots in Table Layout order, and its document-resident members."""
+    slots in Table Layout order, its document-resident members, and the element
+    type of each scalar collection with a structured Column of its own."""
 
-    __slots__ = ("columns", "residence", "view")
+    __slots__ = ("collections", "columns", "residence", "view")
 
     def __init__(self, view: EntityLayoutView) -> None:
         self.view = view
         self.columns: tuple[ColumnSlot, ...] = tuple(view.columns)
         resident = view.document_residents
         self.residence = None if resident is None else _Residence(resident)
+        bindings = view.member_selection.bindings
+        selection = view.member_selection
+        self.collections: Mapping[AttributeIdentity, NeutralType] = {
+            slot.contributor: cast(
+                "AttributeMetadata", bindings[selection.position(slot.contributor)]
+            ).type
+            for slot in self.columns
+            if slot.tier is ColumnTier.DOCUMENT and isinstance(slot.contributor, AttributeIdentity)
+        }
 
 
 class _Residence:
@@ -284,7 +296,7 @@ class _Residence:
 
 # One arm per Column contributor kind, in Table Layout slot order. It runs per written row
 # and visits every slot, so the arms stay inline rather than behind a per-slot call.
-def _row_cells(table: _Table, write_row: WriteRow) -> _Cells:
+def _row_cells(table: _Table, write_row: WriteRow) -> _Cells:  # noqa: C901
     """``write_row``'s complete persisted cells, in Table Layout slot order.
 
     Every member a row names occupies its slot. A Value Object occurrence with
@@ -301,16 +313,23 @@ def _row_cells(table: _Table, write_row: WriteRow) -> _Cells:
     attributes = row.attributes
     value_objects = row.value_objects
     discriminator = view.discriminator
+    collections = table.collections
     contributors: list[Hashable] = []
     values: list[object] = []
     matched = 0
     for slot in table.columns:
         contributor = slot.contributor
         if isinstance(contributor, AttributeIdentity):
+            element_type = collections.get(contributor) if collections else None
             if contributor not in attributes:
-                continue
-            value: object = attributes[contributor]
-            matched += 1
+                if element_type is None:
+                    continue
+                value: object = ()
+            else:
+                value = attributes[contributor]
+                matched += 1
+                if element_type is not None:
+                    value = _collection_cell(element_type, value)
         elif isinstance(contributor, InheritanceDiscriminator):
             if discriminator is None:  # pragma: no cover - a discriminator slot owns its tag
                 raise ValueError(f"{view.entity.canonical}: discriminator slot has no tag")
@@ -345,6 +364,7 @@ def _assignment_cells(table: _Table, assignments: PlannedAssignments) -> _Cells:
     """
     view = table.view
     residence = table.residence
+    collections = table.collections
     attributes = assignments.attributes
     value_objects = assignments.value_objects
     contributors: list[Hashable] = []
@@ -357,6 +377,9 @@ def _assignment_cells(table: _Table, assignments: PlannedAssignments) -> _Cells:
                 continue
             value: object = attributes[contributor]
             matched += 1
+            element_type = collections.get(contributor) if collections else None
+            if element_type is not None:
+                value = _collection_cell(element_type, value)
         elif isinstance(contributor, RelationalDocument):
             resident = _residents(view, residence)
             named = resident.named(attributes, value_objects)
@@ -461,11 +484,11 @@ def _resident_patches(
         if isinstance(binding, AttributeMetadata):
             if binding.identity in attributes:
                 raw = attributes[binding.identity]
-                patches.append(SetLeaf(path, NULL if raw is None else Present(raw)))
+                patches.append(SetScalar(path, NULL if raw is None else Present(raw)))
         elif binding.identity in value_objects:
             raw = value_objects[binding.identity]
             patches.append(
-                SetValue(path, None if raw is None else _occurrence_document(binding, raw))
+                SetValueObject(path, None if raw is None else _occurrence_document(binding, raw))
             )
     return tuple(patches)
 
@@ -485,6 +508,13 @@ def _occurrence_document(occurrence: ValueObjectMetadata, value: object) -> obje
     if occurrence.multiplicity is Multiplicity.MANY:
         return encode_managed_many(shape, cast("Sequence[Mapping[str, object]]", value))
     return encode_managed_document(shape, cast("Mapping[str, object]", value))
+
+
+def _collection_cell(element_type: NeutralType, value: object) -> object:
+    """A scalar collection's own structured Column: its encoded array, with the
+    null a stored row may carry read as the empty collection it denotes."""
+    elements = () if value is None else cast("Sequence[object]", value)
+    return encode_scalar_many(element_type, elements)
 
 
 def _residents(view: EntityLayoutView, resident: _Residence | None) -> _Residence:

@@ -153,7 +153,8 @@ type MemberPlacement = DirectColumn | DocumentPath
 class DocumentMember:
     """One member a Relational Document Layout keeps inside the shared Structured
     Column: where it sits in the document and — for a leaf — the declared type its
-    stored spelling decodes through.
+    stored spelling decodes through, and whether the leaf is a scalar collection
+    whose stored array holds one such spelling per element.
 
     ``address`` identifies the member — by its declaring owner, so two disjoint
     inheritance siblings sharing a Table may reuse a member name and still be told
@@ -166,6 +167,7 @@ class DocumentMember:
     column: str
     path: tuple[str, ...]
     type_spelling: str | None
+    many: bool = False
 
     @property
     def name(self) -> str:
@@ -796,7 +798,8 @@ def _validate_document_members(
 def _validate_document_indices(
     index: _ModelIndex, groups: Sequence[_Group], roles_of_group: Mapping[str, _DirectRoles]
 ) -> None:
-    """Refuse an Index component reaching into a shared Structured Column."""
+    """Refuse an Index component reaching into structured document storage: a
+    shared Structured Column, or a scalar collection's own structured Column."""
     resident: dict[tuple[str, str], str] = {}
     for group in groups:
         roles = roles_of_group.get(group.table)
@@ -807,16 +810,21 @@ def _validate_document_indices(
                 resident.setdefault((owner, attribute["name"]), group.root)
     for definition in index.definitions:
         owner = _identity(definition)
+        collections = {
+            attribute["name"]
+            for attribute in definition.get("attributes", []) or []
+            if isinstance(attribute, dict) and is_scalar_collection(attribute)
+        }
         for declared in definition.get("indices", []) or []:
             if not isinstance(declared, dict):
                 continue
             for component in declared.get("attributes", []) or []:
-                if (owner, component) not in resident:
+                if (owner, component) not in resident and component not in collections:
                     continue
                 raise RejectionError(
                     STORAGE_LAYOUT_INDEX_OVER_DOCUMENT_MEMBER,
-                    f"Index {owner}.{declared['name']} names document-resident Attribute "
-                    f"{component!r}, which has no Column to index",
+                    f"Index {owner}.{declared['name']} names Attribute {component!r}, "
+                    "which is stored as a structured document and has no Column to index",
                 )
 
 
@@ -887,19 +895,28 @@ def derived_primary_key_index(definition: Mapping[str, Any]) -> dict[str, Any] |
     return {"name": f"{stem}_pk", "attributes": attributes, "unique": True}
 
 
+def is_scalar_collection(attribute: Mapping[str, Any]) -> bool:
+    """Whether a declared Attribute or Value Object Attribute is a scalar collection."""
+    return attribute.get("multiplicity", "one") == "many"
+
+
 def classify_attribute_tier(
     contributor: AttributeContributor,
     attribute: Mapping[str, Any],
     temporal_designations: frozenset[AttributeContributor],
     audit_designations: frozenset[AttributeContributor] = frozenset(),
 ) -> ColumnTier:
-    """Classify one Attribute with identity, temporal, then audit precedence."""
+    """Classify one Attribute with identity, temporal, then audit precedence; a
+    scalar collection holds none of those roles and stores one structured
+    document, so it joins the document tier."""
     if bool(attribute.get("primaryKey")):
         return ColumnTier.IDENTITY
     if contributor in temporal_designations:
         return ColumnTier.TEMPORAL
     if contributor in audit_designations:
         return ColumnTier.AUDIT
+    if is_scalar_collection(attribute):
+        return ColumnTier.DOCUMENT
     return ColumnTier.DOMAIN
 
 
@@ -1135,7 +1152,13 @@ def _entity_document(
         placement = layout.placement(address)
         if not (isinstance(placement, DocumentPath) and placement.slot == slot):
             return None
-        return DocumentMember(address, effective_column(declaration), placement.path, type_spelling)
+        return DocumentMember(
+            address,
+            effective_column(declaration),
+            placement.path,
+            type_spelling,
+            many=type_spelling is not None and is_scalar_collection(declaration),
+        )
 
     declared = (
         *((attribute, attribute["type"]) for attribute in effective.get("attributes") or []),

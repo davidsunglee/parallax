@@ -1,0 +1,127 @@
+# Columns half of the scalar collection write proof: an insert stores every
+# collection it names as its canonical array, in order and with duplicates, and every
+# collection it omits as the empty array, each in its own structured Column; an
+# amendment replaces whole collections — clearing one, replacing another, and
+# replacing a `many` occurrence together with the collections inside it — while every
+# unassigned collection rides forward as stored. Its twin authors the same writes and
+# table state under Relational Document Layout.
+model: models/scalar-collection-layout-twin-columns.yaml
+tags: [m-storage-layout, m-document-codec, m-value-object, m-unit-work, m-opt-lock, m-read-lock, m-sql, scenario, insert, update, json, nested, to-many, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.CollectionTwinItem
+          rows:
+            - id: 10
+              flags: [false, false]
+              amounts: ["0.10", "0.10"]
+              tags: [z, z, a]
+              detail:
+                labels: []
+              parts:
+                - sku: c
+                  marks: [7]
+                  note:
+                    words: [w, w]
+      roundTrips: 1
+      note: name some collections, with duplicates and nested in each occurrence kind, and omit the rest
+      statements:
+        - sql:
+            postgres: insert into collection_twin(id, flags, smalls, counts, ratios, scores, amounts, tags, blobs, days, clocks, instants, tokens, detail, parts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            mariadb: insert into collection_twin(id, flags, smalls, counts, ratios, scores, amounts, tags, blobs, days, clocks, instants, tokens, detail, parts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          binds:
+            - 10
+            - [false, false]
+            - []
+            - []
+            - []
+            - []
+            - ["0.10", "0.10"]
+            - [z, z, a]
+            - []
+            - []
+            - []
+            - []
+            - []
+            - { labels: [] }
+            - - { sku: c, marks: [7], note: { words: [w, w] } }
+    - write:
+        - mutation: amend
+          entity: parallax.compatibility.CollectionTwinItem
+          rows:
+            - id: 1
+              tags: []
+              counts: [5, 5]
+              parts:
+                - sku: d
+                  marks: []
+      roundTrips: 2
+      note: clear one collection, replace another, and replace the `many` occurrence holding nested collections
+      statements:
+        - sql:
+            postgres: update collection_twin set counts = ?, tags = ?, parts = ? where id = ?
+            mariadb: update collection_twin set counts = ?, tags = ?, parts = ? where id = ?
+          binds:
+            - [5, 5]
+            - []
+            - - { sku: d, marks: [] }
+            - 1
+then:
+  roundTrips: 3
+  tableState:
+    collection_twin:
+      - id: 1
+        flags: [true, false, true]
+        smalls: [3, -2, 3]
+        counts: [5, 5]
+        ratios: [1.2, 0.0]
+        scores: [0.1, 2.5, 0.1]
+        amounts: ["1.50", "1.50", "7.00"]
+        tags: []
+        blobs: ["0aff", ""]
+        days: ["2024-02-29"]
+        clocks: ["13:05:07.000250"]
+        instants: ["2024-06-01T10:00:00.000000Z"]
+        tokens: ["12345678-1234-5678-1234-567812345678", "12345678-1234-5678-1234-567812345678"]
+        detail:
+          labels: [x, y, x]
+        parts:
+          - sku: d
+            marks: []
+      - id: 2
+        flags: []
+        smalls: []
+        counts: []
+        ratios: []
+        scores: []
+        amounts: []
+        tags: []
+        blobs: []
+        days: []
+        clocks: []
+        instants: []
+        tokens: []
+        detail: null
+        parts: []
+      - id: 10
+        flags: [false, false]
+        smalls: []
+        counts: []
+        ratios: []
+        scores: []
+        amounts: ["0.10", "0.10"]
+        tags: [z, z, a]
+        blobs: []
+        days: []
+        clocks: []
+        instants: []
+        tokens: []
+        detail:
+          labels: []
+        parts:
+          - sku: c
+            marks: [7]
+            note:
+              words: [w, w]

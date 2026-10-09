@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from parallax.core.base import coerce_neutral_input, matches_neutral_type
+from parallax.core.metamodel._authoring_violation import AuthoringViolation
 from parallax.core.metamodel._states import ValueObjectMetadata
-from parallax.core.metamodel._values import AttributeMetadata, PrimaryKey
-from parallax.core.metamodel._vo_document import VoDocumentViolation
+from parallax.core.metamodel._values import AttributeMetadata, Multiplicity, PrimaryKey
 
 __all__ = ["WriteAssignmentError", "judge_assignment"]
 
@@ -27,7 +27,7 @@ def judge_assignment(
     member: AttributeMetadata | ValueObjectMetadata,
     value: object,
     *,
-    known_vo_violation: VoDocumentViolation | object | None = _UNJUDGED,
+    known_violation: AuthoringViolation | object | None = _UNJUDGED,
     known_value_valid: bool | None = None,
 ) -> None:
     """Judge writing ``value`` to the already-resolved ``member``, or raise.
@@ -37,20 +37,27 @@ def judge_assignment(
     it is; otherwise ``None`` is a clearing
     assignment legal only where the member is nullable, and any other value must
     conform to the declared `m-core` neutral type after the developer input
-    policy's coercion. A Value Object occurrence refuses ``None`` unless nullable
-    and otherwise consumes the structural verdict its authoring caller supplied.
+    policy's coercion. A scalar collection and a Value Object occurrence instead
+    consume the structural verdict their authoring caller supplied, after a
+    collection or a non-nullable occurrence refuses ``None``.
 
     The message names the member relative to its own owner, so a caller that
     knows a wider position prefixes rather than re-renders.
     """
     if isinstance(member, AttributeMetadata):
-        _judge_attribute(member, value, known_valid=known_value_valid)
+        _judge_attribute(
+            member, value, known_valid=known_value_valid, known_violation=known_violation
+        )
         return
-    _judge_value_object(member, value, known_violation=known_vo_violation)
+    _judge_value_object(member, value, known_violation=known_violation)
 
 
 def _judge_attribute(
-    attribute: AttributeMetadata, value: object, *, known_valid: bool | None
+    attribute: AttributeMetadata,
+    value: object,
+    *,
+    known_valid: bool | None,
+    known_violation: AuthoringViolation | object | None,
 ) -> None:
     name = attribute.identity.name
     if isinstance(attribute.primary_key, PrimaryKey):
@@ -66,6 +73,9 @@ def _judge_attribute(
             raise WriteAssignmentError(
                 "value-type-mismatch", f"{name}: required attribute is absent (or null)"
             )
+        return
+    if attribute.multiplicity is Multiplicity.MANY:
+        _consume_verdict(name, known_violation, many_scalar=True)
         return
     valid = (
         matches_neutral_type(coerce_neutral_input(value, attribute.type), attribute.type)
@@ -83,36 +93,48 @@ def _judge_value_object(
     occurrence: ValueObjectMetadata,
     value: object,
     *,
-    known_violation: VoDocumentViolation | object | None,
+    known_violation: AuthoringViolation | object | None,
 ) -> None:
     name = occurrence.identity.path[-1]
     if value is None:
         if not occurrence.nullable:
-            raise _vo_error(name, VoDocumentViolation("", "value-object-missing"))
+            raise _authoring_error(name, AuthoringViolation("", "value-object-missing"))
         return
-    if known_violation is not None and not isinstance(known_violation, VoDocumentViolation):
+    _consume_verdict(name, known_violation, many_scalar=False)
+
+
+def _consume_verdict(
+    name: str, known_violation: AuthoringViolation | object | None, *, many_scalar: bool
+) -> None:
+    if known_violation is not None and not isinstance(known_violation, AuthoringViolation):
         raise TypeError(
-            f"{name}: Value Object assignment judgement requires the document codec's "
+            f"{name}: a structured assignment's judgement requires the document codec's "
             "authoring verdict"
         )
     if known_violation is not None:
-        raise _vo_error(name, known_violation)
+        raise _authoring_error(name, known_violation, many_scalar=many_scalar)
 
 
-def _vo_error(name: str, violation: VoDocumentViolation) -> WriteAssignmentError:
+def _authoring_error(
+    name: str, violation: AuthoringViolation, *, many_scalar: bool = False
+) -> WriteAssignmentError:
     """This module's own rule vocabulary and wording for a shared, error-neutral
-    Value Object document violation — the codec finding owns no text of its own.
+    authoring violation — the codec finding owns no text of its own.
 
-    A malformed value-object assignment is, in this vocabulary, one more shape of
+    A malformed structured assignment is, in this vocabulary, one more shape of
     "the value does not match the declared type", so every case classifies as
     ``value-type-mismatch``.
     """
     path = _joined(name, violation.path)
     if violation.reason == "not-a-list":
+        expected = (
+            "a `many` attribute must bind a sequence of scalar values"
+            if many_scalar
+            else "a `many` value object must bind a list of documents"
+        )
         return WriteAssignmentError(
             "value-type-mismatch",
-            f"{path}: value {violation.value!r} does not match the declared type — a `many` "
-            "value object must bind a list of documents",
+            f"{path}: value {violation.value!r} does not match the declared type — {expected}",
         )
     if violation.reason == "not-a-document":
         return WriteAssignmentError(

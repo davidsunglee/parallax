@@ -22,6 +22,7 @@ from parallax.core.metamodel import (
     EntityLocation,
     Leaf,
     ModelLocation,
+    Multiplicity,
     OccurrenceMetadata,
     ValueObjectAttributeDeclaration,
     ValueObjectAttributeIdentity,
@@ -101,6 +102,22 @@ def _invalid_operand(
             f"{type(value).__name__}; developer-input rule violated: {rule}"
         ),
     )
+
+
+def _single_scalar[
+    M: AttributeMetadata | ValueObjectAttributeMetadata | ValueObjectAttributeDeclaration
+](path: str, member: M) -> M:
+    """``member``, refused where it is a scalar collection: a collection is not
+    one scalar value, so no scalar operation or ordering reaches its elements."""
+    if member.multiplicity is Multiplicity.MANY:
+        raise QueryDefinitionError(
+            code="query-expression-invalid",
+            message=(
+                f"{path}: a scalar collection is not one scalar value and takes no comparison, "
+                "membership, range, string, null-check, or ordering operation"
+            ),
+        )
+    return member
 
 
 def _native_literal(path: str, neutral_type: NeutralType | None, value: object) -> Scalar:
@@ -496,7 +513,7 @@ class AttributeExpr[E, T]:
 
     def _resolved_scalar_member(self) -> AttributeMetadata | ValueObjectAttributeMetadata | None:
         if isinstance(self._member, AttributeMetadata):
-            return self._member if not self._path else None
+            return _single_scalar(self._dotted(), self._member) if not self._path else None
         if self._member is None or isinstance(self._member, AttributeMetadata) or not self._path:
             return None
         container: OccurrenceMetadata = self._member
@@ -505,7 +522,8 @@ class AttributeExpr[E, T]:
             if nested is None:
                 return None
             container = nested
-        return container.attribute(snake_to_camel(self._path[-1]))
+        leaf = container.attribute(snake_to_camel(self._path[-1]))
+        return None if leaf is None else _single_scalar(self._dotted(), leaf)
 
     def is_null(self) -> Predicate[E]:
         self._reject_non_nullable_null_check()
@@ -589,10 +607,12 @@ class AttributeExpr[E, T]:
         Expression itself exposes neither, so placement is authorable exactly where
         a direction is.
         """
+        self._resolved_scalar_member()
         return SortKey(OrderKey(attr=str(self.ref), direction="asc"))
 
     def desc(self) -> SortKey[E]:
         """A descending order-by key over this attribute (see :meth:`asc`)."""
+        self._resolved_scalar_member()
         return SortKey(OrderKey(attr=str(self.ref), direction="desc"))
 
     def set(self, value: T) -> AttributeAssignment[E]:
@@ -728,7 +748,7 @@ def judged_edit_violation(
     belongs to no model position at all.
     """
     try:
-        known_vo_violation = (
+        known_violation = (
             validate_member_authoring(
                 member.definition,
                 value,
@@ -736,10 +756,14 @@ def judged_edit_violation(
                 normalize_leaf=_typed_authoring_leaf,
                 path=owner,
             )
-            if not isinstance(member, AttributeMetadata) and value is not None
+            if value is not None
+            and (
+                not isinstance(member, AttributeMetadata)
+                or member.multiplicity is Multiplicity.MANY
+            )
             else None
         )
-        judge_assignment(member, value, known_vo_violation=known_vo_violation)
+        judge_assignment(member, value, known_violation=known_violation)
     except WriteAssignmentError as error:
         return EditViolation(
             code=EDIT_CODE_BY_RULE[error.rule],
@@ -803,7 +827,7 @@ class ElementAttributeExpr[V, T]:
                 code="query-expression-invalid",
                 message=f"{self._dotted()}: {name!r} is not a scalar leaf",
             )
-        return leaf
+        return _single_scalar(self._dotted(), leaf)
 
     def _literal(self, value: object) -> Scalar:
         neutral_type = None if self._shape is None else self._leaf().type

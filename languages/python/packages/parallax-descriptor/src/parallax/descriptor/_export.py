@@ -205,6 +205,8 @@ def _attribute(attribute: AttributeMetadata) -> dict[str, object]:
         "name": attribute.identity.name,
         "type": format_type_spelling(attribute.type),
     }
+    if attribute.multiplicity is not Multiplicity.ONE:
+        out["multiplicity"] = _MULTIPLICITIES[attribute.multiplicity]
     if attribute.storage.name != default_column_name(attribute.identity.name):
         out["column"] = attribute.storage.name
     if isinstance(attribute.primary_key, PrimaryKey):
@@ -350,6 +352,8 @@ def _vo_attribute(attribute: ValueObjectAttributeMetadata) -> dict[str, object]:
         "name": attribute.identity.name,
         "type": format_type_spelling(attribute.type),
     }
+    if attribute.multiplicity is not Multiplicity.ONE:
+        out["multiplicity"] = _MULTIPLICITIES[attribute.multiplicity]
     if attribute.nullable:
         out["nullable"] = True
     return out

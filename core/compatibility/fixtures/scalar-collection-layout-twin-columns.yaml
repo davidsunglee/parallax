@@ -1,0 +1,40 @@
+# Logical rows shared by both scalar collection transparency descriptors. Row 1
+# holds every scalar type in order with duplicates, and collections inside each
+# kind of occurrence; row 2 stores every collection empty and has no `detail`.
+parallax.compatibility.CollectionTwinItem:
+  - id: 1
+    flags: [true, false, true]
+    smalls: [3, -2, 3]
+    counts: [9007199254740993, 0]
+    ratios: [1.2, 0.0]
+    scores: [0.1, 2.5, 0.1]
+    amounts: ["1.50", "1.50", "7.00"]
+    tags: [b, a, b]
+    blobs: ["0aff", ""]
+    days: ["2024-02-29"]
+    clocks: ["13:05:07.000250"]
+    instants: ["2024-06-01T10:00:00.000000Z"]
+    tokens: ["12345678-1234-5678-1234-567812345678", "12345678-1234-5678-1234-567812345678"]
+    detail:
+      labels: [x, y, x]
+    parts:
+      - sku: a
+        marks: [2, 1, 2]
+        note:
+          words: [deep]
+      - sku: b
+        marks: []
+  - id: 2
+    flags: []
+    smalls: []
+    counts: []
+    ratios: []
+    scores: []
+    amounts: []
+    tags: []
+    blobs: []
+    days: []
+    clocks: []
+    instants: []
+    tokens: []
+    parts: []

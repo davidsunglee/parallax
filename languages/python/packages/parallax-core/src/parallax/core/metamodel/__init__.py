@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from parallax.core.metamodel._authoring_violation import AuthoringViolation
 from parallax.core.metamodel._compile import (
     METADATA_COMPILER,
     accept_metamodel,
@@ -125,7 +126,6 @@ from parallax.core.metamodel._values import (
     designate_framework_owned,
     inheritance_parent,
 )
-from parallax.core.metamodel._vo_document import VoDocumentViolation
 
 __all__ = [
     "APPLICATION_ASSIGNED",
@@ -146,6 +146,7 @@ __all__ = [
     "AttributeMetadata",
     "AttributePrimaryKey",
     "AttributeReference",
+    "AuthoringViolation",
     "CandidateMetamodel",
     "Cardinality",
     "Column",
@@ -225,7 +226,6 @@ __all__ = [
     "ValueObjectOccurrenceDeclaration",
     "ValueObjectShapeDeclaration",
     "ValueObjectShapeKey",
-    "VoDocumentViolation",
     "WriteAssignmentError",
     "accept_metamodel",
     "canonical_location_key",

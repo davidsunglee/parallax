@@ -77,12 +77,18 @@ class FakeValueObjectAttribute:
     """One scalar leaf of a Value Object occurrence."""
 
     def __init__(
-        self, identity: ValueObjectAttributeIdentity, type: NeutralType, *, nullable: bool = False
+        self,
+        identity: ValueObjectAttributeIdentity,
+        type: NeutralType,
+        *,
+        nullable: bool = False,
+        multiplicity: Multiplicity = Multiplicity.ONE,
     ) -> None:
         self.identity = identity
         self.type = type
         self.nullable = nullable
-        self.definition = Leaf(identity.name, type, nullable)
+        self.multiplicity = multiplicity
+        self.definition = Leaf(identity.name, type, nullable, multiplicity)
 
 
 class FakeNestedValueObject:

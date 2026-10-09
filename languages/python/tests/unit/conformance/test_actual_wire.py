@@ -303,3 +303,32 @@ def test_actual_wire_projection_rejects_a_narrowing_product_with_no_position(
 
     with pytest.raises(ValueError, match="narrowing resolves no position"):
         ActualWireProjection(model).published_row(query, {})
+
+
+def test_actual_wire_projects_scalar_collections_element_wise_and_keeps_corruption() -> None:
+    model = models.load_model(
+        models.default_models_dir() / "scalar-collection-layout-twin-columns.yaml"
+    )
+    projection = ActualWireProjection(model)
+    item = EntityIdentity("parallax.compatibility", "CollectionTwinItem")
+    entity = model.entity(item)
+    assert entity is not None
+    amounts = entity.attribute("amounts")
+    assert amounts is not None
+    parts = entity.value_object("parts")
+    assert parts is not None
+    detail = entity.value_object("detail")
+    assert detail is not None
+    view = storage_layout.view(model).entity(item)
+    assert view is not None
+
+    assert projection.scalar(amounts, (decimal.Decimal("1.5"),)) == ["1.50"]
+    assert projection.published_scalar(amounts, ["1.50", "1.5"]) == ["1.50", "1.5"]
+    with pytest.raises(ValueError, match="requires a sequence"):
+        projection.scalar(amounts, "1.50")
+    row = projection.table_row(view.layout, {"id": 1, "amounts": ["7.00", 7], "tags": "x"})
+    assert (row["amounts"], row["tags"], row["flags"]) == (["7.00", 7], "x", None)
+    assert projection.value_object(parts, [{"sku": "a", "marks": (2, 2)}]) == [
+        {"sku": "a", "marks": [2, 2]}
+    ]
+    assert projection.published_value_object(detail, {"labels": ["x", 1]}) == {"labels": ["x", 1]}

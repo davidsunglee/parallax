@@ -145,6 +145,7 @@ def _attribute_from(value: object, where: str) -> Attribute:
                 "readOnly",
                 "optimisticLocking",
                 "pkGeneration",
+                "multiplicity",
             }
         ),
         where,
@@ -169,6 +170,7 @@ def _attribute_from(value: object, where: str) -> Attribute:
             if pk is not None
             else (PkGenerator(strategy="none") if primary_key else None)
         ),
+        multiplicity=_vo_multiplicity(m, f"{where}.{name}"),
     )
 
 
@@ -312,12 +314,13 @@ def _inheritance_from(value: object, where: str) -> Inheritance:
 
 def _vo_attribute_from(value: object, where: str) -> ValueObjectAttribute:
     m = _mapping(value, where)
-    _closed(m, frozenset({"name", "type", "nullable"}), where)
+    _closed(m, frozenset({"name", "type", "nullable", "multiplicity"}), where)
     name = _str(m, "name", where)
     return ValueObjectAttribute(
         name=name,
         type=_str(m, "type", f"{where}.{name}"),
         nullable=_bool(m, "nullable", default=False, where=f"{where}.{name}"),
+        multiplicity=_vo_multiplicity(m, f"{where}.{name}"),
     )
 
 

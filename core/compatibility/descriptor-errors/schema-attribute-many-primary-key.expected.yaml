@@ -1,0 +1,7 @@
+# A scalar collection cannot be a primary key, so `many` + `primaryKey: true`
+# is rejected at the Attribute through its `not` keyword.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, attributes, 0]
+    rule: not

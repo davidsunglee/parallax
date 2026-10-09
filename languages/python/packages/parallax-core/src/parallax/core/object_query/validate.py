@@ -39,6 +39,7 @@ from parallax.core.predicate import (
     check_attribute_reference,
     effective_set,
     relationship_target,
+    require_single_scalar,
     resolve_subtype_selection,
     root_position,
     validate_narrow,
@@ -69,6 +70,7 @@ def validate_object_query(
         member = check_attribute_reference(key.attr, model, result)
         if member is None:
             raise ValueError(f"{key.attr!r} names no declared ordering attribute")
+        require_single_scalar(key.attr, member)
         order_terms.append(ValidatedOrderTerm(member, key.direction or "asc", key.nulls or "last"))
     includes = tuple(validate_include_path(path, model, queried) for path in query.includes)
     narrowed = (

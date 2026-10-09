@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from . import portable_literal
+from . import document_codec, portable_literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,10 +18,16 @@ TEMPORAL_INFINITY = _TemporalInfinity()
 
 @dataclass(frozen=True, slots=True)
 class DeclaredContributor:
-    """The declaration facts needed to spell and convert one contributed column."""
+    """The declaration facts needed to spell and convert one contributed column.
+
+    A scalar collection's column is a structured document, so its
+    ``neutral_type`` is ``json`` and ``element_type`` names the scalar type each
+    element of its stored array spells.
+    """
 
     neutral_type: str
     max_length: int | None = None
+    element_type: str | None = None
 
     def fixture_value(self, value: Any) -> Any:
         """Decode one canonical fixture value for provider storage."""
@@ -29,6 +35,8 @@ class DeclaredContributor:
             return None
         if self._is_temporal_infinity(value):
             return TEMPORAL_INFINITY
+        if self.element_type is not None and isinstance(value, list):
+            return [document_codec.encode_leaf(self.element_type, element) for element in value]
         return portable_literal.decode(value, self.neutral_type)
 
     def provider_bind(self, value: Any) -> Any:

@@ -75,7 +75,14 @@ _MATERIALIZATION_KEY_COMPATIBILITY_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-119", "m-inheritance-120"}
 )
 _STORAGE_LAYOUT_READS: Final[frozenset[str]] = frozenset(
-    {"m-storage-layout-009", "m-storage-layout-010"}
+    {
+        "m-storage-layout-009",
+        "m-storage-layout-010",
+        "m-storage-layout-035",
+        "m-storage-layout-036",
+        "m-storage-layout-039",
+        "m-storage-layout-040",
+    }
 )
 _DOCUMENT_CODEC_READS: Final[frozenset[str]] = frozenset(
     f"m-document-codec-{n:03d}" for n in range(3, 14)
@@ -184,7 +191,7 @@ _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     }
 )
 _LAYOUT_TWIN_WRITES: Final[frozenset[str]] = frozenset(
-    {f"m-storage-layout-{n:03d}" for n in range(29, 35)}
+    {f"m-storage-layout-{n:03d}" for n in (*range(29, 35), 37, 38)}
     | {"m-temporal-write-013", "m-temporal-write-014"}
 )
 _FLOAT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(

@@ -152,7 +152,7 @@ def prepare_effective_change(
 def _prepared_member(member: DocumentMember, value: object) -> object:
     """:func:`_canonical_member`'s form, always built anew in plain containers."""
     if isinstance(member, Leaf):
-        return value
+        return _scalar_zero(member, value)
     if member.multiplicity is not Multiplicity.MANY:
         return _prepared_document(member.shape, value) if _is_document(value) else value
     if value is None:
@@ -179,6 +179,7 @@ def _restores(member: DocumentMember, value: object, cell: object, absent: objec
     if cell is absent:
         return False
     if isinstance(member, Leaf):
+        cell = _scalar_zero(member, cell)
         return value == cell or _structurally_equal(value, cell)
     return _occurrence_restores(member, value, cell, absent)
 
@@ -219,7 +220,7 @@ def _document_restores(
         held += 1
         assigned = value[member.name]
         if isinstance(member, Leaf):
-            if not _structurally_equal(assigned, stored):
+            if not _structurally_equal(assigned, _scalar_zero(member, stored)):
                 return False
         elif not _occurrence_restores(member, assigned, stored, absent):
             return False
@@ -249,7 +250,7 @@ def _canonical_document(shape: MemberShape, document: Mapping[str, object]) -> M
 
 def _canonical_member(member: DocumentMember, value: object) -> object:
     if isinstance(member, Leaf):
-        return value
+        return _scalar_zero(member, value)
     if member.multiplicity is not Multiplicity.MANY:
         if not _is_document(value):
             return value
@@ -306,5 +307,11 @@ def _is_array(value: object) -> TypeIs[Sequence[object]]:
     )
 
 
+def _scalar_zero(member: Leaf, value: object) -> object:
+    """A scalar collection's null as the empty collection it denotes; every
+    other scalar value as itself."""
+    return [] if value is None and member.multiplicity is Multiplicity.MANY else value
+
+
 def _is_many(member: DocumentMember) -> bool:
-    return isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY
+    return member.multiplicity is Multiplicity.MANY

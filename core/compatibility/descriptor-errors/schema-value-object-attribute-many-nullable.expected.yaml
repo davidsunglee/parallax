@@ -1,0 +1,8 @@
+# A scalar collection inside a Value Object is non-null exactly as one on an
+# Entity is, so `many` + `nullable: true` on a Value Object Attribute fails its
+# `not` keyword at that Attribute.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, valueObjects, 0, attributes, 0]
+    rule: not

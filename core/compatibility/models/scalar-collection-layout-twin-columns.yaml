@@ -1,0 +1,73 @@
+# Columns member of the scalar collection transparency twin. Every scalar type is
+# declared once as a top-level collection, and collections also sit inside a
+# nullable `one` (`detail.labels`), a `many` (`parts[].marks`), and a `one` nested
+# in that `many` (`parts[].note.words`). Under Columns each top-level collection
+# owns one structured-document Column holding its canonical array, while the nested
+# ones ride inside their occurrence's own Column. The Document twin differs only by
+# the root-owned layout block.
+entity:
+  name: CollectionTwinItem
+  namespace: parallax.compatibility
+  table: collection_twin
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: flags
+      type: boolean
+      multiplicity: many
+    - name: smalls
+      type: int32
+      multiplicity: many
+    - name: counts
+      type: int64
+      multiplicity: many
+    - name: ratios
+      type: float32
+      multiplicity: many
+    - name: scores
+      type: float64
+      multiplicity: many
+    - name: amounts
+      type: decimal(12,2)
+      multiplicity: many
+    - name: tags
+      type: string
+      multiplicity: many
+    - name: blobs
+      type: bytes
+      multiplicity: many
+    - name: days
+      type: date
+      multiplicity: many
+    - name: clocks
+      type: time
+      multiplicity: many
+    - name: instants
+      type: timestamp
+      multiplicity: many
+    - name: tokens
+      type: uuid
+      multiplicity: many
+  valueObjects:
+    - name: detail
+      nullable: true
+      attributes:
+        - name: labels
+          type: string
+          multiplicity: many
+    - name: parts
+      multiplicity: many
+      attributes:
+        - name: sku
+          type: string
+        - name: marks
+          type: int32
+          multiplicity: many
+      valueObjects:
+        - name: note
+          nullable: true
+          attributes:
+            - name: words
+              type: string
+              multiplicity: many

@@ -19,7 +19,7 @@ complete Issue Code set is:
 |---|---|
 | `relationship-join-source-invalid` | A defining join's source Attribute is not a local Attribute of the declaring Entity. |
 | `relationship-join-target-invalid` | A defining join's target Attribute does not belong to the target Entity established by the declaration reference. |
-| `relationship-join-type-mismatch` | Resolved defining join endpoints have unequal declared neutral types. |
+| `relationship-join-type-mismatch` | Resolved defining join endpoints have unequal declared neutral types or multiplicities. |
 | `relationship-cardinality-join-mismatch` | Cardinality and join orientation cannot identify the required one/many sides. |
 | `relationship-reverse-cycle` | A reverse declaration names another reverse declaration, directly or transitively. |
 | `relationship-reverse-not-defining` | A reverse declaration does not resolve to one defining declaration. |
@@ -31,7 +31,7 @@ complete Issue Code set is:
 Reference absence is a foundational `m-metamodel` issue, not a second
 relationship-owned missing-reference code.
 
-Every defining join MUST have exactly equal declared neutral scalar types at its resolved source and target, including inherited Attributes. Int32 differs from Int64, and String differs from Uuid; input coercion, Wire spelling, physical layout, and database casts do not establish equality. Existing ownership, key orientation, cardinality, ordering, and nullability rules still apply.
+Every defining join MUST have exactly equal declared neutral scalar types at its resolved source and target, including inherited Attributes. Int32 differs from Int64, and String differs from Uuid; input coercion, Wire spelling, physical layout, and database casts do not establish equality. Both endpoints MUST also have equal multiplicity; because a primary key is never a scalar collection (`m-metamodel`), an endpoint that is a scalar collection always fails this rule or the cardinality rule. Existing ownership, key orientation, cardinality, ordering, and nullability rules still apply.
 
 A type mismatch is reported only when both endpoints resolve. Its location is the defining Relationship Declaration, its related locations are the join-addressed source and target Attributes in that order, and its message identifies both addressed endpoints and declared types. An inherited Attribute supplies its ancestor's declared type without replacing the descendant-addressed diagnostic location. Type, cardinality, and ordering defects aggregate independently after foundational resolution succeeds. Reverse declarations derive the same validated join and emit no second type-mismatch issue.
 

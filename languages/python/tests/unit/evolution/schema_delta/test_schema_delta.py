@@ -108,6 +108,26 @@ def test_provisioning_map_value_objects_to_jsonb() -> None:
     assert "primary key (id)" in ddl
 
 
+def test_provisioning_maps_each_scalar_collection_to_its_own_jsonb_column() -> None:
+    # The document tier decides the physical type before the element type is
+    # read, so a `bytes` or `decimal` collection is no `bytea` or `numeric` Column.
+    (columns,) = _statements(_MODELS["scalar-collection-layout-twin-columns"])
+    (document,) = _statements(_MODELS["scalar-collection-layout-twin-document"])
+
+    assert columns == (
+        "create table collection_twin (id bigint not null, flags jsonb not null, "
+        "smalls jsonb not null, counts jsonb not null, ratios jsonb not null, "
+        "scores jsonb not null, amounts jsonb not null, tags jsonb not null, "
+        "blobs jsonb not null, days jsonb not null, clocks jsonb not null, "
+        "instants jsonb not null, tokens jsonb not null, detail jsonb, "
+        "parts jsonb not null, primary key (id))"
+    )
+    assert document == (
+        "create table collection_twin (id bigint not null, payload jsonb not null, "
+        "primary key (id))"
+    )
+
+
 def test_provisioning_temporal_pk_is_business_key_plus_to_columns() -> None:
     # A temporal entity's physical PK is the business key plus each axis's end column
     # (m-storage-layout): audit-only Balance keys on (bal_id, out_z) so successive

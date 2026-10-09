@@ -1,0 +1,8 @@
+entity:
+  name: Order
+  table: orders
+  attributes:
+    - name: codes
+      type: string
+      multiplicity: many
+      primaryKey: true
