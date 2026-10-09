@@ -349,6 +349,20 @@ def test_cheap_inequality_decides_nothing_about_documents_or_generated_values() 
     )
 
 
+def test_cheap_inequality_reads_every_stated_scalar_beyond_what_either_row_executes() -> None:
+    # An equal executed member and an executed occurrence prove nothing; a
+    # differing scalar neither row executes still proves the rows unequal.
+    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    carried = _successor(CarriedFrom(_predecessor()))
+    executed = {_ID: 7, _ROUTE: {"name": "Elsewhere", "stops": ()}}
+    rerouted = _successor(ChangedFrom(_predecessor()), executed)
+    retitled = _successor(ChangedFrom(_predecessor()), executed, title="Inland Run")
+
+    assert not preparer.proven_unequal_non_interval(_EXPEDITION, carried, rerouted)
+    assert preparer.proven_unequal_non_interval(_EXPEDITION, carried, retitled)
+    assert preparer.proven_unequal_non_interval(_EXPEDITION, retitled, carried)
+
+
 def test_rows_of_two_entities_or_misaligned_cells_are_never_equal() -> None:
     preparer = LayoutPayloadPreparer(_EXPEDITIONS)
     payload = preparer.row(_EXPEDITION, _successor(NEW_LINEAGE))

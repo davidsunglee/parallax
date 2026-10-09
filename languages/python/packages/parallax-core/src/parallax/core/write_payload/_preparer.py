@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Container, Hashable, Mapping, Sequence
+from itertools import chain
 from typing import Final, cast
 
 from parallax.core import storage_layout
@@ -26,6 +27,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.storage_layout import (
+    ColumnSlot,
     ColumnTier,
     DocumentResidentSelection,
     EntityLayoutView,
@@ -59,24 +61,22 @@ class LayoutPayloadPreparer:
     answers. Nothing here chooses authority, preservation, or topology.
     """
 
-    __slots__ = ("_comparisons", "_intervals", "_layouts", "_residences")
+    __slots__ = ("_comparisons", "_entities", "_intervals", "_layouts")
 
     def __init__(self, model: Metamodel) -> None:
         self._layouts = storage_layout.view(model)
         self._intervals: dict[EntityIdentity, frozenset[AttributeIdentity]] = {}
-        self._residences: dict[EntityIdentity, _Residence | None] = {}
+        self._entities: dict[EntityIdentity, _Table] = {}
         self._comparisons: dict[EntityIdentity, _Comparison] = {}
 
     def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
-        view = self._view(entity)
-        contributors, values = _row_cells(view, self._residence(entity, view), write_row)
+        contributors, values = _row_cells(self._table(entity), write_row)
         return RowPayload(entity=entity, source=write_row, contributors=contributors, values=values)
 
     def assignments(
         self, entity: EntityIdentity, assignments: PlannedAssignments
     ) -> AssignmentPayload:
-        view = self._view(entity)
-        contributors, values = _assignment_cells(view, self._residence(entity, view), assignments)
+        contributors, values = _assignment_cells(self._table(entity), assignments)
         return AssignmentPayload(
             entity=entity, assignments=assignments, contributors=contributors, values=values
         )
@@ -93,14 +93,19 @@ class LayoutPayloadPreparer:
         generated values, members only one row states, and occurrences decide
         nothing here.
         """
-        documented = self._comparison(entity).scalars
-        right_attributes = right.row.attributes
-        for identity, value in left.row.attributes.items():
+        # A member either row executes is where neighbours usually differ, so it
+        # is compared before the rest; an executed occurrence is no scalar and
+        # its lookups miss.
+        documented = cast("Mapping[Hashable, bool]", self._comparison(entity).scalars)
+        left_attributes = cast("Mapping[Hashable, object]", left.row.attributes)
+        right_attributes = cast("Mapping[Hashable, object]", right.row.attributes)
+        for identity in chain(left.executed, right.executed, left_attributes):
             json = documented.get(identity)
-            if json is None:  # an interval member
+            if json is None:  # an interval member or an occurrence
                 continue
+            value = left_attributes.get(identity, _UNSTATED)
             other = right_attributes.get(identity, _UNSTATED)
-            if other is _UNSTATED or _generated(value) or _generated(other):
+            if value is _UNSTATED or other is _UNSTATED or _generated(value) or _generated(other):
                 continue
             if _scalar_differs(json, value, other):
                 return True
@@ -168,18 +173,16 @@ class LayoutPayloadPreparer:
         )
 
     def _view(self, entity: EntityIdentity) -> EntityLayoutView:
-        view = self._layouts.entity(entity)
-        if view is None:
-            raise WritePlanningError(f"{entity.name!r}: write target has no effective table")
-        return view
+        return self._table(entity).view
 
-    def _residence(self, entity: EntityIdentity, view: EntityLayoutView) -> _Residence | None:
-        if entity in self._residences:
-            return self._residences[entity]
-        resident = view.document_residents
-        residence = None if resident is None else _Residence(resident)
-        self._residences[entity] = residence
-        return residence
+    def _table(self, entity: EntityIdentity) -> _Table:
+        table = self._entities.get(entity)
+        if table is None:
+            view = self._layouts.entity(entity)
+            if view is None:
+                raise WritePlanningError(f"{entity.name!r}: write target has no effective table")
+            table = self._entities[entity] = _Table(view)
+        return table
 
     def _comparison(self, entity: EntityIdentity) -> _Comparison:
         comparison = self._comparisons.get(entity)
@@ -236,6 +239,19 @@ class _Comparison:
         self.scalars = scalars
 
 
+class _Table:
+    """One Entity's Table Layout view, resolved once per preparer: the view, its
+    slots in Table Layout order, and its document-resident members."""
+
+    __slots__ = ("columns", "residence", "view")
+
+    def __init__(self, view: EntityLayoutView) -> None:
+        self.view = view
+        self.columns: tuple[ColumnSlot, ...] = tuple(view.columns)
+        resident = view.document_residents
+        self.residence = None if resident is None else _Residence(resident)
+
+
 class _Residence:
     """One Table's document-resident members, resolved once per preparer: each
     member's binding and path in canonical logical placement order, and the
@@ -268,7 +284,7 @@ class _Residence:
 
 # One arm per Column contributor kind, in Table Layout slot order. It runs per written row
 # and visits every slot, so the arms stay inline rather than behind a per-slot call.
-def _row_cells(view: EntityLayoutView, residence: _Residence | None, write_row: WriteRow) -> _Cells:
+def _row_cells(table: _Table, write_row: WriteRow) -> _Cells:
     """``write_row``'s complete persisted cells, in Table Layout slot order.
 
     Every member a row names occupies its slot. A Value Object occurrence with
@@ -279,6 +295,8 @@ def _row_cells(view: EntityLayoutView, residence: _Residence | None, write_row: 
     object included (`m-storage-layout`). The table-per-hierarchy discriminator
     stores the concrete subtype's own tag.
     """
+    view = table.view
+    residence = table.residence
     row = write_row.row
     attributes = row.attributes
     value_objects = row.value_objects
@@ -286,7 +304,7 @@ def _row_cells(view: EntityLayoutView, residence: _Residence | None, write_row: 
     contributors: list[Hashable] = []
     values: list[object] = []
     matched = 0
-    for slot in view.columns:
+    for slot in table.columns:
         contributor = slot.contributor
         if isinstance(contributor, AttributeIdentity):
             if contributor not in attributes:
@@ -317,9 +335,7 @@ def _row_cells(view: EntityLayoutView, residence: _Residence | None, write_row: 
     return tuple(contributors), tuple(values)
 
 
-def _assignment_cells(
-    view: EntityLayoutView, residence: _Residence | None, assignments: PlannedAssignments
-) -> _Cells:
+def _assignment_cells(table: _Table, assignments: PlannedAssignments) -> _Cells:
     """The persisted values ``assignments`` writes, in Table Layout slot order.
 
     A revising statement writes only what it assigns: the shared Structured
@@ -327,12 +343,14 @@ def _assignment_cells(
     it does not name survives, and an assigned occurrence replaces its whole
     subtree at its own path whatever its cardinality.
     """
+    view = table.view
+    residence = table.residence
     attributes = assignments.attributes
     value_objects = assignments.value_objects
     contributors: list[Hashable] = []
     values: list[object] = []
     matched = 0
-    for slot in view.columns:
+    for slot in table.columns:
         contributor = slot.contributor
         if isinstance(contributor, AttributeIdentity):
             if contributor not in attributes:
