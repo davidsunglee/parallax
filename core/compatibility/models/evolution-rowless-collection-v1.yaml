@@ -1,8 +1,3 @@
-# Folio (v1): the earlier endpoint of the ROWLESS SCALAR COLLECTION scenario.
-#
-# This descriptor is an instance of core/schemas/metamodel.schema.json. The
-# abstract `Sketch` composes no concrete subtype of its own, so it resolves to an
-# empty effective concrete set while the family stays legal on `Page`.
 entities:
   - name: Folio
     namespace: parallax.compatibility

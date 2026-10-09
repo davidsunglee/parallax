@@ -1,11 +1,3 @@
-# Folio (v2): the later endpoint of the ROWLESS SCALAR COLLECTION scenario.
-#
-# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
-# models/evolution-rowless-collection-v1.yaml with the rowless `Sketch`
-# declaring the scalar collection `strokes`; nothing else differs. No concrete
-# subtype composes that position, so no stored shape carries the collection and
-# no insert names it, while the family's shared Table still materializes its
-# Structured Column.
 entities:
   - name: Folio
     namespace: parallax.compatibility

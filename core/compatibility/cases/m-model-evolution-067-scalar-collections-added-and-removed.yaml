@@ -1,7 +1,3 @@
-# Adding and removing scalar collections (m-model-evolution): a collection is
-# never nullable, so under a shape that survives each addition and removal is a
-# required member's, coordinated for both reasons. Its empty default supplies no
-# backfill contract.
 tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
 shape: evolution
 when:

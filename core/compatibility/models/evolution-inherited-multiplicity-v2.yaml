@@ -1,10 +1,3 @@
-# Gear and Tool (v2): the later endpoint of the INHERITED SCALAR MULTIPLICITY
-# scenario.
-#
-# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
-# models/evolution-inherited-multiplicity-v1.yaml with every scalar collection
-# declared single and every single scalar beside them declared a collection of
-# the same type; nothing else differs.
 entities:
   - name: Gear
     namespace: parallax.compatibility

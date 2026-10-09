@@ -1,9 +1,3 @@
-# Changing an inherited scalar member between ONE and MANY (m-model-evolution):
-# a member declared on a root or a concrete subtype, under table-per-hierarchy
-# with `Columns` and table-per-concrete-subtype with Relational Document Layout,
-# needs both reasons because a shape stored under its position survives. The
-# rowless `Prototype` stores no value to carry across, so its member's move
-# needs the authoring surface alone.
 tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

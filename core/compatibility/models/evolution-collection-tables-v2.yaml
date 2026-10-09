@@ -1,13 +1,3 @@
-# Anchor and its new neighbours (v2): the later endpoint of the SCALAR
-# COLLECTION TABLES scenario.
-#
-# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
-# models/evolution-collection-tables-v1.yaml beside four arriving owners of
-# scalar collections: a standalone Entity under `Columns`, one under Relational
-# Document Layout, a table-per-hierarchy family whose root and one concrete
-# subtype declare collections, and a table-per-concrete-subtype family whose
-# root and one concrete subtype declare collections. Every declared element type
-# is one whose single scalar would take a native Column.
 entities:
   - name: Anchor
     namespace: parallax.compatibility
