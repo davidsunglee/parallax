@@ -289,6 +289,7 @@ def _member_metadata(
             type=leaf.type,
             storage=Column(leaf.name),
             nullable=leaf.nullable,
+            multiplicity=leaf.multiplicity,
         )
     for nested in shape.shape.value_objects:
         members[shape.name_to_py[nested.name]] = value_object_metadata(

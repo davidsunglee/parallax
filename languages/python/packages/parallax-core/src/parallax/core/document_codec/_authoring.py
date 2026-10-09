@@ -31,13 +31,20 @@ element with that same leaf, so it never reads the leaf's multiplicity."""
 
 
 class SourceAccess(Protocol):
-    """Read document names, named members, and collection elements from a source."""
+    """Read document names, named members, and collection elements from a source.
+
+    ``elements`` reads a ``many`` occurrence's documents and ``scalar_elements``
+    a scalar collection's values; each answers ``None`` for a carrier its
+    frontend does not accept as that collection.
+    """
 
     def names(self, source: object, /) -> Iterable[str] | None: ...
 
     def member(self, source: object, name: str, /) -> object: ...
 
     def elements(self, source: object, /) -> Iterable[object] | None: ...
+
+    def scalar_elements(self, source: object, /) -> Iterable[object] | None: ...
 
 
 @runtime_checkable
@@ -64,6 +71,9 @@ class _MappingSourceAccess:
             return None
         return cast("Sequence[object]", source)
 
+    def scalar_elements(self, source: object, /) -> Iterable[object] | None:
+        return self.elements(source)
+
 
 @dataclass(frozen=True, slots=True)
 class _BorrowedSourceAccess:
@@ -79,6 +89,11 @@ class _BorrowedSourceAccess:
 
     def elements(self, source: object, /) -> Iterable[object] | None:
         return MAPPING_SOURCE_ACCESS.elements(source)
+
+    def scalar_elements(self, source: object, /) -> Iterable[object] | None:
+        if type(source) is not tuple:
+            return None
+        return cast("tuple[object, ...]", source)
 
 
 MAPPING_SOURCE_ACCESS: SourceAccess = _MappingSourceAccess()
@@ -317,7 +332,7 @@ def _author_scalar_many(
     never nullable."""
     if source is None:
         return None, None
-    elements = source_access.elements(source)
+    elements = source_access.scalar_elements(source)
     if elements is None:
         retained = retain_document_value(source) if produce else source
         return retained, AuthoringViolation("", "not-a-list", source)

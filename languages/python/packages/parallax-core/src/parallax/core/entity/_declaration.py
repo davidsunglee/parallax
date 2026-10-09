@@ -26,8 +26,17 @@ from pydantic._internal._model_construction import ModelMetaclass
 
 from parallax.core.base import FLOAT32, INT32, Decimal, Float32, Int32, NeutralType
 from parallax.core.base import infer_neutral_type as _infer_neutral_type
+from parallax.core.document_codec._authoring import (
+    BORROWED_SOURCE_ACCESS,
+    validate_member_authoring,
+)
 from parallax.core.entity._errors import EntityDefinitionError
-from parallax.core.entity._expressions import AttributeRef, RelationshipRef, snake_to_camel
+from parallax.core.entity._expressions import (
+    AttributeRef,
+    RelationshipRef,
+    snake_to_camel,
+    typed_authoring_leaf,
+)
 from parallax.core.entity._instance_state import PublicationPlan
 from parallax.core.entity._instance_state import install as install_publication_plan
 from parallax.core.entity._members import (
@@ -58,6 +67,7 @@ from parallax.core.metamodel import (
     ExactEntityReference,
     IndexIdentity,
     IndexMetadata,
+    Leaf,
     MemberShape,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
@@ -1055,6 +1065,7 @@ def _build_value_object(
     nested: list[NestedValueObjectOccurrenceDeclaration] = []
     py_to_name: dict[str, str] = {}
     nested_classes: dict[str, type] = {}
+    collections: dict[str, Leaf] = {}
     shapes: dict[str, _Shape] = {}
 
     body = _body_members(cls_name, annotations, ns, DeclarationKind.VALUE_OBJECT)
@@ -1082,16 +1093,24 @@ def _build_value_object(
             )
             continue
         _reject_nullable_collection(shape, where)
-        attributes.append(
-            ValueObjectAttributeDeclaration(
-                name=canonical,
-                type=_scalar_type(shape.base, spec, where),
-                nullable=shape.nullable,
-                multiplicity=shape.multiplicity,
-            )
+        declared = ValueObjectAttributeDeclaration(
+            name=canonical,
+            type=_scalar_type(shape.base, spec, where),
+            nullable=shape.nullable,
+            multiplicity=shape.multiplicity,
         )
+        attributes.append(declared)
+        if declared.multiplicity is Multiplicity.MANY:
+            collections[py_name] = declared.definition
 
-    _install_fields(annotations, ns, shapes, nested_classes, framework_owned=frozenset())
+    _install_fields(
+        annotations,
+        ns,
+        shapes,
+        nested_classes,
+        collections,
+        framework_owned=frozenset(),
+    )
     declared_attributes = tuple(attributes)
     declared_nested = tuple(nested)
     ns[_SHAPE] = ValueObjectShape(
@@ -1162,6 +1181,7 @@ def _build_entity(
     relationship_shapes: dict[str, RelationshipAnnotation] = {}
     pk_py: set[str] = set()
     vo_classes: dict[str, type] = {}
+    collections: dict[str, Leaf] = {}
     shapes: dict[str, _Shape] = {}
 
     body = _body_members(cls_name, annotations, ns, DeclarationKind.ENTITY)
@@ -1211,6 +1231,8 @@ def _build_entity(
         attribute = _attribute(identity, canonical, column, attr_spec, shape, where)
         attributes.append(attribute)
         members[canonical] = attribute
+        if attribute.multiplicity is Multiplicity.MANY:
+            collections[py_name] = attribute.definition
 
     # Both frontends derive the designation through the one shared rule, and the
     # descriptors installed below carry the designated Metadata — which is what
@@ -1223,7 +1245,9 @@ def _build_entity(
         for attribute in declared_attributes
         if attribute.framework_owned
     )
-    _install_fields(annotations, ns, shapes, vo_classes, framework_owned=framework_owned_py)
+    _install_fields(
+        annotations, ns, shapes, vo_classes, collections, framework_owned=framework_owned_py
+    )
     container = _container(cls_name, header)
     ns[_DECLARATION] = EntityDeclaration(
         identity=identity,
@@ -2058,6 +2082,7 @@ def _install_fields(
     ns: dict[str, object],
     shapes: dict[str, _Shape],
     vo_classes: dict[str, type],
+    collections: Mapping[str, Leaf],
     *,
     framework_owned: frozenset[str],
 ) -> None:
@@ -2086,9 +2111,8 @@ def _install_fields(
     for py_name, vo_class in vo_classes.items():
         multiplicity = shapes[py_name].multiplicity
         ns[f"_validate_vo_{py_name}"] = _value_object_validator(py_name, vo_class, multiplicity)
-    for py_name, shape in shapes.items():
-        if shape.multiplicity is Multiplicity.MANY and py_name not in vo_classes:
-            ns[f"_validate_collection_{py_name}"] = _scalar_collection_validator(py_name)
+    for py_name, leaf in collections.items():
+        ns[f"_validate_collection_{py_name}"] = _scalar_collection_validator(py_name, leaf)
     ns["__annotations__"] = annotations
 
 
@@ -2128,13 +2152,16 @@ def _framework_owned_validator(py_name: str) -> Any:
     return field_validator(py_name, mode="before")(bound)
 
 
-def _scalar_collection_validator(py_name: str) -> Any:
-    """A ``mode="before"`` validator enforcing "a scalar collection is a tuple".
+def _scalar_collection_validator(py_name: str, leaf: Leaf) -> Any:
+    """A ``mode="before"`` validator enforcing "a scalar collection is a tuple of
+    admissible elements".
 
-    Pydantic would otherwise accept any sequence for a ``tuple[X, ...]`` field;
-    the Python binding's collection input follows the Value Object Many
-    convention instead, so the exact immutable carrier is required here and each
-    element then takes its scalar field's ordinary validation.
+    Pydantic would otherwise accept any sequence for a ``tuple[X, ...]`` field
+    and coerce elements the Python input policy refuses — ``True`` into an
+    integer, a ``float`` into a ``Decimal`` — erasing them before any write
+    admission sees them. So the exact immutable carrier is required here, and
+    every element is judged by the same validation-only authoring an edit or a
+    ``.set(...)`` applies before Pydantic's own element validation runs.
     """
 
     def _validate(_cls: type, value: object) -> object:
@@ -2145,6 +2172,18 @@ def _scalar_collection_validator(py_name: str) -> Any:
         if carrier is not tuple:
             raise TypeError(
                 f"{py_name}: a scalar collection member requires a tuple, not {carrier.__name__!r}"
+            )
+        violation = validate_member_authoring(
+            leaf,
+            value,
+            source_access=BORROWED_SOURCE_ACCESS,
+            normalize_leaf=typed_authoring_leaf,
+            path=py_name,
+        )
+        if violation is not None:
+            raise ValueError(
+                f"{py_name}{violation.path}: value {violation.value!r} does not match the "
+                f"declared element type {leaf.type}"
             )
         return value
 

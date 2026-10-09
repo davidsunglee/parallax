@@ -1,10 +1,11 @@
-"""Wire writes refuse a malformed scalar collection before any statement.
+"""Writes refuse a malformed scalar collection before any statement.
 
 A collection is a whole sequence of non-null elements. A row or an assignment
 that binds anything else is refused by the existing write vocabulary, at the
 collection or at the failing element's position: a non-sequence or a null
 element is a value-type mismatch, a null collection a missing required value,
-and an element its type cannot decode the Wire literal rule. The scripted port
+and an element its type cannot decode the Wire literal rule. A Typed write
+accepts only a tuple, even where no ``.set(...)`` judged the assignment first. The scripted port
 is given no statement to answer, so a refusal that reached the database would
 fail the script instead.
 """
@@ -13,10 +14,13 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 
 from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core.entity import AttributeAssignment
+from parallax.core.entity._expressions import AttributeRef
 from parallax.core.execution import ExecutionFailure
 from parallax.snapshot import Transaction, connect
 from tests._support.db_port import ScriptedAdapter, Transact
@@ -76,3 +80,12 @@ def test_a_predicate_assignment_refuses_a_malformed_collection(tags: object, mes
     )
 
     assert message in str(refusal)
+
+
+@pytest.mark.parametrize("tags", [["urgent"], range(1)], ids=["list", "range"])
+def test_a_typed_assignment_no_set_judged_refuses_any_carrier_but_a_tuple(tags: object) -> None:
+    unjudged: AttributeAssignment[Any] = AttributeAssignment(AttributeRef(_ORDER, "tags"), tags)
+    refusal = _refusal(lambda tx: tx.amend_where(Order.where(Order.id == 1), unjudged))
+
+    assert "tags: value" in str(refusal)
+    assert "a `many` attribute must bind" in str(refusal)

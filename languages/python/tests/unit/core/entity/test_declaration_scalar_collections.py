@@ -14,6 +14,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
+from pydantic import ValidationError
 
 from parallax.core import (
     MANY_TO_ONE,
@@ -90,6 +91,30 @@ def test_construction_requires_an_exact_tuple() -> None:
         Order(id=1, tags=cast("Any", ["a"]))
     with pytest.raises(TypeError, match="requires a tuple"):
         Detail(labels=cast("Any", ["a"]))
+
+
+@pytest.mark.parametrize(
+    ("member", "authored", "location"),
+    [
+        ("marks", (1, True), r"marks\[1\]"),
+        ("marks", (2**40,), r"marks\[0\]"),
+        ("amounts", (Decimal("1.50"), 1.5), r"amounts\[1\]"),
+    ],
+    ids=["bool-integer", "out-of-width", "float-decimal"],
+)
+def test_construction_judges_each_element_as_an_edit_does(
+    member: str, authored: tuple[object, ...], location: str
+) -> None:
+    with pytest.raises(ValidationError, match=location):
+        Order(id=1, **{member: authored})
+    with pytest.raises(EditError, match=location):
+        Order(id=1).edit(**{member: authored})
+
+
+def test_value_object_construction_judges_each_element() -> None:
+    with pytest.raises(ValidationError, match=r"weights\[0\]"):
+        Detail(weights=cast("Any", ("heavy",)))
+    assert Detail(weights=(1, 2.5)).weights == (1.0, 2.5)
 
 
 @pytest.mark.parametrize(
@@ -183,6 +208,27 @@ def test_a_set_assignment_states_the_whole_collection() -> None:
     assert Order.tags.set(()).value == ()
     with pytest.raises(EditError, match=r"Order\.marks\[0\]"):
         Order.marks.set((2**40,))
+
+
+@pytest.mark.parametrize("carrier", [["a"], range(2)], ids=["list", "range"])
+def test_an_assignment_refuses_any_carrier_but_a_tuple(carrier: object) -> None:
+    order = Order(id=1)
+    refusals: list[EditError] = []
+    for assign in (
+        lambda: Order.tags.set(cast("Any", carrier)),
+        lambda: order.edit(tags=carrier),
+        lambda: Detail().edit(labels=carrier),
+    ):
+        with pytest.raises(EditError, match="must bind") as caught:
+            assign()
+        refusals.append(caught.value)
+    assert [error.violations[0].code for error in refusals] == ["edit-value-mismatch"] * 3
+
+
+def test_a_value_object_edit_assigns_its_whole_collection() -> None:
+    assert Detail(labels=("x",)).edit(labels=("y", "y")).labels == ("y", "y")
+    with pytest.raises(EditError, match=r"Detail\.labels\[0\]"):
+        Detail().edit(labels=(1,))
 
 
 def test_a_nested_collection_is_assigned_only_through_its_owning_occurrence() -> None:

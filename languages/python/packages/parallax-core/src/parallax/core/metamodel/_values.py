@@ -406,6 +406,8 @@ class AttributeMetadata:
     def __post_init__(self) -> None:
         from parallax.core.metamodel._shape import Leaf
 
+        if self.multiplicity is Multiplicity.MANY:
+            _check_collection_attribute(self)
         object.__setattr__(
             self,
             "definition",
@@ -416,8 +418,6 @@ class AttributeMetadata:
                 multiplicity=self.multiplicity,
             ),
         )
-        if self.multiplicity is Multiplicity.MANY:
-            _check_collection_attribute(self)
         if isinstance(self.primary_key, PrimaryKey):
             if isinstance(self.primary_key.generation, Max | Sequence):
                 if not isinstance(self.type, Int32 | Int64):

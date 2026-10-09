@@ -26,7 +26,7 @@ complete Issue Code set is:
 | `relationship-reverse-inconsistent` | A reverse declaration's source/target orientation is inconsistent with the defining direction. |
 | `relationship-defining-duplicate` | More than one reverse declaration claims the same defining declaration. |
 | `relationship-order-on-to-one` | Ordering is declared for a direction whose target multiplicity is One. |
-| `relationship-order-attribute-invalid` | An ordering term does not name a target-local Attribute. |
+| `relationship-order-attribute-invalid` | An ordering term does not name a target-local Attribute, or names a scalar collection. |
 
 Reference absence is a foundational `m-metamodel` issue, not a second
 relationship-owned missing-reference code.
@@ -103,5 +103,6 @@ Descending Sort Direction, and NullsFirst or NullsLast Null Placement. An
 omitted authored direction normalizes to Ascending and an omitted authored
 placement to NullsLast, which is the canonical placement in either direction.
 Placement is independent of direction and is observable only on a nullable
-Attribute (`m-dialect`). Direct many-to-many is invalid; applications use an
-explicit association Entity.
+Attribute (`m-dialect`). A term orders by one scalar value, so it never names a
+scalar collection, which has no whole-collection ordering. Direct many-to-many
+is invalid; applications use an explicit association Entity.

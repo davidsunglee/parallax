@@ -257,8 +257,10 @@ def materialize_read(
     first, because it is what puts each member back under the result name the
     steps after it read; the Value Object bookkeeping is taken over the fanned-out
     row, so an occurrence that arrived inside the shared document is recorded
-    where the identity oracle can drop it again; and ``familyVariant`` is derived
-    last, over rows already standing at the columns their own branch spells.
+    where the identity oracle can drop it again; ``familyVariant`` is derived
+    over rows already standing at the columns their own branch spells; and a
+    scalar collection in a Column of its own is decoded last, at the concrete
+    that variant names.
 
     Per-variant COLUMN narrowing is deliberately NOT part of this
     (:func:`narrow_to_variant_columns`): a whole read's ``then.graph`` states the
@@ -273,7 +275,11 @@ def materialize_read(
     )
     if instance_form:
         materialized = _carrying_value_object_columns(read, materialized)
-    return [_published(row) for row in _materialize_family_variant(read, materialized)]
+    target = read.model.entity(read.object_query["target"])
+    return [
+        _published(_with_direct_collections_decoded(read.model, target, row))
+        for row in _materialize_family_variant(read, materialized)
+    ]
 
 
 def materialize_navigated(
@@ -291,12 +297,16 @@ def materialize_navigated(
     """
     return [
         _published(
-            _materialize_document_layout(
-                case,
-                variant_entity(case.model, entity, row),
-                [row],
-                include_value_objects=True,
-            )[0]
+            _with_direct_collections_decoded(
+                case.model,
+                entity,
+                _materialize_document_layout(
+                    case,
+                    variant_entity(case.model, entity, row),
+                    [row],
+                    include_value_objects=True,
+                )[0],
+            )
         )
         for row in _materialize_navigated_family_variant(case, entity, rows)
     ]
@@ -334,7 +344,7 @@ def materialize_hop_level(
     """
     if tag_column is None:
         return [
-            _published(row)
+            _published(_with_direct_collections_decoded(case.model, entity, row))
             for row in _materialize_document_layout(case, entity, rows, include_value_objects=True)
         ]
     at_their_variant = [
@@ -345,12 +355,16 @@ def materialize_hop_level(
     ]
     return [
         _published(
-            _materialize_document_layout(
-                case,
-                case.model.entity(row["familyVariant"]),
-                [row],
-                include_value_objects=True,
-            )[0]
+            _with_direct_collections_decoded(
+                case.model,
+                entity,
+                _materialize_document_layout(
+                    case,
+                    case.model.entity(row["familyVariant"]),
+                    [row],
+                    include_value_objects=True,
+                )[0],
+            )
         )
         for row in at_their_variant
     ]
@@ -504,15 +518,47 @@ def _decoded_leaf(entity: Entity, member: DocumentMember, stored: Any) -> Any:
     """
     try:
         if member.many:
-            # Validated here and left as stored: the owner node decodes a
-            # collection once whichever Column carried it.
-            decode_collection(member.type_spelling or "", stored)
-            return stored
+            return decode_collection(member.type_spelling or "", stored)
         if stored is None:
             return None if _leaf_nullable(entity, member) else UnavailableLeaf(None)
         return decode_leaf(member.type_spelling or "", stored)
     except DocumentEncodingError:
         return UnavailableLeaf(stored)
+
+
+def _with_direct_collections_decoded(
+    model: Model, entity: Entity, row: dict[str, Any]
+) -> dict[str, Any]:
+    """*row* with each scalar collection stored in a Column of its own decoded to
+    the elements a read publishes, or to the judgement leaving its root unhydratable.
+
+    A collection the Relational Document Layout fan-out already read out of the
+    shared document is left alone, so every published row — row form or instance
+    form, golden or ``referenceSql`` — carries one logical value per collection
+    whichever Column stored it, exactly as :func:`_decoded_leaf` does for the
+    document arm.
+    """
+    concrete = variant_entity(model, entity, row)
+    resident = {
+        member.column for member in model.storage_layout.document(concrete.canonical_name).members
+    }
+    columns = [
+        attribute
+        for attribute in concrete.attributes
+        if is_scalar_collection(attribute)
+        and attribute["column"] in row
+        and attribute["column"] not in resident
+    ]
+    if not columns:
+        return row
+    decoded = _materialized_row(row)
+    for attribute in columns:
+        stored = decode_stored(row[attribute["column"]])
+        try:
+            decoded[attribute["column"]] = decode_collection(attribute["type"], stored)
+        except DocumentEncodingError:
+            decoded[attribute["column"]] = UnavailableLeaf(stored)
+    return decoded
 
 
 def _leaf_nullable(entity: Entity, member: DocumentMember) -> bool:
@@ -922,14 +968,6 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
     the golden SELECT did not project is left untouched (no synthetic null).
     """
     node = dict(row)
-    for attribute in entity.attributes:
-        column = attribute["column"]
-        if (
-            is_scalar_collection(attribute)
-            and column in node
-            and not isinstance(node[column], UnavailableLeaf)
-        ):
-            node[column] = decode_collection(attribute["type"], decode_stored(node[column]))
     for occurrence in entity.value_objects:
         column = occurrence["column"]
         if column not in node:

@@ -85,6 +85,7 @@ __all__ = [
     "judged_edit_violation",
     "member_location",
     "snake_to_camel",
+    "typed_authoring_leaf",
 ]
 
 
@@ -753,7 +754,7 @@ def judged_edit_violation(
                 member.definition,
                 value,
                 source_access=BORROWED_SOURCE_ACCESS,
-                normalize_leaf=_typed_authoring_leaf,
+                normalize_leaf=typed_authoring_leaf,
                 path=owner,
             )
             if value is not None
@@ -774,7 +775,7 @@ def judged_edit_violation(
     return None
 
 
-def _typed_authoring_leaf(leaf: Leaf, value: object, _path: str) -> tuple[object, bool]:
+def typed_authoring_leaf(leaf: Leaf, value: object, _path: str) -> tuple[object, bool]:
     neutral_type = leaf.type
     managed = coerce_neutral_input(value, neutral_type)
     return managed, matches_neutral_type(managed, neutral_type)
