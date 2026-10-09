@@ -85,7 +85,7 @@ _STORAGE_LAYOUT_READS: Final[frozenset[str]] = frozenset(
     }
 )
 _SCALAR_COLLECTION_INHERITANCE_READS: Final[frozenset[str]] = frozenset(
-    f"m-inheritance-{n:03d}" for n in range(139, 143)
+    f"m-inheritance-{n:03d}" for n in (139, 140, 141, 142, 145, 146)
 )
 _DOCUMENT_CODEC_READS: Final[frozenset[str]] = frozenset(
     f"m-document-codec-{n:03d}" for n in range(3, 14)

@@ -1,0 +1,20 @@
+model: models/scalar-collection-lifecycle-layout-twin-document.yaml
+tags: [m-inheritance, m-storage-layout, m-document-codec, m-sql, read, table-per-concrete-subtype, union-all, root, json, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.TagKit
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.TagKit.id
+        direction: asc
+then:
+  statements:
+    - sql:
+        postgres: select u.id, not u.payload is null, u.payload, u.family_variant from (select t0.id, t0.payload, 'TagDrill' family_variant from tag_drill t0 union all select t0.id, t0.payload, 'TagSaw' family_variant from tag_saw t0) u order by u.id asc
+        mariadb: select u.id, not u.payload is null, u.payload, u.family_variant from (select t0.id, t0.payload, 'TagDrill' family_variant from tag_drill t0 union all select t0.id, t0.payload, 'TagSaw' family_variant from tag_saw t0) u order by u.id asc
+  rows:
+    - { id: 1, tags: [t], bits: [8, 8], blades: null, familyVariant: TagDrill }
+    - { id: 2, tags: [], bits: null, blades: [rip], familyVariant: TagSaw }
+  roundTrips: 1

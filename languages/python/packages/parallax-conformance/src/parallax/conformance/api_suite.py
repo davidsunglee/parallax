@@ -683,6 +683,12 @@ _INHERITED_SCALAR_COLLECTION_REASON: Final[str] = (
     "collections are projected and bound, graded byte-exact by the compile lane and end "
     "to end by the database-backed run lane"
 )
+_INHERITED_SCALAR_COLLECTION_ROW_FORM_REASON: Final[str] = (
+    "the row-form (values-lane) original of m-inheritance-141/-142: `db.find` is "
+    "instance-form, never row-form, so a flat `then.rows` comparison can never be "
+    "reproduced from typed instances; the compile lane grades each branch's collection "
+    "projection byte-exact and the database-backed run lane grades the superset rows"
+)
 _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "a non-temporal inheritance-family keyed write (table-per-hierarchy or table-per-"
     "concrete-subtype insert/update/delete, including the opt-lock composition pair): "
@@ -1626,6 +1632,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-142": _INHERITED_SCALAR_COLLECTION_REASON,
     "m-inheritance-143": _INHERITED_SCALAR_COLLECTION_REASON,
     "m-inheritance-144": _INHERITED_SCALAR_COLLECTION_REASON,
+    "m-inheritance-145": _INHERITED_SCALAR_COLLECTION_ROW_FORM_REASON,
+    "m-inheritance-146": _INHERITED_SCALAR_COLLECTION_ROW_FORM_REASON,
     "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-101": _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON,
