@@ -2291,3 +2291,14 @@ def test_a_part_of_a_row_no_proven_original_held_descends_from_none() -> None:
         ),
     )
     assert targets.descent(tail) is None
+
+
+def test_an_original_that_left_no_row_stays_proven_until_its_object_concludes() -> None:
+    first = _original(_JAN, _T0)
+    targets = _TargetWriteState()
+    # Terminated over its whole coverage, the original contributed no row.
+    targets.complete((), NO_OPENINGS, (Derivation(first, TimeInterval(_JAN, _APR), None, ()),))
+    assert targets.proven(first) is not None
+    assert list(targets.descendants(first, TimeInterval(_JAN, INFINITY))) == []
+    targets.complete((), NO_OPENINGS, concludes=first.object)
+    assert targets.proven(first) is None

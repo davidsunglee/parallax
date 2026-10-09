@@ -709,21 +709,11 @@ _MISSING_MEMBER: Final = object()
 
 
 def _alike(first: object, second: object, pending: list[tuple[object, object]]) -> bool:
-    """Whether ``first`` and ``second`` may still be equal, queuing the member
-    pairs that decide it."""
+    """Whether ``first``, which is neither a string nor an object, and
+    ``second`` may still be equal, queuing the item pairs that decide it."""
     kind = _json_kind(first)
     if kind != _json_kind(second):
         return False
-    if kind == "object":
-        first_members = cast("Mapping[str, object]", first)
-        second_members = cast("Mapping[str, object]", second)
-        if len(first_members) != len(second_members):
-            return False
-        for name, value in first_members.items():
-            if name not in second_members:
-                return False
-            pending.append((value, second_members[name]))
-        return True
     if kind == "array":
         first_items = cast("Sequence[object]", first)
         second_items = cast("Sequence[object]", second)

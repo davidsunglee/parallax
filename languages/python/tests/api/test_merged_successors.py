@@ -186,7 +186,7 @@ def _history(labels: tuple[str, str] = ("a", "a")) -> list[_Row]:
 
 
 # --------------------------------------------------------------------------- #
-# The ticket's acceptance shapes.                                              #
+# An amendment's successors merge only where their persisted state is equal.   #
 # --------------------------------------------------------------------------- #
 @_SPAN_AXES
 @_STRATEGIES
