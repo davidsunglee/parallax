@@ -1,10 +1,3 @@
-# Roster (v2): the later endpoint of the SCALAR MULTIPLICITY scenario.
-#
-# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
-# models/evolution-scalar-multiplicity-v1.yaml with every scalar collection
-# declared single and every single scalar declared a collection of the same
-# type. `note` was nullable and a collection never is, so it also becomes
-# required; nothing else differs.
 entities:
   - name: Roster
     namespace: parallax.compatibility

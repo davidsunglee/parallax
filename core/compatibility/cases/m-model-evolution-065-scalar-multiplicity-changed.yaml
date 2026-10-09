@@ -1,8 +1,3 @@
-# Changing a scalar member between ONE and MANY (m-model-evolution): coordinated
-# for both reasons, in either direction, for a top-level member under either
-# layout and for a member of a `one` and of a `many` Value Object. The element
-# type is unchanged, so no `TypeChanged` accompanies the move; `note` also
-# becomes required, so its admitted domain contracts beside it.
 tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
 shape: evolution
 when:

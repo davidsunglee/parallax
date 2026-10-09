@@ -1,7 +1,3 @@
-# Adding a scalar collection to a position that denotes no stored shape
-# (m-model-evolution): unilateral like any required member there, and the
-# family's shared Table gains a Structured Column for it however its elements
-# are typed (m-schema-delta).
 tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:
