@@ -1,0 +1,18 @@
+# Fixture rows for models/document-layout-nested-many.yaml: row 1's nested `stops`
+# array is what a whole-occurrence assignment replaces, and row 2 is the row it
+# leaves as stored.
+parallax.compatibility.NestedRoute:
+  - id: 1
+    route:
+      name: Coastal
+      segment:
+        stops:
+          - { port: Bergen }
+          - { port: Oslo }
+  - id: 2
+    route:
+      name: Inland
+      segment:
+        stops:
+          - { port: Lyon }
+          - { port: Lyon }

@@ -1444,13 +1444,16 @@ def _projects_document_slot(
 ) -> bool:
     """Whether a `union all` branch projects ``contributor``'s `Document` slot.
 
-    A top-level Value Object occurrence owns a Structured Column of its own under
-    `Columns` layout, and `m-sql` *Read projection* rule 3 gives it to an
-    instance-form read alone — a row-form read omits it. A Relational Document
-    Layout's shared Structured Column additionally answers rule 5's other need:
-    a row-form read still projects it to produce a member the layout placed at a
-    Document Path, which ``document_resident`` is.
+    A scalar collection's own Structured Column holds an Attribute, which every
+    read projects. A top-level Value Object occurrence owns a Structured Column
+    of its own under `Columns` layout, and `m-sql` *Read projection* rule 3 gives
+    it to an instance-form read alone — a row-form read omits it. A Relational
+    Document Layout's shared Structured Column additionally answers rule 5's
+    other need: a row-form read still projects it to produce a member the layout
+    placed at a Document Path, which ``document_resident`` is.
     """
+    if isinstance(contributor, AttributeIdentity):
+        return True
     if isinstance(contributor, ValueObjectIdentity):
         return instance_form
     return isinstance(contributor, RelationalDocument) and (instance_form or document_resident)
@@ -1552,8 +1555,12 @@ def _plan_tpcs_read(
             column.contributor, instance_form=instance_form, document_resident=document_resident
         )
     )
+    # A scalar collection's Column holds a document, never its element type's
+    # native scalar lane, so it projects and keys as a document.
     by_identity: dict[AttributeIdentity | ValueObjectIdentity, AttributeMetadata] = {
-        attribute.identity: attribute for attribute in position.superset_attributes
+        attribute.identity: attribute
+        for attribute in position.superset_attributes
+        if attribute.multiplicity is Multiplicity.ONE
     }
     attributes = tuple(
         by_identity.get(contributor)

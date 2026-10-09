@@ -19,6 +19,7 @@ from parallax.core import Attr, Bitemporal, Document, DomainModel, ValueObject, 
 from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
+from parallax.core.document_codec import _document as document_module
 from parallax.core.entity._model import model_of
 from parallax.core.execution import _attempt as attempt_module
 from parallax.core.execution._attempt import Attempt
@@ -338,11 +339,13 @@ class HullMark(ValueObject):
 class HullSpec(ValueObject):
     title: Attr[str]
     marks: Attr[tuple[HullMark, ...]]
+    labels: Attr[tuple[str, ...]]
 
 
 class ColumnsHull(Bitemporal, table="hull_columns", namespace="parallax.execution"):
     id: Attr[int] = attr(primary_key=True)
     amount: Attr[int]
+    tags: Attr[tuple[str, ...]]
     spec: Attr[HullSpec | None]
     keel: Attr[HullMark]
     marks: Attr[tuple[HullMark, ...]]
@@ -353,6 +356,7 @@ class DocumentHull(
 ):
     id: Attr[int] = attr(primary_key=True)
     amount: Attr[int]
+    tags: Attr[tuple[str, ...]]
     spec: Attr[HullSpec | None]
     keel: Attr[HullMark]
     marks: Attr[tuple[HullMark, ...]]
@@ -363,7 +367,8 @@ _JAN: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _MAR: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 _SQL_NULL_OCCURRENCE: Final = object()
 _VALID: Final[dict[str, object]] = {
-    "spec": {"title": "s", "marks": [{"title": "n"}]},
+    "tags": ["t", "t"],
+    "spec": {"title": "s", "marks": [{"title": "n"}], "labels": ["l"]},
     "keel": {"title": "k"},
     "marks": [{"title": "m"}],
 }
@@ -398,6 +403,9 @@ _STORED: Final[dict[str, Mapping[str, object]]] = {
     "many-element-leaf": {**_VALID, "marks": [{"title": "m"}, {"title": 2}]},
     "one-kind": {**_VALID, "keel": ["k"]},
     "unknown-keys": {**_VALID, "spec": {"title": "s", "marks": [], "extra": 1}},
+    "collection-sql-null": {**_VALID, "tags": _SQL_NULL_OCCURRENCE},
+    "collection-json-null": {**_VALID, "tags": None},
+    "nested-collection-element": {**_VALID, "spec": {"title": "s", "marks": [], "labels": [3]}},
 }
 
 
@@ -496,13 +504,164 @@ def test_a_non_object_structured_column_is_refused_alike_by_a_retaining_read() -
 
 
 @pytest.mark.parametrize("entity", [ColumnsHull, DocumentHull], ids=["columns", "document"])
-def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
+def test_several_target_rows_with_invalid_collections_are_corruption_before_judgment(
     entity: type[Any],
 ) -> None:
-    # The occurrence is judged when the flush completes the row it reuses, after
-    # the call has returned and inside the write batch, with no read of its own.
+    row = _hull_row(entity, {**_VALID, "tags": ["t", 2]})
+    metadata, key = _hull_keys(entity)
+    port = ScriptedAdapter(Transact(Read(rows=[row, row])))
+    counts: list[int] = []
+
+    def fn(tx: Attempt) -> None:
+        count, retained, _document = tx.uow.acquire_rows(
+            TargetReadRequest(metadata, key, _MAR, retains=True), consume_target
+        )
+        assert retained is None
+        counts.append(count)
+
+    scope(port, _HULLS).transact(fn, itself, concurrency="locking")
+    assert counts == [2]
+
+
+class _Stopped(Exception):
+    pass
+
+
+@pytest.mark.parametrize("entity", [ColumnsHull, DocumentHull], ids=["columns", "document"])
+def test_a_write_reusing_a_pending_participation_reads_and_judges_nothing_again(
+    entity: type[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    interpreted: list[str] = []
+    interpret = vars(document_module)["_interpreted_scalar_many"]
+
+    def counting(member: Any, raw: object, path: Any) -> Any:
+        interpreted.append(member.name)
+        return interpret(member, raw, path)
+
+    monkeypatch.setattr(document_module, "_interpreted_scalar_many", counting)
+    port = ScriptedAdapter(Transact(Read(rows=[_hull_row(entity, _VALID)])))
+    metadata, _key = _hull_keys(entity)
+
+    def amend(tags: list[str]) -> PreparedTargetWrite:
+        return prepare_wire_write(
+            TargetWrite(
+                "amend",
+                metadata.identity.canonical,
+                {"id": 1, "tags": tags},
+                if_tx_start=_T0,
+                valid_from=_MAR,
+            ),
+            model_of(_HULLS),
+        )
+
+    def fn(tx: Attempt) -> None:
+        tx.target_write(amend(["a"]))
+        assert interpreted == ["tags"]
+        tx.target_write(amend(["b", "b"]))
+        assert interpreted == ["tags"]
+        assert [type(call) for call in port.calls] == [BeginCall, ReadCall]
+        raise _Stopped
+
+    with raises_contextualized(_Stopped):
+        scope(port, _HULLS).transact(fn, itself, concurrency="locking")
+
+
+@pytest.mark.parametrize("entity", [ColumnsHull, DocumentHull], ids=["columns", "document"])
+def test_an_optimistic_target_reads_no_collection_until_its_flush_covers_it(
+    entity: type[Any],
+) -> None:
+    # Optimistic admission reads nothing, so an invalid collection is first met
+    # by the coverage read the flush makes for the write's range.
     recorder = RecordingLifecycleProvider()
-    row = _hull_row(entity, {**_VALID, "spec": {"title": 7, "marks": []}})
+    port = ScriptedAdapter(Transact(Read(rows=[_hull_row(entity, {**_VALID, "tags": [1]})])))
+    metadata, _key = _hull_keys(entity)
+    called: list[str] = []
+
+    def fn(tx: Attempt) -> None:
+        tx.target_write(
+            prepare_wire_write(
+                TargetWrite(
+                    "amend",
+                    metadata.identity.canonical,
+                    {"id": 1, "amount": 5},
+                    if_tx_start=_T0,
+                    valid_from=_MAR,
+                ),
+                model_of(_HULLS),
+            )
+        )
+        assert [type(call) for call in port.calls] == [BeginCall]
+        called.append("returned")
+
+    with raises_contextualized(StoredDataDecodingError) as refused:
+        scope(port, _HULLS, provider=recorder).transact(fn, itself, concurrency="optimistic")
+    assert called == ["returned"]
+    assert refused.value.member == AttributeIdentity(metadata.identity, "tags")
+
+
+_INVALID_COLLECTIONS: Final[dict[str, object]] = {
+    "kind": {"t": 1},
+    "elements": ["t", 1, "u", False],
+}
+
+
+@pytest.mark.parametrize("entity", [ColumnsHull, DocumentHull], ids=["columns", "document"])
+@pytest.mark.parametrize("stored", list(_INVALID_COLLECTIONS), ids=list(_INVALID_COLLECTIONS))
+def test_a_retaining_read_judges_a_top_level_collection_as_a_coverage_read_judges_it(
+    entity: type[Any], stored: str
+) -> None:
+    # A scalar collection is an Attribute wherever it is stored, so the retaining
+    # read judges it with the prefix rather than leaving it to completion.
+    row = _hull_row(entity, {**_VALID, "tags": _INVALID_COLLECTIONS[stored]})
+    port = ScriptedAdapter(Transact(Read(rows=[row]), Read(rows=[row])))
+    metadata, key = _hull_keys(entity)
+    key_attribute = AttributeIdentity(metadata.identity, "id")
+    seen: list[object] = []
+
+    def fn(tx: Attempt) -> None:
+        coverage = CoverageReadRequest(
+            metadata,
+            key_attribute,
+            (CoverageTerm(1, (TimeInterval(_JAN, INFINITY),)),),
+            locking=True,
+        )
+        seen.append(_judged(lambda: tx.uow.acquire_rows(coverage, _member_rows)))
+        seen.append(
+            _judged(
+                lambda: tx.uow.acquire_rows(
+                    TargetReadRequest(metadata, key, _MAR, retains=True), consume_target
+                )
+            )
+        )
+
+    scope(port, _HULLS).transact(fn, itself, concurrency="locking")
+    ordinary, retaining = seen
+    invalid = f"{metadata.identity.canonical} holds invalid stored data"
+    assert retaining == ordinary
+    assert ordinary == (
+        f"{invalid} (stored-data-leaf-undecodable)",
+        metadata.identity,
+        AttributeIdentity(metadata.identity, "tags"),
+    )
+
+
+_INVALID_SPECS: Final[dict[str, tuple[dict[str, object], str]]] = {
+    "leaf": ({"title": 7, "marks": []}, "title"),
+    "nested-collection": ({"title": "s", "marks": [], "labels": ["l", 3]}, "labels"),
+}
+
+
+@pytest.mark.parametrize("entity", [ColumnsHull, DocumentHull], ids=["columns", "document"])
+@pytest.mark.parametrize("invalid", list(_INVALID_SPECS), ids=list(_INVALID_SPECS))
+def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
+    entity: type[Any], invalid: str
+) -> None:
+    # The occurrence is judged when the flush completes the row it reuses, after
+    # the call has returned and inside the write batch, with no read of its own;
+    # a scalar collection inside it is judged with it.
+    recorder = RecordingLifecycleProvider()
+    spec, failing = _INVALID_SPECS[invalid]
+    row = _hull_row(entity, {**_VALID, "spec": spec})
     port = ScriptedAdapter(Transact(Read(rows=[row])))
     metadata, _key = _hull_keys(entity)
     called: list[str] = []
@@ -526,7 +685,7 @@ def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
         scope(port, _HULLS, provider=recorder).transact(fn, itself, concurrency="locking")
     assert called == ["returned"]
     assert refused.value.member == ValueObjectAttributeIdentity(
-        ValueObjectIdentity(metadata.identity, ("spec",)), "title"
+        ValueObjectIdentity(metadata.identity, ("spec",)), failing
     )
     events = recorder.roots[-1].events
     (read,) = [event for event in events if isinstance(event, ReadStarted)]
@@ -537,7 +696,17 @@ def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
     assert not any(isinstance(event, DatabaseCallStarted) for event in events[batch:])
 
 
-def test_a_completion_reads_nothing_and_opens_no_activity() -> None:
+def test_a_completion_reads_nothing_and_opens_no_activity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    interpreted: list[str] = []
+    interpret = vars(document_module)["_interpreted_scalar_many"]
+
+    def counting(member: Any, raw: object, path: Any) -> Any:
+        interpreted.append(member.name)
+        return interpret(member, raw, path)
+
+    monkeypatch.setattr(document_module, "_interpreted_scalar_many", counting)
     recorder = RecordingLifecycleProvider()
     row = _hull_row(DocumentHull, _VALID)
     port = ScriptedAdapter(Transact(Read(rows=[row])))
@@ -549,9 +718,14 @@ def test_a_completion_reads_nothing_and_opens_no_activity() -> None:
             TargetReadRequest(metadata, key, _MAR, retains=True), consume_target
         )
         assert retained is not None
+        # The retaining read judged the top-level collection with the prefix.
+        assert interpreted == ["tags"]
         completion = CompletionRequest(metadata, key_attribute, (retained,), (document,))
         (completed,) = tx.uow.acquire_rows(completion, _member_rows)
-        assert completed[-3:] == (("s", (("n",),)), ("k",), (("m",),))
+        # Completion decodes only the collection inside the pending occurrence.
+        assert interpreted == ["tags", "labels"]
+        assert completed[:3] == (1, 100, ("t", "t"))
+        assert completed[-3:] == (("s", ("l",), (("n",),)), ("k",), (("m",),))
         assert [type(call) for call in port.calls] == [BeginCall, ReadCall]
 
     scope(port, _HULLS, provider=recorder).transact(fn, itself, concurrency="locking")
@@ -561,11 +735,17 @@ def test_a_completion_reads_nothing_and_opens_no_activity() -> None:
 
 
 @pytest.mark.parametrize("entity", [ColumnsHull, DocumentHull], ids=["columns", "document"])
-def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(entity: type[Any]) -> None:
+@pytest.mark.parametrize("attribute", ["scalar", "collection"])
+def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
+    entity: type[Any], attribute: str
+) -> None:
     # An Attribute is judged as the narrow read judged it, before the stated
-    # revision is compared; the occurrences beside it are left to the flush.
+    # revision is compared; the occurrences beside it are left to the flush. A
+    # scalar collection is such an Attribute under either layout.
     row = _hull_row(entity, {**_VALID, "spec": {"title": 7, "marks": []}})
-    if entity is DocumentHull:
+    if attribute == "collection":
+        row = _hull_row(entity, {**_VALID, "tags": ["t", 2], "spec": {"title": 7, "marks": []}})
+    elif entity is DocumentHull:
         payload = row["payload"]
         assert isinstance(payload, PresentDocument)
         document = cast("dict[str, DocumentValue]", payload.document)
@@ -596,5 +776,7 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(entity: type
 
     scope(port, _HULLS).transact(fn, itself, concurrency="locking")
     (failure,) = refused
-    attribute = "amount" if entity is DocumentHull else "validEnd"
-    assert failure.member == AttributeIdentity(metadata.identity, attribute)
+    member = (
+        "tags" if attribute == "collection" else "amount" if entity is DocumentHull else "validEnd"
+    )
+    assert failure.member == AttributeIdentity(metadata.identity, member)

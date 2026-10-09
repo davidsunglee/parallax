@@ -1,0 +1,54 @@
+# Document half of the versioned scalar collection write proof: the same writes
+# patch whole arrays into the shared document beside the version gate. Its twin
+# authors the same writes under Columns.
+model: models/scalar-collection-lifecycle-layout-twin-document.yaml
+tags: [m-opt-lock, m-unit-work, m-storage-layout, m-document-codec, m-sql, write-sequence, update, json, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  writeSequence:
+    - mutation: amend
+      entity: parallax.compatibility.TagLedger
+      statements: 1
+      note: a whole collection is assigned beside the version gate, the nested collection riding forward
+      rows:
+        - { id: 1, tags: [c, c], observedVersion: 1 }
+    - mutation: replace
+      entity: parallax.compatibility.TagLedger
+      statements: 1
+      note: a replacement stating only the label writes the omitted collection empty and the omitted occurrence null under the caller's version
+      row: { id: 2, label: whole }
+      ifVersion: 4
+then:
+  statements:
+    - sql:
+        postgres: update tag_ledger set payload = jsonb_set(payload, ?, cast(? as jsonb)), version = ? where id = ? and version = ?
+        mariadb: update tag_ledger set payload = json_set(payload, ?, json_extract(?, '$')), version = ? where id = ? and version = ?
+      binds:
+        postgres: ['{tags}', [c, c], 2, 1, 1]
+        mariadb: ['$.tags', [c, c], 2, 1, 1]
+    - sql:
+        postgres: update tag_ledger set payload = jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), version = ? where id = ? and version = ?
+        mariadb: update tag_ledger set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$')), version = ? where id = ? and version = ?
+      binds:
+        postgres: ['{label}', whole, '{tags}', [], '{route}', null, 5, 2, 4]
+        mariadb: ['$.label', whole, '$.tags', [], '$.route', null, 5, 2, 4]
+  tableState:
+    tag_ledger:
+      - id: 1
+        version: 2
+        payload:
+          label: open
+          tags: [c, c]
+          route:
+            stops: [x, y]
+      - id: 2
+        version: 5
+        payload:
+          label: whole
+          tags: []
+          route: null
+  roundTrips: 3

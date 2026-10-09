@@ -75,7 +75,7 @@ from .ddl_builder import (
     ddl_for,
     declared_contributors,
 )
-from .document_codec import encode_document, encode_leaf
+from .document_codec import encode_collection, encode_document, encode_leaf
 from .evolution_validate import validate_evolution
 from .inheritance import (
     MODEL_REJECTED_RULES,
@@ -99,10 +99,7 @@ from .metamodel import (
 from .object_query_oracle import assert_case_read
 from .object_query_oracle import row as object_query_row
 from .object_query_validate import validate_object_query
-from .predicate_write_validate import (
-    requires_predicate_write_materialization,
-    validate_predicate_write,
-)
+from .predicate_write_validate import validate_predicate_write
 from .providers import Catalog, DatabaseProvider
 from .provisioning import apply_given, provision, provision_empty
 from .relationship import MODEL_REJECTED_RULES as RELATIONSHIP_MODEL_REJECTED_RULES
@@ -166,7 +163,6 @@ ALL_REJECTED_RULES = (
     | PREDICATE_REJECTED_RULES
     | WRITE_REJECTED_RULES
     | KEYED_WRITE_REJECTED_RULES
-    | {"predicate-write-readless-document-many-unsupported"}
 )
 
 
@@ -878,38 +874,6 @@ def _validate_rejected_predicate_write(case: Case, write: dict[str, Any]) -> Non
     if entity is None:
         return
     validate_predicate_write(entity, write)
-    document_layout = entity.runtime_facts.get("layout", {}).get("document")
-    if not document_layout:
-        return
-    if requires_predicate_write_materialization(entity):
-        return
-    for assignment in write.get("assignments", []):
-        name = str(assignment.get("attr", "")).rsplit(".", 1)[-1]
-        occurrence = next((item for item in entity.value_objects if item.get("name") == name), None)
-        if occurrence is None:
-            continue
-        nested_many = _authored_many_path(occurrence, assignment.get("value"))
-        if occurrence.get("multiplicity", "one") == "many" or nested_many is not None:
-            path = name if nested_many is None else ".".join((name, *nested_many))
-            raise RejectionError(
-                "predicate-write-readless-document-many-unsupported",
-                f"{target_name}.{path}: readless document-resident many assignment",
-            )
-
-
-def _authored_many_path(occurrence: dict[str, Any], authored: object) -> tuple[str, ...] | None:
-    if not isinstance(authored, dict):
-        return None
-    for nested in occurrence.get("valueObjects", []):
-        name = nested["name"]
-        if name not in authored:
-            continue
-        if nested.get("multiplicity", "one") == "many":
-            return (name,)
-        path = _authored_many_path(nested, authored[name])
-        if path is not None:
-            return (name, *path)
-    return None
 
 
 # --- write sequences (m-temporal-write) ---------------------------------------------------
@@ -1101,6 +1065,10 @@ def _document_assignments(
         if member.type_spelling is None:
             occurrence = entity.value_object_by_name(name)
             assignments.append(_DocumentAssignment(member.path, encode_document(occurrence, value)))
+        elif member.many:
+            assignments.append(
+                _DocumentAssignment(member.path, encode_collection(member.type_spelling, value))
+            )
         else:
             assignments.append(
                 _DocumentAssignment(member.path, encode_leaf(member.type_spelling, value))

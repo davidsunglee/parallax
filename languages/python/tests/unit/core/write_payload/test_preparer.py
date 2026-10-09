@@ -36,6 +36,7 @@ from parallax.core.write_plan.steps import (
     NEW_LINEAGE,
     CarriedFrom,
     ChangedFrom,
+    NewLineage,
     PlannedAssignments,
     PlannedRow,
     RowOrigin,
@@ -539,3 +540,64 @@ def test_collection_cells_compare_as_persisted_arrays_in_order() -> None:
     assert preparer.proven_unequal_non_interval(
         _ITEM, _collection_row(tags=("a", "b")), _collection_row(tags=("b", "a"))
     )
+
+
+_DOCUMENT_COLLECTIONS: Metamodel = corpus_model("scalar-collection-layout-twin-document")
+_STORED_COLLECTIONS: Mapping[str, object] = FrozenMap(
+    {"tags": ["z"], "amounts": ["1.50"], "futureKey": [1, "x"], "parts": []}
+)
+"""A stored document holding two collections and a key no member declares."""
+
+
+def _document_collection_row(origin: RowOrigin, **attributes: object) -> WriteRow:
+    row = PlannedRow(
+        attributes={_ITEM_ID: 1, **{AttributeIdentity(_ITEM, k): v for k, v in attributes.items()}},
+        value_objects={ValueObjectIdentity(_ITEM, ("parts",)): ()},
+    )
+    executed = (
+        ()
+        if isinstance(origin, NewLineage)
+        else tuple(AttributeIdentity(_ITEM, name) for name in attributes)
+    )
+    return WriteRow(row=row, origin=origin, executed=executed)
+
+
+def test_a_document_successor_patches_an_executed_collection_and_keeps_every_other_key() -> None:
+    preparer = LayoutPayloadPreparer(_DOCUMENT_COLLECTIONS)
+    predecessor = PredecessorRow(
+        {"id": 1, "tags": ("z",), "amounts": (Decimal("1.50"),), "parts": ()},
+        document=_STORED_COLLECTIONS,
+    )
+
+    changed = preparer.row(
+        _ITEM, _document_collection_row(ChangedFrom(predecessor), tags=("b", "b"))
+    )
+
+    assert _document(changed) == {**_STORED_COLLECTIONS, "tags": ["b", "b"]}
+
+
+def test_document_rows_compare_their_collections_in_order_and_their_unknown_content() -> None:
+    preparer = LayoutPayloadPreparer(_DOCUMENT_COLLECTIONS)
+    ordered = preparer.row(_ITEM, _document_collection_row(NEW_LINEAGE, tags=("a", "b")))
+    retained = PredecessorRow({"id": 1, "tags": ("a", "b")}, document={"tags": ["a", "b"], "x": 1})
+
+    assert preparer.equal_non_interval(
+        ordered, preparer.row(_ITEM, _document_collection_row(NEW_LINEAGE, tags=("a", "b")))
+    )
+    assert not preparer.equal_non_interval(
+        ordered, preparer.row(_ITEM, _document_collection_row(NEW_LINEAGE, tags=("b", "a")))
+    )
+    assert not preparer.equal_non_interval(
+        ordered, preparer.row(_ITEM, _document_collection_row(CarriedFrom(retained), tags=()))
+    )
+
+
+def test_a_document_assignment_patches_a_whole_collection_as_composite_content() -> None:
+    payload = LayoutPayloadPreparer(_DOCUMENT_COLLECTIONS).assignments(
+        _ITEM, PlannedAssignments(attributes={_TAGS: ("b", "b")}, value_objects={})
+    )
+
+    (patched,) = payload.values
+    assert isinstance(patched, PatchedDocument)
+    (tags,) = patched.patches
+    assert (tags.path, tags.leaf, tags.removes, tags.value) == (("tags",), None, False, ("b", "b"))

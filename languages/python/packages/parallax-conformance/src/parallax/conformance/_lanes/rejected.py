@@ -19,8 +19,6 @@ from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
 from parallax.core.unit_work import KeyedWrite, PredicateWrite, WriteRejectedError, instructions
-from parallax.core.unit_work.instructions import PreparedPredicateWrite
-from parallax.core.unit_work.materialized import reject_readless_document_many
 from parallax.core.write_plan import WritePlanningError
 from parallax.descriptor import (
     DescriptorError,
@@ -205,10 +203,7 @@ def _rejected_predicate_write(
     if not isinstance(instruction, PredicateWrite):  # pragma: no cover - target implies predicate
         raise EngineError(f"{case.path.name}: rejected predicate write decoded as keyed")
     try:
-        prepared = _case_ingress.prepare_case_write(instruction, model)
-        assert isinstance(prepared, PreparedPredicateWrite)
-        target = case_entity(model, prepared.selection.target.identity.canonical)
-        reject_readless_document_many(target, prepared)
+        _case_ingress.prepare_case_write(instruction, model)
     except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
         return exc.rule
     raise EngineError(  # pragma: no cover - rejected cases must classify

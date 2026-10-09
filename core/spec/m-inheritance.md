@@ -373,8 +373,9 @@ concrete instance** in the ordinary sense — only its own branch's inherited-
 plus-own members, never a sibling's null-padded column. Inheritance resolves the
 same effective concrete set and branch applicability for both forms. `m-sql`
 owns result projection: both forms select the same applicable non-Document
-Position Layout sequence, while instance-form additionally selects applicable
-top-level Value Object Document slots and row-form omits them. The SQL is
+Position Layout sequence and every applicable scalar collection's own Document
+slot, while instance-form additionally selects applicable top-level Value Object
+Document slots and row-form omits them. The SQL is
 therefore identical only when that Document-slot delta is empty. After the read,
 instance-form materialization narrows the branch-backed values to the concrete
 variant's own declared shape. This is the read-side counterpart of *Concrete-

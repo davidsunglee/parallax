@@ -14,9 +14,10 @@ from typing import Any, Final
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core.base import INFINITY
+from parallax.core import Attr, Bitemporal, DomainModel, attr
+from parallax.core.base import INFINITY, DocumentValue, PresentDocument
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import MappingRow
+from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     Concurrency,
@@ -399,3 +400,86 @@ def test_a_batchs_objects_share_one_coverage_read() -> None:
     _selection, coverage = [call for call in port.calls if isinstance(call, ReadCall)]
     assert "((t0.id = %s and t0.thru_z > %s and t0.from_z < %s) or (t0.id = %s" in coverage.sql
     assert coverage.binds[:6] == (1, _APR, _JUN, 2, _APR, _JUN)
+
+
+# --------------------------------------------------------------------------- #
+# A scalar collection moves none of the group's gates: it is selected at       #
+# valid_from, refused for two starting rows before buffering, and reaches its  #
+# later coverage at the flush, its equal start kept.                           #
+# --------------------------------------------------------------------------- #
+class WhereTagged(Bitemporal, table="where_tagged", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    tags: Attr[tuple[str, ...]] = attr()
+
+
+_WHERE_TAGGED_META: Final = DomainModel(WhereTagged)
+
+
+def _tagged(key: int, start: dt.datetime, end: object, tags: list[DocumentValue]) -> MappingRow:
+    return {
+        "id": key,
+        "tags": PresentDocument(tags),
+        "from_z": start,
+        "thru_z": end,
+        "in_z": _JAN,
+        "out_z": INFINITY,
+    }
+
+
+def _tag(tx: Transaction) -> None:
+    tx.amend_where(
+        WhereTagged.where(WhereTagged.id <= 2),
+        WhereTagged.tags.set(("z", "z")),
+        valid_from=_FEB,
+        until=_JUN,
+    )
+
+
+def _transact_tagged(port: ScriptedAdapter, *, concurrency: Concurrency) -> None:
+    own_root(
+        Database.connect(port, _WHERE_TAGGED_META, clock=FixedClock(_FIXED))
+    ).using_database_login().transact(_tag, concurrency=concurrency)
+
+
+def test_a_collection_amendment_keeps_an_equal_start_and_reads_later_coverage_at_its_flush() -> (
+    None
+):
+    port = ScriptedAdapter(
+        Transact(
+            Read(rows=[_tagged(1, _JAN, _APR, ["z", "z"])]),
+            Read(rows=[_tagged(1, _APR, _JUL, ["y"])]),
+            Write(times=3),
+        )
+    )
+    _transact_tagged(port, concurrency="locking")
+    selection, coverage = [call for call in port.calls if isinstance(call, ReadCall)]
+    assert selection.binds.count(_FEB) == 2
+    # Only the uncovered April onwards is read, and only when the flush reaches it.
+    assert coverage.binds[:3] == (1, _APR, _JUN)
+    assert _kinds(port) == ["read", "read", "update", "insert", "insert", "CommitCall"]
+    _close, changed, carried = [call for call in port.calls if isinstance(call, WriteCall)]
+    assert JsonDocument(("z", "z")) in changed.binds
+    assert JsonDocument(("y",)) in carried.binds
+
+
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_an_object_whose_collection_starts_twice_is_refused_before_buffering(
+    concurrency: Concurrency,
+) -> None:
+    port = ScriptedAdapter(
+        Transact(
+            Read(
+                rows=[
+                    _tagged(1, _JAN, _APR, ["a"]),
+                    _tagged(2, _JAN, _APR, ["a"]),
+                    _tagged(1, _FEB, _MAY, ["b"]),
+                ]
+            ),
+            Read(rows=[]),
+            Write(times=12),
+        )
+    )
+    with raises_contextualized(CardinalityCorruptionError) as raised:
+        _transact_tagged(port, concurrency=concurrency)
+    assert raised.value.target.key_values == ((1,),)
+    assert _kinds(port) == ["read", "RollbackCall"]

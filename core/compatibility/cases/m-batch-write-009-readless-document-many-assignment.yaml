@@ -1,0 +1,63 @@
+# An unversioned, non-temporal predicate-selected update assigning a
+# document-resident `many` stays readless: its one statement replaces the whole
+# array at the occurrence's path in every row the predicate matches, whatever that
+# row stored there — an equal leading element and an empty array alike — and every
+# other key of each document survives. No stored element is read or written alone.
+model: models/document-layout.yaml
+tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, scenario, update, json, document-layout, to-many, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        mutation: amend
+        target:
+          entity: parallax.compatibility.Traveler
+          predicate:
+            lessThan: { attr: parallax.compatibility.Traveler.id, value: 3 }
+        assignments:
+          - attr: parallax.compatibility.Traveler.tags
+            value:
+              - { label: founder }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id < ?
+            mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id < ?
+          binds:
+            postgres: ['{tags}', [{ label: founder }], 3]
+            mariadb: ['$.tags', [{ label: founder }], 3]
+then:
+  roundTrips: 1
+  tableState:
+    traveler:
+      - id: 1
+        payload:
+          displayName: Ada
+          score: 7
+          joinedOn: "2026-01-15"
+          note: north wing
+          address:
+            city: Oslo
+            geo:
+              country: "NO"
+          tags:
+            - { label: founder }
+      - id: 2
+        payload:
+          displayName: Bo
+          score: 30
+          joinedOn: "2025-12-31"
+          address:
+            city: Bergen
+            geo:
+              country: "NO"
+          tags:
+            - { label: founder }
+      - id: 3
+        payload:
+          displayName: Cyd
+          score: null
+          joinedOn: null
+          note: null
+          address: null
+          tags: []

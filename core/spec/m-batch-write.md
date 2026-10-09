@@ -98,10 +98,12 @@ when the flush reaches it (`m-unit-work` *Materialized Write Groups*).
 ## Predicate-selected readless forms
 
 For an **unversioned, non-temporal** target, a predicate-selected write is
-readless and emits exactly one statement unless it assigns a document-resident
-`many` occurrence. That narrow combination is refused before buffering or SQL as
-`predicate-write-readless-document-many-unsupported`; it never falls back to a
-planning-time read. Scalar and `one` assignments remain readless. `amend` is:
+readless and emits exactly one statement, whatever members it assigns. A Value
+Object occurrence — `one` or `many`, any nested `many` it holds included — and a
+scalar collection are each assigned whole at their own path, exactly as any
+other amendment assigns them (`m-storage-layout`): the statement reads no stored
+value, inspects no authored content to choose its route, and writes no element
+alone. `amend` is:
 
 ```text
 update <table> set <column> = ?, … where <predicate>
@@ -166,8 +168,9 @@ versioned per-key delete. The predicate-write witnesses prove a distinct target:
 |---|---|---|
 | `m-batch-write-005` | non-versioned `Wallet` delete | one readless `delete … where <predicate>` |
 | `m-batch-write-006` | non-versioned `Wallet` update | one readless update; reversed authored assignments still emit Entity Layout order and assignment-before-predicate binds |
-| `m-batch-write-009` | unversioned, non-temporal document-mapped `Voyage` update | refuse a top-level document-resident `many` assignment before buffering or SQL |
-| `m-batch-write-010` | unversioned, non-temporal document-mapped `NestedRoute` update | refuse an authored nested document-resident `many` assignment before buffering or SQL |
+| `m-batch-write-009` | unversioned, non-temporal document-mapped `Traveler` update | one readless update replacing a top-level document-resident `many` whole at its path, every other key kept |
+| `m-batch-write-010` | unversioned, non-temporal document-mapped `NestedRoute` update | one readless update replacing a `one` whose authored content holds a nested `many`, its whole subtree included |
+| `m-batch-write-012`/`-013` | unversioned, non-temporal `CollectionTwinItem` update under each layout | one readless update assigning whole scalar collections and a `many` holding one, in Table Layout order |
 | `m-opt-lock-015` | versioned `Account` delete | materialize plus one optimistic per-row delete for each match |
 
 The two families share SQL terminology but not an observation contract: an `IN`

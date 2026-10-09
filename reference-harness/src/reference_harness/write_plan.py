@@ -37,11 +37,11 @@ from sqlglot.expressions.core import Expr
 
 from .case import Case, Entity
 from .case_assertions import CaseFailure, write_value_equal
-from .document_codec import encode_document, encode_leaf
+from .document_codec import encode_collection, encode_document, encode_leaf
 from .inheritance import tag_of
 from .keyed_write_validate import is_framework_marker, states_framework_marker
 from .sql_canonical import sqlglot_dialect
-from .storage_layout import DocumentMember
+from .storage_layout import DocumentMember, is_scalar_collection
 from .temporality import TEMPORAL_DIMENSION_RANK
 
 # --- the write verbs and control keys a neutral write input speaks ---------------
@@ -414,7 +414,11 @@ def _member_column(
         pass
     else:
         column = attribute["column"]
-        if column in resident_columns or not _literal_scalar(entity, column, value):
+        if column in resident_columns:
+            return column, value
+        if is_scalar_collection(attribute):
+            return column, encode_collection(attribute["type"], value)
+        if not _literal_scalar(entity, column, value):
             return column, value
         return column, encode_leaf(attribute["type"], value)
     # Not an attribute — a value object binds as ONE document at its
@@ -446,20 +450,31 @@ def _literal_scalar(entity: Entity, column: str, value: Any) -> bool:
 def _unnamed_many_columns(
     entity: Entity, row: dict[str, Any], resident_columns: set[str]
 ) -> dict[str, Any]:
-    """The zero state each unnamed `many` occurrence with a Column of its own binds.
+    """The zero state each unnamed `many` member with a Column of its own binds.
 
-    Such an occurrence binds on every opening statement whether or not the row
-    names it: absence and the empty array are one logical zero state, so an
-    unnamed `many` stores `[]` (m-value-object) — the same answer the codec
-    composes for one inside a document.
+    Such a member — a `many` occurrence or a scalar collection — binds on every
+    opening statement whether or not the row names it: absence and the empty
+    array are one logical zero state, so an unnamed `many` stores `[]`
+    (m-value-object, m-document-codec) — the same answer the codec composes for
+    one inside a document.
     """
-    return {
-        value_object["column"]: encode_document(value_object, [])
-        for value_object in entity.value_objects
-        if value_object.get("multiplicity", "one") == "many"
-        and value_object["column"] not in resident_columns
-        and value_object["name"] not in row
+    zero: dict[str, Any] = {
+        attribute["column"]: []
+        for attribute in entity.attributes
+        if is_scalar_collection(attribute)
+        and attribute["column"] not in resident_columns
+        and attribute["name"] not in row
     }
+    zero.update(
+        {
+            value_object["column"]: encode_document(value_object, [])
+            for value_object in entity.value_objects
+            if value_object.get("multiplicity", "one") == "many"
+            and value_object["column"] not in resident_columns
+            and value_object["name"] not in row
+        }
+    )
+    return zero
 
 
 def _entity_document(
@@ -483,7 +498,9 @@ def _entity_document(
             elif occurrence.get("multiplicity", "one") == "many":
                 document[name] = []
             continue
-        if name in row:
+        if member.many:
+            document[name] = encode_collection(member.type_spelling, row.get(name))
+        elif name in row:
             document[name] = encode_leaf(member.type_spelling, row[name])
     return document
 

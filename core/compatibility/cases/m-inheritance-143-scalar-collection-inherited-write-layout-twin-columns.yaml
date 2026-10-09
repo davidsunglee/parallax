@@ -1,0 +1,68 @@
+# Columns half of the inherited scalar collection write proof: concretes of a
+# table-per-hierarchy and a table-per-concrete-subtype family insert and amend the
+# collections they inherit and declare, each in its own structured Column, while a
+# sibling's collection stays NULL in the shared table. Its twin authors the same
+# writes under Relational Document Layout.
+model: models/scalar-collection-lifecycle-layout-twin-columns.yaml
+tags: [m-inheritance, m-storage-layout, m-document-codec, m-sql, m-unit-work, table-per-hierarchy, table-per-concrete-subtype, write-sequence, insert, update, json, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.TagPhone
+      statements: 1
+      note: a concrete inserts the collections its root, abstract subtype, and own declaration contribute, and omits a sibling's
+      rows:
+        - { id: 3, tags: [n], numbers: [x, x], codes: ["00"] }
+    - mutation: insert
+      entity: parallax.compatibility.TagSaw
+      statements: 1
+      note: a table-per-concrete-subtype concrete writes its own table, its omitted inherited collection empty
+      rows:
+        - { id: 3, blades: [a] }
+    - mutation: amend
+      entity: parallax.compatibility.TagPhone
+      statements: 1
+      note: an amendment of the abstract subtype's and the concrete's own collections leaves the root's collection as stored
+      rows:
+        - { id: 1, ports: [9], numbers: [] }
+then:
+  statements:
+    - sql:
+        postgres: insert into tag_asset(id, kind, tags, ports, numbers, codes) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into tag_asset(id, kind, tags, ports, numbers, codes) values (?, ?, ?, ?, ?, ?)
+      binds:
+        - 3
+        - phone
+        - [n]
+        - []
+        - [x, x]
+        - ["00"]
+    - sql:
+        postgres: insert into tag_saw(id, tags, blades) values (?, ?, ?)
+        mariadb: insert into tag_saw(id, tags, blades) values (?, ?, ?)
+      binds:
+        - 3
+        - []
+        - [a]
+    - sql:
+        postgres: update tag_asset set ports = ?, numbers = ? where id = ? and kind = ?
+        mariadb: update tag_asset set ports = ?, numbers = ? where id = ? and kind = ?
+      binds:
+        - [9]
+        - []
+        - 1
+        - phone
+  tableState:
+    tag_asset:
+      - { id: 1, kind: phone, tags: [a, a], ports: [9], legs: null, numbers: [], codes: ["01ff"] }
+      - { id: 2, kind: desk, tags: [d], ports: null, legs: [l, r], numbers: null, codes: null }
+      - { id: 3, kind: phone, tags: [n], ports: [], legs: null, numbers: [x, x], codes: ["00"] }
+    tag_drill:
+      - { id: 1, tags: [t], bits: [8, 8] }
+    tag_saw:
+      - { id: 2, tags: [], blades: [rip] }
+      - { id: 3, tags: [], blades: [a] }
+  roundTrips: 4

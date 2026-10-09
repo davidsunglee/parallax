@@ -55,6 +55,7 @@ from .inheritance import (
     is_abstract,
     tag_of,
 )
+from .storage_layout import is_scalar_collection
 from .temporality import temporal_axes
 from .value_object_resolve import (
     WRITE_REQUIRED_ATTRIBUTE_MISSING,
@@ -170,7 +171,7 @@ def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool)
     an assignment (:func:`assignment_violation`). A replacement states the
     object's whole writable state, so it also omits no required member a caller
     may assign; an omitted nullable member is written empty, and an omitted
-    `many` value object is its empty collection.
+    `many` value object or scalar collection is its empty collection.
     """
     keys = [attribute for attribute in entity.attributes if attribute.get("primaryKey")]
     for attribute in keys:
@@ -196,6 +197,7 @@ def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool)
         and attribute["name"] not in key_names | framework_owned
         and not attribute.get("readOnly")
         and not attribute.get("nullable", False)
+        and not is_scalar_collection(attribute)
     ]
     omitted += [
         value_object["name"]
@@ -257,6 +259,9 @@ def _validate_attribute(
     """Validate one scalar Attribute position inside *document*."""
     name = attribute["name"]
     value = document.get(name)
+    if is_scalar_collection(attribute):
+        _validate_collection(document, attribute, path=path)
+        return
     if name not in document or value is None:
         if not attribute.get("nullable", False):
             raise RejectionError(
@@ -267,6 +272,35 @@ def _validate_attribute(
     if marker_exempt and _is_marker(value):
         return
     decode_typed_literal(value, attribute.get("type"), path)
+
+
+def _validate_collection(document: dict[str, Any], attribute: dict[str, Any], *, path: str) -> None:
+    """Validate one scalar collection position inside *document*.
+
+    An unnamed collection is its empty collection; a named one is never null, is
+    an array, and holds one non-null literal of its declared element type per
+    position.
+    """
+    name = attribute["name"]
+    if name not in document:
+        return
+    value = document[name]
+    if value is None:
+        raise RejectionError(
+            WRITE_REQUIRED_ATTRIBUTE_MISSING,
+            f"{path}: a scalar collection is never null; assign the empty collection instead",
+        )
+    if not isinstance(value, list):
+        raise RejectionError(
+            WRITE_VALUE_TYPE_MISMATCH,
+            f"{path}: a scalar collection binds a list, got {type(value).__name__}",
+        )
+    for index, element in enumerate(value):
+        if element is None:
+            raise RejectionError(
+                WRITE_VALUE_TYPE_MISMATCH, f"{path}[{index}]: a collection element is never null"
+            )
+        decode_typed_literal(element, attribute.get("type"), f"{path}[{index}]")
 
 
 def _validate_occurrence(

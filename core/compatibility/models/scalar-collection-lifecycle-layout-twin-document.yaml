@@ -1,0 +1,79 @@
+# Document member of the scalar collection lifecycle twin. Each layout owner
+# declares Relational Document Layout, so every collection is an array member of the
+# shared document, and a table-per-hierarchy row omits the members its concrete does
+# not apply to. Its Columns twin differs only by omitting the layout blocks.
+entities:
+  - name: TagLedger
+    namespace: parallax.compatibility
+    table: tag_ledger
+    layout: {document: {column: payload}}
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: version, type: int32, optimisticLocking: true}
+      - {name: label, type: string, maxLength: 16}
+      - {name: tags, type: string, multiplicity: many}
+    valueObjects:
+      - name: route
+        nullable: true
+        attributes:
+          - {name: stops, type: string, multiplicity: many}
+  - name: TagLog
+    namespace: parallax.compatibility
+    table: tag_log
+    layout: {document: {column: payload}}
+    temporality: transaction-time
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: tags, type: string, multiplicity: many}
+  - name: TagSpan
+    namespace: parallax.compatibility
+    table: tag_span
+    layout: {document: {column: payload}}
+    temporality: bitemporal
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: amount, type: int64}
+      - {name: marks, type: int32, multiplicity: many}
+  - name: TagAsset
+    namespace: parallax.compatibility
+    table: tag_asset
+    layout: {document: {column: payload}}
+    inheritance: {role: root, strategy: table-per-hierarchy, tag: {column: kind}}
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: tags, type: string, multiplicity: many}
+  - name: TagDevice
+    namespace: parallax.compatibility
+    inheritance: {role: abstract-subtype, parent: parallax.compatibility.TagAsset}
+    attributes:
+      - {name: ports, type: int32, multiplicity: many}
+  - name: TagPhone
+    namespace: parallax.compatibility
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.TagDevice, tagValue: phone}
+    attributes:
+      - {name: numbers, type: string, multiplicity: many}
+      - {name: codes, type: bytes, multiplicity: many}
+  - name: TagDesk
+    namespace: parallax.compatibility
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.TagAsset, tagValue: desk}
+    attributes:
+      - {name: legs, type: string, multiplicity: many}
+  - name: TagKit
+    namespace: parallax.compatibility
+    layout: {document: {column: payload}}
+    inheritance: {role: root, strategy: table-per-concrete-subtype}
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: tags, type: string, multiplicity: many}
+  - name: TagDrill
+    namespace: parallax.compatibility
+    table: tag_drill
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.TagKit}
+    attributes:
+      - {name: bits, type: int32, multiplicity: many}
+  - name: TagSaw
+    namespace: parallax.compatibility
+    table: tag_saw
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.TagKit}
+    attributes:
+      - {name: blades, type: string, multiplicity: many}
