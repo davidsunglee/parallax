@@ -420,7 +420,12 @@ its rectangle current at `validFrom`, current on Transaction Time, matches the
 predicate, and that rectangle is the object's starting rectangle, held as a
 read holds it. The predicate never judges a later rectangle: one whose values
 no longer match is amended like any other the extent reaches, and an object
-whose only matching rectangle starts after `validFrom` is not selected.
+whose only matching rectangle starts after `validFrom` is not selected. Where
+the selection holds more than one rectangle of one object, the call fails as
+Cardinality Corruption naming that object and the count, once the selection is
+read and before anything of the write is buffered or executed — exactly as a
+caller-addressed write whose read shows more than one rectangle containing its
+`validFrom` does (*Caller-addressed writes span their requested extent*).
 
 Each selected object's extent is applied as an observed write's is (*Observed
 writes span their requested extent*). Under Optimistic the starting rectangle
