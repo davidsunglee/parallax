@@ -32,6 +32,7 @@ from parallax.core.metamodel import (
     IndexIdentity,
     IndexMetadata,
     Metamodel,
+    Multiplicity,
     PersistenceMode,
     Table,
     TablePerHierarchy,
@@ -213,6 +214,21 @@ def test_only_a_surviving_position_reports_an_admissible_value_domain() -> None:
     assert admissibility.scope == note.identity
     assert admissibility.earlier == ScalarAdmissibility(STRING, nullable=False, max_length=None)
     assert admissibility.later == ScalarAdmissibility(STRING, nullable=True, max_length=64)
+
+
+def test_scalar_multiplicity_is_structural_rather_than_an_admissible_domain() -> None:
+    # A collection's type names its elements, so moving a required member across
+    # the boundary admits the same element domain it did; only a fact the domain
+    # is made of, here the nullability a collection cannot keep, is an impact.
+    note = attribute(_ARCHIVE, "note", type=STRING)
+    tags = dataclasses.replace(note, multiplicity=Multiplicity.MANY)
+    assert evolve(_holding(note), _holding(tags)).behavioral_impacts == ()
+    assert evolve(_holding(tags), _holding(note)).behavioral_impacts == ()
+
+    optional = dataclasses.replace(note, nullable=True)
+    (admissibility,) = _of(evolve(_holding(optional), _holding(tags)), ValueAdmissibilityChanged)
+    assert admissibility.earlier == ScalarAdmissibility(STRING, nullable=True, max_length=None)
+    assert admissibility.later == ScalarAdmissibility(STRING, nullable=False, max_length=None)
 
 
 def _versioned(*, declares_version: bool) -> Metamodel:

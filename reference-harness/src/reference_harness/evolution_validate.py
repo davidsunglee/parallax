@@ -104,6 +104,7 @@ FIELD_DELTA_ORDER: Mapping[str, tuple[str, ...]] = {
     "AttributeAltered": (
         "TypeChanged",
         "StorageChanged",
+        "MultiplicityChanged",
         "PrimaryKeyChanged",
         "NullabilityChanged",
         "MaximumLengthChanged",
@@ -115,7 +116,11 @@ FIELD_DELTA_ORDER: Mapping[str, tuple[str, ...]] = {
         "MultiplicityChanged",
         "NullabilityChanged",
     ),
-    "ValueObjectAttributeAltered": ("TypeChanged", "NullabilityChanged"),
+    "ValueObjectAttributeAltered": (
+        "TypeChanged",
+        "MultiplicityChanged",
+        "NullabilityChanged",
+    ),
     "RelationshipAltered": (
         "DeclarationFormChanged",
         "CardinalityChanged",

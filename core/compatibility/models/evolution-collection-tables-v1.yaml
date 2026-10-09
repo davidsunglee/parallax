@@ -1,0 +1,11 @@
+# Anchor (v1): the earlier endpoint of the SCALAR COLLECTION TABLES scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It holds
+# one unrelated Entity, so the later endpoint's new Tables arrive in a
+# described evolution rather than in fresh provisioning.
+entity:
+  name: Anchor
+  namespace: parallax.compatibility
+  table: evolution_anchor
+  attributes:
+    - {name: id, type: int64, primaryKey: true}

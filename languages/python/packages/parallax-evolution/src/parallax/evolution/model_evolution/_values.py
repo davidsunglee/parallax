@@ -264,7 +264,8 @@ class OptimisticLockingChanged:
 
 @dataclass(frozen=True, slots=True)
 class MultiplicityChanged:
-    """The declared multiplicity of a surviving Value Object occurrence."""
+    """The declared multiplicity of a surviving scalar member or Value Object
+    occurrence."""
 
     earlier: Multiplicity
     later: Multiplicity
@@ -364,6 +365,7 @@ type EntityDelta = (
 type AttributeDelta = (
     TypeChanged
     | StorageChanged
+    | MultiplicityChanged
     | PrimaryKeyChanged
     | NullabilityChanged
     | MaximumLengthChanged
@@ -371,7 +373,7 @@ type AttributeDelta = (
     | OptimisticLockingChanged
 )
 type ValueObjectOccurrenceDelta = StorageChanged | MultiplicityChanged | NullabilityChanged
-type ValueObjectAttributeDelta = TypeChanged | NullabilityChanged
+type ValueObjectAttributeDelta = TypeChanged | MultiplicityChanged | NullabilityChanged
 type RelationshipDelta = (
     DeclarationFormChanged
     | CardinalityChanged
@@ -392,6 +394,7 @@ ENTITY_DELTA_ORDER: Final[tuple[type, ...]] = (
 ATTRIBUTE_DELTA_ORDER: Final[tuple[type, ...]] = (
     TypeChanged,
     StorageChanged,
+    MultiplicityChanged,
     PrimaryKeyChanged,
     NullabilityChanged,
     MaximumLengthChanged,
@@ -403,7 +406,11 @@ VALUE_OBJECT_OCCURRENCE_DELTA_ORDER: Final[tuple[type, ...]] = (
     MultiplicityChanged,
     NullabilityChanged,
 )
-VALUE_OBJECT_ATTRIBUTE_DELTA_ORDER: Final[tuple[type, ...]] = (TypeChanged, NullabilityChanged)
+VALUE_OBJECT_ATTRIBUTE_DELTA_ORDER: Final[tuple[type, ...]] = (
+    TypeChanged,
+    MultiplicityChanged,
+    NullabilityChanged,
+)
 RELATIONSHIP_DELTA_ORDER: Final[tuple[type, ...]] = (
     DeclarationFormChanged,
     CardinalityChanged,
@@ -726,7 +733,11 @@ class UniqueTuple:
 
 @dataclass(frozen=True, slots=True)
 class ScalarAdmissibility:
-    """The accepted value domain of one scalar position."""
+    """The accepted value domain of one scalar position.
+
+    A scalar collection's ``type`` names its elements; its multiplicity is
+    structural rather than part of the domain.
+    """
 
     type: NeutralType
     nullable: bool

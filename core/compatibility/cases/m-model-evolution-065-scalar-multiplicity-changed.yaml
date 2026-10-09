@@ -1,0 +1,110 @@
+# Changing a scalar member between ONE and MANY (m-model-evolution): coordinated
+# for both reasons, in either direction, for a top-level member under either
+# layout and for a member of a `one` and of a `many` Value Object. The element
+# type is unchanged, so no `TypeChanged` accompanies the move; `note` also
+# becomes required, so its admitted domain contracts beside it.
+tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-scalar-multiplicity-v1.yaml
+    later: models/evolution-scalar-multiplicity-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Register.marks
+        deltas:
+          - {kind: MultiplicityChanged, earlier: many, later: one}
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Register.title
+        deltas:
+          - {kind: MultiplicityChanged, earlier: one, later: many}
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Roster.codes
+        deltas:
+          - {kind: MultiplicityChanged, earlier: many, later: one}
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Roster.note
+        deltas:
+          - {kind: MultiplicityChanged, earlier: one, later: many}
+          - {kind: NullabilityChanged, earlier: true, later: false}
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Roster.tag
+        deltas:
+          - {kind: MultiplicityChanged, earlier: one, later: many}
+      - kind: ValueObjectAttributeAltered
+        valueObjectAttribute: parallax.compatibility.Roster.detail.label
+        deltas:
+          - {kind: MultiplicityChanged, earlier: one, later: many}
+      - kind: ValueObjectAttributeAltered
+        valueObjectAttribute: parallax.compatibility.Roster.detail.scores
+        deltas:
+          - {kind: MultiplicityChanged, earlier: many, later: one}
+      - kind: ValueObjectAttributeAltered
+        valueObjectAttribute: parallax.compatibility.Roster.lines.flags
+        deltas:
+          - {kind: MultiplicityChanged, earlier: one, later: many}
+    behavioralImpacts:
+      - kind: ValueAdmissibilityChanged
+        scope: {attribute: parallax.compatibility.Roster.note}
+        earlier: {type: string, nullable: true, maxLength: null}
+        later: {type: string, nullable: false, maxLength: null}
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Roster.note
+            deltas:
+              - {kind: MultiplicityChanged, earlier: one, later: many}
+              - {kind: NullabilityChanged, earlier: true, later: false}
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Register.marks
+          deltas:
+            - {kind: MultiplicityChanged, earlier: many, later: one}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Register.title
+          deltas:
+            - {kind: MultiplicityChanged, earlier: one, later: many}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Roster.codes
+          deltas:
+            - {kind: MultiplicityChanged, earlier: many, later: one}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Roster.note
+          deltas:
+            - {kind: MultiplicityChanged, earlier: one, later: many}
+            - {kind: NullabilityChanged, earlier: true, later: false}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Roster.tag
+          deltas:
+            - {kind: MultiplicityChanged, earlier: one, later: many}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: ValueObjectAttributeAltered
+          valueObjectAttribute: parallax.compatibility.Roster.detail.label
+          deltas:
+            - {kind: MultiplicityChanged, earlier: one, later: many}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: ValueObjectAttributeAltered
+          valueObjectAttribute: parallax.compatibility.Roster.detail.scores
+          deltas:
+            - {kind: MultiplicityChanged, earlier: many, later: one}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: ValueObjectAttributeAltered
+          valueObjectAttribute: parallax.compatibility.Roster.lines.flags
+          deltas:
+            - {kind: MultiplicityChanged, earlier: one, later: many}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]

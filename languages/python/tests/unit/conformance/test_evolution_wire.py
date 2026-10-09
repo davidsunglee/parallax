@@ -206,6 +206,7 @@ def test_the_encoder_spells_every_attribute_operation() -> None:
             _SKU,
             (
                 StorageChanged(Column("sku"), Column("stock_keeping_unit")),
+                MultiplicityChanged(Multiplicity.MANY, Multiplicity.ONE),
                 NullabilityChanged(False, True),
                 MaximumLengthChanged(32, None),
                 ReadOnlyChanged(True, False),
@@ -220,6 +221,7 @@ def test_the_encoder_spells_every_attribute_operation() -> None:
             "attribute": f"{_ORDER_SPELLING}.sku",
             "deltas": [
                 {"kind": "StorageChanged", "earlier": "sku", "later": "stock_keeping_unit"},
+                {"kind": "MultiplicityChanged", "earlier": "many", "later": "one"},
                 {"kind": "NullabilityChanged", "earlier": False, "later": True},
                 {"kind": "MaximumLengthChanged", "earlier": 32, "later": None},
                 {"kind": "ReadOnlyChanged", "earlier": True, "later": False},
@@ -238,7 +240,13 @@ def test_the_encoder_spells_every_value_object_operation() -> None:
         ),
         ValueObjectAttributeAdded(_CITY),
         ValueObjectAttributeRemoved(_CITY),
-        ValueObjectAttributeAltered(_CITY, (NullabilityChanged(True, False),)),
+        ValueObjectAttributeAltered(
+            _CITY,
+            (
+                MultiplicityChanged(Multiplicity.ONE, Multiplicity.MANY),
+                NullabilityChanged(True, False),
+            ),
+        ),
     ) == [
         {"kind": "ValueObjectOccurrenceAdded", "valueObject": f"{_ORDER_SPELLING}.address"},
         {
@@ -261,7 +269,10 @@ def test_the_encoder_spells_every_value_object_operation() -> None:
         {
             "kind": "ValueObjectAttributeAltered",
             "valueObjectAttribute": f"{_ORDER_SPELLING}.address.city",
-            "deltas": [{"kind": "NullabilityChanged", "earlier": True, "later": False}],
+            "deltas": [
+                {"kind": "MultiplicityChanged", "earlier": "one", "later": "many"},
+                {"kind": "NullabilityChanged", "earlier": True, "later": False},
+            ],
         },
     ]
 

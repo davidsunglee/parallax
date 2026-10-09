@@ -1,0 +1,44 @@
+# Gear and Tool (v1): the earlier endpoint of the INHERITED SCALAR MULTIPLICITY
+# scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. A
+# table-per-hierarchy family under `Columns` and a table-per-concrete-subtype
+# family under Relational Document Layout each declare scalar members on the
+# root and on a concrete subtype, at one end of the ONE/MANY boundary. The
+# abstract `Prototype` composes no concrete subtype, so the member it declares is
+# stored by no shape.
+entities:
+  - name: Gear
+    namespace: parallax.compatibility
+    table: evolution_gear
+    inheritance: {role: root, strategy: table-per-hierarchy, tag: {column: kind}}
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: labels, type: string, multiplicity: many}
+  - name: Prototype
+    namespace: parallax.compatibility
+    inheritance: {role: abstract-subtype, parent: parallax.compatibility.Gear}
+    attributes:
+      - {name: marks, type: string}
+  - name: Drill
+    namespace: parallax.compatibility
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.Gear, tagValue: drill}
+    attributes:
+      - {name: sizes, type: int32}
+  - name: Tool
+    namespace: parallax.compatibility
+    layout: {document: {column: payload}}
+    inheritance: {role: root, strategy: table-per-concrete-subtype}
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: tags, type: string}
+  - name: Saw
+    namespace: parallax.compatibility
+    table: evolution_saw
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.Tool}
+    attributes:
+      - {name: teeth, type: int32, multiplicity: many}
+  - name: Lathe
+    namespace: parallax.compatibility
+    table: evolution_lathe
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.Tool}

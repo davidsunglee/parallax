@@ -171,9 +171,9 @@ in the fixed order below.
 | Alteration | Field deltas, in fixed order |
 |---|---|
 | `EntityAltered` | `StorageContainerChanged`, `PersistenceChanged`, `StorageLayoutChanged`, `InheritanceChanged` |
-| `AttributeAltered` | `TypeChanged`, `StorageChanged`, `PrimaryKeyChanged`, `NullabilityChanged`, `MaximumLengthChanged`, `ReadOnlyChanged`, `OptimisticLockingChanged` |
+| `AttributeAltered` | `TypeChanged`, `StorageChanged`, `MultiplicityChanged`, `PrimaryKeyChanged`, `NullabilityChanged`, `MaximumLengthChanged`, `ReadOnlyChanged`, `OptimisticLockingChanged` |
 | `ValueObjectOccurrenceAltered` | `StorageChanged`, `MultiplicityChanged`, `NullabilityChanged` |
-| `ValueObjectAttributeAltered` | `TypeChanged`, `NullabilityChanged` |
+| `ValueObjectAttributeAltered` | `TypeChanged`, `MultiplicityChanged`, `NullabilityChanged` |
 | `RelationshipAltered` | `DeclarationFormChanged`, `CardinalityChanged`, `JoinChanged`, `ReverseOfChanged`, `DependencyChanged`, `OrderingChanged` |
 | `AsOfAxisAltered` | `StartAttributeChanged`, `EndAttributeChanged` |
 | `IndexAltered` | `ComponentsChanged`, `UniquenessChanged` |
@@ -193,9 +193,12 @@ access path.
 A Value Object occurrence's storage change is valid only for a top-level
 occurrence, a nested one owning no independent Storage Location. A Value Object
 scalar leaf has no Column, maximum length, key, read-only, locking, or generation
-fact, which is why its delta union is the narrowest. The derived `frameworkOwned`
-fact is never a parallel delta: the optimistic-locking and As-Of Axis operations
-report its independent causes.
+fact, which is why its delta union is the narrowest. A scalar member's
+`TypeChanged` compares its declared Neutral Type, which names a collection's
+elements, so moving between one scalar and a scalar collection of the same type
+is a `MultiplicityChanged` alone. The derived `frameworkOwned` fact is never a
+parallel delta: the optimistic-locking and As-Of Axis operations report its
+independent causes.
 
 ## Canonical operation order
 
@@ -279,7 +282,10 @@ ancestry makes applicable.
   member to an existing stored shape requires coordination until a default and
   backfill contract makes existing data satisfy the later model — for scalar
   Attributes and Value Object members alike, whether they occupy a direct Column
-  or an existing Structured Column. Where an insert the caller could author
+  or an existing Structured Column. A scalar collection and a `MANY` occurrence
+  are never nullable, so each arrives and leaves as a required member: reading
+  an absent collection as empty, or authoring one as empty by default, is no
+  default and backfill contract. Where an insert the caller could author
   carries the value it needs the authoring surface too, because every previously
   valid insert omits an input the later model demands. A framework-owned member
   needs the database alone, since no caller ever supplied it, and so does any
@@ -312,9 +318,17 @@ ancestry makes applicable.
   directional rule over the whole family — `ReadWrite` to `ReadOnly` requires
   coordination, `ReadOnly` to `ReadWrite` is unilateral — and the root-owned
   change is reported once rather than repeated per descendant.
-- **Value Objects.** Changing an occurrence between `ONE` and `MANY` requires
-  coordination, because an authored path changes between one object and a
-  collection. Occurrence nullability stays directional.
+- **Multiplicity.** Changing an Attribute, a Value Object occurrence, or a
+  Value Object member between `ONE` and `MANY` requires the authoring surface
+  wherever the position sits, because an authored path changes between one
+  value and an ordered collection — one scalar and a scalar collection, one
+  object and a collection of objects. Where a shape stored under the position
+  survives, it requires database migration too: each stored value keeps the
+  form it was written in. Under `Columns` a top-level scalar member's slot
+  moves between a scalar Column and a Structured Column; inside a document the
+  member moves between a scalar and an array while its containing Structured
+  Column remains. The description infers no wrapping or unwrapping that would
+  carry stored values across. Occurrence nullability stays directional.
 - **Relationships.** Adding one is unilateral and removing one requires
   coordination. An alteration is unilateral only while the preserved identity
   retains its effective target Entity and its One-versus-Many result shape; join,
@@ -419,7 +433,7 @@ claim to enumerate consequences outside this vocabulary.
 | Impact | Scope | Endpoint facts |
 |---|---|---|
 | `UniquenessEnforcementChanged` | one surviving Entity | the canonically ordered set of secondary uniqueness rules, each an unordered Attribute set; Index identity and component order do not participate, equivalent rules collapse, and derived primary-key uniqueness is excluded |
-| `ValueAdmissibilityChanged` | one surviving value-bearing path | Neutral Type, nullability, and maximum String length at a scalar leaf; nullability alone at a Value Object occurrence |
+| `ValueAdmissibilityChanged` | one surviving value-bearing path | Neutral Type, nullability, and maximum String length at a scalar leaf, whose Neutral Type names a scalar collection's elements; nullability alone at a Value Object occurrence |
 | `DeletePropagationChanged` | one surviving Relationship | the effective dependency policy, `Propagates` or `DoesNotPropagate` |
 | `ConcurrencyControlChanged` | one surviving Entity | its model-derived behavior under the `optimistic` Concurrency Preference: `LockingFallback`, `VersionGated` naming the explicit version Attribute, or `TransactionTimeGated` naming the Transaction-Time start Attribute |
 | `QueryResultMembershipChanged` | one surviving Entity or Relationship position | for an Entity, the effective concrete Entity set and Temporal Shape including its axis Attributes; for a Relationship, the target Entity and effective join |
@@ -437,11 +451,12 @@ through `QueryResultOrderingChanged`, and a value-domain change alone does not
 cause it while the ordering rule is unchanged; declaration order, Index component
 order, primary-key changes, unspecified physical row order, and caller-authored
 Sort Keys are not model-defined result ordering. Member addition and removal stay
-their own operations rather than becoming admissibility impacts, and occurrence
-multiplicity stays structural. An Entity-level change in Persistence Mode or
-temporal write shape dominates its members and suppresses the resulting Attribute
-write impacts; where the Entity write surface is unchanged, a surviving Attribute
-whose effective input capability changes receives its own impact.
+their own operations rather than becoming admissibility impacts, and
+multiplicity, a scalar member's or an occurrence's, stays structural. An
+Entity-level change in Persistence Mode or temporal write shape dominates its
+members and suppresses the resulting Attribute write impacts; where the Entity
+write surface is unchanged, a surviving Attribute whose effective input
+capability changes receives its own impact.
 
 An explicit `locking` Concurrency Preference always resolves to Locking and is
 therefore unaffected by evolution. `ConcurrencyControlChanged`'s per-Entity grain

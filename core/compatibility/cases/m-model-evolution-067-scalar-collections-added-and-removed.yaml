@@ -1,0 +1,35 @@
+# Adding and removing scalar collections (m-model-evolution): a collection is
+# never nullable, so under a shape that survives each addition and removal is a
+# required member's, coordinated for both reasons. Its empty default supplies no
+# backfill contract.
+tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-collection-members-v1.yaml
+    later: models/evolution-collection-members-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - {kind: AttributeRemoved, attribute: parallax.compatibility.Parcel.legacy}
+      - {kind: AttributeAdded, attribute: parallax.compatibility.Parcel.tags}
+      - kind: ValueObjectAttributeAdded
+        valueObjectAttribute: parallax.compatibility.Parcel.origin.codes
+      - kind: ValueObjectAttributeRemoved
+        valueObjectAttribute: parallax.compatibility.Parcel.origin.zones
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation: {kind: AttributeRemoved, attribute: parallax.compatibility.Parcel.legacy}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation: {kind: AttributeAdded, attribute: parallax.compatibility.Parcel.tags}
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: ValueObjectAttributeAdded
+          valueObjectAttribute: parallax.compatibility.Parcel.origin.codes
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: ValueObjectAttributeRemoved
+          valueObjectAttribute: parallax.compatibility.Parcel.origin.zones
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
