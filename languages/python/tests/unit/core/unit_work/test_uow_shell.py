@@ -1952,7 +1952,7 @@ def _position_endpoint(end: dt.datetime | None) -> OwnedEndpoint:
 def test_a_stored_insertions_removal_window_is_kept_until_what_it_derives_from_changes() -> None:
     key = corpus_object_key("WherePosition", ("id", 1))
     targets = _TargetWriteState()
-    targets.open_insert(key, None, TimeInterval(_FEB, INFINITY), bitemporal=True)
+    targets.open_insert(key, None, TimeInterval(_FEB, INFINITY))
     targets.end_flush(())
     record = targets.record(key)
     assert record is not None
@@ -1969,7 +1969,7 @@ def test_a_stored_insertions_removal_window_is_kept_until_what_it_derives_from_c
     assert narrowed is not window
     # A stored object's further admission keeps its floor until a flush
     # executes it, and cancelling authority changes neither tags nor floor.
-    targets.open_insert(key, None, TimeInterval(_APR, INFINITY), bitemporal=True)
+    targets.open_insert(key, None, TimeInterval(_APR, INFINITY))
     assert targets.removal_window(record) is narrowed
     targets.end_flush(())
     moved = targets.removal_window(record)
@@ -2143,7 +2143,7 @@ def test_a_row_derived_from_a_merged_row_inherits_each_original_by_intersection(
 def test_an_insertion_keeps_only_its_own_part_of_a_merged_row_and_ends_with_it() -> None:
     key = corpus_object_key("WherePosition", ("id", 1))
     targets = _TargetWriteState()
-    identity = targets.open_insert(key, None, TimeInterval(_JAN, _APR), bitemporal=True)
+    identity = targets.open_insert(key, None, TimeInterval(_JAN, _APR))
     targets.end_flush(())
     record = targets.record(key)
     assert record is not None
@@ -2166,7 +2166,7 @@ def test_an_insertion_keeps_only_its_own_part_of_a_merged_row_and_ends_with_it()
 def test_a_row_still_holding_part_of_an_insertion_keeps_it_standing() -> None:
     key = corpus_object_key("WherePosition", ("id", 1))
     targets = _TargetWriteState()
-    identity = targets.open_insert(key, None, TimeInterval(_JAN, _APR), bitemporal=True)
+    identity = targets.open_insert(key, None, TimeInterval(_JAN, _APR))
     targets.end_flush(())
     record = targets.record(key)
     assert record is not None
@@ -2186,7 +2186,7 @@ def test_a_row_still_holding_part_of_an_insertion_keeps_it_standing() -> None:
 def test_an_insertions_part_running_on_without_end_leaves_its_removal_window_open() -> None:
     key = corpus_object_key("WherePosition", ("id", 1))
     targets = _TargetWriteState()
-    targets.open_insert(key, None, TimeInterval(_JAN, _APR), bitemporal=True)
+    targets.open_insert(key, None, TimeInterval(_JAN, _APR))
     targets.end_flush(())
     record = targets.record(key)
     assert record is not None
@@ -2202,7 +2202,7 @@ def test_an_insertions_part_running_on_without_end_leaves_its_removal_window_ope
 def test_a_row_named_again_after_its_insertion_ended_is_no_longer_tagged() -> None:
     key = corpus_object_key("WherePosition", ("id", 1))
     targets = _TargetWriteState()
-    targets.open_insert(key, None, TimeInterval(_JAN, _APR), bitemporal=True)
+    targets.open_insert(key, None, TimeInterval(_JAN, _APR))
     targets.end_flush(())
     row = _position_endpoint(_APR)
     targets.complete((), Openings(continued=(row,)))
