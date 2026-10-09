@@ -134,46 +134,60 @@ def validate_predicate_write_materialization(
             "for the same concrete target and canonical predicate"
         )
 
-    for index, step in matching_finds:
-        rows = _resolving_materialization_rows(step)
-        if rows is None:
-            continue
-        _assert_materialization_rows(entity, index, rows, instruction)
-        _assert_start_selection(entity, index, step, rows, instruction)
-        return
-    indexes = ", ".join(f"scenario[{index}]" for index, _ in matching_finds)
-    raise PredicateWriteValidationError(
-        f"matching materializing find at {indexes} must be a real resolving read: "
-        "roundTrips: 1, exactly one authored golden read statement, and expectRows "
-        "exposing the resolved rows (or a genuine zero-match result)"
-    )
+    resolving = [
+        (index, step, rows)
+        for index, step in matching_finds
+        if (rows := _resolving_materialization_rows(step)) is not None
+    ]
+    if not resolving:
+        indexes = ", ".join(f"scenario[{index}]" for index, _ in matching_finds)
+        raise PredicateWriteValidationError(
+            f"matching materializing find at {indexes} must be a real resolving read: "
+            "roundTrips: 1, exactly one authored golden read statement, and expectRows "
+            "exposing the resolved rows (or a genuine zero-match result)"
+        )
+    valid = _start_selected_valid_time(entity, instruction)
+    if valid is not None:
+        resolving = [found for found in resolving if _selects_at_start(found[1], instruction)]
+        if not resolving:
+            indexes = ", ".join(f"scenario[{index}]" for index, _ in matching_finds)
+            raise PredicateWriteValidationError(
+                f"materializing find at {indexes} must read {entity.name!r} as of the "
+                f"amendment's validFrom {instruction.get('validFrom')!r} on Valid Time and at "
+                "latest on Transaction Time: a Bitemporal amendment selects there"
+            )
+    index, _, rows = resolving[0]
+    _assert_materialization_rows(entity, index, rows, instruction)
+    if valid is not None:
+        _assert_window_covered(valid, index, rows, instruction)
 
 
-def _assert_start_selection(
-    entity: Entity, index: int, step: dict[str, Any], rows: list[Any], instruction: dict[str, Any]
-) -> None:
-    """A Bitemporal amendment selects each object by its rectangle current at
-    the write's ``validFrom``, so its resolving find reads as of that instant
-    on Valid Time and at Latest on Transaction Time, and a golden-graded case
-    states only rows covering the write's whole window: coverage past them is
-    read inside the flush, which only a state-graded case grades."""
+def _start_selected_valid_time(
+    entity: Entity, instruction: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The Valid-Time axis of a Bitemporal amendment, which selects each object
+    by its rectangle current at the write's ``validFrom``; ``None`` for any
+    other write."""
     if instruction.get("mutation") not in ("amend", "amendUntil"):
-        return
+        return None
     axes = {axis["dimension"]: axis for axis in entity.temporal_runtime_axes}
-    valid = axes.get("valid-time")
-    if valid is None:
-        return
-    valid_from = instruction.get("validFrom")
+    return axes.get("valid-time")
+
+
+def _selects_at_start(step: dict[str, Any], instruction: dict[str, Any]) -> bool:
     temporal = step["objectQuery"].get("temporal")
     selection = temporal if isinstance(temporal, dict) else {}
-    if selection.get("valid-time") != {"asOf": valid_from} or selection.get("transaction-time") != {
-        "asOf": "latest"
-    }:
-        raise PredicateWriteValidationError(
-            f"materializing find at scenario[{index}] must read {entity.name!r} as of the "
-            f"amendment's validFrom {valid_from!r} on Valid Time and at latest on Transaction "
-            "Time: a Bitemporal amendment selects there"
-        )
+    return selection.get("valid-time") == {"asOf": instruction.get("validFrom")} and selection.get(
+        "transaction-time"
+    ) == {"asOf": "latest"}
+
+
+def _assert_window_covered(
+    valid: dict[str, Any], index: int, rows: list[Any], instruction: dict[str, Any]
+) -> None:
+    """A golden-graded case states only selected rows covering the write's
+    whole window: coverage past them is read inside the flush, which only a
+    state-graded case grades."""
     until = instruction.get("until", "infinity")
     for row_index, row in enumerate(rows):
         end = row.get(valid["end_column"]) if isinstance(row, dict) else None

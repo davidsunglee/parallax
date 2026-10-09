@@ -216,7 +216,8 @@ class FlushFailure:
     """The failure a rolled-back group's flush reports: where the flush ran — a
     step index, or ``"commit"`` — and the object and Shortfall it names.
     ``flushed`` holds the pointers of the submissions that flush ran, the ones
-    still pending when it began."""
+    still pending when it began — when several flushes run at one step, when
+    any of them began."""
 
     at: int | Literal["commit"]
     entity: Entity
@@ -601,10 +602,12 @@ def _flush_failure(
     if not isinstance(authored, Mapping):
         return None
     last = members[-1]
-    flushes = _group_flushes(members)
-    candidates = {
-        at: flushed for at, flushed in flushes if flushed and at in ("commit", last.index)
-    }
+    # Several materializing predicate submissions of one step each flush there,
+    # and `at` cannot say which of them failed.
+    candidates: dict[int | Literal["commit"], tuple[str, ...]] = {}
+    for at, flushed in _group_flushes(members):
+        if flushed and at in ("commit", last.index):
+            candidates[at] = candidates.get(at, ()) + flushed
     if authored.get("at") not in candidates:
         where = (
             "nothing"

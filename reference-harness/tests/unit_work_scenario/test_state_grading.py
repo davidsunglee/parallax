@@ -404,6 +404,15 @@ def test_a_failure_flushing_what_a_predicate_submission_follows_is_its_steps(
         _grade(case)
 
 
+def test_a_failure_at_a_step_of_several_predicate_flushes_may_be_any_of_them(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_PRECEDED)
+    writes = case.when["scenario"][0]["write"]
+    writes.append(dict(writes[-1]))
+    _grade(case)
+
+
 def _refused_after_the_amendment() -> dict[str, Any]:
     return {
         "mutation": "amend",
