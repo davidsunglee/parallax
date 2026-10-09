@@ -10,6 +10,7 @@ from parallax.core.metamodel import (
     AttributePrimaryKey,
     Cardinality,
     EntityIdentity,
+    Multiplicity,
     PersistenceMode,
     PrimaryKey,
     TablePerHierarchy,
@@ -220,15 +221,17 @@ def _addition(
                 _position(matching, operation.attribute.entity),
             )
         case ValueObjectOccurrenceAdded():
+            occurrence = matching.value_objects.added[operation.value_object]
             return _member_addition(
-                nullable=matching.value_objects.added[operation.value_object].nullable,
+                nullable=occurrence.nullable,
+                multiplicity=occurrence.multiplicity,
                 position=_position(matching, operation.value_object.entity),
             )
         case ValueObjectAttributeAdded():
+            leaf = matching.value_object_attributes.added[operation.value_object_attribute]
             return _member_addition(
-                nullable=matching.value_object_attributes.added[
-                    operation.value_object_attribute
-                ].nullable,
+                nullable=leaf.nullable,
+                multiplicity=leaf.multiplicity,
                 position=_position(matching, operation.value_object_attribute.value_object.entity),
             )
 
@@ -326,6 +329,7 @@ def _attribute_addition(added: AttributeMetadata, position: _Position) -> Classi
     """
     return _member_addition(
         nullable=added.nullable,
+        multiplicity=added.multiplicity,
         position=position,
         caller_authored=attribute_write_capability(added)
         is not AttributeWriteCapability.FRAMEWORK_OWNED,
@@ -352,7 +356,11 @@ def _member_removal(*, nullable: bool, position: _Position) -> Classification:
 
 
 def _member_addition(
-    *, nullable: bool, position: _Position, caller_authored: bool = True
+    *,
+    nullable: bool,
+    multiplicity: Multiplicity,
+    position: _Position,
+    caller_authored: bool = True,
 ) -> Classification:
     """A member added to an Entity or Value Object that survives its arrival.
 
@@ -360,18 +368,20 @@ def _member_addition(
     where a shape stored under the position survives there: its rows have no
     value for the member until a default and backfill contract supplies one, for
     a scalar Attribute and a Value Object member alike, whether it occupies a
-    direct Column or an existing Structured Column. It needs the authoring
-    surface too where a previously valid insert carried the value — the member
-    is caller-authored and the containing Entity admitted caller writes in the
-    earlier edition — because that insert now omits a required input. A wholly
-    new Entity may carry required members, because its own addition suppresses
-    them and creates a complete empty Table, and so may a position keeping no
-    stored shape, which has neither a row to backfill nor an insert to
-    invalidate.
+    direct Column or an existing Structured Column. A collection is never
+    nullable, and completing an omitted one as empty is no such contract. A
+    single member needs the authoring surface too where a previously valid
+    insert carried the value — the member is caller-authored and the containing
+    Entity admitted caller writes in the earlier edition — because that insert
+    now omits a required input; an omitted collection is completed as empty, so
+    its arrival leaves every such insert valid. A wholly new Entity may carry
+    required members, because its own addition suppresses them and creates a
+    complete empty Table, and so may a position keeping no stored shape, which
+    has neither a row to backfill nor an insert to invalidate.
     """
     if nullable or not position.keeps_a_stored_shape:
         return Classification(reasons=_UNILATERAL, overlap_visible=False)
-    if caller_authored and position.wrote_before:
+    if caller_authored and multiplicity is Multiplicity.ONE and position.wrote_before:
         return Classification(reasons=_BOTH, overlap_visible=False)
     return Classification(reasons=(_MIGRATION,), overlap_visible=False)
 
@@ -510,7 +520,11 @@ def _inherited_addition_reasons(position: _Position) -> set[CoordinationReason]:
             if attribute.identity.entity in arriving
         ),
         *(
-            _member_addition(nullable=occurrence.nullable, position=position)
+            _member_addition(
+                nullable=occurrence.nullable,
+                multiplicity=occurrence.multiplicity,
+                position=position,
+            )
             for occurrence in position.later.applicable_value_objects
             if occurrence.identity.entity in arriving
         ),
