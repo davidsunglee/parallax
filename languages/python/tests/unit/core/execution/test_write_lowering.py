@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import gc
+import weakref
 from collections.abc import Mapping
 from decimal import Decimal
 from types import MappingProxyType
@@ -69,6 +71,7 @@ from parallax.core.metamodel import Table as CoreTable
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._write import StepPayload, compile_write_step
+from parallax.core.storage_layout import InheritanceDiscriminator
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
@@ -1660,3 +1663,79 @@ def test_the_compiler_places_no_cell_its_layout_does_not_hold() -> None:
     )
     with pytest.raises(SqlGenError, match="removes no document key"):
         compile_write_step(step, removal, document, POSTGRES)
+    tagged = RowPayload(
+        entity=_CRATE,
+        source=entry,
+        contributors=(_CRATE_ID, InheritanceDiscriminator(_CRATE)),
+        values=(7, "crate"),
+    )
+    with pytest.raises(SqlGenError, match="names no tag slot"):
+        compile_write_step(
+            PlannedInsert(entity=_CRATE, entries=(entry,)), (tagged,), _CRATE_MODEL, POSTGRES
+        )
+
+
+def _noted_crate(column: str) -> Metamodel:
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_CRATE,
+                container=CoreTable("crate"),
+                attributes=(key(_CRATE), attribute(_CRATE, "note", type=STRING, column=column)),
+            )
+        )
+    )
+
+
+def _crate_row(attributes: Mapping[AttributeIdentity, object]) -> PlannedInsert:
+    return PlannedInsert(
+        entity=_CRATE,
+        entries=(WriteRow(row=PlannedRow(attributes=attributes), origin=NEW_LINEAGE),),
+    )
+
+
+def test_each_model_places_one_entity_identitys_cells_in_its_own_columns() -> None:
+    noted, remarked = _noted_crate("note"), _noted_crate("remark")
+    insert = _crate_row({_CRATE_ID: 1, _CRATE_NOTE: "n"})
+    for model, column in ((noted, "note"), (remarked, "remark"), (noted, "note")):
+        payloads = LayoutPayloadPreparer(model)
+        assert lowered(insert, payloads, model, POSTGRES).sql == (
+            f"insert into crate(id, {column}) values (?, ?)"
+        )
+        assert lowered(_crate_update(), payloads, model, POSTGRES).sql == (
+            f"update crate set {column} = ? where id = ?"
+        )
+
+
+def test_each_statement_is_placed_by_its_own_cells_as_shapes_alternate() -> None:
+    model = _noted_crate("note")
+    payloads = LayoutPayloadPreparer(model)
+    narrow, full = _crate_row({_CRATE_ID: 1}), _crate_row({_CRATE_ID: 2, _CRATE_NOTE: "n"})
+    update = _crate_update()
+    stray = AssignmentPayload(
+        entity=_CRATE,
+        assignments=update.assignments,
+        contributors=(AttributeIdentity(_CRATE, "missing"),),
+        values=("value",),
+    )
+    for _ in range(2):
+        assert lowered(narrow, payloads, model, POSTGRES).sql == "insert into crate(id) values (?)"
+        assert lowered(full, payloads, model, POSTGRES).sql == (
+            "insert into crate(id, note) values (?, ?)"
+        )
+        assert lowered(update, payloads, model, POSTGRES).sql == (
+            "update crate set note = ? where id = ?"
+        )
+        with pytest.raises(SqlGenError, match="occupies no Column"):
+            compile_write_step(update, stray, model, POSTGRES)
+
+
+def test_lowering_keeps_no_model_alive() -> None:
+    model = _noted_crate("note")
+    payloads = LayoutPayloadPreparer(model)
+    lowered(_crate_row({_CRATE_ID: 1, _CRATE_NOTE: "n"}), payloads, model, POSTGRES)
+    lowered(_crate_update(), payloads, model, POSTGRES)
+    layout = weakref.ref(storage_layout.view(model))
+    del model, payloads
+    gc.collect()
+    assert layout() is None

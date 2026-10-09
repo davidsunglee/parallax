@@ -386,7 +386,7 @@ class StorageLayoutFamilyFacts:
 
 
 class _StorageLayoutFacet:
-    __slots__ = ("_entities", "_families", "_table_values", "_tables")
+    __slots__ = ("__weakref__", "_entities", "_families", "_table_values", "_tables")
 
     _table_values: tuple[TableLayout, ...]
     _tables: Mapping[Table, TableLayout]

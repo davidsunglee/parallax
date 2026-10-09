@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Hashable, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import Final, cast
+from weakref import WeakKeyDictionary
 
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import INFINITY, INFINITY_LITERAL, FrozenMap, NeutralType
@@ -31,6 +32,7 @@ from parallax.core.storage_layout import (
     ColumnContributor,
     EntityLayoutView,
     InheritanceDiscriminator,
+    StorageLayoutFacet,
 )
 from parallax.core.wire import WireValue
 from parallax.core.write_plan.payload import (
@@ -197,8 +199,7 @@ def _lower_insert(
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
     first = payloads[0]
-    placement = _placement(view, entity, first.contributors)
-    columns, types, documents = placement
+    columns, types, documents = _placed(meta, view, entity, first.contributors, _ROW)
     for payload in payloads[1:]:
         if payload.contributors != first.contributors:
             raise SqlGenError(
@@ -343,7 +344,7 @@ def _assignment_clause(
     dialect: Dialect,
 ) -> str:
     version_column = None if version is None else _column(view, version, entity)
-    columns, types, documents = _placement(view, entity, payload.contributors)
+    columns, types, documents = _placed(meta, view, entity, payload.contributors, _ASSIGNMENT)
     parts: list[str] = []
     advance: tuple[str, object, NeutralType | None] | None = None
     for column, value, neutral_type, document in zip(
@@ -553,9 +554,44 @@ def _temporal_gate(
     return f" and {dialect.quote(column)} = ?"
 
 
-type _Placement = tuple[list[str], list[NeutralType | None], list[bool]]
+type _Placement = tuple[Sequence[str], Sequence[NeutralType | None], Sequence[bool]]
 """The physical Column of each prepared cell, its Attribute's Neutral Type where
 it binds a scalar, and whether it binds a whole document."""
+
+type _Placed = tuple[tuple[Hashable, ...], _Placement]
+type _RecentByEntity = dict[EntityIdentity, list[_Placed | None]]
+
+_ROW, _ASSIGNMENT = range(2)
+
+_RECENT: Final[WeakKeyDictionary[StorageLayoutFacet, _RecentByEntity]] = WeakKeyDictionary()
+"""Each model's most recently placed row and assignment contributors, by Entity.
+
+A placement is a pure function of the immutable Storage Layout Facet, the
+Entity, and its contributors, so a remembered one never goes stale, and keying
+by the facet weakly ends it with its model. One row and one assignment shape
+are kept per Entity because one write interleaves both. Prepared contributors
+are the layout's own identity objects, so a repeated shape is recognized by
+tuple equality that its identical members answer without hashing."""
+
+
+def _placed(
+    meta: Metamodel,
+    view: EntityLayoutView,
+    entity: EntityMetadata,
+    contributors: tuple[Hashable, ...],
+    kind: int,
+) -> _Placement:
+    facet = storage_layout.view(meta)
+    entities = _RECENT.get(facet)
+    if entities is None:
+        entities = _RECENT[facet] = {}
+    recent = entities.get(entity.identity)
+    if recent is None:
+        recent = entities[entity.identity] = [None, None]
+    placed = recent[kind]
+    if placed is None or placed[0] != contributors:
+        placed = recent[kind] = (contributors, _placement(view, entity, contributors))
+    return placed[1]
 
 
 def _placement(
@@ -600,7 +636,7 @@ def _placement(
         else:
             types.append(None)
             documents.append(True)
-    return columns, types, documents
+    return tuple(columns), tuple(types), tuple(documents)
 
 
 def _bound(values: tuple[object, ...], documents: Sequence[bool]) -> Sequence[object]:
