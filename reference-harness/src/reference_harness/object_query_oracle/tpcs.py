@@ -33,6 +33,7 @@ from ..inheritance import Family
 from ..sql_canonical import NonCanonicalError, sqlglot_dialect
 from ..sql_wrapped_union import WrapFacts, WrapOrderKey, wrapped_union_source
 from ..storage_layout import (
+    AttributeContributor,
     ColumnSlot,
     ColumnTier,
     DocumentPath,
@@ -114,15 +115,16 @@ def projected_position_ordinals(
 ) -> tuple[int, ...]:
     """The position-column ordinals a read of the given result form projects.
 
-    Every non-`Document` contributor is projected in both result forms. A
-    `Document` one is not: a top-level Value Object occurrence's own Structured
-    Column reaches only an instance-form read (`m-sql` *Read projection*, rule 3),
+    Every non-`Document` contributor is projected in both result forms, and so is a
+    scalar collection's own `Document`-tier slot (`m-sql` *Read projection*, rule
+    1). The other `Document` contributors are not: a top-level Value Object
+    occurrence's own Structured Column reaches only an instance-form read (rule 3),
     and a Relational Document Layout's shared Structured Column reaches a row-form
     read as well, but only to produce a member the layout placed inside it (rule
     5) — and in a row-form read the members requested are the Attributes alone,
     rule 3 having already omitted every occurrence. So the superset a `union all`
     branch aligns to, and the result aliases allocated over it, are form-dependent
-    wherever the position holds a `Document` contributor.
+    wherever the position holds a Value Object or shared Structured Column.
 
     *document_resident* is that last fact — whether any branch's concrete places an
     Attribute of its own inside the shared Structured Column — and it is stated by the
@@ -135,6 +137,7 @@ def projected_position_ordinals(
         ordinal
         for ordinal, column in enumerate(view.columns)
         if column.tier is not ColumnTier.DOCUMENT
+        or isinstance(column.contributor, AttributeContributor)
         or (
             instance_form
             if isinstance(column.contributor, ValueObjectContributor)
@@ -365,7 +368,7 @@ def assert_union_shape(
 
     The superset is the position's contributor sequence restricted to what the
     case's own result form projects (:func:`projected_position_ordinals`), so a
-    row-form read of a position holding a `Document` slot is graded on omitting it
+    row-form read of a position holding a Value Object slot is graded on omitting it
     rather than on carrying it.
 
     An ordered or limited read additionally wraps its union, and the wrap's own shape

@@ -174,6 +174,26 @@ def _passthrough_column(select: Any, column: Any, dialect: str) -> Any | None:
     return None
 
 
+def _union_projection_ordinal(branches: list[Any], column: Any, dialect: str) -> int | None:
+    """The one `union all` ordinal projected under *column*'s name, which its first
+    branch spells and every branch carries."""
+    if not branches:
+        return None
+    identity = _column_identity(column, dialect)
+    ordinals = [
+        ordinal
+        for ordinal, projection in enumerate(branches[0].expressions)
+        if _projection_identity(projection, dialect) == identity
+    ]
+    if len(ordinals) != 1 or any(len(branch.expressions) <= ordinals[0] for branch in branches):
+        return None
+    return ordinals[0]
+
+
+def _null_placeholder(projection: Any) -> bool:
+    return isinstance(projection, exp.Cast) and isinstance(projection.this, exp.Null)
+
+
 def _ordinal_passthrough_column(select: Any, ordinal: int) -> Any | None:
     if ordinal >= len(select.expressions):
         return None
@@ -191,7 +211,9 @@ def _physical_column_sources(
     A derived table over a `union all` contributes one source PER BRANCH, and a
     table-per-concrete-subtype union's branches read DIFFERENT Tables by construction
     (m-inheritance) — so a wrapped such read is traceable only if the answer is the
-    whole set. A caller asking a per-source question asks it of every member.
+    whole set. A caller asking a per-source question asks it of every member. A
+    branch padding the column with a typed `null` placeholder reads no Table for it
+    and contributes no source, but at least one branch must.
     """
     relations = _source_relations(select)
     relation = relations.get(column.table)
@@ -203,17 +225,20 @@ def _physical_column_sources(
         return None
     branches = _select_branches(relation.this)
     if isinstance(relation.this, exp.SetOperation):
-        if not branches:
+        ordinal = _union_projection_ordinal(branches, column, dialect)
+        if ordinal is None:
             return None
-        matched = _passthrough_projection(branches[0], column, dialect)
-        if matched is None:
-            return None
-        ordinal = matched[0]
-        passthroughs = [_ordinal_passthrough_column(branch, ordinal) for branch in branches]
+        sourced = [
+            (branch, _ordinal_passthrough_column(branch, ordinal))
+            for branch in branches
+            if not _null_placeholder(projection_expr(branch.expressions[ordinal]))
+        ]
     else:
-        passthroughs = [_passthrough_column(branch, column, dialect) for branch in branches]
+        sourced = [(branch, _passthrough_column(branch, column, dialect)) for branch in branches]
+    if not sourced:
+        return None
     sources: list[tuple[str, str]] = []
-    for branch, passthrough in zip(branches, passthroughs, strict=True):
+    for branch, passthrough in sourced:
         if passthrough is None:
             return None
         traced = _physical_column_sources(branch, passthrough, dialect)

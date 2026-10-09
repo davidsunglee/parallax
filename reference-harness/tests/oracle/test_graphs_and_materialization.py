@@ -696,6 +696,53 @@ def test_a_malformed_collection_leaves_its_published_row_unhydratable(
     assert oracle_materialize.is_unavailable(published)
 
 
+_TPCS_ROW_FORM_COLLECTIONS = (
+    "m-inheritance-145-scalar-collection-tpcs-row-read-layout-twin-columns.yaml"
+)
+
+
+def _presence(*ordinals_and_values: tuple[int, bool]) -> dict[str, bool]:
+    return {
+        f"__parallax_document_presence_{ordinal}": value for ordinal, value in ordinals_and_values
+    }
+
+
+def test_a_row_form_tpcs_read_projects_every_branch_collection(corpus_case: CaseLoader) -> None:
+    """Each collection's presence cell is proven over the branches owning its
+    Column, a typed `null` placeholder arm included, so none reaches the row."""
+    reads = ScriptedReads(
+        results=[
+            [
+                {"id": 1, "tags": ["t"], "bits": [8, 8], "blades": None}
+                | _presence((1, True), (3, True), (5, False))
+                | {"family_variant": "TagDrill"},
+                {"id": 2, "tags": [], "bits": None, "blades": ["rip"]}
+                | _presence((1, True), (3, False), (5, True))
+                | {"family_variant": "TagSaw"},
+            ]
+        ]
+    )
+
+    assert_case_read(corpus_case(_TPCS_ROW_FORM_COLLECTIONS), reads)
+
+
+def test_a_row_form_tpcs_read_dropping_its_collections_is_refused(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_TPCS_ROW_FORM_COLLECTIONS)
+    for dialect in ("postgres", "mariadb"):
+        case.then["statements"][0]["sql"][dialect] = (
+            "select u.id, u.family_variant from (select t0.id, 'TagDrill' family_variant "
+            "from tag_drill t0 union all select t0.id, 'TagSaw' family_variant from tag_saw t0) "
+            "u order by u.id asc"
+        )
+    case.then["rows"] = [{"id": 1, "familyVariant": "TagDrill"}]
+    reads = ScriptedReads(results=[[{"id": 1, "family_variant": "TagDrill"}]])
+
+    with pytest.raises(CaseFailure, match="tags"):
+        assert_case_read(case, reads)
+
+
 # --- single-statement graphs --------------------------------------------------
 
 
