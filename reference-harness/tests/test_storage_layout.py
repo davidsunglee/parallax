@@ -1326,14 +1326,15 @@ def test_fixture_load_derives_each_variant_discriminator_through_its_view() -> N
     assert variants == [("kind", "card"), ("kind", "cash")]
 
 
-def _corrupted_cells(model_rel: str, table: str, *corruptions: Any) -> list[Any]:
-    """The first row *table* loads with, after *corruptions* are written into it."""
+def _corrupted_cells(model_rel: str, table: str, *corruptions: Any) -> dict[str, Any]:
+    """The first row *table* loads with, by column, after *corruptions* are written
+    into it."""
     provider = _RecordingProvider()
     load_fixture_rows(
         load_model(_COMPATIBILITY_ROOT, model_rel), cast("Any", provider), list(corruptions)
     )
-    ((_table, _columns, rows),) = [entry for entry in provider.loads if entry[0] == table]
-    return rows[0]
+    ((_table, columns, rows),) = [entry for entry in provider.loads if entry[0] == table]
+    return dict(zip(columns, rows[0], strict=True))
 
 
 def test_a_corruption_replaces_a_whole_occurrence_under_columns() -> None:
@@ -1350,7 +1351,27 @@ def test_a_corruption_replaces_a_whole_occurrence_under_columns() -> None:
             "value": "not-an-object",
         },
     )
-    assert "not-an-object" in cells
+    assert cells["profile"] == '"not-an-object"'
+
+
+@pytest.mark.parametrize(
+    ("value", "bound"),
+    [("1,2", '"1,2"'), ('["a"]', '"[\\"a\\"]"'), (5, "5"), (None, "null"), (["a"], ["a"])],
+)
+def test_a_corruption_binds_a_whole_scalar_collection_as_the_json_it_names(
+    value: Any, bound: Any
+) -> None:
+    cells = _corrupted_cells(
+        "models/scalar-collection-layout-twin-columns.yaml",
+        "collection_twin",
+        {
+            "entity": "parallax.compatibility.CollectionTwinItem",
+            "key": 1,
+            "member": ["tags"],
+            "value": value,
+        },
+    )
+    assert cells["tags"] == bound
 
 
 def test_a_corruption_indexes_an_array_backed_structured_column() -> None:
@@ -1367,7 +1388,7 @@ def test_a_corruption_indexes_an_array_backed_structured_column() -> None:
             "value": 7,
         },
     )
-    assert [{"code": 7}, {"code": "B"}] in cells
+    assert cells["marks"] == [{"code": 7}, {"code": "B"}]
 
 
 def test_a_corruption_addressing_a_member_of_its_own_column_is_refused() -> None:

@@ -21,6 +21,7 @@ from reference_harness._case_execution import CaseExecution
 from reference_harness._declared_contributor import TEMPORAL_INFINITY
 from reference_harness.case import Case, Model, load_model
 from reference_harness.ddl_builder import _column_type, ddl_for, quote_identifier
+from reference_harness.document_codec import decode_stored
 from reference_harness.providers.mariadb import (
     _INFINITY_SENTINEL,
     _ISOLATION,
@@ -29,6 +30,7 @@ from reference_harness.providers.mariadb import (
     _to_db_bind,
     _to_pymysql,
 )
+from reference_harness.providers.postgres import _load_authored_json
 from reference_harness.sql_canonical import sqlglot_dialect
 from reference_harness.sql_normalize import is_canonical, normalize
 
@@ -222,6 +224,11 @@ def test_managed_instant_binds_become_naive_utc_datetimes() -> None:
 def test_untyped_offset_string_bind_passes_through() -> None:
     bound = _to_db_bind("2024-06-01T00:00:00+00:00")
     assert bound == "2024-06-01T00:00:00+00:00"
+
+
+def test_a_parsed_jsonb_string_is_not_parsed_again_as_json_text() -> None:
+    assert decode_stored(_load_authored_json(b'"[1]"')) == "[1]"
+    assert decode_stored(_load_authored_json(b"[1]")) == [1]
 
 
 def test_case_execution_adapts_only_the_declared_timestamp_column() -> None:

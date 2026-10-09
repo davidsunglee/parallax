@@ -24,7 +24,7 @@ from testcontainers.community.postgres import PostgresContainer
 from .. import errors
 from .._declared_contributor import TEMPORAL_INFINITY
 from ..ddl_builder import quote_identifier
-from ..document_codec import is_document
+from ..document_codec import ParsedJsonString, is_document
 from ..portable_literal import AuthoredNumber
 from . import Catalog, build_catalog, register
 from ._binds import adapt_document_scalar_binds
@@ -127,7 +127,8 @@ def _trusted_query(sql: str) -> QueryNoTemplate:
 
 
 def _load_authored_json(data: str | bytes) -> Any:
-    return json.loads(data, parse_float=AuthoredNumber)
+    parsed = json.loads(data, parse_float=AuthoredNumber)
+    return ParsedJsonString(parsed) if isinstance(parsed, str) else parsed
 
 
 class _IsoTimestamptzLoader(Loader):

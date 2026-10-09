@@ -19,7 +19,8 @@ Three things live here rather than in three consumers:
 * :func:`is_document` and :func:`decode_stored` — the provider-facing pair. A portable
   document is recognized once, on the way to a driver's structured-document wrapper,
   and parsed once on the way back, rather than at each provider and again in the case
-  runner.
+  runner. A driver that parses its own column marks a stored JSON string with
+  :class:`ParsedJsonString` so it is not taken for raw JSON text.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from .portable_literal import AuthoredInteger, AuthoredNumber, DeclaredFloat
 
 __all__ = [
     "DocumentEncodingError",
+    "ParsedJsonString",
     "comparison_text",
     "decode_collection",
     "decode_leaf",
@@ -60,6 +62,15 @@ class DocumentEncodingError(Exception):
     no value of it."""
 
 
+class ParsedJsonString(str):
+    """A JSON string a driver already parsed out of a structured-document column.
+
+    MariaDB hands :func:`decode_stored` its raw JSON text, so a bare ``str`` is text
+    to parse; a stored JSON string a driver has parsed must say so, or its contents
+    would be parsed a second time.
+    """
+
+
 def is_text_compared(type_spelling: str) -> bool:
     """Whether a document-resident member of this declared type compares as extracted
     text rather than through a dialect cast (m-dialect)."""
@@ -79,10 +90,10 @@ def is_document(value: Any) -> bool:
 def decode_stored(raw: Any) -> Any:
     """A structured-document column value read back from a driver, as a document.
 
-    Postgres returns its ``jsonb`` column already parsed; MariaDB returns its ``json``
-    column as the raw JSON text. Both collapse to the same portable document here, so
-    every consumer above the driver is dialect-agnostic. A SQL ``NULL`` column stays
-    ``None``.
+    Postgres returns its ``jsonb`` column already parsed, a stored JSON string as a
+    :class:`ParsedJsonString`; MariaDB returns its ``json`` column as the raw JSON
+    text. Both collapse to the same portable document here, so every consumer above
+    the driver is dialect-agnostic. A SQL ``NULL`` column stays ``None``.
 
     A fractional number and integer-token negative zero keep the digits they were
     stored with: a float leaf's canonical spelling is a property of those digits, so
@@ -92,6 +103,8 @@ def decode_stored(raw: Any) -> Any:
     """
     if raw is None:
         return None
+    if isinstance(raw, ParsedJsonString):
+        return str(raw)
     if isinstance(raw, (bytes, bytearray, memoryview)):
         raw = bytes(raw).decode()
     if isinstance(raw, str):
