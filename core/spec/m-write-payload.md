@@ -72,9 +72,12 @@ A revising step writes only what it assigns. A directly stored member takes its
 own slot. The shared Structured Column takes the ordered patches of its assigned
 paths, prepared once by the codec (`m-document-codec` *Patching*): an assigned
 leaf's encoded value or JSON null, and an assigned occurrence's complete encoded
-document or JSON null, so every key the step does not name survives. The same
-prepared values are what a document patched from them holds and what the
-statement assigns; nothing encodes them a second time.
+document or JSON null, so every key the step does not name survives. Within one
+preparation, the same prepared values are what a document patched from them
+holds and what the statement assigns; nothing encodes them a second time. A
+revising step whose successor was also prepared whole for a comparison retains
+none of that comparison's backing, so its own lowering prepares its assignments
+again.
 
 ## Comparing persisted state
 
