@@ -7,13 +7,11 @@ import shutil
 import subprocess
 from typing import Any
 
-import jsonschema
 import pytest
 
 from parallax.conformance import case_format, cli
-from tests._support.repo import adapter_schema, canonical_snapshot_claim
+from tests._support.repo import canonical_snapshot_claim, validate_adapter_envelope
 
-_SCHEMA = adapter_schema()
 _READ_CASE = str(case_format.default_cases_dir() / "m-predicate-002-eq.yaml")
 
 
@@ -26,7 +24,7 @@ def _run(capsys: pytest.CaptureFixture[str], argv: list[str]) -> tuple[int, dict
 def test_describe_in_process(capsys: pytest.CaptureFixture[str]) -> None:
     code, envelope = _run(capsys, ["describe"])
     assert code == 0
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     canonical = canonical_snapshot_claim()
     assert envelope["capabilities"] == canonical["capabilities"]
     assert envelope["adapter"]["language"] == "python"
@@ -72,7 +70,7 @@ def test_run_rejected_case_never_provisions_a_container(
     )
     code, envelope = _run(capsys, ["run", "--case", rejected_case, "--profile", "pg-full"])
     assert code == 0
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert envelope["profile"] == "pg-full"
     assert envelope["dialect"] == "postgres"
@@ -99,7 +97,7 @@ def test_unreadable_case_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
         capsys, ["run", "--case", "/nonexistent/missing.yaml", "--profile", "pg-full"]
     )
     assert code == 2
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     assert envelope["diagnostics"][0]["code"] == "unreadable-case"
 
 
@@ -115,7 +113,7 @@ def test_describe_subprocess_smoke() -> None:
     result = subprocess.run([executable, "describe"], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     envelope = json.loads(result.stdout)
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
     canonical = canonical_snapshot_claim()
     canonical["adapter"] = envelope["adapter"]
     assert envelope == canonical

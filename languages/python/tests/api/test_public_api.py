@@ -12,6 +12,7 @@ public classmethod constructors that class declares.
 
 from __future__ import annotations
 
+import functools
 import json
 from importlib import import_module
 from pathlib import Path
@@ -23,9 +24,24 @@ from griffe import Alias, Class, GriffeLoader, Module
 _SNAPSHOT = Path(__file__).parent / "public_api.json"
 
 
+@functools.cache
+def _namespace() -> GriffeLoader:
+    # Griffe loads a dotted path's whole top-level package and processes it the
+    # same way whichever object was asked for, so one load of the namespace
+    # serves every module these checks read.
+    loader = GriffeLoader()
+    loader.load("parallax")
+    return loader
+
+
+def _module(path: str) -> Module:
+    module = _namespace().modules_collection.get_member(path)
+    assert isinstance(module, Module), path
+    return module
+
+
 def _public_api(package: str) -> list[str]:
-    module = GriffeLoader().load(package)
-    assert isinstance(module, Module), package
+    module = _module(package)
     exports = module.exports
     if exports is None:
         # No ``__all__``: public surface is every non-underscore public member.
@@ -39,9 +55,7 @@ def _public_api(package: str) -> list[str]:
 
 def _public_constructors(public_class: str) -> list[str]:
     package, _, class_name = public_class.partition(":")
-    module = GriffeLoader().load(package)
-    assert isinstance(module, Module), package
-    declared = module.members[class_name]
+    declared = _module(package).members[class_name]
     if isinstance(declared, Alias):
         declared = declared.final_target
     assert isinstance(declared, Class), public_class
@@ -103,11 +117,8 @@ def test_exported_closed_contributor_algebras_have_expected_variants(
     name: str,
     variants: tuple[str, ...],
 ) -> None:
-    loader = GriffeLoader()
-    public = loader.load(public_module)
-    defining = loader.load(defining_module)
-    assert isinstance(public, Module)
-    assert isinstance(defining, Module)
+    public = _module(public_module)
+    _module(defining_module)
     assert public.exports is not None and name in {str(export) for export in public.exports}
     alias = getattr(import_module(defining_module), name)
     assert isinstance(alias, TypeAliasType)

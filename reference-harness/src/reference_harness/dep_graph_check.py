@@ -48,6 +48,10 @@ from pathlib import Path
 
 import yaml
 
+# Which of PyYAML's parsers scans a fixture changes what reading it costs and
+# nothing about what it reads, so libyaml's is taken when the wheel carries it.
+_SAFE_LOADER = yaml.CSafeLoader if yaml.__with_libyaml__ else yaml.SafeLoader
+
 _FENCE_RE = re.compile(r"```dependency-graph\n(.*?)```", re.DOTALL)
 # The canonical module-slug body. Anchored below as the edge/fixture-tag pattern;
 # other modules wrap it in word boundaries to extract slugs from prose.
@@ -290,7 +294,7 @@ def _fixture_tags(compatibility_root: Path) -> set[str]:
             continue
         for path in sorted(root.glob("**/*.yaml")) + sorted(root.glob("**/*.yml")):
             try:
-                doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+                doc = yaml.load(path.read_text(encoding="utf-8"), Loader=_SAFE_LOADER)
             except yaml.YAMLError:
                 continue
             if not isinstance(doc, dict):
@@ -759,7 +763,7 @@ def load_cases(compatibility_root: Path) -> list[tuple[Path, dict]]:
     paths = sorted(cases_dir.glob("**/*.yaml")) + sorted(cases_dir.glob("**/*.yml"))
     for path in sorted(set(paths)):
         try:
-            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+            doc = yaml.load(path.read_text(encoding="utf-8"), Loader=_SAFE_LOADER)
         except yaml.YAMLError:
             continue
         if not isinstance(doc, dict):
@@ -854,7 +858,11 @@ def _tagged_case_errors(
     return errors
 
 
-def profile_errors(claim_markdown: str, compatibility_root: Path) -> list[str]:
+def profile_errors(
+    claim_markdown: str,
+    compatibility_root: Path,
+    cases: list[tuple[Path, dict]] | None = None,
+) -> list[str]:
     """Assert every slice's tagged cases are consistent with its claim.
 
     Parse the declared claims (one fenced json block per slice in ``slices.md``),
@@ -875,7 +883,8 @@ def profile_errors(claim_markdown: str, compatibility_root: Path) -> list[str]:
         claims = parse_profile_claims(claim_markdown)
     except DepGraphFailure as exc:
         return [str(exc)]
-    return _profile_errors_from(claims, load_cases(compatibility_root))
+    loaded = cases if cases is not None else load_cases(compatibility_root)
+    return _profile_errors_from(claims, loaded)
 
 
 def _profile_errors_from(claims: dict[str, dict], cases: list[tuple[Path, dict]]) -> list[str]:

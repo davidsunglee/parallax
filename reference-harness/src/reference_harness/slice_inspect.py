@@ -35,8 +35,9 @@ def build_reports(spec_dir: Path, compatibility_root: Path) -> dict[str, dict[st
     slices_markdown = slices_path.read_text(encoding="utf-8")
     modules_markdown = modules_path.read_text(encoding="utf-8")
 
+    cases = load_cases(compatibility_root)
     graph_errors = check(modules_markdown)
-    claim_errors = profile_errors(slices_markdown, compatibility_root)
+    claim_errors = profile_errors(slices_markdown, compatibility_root, cases)
     errors = [*graph_errors, *claim_errors]
     if errors:
         raise DepGraphFailure("; ".join(errors))
@@ -51,7 +52,6 @@ def build_reports(spec_dir: Path, compatibility_root: Path) -> dict[str, dict[st
                 f"canonical claim {slice_tag!r} does not satisfy "
                 f"conformance-adapter.schema.json: {problem}"
             )
-    cases = load_cases(compatibility_root)
     edges = parse_edges(modules_markdown)
     repo_root = find_core_root(compatibility_root).parent
     reports: dict[str, dict[str, Any]] = {}

@@ -19,7 +19,6 @@ import re
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 
-import jsonschema
 import pytest
 
 from parallax.conformance import adapter, case_format, engine, sweep
@@ -28,7 +27,7 @@ from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from tests._support.corpus import case_document
 from tests._support.db_port import ConnectsAsItself
-from tests._support.repo import adapter_schema
+from tests._support.repo import validate_adapter_envelope
 from tests._support.sweep_goldens import (
     COMPILE_EXERCISED,
     WRITE_EXERCISED,
@@ -40,7 +39,6 @@ from tests.compatibility._float_zero_support import spell_float_zero_negative
 pytestmark = pytest.mark.compile_sweep
 
 _REACHABLE = sweep.reachable_cases()
-_SCHEMA = adapter_schema()
 # The declared profile the lane-dispatch check below makes its `run` request under,
 # read off the one roster; nothing here provisions it, because the case is refused
 # before a database is needed, so the run is built over a stand-in port.
@@ -183,7 +181,7 @@ def _assert_write_emissions(case: case_format.Case, envelope: dict[str, Any]) ->
 @pytest.mark.parametrize("case", _REACHABLE, ids=[c.case_id for c in _REACHABLE])
 def test_compile_sweep(case: case_format.Case) -> None:
     envelope = adapter.compile_case(case.path, "postgres")
-    jsonschema.validate(envelope, _SCHEMA)
+    validate_adapter_envelope(envelope)
 
     if case.shape == "rejected":
         # A rejected case carries no golden SQL by construction (m-case-format);
