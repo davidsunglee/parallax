@@ -2008,6 +2008,19 @@ def _derived(
     return derive_keyed_write(_prepared_keyed(write, model), rows)
 
 
+def test_a_preformed_plural_temporal_update_of_key_only_rows_reaches_settlement_whole() -> None:
+    # Elimination never takes a plural temporal instruction apart, even where
+    # every row names only its key: it reaches settlement as authored, which
+    # refuses it rather than planning nothing.
+    plural = _derived(
+        KeyedWrite("amend", "Balance", ({"id": 1, "value": Decimal("9.00")},)),
+        _BALANCE,
+        rows=({"id": 1}, {"id": 2}),
+    )
+    with pytest.raises(WritePlanningError, match="every close requires the Temporal Observation"):
+        _plan([plural], _BALANCE)
+
+
 def test_a_row_naming_a_member_outside_the_family_is_refused_at_settlement() -> None:
     stray = _derived(
         KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)),

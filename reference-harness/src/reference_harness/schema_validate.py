@@ -321,6 +321,7 @@ def _validate_buffered_write(
     registry: Registry | None = None,
     *,
     grouped: bool = False,
+    state_graded: bool = False,
 ) -> None:
     """Validate a buffered scenario write — the m-unit-work general keyed buffer.
 
@@ -358,9 +359,11 @@ def _validate_buffered_write(
     multi-object flush, an abort pair over distinct objects). Coalescing correctness is
     proven where it always was — the step's golden SQL executed verbatim plus
     ``tableState`` / ``expectRows`` — so no cross-entry same-object equality is imposed
-    here. A predicate entry is not part of the buffered shape (the schema forbids it);
-    should a schema-invalid case still carry one, the predicate-write validator reports
-    it rather than the keyed member check.
+    here. A predicate entry is validated as a predicate write rather than by the keyed
+    member check. One whose target requires materialization resolves through its own
+    verb, which flushes every submission before it: only a state-graded buffer carries
+    one, because no golden lowering of the buffer could state the statements its
+    selection decides.
     """
     framework: list[int] = []
     for position, instruction in enumerate(instructions):
@@ -371,11 +374,15 @@ def _validate_buffered_write(
             entity = _validate_predicate_write(
                 instruction, entity_defs, predicate_schema, entry_label, errors, registry
             )
-            if entity is not None and requires_predicate_write_materialization(entity):
+            if (
+                entity is not None
+                and not state_graded
+                and requires_predicate_write_materialization(entity)
+            ):
                 errors.append(
-                    f"{entry_label}: a predicate submission of {entity.name} would materialize "
-                    f"through a resolving read, which flushes the buffer it stands in; a "
-                    f"buffered predicate write is readless"
+                    f"{entry_label}: a predicate submission of {entity.name} materializes "
+                    f"through a resolving read, which flushes the buffer it stands in; only a "
+                    f"`grading: state` buffer carries one"
                 )
             continue
         entity = _valid_keyed_entry_entity(instruction, entity_defs, entry_label, errors)
@@ -1207,7 +1214,14 @@ def _validate_case(
     if isinstance(when.get("scenario"), list):
         for index, step in enumerate(when["scenario"]):
             if isinstance(step, dict):  # the case schema owns a malformed step
-                _validate_scenario_step(when["scenario"], index, step, scope, errors)
+                _validate_scenario_step(
+                    when["scenario"],
+                    index,
+                    step,
+                    scope,
+                    errors,
+                    state_graded=case.get("grading") == "state",
+                )
     if isinstance(when.get("coherence"), list):
         _validate_coherence_queries(when["coherence"], scope, errors)
     if isinstance(case, dict):
@@ -1238,6 +1252,8 @@ def _validate_scenario_step(
     step: dict[str, Any],
     scope: _CaseScope,
     errors: list[str],
+    *,
+    state_graded: bool = False,
 ) -> None:
     step_label = f"{scope.label} scenario[{index}]"
     _scenario_statement_binds_keys(step, step_label, errors)
@@ -1278,6 +1294,7 @@ def _validate_scenario_step(
             errors,
             scope.registry,
             grouped=isinstance(step.get("uow"), str),
+            state_graded=state_graded,
         )
 
 

@@ -217,10 +217,19 @@ class PredecessorExpander:
         self._derives = derives
         self._ownership = ownership
         self._audit = audit
-        self._resolved: tuple[
-            tuple[Mapping[str, object], _ResolvedState, ExecutedMembers], ...
-        ] = ()
-        self._comparisons: tuple[tuple[Mapping[str, object], AssignedComparison], ...] = ()
+        self._resolved: list[tuple[Mapping[str, object], _ResolvedState, ExecutedMembers]] = []
+        self._comparisons: list[tuple[Mapping[str, object], AssignedComparison]] = []
+
+    def keyed(self, key_value: object) -> PredecessorExpander:
+        """This expansion over the object ``key_value`` names, sharing every
+        assignment mapping it has resolved and comparison it has prepared, and
+        every one either prepares from now on: a group expands each of its
+        objects through one."""
+        expansion = object.__new__(PredecessorExpander)
+        for slot in PredecessorExpander.__slots__:
+            setattr(expansion, slot, getattr(self, slot))
+        expansion._key_values = (key_value,)
+        return expansion
 
     def expand(
         self,
@@ -448,7 +457,7 @@ class PredecessorExpander:
             if mapping is assigned:
                 return comparison
         comparison = AssignedComparison(self._facts.view.member_selection, assigned)
-        self._comparisons += ((assigned, comparison),)
+        self._comparisons.append((assigned, comparison))
         return comparison
 
     def _resolution(self, assigned: Mapping[str, object]) -> tuple[_ResolvedState, ExecutedMembers]:
@@ -458,7 +467,7 @@ class PredecessorExpander:
         facts = self._facts
         maps = resolve_row(facts.entity, facts.view, assigned, context="insert")
         executed = _in_member_order(facts, (*maps[0], *maps[1]))
-        self._resolved += ((assigned, maps, executed),)
+        self._resolved.append((assigned, maps, executed))
         return maps, executed
 
     def _realized(

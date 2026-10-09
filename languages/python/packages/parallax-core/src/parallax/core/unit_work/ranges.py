@@ -16,7 +16,7 @@ from parallax.core.temporal_read import (
     milestone_edge,
     valid_time_coverage,
 )
-from parallax.core.temporal_write.coverage import CoverageGap, CoverageTransform
+from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageGap, CoverageTransform
 from parallax.core.temporal_write.expansion import (
     ExpansionRole,
     PredecessorExpander,
@@ -25,7 +25,13 @@ from parallax.core.temporal_write.expansion import (
     entry_endpoint,
     openings,
 )
-from parallax.core.unit_work.acquisition import CompletionRequest, CoverageReadRequest
+from parallax.core.unit_work.acquisition import (
+    AcquireRows,
+    CompletionRequest,
+    CoverageReadRequest,
+    CoverageTerm,
+    consume_coverage,
+)
 from parallax.core.unit_work.effects import (
     CardinalityCorruptionError,
     MissingTargetError,
@@ -37,6 +43,7 @@ from parallax.core.unit_work.materialized import (
     ChainedTemporalWrite,
     ComposedTemporalWrite,
     InsertionKeyedWrite,
+    MaterializedWriteGroup,
     ObservedKeyedWrite,
     PendingOpening,
     TargetKeyedWrite,
@@ -45,6 +52,7 @@ from parallax.core.unit_work.materialized import (
 )
 from parallax.core.unit_work.retain import RetainedObservation, RetainedTargetState
 from parallax.core.unit_work.strategy import AuditDecoration
+from parallax.core.write_plan.columns import ChunkedColumnBuilder
 from parallax.core.write_plan.keys import ObjectKey, ObservedStateKey, TemporalStateKey
 from parallax.core.write_plan.materialized import PredecessorRows
 from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
@@ -57,17 +65,24 @@ from parallax.core.write_plan.plan import (
     Descent,
     Openings,
     OwnedEndpoint,
+    PlannedWrites,
     SourceAuthority,
     TemporalWriteOwnership,
+    UnitEffects,
+    eager_segment,
 )
-from parallax.core.write_plan.planned_rows import resolve_row
+from parallax.core.write_plan.planned_rows import assigned_name, resolve_row
 from parallax.core.write_plan.steps import TERMINATED, KeyTarget, PlannedInsert, PlannedValue
 from parallax.core.write_plan.steps import PlannedWrite as PlannedStep
 
 __all__ = [
+    "DeferredGroupRange",
     "DeferredTemporalRange",
+    "GroupContinuation",
+    "StartingRows",
     "bind_deferred",
     "coverage_reads",
+    "defer_group",
     "range_claims",
     "retained_completion",
     "settle_opening",
@@ -630,28 +645,19 @@ class _TemporalRangeBinder:
         return tuple(ordered), frozenset(discharged)
 
     def read(self, rows: Sequence[PredecessorRows]) -> list[_Original]:
-        """Every row of ``rows`` as an original, each physical row once: a row
-        an earlier read already returned, at the same state and Valid-Time end,
-        is not repeated, while every row one read returns stays, however it
-        overlaps the others."""
-        meaning = self.meaning
-        reads = [
+        """Every row of ``rows`` as an original, each physical row once
+        (:func:`_distinct`)."""
+        return _distinct(
             [
-                _original(
-                    meaning.facts, meaning.key_attribute, meaning.key_value, predecessor, None
-                )
-                for predecessor in _acquired_predecessors(acquired)
+                [self.original(predecessor) for predecessor in _acquired_predecessors(acquired)]
+                for acquired in rows
             ]
-            for acquired in rows
-        ]
-        if len(reads) < 2:
-            return reads[0] if reads else []
-        originals: list[_Original] = []
-        earlier: set[tuple[ObservedStateKey, object | None]] = set()
-        for read in reads:
-            originals.extend(original for original in read if _physical(original) not in earlier)
-            earlier.update(_physical(original) for original in read)
-        return originals
+        )
+
+    def original(self, predecessor: PredecessorRow) -> _Original:
+        """One current row of the range's object as an original."""
+        meaning = self.meaning
+        return _original(meaning.facts, meaning.key_attribute, meaning.key_value, predecessor, None)
 
     def _require_one_start(self, current: Sequence[_Original]) -> None:
         for condition in self.meaning.conditions:
@@ -1029,8 +1035,12 @@ def coverage_reads(
         sorted((interval for interval in covered if interval is not None), key=_START)
     )
     return tuple(
-        _coverage(meaning, missing[first : first + _COVERAGE_TERMS])
-        for first in range(0, len(missing), _COVERAGE_TERMS)
+        coverage_requests(
+            meaning.facts.entity,
+            meaning.key_attribute,
+            (CoverageTerm(cast("ManagedValue", meaning.key_value), missing),) if missing else (),
+            locking=not meaning.gated,
+        )
     )
 
 
@@ -1038,10 +1048,38 @@ def _coverage(meaning: _RangeMeaning, windows: tuple[TimeInterval, ...]) -> Cove
     return CoverageReadRequest(
         entity=meaning.facts.entity,
         key_attribute=meaning.key_attribute,
-        key_value=cast("ManagedValue", meaning.key_value),
-        valid_time_windows=windows,
+        terms=(CoverageTerm(cast("ManagedValue", meaning.key_value), windows),),
         locking=not meaning.gated,
     )
+
+
+def coverage_requests(
+    entity: EntityMetadata,
+    key_attribute: AttributeIdentity,
+    terms: Iterable[CoverageTerm],
+    *,
+    locking: bool,
+) -> Iterator[CoverageReadRequest]:
+    """Reads of every Valid-Time window ``terms`` name, in order, each naming at
+    most :data:`_COVERAGE_TERMS` key/window terms; an object whose windows do
+    not fit what remains of one read continues in the next."""
+    pending: list[CoverageTerm] = []
+    room = _COVERAGE_TERMS
+    for term in terms:
+        windows = term.valid_time_windows
+        first = 0
+        while first < len(windows):
+            if not room:
+                yield CoverageReadRequest(entity, key_attribute, tuple(pending), locking)
+                pending, room = [], _COVERAGE_TERMS
+            part = windows[first : first + room]
+            pending.append(
+                term if len(part) == len(windows) else CoverageTerm(term.key_value, part)
+            )
+            first += len(part)
+            room -= len(part)
+    if pending:
+        yield CoverageReadRequest(entity, key_attribute, tuple(pending), locking)
 
 
 def bind_deferred(
@@ -1085,6 +1123,270 @@ def _binding(
             audit=audit,
         ),
     )
+
+
+_GROUP_OBJECTS: Final = 32
+"""The most selected objects one batch of a deferred group settles: their
+coverage is read, each is settled whole, and their steps execute before the
+next batch is prepared. The batch bounds how much acquired coverage and
+settled payload is live at once, not bytes; one object's history is never
+split across batches. A batch's settled steps are its peak, so the limit
+trades that peak against coverage statements: a selected object leaves at most
+one part of its window to read, so a batch no larger than the term cap costs
+one read."""
+
+
+class StartingRows:
+    """The rows a Bitemporal amendment group selected, held for the one
+    continuation that settles them, which takes them (:meth:`take`) so that the
+    plan describing the group keeps nothing alive while its batches run."""
+
+    __slots__ = ("_evidence",)
+
+    def __init__(self, evidence: PredecessorRows) -> None:
+        self._evidence: PredecessorRows | None = evidence
+
+    def take(self) -> PredecessorRows | None:
+        """The rows, released from this holder, or ``None`` once taken."""
+        evidence = self._evidence
+        self._evidence = None
+        return evidence
+
+
+@dataclass(frozen=True, slots=True)
+class DeferredGroupRange(DeferredRange):
+    """A Bitemporal amendment group whose every selected object is a range from
+    the row it was selected by: the meaning they share, holding no object's key,
+    and the ``starting`` rows its continuation takes when its unit's turn comes
+    (:class:`GroupContinuation`). Like every deferred description it holds what
+    settlement decided and nothing that could decide again."""
+
+    meaning: _RangeMeaning
+    starting: StartingRows
+
+
+def defer_group(
+    group: MaterializedWriteGroup,
+    *,
+    view: InheritanceEntityView,
+    shape: Bitemporal,
+    gated: bool,
+    instant: dt.datetime,
+    guards: bool = False,
+) -> DeferredGroupRange:
+    """A Bitemporal amendment group as the deferred range every one of its
+    objects takes from the row it was selected by through the write's window:
+    the group's one assignment set over that window, an amendment that opens no
+    gap. Its assignments are resolved here once, so a marker no opened row can
+    express is refused before anything executes."""
+    mutation = group.mutation
+    evidence = group.evidence
+    assert isinstance(evidence, PredecessorRows)  # a temporal group's rows are whole
+    entity = mutation.selection.target
+    assigned = {
+        assigned_name(assignment): assignment.value for assignment in mutation.managed_assignments
+    }
+    resolve_row(entity, view, assigned, context="insert")
+    transform = NO_TRANSFORM.followed_by(mutation.valid_time_window, assigned, replaces=False)
+    meaning = _RangeMeaning(
+        facts=TemporalFacts(entity=entity, view=view, shape=shape, instant=instant),
+        transform=transform,
+        valid_time_window=transform.valid_time_window,
+        gated=gated,
+        key_attribute=view.primary_key.identity,
+        key_value=None,
+        guards=guards,
+    )
+    return DeferredGroupRange(meaning=meaning, starting=StartingRows(evidence))
+
+
+class GroupContinuation:
+    """The batches a deferred group executes in, each prepared only once the
+    previous one's steps succeeded (:meth:`pull`).
+
+    A batch takes the next objects in the order the group selected them, at
+    most a bounded number, and each whole: the coverage its window reaches past
+    the row the object was selected by is read for all of them — several
+    objects per read, and an object's windows across several reads where they
+    do not fit one — and each object then settles as a range of its own over
+    that row and the rows read, through one expansion every object shares, so
+    its assignments are resolved and their comparison prepared once. Each
+    selected row is released as its batch takes it, and nothing a batch read or
+    settled outlives the steps it answers. What success publishes accumulates
+    as plain facts, handed over once every batch is exhausted (:meth:`finish`).
+    """
+
+    __slots__ = (
+        "_absent",
+        "_acquire",
+        "_changed",
+        "_continued",
+        "_documents",
+        "_exhausted",
+        "_expansion",
+        "_fresh",
+        "_key_position",
+        "_meaning",
+        "_next",
+        "_ownership",
+        "_rows",
+        "_selection",
+    )
+
+    def __init__(
+        self,
+        description: DeferredGroupRange,
+        *,
+        acquire_rows: AcquireRows,
+        ownership: TemporalWriteOwnership,
+        audit: AuditDecoration,
+    ) -> None:
+        evidence = description.starting.take()
+        if evidence is None:
+            raise ValueError("a deferred group's selected rows settle through one continuation")
+        meaning = description.meaning
+        self._meaning = meaning
+        self._acquire = acquire_rows
+        self._ownership = ownership
+        self._selection = evidence.selection
+        self._key_position = evidence.key_position
+        self._absent = evidence.absent
+        # The selected rows move into lists this continuation alone holds, so
+        # each one is released as its batch takes it.
+        self._rows: list[tuple[object, ...] | None] = list(evidence.rows)
+        documents = evidence.documents
+        self._documents: list[object | None] | None = None if documents is None else list(documents)
+        self._next = 0
+        self._exhausted = False
+        self._expansion = PredecessorExpander(
+            meaning.facts,
+            meaning.transform,
+            key_attribute=meaning.key_attribute,
+            gated=meaning.gated,
+            guards=meaning.guards,
+            ownership=ownership,
+            audit=audit,
+        )
+        self._changed: ChunkedColumnBuilder[ObservedStateKey] = ChunkedColumnBuilder()
+        self._fresh: ChunkedColumnBuilder[OwnedEndpoint] = ChunkedColumnBuilder()
+        self._continued: ChunkedColumnBuilder[OwnedEndpoint] = ChunkedColumnBuilder()
+
+    def pull(self) -> PlannedWrites | None:
+        """The next batch's steps, settled once its coverage is read, or
+        ``None`` once every object has been."""
+        first = self._next
+        rows = self._rows
+        if first >= len(rows):
+            self._exhausted = True
+            return None
+        last = min(first + _GROUP_OBJECTS, len(rows))
+        self._next = last
+        starts = [self._start(index) for index in range(first, last)]
+        reads = self._read(starts)
+        steps: list[PlannedStep] = []
+        for key, start in starts:
+            bound = self._settled(key, start, reads.get(key, ()))
+            steps.extend(bound.steps)
+            self._record(bound)
+        return PlannedWrites((eager_segment(steps),)) if steps else PlannedWrites()
+
+    def finish(self) -> UnitEffects:
+        """What every batch's success publishes, once no batch remains."""
+        if not self._exhausted:
+            raise ValueError("a deferred group's effects are final only once every batch ran")
+        # An amendment leaves every row it reaches a successor ending where the
+        # row ends, so no row it reaches is removed.
+        return UnitEffects(
+            changed=self._changed.build(),
+            opened=Openings(fresh=self._fresh.build(), continued=self._continued.build()),
+        )
+
+    def close(self) -> None:
+        """Release everything still held for batches that will not run, and
+        every fact not yet handed over; facts :meth:`finish` answered stay
+        theirs."""
+        self._rows = []
+        self._documents = None
+        self._changed = ChunkedColumnBuilder()
+        self._fresh = ChunkedColumnBuilder()
+        self._continued = ChunkedColumnBuilder()
+
+    def _start(self, index: int) -> tuple[object, _Original]:
+        """The ``index``-th selected object's key beside the row it was
+        selected by, released from this continuation."""
+        row = self._rows[index]
+        assert row is not None  # each selected row is taken once
+        self._rows[index] = None
+        documents = self._documents
+        document = None
+        if documents is not None:
+            document = documents[index]
+            documents[index] = None
+        meaning = self._meaning
+        key = row[self._key_position]
+        predecessor = PredecessorRow.over_row(self._selection, row, document, self._absent)
+        return key, _original(meaning.facts, meaning.key_attribute, key, predecessor, None)
+
+    def _read(
+        self, starts: Sequence[tuple[object, _Original]]
+    ) -> dict[object, list[list[PredecessorRow]]]:
+        """Each object's current rows the coverage reads of ``starts`` returned,
+        one list per read that returned any."""
+        meaning = self._meaning
+        window = meaning.valid_time_window
+        assert window is not None  # a Bitemporal group spans Valid Time
+        terms = (
+            CoverageTerm(cast("ManagedValue", key), missing)
+            for key, start in starts
+            if (missing := window.uncovered(_valid_time_coverages((start,))))
+        )
+        reads: dict[object, list[list[PredecessorRow]]] = {}
+        for request in coverage_requests(
+            meaning.facts.entity, meaning.key_attribute, terms, locking=not meaning.gated
+        ):
+            acquired = self._acquire(request, consume_coverage)
+            if acquired is None:
+                continue
+            returned: dict[object, list[PredecessorRow]] = {}
+            for index, predecessor in enumerate(_acquired_predecessors(acquired)):
+                returned.setdefault(acquired.key(index), []).append(predecessor)
+            for key, predecessors in returned.items():
+                reads.setdefault(key, []).append(predecessors)
+        return reads
+
+    def _settled(
+        self, key: object, start: _Original, reads: Sequence[list[PredecessorRow]]
+    ) -> BoundRange:
+        """One object settled as its own range: the row it was selected by and
+        every row read past it, each expanded by the group's one expansion."""
+        binder = _TemporalRangeBinder(
+            replace(self._meaning, key_value=key), self._ownership, self._expansion.keyed(key)
+        )
+        current = _distinct([[binder.original(row) for row in read] for read in reads])
+        return binder.bind(binder.acquired(current, (start,)), ())
+
+    def _record(self, bound: BoundRange) -> None:
+        for state in bound.changed:
+            self._changed.append(state)
+        opened = bound.opened
+        for endpoint in opened.fresh:
+            self._fresh.append(endpoint)
+        for endpoint in opened.continued:
+            self._continued.append(endpoint)
+
+
+def _distinct(reads: Sequence[list[_Original]]) -> list[_Original]:
+    """Every original of ``reads`` once per physical row: a row an earlier read
+    already returned, at the same state and Valid-Time end, is not repeated,
+    while every row one read returns stays, however it overlaps the others."""
+    if len(reads) < 2:
+        return reads[0] if reads else []
+    originals: list[_Original] = []
+    earlier: set[tuple[ObservedStateKey, object | None]] = set()
+    for read in reads:
+        originals.extend(original for original in read if _physical(original) not in earlier)
+        earlier.update(_physical(original) for original in read)
+    return originals
 
 
 def _acquired_predecessors(rows: PredecessorRows) -> Iterator[PredecessorRow]:

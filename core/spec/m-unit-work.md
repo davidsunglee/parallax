@@ -607,9 +607,9 @@ acquisition*). A request describes what to read and performs no read:
 
 | Request | What it reads | When |
 |---|---|---|
-| **Selection** | the rows a predicate-selected write on a versioned or temporal target will change | when the write is buffered, after pending writes are flushed through the read gate |
+| **Selection** | the rows a predicate-selected write on a versioned or temporal target will change — for a Bitemporal amendment, each matching object's rectangle current at its `validFrom` | when the write is buffered, after pending writes are flushed through the read gate |
 | **Target** | the one row a Locking caller-addressed write addresses, at `validFrom` for a Bitemporal target, when no pending write or live read already proves it; a temporal one whole, retained with the write | when the write is buffered, with no force-flush |
-| **Coverage** | an object's current milestones overlapping the parts of a deferred range unit's window no row it holds covers, in statements naming a bounded number of parts each | when the flush reaches that unit, inside its write batch |
+| **Coverage** | the current milestones of one or several objects overlapping the parts of each object's window no row it holds covers, in statements naming a bounded number of object/part terms each | when the flush reaches the deferred unit — for a deferred group, each batch of its objects — inside its write batch |
 | **Completion** | nothing: the retained rows of a deferred range unit that are still current, each occurrence the target read left pending judged as a read judges it | when the flush reaches that unit, before its coverage is read |
 
 The unit of work hands each request a consumer of its own and receives the
@@ -706,7 +706,7 @@ The Write Planner privately owns this stage order:
    predecessors planning holds (`m-temporal-write`), or finalize a requested
    range whose coverage no planning input holds
 8. audit: finalize each produced row, and decorate each update and close
-9. freeze the Planned Steps
+9. freeze the Planned Writes
 ```
 
 Four of those orderings are load-bearing and therefore normative:
@@ -754,19 +754,20 @@ settlement at all. That operation answers the Write Planning Result, which the
 planner returns unchanged: the planner neither wraps nor reconstructs it, so no
 fact about a settled write is decided twice.
 
-### Write Plan and Planned Steps
+### Write Plan and Planned Writes
 
 ```text
-WritePlan(steps: PlannedSteps, units: ExecutionUnits)
+WritePlan(steps: PlannedWrites, units: ExecutionUnits)
 
-PlannedSteps: an immutable ordered logical sequence of Planned Writes
+PlannedWrites: an immutable, ordered, possibly empty collection of Planned
+    Writes, indexable and repeatable
 ExecutionUnits: an ordered partition of those steps, each unit with the
     claims it spends, the Observed States it changes, and the attempt-owned
     rows it removes and opens
 ```
 
 A **Write Plan** is the immutable, **execution-ordered** result of one planning
-call. Its Planned Steps contain every Planned Write that survives coalescing,
+call. Its Planned Writes contain every Planned Write that survives coalescing,
 cancellation, and known no-op elimination, with temporal topology and correctness
 semantics already decided.
 
@@ -787,7 +788,7 @@ semantics already decided.
   else. Carrying an operation is therefore not what makes something a producer —
   advancing an observed version by an already-fixed step is the strategy's
   settled answer restated, not a fresh decision.
-- An **empty** Planned Steps sequence is the one canonical result for complete
+- An **empty** Planned Writes sequence is the one canonical result for complete
   cancellation or known no-op elimination. There is no empty-plan sentinel and no
   second result variant.
 - A **deferred range unit** is the one exception to fully expanded topology. A
@@ -830,7 +831,21 @@ semantics already decided.
   units complete before later work runs*); any other caller's start is a failed
   precondition, and any other observed condition fails as that write's own
   shortfall would, the caller's first.
-- Planned Steps is a **logical** sequence. An implementation MAY pack homogeneous
+- A **deferred group** is the deferred unit of a Bitemporal amendment's
+  Materialized Write Group (below). Its meaning is the group's one window and
+  assignment set, the gate, and the resolved instant, beside the starting rows
+  the group selected, which the unit's preparation takes over when its turn
+  comes so that the plan keeps none of them alive while it executes. Binding it
+  answers a **continuation** rather than steps: preparation in rounds, each
+  round the Planned Writes of the next batch of complete objects — possibly
+  none — settled only after every step of the round before it has executed and
+  been enforced. Iterating or indexing a round's Planned Writes acquires and
+  settles nothing. Once no round remains the continuation hands over what the
+  whole unit's success publishes, and however the unit ends its preparation is
+  released without preparing or publishing anything more; a failure releasing
+  it after an earlier failure leaves that earlier failure the one reported, and
+  one with no earlier failure refuses the unit's success.
+- Planned Writes is a **logical** sequence. An implementation MAY pack homogeneous
   runs and expose stable immutable views during iteration rather than allocating
   one container per step; every exposed view is immutable and stable, and equal
   views need not have object identity.
@@ -862,7 +877,8 @@ register the rows the unit opened
 ```
 
 A deferred range unit's changed states, removals, and openings are those its
-binding produced. A milestone a unit kept unchanged (`m-temporal-write`
+binding produced; a deferred group's are those every round produced, published
+once, after the last round, and never per round. A milestone a unit kept unchanged (`m-temporal-write`
 *Unchanged milestones*) is
 no changed state, even where a guard executed for it, and derives nothing a
 later unit relies on: it still stands. A source that carries no observation — an unversioned
@@ -994,7 +1010,10 @@ and undeclared key alike — is the codec's and is not restated here.
 A resolved row every assigned member of which the classification answers as
 **restored** is **eliminated**: it issues no DML, advances no version, consults
 no clock, and for a temporal entity performs no close and chains no row. That
-holds however the codec reached the answer.
+holds however the codec reached the answer. A Bitemporal amendment's group
+eliminates nothing at selection: its write reaches each object's later coverage
+too, so every milestone it reaches is judged unchanged for itself when the group
+settles (`m-temporal-write` *Unchanged milestones*), as a keyed write's are.
 
 Elimination decides the whole row and nothing smaller. A Materialized Write
 Group row that survives because one of its assigned members is effective
@@ -1250,9 +1269,13 @@ and returns fresh state, which nothing claims.
 
 A **Materialized Write Group** claims every state its predicate resolution
 selected. A later keyed write of one of those states is refused rather than merged
-in, because merging would mean indexing and mutating the compact group. In the
-reverse order there is nothing to refuse: the group's resolving read force-flushes
-the buffer first, so it selects state no pending intent still holds.
+in, because merging would mean indexing and mutating the compact group. A
+Bitemporal amendment's group also reaches each selected object's later coverage
+when its flush reaches it, so a later observed write of any other state of a
+selected object is refused too: it would settle against coverage the group
+changes first. In the reverse order there is nothing to refuse: the group's
+resolving read force-flushes the buffer first, so it selects state no pending
+intent still holds.
 
 A coalescing witness encodes **both** buffered mutations explicitly by authoring
 the write step as an ordered **buffer-and-flush** scenario. `/scenario/<n>/write`
@@ -1286,7 +1309,8 @@ template) cannot be planned from buffered data alone. Its resolving read happens
 3. acquires the selected physical row locks when the Entity's Effective
    Concurrency Strategy is Locking (`m-read-lock`);
 4. compares assigned members with their persisted values, using this module's
-   structural equality rules, for an assignment-bearing mutation;
+   structural equality rules, for an assignment-bearing mutation other than a
+   Bitemporal amendment;
 5. records the effective rows in database resolution order; and
 6. produces **no item at all** when the result is empty or entirely no-op.
 
@@ -1319,6 +1343,59 @@ in a Write Plan.
   group.
 - A zero-row shortfall encountered while flushing the group aborts the **whole**
   unit of work (`m-opt-lock`); a later row is never silently continued past it.
+
+#### A Bitemporal amendment's group settles at execution
+
+A Bitemporal `amend` or `amendUntil` selects each object by its rectangle current
+at the write's `validFrom` under current Transaction Time, after the dependency
+flush, and keeps every object its predicate matches there (`m-temporal-write`
+*Predicate-selected amendments span their requested extent*). The selected
+rectangles are its starting evidence; the coverage past them that the write's
+window reaches is no planning input, so planning finalizes the group to a
+**deferred group** (*Write Plan and Planned Writes*). When the flush reaches it,
+its objects settle in **batches**, in resolution order, each object whole:
+
+```text
+for the next batch of a bounded number of complete objects:
+  read the part of each object's window its starting rectangle leaves,
+    several objects to a statement, every statement before the batch settles
+  settle each object as a range over its starting rectangle and the rows read
+  execute and enforce the batch's steps
+  release what the batch read and settled
+publish the group's effects once, after the last batch
+```
+
+An object with nothing left to read still takes its place in a batch, and a read
+finding nothing in a part settles that part as a gap. A batch boundary never
+divides an object's history, its effects before its openings, or the proof of
+any of its rectangles. Batch and statement bounds are private: neither is a
+caller option, and neither bounds the rows or bytes a read returns.
+
+The group is still one execution unit. No other unit's step runs between its
+batches, and no batch commits, publishes ownership, or spends anything: the
+group's effects are published once, after its last batch succeeds. The **first
+failure encountered** ends it — a failure executing an earlier batch precedes
+any acquisition or settlement of a later one, and a refusal settling a later
+batch follows the earlier batches' statements — and the attempt is doomed as for
+any failed flush. Retry classification applies to the failure that actually
+occurred (`m-auto-retry`). Everything the earlier batches executed rolls back
+with the attempt, transactional trigger effects included; sequence advances,
+effects outside the transaction, and time spent blocked do not.
+
+A later batch's reads run after the earlier batches executed. Under READ
+COMMITTED each read observes what committed before it and the attempt's own
+earlier writes, so several reads share no one snapshot, while each starting
+rectangle keeps the proof its selection observed and is never refreshed by a
+later read. Under Locking the selection locked the starting rectangles at the
+call; each later rectangle is locked when its object's batch reads it, and every
+lock an earlier batch took or a guard holds stays until the transaction ends.
+Stronger isolation behaves as its provider defines; no group-wide snapshot is
+taken.
+
+Planning keeps the buffered group no longer than it plans: once planning
+succeeds, the selected rows belong to the deferred group alone, and each batch
+releases the rows it took once its steps have executed. A planning refusal
+leaves the buffer as it was.
 
 ## The Transaction Instant
 

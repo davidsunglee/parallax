@@ -11,6 +11,7 @@ target's profile.
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 from .case import Entity
@@ -138,6 +139,7 @@ def validate_predicate_write_materialization(
         if rows is None:
             continue
         _assert_materialization_rows(entity, index, rows, instruction)
+        _assert_start_selection(entity, index, step, rows, instruction)
         return
     indexes = ", ".join(f"scenario[{index}]" for index, _ in matching_finds)
     raise PredicateWriteValidationError(
@@ -145,6 +147,46 @@ def validate_predicate_write_materialization(
         "roundTrips: 1, exactly one authored golden read statement, and expectRows "
         "exposing the resolved rows (or a genuine zero-match result)"
     )
+
+
+def _assert_start_selection(
+    entity: Entity, index: int, step: dict[str, Any], rows: list[Any], instruction: dict[str, Any]
+) -> None:
+    """A Bitemporal amendment selects each object by its rectangle current at
+    the write's ``validFrom``, so its resolving find reads as of that instant
+    on Valid Time and at Latest on Transaction Time, and a golden-graded case
+    states only rows covering the write's whole window: coverage past them is
+    read inside the flush, which only a state-graded case grades."""
+    if instruction.get("mutation") not in ("amend", "amendUntil"):
+        return
+    axes = {axis["dimension"]: axis for axis in entity.temporal_runtime_axes}
+    valid = axes.get("valid-time")
+    if valid is None:
+        return
+    valid_from = instruction.get("validFrom")
+    temporal = step["objectQuery"].get("temporal")
+    selection = temporal if isinstance(temporal, dict) else {}
+    if selection.get("valid-time") != {"asOf": valid_from} or selection.get("transaction-time") != {
+        "asOf": "latest"
+    }:
+        raise PredicateWriteValidationError(
+            f"materializing find at scenario[{index}] must read {entity.name!r} as of the "
+            f"amendment's validFrom {valid_from!r} on Valid Time and at latest on Transaction "
+            "Time: a Bitemporal amendment selects there"
+        )
+    until = instruction.get("until", "infinity")
+    for row_index, row in enumerate(rows):
+        end = row.get(valid["end_column"]) if isinstance(row, dict) else None
+        if end != "infinity" and (until == "infinity" or _instant(end) < _instant(until)):
+            raise PredicateWriteValidationError(
+                f"materializing find at scenario[{index}] expectRows[{row_index}] ends before "
+                "the amendment's window does: the coverage past it is read inside the flush, "
+                "so the case is state-graded"
+            )
+
+
+def _instant(value: Any) -> dt.datetime:
+    return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
 def requires_predicate_write_materialization(entity: Entity) -> bool:

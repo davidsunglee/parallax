@@ -43,6 +43,7 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.execution._planning import build_write_planner
+from parallax.core.execution._write_lowering import lowered as lower
 from parallax.core.execution._write_lowering import stream_lowered
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
 from parallax.core.object_query import LATEST, TX_TIME
@@ -67,6 +68,7 @@ from parallax.core.unit_work import (
     run_unit_of_work,
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
+from parallax.core.unit_work.ranges import DeferredGroupRange
 from parallax.core.unit_work.write_settlement import OrderedWrite
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
@@ -78,6 +80,7 @@ from parallax.core.write_plan import (
     WritePlan,
 )
 from parallax.core.write_plan.keys import TemporalStateKey, VersionedStateKey
+from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP
 from parallax.core.write_plan.steps import (
     PlannedClose,
     PlannedDelete,
@@ -136,6 +139,7 @@ _GRANT_BOUND: Final = frozenset(
     {
         "parallax.core.object_query.validate:_validate_temporal_selections",
         "parallax.core.object_query._validated:latest_temporal_selections",
+        "parallax.core.object_query._validated:selections_at_valid_time",
     }
 )
 
@@ -350,24 +354,39 @@ def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_fami
     planner = build_write_planner(_TEMPORAL_MODEL)
     callers = _trace_declarations(monkeypatch, _TEMPORAL_MODEL)
 
+    instant = instant_at("2024-06-01T00:00:00+00:00")
     plan = planner.finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+            transaction_instant=instant,
             concurrency=concurrency,
             buffered_writes=_temporal_writes(),
         )
     )
     steps = list(plan.steps)
     assert list(plan.steps) == steps
-    lowered = list(
-        stream_lowered(plan, LayoutPayloadPreparer(_TEMPORAL_MODEL), _TEMPORAL_MODEL, POSTGRES)
+    payloads = LayoutPayloadPreparer(_TEMPORAL_MODEL)
+    lowered = list(stream_lowered(plan, payloads, _TEMPORAL_MODEL, POSTGRES))
+    # The Bitemporal amendment group settles at execution; its selected rows
+    # cover its window, so it reads nothing.
+    (deferred,) = (unit.deferred for unit in plan.units if unit.deferred is not None)
+    assert isinstance(deferred, DeferredGroupRange)
+    continuation = planner.continue_group(
+        deferred,
+        acquire_rows=NO_ROW_READS,
+        ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
+        actor_identity=TEST_ACTOR_IDENTITY,
+        transaction_instant=instant,
     )
+    while (writes := continuation.pull()) is not None:
+        steps.extend(writes)
+        lowered.extend((step, lower(step, payloads, _TEMPORAL_MODEL, POSTGRES)) for step in writes)
+    continuation.close()
 
     assert callers == []
     assert len(lowered) == len(steps)
     closes = [step for step in steps if isinstance(step, PlannedClose)]
-    # Three addressed writes and three rows of each packed group.
+    # Three addressed writes and three rows of each group.
     assert len(closes) == 9
     for close in closes:
         shape = temporal_read.view(_TEMPORAL_MODEL).shape(close.entity)

@@ -31,7 +31,12 @@ from parallax.core.unit_work import (
     instructions,
     keyed_intent,
 )
-from parallax.core.unit_work.claims import ClaimTable, admits, admits_composed
+from parallax.core.unit_work.claims import (
+    SPANNING_SELECTION_INTENT,
+    ClaimTable,
+    admits,
+    admits_composed,
+)
 from parallax.core.unit_work.instructions import PreparedKeyedWrite
 from parallax.core.unit_work.materialized import ObjectClaimedWrite
 from parallax.core.write_plan import ObjectKey, VersionObservation
@@ -204,6 +209,24 @@ def test_the_claim_table_answers_which_objects_it_claims_as_its_claims_change() 
     assert table.claims_object(another)
     table.clear()
     assert not table.claims_object(another)
+
+
+def test_the_claim_table_answers_which_objects_a_claim_reaches_whole() -> None:
+    another = ObjectKey(_STATE.object.entity, (("id", 99),))
+    third = ObjectKey(_STATE.object.entity, (("id", 98),))
+    table = ClaimTable()
+    assert table.claim(_STATE, SELECTION_INTENT) == "admit"
+    assert not table.spans(_STATE.object)
+    assert table.claim(another, SPANNING_SELECTION_INTENT) == "admit"
+    assert table.spans(another)
+    assert table.claim(third, SPANNING_SELECTION_INTENT) == "admit"
+    assert table.spans(third)
+    assert table.claim(another, _ASSIGNMENT) == "incompatible"
+    table.release(iter((another,)))
+    assert not table.spans(another)
+    assert table.spans(third)
+    table.clear()
+    assert not table.spans(third)
 
 
 _S1 = "first observed state"

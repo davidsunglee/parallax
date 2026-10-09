@@ -1388,7 +1388,13 @@ def _without_leaf_types(snapshot: dict[str, Any]) -> None:
     readings[:] = [r for r in readings if not str(r["workload"]).startswith("leaf-")]
 
 
+def _without_flush_cases(write: dict[str, Any]) -> None:
+    readings = cast("list[dict[str, Any]]", write["readings"])
+    readings[:] = [r for r in readings if r["workload"] not in write_report.FLUSH_CASE_NAMES]
+
+
 def _without_target_cases(write: dict[str, Any]) -> None:
+    _without_flush_cases(write)
     readings = cast("list[dict[str, Any]]", write["readings"])
     readings[:] = [r for r in readings if r["workload"] not in write_report.TARGET_CASE_NAMES]
 
@@ -1432,6 +1438,23 @@ def _without_instance_head_only(document: dict[str, Any]) -> None:
         for reading in readings
         if cast("str", reading["cell"]) not in cost_report.HEAD_ONLY["instance-state"]
     ]
+
+
+def test_a_capture_without_the_predicate_flush_verifies_but_cannot_be_required_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    document = _verifiable(contract)
+    _without_flush_cases(_write_of(document))
+    assert verify(document) == []
+    (write_failure,) = verify(document, required=[write_report.SUBJECT])
+    assert write_failure.startswith(
+        "the write-lowering envelope is invalid: write-lowering reading matrix is not exact "
+        "under any one case coverage and counter vocabulary; against the current cases and "
+        "current counters: missing CPython"
+    )
+    assert write_report.FLUSH_CASE_NAMES[0] in write_failure
 
 
 def test_a_capture_without_the_target_writes_verifies_but_cannot_be_required_current(

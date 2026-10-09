@@ -11,6 +11,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     RelationshipIdentity,
+    TemporalDimension,
 )
 from parallax.core.object_query._nodes import ObjectQueryNode, OrderKey
 from parallax.core.predicate._validated import ValidatedPredicate
@@ -52,6 +53,19 @@ def latest_temporal_selections(
 ) -> tuple[ValidatedTemporalSelection, ...]:
     """Produce resolved Latest selections for an internal mutation read."""
     return tuple(ValidatedLatestSelection(axis) for axis in root.declared_as_of_axes)
+
+
+def selections_at_valid_time(
+    root: EntityMetadata, instant: ManagedValue
+) -> tuple[ValidatedTemporalSelection, ...]:
+    """Produce resolved selections for an internal mutation read as of
+    ``instant`` on Valid Time and at Latest on every other axis."""
+    return tuple(
+        ValidatedAsOfSelection(axis, instant)
+        if axis.dimension is TemporalDimension.VALID_TIME
+        else ValidatedLatestSelection(axis)
+        for axis in root.declared_as_of_axes
+    )
 
 
 @dataclass(frozen=True, slots=True)

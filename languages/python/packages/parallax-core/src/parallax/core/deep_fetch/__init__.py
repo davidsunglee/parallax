@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal, NamedTuple
 
@@ -288,50 +288,73 @@ def plan_coverage_read(
     *,
     model: Metamodel,
     key: str,
-    key_value: ManagedValue,
-    valid_time_windows: tuple[TimeInterval, ...],
+    terms: Sequence[tuple[ManagedValue, tuple[TimeInterval, ...]]],
 ) -> ValidatedEntityQuery:
-    """The one flat read of a temporal object's current coverage overlapping any
-    of ``valid_time_windows`` that an execution-bound range transforms, each
-    window bounded by its endpoints as they are, with no upper term where it
-    runs to the open bound, and several windows read as alternatives. A
+    """The one flat read of the current coverage execution-bound ranges
+    transform: for each object ``terms`` names by its ``key`` value, its rows
+    overlapping any of the Valid-Time windows named beside it, each window
+    bounded by its endpoints as they are, with no upper term where it runs to
+    the open bound, and several windows read as alternatives. A
     Transaction-Time-Only object has no Valid Time to bound, so its read
-    selects its current row.
+    names one object and selects its current row. One object's read keys the
+    conjunction directly; several objects' reads are alternatives of their own.
 
     Every row it selects is current on Transaction Time and is projected whole,
     every document included, because the range carries each row's unassigned
     members forward. A row overlapping a window is selected whole, however
     little of it the window reaches.
     """
+    assert terms  # a coverage read names at least one object
     families = inheritance.view(model)
     root = inheritance.root_metadata(families, model, entity.identity)
     view = _entity_view(families, entity.identity)
-    terms = [
-        _managed_comparison(
-            op="eq",
-            attr=f"{entity.identity.canonical}.{key}",
-            member=_declared_attribute(view, key),
-            value=key_value,
-        )
-    ]
+    key_member = _declared_attribute(view, key)
+    key_ref = f"{entity.identity.canonical}.{key}"
+    # Each axis in declared order: Transaction Time's current-row term, or
+    # ``None`` where the object's own Valid-Time windows stand.
+    axes: list[ValidatedPredicate | None] = []
+    valid: tuple[AttributeMetadata, str, AttributeMetadata, str] | None = None
     for axis in root.declared_as_of_axes:
         start = _declared_attribute(view, axis.start_attribute.name)
         end = _declared_attribute(view, axis.end_attribute.name)
         start_ref = f"{root.identity.canonical}.{start.identity.name}"
         end_ref = f"{root.identity.canonical}.{end.identity.name}"
         if axis.dimension is TemporalDimension.TRANSACTION_TIME:
-            terms.append(_framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY))
+            axes.append(_framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY))
             continue
-        assert valid_time_windows  # a Valid-Time axis bounds every range over it
-        terms.append(
-            _validated_disjunction(
-                *(
-                    _overlapping(window, start=start, start_ref=start_ref, end=end, end_ref=end_ref)
-                    for window in valid_time_windows
-                )
+        valid = (start, start_ref, end, end_ref)
+        axes.append(None)
+
+    def overlapping(intervals: tuple[TimeInterval, ...]) -> ValidatedPredicate:
+        assert valid is not None and intervals  # a Valid-Time axis bounds every range over it
+        start, start_ref, end, end_ref = valid
+        return _validated_disjunction(
+            *(
+                _overlapping(interval, start=start, start_ref=start_ref, end=end, end_ref=end_ref)
+                for interval in intervals
             )
         )
-    predicate = navigate.canonicalize_validated(_validated_conjunction(*terms), model, entity, {})
+
+    def keyed(key_value: ManagedValue) -> ValidatedPredicate:
+        return _managed_comparison(op="eq", attr=key_ref, member=key_member, value=key_value)
+
+    if len(terms) == 1:
+        ((key_value, intervals),) = terms
+        conjunction = _validated_conjunction(
+            keyed(key_value),
+            *(overlapping(intervals) if term is None else term for term in axes),
+        )
+    else:
+        conjunction = _validated_conjunction(
+            _validated_disjunction(
+                *(
+                    _validated_conjunction(keyed(key_value), overlapping(intervals))
+                    for key_value, intervals in terms
+                )
+            ),
+            *(term for term in axes if term is not None),
+        )
+    predicate = navigate.canonicalize_validated(conjunction, model, entity, {})
     return ValidatedEntityQuery(
         target=entity.identity,
         entity=entity,

@@ -14,6 +14,7 @@ from parallax.core.document_codec import Leaf, MemberShape, Occurrence, _documen
 from parallax.core.metamodel import Multiplicity
 from parallax.core.write_payload import _preparer as payload_preparer
 from tests.unit import _predicate_acquisition_support as acquisition_support
+from tests.unit import _predicate_flush_support as flush_support
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.memory_instruments import (
     in_a_child_interpreter,
@@ -105,6 +106,7 @@ def test_child_case_names_match_the_shared_workloads() -> None:
         *(case.name for case in lowering_support.RESPONSE_CASES),
         write_lowering_reading.MODEL_CASE,
         write_lowering_reading.MODEL_FAMILY_CASE,
+        *(case.name for case in flush_support.CASES),
     ) == CASE_NAMES
 
 

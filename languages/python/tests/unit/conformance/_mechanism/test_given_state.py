@@ -43,7 +43,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work.acquisition import CoverageReadRequest
+from parallax.core.unit_work.acquisition import CoverageReadRequest, CoverageTerm
 from tests._support.db_port import body_outcome
 from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 from tests.unit.conformance._recording_ports import FakeWritePort
@@ -355,8 +355,9 @@ def test_fixture_seeding_tracks_current_milestones_with_managed_axis_ends() -> N
         CoverageReadRequest(
             entity=entity,
             key_attribute=AttributeIdentity(entity.identity, "id"),
-            key_value=1,
-            valid_time_windows=(TimeInterval(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), INFINITY),),
+            terms=(
+                CoverageTerm(1, (TimeInterval(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), INFINITY),)),
+            ),
             locking=False,
         ),
     )

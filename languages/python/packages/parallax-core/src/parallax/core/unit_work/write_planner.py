@@ -10,6 +10,7 @@ from parallax.core import inheritance, relationship, temporal_read
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
 from parallax.core.temporal_write.coverage import NO_TRANSFORM
+from parallax.core.unit_work.acquisition import AcquireRows
 from parallax.core.unit_work.claims import (
     ClaimVerdict,
     WriteIntent,
@@ -51,7 +52,12 @@ from parallax.core.unit_work.materialized import (
     composed_temporal_write,
     temporal_contribution,
 )
-from parallax.core.unit_work.ranges import DeferredTemporalRange, bind_deferred
+from parallax.core.unit_work.ranges import (
+    DeferredGroupRange,
+    DeferredTemporalRange,
+    GroupContinuation,
+    bind_deferred,
+)
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
     ActorIdentity,
@@ -250,6 +256,29 @@ class WritePlanner:
             description,
             reused,
             acquired,
+            ownership=ownership,
+            audit=AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled),
+        )
+
+    def continue_group(
+        self,
+        description: DeferredGroupRange,
+        /,
+        *,
+        acquire_rows: AcquireRows,
+        ownership: TemporalWriteOwnership,
+        actor_identity: ActorIdentity,
+        transaction_instant: TransactionInstant,
+    ) -> GroupContinuation:
+        """The continuation that settles a deferred group this planner
+        finalized, batch by batch, reading each batch's coverage through
+        ``acquire_rows`` under ``ownership`` as the running flush's earlier
+        units left it; the configured audit finalizes each row it produces once
+        and decorates each close it emits, with ``actor_identity`` and
+        ``transaction_instant``."""
+        return GroupContinuation(
+            description,
+            acquire_rows=acquire_rows,
             ownership=ownership,
             audit=AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled),
         )

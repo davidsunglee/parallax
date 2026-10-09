@@ -6,7 +6,8 @@ the twenty categorical keyed-write cases, the caller-addressed target writes
 beside them, the geometry inserts, the changed-ancestor successors, and the
 leaf-type inserts through their public verbs and the flush's actual driver
 serialization, the predicate-acquisition
-families to their buffered group, the public Wire insert to the node it
+families to their buffered group, the predicate-flush workloads from their verb
+through their batched flush and commit, the public Wire insert to the node it
 answers, and the two model-preparation checkpoints. The leaf-type cases are
 read only on the supported minors the leaf-type manifest scopes them to.
 Measurements are observations: only an incomplete matrix changes this
@@ -108,6 +109,7 @@ single sample."""
 
 KEYED_WINDOW: Final = "keyed-write"
 ACQUISITION_WINDOW: Final = "predicate-acquisition"
+FLUSH_WINDOW: Final = "predicate-flush"
 RESPONSE_WINDOW: Final = "wire-insert-response"
 MODEL_WINDOW: Final = "model-preparation"
 MODEL_CASE: Final = "model.prepared"
@@ -128,6 +130,14 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
         "acquisition over freshly composed resolving rows to a buffered Materialized "
         "Write Group; no flush or serialization"
     ),
+    FLUSH_WINDOW: (
+        "one public tx.wire.amend_where bounded by until over a Bitemporal target, from the "
+        "caller's target and changes documents through selection at valid_from over "
+        "provider-free rows, buffering, and the pre-commit flush's batched coverage reads, "
+        "settlement, SQL lowering, bind adaptation, and document serialization, until "
+        "transact returns; the retained checkpoint is the first write naming the last "
+        "selected object"
+    ),
     RESPONSE_WINDOW: (
         "one public tx.wire.insert of a nested, polymorphic Create Payload inside an open "
         "transaction, from the payload arriving to the frozen node it answers; no flush, "
@@ -141,6 +151,7 @@ sys.path.insert(0, str(WORKSPACE))
 # `sys.path` gains the workspace above, so these imports cannot precede it; that is
 # what the E402 suppression each one carries records.
 from tests.unit import _predicate_acquisition_support as acquisition_support  # noqa: E402
+from tests.unit import _predicate_flush_support as flush_support  # noqa: E402
 from tests.unit import _write_lowering_support as lowering_support  # noqa: E402
 
 if Path(lowering_support.__file__ or "").resolve() != SUPPORT_MODULE:
@@ -156,10 +167,15 @@ WINDOWS: Final[Mapping[str, str]] = {
     **{case.name: RESPONSE_WINDOW for case in lowering_support.RESPONSE_CASES},
     MODEL_CASE: MODEL_WINDOW,
     MODEL_FAMILY_CASE: MODEL_WINDOW,
+    **{case.name: FLUSH_WINDOW for case in flush_support.CASES},
 }
 """Every case the child can be asked for, and the window it reads."""
 
 CASE_NAMES: Final = tuple(WINDOWS)
+FLUSH_CASE_NAMES: Final = tuple(case.name for case in flush_support.CASES)
+"""The predicate-flush workloads, added after the target writes."""
+BEFORE_FLUSH_CASE_NAMES: Final = tuple(name for name in CASE_NAMES if name not in FLUSH_CASE_NAMES)
+"""The case set captures were taken over before the predicate-flush workloads."""
 CONTROL_CASE_NAMES: Final = (
     *(case.name for case in lowering_support.RESPONSE_CASES),
     MODEL_FAMILY_CASE,
@@ -174,7 +190,7 @@ LEAF_TYPE_CASE_NAMES: Final = (
 TARGET_CASE_NAMES: Final = tuple(case.name for case in lowering_support.CASES if case.addressed)
 """The caller-addressed target writes, added after the leaf-type families."""
 BEFORE_TARGET_CASE_NAMES: Final = tuple(
-    name for name in CASE_NAMES if name not in TARGET_CASE_NAMES
+    name for name in BEFORE_FLUSH_CASE_NAMES if name not in TARGET_CASE_NAMES
 )
 """The case set captures were taken over before the target writes."""
 BEFORE_LEAF_TYPE_CASE_NAMES: Final = tuple(
@@ -187,6 +203,7 @@ LEGACY_CASE_NAMES: Final = tuple(
 """The case set the retained captures were taken over, before the controls."""
 CASE_COVERAGES: Final[Mapping[str, tuple[str, ...]]] = {
     "current": CASE_NAMES,
+    "before predicate flush": BEFORE_FLUSH_CASE_NAMES,
     "before target writes": BEFORE_TARGET_CASE_NAMES,
     "before leaf types": BEFORE_LEAF_TYPE_CASE_NAMES,
     "legacy": LEGACY_CASE_NAMES,

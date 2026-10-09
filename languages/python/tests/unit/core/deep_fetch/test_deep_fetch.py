@@ -1121,8 +1121,7 @@ def test_an_acquisition_read_selects_current_transaction_time_by_managed_infinit
             rate,
             model=RATE,
             key="id",
-            key_value=1,
-            valid_time_windows=(TimeInterval(jan, INFINITY),),
+            terms=((1, (TimeInterval(jan, INFINITY),)),),
         )
         if read == "coverage"
         else deep_fetch.plan_target_read(rate, model=RATE, key="id", key_value=1, valid_from=jan)
@@ -1151,9 +1150,7 @@ def test_a_coverage_read_bounds_valid_time_by_the_endpoints_of_the_window_it_is_
     jun = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def valid_time_terms(window: TimeInterval) -> dict[str, tuple[object, ...]]:
-        query = deep_fetch.plan_coverage_read(
-            rate, model=RATE, key="id", key_value=1, valid_time_windows=(window,)
-        )
+        query = deep_fetch.plan_coverage_read(rate, model=RATE, key="id", terms=((1, (window,)),))
         terms: dict[str, tuple[object, ...]] = {}
         for term in query.validated_predicate.children:
             authored = term.authored
@@ -1177,11 +1174,15 @@ def test_a_coverage_read_of_several_windows_selects_rows_overlapping_any_of_them
         rate,
         model=RATE,
         key="id",
-        key_value=1,
-        valid_time_windows=(
-            TimeInterval(jan, mar),
-            TimeInterval(may, jul),
-            TimeInterval(jul, INFINITY),
+        terms=(
+            (
+                1,
+                (
+                    TimeInterval(jan, mar),
+                    TimeInterval(may, jul),
+                    TimeInterval(jul, INFINITY),
+                ),
+            ),
         ),
     )
     statement = compile_read(query, RATE, POSTGRES).statement
@@ -1192,6 +1193,26 @@ def test_a_coverage_read_of_several_windows_selects_rows_overlapping_any_of_them
     assert statement.binds[-7:] == (1, jan, mar, may, jul, jul, INFINITY)
 
 
+def test_a_coverage_read_of_several_objects_names_each_objects_windows_beside_its_key() -> None:
+    rate = entity_of(RATE, "Rate")
+    jan, mar, may, jul = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 5, 7))
+    query = deep_fetch.plan_coverage_read(
+        rate,
+        model=RATE,
+        key="id",
+        terms=(
+            (1, (TimeInterval(jan, mar), TimeInterval(may, jul))),
+            (2, (TimeInterval(mar, INFINITY),)),
+        ),
+    )
+    statement = compile_read(query, RATE, POSTGRES).statement
+    assert statement.sql.endswith(
+        "((t0.id = ? and ((t0.thru_z > ? and t0.from_z < ?) or (t0.thru_z > ? "
+        "and t0.from_z < ?))) or (t0.id = ? and t0.thru_z > ?)) and t0.out_z = ?"
+    )
+    assert statement.binds[-8:] == (1, jan, mar, may, jul, 2, mar, INFINITY)
+
+
 @pytest.mark.parametrize("whole", [False, True], ids=["revision", "whole"])
 def test_a_target_read_projects_its_row_whole_only_where_it_retains_it(whole: bool) -> None:
     rate = entity_of(RATE, "Rate")
@@ -1200,7 +1221,7 @@ def test_a_target_read_projects_its_row_whole_only_where_it_retains_it(whole: bo
         rate, model=RATE, key="id", key_value=1, valid_from=jan, whole=whole
     )
     coverage = deep_fetch.plan_coverage_read(
-        rate, model=RATE, key="id", key_value=1, valid_time_windows=(TimeInterval(jan, INFINITY),)
+        rate, model=RATE, key="id", terms=((1, (TimeInterval(jan, INFINITY),)),)
     )
     assert (target.projection == coverage.projection) is whole
 

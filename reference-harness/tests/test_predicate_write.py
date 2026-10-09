@@ -718,3 +718,70 @@ def test_model_validator_rejects_invalid_predicate_write(
     entity = _account_entity()
     with pytest.raises(PredicateWriteValidationError, match=message):
         validate_predicate_write(entity, instruction)
+
+
+def _position_amendment(valid_from: str, until: str | None = None) -> dict[str, object]:
+    instruction: dict[str, object] = {
+        "mutation": "amend" if until is None else "amendUntil",
+        "target": {
+            "entity": "Position",
+            "predicate": {"eq": {"attr": "Position.value", "value": 100}},
+        },
+        "assignments": [{"attr": "Position.value", "value": 300}],
+        "at": "2024-10-01T00:00:00+00:00",
+        "validFrom": valid_from,
+    }
+    if until is not None:
+        instruction["until"] = until
+    return instruction
+
+
+def _selection_at(
+    entity: Entity, instruction: dict[str, object], valid_time: str, thru_z: str
+) -> dict[str, object]:
+    target = instruction["target"]
+    assert isinstance(target, dict)
+    find = _materializing_find(
+        entity,
+        target["predicate"],
+        [
+            {
+                "pos_id": 1,
+                "acct_num": "A",
+                "val": 100,
+                "from_z": "2024-01-01T00:00:00+00:00",
+                "thru_z": thru_z,
+                "in_z": "2024-04-01T00:00:00+00:00",
+                "out_z": "infinity",
+            }
+        ],
+    )
+    query = find["objectQuery"]
+    assert isinstance(query, dict)
+    query["temporal"] = {"transaction-time": {"asOf": "latest"}, "valid-time": {"asOf": valid_time}}
+    return find
+
+
+def test_a_bitemporal_amendments_find_selects_at_its_valid_from() -> None:
+    entity = _position_entity()
+    instruction = _position_amendment("2024-03-01T00:00:00+00:00", "2024-05-01T00:00:00+00:00")
+    covering = "2024-06-01T00:00:00+00:00"
+    validate_predicate_write_materialization(
+        entity,
+        [_selection_at(entity, instruction, "2024-03-01T00:00:00+00:00", covering)],
+        instruction,
+    )
+    with pytest.raises(PredicateWriteValidationError, match="as of the amendment's validFrom"):
+        validate_predicate_write_materialization(
+            entity, [_selection_at(entity, instruction, "latest", covering)], instruction
+        )
+
+
+def test_a_golden_bitemporal_amendments_selection_covers_its_window() -> None:
+    entity = _position_entity()
+    instruction = _position_amendment("2024-03-01T00:00:00+00:00")
+    find = _selection_at(
+        entity, instruction, "2024-03-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"
+    )
+    with pytest.raises(PredicateWriteValidationError, match="ends before the amendment's window"):
+        validate_predicate_write_materialization(entity, [find], instruction)
