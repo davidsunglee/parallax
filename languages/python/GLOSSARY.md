@@ -2,7 +2,7 @@
 
 Python-specific spelling and public semantics live in the
 [binding documents](spec/python.md). Portable terms are indexed in the
-[root glossary](../../CONTEXT.md).
+[root glossary](../../GLOSSARY.md).
 
 | Term | Meaning | Binding |
 |---|---|---|

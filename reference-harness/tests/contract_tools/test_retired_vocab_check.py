@@ -141,7 +141,7 @@ def test_avoid_lines_are_exempt() -> None:
     text = (
         "**Valid Time**:\nThe dimension.\n_Avoid_: business time, business date, effective date\n"
     )
-    assert check_text("CONTEXT.md", text) == []
+    assert check_text("GLOSSARY.md", text) == []
 
 
 def test_prior_art_paragraph_is_exempt() -> None:
@@ -153,7 +153,7 @@ def test_prior_art_paragraph_is_exempt() -> None:
         "\n"
         "**Temporal Dimension**:\n"
     )
-    assert check_text("CONTEXT.md", text) == []
+    assert check_text("GLOSSARY.md", text) == []
 
 
 def test_a_paragraph_not_labeled_prior_art_is_not_exempt() -> None:

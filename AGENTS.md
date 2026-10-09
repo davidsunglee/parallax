@@ -24,7 +24,7 @@
 - Language bindings inherit core semantics and own additional public language decisions that signatures, types, and executable examples cannot express. Private structure belongs to code; package metadata, quality thresholds, and commands belong to executable configuration.
 - Dependency declarations are an intentional exception to single authorship: preserve the core graph, language topology declarations, and independent implementation mappings and checks. Changes to this enforcement mechanism require explicit design review.
 - Otherwise, author a fact once. Link to its owner or generate another view; do not maintain prose inventories of code, cases, or CI jobs. An internal refactor normally needs no specification edit.
-- `CONTEXT.md` files are terminology/navigation aids. ADRs record decisions and rationale at the time they were made; supersede them when a decision changes rather than keeping historical prose synchronized. Research, measurements, and task artifacts are evidence, not additional current product contracts.
+- `GLOSSARY.md` files are terminology/navigation aids. ADRs record decisions and rationale at the time they were made; supersede them when a decision changes rather than keeping historical prose synchronized. Research, measurements, and task artifacts are evidence, not additional current product contracts.
 - Keep private task records out of product documentation. A bounded change needs no separate design document; a large change needs only a short execution outline unless an unresolved product decision requires design work.
 
 ## Review Prompts

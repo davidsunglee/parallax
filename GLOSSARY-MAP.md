@@ -1,9 +1,9 @@
-# Context Map
+# Glossary Map
 
 ## Contexts
 
-- [Parallax Core](./CONTEXT.md) - language-neutral ORM contract, runtime semantics, and shared vocabulary.
-- [Parallax Python](./languages/python/CONTEXT.md) - Python-specific class-first authoring, snapshot-lifecycle API surface, and idioms.
+- [Parallax Core](./GLOSSARY.md) - language-neutral ORM contract, runtime semantics, and shared vocabulary.
+- [Parallax Python](./languages/python/GLOSSARY.md) - Python-specific class-first authoring, snapshot-lifecycle API surface, and idioms.
 
 ## Relationships
 

@@ -6,4 +6,4 @@
 - Before changing tests, read `TESTING.md` for placement and fixtures. Root `justfile` recipes and `just show-gates <recipe>` describe verification ownership.
 - Keep useful public contracts and critical local rationale in source. Do not require docstrings to list variants, signatures, or behavior already expressed by types, tests, or a contract owner.
 - `docs/deferred-ledger.md` tracks open unowned work. Consult relevant entries when touching their subject, record a new deferral only when no issue or task owns it, and remove resolved entries at claim closure. It is not required reading for unrelated changes.
-- ADRs record consequential Python-specific decisions and alternatives; ordinary internal refactors need no ADR. `CONTEXT.md` is a terminology index, not another binding specification.
+- ADRs record consequential Python-specific decisions and alternatives; ordinary internal refactors need no ADR. `GLOSSARY.md` is a terminology index, not another binding specification.
