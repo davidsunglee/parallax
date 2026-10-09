@@ -387,7 +387,7 @@ class _TargetRecord:
     What survives of the object's admitted insertions is counted where it is
     stored: ``live`` — the owned current rows an admission of the object
     opened, by their tags — for a Bitemporal object, whose coverage a write can
-    remove in part, and ``row`` for any other, which a removal takes whole.
+    remove in part, and zero or one for any other, which a removal takes whole.
     ``floor`` is the earliest anchor of any admission whose coverage may still
     be stored — once a flush executes an insertion, its own anchor, since what
     an earlier admission opened was removed before it — and ``advanced_from``
@@ -400,14 +400,12 @@ class _TargetRecord:
 
     __slots__ = (
         "advanced_from",
-        "bitemporal",
         "floor",
         "identity",
         "live",
         "opener",
         "pending_insert",
         "removal",
-        "row",
         "valid_time_window",
     )
 
@@ -416,15 +414,11 @@ class _TargetRecord:
         opener: Hashable | None,
         valid_time_window: TimeInterval | None,
         identity: InsertionIdentity,
-        *,
-        bitemporal: bool,
     ) -> None:
         self.opener = opener
         self.valid_time_window = valid_time_window
         self.identity: InsertionIdentity | None = identity
         self.pending_insert = True
-        self.bitemporal = bitemporal
-        self.row = False
         self.live = 0
         self.floor = _window_start(valid_time_window)
         self.advanced_from: int | None = None
@@ -441,7 +435,7 @@ class _TargetRecord:
     def stored(self) -> bool:
         """Whether anything an admitted insertion of the object opened may
         still be stored."""
-        return self.live > 0 if self.bitemporal else self.row
+        return self.live > 0
 
 
 @final
@@ -569,15 +563,13 @@ class _TargetWriteState:
         target: ObjectKey,
         opener: Hashable | None,
         valid_time_window: TimeInterval | None,
-        *,
-        bitemporal: bool,
     ) -> InsertionIdentity:
         identity = InsertionIdentity(target)
         record = self._records.get(target)
         if record is None:
-            record = _TargetRecord(opener, valid_time_window, identity, bitemporal=bitemporal)
+            record = _TargetRecord(opener, valid_time_window, identity)
             self._records[target] = record
-            if bitemporal:
+            if valid_time_window is not None:
                 self._addresses[_address(target)] = record
             return identity
         if not record.stored:
@@ -596,7 +588,8 @@ class _TargetWriteState:
         record = self._records.get(target)
         if record is not None and record.pending_insert:
             record.pending_insert = False
-            record.row = True
+            if record.valid_time_window is None:
+                record.live = 1
 
     def cancel_insert(self, target: ObjectKey) -> None:
         # The record stays: the attempt admitted an insertion of the object
@@ -656,13 +649,15 @@ class _TargetWriteState:
             record = records.get(target)
             if record is None:
                 continue
-            record.row = False
+            if record.valid_time_window is None:
+                record.live = 0
             if not record.pending_insert:
                 record.identity = None
         for record in records.values():
             if record.pending_insert:
                 record.pending_insert = False
-                record.row = True
+                if record.valid_time_window is None:
+                    record.live = 1
                 record.set_floor(_window_start(record.valid_time_window))
 
     def complete(
@@ -1184,7 +1179,6 @@ class UnitOfWork:
                 key,
                 opener,
                 instruction.valid_time_window,
-                bitemporal=self._pending.is_bitemporal_target(instruction),
             )
             return BufferOutcome.BUFFERED
         folds = key is not None and self._pending.folds_into_opening(key)
@@ -1460,7 +1454,7 @@ class UnitOfWork:
         """
         if not record.pending_insert:
             return record.stored and self._removes_stored(key, record)
-        if not record.bitemporal or self._pending.folds_into_opening(key):
+        if record.valid_time_window is None or self._pending.folds_into_opening(key):
             return False
         window = record.valid_time_window
         assert window is not None  # a Bitemporal opening states its window
@@ -1479,7 +1473,7 @@ class UnitOfWork:
         end among the rows those admissions opened, so the pending writes must
         destroy all of that window.
         """
-        if not record.bitemporal:
+        if record.valid_time_window is None:
             return self._pending.removes(key)
         window = self._targets.removal_window(record)
         return window.first_uncovered(self._pending.destroyed_coverage(key)) is None
