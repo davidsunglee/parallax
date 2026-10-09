@@ -24,6 +24,7 @@ import pytest
 
 from reference_harness.case import Case
 from reference_harness.case_assertions import CaseFailure
+from reference_harness.document_codec import ParsedJsonString
 from reference_harness.object_query_oracle import assert_case_read
 from reference_harness.object_query_oracle import materialize as oracle_materialize
 
@@ -675,21 +676,23 @@ def test_a_row_form_read_publishes_an_omitted_document_collection_as_empty(
 
 
 @pytest.mark.parametrize(
-    ("name", "stored"),
-    [(_COLLECTION_COLUMNS, {"id": 1, "tags": '"b"'}), (_COLLECTION_DOCUMENT, None)],
-    ids=["columns", "document"],
+    ("name", "row", "judged"),
+    [
+        (_COLLECTION_COLUMNS, {"id": 1, "tags": '"b"'}, "b"),
+        (_COLLECTION_COLUMNS, {"id": 1, "tags": ParsedJsonString('["b"]')}, '["b"]'),
+        (_COLLECTION_COLUMNS, {"id": 1, "tags": ParsedJsonString("b, a")}, "b, a"),
+        (_COLLECTION_DOCUMENT, {"id": 1, "payload": {"tags": ["b", None]}}, ["b", None]),
+    ],
+    ids=["columns-text", "columns-parsed-array-text", "columns-parsed-text", "document"],
 )
 def test_a_malformed_collection_leaves_its_published_row_unhydratable(
-    corpus_case: CaseLoader, name: str, stored: dict[str, Any] | None
+    corpus_case: CaseLoader, name: str, row: dict[str, Any], judged: Any
 ) -> None:
     case = corpus_case(name)
-    row = stored if stored is not None else {"id": 1, "payload": {"tags": ["b", None]}}
 
     (published,) = oracle_materialize.materialize_read(case, [row])
 
-    assert published["tags"] == oracle_materialize.UnavailableLeaf(
-        "b" if stored is not None else ["b", None]
-    )
+    assert published["tags"] == oracle_materialize.UnavailableLeaf(judged)
     assert oracle_materialize.is_unavailable(published)
 
 

@@ -8,13 +8,14 @@ Every row-owning entity in a (possibly multi-entity) descriptor is loaded.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from ._declared_contributor import DeclaredContributor
 from .case import Entity, Model, temporal_corruption_refusal
 from .ddl_builder import declared_contributors
-from .document_codec import encode_leaf
+from .document_codec import encode_leaf, is_document
 from .inheritance import assert_no_abstract_fixture_rows
 from .storage_layout import (
     AttributeContributor,
@@ -235,9 +236,15 @@ def _thawed(document: Any) -> Any:
 
 def _replaced_at(document: Any, path: tuple[Any, ...], value: Any) -> Any:
     """*document* with *value* stored at *path*, or *value* itself where *path* is
-    empty and the whole stored value is what the address named."""
+    empty and the whole stored value is what the address named.
+
+    A whole stored value that is not itself a document is bound as its JSON text,
+    which each dialect's structured-document column parses into that JSON value: a
+    bare string bound there would otherwise be parsed as JSON text rather than
+    stored as a JSON string.
+    """
     if not path:
-        return value
+        return value if is_document(value) else json.dumps(value)
     current = document
     for segment in path[:-1]:
         current = current[segment]

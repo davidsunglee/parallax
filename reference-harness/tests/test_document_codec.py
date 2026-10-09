@@ -16,6 +16,7 @@ import pytest
 
 from reference_harness.document_codec import (
     DocumentEncodingError,
+    ParsedJsonString,
     comparison_text,
     decode_leaf,
     decode_stored,
@@ -211,6 +212,8 @@ def test_decode_stored_is_dialect_agnostic() -> None:
     assert decode_stored(b'{"a": 1}') == {"a": 1}  # MariaDB JSON bytes
     assert decode_stored({"a": 1}) == {"a": 1}  # Postgres parsed jsonb
     assert decode_stored(None) is None  # SQL NULL column
+    assert decode_stored('"[1]"') == "[1]"  # MariaDB JSON string text
+    assert decode_stored(ParsedJsonString("[1]")) == "[1]"  # Postgres parsed jsonb string
     assert type(decode_leaf("int32", decode_stored('{"a": 1}')["a"])) is int
 
 
