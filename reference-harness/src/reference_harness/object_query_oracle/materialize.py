@@ -1234,10 +1234,22 @@ def _materialize_tpcs_document_row(
         occurrence = next((item for item in entity.value_objects if item["name"] == name), None)
         stored = _document_value(document, placement.path)
         if attribute is not None:
-            materialized[attribute["column"]] = decode_leaf(attribute["type"], stored)
+            materialized[attribute["column"]] = _decoded_branch_attribute(attribute, stored)
         elif occurrence is not None:
             materialized[occurrence["column"]] = stored
     return materialized
+
+
+def _decoded_branch_attribute(attribute: Mapping[str, Any], stored: Any) -> Any:
+    """One branch document's top-level Attribute as the read publishes it: a
+    scalar collection decodes element by element, or leaves its root
+    unhydratable, as :func:`_decoded_leaf` judges one."""
+    if not is_scalar_collection(attribute):
+        return decode_leaf(attribute["type"], stored)
+    try:
+        return decode_collection(attribute["type"], stored)
+    except DocumentEncodingError:
+        return UnavailableLeaf(stored)
 
 
 def _top_level_document_members(

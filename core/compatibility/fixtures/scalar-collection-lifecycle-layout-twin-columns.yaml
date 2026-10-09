@@ -1,0 +1,52 @@
+# Logical rows shared by both scalar collection lifecycle descriptors. Each row
+# authors declared member names, so one file states one logical state under either
+# layout. TagSpan 1 holds two rectangles whose collections differ only in order.
+parallax.compatibility.TagLedger:
+  - id: 1
+    version: 1
+    label: open
+    tags: [a, b, a]
+    route:
+      stops: [x, y]
+  - id: 2
+    version: 4
+    label: kept
+    tags: []
+parallax.compatibility.TagLog:
+  - id: 1
+    tags: [a, b]
+    txStart: "2024-01-01T00:00:00.000000Z"
+    txEnd: infinity
+parallax.compatibility.TagSpan:
+  - id: 1
+    amount: 1
+    marks: [1, 2]
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: "2024-05-01T00:00:00.000000Z"
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 1
+    amount: 2
+    marks: [2, 1]
+    validStart: "2024-05-01T00:00:00.000000Z"
+    validEnd: infinity
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+parallax.compatibility.TagPhone:
+  - id: 1
+    tags: [a, a]
+    ports: [1, 2]
+    numbers: ["555"]
+    codes: ["01ff"]
+parallax.compatibility.TagDesk:
+  - id: 2
+    tags: [d]
+    legs: [l, r]
+parallax.compatibility.TagDrill:
+  - id: 1
+    tags: [t]
+    bits: [8, 8]
+parallax.compatibility.TagSaw:
+  - id: 2
+    tags: []
+    blades: [rip]

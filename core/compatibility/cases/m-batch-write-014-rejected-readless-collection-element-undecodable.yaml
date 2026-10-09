@@ -1,0 +1,19 @@
+# A readless predicate-selected update decodes every element of a scalar collection
+# it assigns before buffering or SQL: an element its declared type cannot decode is
+# refused at its position, so no statement replaces the stored array with one
+# holding it.
+model: models/scalar-collection-layout-twin-columns.yaml
+tags: [m-batch-write, m-unit-work, m-document-codec, rejected, predicate-write, readless, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    mutation: amend
+    target:
+      entity: parallax.compatibility.CollectionTwinItem
+      predicate:
+        eq: { attr: parallax.compatibility.CollectionTwinItem.id, value: 1 }
+    assignments:
+      - attr: parallax.compatibility.CollectionTwinItem.counts
+        value: [5, "6"]
+then:
+  rejectedRule: neutral-literal-type-mismatch

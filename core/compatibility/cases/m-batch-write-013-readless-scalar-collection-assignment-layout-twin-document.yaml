@@ -1,0 +1,71 @@
+# Document half of the readless scalar collection predicate-write proof: the same
+# statement patches each assigned path of the shared document in canonical placement
+# order, and every unassigned key survives. Its twin authors the same write under
+# Columns.
+model: models/scalar-collection-layout-twin-document.yaml
+tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, scenario, update, json, nested, to-many, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        mutation: amend
+        target:
+          entity: parallax.compatibility.CollectionTwinItem
+          predicate:
+            lessThan: { attr: parallax.compatibility.CollectionTwinItem.id, value: 3 }
+        assignments:
+          - attr: parallax.compatibility.CollectionTwinItem.parts
+            value:
+              - { sku: d, marks: [1] }
+          - attr: parallax.compatibility.CollectionTwinItem.tags
+            value: []
+          - attr: parallax.compatibility.CollectionTwinItem.counts
+            value: [5, 5]
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: update collection_twin set payload = jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id < ?
+            mariadb: update collection_twin set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id < ?
+          binds:
+            postgres: ['{counts}', [5, 5], '{tags}', [], '{parts}', [{ sku: d, marks: [1] }], 3]
+            mariadb: ['$.counts', [5, 5], '$.tags', [], '$.parts', [{ sku: d, marks: [1] }], 3]
+then:
+  roundTrips: 1
+  tableState:
+    collection_twin:
+      - id: 1
+        payload:
+          flags: [true, false, true]
+          smalls: [3, -2, 3]
+          counts: [5, 5]
+          ratios: [1.2, 0.0]
+          scores: [0.1, 2.5, 0.1]
+          amounts: ["1.50", "1.50", "7.00"]
+          tags: []
+          blobs: ["0aff", ""]
+          days: ["2024-02-29"]
+          clocks: ["13:05:07.000250"]
+          instants: ["2024-06-01T10:00:00.000000Z"]
+          tokens: ["12345678-1234-5678-1234-567812345678", "12345678-1234-5678-1234-567812345678"]
+          detail:
+            labels: [x, y, x]
+          parts:
+            - sku: d
+              marks: [1]
+      - id: 2
+        payload:
+          flags: []
+          smalls: []
+          counts: [5, 5]
+          ratios: []
+          scores: []
+          amounts: []
+          tags: []
+          blobs: []
+          days: []
+          clocks: []
+          instants: []
+          tokens: []
+          parts:
+            - sku: d
+              marks: [1]

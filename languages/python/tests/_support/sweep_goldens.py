@@ -84,6 +84,9 @@ _STORAGE_LAYOUT_READS: Final[frozenset[str]] = frozenset(
         "m-storage-layout-040",
     }
 )
+_SCALAR_COLLECTION_INHERITANCE_READS: Final[frozenset[str]] = frozenset(
+    f"m-inheritance-{n:03d}" for n in range(139, 143)
+)
 _DOCUMENT_CODEC_READS: Final[frozenset[str]] = frozenset(
     f"m-document-codec-{n:03d}" for n in range(3, 14)
 )
@@ -124,6 +127,7 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _DESCRIPTOR_DEFAULT_COLUMN_READS
     | _MATERIALIZATION_KEY_COMPATIBILITY_READS
     | _STORAGE_LAYOUT_READS
+    | _SCALAR_COLLECTION_INHERITANCE_READS
     | _STORAGE_LAYOUT_DOCUMENT_AND_TWIN_READS
     | _CANONICAL_ENTITY_SPELLING_READS
     | _EXECUTION_LIFECYCLE_READS
@@ -132,7 +136,15 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
 
 _WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(f"m-unit-work-{n:03d}" for n in (1, 8, 10, 11))
 _READLESS_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
-    {"m-batch-write-005", "m-batch-write-006", "m-batch-write-007"}
+    {
+        "m-batch-write-005",
+        "m-batch-write-006",
+        "m-batch-write-007",
+        "m-batch-write-009",
+        "m-batch-write-010",
+        "m-batch-write-012",
+        "m-batch-write-013",
+    }
 )
 _READLESS_BARRIER_SCENARIOS: Final[frozenset[str]] = frozenset({"m-batch-write-011"})
 _LOCKING_FALLBACK_SCENARIOS: Final[frozenset[str]] = frozenset({"m-opt-lock-023"})
@@ -190,6 +202,9 @@ _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-inheritance-128",
     }
 )
+_SCALAR_COLLECTION_LIFECYCLE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
+    {"m-opt-lock-032", "m-opt-lock-033", "m-inheritance-143", "m-inheritance-144"}
+)
 _LAYOUT_TWIN_WRITES: Final[frozenset[str]] = frozenset(
     {f"m-storage-layout-{n:03d}" for n in (*range(29, 35), 37, 38)}
     | {"m-temporal-write-013", "m-temporal-write-014"}
@@ -211,6 +226,7 @@ _WRITE_SEQUENCES: Final[frozenset[str]] = (
     | _DECIMAL_PRECISION_WRITE_SEQUENCES
     | _STORAGE_LAYOUT_WRITE_SEQUENCES
     | _DOCUMENT_LAYOUT_WRITE_SEQUENCES
+    | _SCALAR_COLLECTION_LIFECYCLE_WRITE_SEQUENCES
     | _FLOAT_WRITE_SEQUENCES
 )
 _SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-010"})

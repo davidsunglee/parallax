@@ -1,0 +1,50 @@
+# An unversioned, non-temporal predicate-selected update assigning a top-level
+# document-resident `one` whose authored content holds a nested `many` stays
+# readless: its one statement replaces that occurrence's whole subtree at its path,
+# the nested array included, without inspecting the authored shape to choose a
+# route. The row the predicate does not match keeps its stored document.
+model: models/document-layout-nested-many.yaml
+tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, scenario, update, json, document-layout, nested, to-many, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        mutation: amend
+        target:
+          entity: parallax.compatibility.NestedRoute
+          predicate:
+            eq: { attr: parallax.compatibility.NestedRoute.id, value: 1 }
+        assignments:
+          - attr: parallax.compatibility.NestedRoute.route
+            value:
+              name: Coastal
+              segment:
+                stops:
+                  - { port: Oslo }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: update nested_route set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+            mariadb: update nested_route set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
+          binds:
+            postgres: ['{route}', { name: Coastal, segment: { stops: [{ port: Oslo }] } }, 1]
+            mariadb: ['$.route', { name: Coastal, segment: { stops: [{ port: Oslo }] } }, 1]
+then:
+  roundTrips: 1
+  tableState:
+    nested_route:
+      - id: 1
+        payload:
+          route:
+            name: Coastal
+            segment:
+              stops:
+                - { port: Oslo }
+      - id: 2
+        payload:
+          route:
+            name: Inland
+            segment:
+              stops:
+                - { port: Lyon }
+                - { port: Lyon }

@@ -1,0 +1,50 @@
+# Columns half of the versioned scalar collection write proof: an amendment assigns
+# a whole collection in the same statement that advances and gates the version, and
+# a caller-addressed replacement writes every collection it omits as the empty
+# collection. Its twin authors the same writes under Relational Document Layout.
+model: models/scalar-collection-lifecycle-layout-twin-columns.yaml
+tags: [m-opt-lock, m-unit-work, m-storage-layout, m-document-codec, m-sql, write-sequence, update, json, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  writeSequence:
+    - mutation: amend
+      entity: parallax.compatibility.TagLedger
+      statements: 1
+      note: a whole collection is assigned beside the version gate, the nested collection riding forward
+      rows:
+        - { id: 1, tags: [c, c], observedVersion: 1 }
+    - mutation: replace
+      entity: parallax.compatibility.TagLedger
+      statements: 1
+      note: a replacement stating only the label writes the omitted collection empty and the omitted occurrence null under the caller's version
+      row: { id: 2, label: whole }
+      ifVersion: 4
+then:
+  statements:
+    - sql:
+        postgres: update tag_ledger set tags = ?, version = ? where id = ? and version = ?
+        mariadb: update tag_ledger set tags = ?, version = ? where id = ? and version = ?
+      binds:
+        - [c, c]
+        - 2
+        - 1
+        - 1
+    - sql:
+        postgres: update tag_ledger set label = ?, tags = ?, route = ?, version = ? where id = ? and version = ?
+        mariadb: update tag_ledger set label = ?, tags = ?, route = ?, version = ? where id = ? and version = ?
+      binds:
+        - whole
+        - []
+        - null
+        - 5
+        - 2
+        - 4
+  tableState:
+    tag_ledger:
+      - { id: 1, version: 2, label: open, tags: [c, c], route: { stops: [x, y] } }
+      - { id: 2, version: 5, label: whole, tags: [], route: null }
+  roundTrips: 3

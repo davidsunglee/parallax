@@ -1483,8 +1483,7 @@ def test_runner_fails_a_handleless_input_against_a_multi_family_model() -> None:
     # there is no default: the case must carry its own handle. Resolving it to
     # whichever entity is declared first would grade a rule against an entity the
     # case never named, which is the failure this refusal replaces. The instruction
-    # forms beside it name their own handle and are unaffected — the corpus's own
-    # m-batch-write-009 is a predicate write on exactly such a model.
+    # forms beside it name their own handle and are unaffected.
     from reference_harness.case import Model
 
     model = load_model(_COMPATIBILITY_ROOT, "models/workshop.yaml")

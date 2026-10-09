@@ -1,0 +1,24 @@
+# Document half of the inherited scalar collection read proof: the same abstract
+# table-per-hierarchy read locates every applicable collection in the shared
+# document. Its twin authors the same read under Columns.
+model: models/scalar-collection-lifecycle-layout-twin-document.yaml
+tags: [m-inheritance, m-storage-layout, m-document-codec, m-sql, read, table-per-hierarchy, root, graph, instance-form, json, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.TagAsset
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.TagAsset.id
+        direction: asc
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, not t0.payload is null, t0.payload from tag_asset t0 order by t0.id asc
+        mariadb: select t0.id, t0.kind, not t0.payload is null, t0.payload from tag_asset t0 order by t0.id asc
+  graph:
+    TagAsset:
+      - { id: 1, tags: [a, a], ports: [1, 2], numbers: ["555"], codes: ["01ff"], familyVariant: TagPhone }
+      - { id: 2, tags: [d], legs: [l, r], familyVariant: TagDesk }
+  roundTrips: 1

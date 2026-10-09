@@ -81,6 +81,8 @@ _FAMILIES: Final[tuple[str, ...]] = (
     "quote",
     "rate",
     "reading",
+    "scalar-collection-lifecycle-layout-twin-columns",
+    "scalar-collection-lifecycle-layout-twin-document",
     "storage-layout",
     "vehicle",
     "workshop",

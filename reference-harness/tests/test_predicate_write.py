@@ -613,7 +613,7 @@ def test_model_validator_accepts_omitted_nullable_nested_one_assignment() -> Non
     validate_predicate_write(entity, instruction)
 
 
-def test_rejected_many_oracle_does_not_certify_assignment_missing_required_nested_one() -> None:
+def test_rejected_oracle_does_not_certify_assignment_missing_required_nested_one() -> None:
     model = deepcopy(load_model(_COMPATIBILITY_ROOT, "models/contact.yaml"))
     model.entity_defs[0]["layout"] = {"document": {"column": "payload"}}
     assert isinstance(model, Model)
@@ -634,7 +634,7 @@ def test_rejected_many_oracle_does_not_certify_assignment_missing_required_neste
             "tags": ["m-batch-write"],
             "shape": "rejected",
             "when": {"write": instruction},
-            "then": {"rejectedRule": "predicate-write-readless-document-many-unsupported"},
+            "then": {"rejectedRule": "write-value-type-mismatch"},
         },
         model=model,
     )

@@ -351,3 +351,33 @@ def test_run_rejected_case_raises_when_when_carries_model_and_write() -> None:
     when: dict[str, object] = {"model": {"entities": []}, "write": {}}
     with pytest.raises(EngineError, match="EXACTLY ONE"):
         rejected.run_rejected_case(_synthetic_rejected(when))
+
+
+def test_run_rejected_case_predicate_write_dispatch_classifies_the_rule() -> None:
+    # A predicate-selected amendment's assignment decodes every collection element
+    # before buffering, so an undecodable one is the Wire literal rule.
+    document: dict[str, object] = {
+        "model": "models/scalar-collection-layout-twin-columns.yaml",
+        "when": {
+            "write": {
+                "mutation": "amend",
+                "target": {
+                    "entity": "parallax.compatibility.CollectionTwinItem",
+                    "predicate": {"all": {}},
+                },
+                "assignments": [
+                    {"attr": "parallax.compatibility.CollectionTwinItem.counts", "value": [5, "6"]}
+                ],
+            }
+        },
+        "then": {"rejectedRule": "neutral-literal-type-mismatch"},
+    }
+    case = case_format.Case(
+        path=Path("m-batch-write-998-synthetic-rejected.yaml"),
+        case_id="m-batch-write-998",
+        shape="rejected",
+        tags=("m-batch-write", "rejected", "slice-snapshot-1"),
+        model="models/scalar-collection-layout-twin-columns.yaml",
+        document=document,
+    )
+    assert rejected.run_rejected_case(case) == "neutral-literal-type-mismatch"

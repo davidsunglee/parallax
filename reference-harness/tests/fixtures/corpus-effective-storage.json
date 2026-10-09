@@ -3555,6 +3555,207 @@
       }
     }
   },
+  "models/scalar-collection-lifecycle-layout-twin-columns.yaml": {
+    "parallax.compatibility.TagAsset": {
+      "attribute": {
+        "id": "id",
+        "tags": "tags"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagDesk": {
+      "attribute": {
+        "legs": "legs"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagDevice": {
+      "attribute": {
+        "ports": "ports"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagDrill": {
+      "attribute": {
+        "bits": "bits"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagKit": {
+      "attribute": {
+        "id": "id",
+        "tags": "tags"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagLedger": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "tags": "tags",
+        "version": "version"
+      },
+      "documentPath": {
+        "route.stops": "route:stops"
+      },
+      "valueObject": {
+        "route": "route"
+      }
+    },
+    "parallax.compatibility.TagLog": {
+      "attribute": {
+        "id": "id",
+        "tags": "tags",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagPhone": {
+      "attribute": {
+        "codes": "codes",
+        "numbers": "numbers"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagSaw": {
+      "attribute": {
+        "blades": "blades"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagSpan": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "marks": "marks",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/scalar-collection-lifecycle-layout-twin-document.yaml": {
+    "parallax.compatibility.TagAsset": {
+      "attribute": {
+        "id": "id",
+        "tags": "tags"
+      },
+      "documentPath": {
+        "tags": "payload:tags"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagDesk": {
+      "attribute": {
+        "legs": "legs"
+      },
+      "documentPath": {
+        "legs": "payload:legs"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagDevice": {
+      "attribute": {
+        "ports": "ports"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagDrill": {
+      "attribute": {
+        "bits": "bits"
+      },
+      "documentPath": {
+        "bits": "payload:bits"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagKit": {
+      "attribute": {
+        "id": "id",
+        "tags": "tags"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagLedger": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "tags": "tags",
+        "version": "version"
+      },
+      "documentPath": {
+        "label": "payload:label",
+        "route": "payload:route",
+        "route.stops": "payload:route.stops",
+        "tags": "payload:tags"
+      },
+      "valueObject": {
+        "route": "route"
+      }
+    },
+    "parallax.compatibility.TagLog": {
+      "attribute": {
+        "id": "id",
+        "tags": "tags",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {
+        "tags": "payload:tags"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagPhone": {
+      "attribute": {
+        "codes": "codes",
+        "numbers": "numbers"
+      },
+      "documentPath": {
+        "codes": "payload:codes",
+        "numbers": "payload:numbers"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagSaw": {
+      "attribute": {
+        "blades": "blades"
+      },
+      "documentPath": {
+        "blades": "payload:blades"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.TagSpan": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "marks": "marks",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {
+        "amount": "payload:amount",
+        "marks": "payload:marks"
+      },
+      "valueObject": {}
+    }
+  },
   "models/scalars.yaml": {
     "parallax.compatibility.ScalarThing": {
       "attribute": {

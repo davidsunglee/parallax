@@ -1205,9 +1205,8 @@ class UnitOfWork:
         """Buffer a prepared predicate-selected write, readless or materialized.
 
         An unversioned Non-Temporal target settles as one statement
-        (`m-batch-write` "Predicate-selected readless forms"), after refusing a
-        document-resident ``many`` assignment no readless statement can
-        express. Every other target materializes (`m-opt-lock`, ADR 0014):
+        (`m-batch-write` "Predicate-selected readless forms"). Every other
+        target materializes (`m-opt-lock`, ADR 0014):
         pending writes flush through :meth:`read`, its selection is read
         through ``acquire_rows``, and every selected row that is not a no-op
         becomes the evidence of one Materialized Write Group buffered at the

@@ -19,7 +19,8 @@ from .inheritance import inheritance_of
 from .object_query_validate import validate_predicate
 from .query_references import collect_reference_classes
 from .serde import canonical
-from .value_object_resolve import RejectionError, literal_matches_type
+from .storage_layout import is_scalar_collection
+from .value_object_resolve import RejectionError, decode_typed_literal, literal_matches_type
 
 
 class PredicateWriteValidationError(ValueError):
@@ -401,10 +402,25 @@ def _assert_attribute_assignment(
         raise PredicateWriteValidationError(
             f"assignment {ref!r} targets a framework-owned attribute"
         )
-    if not literal_matches_type(value, attribute.get("type")):
+    if not is_scalar_collection(attribute):
+        if not literal_matches_type(value, attribute.get("type")):
+            raise PredicateWriteValidationError(
+                f"assignment {ref!r} value does not match declared type {attribute.get('type')!r}"
+            )
+        return
+    _assert_collection_literal(ref, attribute, value)
+
+
+def _assert_collection_literal(ref: str, attribute: dict[str, Any], value: Any) -> None:
+    """Validate a scalar collection literal: an array of non-null elements, each
+    decoded at its position as the instruction decodes it, so an element its
+    declared type cannot decode is refused with the Wire literal rule."""
+    if not isinstance(value, list) or any(element is None for element in value):
         raise PredicateWriteValidationError(
-            f"assignment {ref!r} value does not match declared type {attribute.get('type')!r}"
+            f"assignment {ref!r} must use an array of non-null {attribute.get('type')!r} elements"
         )
+    for index, element in enumerate(value):
+        decode_typed_literal(element, attribute.get("type"), f"{ref}[{index}]")
 
 
 def _assert_value_object_assignment(ref: str, value_object: dict[str, Any], value: Any) -> None:
@@ -440,12 +456,17 @@ def _assert_value_object_document(ref: str, value_object: dict[str, Any], docume
         )
     for attribute in value_object.get("attributes", []):
         name = attribute["name"]
+        if name not in document and is_scalar_collection(attribute):
+            continue
         value = document.get(name)
         if value is None:
             if not attribute.get("nullable", False):
                 raise PredicateWriteValidationError(
                     f"value object assignment {ref!r} omits required attribute {name!r}"
                 )
+            continue
+        if is_scalar_collection(attribute):
+            _assert_collection_literal(f"{ref}.{name}", attribute, value)
             continue
         if not literal_matches_type(value, attribute.get("type")):
             raise PredicateWriteValidationError(

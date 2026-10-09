@@ -1,0 +1,87 @@
+# Columns half of the temporal scalar collection lifecycle proof: an amendment
+# assigning the collection a Transaction-Time milestone already holds keeps it,
+# while the same elements in another order chain a successor; a bounded Bitemporal
+# amendment judges each rectangle it reaches, carries each untouched part's own
+# collection, and coalesces the equal rectangles it writes. Its twin authors the
+# same submissions under Relational Document Layout.
+model: models/scalar-collection-lifecycle-layout-twin-columns.yaml
+tags: [m-temporal-write, m-unit-work, m-read-lock, m-storage-layout, m-document-codec, scenario, update, target-write, json, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: each flush writes against coverage its own reads leave, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - uow: kept
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.TagLog
+          row: { id: 1, tags: [a, b] }
+          ifTxStart: "2024-01-01T00:00:00.000000Z"
+          at: "2024-03-01T00:00:00.000000Z"
+      note: "the collection assigned is the one the milestone holds, element for element, so the milestone is kept"
+    - uow: chained
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.TagLog
+          row: { id: 1, tags: [b, a] }
+          ifTxStart: "2024-01-01T00:00:00.000000Z"
+          at: "2024-04-01T00:00:00.000000Z"
+        - mutation: amendUntil
+          entity: parallax.compatibility.TagSpan
+          row: { id: 1, amount: 9, marks: [7] }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          until: "2024-07-01T00:00:00.000000Z"
+          at: "2024-04-01T00:00:00.000000Z"
+      note: "the same elements in another order are a change, so the log chains; each span rectangle the window reaches is judged on its own and both become one coalesced rectangle, while the parts outside the window keep their own collections"
+then:
+  units:
+    kept: { outcome: committed }
+    chained: { outcome: committed }
+  tableState:
+    tag_log:
+      - { id: 1, tags: [a, b], in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-04-01T00:00:00.000000Z" }
+      - { id: 1, tags: [b, a], in_z: "2024-04-01T00:00:00.000000Z", out_z: infinity }
+    tag_span:
+      - id: 1
+        amount: 1
+        marks: [1, 2]
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-05-01T00:00:00.000000Z"
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-04-01T00:00:00.000000Z"
+      - id: 1
+        amount: 2
+        marks: [2, 1]
+        from_z: "2024-05-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-04-01T00:00:00.000000Z"
+      - id: 1
+        amount: 1
+        marks: [1, 2]
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-03-01T00:00:00.000000Z"
+        in_z: "2024-04-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 1
+        amount: 9
+        marks: [7]
+        from_z: "2024-03-01T00:00:00.000000Z"
+        thru_z: "2024-07-01T00:00:00.000000Z"
+        in_z: "2024-04-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 1
+        amount: 2
+        marks: [2, 1]
+        from_z: "2024-07-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-04-01T00:00:00.000000Z"
+        out_z: infinity

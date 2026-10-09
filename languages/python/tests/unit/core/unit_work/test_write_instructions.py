@@ -641,6 +641,25 @@ def test_a_replacement_writes_every_omitted_nullable_member_empty(prepare: Any) 
     assert dict(prepared.row) == {"id": 1, "label": None, "spec": None, "marks": ()}
 
 
+_TAGS = _MODELS["scalar-collection-lifecycle-layout-twin-columns"]
+
+
+@_BOTH_PRODUCERS
+def test_a_replacement_writes_every_omitted_collection_as_the_empty_collection(
+    prepare: Any,
+) -> None:
+    prepared = prepare(
+        _target("replace", "TagLedger", {"id": 2, "label": "whole"}, if_version=4), _TAGS
+    )
+    assert dict(prepared.row) == {"id": 2, "label": "whole", "tags": (), "route": None}
+
+
+@_BOTH_PRODUCERS
+def test_a_patch_assigns_only_the_collections_it_states(prepare: Any) -> None:
+    prepared = prepare(_target("amend", "TagLedger", {"id": 2, "tags": ()}, if_version=4), _TAGS)
+    assert dict(prepared.row) == {"id": 2, "tags": ()}
+
+
 @_BOTH_PRODUCERS
 def test_a_replacement_refuses_an_omitted_required_value_object(prepare: Any) -> None:
     with pytest.raises(WriteRejectedError, match=r"destination.*absent") as refused:

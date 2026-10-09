@@ -15,15 +15,17 @@ from typing import cast
 
 import pytest
 
-from parallax.core import Entity, temporal_read
+from parallax.core import Entity, inheritance, temporal_read
 from parallax.core.base import INFINITY
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeIdentity
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.temporal_read import Bitemporal, milestone_edge, valid_time_coverage
 from parallax.core.write_plan import EntityStateRow, PredecessorRow
+from parallax.core.write_plan.observe import AssignedComparison
 from tests.unit import _predicate_acquisition_support as acquisition
+from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import PERSON, columns_model, document_model
 from tests.unit._positional_row_support import positional_row
 
@@ -403,3 +405,56 @@ def test_a_predecessor_row_carrying_no_member_is_refused() -> None:
     # partial one would silently drop members temporal expansion carries forward.
     with pytest.raises(ValueError, match="complete state"):
         PredecessorRow(members={})
+
+
+# --------------------------------------------------------------------------- #
+# A scalar collection holds an assignment only element for element, in order.  #
+# --------------------------------------------------------------------------- #
+_COLLECTION_SELECTION = (
+    inheritance.view(corpus_model("scalar-collection-layout-twin-columns"))
+    .entity(EntityIdentity("parallax.compatibility", "CollectionTwinItem"))
+    .member_selection  # pyright: ignore[reportOptionalMemberAccess] - the corpus declares it
+)
+
+
+def _collection_predecessor(tags: object, detail: object) -> PredecessorRow:
+    # `id`, eleven empty collections around `tags`, then `detail` and `parts`.
+    values = (1, (), (), (), (), (), (), tags, (), (), (), (), (), detail, ())
+    return PredecessorRow.over_row(_COLLECTION_SELECTION, values, None, ABSENT)
+
+
+@pytest.mark.parametrize(
+    ("stored", "assigned", "held"),
+    [
+        (("b", "a", "b"), ("b", "a", "b"), True),
+        (("b", "a", "b"), ["b", "a", "b"], True),
+        (("b", "a", "b"), ("a", "b", "b"), False),
+        (("b", "a", "b"), ("b", "a"), False),
+        ((), (), True),
+        ((), ("b",), False),
+    ],
+)
+def test_a_top_level_collection_holds_only_its_own_elements_in_order(
+    stored: tuple[str, ...], assigned: object, held: bool
+) -> None:
+    comparison = AssignedComparison(_COLLECTION_SELECTION, {"tags": assigned})
+
+    assert _collection_predecessor(stored, None).holds(comparison) is held
+
+
+@pytest.mark.parametrize(
+    ("stored", "assigned", "held"),
+    [
+        ((("x", "y"),), {"labels": ("x", "y")}, True),
+        ((("x", "y"),), {"labels": ("y", "x")}, False),
+        ((ABSENT,), {"labels": ()}, True),
+        ((ABSENT,), {}, True),
+        ((("x",),), {}, False),
+    ],
+)
+def test_a_nested_collection_holds_as_part_of_its_whole_occurrence(
+    stored: tuple[object, ...], assigned: dict[str, object], held: bool
+) -> None:
+    comparison = AssignedComparison(_COLLECTION_SELECTION, {"detail": assigned})
+
+    assert _collection_predecessor((), stored).holds(comparison) is held

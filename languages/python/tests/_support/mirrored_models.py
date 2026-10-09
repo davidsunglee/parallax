@@ -638,6 +638,13 @@ _UNCHANGED_MILESTONE_TWIN = (
     "already proves"
 )
 
+_SCALAR_COLLECTION_LIFECYCLE_REASON = (
+    "no mirror authored; it adds no declaration construct of its own, placing the mirrored "
+    "`scalar-collection-layout-twin`'s `multiplicity: many` Attributes on versioned, "
+    "temporal, table-per-hierarchy, and table-per-concrete-subtype owners whose Typed "
+    "spellings the scalar collection lifecycle and inheritance API tests declare and run"
+)
+
 UNMIRRORED: Mapping[str, str] = MappingProxyType(
     {
         "appliance": (
@@ -851,6 +858,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "no mirror authored; the mirrored `writable-scalars` carries the same scalar set, so "
             "the only construct this model adds is `persistence=READ_ONLY`"
         ),
+        "scalar-collection-lifecycle-layout-twin-columns": _SCALAR_COLLECTION_LIFECYCLE_REASON,
+        "scalar-collection-lifecycle-layout-twin-document": _SCALAR_COLLECTION_LIFECYCLE_REASON,
         "shared-local-name": (
             "portable compatibility-only model: it exists to make one local Entity name "
             "ambiguous in a reference position, and its declarations are the mirrored "

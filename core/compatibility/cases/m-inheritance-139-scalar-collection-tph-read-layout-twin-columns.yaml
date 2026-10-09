@@ -1,0 +1,26 @@
+# Columns half of the inherited scalar collection read proof: an abstract
+# table-per-hierarchy read publishes each row's own concrete with every collection
+# its root, abstract subtype, and concrete declare, each read from its own
+# structured Column, and none a sibling declares. Its twin authors the same read
+# under Relational Document Layout.
+model: models/scalar-collection-lifecycle-layout-twin-columns.yaml
+tags: [m-inheritance, m-storage-layout, m-document-codec, m-sql, read, table-per-hierarchy, root, graph, instance-form, json, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.TagAsset
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.TagAsset.id
+        direction: asc
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, not t0.tags is null, t0.tags, not t0.ports is null, t0.ports, not t0.legs is null, t0.legs, not t0.numbers is null, t0.numbers, not t0.codes is null, t0.codes from tag_asset t0 order by t0.id asc
+        mariadb: select t0.id, t0.kind, not t0.tags is null, t0.tags, not t0.ports is null, t0.ports, not t0.legs is null, t0.legs, not t0.numbers is null, t0.numbers, not t0.codes is null, t0.codes from tag_asset t0 order by t0.id asc
+  graph:
+    TagAsset:
+      - { id: 1, tags: [a, a], ports: [1, 2], numbers: ["555"], codes: ["01ff"], familyVariant: TagPhone }
+      - { id: 2, tags: [d], legs: [l, r], familyVariant: TagDesk }
+  roundTrips: 1

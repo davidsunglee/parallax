@@ -676,6 +676,13 @@ _INHERITANCE_COMPOSED_CONFLICT_REASON: Final[str] = (
 # Non-temporal TPH/TPCS insert, update, and delete cases are graded end-to-end
 # by the compile/run lanes, including deep-chain, sibling-branch, and
 # optimistic-lock compositions. They have no idiomatic instance-native story.
+_INHERITED_SCALAR_COLLECTION_REASON: Final[str] = (
+    "the developer spellings are the abstract-target `db.find`, the concrete `tx.insert`, "
+    "and the source-authorized `tx.amend` an inherited Entity already exercises, over "
+    "members declared `Attr[tuple[T, ...]]`; what the case pins is where each family's "
+    "collections are projected and bound, graded byte-exact by the compile lane and end "
+    "to end by the database-backed run lane"
+)
 _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "a non-temporal inheritance-family keyed write (table-per-hierarchy or table-per-"
     "concrete-subtype insert/update/delete, including the opt-lock composition pair): "
@@ -1613,6 +1620,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
         "`NULL` placeholder for the branches declaring none — graded byte-exact by the "
         "compile lane and end to end by the database-backed run lane"
     ),
+    "m-inheritance-139": _INHERITED_SCALAR_COLLECTION_REASON,
+    "m-inheritance-140": _INHERITED_SCALAR_COLLECTION_REASON,
+    "m-inheritance-141": _INHERITED_SCALAR_COLLECTION_REASON,
+    "m-inheritance-142": _INHERITED_SCALAR_COLLECTION_REASON,
+    "m-inheritance-143": _INHERITED_SCALAR_COLLECTION_REASON,
+    "m-inheritance-144": _INHERITED_SCALAR_COLLECTION_REASON,
     "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-101": _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON,

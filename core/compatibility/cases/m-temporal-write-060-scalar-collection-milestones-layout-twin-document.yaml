@@ -1,0 +1,85 @@
+# Document half of the temporal scalar collection lifecycle proof: the same
+# submissions keep, chain, split, and coalesce milestones whose collections live in
+# the shared document. Its twin authors the same submissions under Columns.
+model: models/scalar-collection-lifecycle-layout-twin-document.yaml
+tags: [m-temporal-write, m-unit-work, m-read-lock, m-storage-layout, m-document-codec, scenario, update, target-write, json, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: each flush writes against coverage its own reads leave, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - uow: kept
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.TagLog
+          row: { id: 1, tags: [a, b] }
+          ifTxStart: "2024-01-01T00:00:00.000000Z"
+          at: "2024-03-01T00:00:00.000000Z"
+      note: "the collection assigned is the one the milestone holds, element for element, so the milestone is kept"
+    - uow: chained
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.TagLog
+          row: { id: 1, tags: [b, a] }
+          ifTxStart: "2024-01-01T00:00:00.000000Z"
+          at: "2024-04-01T00:00:00.000000Z"
+        - mutation: amendUntil
+          entity: parallax.compatibility.TagSpan
+          row: { id: 1, amount: 9, marks: [7] }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          until: "2024-07-01T00:00:00.000000Z"
+          at: "2024-04-01T00:00:00.000000Z"
+      note: "the same elements in another order are a change, so the log chains; each span rectangle the window reaches is judged on its own and both become one coalesced rectangle, while the parts outside the window keep their own collections"
+then:
+  units:
+    kept: { outcome: committed }
+    chained: { outcome: committed }
+  tableState:
+    tag_log:
+      - id: 1
+        in_z: "2024-01-01T00:00:00.000000Z"
+        out_z: "2024-04-01T00:00:00.000000Z"
+        payload: { tags: [a, b] }
+      - id: 1
+        in_z: "2024-04-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { tags: [b, a] }
+    tag_span:
+      - id: 1
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-05-01T00:00:00.000000Z"
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-04-01T00:00:00.000000Z"
+        payload: { amount: 1, marks: [1, 2] }
+      - id: 1
+        from_z: "2024-05-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-04-01T00:00:00.000000Z"
+        payload: { amount: 2, marks: [2, 1] }
+      - id: 1
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-03-01T00:00:00.000000Z"
+        in_z: "2024-04-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 1, marks: [1, 2] }
+      - id: 1
+        from_z: "2024-03-01T00:00:00.000000Z"
+        thru_z: "2024-07-01T00:00:00.000000Z"
+        in_z: "2024-04-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 9, marks: [7] }
+      - id: 1
+        from_z: "2024-07-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-04-01T00:00:00.000000Z"
+        out_z: infinity
+        payload: { amount: 2, marks: [2, 1] }

@@ -1,7 +1,7 @@
 # A minimal Relational Document Layout model whose top-level `route` is a `one`,
 # whose named `segment` member is another `one`, and whose named `stops` member is
-# a `many`. It exists so rejected predicate-write cases can distinguish recursive
-# authored-shape inspection from checking only top-level occurrence multiplicity.
+# a `many`. It exists so a readless predicate write can show that a whole `one`
+# assignment replaces the nested array it holds without choosing a route by content.
 entity:
   name: NestedRoute
   namespace: parallax.compatibility

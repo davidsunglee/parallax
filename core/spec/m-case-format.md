@@ -2440,10 +2440,6 @@ atomically as one whole document):
   document/list carrier for its declared multiplicity, or a `many` array contains
   a non-document element. This legacy name is structural only; it MUST NOT
   classify a resolved scalar literal (`m-value-object`).
-- `predicate-write-readless-document-many-unsupported` — an unversioned,
-  non-temporal predicate-selected update assigns a document-resident `many`.
-  The predicate, target, and assignment are individually valid; their readless
-  combination is refused before buffering or SQL (`m-batch-write`).
 
 The retired `nested-literal-type-mismatch` identifier is not an alias. The
 `write-value-type-mismatch` identifier remains only for structural/container

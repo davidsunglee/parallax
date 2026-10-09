@@ -1610,7 +1610,6 @@
             "write-required-attribute-missing",
             "write-required-value-object-missing",
             "write-value-type-mismatch",
-            "predicate-write-readless-document-many-unsupported",
             "temporal-keyed-write-multi-row",
             "subtype-write-sibling-attribute",
             "subtype-write-metadata-field",

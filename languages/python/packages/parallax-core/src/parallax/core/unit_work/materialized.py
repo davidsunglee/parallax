@@ -8,13 +8,9 @@ from typing import Literal, cast
 from parallax.core import inheritance, temporal_read
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.metamodel import (
-    AttributeMetadata,
-    Document,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    Multiplicity,
-    OccurrenceMetadata,
 )
 from parallax.core.temporal_read import TemporalShape, TimeInterval, milestone_edge
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform, Successor
@@ -38,7 +34,6 @@ from parallax.core.unit_work.retain import (
     RetainedObservation,
     RetainedTargetState,
 )
-from parallax.core.unit_work.write_validate import WriteRejectedError
 from parallax.core.write_plan.columns import ChunkedColumnBuilder, ColumnSlice, whole
 from parallax.core.write_plan.keys import (
     ObjectKey,
@@ -75,7 +70,6 @@ __all__ = [
     "composed_temporal_write",
     "group_state_keys",
     "readless_write",
-    "reject_readless_document_many",
     "singleton_transform",
     "target_write",
     "temporal_contribution",
@@ -137,62 +131,17 @@ class ReadlessPredicateWrite:
     equality-elimination pass, and stands in the buffer as an ordering barrier.
 
     Only :func:`readless_write` constructs one, so holding one means the
-    routing decision was made and the readless refusals were applied.
+    routing decision was made.
     """
 
     instruction: PreparedPredicateWrite
 
 
 def readless_write(instruction: PreparedPredicateWrite) -> ReadlessPredicateWrite:
-    """``instruction`` routed readless, after refusing a document-resident
-    ``many`` assignment no readless statement can express."""
-    reject_readless_document_many(instruction.selection.target, instruction)
+    """``instruction`` routed readless."""
     carrier = object.__new__(ReadlessPredicateWrite)
     object.__setattr__(carrier, "instruction", instruction)
     return carrier
-
-
-def reject_readless_document_many(
-    entity: EntityMetadata, instruction: PreparedPredicateWrite
-) -> None:
-    """Refuse the readless document-array assignment shape before planning."""
-    if not isinstance(entity.declared_layout, Document):
-        return
-    occurrences = {
-        occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
-    }
-    for assignment in instruction.managed_assignments:
-        if isinstance(assignment.member, AttributeMetadata):
-            continue
-        member = assignment.member.identity.path[-1]
-        occurrence = occurrences.get(member)
-        if occurrence is None:  # pragma: no cover - preparation resolves every assignment
-            continue
-        nested_many = assigned_many_path(occurrence, assignment.value)
-        if occurrence.multiplicity is Multiplicity.MANY or nested_many is not None:
-            path = member if nested_many is None else ".".join((member, *nested_many))
-            raise WriteRejectedError(
-                "predicate-write-readless-document-many-unsupported",
-                f"{entity.identity.canonical}.{path}: a readless predicate write cannot "
-                "assign a document-resident `many` occurrence",
-            )
-
-
-def assigned_many_path(occurrence: OccurrenceMetadata, authored: object) -> tuple[str, ...] | None:
-    """Return the first authored nested ``many`` path in declaration order."""
-    if not isinstance(authored, Mapping):
-        return None
-    authored_members = cast("Mapping[object, object]", authored)
-    for nested in occurrence.value_objects:
-        name = nested.identity.path[-1]
-        if name not in authored_members:
-            continue
-        if nested.multiplicity is Multiplicity.MANY:
-            return (name,)
-        path = assigned_many_path(nested, authored_members[name])
-        if path is not None:
-            return (name, *path)
-    return None
 
 
 class VersionedEvidenceBuilder:

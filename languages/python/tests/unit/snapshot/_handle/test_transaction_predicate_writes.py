@@ -88,11 +88,9 @@ from parallax.core.unit_work import (
     StaleWriteError,
     UnitOfWork,
     WriteEvidenceError,
-    WriteRejectedError,
     instructions,
 )
 from parallax.core.unit_work import acquisition as acquisition_module
-from parallax.core.unit_work.materialized import assigned_many_path
 from parallax.core.write_plan import (
     ChunkedColumnBuilder,
     EntityStateRow,
@@ -356,8 +354,8 @@ def test_readless_update_where_buffers_one_statement_no_read() -> None:
     ]
 
 
-def test_readless_document_many_assignment_is_refused_before_write_sql() -> None:
-    port = ScriptedAdapter(Transact())
+def test_readless_document_many_assignment_replaces_the_array_at_its_path() -> None:
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.amend_where(
@@ -365,16 +363,62 @@ def test_readless_document_many_assignment_is_refused_before_write_sql() -> None
             mm.Traveler.tags.set((mm.TravelerTag(label="founder"),)),
         )
 
-    with raises_contextualized(WriteRejectedError) as raised:
-        own_root(
-            Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-    assert raised.value.rule == "predicate-write-readless-document-many-unsupported"
-    assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
+    own_root(
+        Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
+    assert port.calls == [
+        BeginCall(),
+        WriteCall(
+            POSTGRES.to_driver_sql(
+                "update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
+            ),
+            ("{tags}", JsonDocument((FrozenMap({"label": "founder"}),)), 1),
+        ),
+        CommitCall(),
+    ]
 
 
-def test_readless_nested_document_many_assignment_is_refused_before_write_sql() -> None:
-    port = ScriptedAdapter(Transact())
+@pytest.mark.parametrize(
+    ("model", "entity", "sql", "binds"),
+    [
+        (
+            mm.SCALAR_COLLECTION_COLUMNS_MODEL,
+            mm.ColumnsCollectionTwinItem,
+            "update collection_twin set counts = ?, tags = ? where id < ?",
+            (JsonDocument((5, 5)), JsonDocument(("b",)), 3),
+        ),
+        (
+            mm.SCALAR_COLLECTION_DOCUMENT_MODEL,
+            mm.DocumentCollectionTwinItem,
+            "update collection_twin set payload = jsonb_set(jsonb_set(payload, ?, "
+            "cast(? as jsonb)), ?, cast(? as jsonb)) where id < ?",
+            ("{counts}", JsonDocument((5, 5)), "{tags}", JsonDocument(("b",)), 3),
+        ),
+    ],
+    ids=["columns", "document"],
+)
+def test_a_readless_collection_assignment_binds_whole_arrays_in_layout_order(
+    model: DomainModel, entity: Any, sql: str, binds: tuple[object, ...]
+) -> None:
+    port = ScriptedAdapter(Transact(Write()))
+
+    def fn(tx: Transaction) -> None:
+        tx.amend_where(
+            entity.where(entity.id < 3), entity.tags.set(("b",)), entity.counts.set((5, 5))
+        )
+
+    own_root(
+        Database.connect(port, model, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
+    assert port.calls == [
+        BeginCall(),
+        WriteCall(POSTGRES.to_driver_sql(sql), binds),
+        CommitCall(),
+    ]
+
+
+def test_readless_nested_document_many_assignment_replaces_the_whole_occurrence() -> None:
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.amend_where(
@@ -387,27 +431,23 @@ def test_readless_nested_document_many_assignment_is_refused_before_write_sql() 
             ),
         )
 
-    with raises_contextualized(WriteRejectedError) as raised:
-        own_root(
-            Database.connect(port, _NESTED_READLESS_META, clock=FixedClock(FIXED))
-        ).using_database_login().transact(fn)
-    assert raised.value.rule == "predicate-write-readless-document-many-unsupported"
-    assert "route.segment.stops" in str(raised.value)
-    assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
-
-
-def test_nested_document_many_detection_follows_only_authored_occurrences() -> None:
-    entity = _NESTED_READLESS_META.entities[0]
-    occurrence = entity.declared_value_objects[0]
-    authored_without_many: dict[str, object] = {"name": "Coastal", "segment": {}}
-    authored_with_many: dict[str, object] = {
-        "name": "Coastal",
-        "segment": {"stops": [{"port": "Oslo"}]},
-    }
-
-    assert assigned_many_path(occurrence, authored_without_many) is None
-    assert assigned_many_path(occurrence, authored_with_many) == ("segment", "stops")
-    assert assigned_many_path(occurrence, None) is None
+    own_root(
+        Database.connect(port, _NESTED_READLESS_META, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
+    route = FrozenMap(
+        {"name": "Coastal", "segment": FrozenMap({"stops": (FrozenMap({"port": "Oslo"}),)})}
+    )
+    assert port.calls == [
+        BeginCall(),
+        WriteCall(
+            POSTGRES.to_driver_sql(
+                "update nested_readless_voyage set payload = "
+                "jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
+            ),
+            ("{route}", JsonDocument(route), 1),
+        ),
+        CommitCall(),
+    ]
 
 
 def test_readless_document_scalar_assignment_still_reaches_planning() -> None:

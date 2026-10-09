@@ -490,6 +490,42 @@ def test_a_rectangle_part_of_which_is_destroyed_is_changed_whatever_else_holds()
     assert _windows(expanded.steps) == [(_JAN, _SEP, 100), (_OCT, INFINITY, 100)]
 
 
+_TAG_SPANS = model("scalar-collection-lifecycle-layout-twin-columns")
+_TAG_SPAN = EntityIdentity("parallax.compatibility", "TagSpan")
+_TAG_SPAN_FACTS = _facts(_TAG_SPANS, _TAG_SPAN)
+_PAYLOADS[_TAG_SPAN] = LayoutPayloadPreparer(_TAG_SPANS)
+_STORED_MARKS = PredecessorRow(
+    members={
+        "id": 1,
+        "amount": 1,
+        "marks": (1, 2),
+        "validStart": _JAN,
+        "validEnd": INFINITY,
+        "txStart": _T0,
+        "txEnd": INFINITY,
+    }
+)
+
+
+@pytest.mark.parametrize(
+    ("marks", "kept"),
+    [((1, 2), True), ([1, 2], True), ((2, 1), False), ((1, 2, 2), False), ((), False)],
+)
+def test_a_collection_assignment_keeps_a_rectangle_only_holding_its_elements_in_order(
+    marks: object, kept: bool
+) -> None:
+    transform = _assigning(TimeInterval(_MAR, _SEP), {"marks": marks})
+    expanded = _expand(
+        _expansion(_TAG_SPAN_FACTS, transform, guards=True), _TAG_SPAN_FACTS, _STORED_MARKS
+    )
+    if kept:
+        assert _kinds(expanded.steps) == [PlannedTemporalGuard]
+        return
+    close, head, changed, tail = expanded.steps
+    assert isinstance(close, PlannedClose)
+    assert [_cells(step)["marks"] for step in (head, changed, tail)] == [(1, 2), marks, (1, 2)]
+
+
 # --------------------------------------------------------------------------- #
 # Validation: an earlier observation retired through the same disposal.        #
 # --------------------------------------------------------------------------- #

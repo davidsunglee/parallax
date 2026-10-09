@@ -1,0 +1,26 @@
+# Columns half of the table-per-concrete-subtype scalar collection read proof: an
+# abstract read's `union all` projects every collection Column each branch owns as a
+# document read and pads the ones it lacks, so each row publishes its own concrete's
+# collections and nothing is lost to the union. Its twin authors the same read under
+# Relational Document Layout.
+model: models/scalar-collection-lifecycle-layout-twin-columns.yaml
+tags: [m-inheritance, m-storage-layout, m-document-codec, m-sql, read, table-per-concrete-subtype, union-all, root, graph, instance-form, json, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.TagKit
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.TagKit.id
+        direction: asc
+then:
+  statements:
+    - sql:
+        postgres: select u.id, not u.tags is null, u.tags, not u.bits is null, u.bits, not u.blades is null, u.blades, u.family_variant from (select t0.id, t0.tags, t0.bits, cast(null as jsonb) blades, 'TagDrill' family_variant from tag_drill t0 union all select t0.id, t0.tags, cast(null as jsonb) bits, t0.blades, 'TagSaw' family_variant from tag_saw t0) u order by u.id asc
+        mariadb: select u.id, not u.tags is null, u.tags, not u.bits is null, u.bits, not u.blades is null, u.blades, u.family_variant from (select t0.id, t0.tags, t0.bits, cast(null as char) blades, 'TagDrill' family_variant from tag_drill t0 union all select t0.id, t0.tags, cast(null as char) bits, t0.blades, 'TagSaw' family_variant from tag_saw t0) u order by u.id asc
+  graph:
+    TagKit:
+      - { id: 1, tags: [t], bits: [8, 8], familyVariant: TagDrill }
+      - { id: 2, tags: [], blades: [rip], familyVariant: TagSaw }
+  roundTrips: 1
