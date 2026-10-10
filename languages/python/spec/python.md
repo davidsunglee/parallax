@@ -77,17 +77,21 @@ common-runtime, Snapshot, or Postgres scope imports the descriptor package.
 
 The enforcement unit is the **scope**, not a package's `__all__`: an importer
 granted `parallax.core.entity` reaches every module that scope owns, private
-ones included. Four modules use that grant for six names the Entity
+ones included. Some modules use that grant for names the Entity
 frontend deliberately does not export — `parallax.snapshot._inspection`,
 `parallax.snapshot._handle._typed_writes`, and `parallax.snapshot._publication._wire`
 read what a class carries from `parallax.core.entity._declaration`
 (`declaration_of`, `is_entity_class`, `members_of`, and the family-merged
-member-name correspondences `wire_names_of`), and `parallax.core.execution._planning`
+member-name correspondences `wire_names_of`); `parallax.core.execution._planning`
 reads the accepted Metamodel and the class index from `parallax.core.entity._model`
 (`model_of`, `class_index`), the two facts model preparation prepares a selection
-over. Each is a seam between two first-party packages that a developer
+over, and the selection's projections and the attempt borrow that index
+(`ClassIndex`); and the read policy and the Typed predicate-write ingress reach
+the Typed predicate adapter in `parallax.core.entity._authored_resolver`
+(`typed_interpretation`). Each is a seam between two first-party packages that a developer
 never needs, so exporting the names to spell the reach publicly would widen the
-developer surface to serve the runtime and one lifecycle package. None of the
+developer surface to serve the runtime and one lifecycle package.
+`tests/unit/test_source_enforcement_topology.py` holds the exact reach set. None of the
 reached modules takes a scope row of its own: they belong to
 `parallax.core.entity`, whose edge every importer above already declares, and
 `parallax.core.entity._construction_input`, `._expressions`, `._instance_state`,

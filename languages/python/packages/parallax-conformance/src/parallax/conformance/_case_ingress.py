@@ -242,9 +242,11 @@ def _normalize_instruction(
         )
         for assignment in instruction.assignments
     )
+    predicate_node = instruction.target.predicate
+    assert isinstance(predicate_node, predicate.PredicateNode)  # a case states canonical input
     selection = PredicateSelection(
         instruction.target.entity,
-        _normalize_predicate(instruction.target.predicate, model),
+        _normalize_predicate(predicate_node, model),
     )
     return PredicateWrite(
         instruction.mutation,

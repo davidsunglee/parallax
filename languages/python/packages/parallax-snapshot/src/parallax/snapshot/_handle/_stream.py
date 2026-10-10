@@ -8,7 +8,7 @@ from parallax.core import deep_fetch
 from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.entity import Entity, EntityGraphConstruction, RelationshipPath
 from parallax.core.execution._publication import SelectedReadModel
-from parallax.core.object_query import ObjectQueryNode
+from parallax.core.execution._read_policy import ReadQuery
 from parallax.core.read_delivery import InvalidData, StreamStateError
 from parallax.core.read_delivery._stream import StreamDelivery
 from parallax.core.temporal_read import Pin
@@ -35,7 +35,7 @@ class _PageWireEncoder(Protocol):
 class StreamExecution(Protocol):
     """The read execution a Snapshot Stream obtains its one delivery from.
 
-    It refuses re-entry, lowers ``query`` with ``convert_query``, and judges the
+    It refuses re-entry, captures ``query`` with ``convert_query``, and judges the
     page size before the delivery exists; the delivery builds its publication
     with ``build_publication`` at entry and reports each Page and its release to
     the two callbacks.
@@ -47,11 +47,11 @@ class StreamExecution(Protocol):
         batch_size: int,
         /,
         *,
-        convert_query: Callable[[Q], ObjectQueryNode],
+        convert_query: Callable[[Q], ReadQuery],
         build_publication: Callable[[SelectedReadModel], SnapshotPublication],
         on_page_start: Callable[[deep_fetch.IncludeTree], None],
         on_release: Callable[[], None],
-    ) -> StreamDelivery[Any, SnapshotPublication]: ...
+    ) -> StreamDelivery[Any, Any, SnapshotPublication]: ...
 
 
 _CURRENT_PROJECTION_PAGE: Final = (
@@ -168,7 +168,7 @@ class SnapshotStream[T]:
         query: Q,
         batch_size: int,
         *,
-        convert_query: Callable[[Q], ObjectQueryNode],
+        convert_query: Callable[[Q], ReadQuery],
         build_publication: Callable[[SelectedReadModel], SnapshotPublication],
     ) -> None:
         self._projection_construction: EntityGraphConstruction | None = None

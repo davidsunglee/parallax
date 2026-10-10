@@ -6,6 +6,7 @@ from typing import NoReturn
 
 from parallax.core.entity import DomainModel, EntityGraphConstruction, EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._model import ClassIndex
 from parallax.core.unit_work import EvidencePolicyLookup, WritePlanner
 
 __all__ = [
@@ -53,11 +54,16 @@ class SelectedReadModel:
     a descriptor-backed model prepares a fully functional catalog while
     preparing no materializer, and a publication that needs one refuses on
     that absence before any I/O.
+
+    ``classes`` is the class index the model composed, borrowed rather than
+    rebuilt, or ``None`` for a descriptor-backed model; Typed predicate
+    resolution reads Python member names through it.
     """
 
     edition: str
     model: CatalogedModel
     construction: EntityGraphConstruction | None
+    classes: ClassIndex | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +72,8 @@ class SelectedWriteModel:
     exact same cataloged model as its read projection, with the Entity Row
     Codec every write derives its rows through, the Write Planner every flush
     plans through, and the write-evidence policy every keyed write is admitted
-    under — all derived from that one model.
+    under — all derived from that one model — and the same borrowed class index
+    as its read projection.
     """
 
     edition: str
@@ -74,6 +81,7 @@ class SelectedWriteModel:
     codec: EntityRowCodec
     planner: WritePlanner
     evidence_policy_for: EvidencePolicyLookup
+    classes: ClassIndex | None
 
 
 class ModelSelection:
@@ -126,6 +134,7 @@ def select_model(
     *,
     edition: str,
     catalog: CatalogedModel,
+    classes: ClassIndex | None,
     construction: EntityGraphConstruction | None,
     codec: EntityRowCodec,
     planner: WritePlanner,
@@ -145,13 +154,16 @@ def select_model(
     reachable half filled.
     """
     checked = check_edition(edition)
-    read = SelectedReadModel(edition=checked, model=catalog, construction=construction)
+    read = SelectedReadModel(
+        edition=checked, model=catalog, construction=construction, classes=classes
+    )
     write = SelectedWriteModel(
         edition=checked,
         model=catalog,
         codec=codec,
         planner=planner,
         evidence_policy_for=evidence_policy_for,
+        classes=classes,
     )
     selection = object.__new__(ModelSelection)
     object.__setattr__(selection, "_edition", checked)

@@ -5,7 +5,12 @@ from typing import Final, Literal
 from parallax.core.execution._features import DeferredFeatureError, deferred_features
 from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.metamodel._states import ambiguous_entity_spellings
-from parallax.core.object_query import ObjectQueryNode, validate_object_query
+from parallax.core.object_query import (
+    InterpretedQuery,
+    QueryClauses,
+    QueryInput,
+    validate_object_query,
+)
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.predicate import ModelRejectedError
 
@@ -30,9 +35,12 @@ class QueryTargetError(RuntimeError):
 
 
 def preflight(
-    query: ObjectQueryNode, *, model: Metamodel, form: Literal["rows", "graph"]
+    query: QueryInput, *, model: Metamodel, form: Literal["rows", "graph"]
 ) -> ResolvedObjectQuery:
     """Resolve and validate ``query`` against ``model``, and do no I/O.
+
+    A canonical query's predicate is validated here; an interpreted query's
+    adapter is invoked at the same stage, so both meet one gate order.
 
     Target resolution follows the reference-position rule every validator and
     lowering site resolves a spelling by, so "preflight accepted this target"
@@ -46,13 +54,14 @@ def preflight(
     yet. Performs no SQL generation, Database Port or connection work,
     transaction demarcation, or materialization.
     """
-    root = entity_by_name(model, query.target.canonical)
+    clauses = query.clauses if isinstance(query, InterpretedQuery) else query
+    root = entity_by_name(model, clauses.target.canonical)
     if root is None:
-        shared = ambiguous_entity_spellings(model, query.target.canonical)
+        shared = ambiguous_entity_spellings(model, clauses.target.canonical)
         if shared:
             raise ModelRejectedError(
                 "reference-ambiguous-entity-name",
-                f"{query.target.canonical!r}: the bare Entity spelling is shared by "
+                f"{clauses.target.canonical!r}: the bare Entity spelling is shared by "
                 f"{list(shared)}, so it names no single Entity in this model and the read "
                 "resolves nowhere (m-predicate reference resolution)",
             )
@@ -61,10 +70,10 @@ def preflight(
             "(query-target-not-in-model)"
         )
     resolved = validate_object_query(root, query, model)
-    deferred = deferred_features(query)
+    deferred = deferred_features(clauses)
     if deferred:
         raise DeferredFeatureError(deferred)
-    if form == "rows" and fetches_relationships(query):
+    if form == "rows" and fetches_relationships(clauses):
         raise ValueError(
             "a row-form read materializes no relationships, so it carries no deep-fetch "
             "levels; request the graph form to materialize a related level"
@@ -72,7 +81,7 @@ def preflight(
     return resolved
 
 
-def fetches_relationships(query: ObjectQueryNode) -> bool:
+def fetches_relationships(query: QueryClauses) -> bool:
     """Whether ``query`` names a relationship level to fetch.
 
     Includes is one clause of one flat query, so this is a field read: a named

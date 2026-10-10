@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import assert_never, cast
 
 from parallax.core import inheritance
-from parallax.core.base import ManagedValue, String
+from parallax.core.base import ManagedValue, NeutralType, String
 from parallax.core.metamodel import (
     AttributeMetadata,
     DefiningRelationshipDeclaration,
@@ -23,6 +23,23 @@ from parallax.core.metamodel import (
     split_reference,
 )
 from parallax.core.metamodel._states import ambiguous_entity_spellings
+from parallax.core.predicate._interpretation import (
+    BETWEEN,
+    COMPARE,
+    MEMBER_OF,
+    NULL_TEST,
+    AttributeSubject,
+    Compare,
+    InRange,
+    Match,
+    MemberOf,
+    NullTest,
+    OperandAdmission,
+    OperationSubject,
+    PathSubject,
+    PredicateInterpretation,
+    ScalarOperator,
+)
 from parallax.core.predicate._nodes import (
     All,
     And,
@@ -53,6 +70,7 @@ from parallax.core.predicate._nodes import (
     NullOp,
     Or,
     PredicateNode,
+    QueryDefinitionError,
     StringMatch,
     StringOp,
 )
@@ -78,14 +96,22 @@ from parallax.core.wire import WireDecodingError, WireValue, decode_wire
 __all__ = [
     "ModelRejectedError",
     "PositionScope",
+    "adopted_operands",
+    "canonical_interpretation",
     "check_attribute_reference",
     "effective_set",
+    "illegal_element_predicate",
+    "narrowed",
+    "relationship_semi_join",
     "relationship_target",
     "require_single_scalar",
+    "resolve_element_operation",
+    "resolve_operation",
     "resolve_subtype_selection",
     "root_position",
     "validate_narrow",
     "validate_predicate",
+    "value_object_scope",
 ]
 
 _NESTED_COMPARISONS: dict[NestedComparisonOp, ComparisonOp] = {
@@ -143,6 +169,15 @@ def validate_predicate(
     return _walk(op, model, scope)
 
 
+def canonical_interpretation(op: PredicateNode, model: Metamodel) -> PredicateInterpretation:
+    """The Wire adapter: ``op`` validated against ``model`` at the position it is given."""
+
+    def interpret(root: EntityMetadata, position: PositionScope, /) -> ResolvedPredicate:
+        return validate_predicate(root, op, model, position=position)
+
+    return interpret
+
+
 def root_position(model: Metamodel, root: EntityMetadata) -> PositionScope:
     """The active position a read starts from: ``root``'s effective concrete set."""
     return PositionScope(effective=effective_set(model, root))
@@ -153,7 +188,9 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> Resolved
         case All() | NoneOp():
             return ResolvedConstant(isinstance(op, All))
         case Comparison() | StringMatch() | Membership() | NullCheck() | Between():
-            return _resolved_attribute_leaf(op, model, scope)
+            return resolve_operation(
+                *_attribute_operation(op), _decoded_operands, model=model, scope=scope
+            )
         case (
             NestedComparison()
             | NestedRange()
@@ -161,13 +198,15 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> Resolved
             | NestedStringMatch()
             | NestedNullCheck()
         ):
-            leaf, crossed = _resolve_nested_leaf(op.path, model)
-            operation = _resolved_nested_leaf(op, leaf)
-            # Through a `many` occurrence a flat nested predicate means some
-            # element satisfies it (m-predicate), so it binds that element.
-            return operation if crossed is None else ResolvedQuantifier("any", crossed, operation)
+            return resolve_operation(
+                PathSubject(op.path),
+                *_nested_operation(op),
+                _decoded_operands,
+                model=model,
+                scope=scope,
+            )
         case NestedExists(path=path, where=where) | NestedNotExists(path=path, where=where):
-            container = _check_nested_vo_terminated(path, model)
+            container = value_object_scope(path, model)
             return ResolvedQuantifier(
                 "none" if isinstance(op, NestedNotExists) else "any",
                 container,
@@ -180,75 +219,187 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> Resolved
             child = _walk(operand, model, scope)
             return ResolvedNot(child) if isinstance(op, Not) else ResolvedGroup(child)
         case Narrow(to=to, operand=operand):
-            new_scope = validate_narrow(to, scope, model)
-            return ResolvedNarrow(
-                _position_identities(model, new_scope), _walk(operand, model, new_scope)
+            return narrowed(to, scope, model, lambda inner: _walk(operand, model, inner))
+        case (
+            Navigate(rel=rel, op=interior)
+            | Exists(rel=rel, op=interior)
+            | NotExists(rel=rel, op=interior)
+        ):
+            return relationship_semi_join(
+                rel,
+                negated=isinstance(op, NotExists),
+                model=model,
+                interior=None if interior is None else lambda hop: _walk(interior, model, hop),
             )
-        case Navigate() | Exists() | NotExists():
-            return _resolved_hop(op, model)
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)
 
 
-def _resolved_attribute_leaf(
+def _attribute_operation(
     op: Comparison | StringMatch | Membership | NullCheck | Between,
+) -> tuple[AttributeSubject, ScalarOperator, tuple[object, ...]]:
+    match op:
+        case Comparison(op=tag, attr=attr, value=value):
+            return AttributeSubject(attr), COMPARE[tag], (value,)
+        case StringMatch(op=tag, attr=attr, value=value, case_insensitive=folded):
+            return AttributeSubject(attr), Match(tag, bool(folded)), (value,)
+        case Membership(op=tag, attr=attr, values=values):
+            return AttributeSubject(attr), MEMBER_OF[tag], values
+        case NullCheck(op=tag, attr=attr):
+            return AttributeSubject(attr), NULL_TEST[tag], ()
+        case Between(attr=attr, lower=lower, upper=upper):
+            return AttributeSubject(attr), BETWEEN, (lower, upper)
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(op)
+
+
+def _nested_operation(
+    op: NestedComparison | NestedRange | NestedMembership | NestedStringMatch | NestedNullCheck,
+) -> tuple[ScalarOperator, tuple[object, ...]]:
+    match op:
+        case NestedComparison(op=tag, value=value):
+            return COMPARE[_NESTED_COMPARISONS[tag]], (value,)
+        case NestedRange(lower=lower, upper=upper):
+            return BETWEEN, (lower, upper)
+        case NestedMembership(op=tag, values=values):
+            return MEMBER_OF[_NESTED_MEMBERSHIPS[tag]], values
+        case NestedStringMatch(op=tag, value=value, case_insensitive=folded):
+            return Match(_NESTED_STRING_MATCHES[tag], bool(folded)), (value,)
+        case NestedNullCheck(op=tag):
+            return NULL_TEST[_NESTED_NULL_CHECKS[tag]], ()
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(op)
+
+
+def resolve_operation(
+    subject: OperationSubject,
+    operator: ScalarOperator,
+    operands: tuple[object, ...],
+    admit: OperandAdmission,
+    *,
     model: Metamodel,
     scope: PositionScope,
 ) -> ResolvedPredicate:
-    member = _require_attribute(op.attr, model, scope)
-    match op:
-        case Comparison(op=tag, attr=attr, value=value):
-            (managed,) = _decoded_operands(attr, member, (value,))
+    """One scalar operation at an Entity position, its subject resolved against
+    ``model`` and its operands made managed by ``admit``.
+
+    An Attribute must be applicable at ``scope``. A Value Object leaf path is
+    read from the Entity through its occurrences; through a ``many`` occurrence
+    the operation means some element satisfies it, so it binds the first such
+    element the path crosses.
+    """
+    if isinstance(subject, AttributeSubject):
+        member = _require_attribute(subject.reference, model, scope)
+        return _judged(subject.reference, member, operator, operands, admit, nested=False)
+    leaf, crossed = _resolve_nested_leaf(subject.path, model)
+    operation = _judged(subject.path, leaf, operator, operands, admit, nested=True)
+    return operation if crossed is None else ResolvedQuantifier("any", crossed, operation)
+
+
+def resolve_element_operation(
+    path: str,
+    operator: ScalarOperator,
+    operands: tuple[object, ...],
+    admit: OperandAdmission,
+    element: OccurrenceMetadata,
+) -> ResolvedPredicate:
+    """One scalar operation over the leaf ``path`` names relative to the bound
+    ``element`` of an enclosing Value Object scope."""
+    leaf = _resolve_element_leaf(element, path)
+    return _judged(path, leaf, operator, operands, admit, nested=True)
+
+
+def _judged(
+    subject: str,
+    member: ResolvedPredicateMember,
+    operator: ScalarOperator,
+    operands: tuple[object, ...],
+    admit: OperandAdmission,
+    *,
+    nested: bool,
+) -> ResolvedPredicate:
+    match operator:
+        case Compare(op=tag):
+            (managed,) = admit(subject, member, operands)
             return ResolvedComparison(tag, member, managed)
-        case StringMatch(op=tag, attr=attr, value=value, case_insensitive=folded):
-            if not isinstance(member.type, String):
+        case InRange():
+            return _resolved_range(subject, member, admit(subject, member, operands))
+        case MemberOf(op=tag):
+            return ResolvedMembership(tag, member, admit(subject, member, operands))
+        case Match(op=tag, case_insensitive=folded):
+            if nested:
+                _check_string_member(subject, member)
+            elif not isinstance(member.type, String):
                 raise ModelRejectedError(
                     "string-predicate-non-string-member",
-                    f"{attr!r}: a string predicate requires a string member",
+                    f"{subject!r}: a string predicate requires a string member",
                 )
-            require_single_scalar(attr, member)
-            return ResolvedStringMatch(tag, member, value, bool(folded))
-        case Membership(op=tag, attr=attr, values=values):
-            return ResolvedMembership(tag, member, _decoded_operands(attr, member, values))
-        case NullCheck(op=tag, attr=attr):
-            _require_nullable_null_check(attr, member.nullable)
+            require_single_scalar(subject, member)
+            (pattern,) = operands
+            return ResolvedStringMatch(tag, member, cast("str", pattern), folded)
+        case NullTest(op=tag):
+            _require_nullable_null_check(subject, member.nullable)
             return ResolvedNullCheck(tag, member)
-        case Between(attr=attr, lower=lower, upper=upper):
-            return _resolved_range(attr, member, lower, upper)
         case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(op)
+            assert_never(operator)
 
 
-def _resolved_nested_leaf(
-    op: NestedComparison | NestedRange | NestedMembership | NestedStringMatch | NestedNullCheck,
-    leaf: ValueObjectAttributeMetadata,
-) -> ResolvedPredicate:
-    """``op`` over ``leaf``, read from whichever position its path starts at."""
-    match op:
-        case NestedComparison(op=tag, path=path, value=value):
-            (managed,) = _decoded_operands(path, leaf, (value,))
-            return ResolvedComparison(_NESTED_COMPARISONS[tag], leaf, managed)
-        case NestedRange(path=path, lower=lower, upper=upper):
-            return _resolved_range(path, leaf, lower, upper)
-        case NestedMembership(op=tag, path=path, values=values):
-            return ResolvedMembership(
-                _NESTED_MEMBERSHIPS[tag], leaf, _decoded_operands(path, leaf, values)
+def adopted_operands(prepared_type: NeutralType) -> OperandAdmission:
+    """Admission of operands already managed under ``prepared_type``: adopted
+    as they are where the resolved member declares exactly that type.
+
+    Matching member identity, or a value that also fits another type's value
+    space, is not enough: preparation may already have rounded a value to the
+    precision, scale, or width it was prepared under.
+    """
+
+    def admit(
+        subject: str, member: ResolvedPredicateMember, values: tuple[object, ...]
+    ) -> tuple[ManagedValue, ...]:
+        require_single_scalar(subject, member)
+        if member.type != prepared_type:
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=(
+                    f"{subject}: its operands were prepared for NeutralType {prepared_type!r}, "
+                    f"but the serving model declares {member.type!r}"
+                ),
             )
-        case NestedStringMatch(op=tag, path=path, value=value, case_insensitive=folded):
-            _check_string_member(path, leaf)
-            require_single_scalar(path, leaf)
-            return ResolvedStringMatch(_NESTED_STRING_MATCHES[tag], leaf, value, bool(folded))
-        case NestedNullCheck(op=tag, path=path):
-            _require_nullable_null_check(path, leaf.nullable)
-            return ResolvedNullCheck(_NESTED_NULL_CHECKS[tag], leaf)
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(op)
+        return cast("tuple[ManagedValue, ...]", values)
+
+    return admit
 
 
-def _resolved_hop(op: Navigate | Exists | NotExists, model: Metamodel) -> ResolvedSemiJoin:
-    """A relationship hop resolved to its direction and join members, its inner
-    predicate walked from the target's own position."""
-    rel = op.rel
+def illegal_element_predicate(described: object) -> ValueError:
+    """The refusal of ``described`` inside a Value Object element scope, which
+    admits only element-relative leaf operations and their Boolean composition."""
+    return ValueError(
+        f"{described!r} is not a legal nestedExists/nestedNotExists element predicate "
+        "(m-predicate elementPredicate)"
+    )
+
+
+def narrowed(
+    to: Sequence[str],
+    scope: PositionScope,
+    model: Metamodel,
+    operand: Callable[[PositionScope], ResolvedPredicate],
+) -> ResolvedNarrow:
+    """The narrowing of ``scope`` to the Subtype Selection ``to``, its ``operand``
+    resolved at the narrowed position."""
+    new_scope = validate_narrow(tuple(to), scope, model)
+    return ResolvedNarrow(_position_identities(model, new_scope), operand(new_scope))
+
+
+def relationship_semi_join(
+    rel: str,
+    *,
+    negated: bool,
+    model: Metamodel,
+    interior: Callable[[PositionScope], ResolvedPredicate] | None,
+) -> ResolvedSemiJoin:
+    """A relationship hop resolved to its direction and join members, its
+    ``interior`` resolved from the target's own position."""
     target = relationship_target(rel, model, wrong_kind_rule="navigate-value-object-target")
     direction = _resolved_relationship(rel, model)
     join = _direction_join(direction, model)
@@ -267,8 +418,8 @@ def _resolved_hop(op: Navigate | Exists | NotExists, model: Metamodel) -> Resolv
         target,
         source,
         member,
-        negated=isinstance(op, NotExists),
-        where=None if op.op is None else _walk(op.op, model, hop_scope),
+        negated=negated,
+        where=None if interior is None else interior(hop_scope),
     )
 
 
@@ -320,9 +471,9 @@ def _decoded_operands(
 
 
 def _resolved_range(
-    subject: str, member: ResolvedPredicateMember, lower: object, upper: object
+    subject: str, member: ResolvedPredicateMember, bounds: tuple[ManagedValue, ...]
 ) -> ResolvedRange:
-    managed_lower, managed_upper = _decoded_operands(subject, member, (lower, upper))
+    managed_lower, managed_upper = bounds
     try:
         inverted = cast("object", managed_lower) > cast("object", managed_upper)  # type: ignore[operator]
     except TypeError:  # pragma: no cover - one declared type yields comparable managed members
@@ -686,7 +837,7 @@ def _resolve_element_leaf(container: OccurrenceMetadata, path: str) -> ValueObje
     """Resolve an element-relative path (`type`, `geo.country`) to its leaf.
 
     ``container`` is the TERMINAL value-object descriptor a `nestedExists`/
-    `nestedNotExists` `path` resolves to (`_check_nested_vo_terminated`); the
+    `nestedNotExists` `path` resolves to (:func:`value_object_scope`); the
     scoped `where`'s own paths are relative to that SAME element (`m-value-object`
     same-element semantics), never re-prefixed with `Class.valueObject`.
     """
@@ -694,7 +845,7 @@ def _resolve_element_leaf(container: OccurrenceMetadata, path: str) -> ValueObje
     return leaf
 
 
-def _check_nested_vo_terminated(path: str, model: Metamodel) -> OccurrenceMetadata:
+def value_object_scope(path: str, model: Metamodel) -> OccurrenceMetadata:
     """Resolve a `nestedExists`/`nestedNotExists` path (ends at a value object),
     returning the TERMINAL value-object descriptor — the same-element scope an
     optional `where` predicate's element-relative members resolve against.
@@ -729,7 +880,7 @@ def _check_nested_vo_terminated(path: str, model: Metamodel) -> OccurrenceMetada
     return container
 
 
-def _check_string_member(path: str, leaf: ValueObjectAttributeMetadata) -> None:
+def _check_string_member(path: str, leaf: ResolvedPredicateMember) -> None:
     """Reject a string predicate whose resolved leaf is not a ``String`` member.
 
     Shared by both nested scopes. This is distinct from literal decoding because
@@ -754,7 +905,9 @@ def _elaborate_element_predicate(
             | NestedStringMatch()
             | NestedNullCheck()
         ):
-            return _resolved_nested_leaf(op, _resolve_element_leaf(container, op.path))
+            return resolve_element_operation(
+                op.path, *_nested_operation(op), _decoded_operands, container
+            )
         case And(operands=operands) | Or(operands=operands):
             children = tuple(
                 _elaborate_element_predicate(operand, container) for operand in operands
@@ -764,10 +917,7 @@ def _elaborate_element_predicate(
             child = _elaborate_element_predicate(operand, container)
             return ResolvedNot(child) if isinstance(op, Not) else ResolvedGroup(child)
         case _:
-            raise ValueError(
-                f"{op!r} is not a legal nestedExists/nestedNotExists element predicate "
-                "(m-predicate elementPredicate)"
-            )
+            raise illegal_element_predicate(op)
 
 
 def _require_nullable_null_check(path: str, nullable: bool) -> None:

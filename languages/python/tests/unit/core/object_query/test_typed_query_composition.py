@@ -109,6 +109,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity import AttributeAssignment
+from parallax.core.entity._expressions import AuthoredConstant
 from parallax.core.entity._model import model_of
 from parallax.core.execution._preflight import preflight
 from parallax.core.object_query._fluent import object_query_node
@@ -541,7 +542,7 @@ def test_the_variance_phantom_exists_for_the_checker_alone() -> None:
     # can solve the meet from the narrower operand — and Python never consults a
     # reflected operator whose left operand already defines the forward one, so
     # the tree a combination builds is always the left-to-right one.
-    predicate: Predicate[Animal] = Predicate(All())
+    predicate: Predicate[Animal] = Predicate(AuthoredConstant(truth=True))
     assert not hasattr(predicate, "_addresses")
     assert not hasattr(predicate, "__rand__")
     assert not hasattr(predicate, "__ror__")

@@ -14,6 +14,7 @@ from parallax.core.execution._publication import (
     read_projection,
 )
 from parallax.core.execution._read_policy import (
+    ReadQuery,
     StandaloneRead,
     read_graph,
     read_page,
@@ -46,11 +47,11 @@ class ExecutionScope:
     standalone reads and transactions run under them.
 
     Every operation refuses re-entry on its own first line. A lifecycle supplies
-    two stable functions per read — the converter that lowers its query
-    spelling to the canonical node, and the builder of the Publication its
-    result is stated through — and a factory per transaction that turns each
-    fully constructed :class:`Attempt` into the transaction its callback is
-    handed.
+    two stable functions per read — the converter that captures its query
+    spelling as the unresolved input the read resolves once it has adopted its
+    selection, and the builder of the Publication its result is stated through —
+    and a factory per transaction that turns each fully constructed
+    :class:`Attempt` into the transaction its callback is handed.
 
     Each standalone operation adopts whatever selection is current when it
     begins, through an adoption of its own, and is served under that selection
@@ -108,7 +109,7 @@ class ExecutionScope:
         query: Q,
         /,
         *,
-        convert_query: Callable[[Q], ObjectQueryNode],
+        convert_query: Callable[[Q], ReadQuery],
         build_publication: Callable[[SelectedReadModel], Publication[ReadOrigin, Eager]],
     ) -> Eager:
         """One standalone whole-result read, published through
@@ -119,8 +120,8 @@ class ExecutionScope:
         be served under, this query's shape, or anything downstream of them is
         even consulted (`m-execution-lifecycle`). The read is then begun and its
         publication built, which is where a selection that cannot publish the
-        requested representation refuses — before the query is lowered and
-        before the gate.
+        requested representation refuses — before the query is captured, and
+        before the gate resolves it under that selection.
         """
         refuse_reentry(self._lifecycle)
         read = self.begin()
@@ -133,24 +134,24 @@ class ExecutionScope:
         batch_size: int,
         /,
         *,
-        convert_query: Callable[[Q], ObjectQueryNode],
+        convert_query: Callable[[Q], ReadQuery],
         build_publication: Callable[[SelectedReadModel], P],
         on_page_start: Callable[[deep_fetch.IncludeTree], None],
         on_release: Callable[[], None],
-    ) -> StreamDelivery[StandaloneRead, P]:
+    ) -> StreamDelivery[StandaloneRead, ReadQuery, P]:
         """One standalone streamed delivery, constructed and not yet entered.
 
         Re-entry is refused, then this call's own arguments are judged — the
-        query lowered, then the page size it was named with — and nothing
+        query captured, then the page size it was named with — and nothing
         model-dependent is: the delivery begins its read at entry, which is
-        where its publication is built. Constructing a delivery begins no read,
-        opens no activity, and reaches no executor.
+        where its publication is built and its query resolved, once. Constructing
+        a delivery begins no read, opens no activity, and reaches no executor.
         """
         refuse_reentry(self._lifecycle)
-        node = convert_query(query)
+        read_query = convert_query(query)
         check_batch_size(batch_size)
         return StreamDelivery(
-            node,
+            read_query,
             self,
             build_publication,
             batch_size=batch_size,
@@ -169,8 +170,8 @@ class ExecutionScope:
         selected = read_projection(adopted.adopt())
         return StandaloneRead(self._lifecycle, adopted, selected, self._capture)
 
-    def resolved(self, read: StandaloneRead, node: ObjectQueryNode, /) -> ResolvedObjectQuery:
-        return resolved(read, node)
+    def resolved(self, read: StandaloneRead, query: ReadQuery, /) -> ResolvedObjectQuery:
+        return resolved(read, query)
 
     def page(
         self,

@@ -3,12 +3,13 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from parallax.core.base import TIMESTAMP, normalize_instant
-from parallax.core.metamodel import AsOfAxisMetadata
+from parallax.core.metamodel import AsOfAxisMetadata, EntityIdentity
 from parallax.core.metamodel import TemporalDimension as AxisKind
-from parallax.core.object_query._canonical import object_query, subtype_spelling
+from parallax.core.object_query._canonical import canonical_includes, subtype_spelling
 from parallax.core.object_query._nodes import (
     TX_TIME,
     VALID_TIME,
@@ -17,7 +18,6 @@ from parallax.core.object_query._nodes import (
     History,
     IncludePath,
     Latest,
-    MutationSelection,
     ObjectQueryNode,
     TemporalDimension,
     TemporalDimensionConstant,
@@ -28,17 +28,40 @@ from parallax.core.wire import encode_wire
 
 if TYPE_CHECKING:
     # Annotation-only, and deliberately so: the Entity frontend's descriptors are
-    # what a caller writes a clause argument with, while this module reads only
-    # the canonical values they carry. Keeping the reach static is what lets the
-    # frontend re-export this surface without an import cycle.
+    # what a caller writes a clause argument with, and its authored query state is
+    # what this carrier holds, while this module reads only clause values off
+    # them. Keeping the reach static is what lets the frontend re-export this
+    # surface without an import cycle.
     from parallax.core.entity._entity import Entity
-    from parallax.core.entity._expressions import RelationshipPath, SortKey
+    from parallax.core.entity._expressions import (
+        AuthoredPredicate,
+        AuthoredQuery,
+        RelationshipPath,
+        SortKey,
+    )
 
 __all__ = [
+    "MutationSelection",
     "ObjectQuery",
     "mutation_selection",
     "object_query_node",
+    "typed_read_query",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class MutationSelection:
+    """What a predicate-selected write reads off a Typed Object Query: the
+    position to write and the authored predicate that selects within it.
+
+    The ephemeral normalization of a mutation-compatible query, and NOT
+    ``parallax.core.unit_work.PredicateSelection``: the write boundary builds that
+    value from these two facts, so an Object Query never reaches the unit of work,
+    the planner, or SQL lowering.
+    """
+
+    target: EntityIdentity
+    predicate: AuthoredPredicate
 
 
 class _Unset:
@@ -66,19 +89,21 @@ class ObjectQuery[E, S]:
     source is legal against the queried position, while a sort key addresses the
     rows the query actually returns.
 
-    Every field is private authoring state. An Object Query exposes no execution,
-    serialization, canonical-query inspection, or refinement ``.where(...)``,
-    carries no Snapshot feature tags and no model, and defines no structural
-    equality or semantic hash — two independently authored queries carrying one
-    canonical node are still two objects, and conformance code compares canonical
-    nodes through :func:`object_query_node` instead. ``bool(query)`` raises: an
-    Object Query has no pre-execution empty/nonempty state.
+    Every field is private authoring state: the authored predicate and the other
+    clauses in their canonical spellings, and no canonical Object Query. An Object
+    Query exposes no execution, serialization, canonical-query inspection, or
+    refinement ``.where(...)``, carries no Snapshot feature tags and no model, and
+    defines no structural equality or semantic hash — two independently authored
+    queries carrying one authored state are still two objects, and conformance
+    code compares their exported canonical nodes through
+    :func:`object_query_node` instead. ``bool(query)`` raises: an Object Query has
+    no pre-execution empty/nonempty state.
 
     ``Entity.where(...)`` is the sole public constructor; direct construction is
     a first-party spelling with no supported contract.
     """
 
-    _node: ObjectQueryNode
+    _query: AuthoredQuery
     # The target family's declared temporal axes, captured at ``Entity.where`` so
     # the dimension-keyed temporal clauses validate against them; empty for a
     # non-temporal Entity (every temporal clause then raises).
@@ -113,7 +138,7 @@ class ObjectQuery[E, S]:
             IncludePath(segments=path.segments, applies_to=self._source_guard(path.source))
             for path in paths
         )
-        return self._with(includes=self._node.includes + added)
+        return self._with(includes=self._query.includes + added)
 
     def order_by(self, *keys: SortKey[S]) -> ObjectQuery[E, S]:
         """Order the result by one or more Sort Keys (``Attr.asc()`` /
@@ -140,7 +165,7 @@ class ObjectQuery[E, S]:
             raise QueryDefinitionError(
                 code="query-clause-invalid", message="order_by requires at least one key"
             )
-        accumulated = self._node.order_by + tuple(key.key for key in keys)
+        accumulated = self._query.order_by + tuple(key.key for key in keys)
         seen: set[str] = set()
         for key in accumulated:
             if key.attr in seen:
@@ -163,7 +188,7 @@ class ObjectQuery[E, S]:
         ``bool``, zero, negative values, and anything that would need coercion
         are refused rather than coerced — ``True`` is not the limit 1.
         """
-        if self._node.limit is not None:
+        if self._query.limit is not None:
             raise QueryDefinitionError(
                 code="query-clause-invalid",
                 message="a limit clause is single-shot; derive from the unbounded base",
@@ -210,7 +235,7 @@ class ObjectQuery[E, S]:
         preflight rejection (``narrow-outside-position``), as does the per-model
         question of which concrete subtypes the named classes resolve to.
         """
-        if self._node.narrow_to is not None:
+        if self._query.narrow_to is not None:
             raise QueryDefinitionError(
                 code="query-clause-invalid",
                 message="a narrow clause is single-shot; derive from the un-narrowed base",
@@ -305,7 +330,7 @@ class ObjectQuery[E, S]:
         queried position itself guards nothing, so it authors no selection at all
         rather than one resolving to the whole position.
         """
-        if source is None or source == self._node.target.canonical:
+        if source is None or source == self._query.target.canonical:
             return None
         return (source,)
 
@@ -320,7 +345,7 @@ class ObjectQuery[E, S]:
                 ),
             )
         for dimension in selections:
-            if dimension in self._node.temporal:
+            if dimension in self._query.temporal:
                 raise QueryDefinitionError(
                     code="query-clause-invalid",
                     message=(
@@ -328,23 +353,23 @@ class ObjectQuery[E, S]:
                         "query that has not selected that dimension"
                     ),
                 )
-        return self._with(temporal={**self._node.temporal, **selections})
+        return self._with(temporal={**self._query.temporal, **selections})
 
     def _with(self, **clauses: object) -> ObjectQuery[E, Any]:
-        """Rebuild this query's canonical node with ``clauses`` replaced."""
-        node = self._node
-        return replace(
-            self,
-            _node=object_query(
-                node.target,
-                node.predicate,
-                narrow_to=cast("Any", clauses.get("narrow_to", node.narrow_to)),
-                temporal=cast("Any", clauses.get("temporal", node.temporal)),
-                order_by=cast("Any", clauses.get("order_by", node.order_by)),
-                limit=cast("Any", clauses.get("limit", node.limit)),
-                includes=cast("Any", clauses.get("includes", node.includes)),
-            ),
-        )
+        """This query with ``clauses`` replaced, each in its canonical spelling."""
+        if "narrow_to" in clauses:
+            clauses["narrow_to"] = canonical_subtype_selection(
+                cast("tuple[str, ...]", clauses["narrow_to"])
+            )
+        if "temporal" in clauses:
+            clauses["temporal"] = MappingProxyType(
+                dict(cast("Mapping[TemporalDimension, TemporalSelection]", clauses["temporal"]))
+            )
+        if "includes" in clauses:
+            clauses["includes"] = canonical_includes(
+                cast("tuple[IncludePath, ...]", clauses["includes"])
+            )
+        return replace(self, _query=replace(self._query, **clauses))
 
     def _dimension(self, name: _DimensionName) -> TemporalDimension:
         """The canonical wire dimension for the developer-surface coordinate
@@ -361,7 +386,7 @@ class ObjectQuery[E, S]:
             else f"declares no {name} dimension"
         )
         raise QueryDefinitionError(
-            code="query-clause-invalid", message=f"{self._node.target.name} {detail}"
+            code="query-clause-invalid", message=f"{self._query.target.name} {detail}"
         )
 
     def __bool__(self) -> bool:
@@ -370,18 +395,18 @@ class ObjectQuery[E, S]:
             "ScopedDatabase.find / Transaction.find and inspect the Snapshot it returns"
         )
 
-    def _canonical(self) -> ObjectQueryNode:
-        """:func:`object_query_node`'s body, stated where the clauses live."""
+    def _completed(self) -> AuthoredQuery:
+        """:func:`typed_read_query`'s body, stated where the clauses live."""
         declared = {
             "valid-time" if axis.dimension is AxisKind.VALID_TIME else "transaction-time"
             for axis in self._as_of_axes
         }
-        selected = self._node.temporal
+        selected = self._query.temporal
         if "valid-time" in declared and "valid-time" not in selected:
             raise QueryDefinitionError(
                 code="query-clause-invalid",
                 message=(
-                    f"{self._node.target.name} is bitemporal and requires an explicit "
+                    f"{self._query.target.name} is bitemporal and requires an explicit "
                     "Valid-Time selection through valid_time= or history(VALID_TIME)"
                 ),
             )
@@ -390,12 +415,12 @@ class ObjectQuery[E, S]:
                 **selected,
                 "transaction-time": AsOf("latest"),
             }
-            return self._with(temporal=completed)._node
-        return self._node
+            return self._with(temporal=completed)._query
+        return self._query
 
     def _selection(self) -> MutationSelection:
         """:func:`mutation_selection`'s body, stated where the clauses live."""
-        node = self._node
+        node = self._query
         carried = [
             name
             for name, present in (
@@ -430,21 +455,26 @@ def mutation_selection(query: ObjectQuery[Any, Any]) -> MutationSelection:
     return query._selection()  # pyright: ignore[reportPrivateUsage] - the seam reads the query's own clause state
 
 
-def object_query_node(query: ObjectQuery[Any, Any]) -> ObjectQueryNode:
-    """``query``'s canonical Object Query, memoized nowhere.
+def typed_read_query(query: ObjectQuery[Any, Any]) -> AuthoredQuery:
+    """``query``'s authored state as a read consumes it, memoized nowhere.
 
-    An Object Query already holds its canonical node; what this settles is the
-    one class-local rule no clause call could settle while further clauses were
-    still legal — the target's own temporal completeness. An omitted
-    Transaction-Time selection becomes the explicit ``asOf latest`` the canonical
-    document always states, and an omitted Valid-Time selection on a Bitemporal
-    target raises. Nothing here changes representation: there is no wrapper tree
-    to build and no clause to reorder.
-
-    Each call answers a fresh value. An Object Query caches nothing and no global
-    memo retains one, so one execution reads once and keeps that value locally.
+    What this settles is the one class-local rule no clause call could settle
+    while further clauses were still legal — the target's own temporal
+    completeness. An omitted Transaction-Time selection becomes the explicit
+    ``asOf latest`` a canonical document always states, and an omitted Valid-Time
+    selection on a Bitemporal target raises. The predicate stays authored: the
+    read resolves it against the model it adopts.
     """
-    return query._canonical()  # pyright: ignore[reportPrivateUsage] - the seam reads the query's own clause state
+    return query._completed()  # pyright: ignore[reportPrivateUsage] - the seam reads the query's own clause state
+
+
+def object_query_node(query: ObjectQuery[Any, Any]) -> ObjectQueryNode:
+    """``query``'s canonical Object Query, exported on demand and memoized nowhere.
+
+    The completed authored state of :func:`typed_read_query`, its predicate
+    encoded canonically; a read never consumes this export.
+    """
+    return typed_read_query(query).canonical()
 
 
 def _instant(value: _Pin) -> str:

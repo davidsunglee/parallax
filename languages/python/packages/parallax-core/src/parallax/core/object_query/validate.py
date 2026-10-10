@@ -19,7 +19,9 @@ from parallax.core.object_query._nodes import (
     AsOfRange,
     History,
     IncludePath,
-    ObjectQueryNode,
+    InterpretedQuery,
+    QueryClauses,
+    QueryInput,
     TemporalDimension,
 )
 from parallax.core.object_query._resolved import (
@@ -36,6 +38,7 @@ from parallax.core.object_query._resolved import (
 from parallax.core.predicate import (
     ModelRejectedError,
     PositionScope,
+    canonical_interpretation,
     check_attribute_reference,
     effective_set,
     relationship_target,
@@ -43,7 +46,6 @@ from parallax.core.predicate import (
     resolve_subtype_selection,
     root_position,
     validate_narrow,
-    validate_predicate,
 )
 from parallax.core.wire import WireDecodingError, decode_wire
 
@@ -51,7 +53,7 @@ __all__ = ["validate_include_path", "validate_object_query"]
 
 
 def validate_object_query(
-    root: EntityMetadata, query: ObjectQueryNode, model: Metamodel
+    root: EntityMetadata, query: QueryInput, model: Metamodel
 ) -> ResolvedObjectQuery:
     """Validate ``query`` against ``model``, raising :class:`ModelRejectedError`.
 
@@ -60,22 +62,29 @@ def validate_object_query(
     the canonical document fixes: temporal completeness, then result narrowing —
     whose resolved position the predicate and the Sort Keys are both measured
     against — then Includes, measured against the unnarrowed queried position.
+    A canonical query's predicate is validated where an interpreted query's
+    adapter is invoked, once, at that same position.
     """
-    temporal = _validate_temporal_selections(root, query, model)
+    clauses: QueryClauses
+    if isinstance(query, InterpretedQuery):
+        clauses, interpret = query.clauses, query.predicate
+    else:
+        clauses, interpret = query, canonical_interpretation(query.predicate, model)
+    temporal = _validate_temporal_selections(root, clauses, model)
     queried = root_position(model, root)
-    result = _narrowed_position(query, queried, model)
-    predicate = validate_predicate(root, query.predicate, model, position=result)
+    result = _narrowed_position(clauses, queried, model)
+    predicate = interpret(root, result)
     order_terms: list[ResolvedOrderTerm] = []
-    for key in query.order_by:
+    for key in clauses.order_by:
         member = check_attribute_reference(key.attr, model, result)
         if member is None:
             raise ValueError(f"{key.attr!r} names no declared ordering attribute")
         require_single_scalar(key.attr, member)
         order_terms.append(ResolvedOrderTerm(member, key.direction or "asc", key.nulls or "last"))
-    includes = tuple(validate_include_path(path, model, queried) for path in query.includes)
+    includes = tuple(validate_include_path(path, model, queried) for path in clauses.includes)
     narrowed = (
         None
-        if query.narrow_to is None
+        if clauses.narrow_to is None
         else tuple(
             entity for entity in model.entities if entity.identity.canonical in result.effective
         )
@@ -87,12 +96,12 @@ def validate_object_query(
         order_by=tuple(order_terms),
         includes=includes,
         narrow_to=narrowed,
-        limit=query.limit,
+        limit=clauses.limit,
     )
 
 
 def _narrowed_position(
-    query: ObjectQueryNode, queried: PositionScope, model: Metamodel
+    query: QueryClauses, queried: PositionScope, model: Metamodel
 ) -> PositionScope:
     if query.narrow_to is None:
         return queried
@@ -168,7 +177,7 @@ def _scope_identities(model: Metamodel, scope: PositionScope) -> tuple[EntityIde
 
 
 def _validate_temporal_selections(
-    root: EntityMetadata, query: ObjectQueryNode, model: Metamodel
+    root: EntityMetadata, query: QueryClauses, model: Metamodel
 ) -> tuple[ResolvedTemporalSelection, ...]:
     # `m-object-query` cannot reach the Temporal Facet, so the family's axes are
     # read from its root's accepted declaration.

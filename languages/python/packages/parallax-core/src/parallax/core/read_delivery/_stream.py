@@ -12,7 +12,7 @@ from parallax.core.execution_lifecycle._activity import (
     StreamBatchActivity,
 )
 from parallax.core.metamodel import AttributeIdentity, Metamodel
-from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query import QueryClauses
 from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
 from parallax.core.read_delivery._delivery import temporal_shape
 from parallax.core.read_delivery._page import EXCEPTION_MACHINERY, InvalidData, InvalidDataError
@@ -68,11 +68,12 @@ class StreamRead[Selection](Protocol):
     def advance[T](self, body: Callable[[], T], /) -> T: ...
 
 
-class StreamScope[R, Origin](Protocol):
+class StreamScope[R, Q, Origin](Protocol):
     """What a delivery asks the execution that constructed it for.
 
-    The scope begins the delivery's one read, validates the query under that
-    read's model, and reads each page inside that read's own bracket: a
+    The scope begins the delivery's one read, resolves the query it captured
+    under that read's selection, and reads each page inside that read's own
+    bracket: a
     standalone page leases its own connection, while a participating one runs
     inside its unit of work's read gate, so buffered writes reach the database
     before the page that must see them. A page is handed its own Stream Batch
@@ -83,7 +84,7 @@ class StreamScope[R, Origin](Protocol):
 
     def begin(self) -> R: ...
 
-    def resolved(self, read: R, node: ObjectQueryNode, /) -> ResolvedObjectQuery: ...
+    def resolved(self, read: R, query: Q, /) -> ResolvedObjectQuery: ...
 
     def page(
         self,
@@ -217,7 +218,7 @@ class StreamContinuationError(RuntimeError):
         return self._ordinal
 
 
-class StreamDelivery[R: StreamRead[Any], P: Publication[Any, Any]]:
+class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, Any]]:
     """One scope-bound, single-pass streamed delivery.
 
     It owns the delivery's whole state machine: entry, the one selected view,
@@ -239,7 +240,6 @@ class StreamDelivery[R: StreamRead[Any], P: Publication[Any, Any]]:
         "_build_publication",
         "_failure",
         "_milestones",
-        "_node",
         "_on_page_start",
         "_on_release",
         "_pages",
@@ -247,6 +247,7 @@ class StreamDelivery[R: StreamRead[Any], P: Publication[Any, Any]]:
         "_paused_includes",
         "_pin",
         "_publication",
+        "_query",
         "_read",
         "_scope",
         "_state",
@@ -254,15 +255,15 @@ class StreamDelivery[R: StreamRead[Any], P: Publication[Any, Any]]:
 
     def __init__(
         self,
-        node: ObjectQueryNode,
-        scope: StreamScope[R, Any],
+        query: Q,
+        scope: StreamScope[R, Q, Any],
         build_publication: Callable[[Any], P],
         *,
         batch_size: int,
         on_page_start: Callable[[deep_fetch.IncludeTree], None],
         on_release: Callable[[], None],
     ) -> None:
-        self._node = node
+        self._query = query
         self._scope = scope
         self._build_publication = build_publication
         self._batch_size = batch_size
@@ -287,8 +288,9 @@ class StreamDelivery[R: StreamRead[Any], P: Publication[Any, Any]]:
         the read is begun, which is where a standalone stream adopts the
         selection every page will be served under; then the publication, which
         is where a selection that cannot publish this representation refuses;
-        then the read gate, the page plan, and the pin the delivery will answer
-        for itself — the query's own lowered as-of coordinates where it reads
+        then the read gate, which resolves the captured query under that
+        selection once for every page, the page plan, and the pin the delivery
+        will answer for itself — the query's own lowered as-of coordinates where it reads
         one instant, and the empty pin where it scans an axis. Each is a refusal
         a caller can earn and keeps its own type, so all of them precede the
         stream's own activity — a refused stream opens no Root Execution and
@@ -300,9 +302,9 @@ class StreamDelivery[R: StreamRead[Any], P: Publication[Any, Any]]:
         self._publication = publication
         try:
             meta = read.meta
-            resolved = self._scope.resolved(read, self._node)
+            resolved = self._scope.resolved(read, self._query)
             self._paging = PagingPlan(
-                continuation.plan(resolved, meta), self._batch_size, self._node.limit
+                continuation.plan(resolved, meta), self._batch_size, resolved.limit
             )
             if scans_resolved_axis(resolved.temporal):
                 self._milestones = temporal_shape(meta, resolved.root)
@@ -311,7 +313,7 @@ class StreamDelivery[R: StreamRead[Any], P: Publication[Any, Any]]:
                 self._pin = resolved_query_pin(resolved.temporal)
             self._read = read
             self._activity = read.open_stream(
-                self._node.target, publication.interface, self._batch_size
+                self._query.target, publication.interface, self._batch_size
             ).__enter__()
         except BaseException:
             self._release_publication()
@@ -368,7 +370,7 @@ class StreamDelivery[R: StreamRead[Any], P: Publication[Any, Any]]:
 
     @property
     def target(self) -> str:
-        return self._node.target.canonical
+        return self._query.target.canonical
 
     @property
     def paused_includes(self) -> deep_fetch.IncludeTree | None:

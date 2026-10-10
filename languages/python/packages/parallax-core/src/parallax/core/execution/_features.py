@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core.object_query import AsOfRange, History, ObjectQueryNode
+from parallax.core.object_query import AsOfRange, History, QueryClauses
 
 __all__ = ["DeferredFeatureError", "deferred_features"]
 
@@ -48,7 +48,7 @@ class DeferredFeatureError(RuntimeError):
         self.features: tuple[str, ...] = ordered
 
 
-def deferred_features(query: ObjectQueryNode) -> frozenset[str]:
+def deferred_features(query: QueryClauses) -> frozenset[str]:
     """Every Deferred Execution Feature ``query`` requires.
 
     Empty for every query this implementation executes, which is the ordinary
@@ -57,7 +57,7 @@ def deferred_features(query: ObjectQueryNode) -> frozenset[str]:
     return _required_features(query) & _DEFERRED_EXECUTION_FEATURES
 
 
-def _required_features(query: ObjectQueryNode) -> frozenset[str]:
+def _required_features(query: QueryClauses) -> frozenset[str]:
     """The Feature-tagged read capabilities ``query`` requires.
 
     Only the capabilities the inventory could name are computed. A query's full
@@ -67,7 +67,7 @@ def _required_features(query: ObjectQueryNode) -> frozenset[str]:
     return frozenset({"snapshot-history-includes"} if _includes_over_a_scan(query) else ())
 
 
-def _includes_over_a_scan(query: ObjectQueryNode) -> bool:
+def _includes_over_a_scan(query: QueryClauses) -> bool:
     """Whether ``query`` eager-fetches over a SCANNED temporal dimension.
 
     A milestone-set read answers one root per milestone, and combining that

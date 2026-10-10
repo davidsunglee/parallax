@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from parallax.core.db_port import DatabaseConnection
+from parallax.core.entity._authored_resolver import typed_interpretation
+from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.execution._adoption import AdoptedExecution
 from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.execution._connection_lifecycle import enter_connection, exit_connection
@@ -25,7 +27,7 @@ from parallax.core.execution_lifecycle._activity import (
     open_stream_root,
 )
 from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query import InterpretedQuery, ObjectQueryNode, QueryInput
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery._delivery import deliver_find, deliver_history
@@ -46,12 +48,29 @@ from parallax.core.unit_work import Concurrency, ReadOrigin
 __all__ = [
     "BegunRead",
     "ReadInputs",
+    "ReadQuery",
     "StandaloneRead",
+    "interpreted",
     "read_graph",
     "read_page",
     "read_rows",
     "resolved",
 ]
+
+type ReadQuery = ObjectQueryNode | AuthoredQuery
+"""What a read is handed to resolve once it has adopted its selection: a
+canonical Object Query, or a Typed query's authored state."""
+
+
+def interpreted(selected: SelectedReadModel, query: ReadQuery) -> QueryInput:
+    """``query`` as the read gate consumes it under ``selected``: canonical input
+    as itself, and an authored query beside the Typed adapter that resolves its
+    predicate against the selection's model and borrowed class index."""
+    if isinstance(query, ObjectQueryNode):
+        return query
+    return InterpretedQuery(
+        query, typed_interpretation(query.predicate, selected.model.meta, selected.classes)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +124,7 @@ class BegunRead(StreamRead[SelectedReadModel], Protocol):
 
 def read_graph[Eager](
     read: BegunRead,
-    node: ObjectQueryNode,
+    query: ReadQuery,
     publication: Publication[ReadOrigin, Eager],
     planner: ReadPlanner,
 ) -> Eager:
@@ -119,7 +138,7 @@ def read_graph[Eager](
     observer is created inside the bracket, after any read gate.
     """
     selected = read.selected
-    checked = preflight(node, model=selected.model.meta, form="graph")
+    checked = preflight(interpreted(selected, query), model=selected.model.meta, form="graph")
 
     def published(activity: ReadActivity, inputs: ReadInputs) -> Eager:
         if scans_resolved_axis(checked.temporal):
@@ -147,7 +166,7 @@ def read_graph[Eager](
             publication,
         )
 
-    return read.eager(node.target, publication.interface, published)
+    return read.eager(query.target, publication.interface, published)
 
 
 def read_rows(read: BegunRead, node: ObjectQueryNode, planner: ReadPlanner) -> RowsResult:
@@ -176,9 +195,9 @@ def read_rows(read: BegunRead, node: ObjectQueryNode, planner: ReadPlanner) -> R
     return read.eager(node.target, "rows", published)
 
 
-def resolved(read: BegunRead, node: ObjectQueryNode, /) -> ResolvedObjectQuery:
-    """``node`` through the shared read gate, under the model ``read`` serves."""
-    return preflight(node, model=read.meta, form="graph")
+def resolved(read: BegunRead, query: ReadQuery, /) -> ResolvedObjectQuery:
+    """``query`` through the shared read gate, under the selection ``read`` adopted."""
+    return preflight(interpreted(read.selected, query), model=read.meta, form="graph")
 
 
 def read_page(

@@ -7,9 +7,10 @@ from typing import Any
 from parallax.core.execution._attempt import Attempt
 from parallax.core.execution._keyed_writes import target_condition, window_mutation
 from parallax.core.execution._options import OMITTED, Omitted
+from parallax.core.execution._read_policy import ReadQuery
 from parallax.core.execution._scope import ExecutionScope
 from parallax.core.object_query import ObjectQueryNode, deserialize
-from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.snapshot._handle._read import Snapshot, wire_publication_for
 from parallax.snapshot._handle._stream import SnapshotStream
 from parallax.snapshot._handle._wire_writes import (
@@ -27,7 +28,7 @@ __all__ = [
     "WireDatabaseView",
     "WireQuery",
     "WireTransactionView",
-    "wire_query_node",
+    "wire_read_query",
 ]
 
 type WireQuery = ObjectQuery[Any, Any] | ObjectQueryNode | Mapping[str, object]
@@ -35,14 +36,16 @@ type WireQuery = ObjectQuery[Any, Any] | ObjectQueryNode | Mapping[str, object]
 node itself, or — on a class-backed model — the Typed authoring value."""
 
 
-def wire_query_node(query: WireQuery) -> ObjectQueryNode:
-    """``query`` as the one canonical Object Query node every read lowers through.
+def wire_read_query(query: WireQuery) -> ReadQuery:
+    """``query`` as the unresolved input the shared read gate resolves.
 
     Accepting three spellings adds no query semantics: the mapping goes through
-    `m-object-query`'s own deserializer, the Typed value through the same
-    accessor ``db.find`` uses, and a node passes as itself. Nothing here
-    validates the query — the shared read gate does, after this resolution and
-    before any I/O — so all three spellings meet the same refusals.
+    `m-object-query`'s own deserializer and a node passes as itself, while the
+    Typed value stays authored exactly as ``db.find`` hands it over, so it keeps
+    the Typed operand policy rather than being encoded and decoded again.
+    Nothing here validates the query — the shared read gate does, after the read
+    adopts its selection and before any I/O — so all three spellings meet the
+    same refusals.
 
     It is a stable converter a read is handed rather than a step the read
     performs first: a Wire read refuses re-entry before it looks at what it was
@@ -54,7 +57,7 @@ def wire_query_node(query: WireQuery) -> ObjectQueryNode:
         return query
     if isinstance(query, Mapping):
         return deserialize(query)
-    return object_query_node(query)
+    return typed_read_query(query)
 
 
 class WireDatabaseView:
@@ -81,11 +84,11 @@ class WireDatabaseView:
 
         The refusal order is the Typed read's without its classless rung — no
         Wire node is an Entity Class instance, so none needs a materializer:
-        re-entry, then the read begun, then the spelling it was handed lowered
-        to the canonical node.
+        re-entry, then the read begun, then the spelling it was handed captured
+        and resolved under the read's selection.
         """
         return self._reads.read(
-            query, convert_query=wire_query_node, build_publication=wire_publication_for
+            query, convert_query=wire_read_query, build_publication=wire_publication_for
         )
 
     def stream(self, query: WireQuery, *, batch_size: int = 1000) -> SnapshotStream[WireEntity]:
@@ -106,7 +109,7 @@ class WireDatabaseView:
             self._reads,
             query,
             batch_size,
-            convert_query=wire_query_node,
+            convert_query=wire_read_query,
             build_publication=wire_publication_for,
         )
 

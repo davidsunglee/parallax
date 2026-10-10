@@ -7,6 +7,11 @@ are the properties this suite pins, together with the two refusals a model does
 own: a model that names no Entity Class cannot serve a Snapshot, and a query
 target the connected model does not declare is refused before any I/O.
 
+A Typed query holds one authored tree and no canonical node, and each operation
+resolves that tree against the model it adopted: prepared operands are adopted
+only under the exact type they were prepared for, and Python member names
+resolve only through the serving model's own Entity Classes.
+
 The assignment half is here too. Extracting the judgement is what lets the typed
 path state its whole rule without a model, so the parity between it and the
 serialized write boundary is the property that must not have moved.
@@ -14,7 +19,11 @@ serialized write boundary is the property that must not have moved.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
+from collections.abc import Iterator, Mapping
+from decimal import Decimal
+from typing import Any, cast
 
 import pytest
 
@@ -25,20 +34,39 @@ from parallax.core import (
     EditError,
     EditViolation,
     Entity,
+    Float32,
+    Predicate,
+    QueryDefinitionError,
     TxTemporal,
     attr,
     inheritance,
 )
+from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.db_port import DatabaseAdapter
+from parallax.core.entity import _expressions
+from parallax.core.entity._expressions import (
+    AuthoredConstant,
+    AuthoredQuery,
+    PreparedOperation,
+    UnfinishedOperation,
+    canonical_predicate,
+)
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import model_of
 from parallax.core.execution import QueryTargetError
+from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import (
     UnresolvedEntityDeclaration,
     WriteAssignmentError,
     judge_assignment,
 )
+from parallax.core.object_query._fluent import object_query_node, typed_read_query
+from parallax.core.predicate import PredicateNode, validate
+from parallax.core.predicate._interpretation import COMPARE, MEMBER_OF, ScalarOperator
+from parallax.core.predicate._resolved import ResolvedComparison
 from parallax.snapshot import Database, ScopedDatabase, SnapshotConnectionError, Transaction
+from tests._support import snapshot_models as sm
+from tests._support import value_object_models as vm
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -50,6 +78,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.query_probes import predicate_node, typed_resolved
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import FIXED
 
@@ -73,11 +102,29 @@ class Gizmo(Entity, table="gizmo", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
 
 
+class Priced(Entity, table="priced", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[Decimal] = attr(precision=10, scale=2)
+    ratio: Attr[float] = attr(type=Float32)
+    display: Attr[str] = attr(name="label", max_length=16)
+
+
+# A second declaration of the SAME Entity Identity, its scalar types differing
+# only in Decimal scale and float width.
+class Repriced(Entity, table="priced", name="Priced", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[Decimal] = attr(precision=10, scale=3)
+    ratio: Attr[float]
+    display: Attr[str] = attr(name="label", max_length=16)
+
+
 # The SAME `Widget` class object composed into two models: a class names an
 # Entity of every model that composed it, so both of these are authoritative.
 WIDGETS = DomainModel(Widget)
 WIDGETS_AND_GIZMOS = DomainModel(Widget, Gizmo)
 GADGETS = DomainModel(Gadget)
+PRICED = DomainModel(Priced)
+REPRICED = DomainModel(Repriced)
 
 
 class _Source:
@@ -397,3 +444,292 @@ def test_every_surface_classifies_a_read_only_member_the_same_way() -> None:
     with pytest.raises(WriteAssignmentError) as caught:
         _model_judgement(WIDGETS, Widget, "computed", "x")
     assert caught.value.rule == "read-only"
+
+
+# --------------------------------------------------------------------------- #
+# One authored tree, no canonical backing                                      #
+# --------------------------------------------------------------------------- #
+def _reachable(value: object) -> Iterator[object]:
+    """Every value reachable from ``value`` through dataclass fields, tuples,
+    and mappings, ``value`` included."""
+    yield value
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        for field in dataclasses.fields(value):
+            yield from _reachable(getattr(value, field.name))
+    elif isinstance(value, tuple):
+        for item in value:  # pyright: ignore[reportUnknownVariableType]
+            yield from _reachable(item)  # pyright: ignore[reportUnknownArgumentType]
+    elif isinstance(value, Mapping):
+        for item in value.values():  # pyright: ignore[reportUnknownVariableType]
+            yield from _reachable(item)  # pyright: ignore[reportUnknownArgumentType]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(Widget.where(Widget.id == 1), id="where"),
+        pytest.param(Widget.where(Widget.all), id="all"),
+        pytest.param(
+            sm.Animal.where(sm.Animal.narrow(sm.Dog, where=sm.Dog.bark_volume > 5)),
+            id="whole-query-narrowing",
+        ),
+        pytest.param(
+            vm.Customer.where(vm.Customer.address.phones.exists(vm.Phone.type == "home")),
+            id="value-object-scope",
+        ),
+        pytest.param(sm.SnapOrder.where(sm.SnapOrder.items.exists()), id="relationship"),
+    ],
+)
+def test_a_typed_query_retains_its_authored_state_and_no_canonical_node(query: Any) -> None:
+    reached = list(_reachable(query))
+    assert not [value for value in reached if isinstance(value, PredicateNode)]
+    assert any(isinstance(value, AuthoredQuery) for value in reached)
+
+
+def test_where_all_and_whole_query_narrowing_keep_their_authored_meaning() -> None:
+    assert typed_read_query(Widget.where(Widget.all)).predicate == AuthoredConstant(truth=True)
+    lifted = typed_read_query(
+        sm.Animal.where(sm.Animal.narrow(sm.Dog, where=sm.Dog.bark_volume > 5))
+    )
+    assert lifted.narrow_to == ("parallax.compatibility.Dog",)
+    assert isinstance(lifted.predicate, PreparedOperation)
+
+
+def test_a_prepared_operation_retains_managed_operands_and_their_preparation_type() -> None:
+    authored = (Priced.amount == Decimal("1.5")).authored
+    assert isinstance(authored, PreparedOperation)
+    assert authored.operands == (Decimal("1.50"),)
+    assert authored.prepared_type == NeutralDecimal(precision=10, scale=2)
+
+
+def test_membership_captures_its_entries_in_an_owned_tuple() -> None:
+    entries: list[object] = [1, 2]
+    predicate = Widget.id.in_(entries)
+    entries.append(3)
+    entries[0] = 99
+    assert predicate_node(predicate) == predicate_node(Widget.id.in_([1, 2]))
+
+
+def test_authoring_and_typed_binding_neither_encode_nor_decode_operands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(*_args: object) -> object:
+        raise AssertionError("a Typed operand crossed a Wire codec on its way to execution")
+
+    monkeypatch.setattr(_expressions, "encode_wire", refuse)
+    monkeypatch.setattr(validate, "decode_wire", refuse)
+    query = Priced.where((Priced.amount == Decimal("1.5")) & Priced.id.in_([1, 2]))
+    port = ScriptedAdapter(Read(rows=[]))
+    _db(PRICED, port).find(query)
+    assert [type(call) for call in port.calls] == [ReadCall]
+
+
+# --------------------------------------------------------------------------- #
+# Binding against the adopted model                                            #
+# --------------------------------------------------------------------------- #
+def test_one_authored_query_is_served_by_class_backed_and_classless_models() -> None:
+    # The classless model indexes no Entity Class, and the query names only
+    # declared facts, so both models resolve it to the same statement.
+    query = Gizmo.where(Gizmo.id == 1)
+    backed, classless = ScriptedAdapter(Read(rows=[])), ScriptedAdapter(Read(rows=[]))
+    _db(WIDGETS_AND_GIZMOS, backed).wire.find(query)
+    _db(CLASSLESS, classless).wire.find(query)
+    assert [type(call) for call in backed.calls] == [ReadCall]
+    assert backed.calls == classless.calls
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        pytest.param(Priced.amount == Decimal("1.25"), id="decimal-scale"),
+        pytest.param(Priced.ratio > 0.5, id="float-width"),
+    ],
+)
+def test_a_prepared_operand_is_refused_under_another_declared_type_before_io(
+    predicate: Predicate[Priced],
+) -> None:
+    # Repriced declares the same member under another type; the operand already
+    # rounded to Priced's declaration is not re-normalized for it.
+    database = _db(REPRICED, RefusingAdapter())
+    with pytest.raises(QueryDefinitionError, match="prepared for NeutralType") as caught:
+        database.find(Priced.where(predicate))
+    assert caught.value.code == "query-expression-invalid"
+
+
+def test_a_prepared_operand_is_adopted_under_the_identical_declared_type() -> None:
+    resolved = typed_resolved(Priced.where(Priced.display == "x"), REPRICED).predicate
+    assert isinstance(resolved, ResolvedComparison)
+    assert resolved.member is REPRICED.meta(Repriced).attribute("label")
+    assert resolved.value == "x"
+
+
+# --------------------------------------------------------------------------- #
+# Unfinished operations                                                        #
+# --------------------------------------------------------------------------- #
+def _unfinished(
+    entity: type[Entity],
+    *names: str,
+    operands: tuple[object, ...],
+    operator: ScalarOperator = COMPARE["eq"],
+) -> Predicate[Any]:
+    return Predicate(UnfinishedOperation(entity.identity, names, operator, operands))
+
+
+@pytest.mark.parametrize(
+    ("root", "unfinished", "known", "model"),
+    [
+        pytest.param(
+            Priced,
+            _unfinished(Priced, "display", operands=("x",)),
+            Priced.display == "x",
+            PRICED,
+            id="renamed",
+        ),
+        pytest.param(
+            sm.Dog,
+            _unfinished(sm.Dog, "owner_id", operands=(7,)),
+            sm.Dog.owner_id == 7,
+            sm.ANIMAL_MODEL,
+            id="inherited",
+        ),
+        pytest.param(
+            vm.Customer,
+            _unfinished(vm.Customer, "address", "geo", "country", operands=("NO",)),
+            vm.Customer.address.geo.country == "NO",
+            vm.CUSTOMER_MODEL,
+            id="value-object-path",
+        ),
+        pytest.param(
+            Priced,
+            _unfinished(Priced, "amount", operator=MEMBER_OF["in"], operands=(Decimal("1.5"), 2)),
+            Priced.amount.in_([Decimal("1.5"), 2]),
+            PRICED,
+            id="native-operands-prepared-once",
+        ),
+    ],
+)
+def test_an_unfinished_operation_resolves_through_the_serving_models_classes(
+    root: type[Entity], unfinished: Predicate[Any], known: Predicate[Any], model: DomainModel
+) -> None:
+    assert typed_resolved(root.where(unfinished), model) == typed_resolved(root.where(known), model)
+
+
+def test_an_unfinished_operation_is_refused_by_a_model_indexing_no_classes() -> None:
+    database = _db(CLASSLESS, RefusingAdapter())
+    with pytest.raises(QueryDefinitionError, match="through Wire instead") as caught:
+        database.wire.find(Gizmo.where(_unfinished(Gizmo, "id", operands=(1,))))
+    assert caught.value.code == "query-expression-invalid"
+
+
+@pytest.mark.parametrize(
+    ("names", "operands", "code", "message"),
+    [
+        pytest.param(("missing",), (1,), "query-path-invalid", "declares no member", id="unknown"),
+        pytest.param(
+            ("id", "deeper"), (1,), "query-path-invalid", "path continues", id="past-a-scalar"
+        ),
+        pytest.param(("amount",), (None,), "query-expression-invalid", "None", id="null-operand"),
+        pytest.param(
+            ("amount",), (object(),), "query-expression-invalid", "input policy", id="carrier"
+        ),
+    ],
+)
+def test_an_unfinished_operation_is_refused_at_binding_before_io(
+    names: tuple[str, ...], operands: tuple[object, ...], code: str, message: str
+) -> None:
+    database = _db(PRICED, RefusingAdapter())
+    with pytest.raises(QueryDefinitionError, match=message) as caught:
+        database.find(Priced.where(_unfinished(Priced, *names, operands=operands)))
+    assert caught.value.code == code
+
+
+def test_an_unfinished_relationship_name_is_not_traversed_by_a_scalar_operation() -> None:
+    with pytest.raises(QueryDefinitionError, match="is a relationship") as caught:
+        typed_resolved(
+            sm.SnapOrder.where(_unfinished(sm.SnapOrder, "items", operands=(1,))),
+            sm.SNAP_ORDERS_MODEL,
+        )
+    assert caught.value.code == "query-path-invalid"
+
+
+def test_an_unfinished_operation_has_no_canonical_export() -> None:
+    with pytest.raises(QueryDefinitionError, match="no canonical form"):
+        canonical_predicate(_unfinished(Priced, "amount", operands=(1,)).authored)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(
+            vm.Customer.where(
+                vm.Customer.address.phones.exists(
+                    ((vm.Phone.type == "home") & (vm.Phone.number == "1")) | ~(vm.Phone.type == "x")
+                )
+            ),
+            id="element-scope",
+        ),
+        pytest.param(
+            vm.Customer.where(
+                vm.Customer.address.phones.exists(
+                    ((vm.Phone.type == "home") | (vm.Phone.type == "work"))
+                    & (vm.Phone.number == "1")
+                )
+            ),
+            id="element-scope-grouping",
+        ),
+        pytest.param(
+            vm.Customer.where(
+                ~(vm.Customer.name == "Ada") | ((vm.Customer.id > 1) & (vm.Customer.id < 9))
+            ),
+            id="entity-position",
+        ),
+        pytest.param(
+            vm.Customer.where(vm.Customer.address.phones.not_exists()),
+            id="bare-value-object-scope",
+        ),
+    ],
+)
+def test_boolean_structure_binds_as_its_canonical_export_does(query: Any) -> None:
+    canonical = preflight(object_query_node(query), model=model_of(vm.CUSTOMER_MODEL), form="graph")
+    assert typed_resolved(query, vm.CUSTOMER_MODEL) == canonical
+
+
+@pytest.mark.parametrize(
+    "interior",
+    [
+        pytest.param(vm.Customer.name == "Ada", id="entity-rooted-attribute"),
+        pytest.param(
+            _unfinished(vm.Customer, "name", operands=("Ada",)), id="unfinished-operation"
+        ),
+        pytest.param(vm.Customer.address.phones.exists(), id="nested-scope"),
+    ],
+)
+def test_a_value_object_element_scope_admits_only_element_relative_operations(
+    interior: Predicate[Any],
+) -> None:
+    query = vm.Customer.where(vm.Customer.address.phones.exists(interior))
+    with pytest.raises(ValueError, match="not a legal nestedExists/nestedNotExists element"):
+        typed_resolved(query, vm.CUSTOMER_MODEL)
+
+
+@pytest.mark.parametrize(
+    ("names", "message"),
+    [
+        pytest.param(("address", "missing"), "declares no member", id="unknown-in-value-object"),
+        pytest.param(("address", "city", "deeper"), "path continues", id="past-a-leaf"),
+    ],
+)
+def test_an_unfinished_value_object_path_is_refused_where_its_names_resolve_nothing(
+    names: tuple[str, ...], message: str
+) -> None:
+    query = vm.Customer.where(_unfinished(vm.Customer, *names, operands=("x",)))
+    with pytest.raises(QueryDefinitionError, match=message) as caught:
+        typed_resolved(query, vm.CUSTOMER_MODEL)
+    assert caught.value.code == "query-path-invalid"
+
+
+def test_an_unfinished_anchor_the_serving_model_composes_no_class_for_is_refused() -> None:
+    query = Widget.where(cast("Predicate[Widget]", _unfinished(Gizmo, "id", operands=(1,))))
+    with pytest.raises(QueryDefinitionError, match="composes no Entity Class") as caught:
+        typed_resolved(query, WIDGETS)
+    assert caught.value.code == "query-expression-invalid"

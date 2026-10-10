@@ -40,7 +40,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel._states import ambiguous_entity_spellings
-from parallax.core.predicate import PredicateNode
+from parallax.core.predicate import PredicateInterpretation, PredicateNode
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work.write_validate import WriteRejectedError, validate_write
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
@@ -244,16 +244,18 @@ class WriteAssignment:
 @dataclass(frozen=True, slots=True)
 class PredicateSelection:
     """The entity a predicate-selected write begins from plus its
-    ``m-predicate`` selection (a canonical Predicate node).
+    ``m-predicate`` selection: a canonical Predicate node, or the adapter that
+    interprets a frontend's own captured predicate at the checked target.
 
     This is the instruction-level carrier an authored :class:`PredicateWrite`
     holds, distinct from the prepared product buffering retains and from the
     finalized :class:`~parallax.core.unit_work.
-    planned.WriteTarget` a Planned Write settles into.
+    planned.WriteTarget` a Planned Write settles into. Preparation resolves
+    either form once and retains only the resolved predicate.
     """
 
     entity: str
-    predicate: PredicateNode
+    predicate: PredicateNode | PredicateInterpretation
 
 
 @dataclass(frozen=True, slots=True)
@@ -752,11 +754,17 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
         }
         _emit_bounds(keyed_body, instruction.valid_from, instruction.until)
         return keyed_body
+    predicate = instruction.target.predicate
+    if not isinstance(predicate, PredicateNode):
+        raise WriteInstructionError(
+            f"{instruction.target.entity}: a predicate write selecting through an interpreted "
+            "predicate has no canonical write-instruction document"
+        )
     predicate_body: dict[str, object] = {
         "mutation": instruction.mutation,
         "target": {
             "entity": instruction.target.entity,
-            "predicate": predicate_algebra.serialize(instruction.target.predicate),
+            "predicate": predicate_algebra.serialize(predicate),
         },
     }
     if instruction.assignments:
@@ -1583,7 +1591,8 @@ def _prepare_predicate_payload(
     selecting predicate, the family refusal, then the assignments.
 
     The predicate is measured with the whole ``validate_predicate``
-    vocabulary. An inheritance-family target is then refused
+    vocabulary: a canonical node is validated, an interpreting adapter invoked,
+    once, at the target's own position. An inheritance-family target is then refused
     (``subtype-write-set-based-unsupported``) before any assignment, so
     ancestry resolution never arises for one.
 
@@ -1593,7 +1602,12 @@ def _prepare_predicate_payload(
     outranks a bad value on the same assignment. Authored order is data order
     only; lowering emits columns in the target's Table Layout order.
     """
-    validated = predicate_algebra.validate_predicate(entity, instruction.target.predicate, model)
+    predicate = instruction.target.predicate
+    validated = (
+        predicate_algebra.validate_predicate(entity, predicate, model)
+        if isinstance(predicate, PredicateNode)
+        else predicate(entity, predicate_algebra.root_position(model, entity))
+    )
     inheritance.reject_predicate_write(entity)
     _judge_assignment_shape(entity, instruction.mutation, instruction.assignments)
     seen: set[str] = set()

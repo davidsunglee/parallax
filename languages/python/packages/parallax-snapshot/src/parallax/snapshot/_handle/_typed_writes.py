@@ -10,6 +10,7 @@ from parallax.core.entity import (
     lifecycle_state_of,
 )
 from parallax.core.entity import Entity as EntityBase
+from parallax.core.entity._authored_resolver import typed_interpretation
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.execution._attempt import Attempt
 from parallax.core.execution._family import family_view
@@ -382,29 +383,35 @@ def typed_predicate_write(
 ) -> None:
     """The Typed entry to the predicate-write lane: a mutation-compatible
     :class:`~parallax.core.object_query.ObjectQuery` plus ``Attr.set(...)``
-    assignments, stated as the canonical
-    :class:`~parallax.core.unit_work.PredicateWrite` every ingress prepares.
+    assignments, stated as the :class:`~parallax.core.unit_work.PredicateWrite`
+    every ingress prepares.
 
     Only the query's own form is judged here: a query carrying a result-shaping,
     temporal, narrowing, or deep-fetch clause is no write target
     (:func:`~parallax.core.object_query.mutation_selection`,
     ``query-not-mutation-compatible``), and no instruction has a spelling for
-    such a clause. Everything the instruction states — its target, verb, window,
-    predicate, and assignments — is judged by
+    such a clause. The authored predicate is captured, never encoded: the
+    instruction carries the Typed adapter over it, borrowing the attempt's
+    adopted write projection. Everything the instruction states — its target,
+    verb, window, predicate, and assignments — is judged by
     :func:`~parallax.core.unit_work.instructions.prepare_typed_write` before
     the attempt dispatches the prepared product.
     """
     refuse_reentry(attempt.lifecycle)
     start = stated_valid_from(valid_from)
     selection = mutation_selection(query)
+    meta = attempt.model.meta
     instruction = PredicateWrite(
         mutation,
-        PredicateSelection(selection.target.canonical, selection.predicate),
+        PredicateSelection(
+            selection.target.canonical,
+            typed_interpretation(selection.predicate, meta, attempt.classes),
+        ),
         write_assignments(assignments),
         start,
         until,
     )
-    prepared = instructions.prepare_typed_write(instruction, attempt.model.meta)
+    prepared = instructions.prepare_typed_write(instruction, meta)
     attempt.predicate_write(prepared)
 
 

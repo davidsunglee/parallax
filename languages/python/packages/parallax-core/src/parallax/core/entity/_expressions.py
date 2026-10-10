@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, assert_never, cast
 
 from parallax.core.base import (
     ManagedValue,
@@ -35,8 +37,15 @@ from parallax.core.metamodel import (
     WriteAssignmentError,
     judge_assignment,
 )
-from parallax.core.object_query import IncludeSegment, OrderKey, subtype_spelling
+from parallax.core.object_query import (
+    IncludeSegment,
+    ObjectQueryNode,
+    OrderKey,
+    object_query,
+    subtype_spelling,
+)
 from parallax.core.predicate import (
+    All,
     And,
     Between,
     Comparison,
@@ -44,7 +53,7 @@ from parallax.core.predicate import (
     Exists,
     Group,
     Membership,
-    MembershipOp,
+    Narrow,
     NestedComparison,
     NestedComparisonOp,
     NestedExists,
@@ -55,6 +64,7 @@ from parallax.core.predicate import (
     NestedRange,
     NestedStringMatch,
     NestedStringOp,
+    NoneOp,
     Not,
     NotExists,
     NullCheck,
@@ -64,25 +74,61 @@ from parallax.core.predicate import (
     Scalar,
     StringMatch,
     StringOp,
+    SubtypeSelection,
     canonical_subtype_selection,
 )
-from parallax.core.wire import WireEncodingError, encode_wire
+from parallax.core.predicate._interpretation import (
+    BETWEEN,
+    COMPARE,
+    MEMBER_OF,
+    NULL_TEST,
+    AttributeSubject,
+    Compare,
+    InRange,
+    Match,
+    MemberOf,
+    NullTest,
+    OperationSubject,
+    PathSubject,
+    ScalarOperator,
+)
+from parallax.core.wire import encode_wire
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from parallax.core.object_query._nodes import (
+        IncludePath,
+        TemporalDimension,
+        TemporalSelection,
+    )
 
 __all__ = [
     "AllPredicate",
     "AttributeAssignment",
     "AttributeExpr",
     "AttributeRef",
+    "AuthoredAnd",
+    "AuthoredConstant",
+    "AuthoredGroup",
+    "AuthoredNarrow",
+    "AuthoredNot",
+    "AuthoredOr",
+    "AuthoredPredicate",
+    "AuthoredQuantifier",
+    "AuthoredQuery",
+    "AuthoredSemiJoin",
     "ElementAttributeExpr",
     "Predicate",
+    "PreparedOperation",
     "RelationshipPath",
     "RelationshipRef",
     "SortKey",
+    "UnfinishedOperation",
+    "canonical_predicate",
     "conjoin",
     "judged_edit_violation",
+    "managed_literal",
     "member_location",
     "snake_to_camel",
     "typed_authoring_leaf",
@@ -121,14 +167,9 @@ def _single_scalar[
     return member
 
 
-def _native_literal(path: str, neutral_type: NeutralType | None, value: object) -> Scalar:
-    if neutral_type is None:
-        raise _invalid_operand(
-            path,
-            None,
-            value,
-            "typed literal operations require resolved scalar metadata",
-        )
+def managed_literal(path: str, neutral_type: NeutralType, value: object) -> ManagedValue:
+    """``value`` admitted as one managed ``neutral_type`` operand under the Typed
+    developer-input policy, or a refusal naming ``path``."""
     if value is None:
         raise _invalid_operand(
             path,
@@ -144,15 +185,7 @@ def _native_literal(path: str, neutral_type: NeutralType | None, value: object) 
             value,
             "the developer input policy does not admit this carrier for the declared type",
         )
-    try:
-        return cast("Scalar", encode_wire(neutral_type, cast("ManagedValue", managed)))
-    except WireEncodingError as error:  # pragma: no cover - membership above proves encoding
-        raise _invalid_operand(
-            path,
-            neutral_type,
-            value,
-            f"the managed value is not Wire-encodable: {error}",
-        ) from error
+    return cast("ManagedValue", managed)
 
 
 def snake_to_camel(name: str) -> str:
@@ -172,25 +205,15 @@ _BOOL_HINT = (
     "parentheses (not and/or/not), and use .between()/.in_() instead of chained comparisons"
 )
 
-_SCALAR_CMP: dict[str, ComparisonOp] = {
-    "eq": "eq",
-    "ne": "notEq",
-    "gt": "greaterThan",
-    "ge": "greaterThanEquals",
-    "lt": "lessThan",
-    "le": "lessThanEquals",
-}
-_NESTED_CMP: dict[str, NestedComparisonOp] = {
+_NESTED_COMPARISONS: dict[ComparisonOp, NestedComparisonOp] = {
     "eq": "nestedEq",
-    "ne": "nestedNotEq",
-    "gt": "nestedGt",
-    "ge": "nestedGte",
-    "lt": "nestedLt",
-    "le": "nestedLte",
+    "notEq": "nestedNotEq",
+    "greaterThan": "nestedGt",
+    "greaterThanEquals": "nestedGte",
+    "lessThan": "nestedLt",
+    "lessThanEquals": "nestedLte",
 }
-# Each scalar string predicate's nested tag: one fluent method serves both, so the
-# same call spells the scalar node on an Attribute and the nested one on a Value
-# Object member path.
+_NESTED_MEMBERSHIPS: dict[str, NestedMembershipOp] = {"in": "nestedIn", "notIn": "nestedNotIn"}
 _NESTED_STRINGS: dict[StringOp, NestedStringOp] = {
     "like": "nestedLike",
     "notLike": "nestedNotLike",
@@ -198,6 +221,251 @@ _NESTED_STRINGS: dict[StringOp, NestedStringOp] = {
     "endsWith": "nestedEndsWith",
     "contains": "nestedContains",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedOperation:
+    """A scalar operation over a known declared subject, its operands already
+    managed under ``prepared_type``, the type that subject's declaration states.
+
+    A string pattern is kept as authored; every other operand is managed.
+    """
+
+    subject: OperationSubject
+    operator: ScalarOperator
+    operands: tuple[object, ...]
+    prepared_type: NeutralType
+
+
+@dataclass(frozen=True, slots=True)
+class UnfinishedOperation:
+    """A scalar operation whose subject continues from the Entity ``anchor`` by
+    Python member ``names``, its native ``operands`` awaiting the type the
+    serving model resolves that subject to."""
+
+    anchor: EntityIdentity
+    names: tuple[str, ...]
+    operator: ScalarOperator
+    operands: tuple[object, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredConstant:
+    truth: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredAnd:
+    operands: tuple[AuthoredPredicate, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredOr:
+    operands: tuple[AuthoredPredicate, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredNot:
+    operand: AuthoredPredicate
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredGroup:
+    operand: AuthoredPredicate
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredNarrow:
+    """``operand`` at the current Entity position narrowed to the Subtype Selection ``to``."""
+
+    to: SubtypeSelection
+    operand: AuthoredPredicate
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredQuantifier:
+    """Whether some element (``any``) or no element (``none``) of the Value Object
+    occurrence at the Entity-rooted ``path`` makes ``where`` true; without
+    ``where``, whether one is present at all. ``where`` is element-relative."""
+
+    kind: Literal["any", "none"]
+    path: str
+    where: AuthoredPredicate | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredSemiJoin:
+    """Whether some Entity the ``Class.relationship`` reference reaches makes
+    ``where`` true, complemented when ``negated``. ``where`` addresses the
+    reached Entity."""
+
+    relationship: str
+    negated: bool
+    where: AuthoredPredicate | None = None
+
+
+type AuthoredPredicate = (
+    PreparedOperation
+    | UnfinishedOperation
+    | AuthoredConstant
+    | AuthoredAnd
+    | AuthoredOr
+    | AuthoredNot
+    | AuthoredGroup
+    | AuthoredNarrow
+    | AuthoredQuantifier
+    | AuthoredSemiJoin
+)
+
+_UNFILTERED: AuthoredPredicate = AuthoredConstant(truth=True)
+_NO_TEMPORAL: Mapping[TemporalDimension, TemporalSelection] = MappingProxyType({})
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredQuery:
+    """The authored state of one Typed Object Query: its target, its authored
+    predicate, and its other clauses in their canonical spellings.
+
+    Model-free and immutable, so one value serves every model that accepts its
+    target; nothing resolved is attached back to it.
+    """
+
+    target: EntityIdentity
+    predicate: AuthoredPredicate
+    narrow_to: SubtypeSelection | None = None
+    temporal: Mapping[TemporalDimension, TemporalSelection] = _NO_TEMPORAL
+    order_by: tuple[OrderKey, ...] = ()
+    limit: int | None = None
+    includes: tuple[IncludePath, ...] = field(default_factory=tuple)
+
+    def canonical(self) -> ObjectQueryNode:
+        """The canonical Object Query this authored state exports to."""
+        return object_query(
+            self.target,
+            canonical_predicate(self.predicate),
+            narrow_to=self.narrow_to,
+            temporal=self.temporal,
+            order_by=self.order_by,
+            limit=self.limit,
+            includes=self.includes,
+        )
+
+
+def canonical_predicate(authored: AuthoredPredicate) -> PredicateNode:
+    """The canonical predicate ``authored`` exports to, encoding its prepared
+    operands; an unfinished operation has no canonical form until bound."""
+    match authored:
+        case PreparedOperation():
+            return _canonical_operation(authored)
+        case UnfinishedOperation(anchor=anchor, names=names):
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=(
+                    f"{anchor.canonical}.{'.'.join(names)}: an operation over Python member names "
+                    "has no canonical form until a serving model resolves them"
+                ),
+            )
+        case AuthoredAnd(operands=operands):
+            return And(tuple(canonical_predicate(operand) for operand in operands))
+        case AuthoredOr(operands=operands):
+            return Or(tuple(canonical_predicate(operand) for operand in operands))
+        case AuthoredNot(operand=operand):
+            return Not(canonical_predicate(operand))
+        case AuthoredGroup(operand=operand):
+            return Group(canonical_predicate(operand))
+        case _:
+            return _canonical_scope(authored)
+
+
+def _canonical_scope(
+    authored: AuthoredConstant | AuthoredNarrow | AuthoredQuantifier | AuthoredSemiJoin,
+) -> PredicateNode:
+    match authored:
+        case AuthoredConstant(truth=truth):
+            return All() if truth else NoneOp()
+        case AuthoredNarrow(to=to, operand=operand):
+            return Narrow(to=to, operand=canonical_predicate(operand))
+        case AuthoredQuantifier(kind=kind, path=path, where=where):
+            exported = None if where is None else canonical_predicate(where)
+            if kind == "any":
+                return NestedExists(path=path, where=exported)
+            return NestedNotExists(path=path, where=exported)
+        case AuthoredSemiJoin(relationship=relationship, negated=negated, where=where):
+            interior = None if where is None else canonical_predicate(where)
+            if negated:
+                return NotExists(rel=relationship, op=interior)
+            return Exists(rel=relationship, op=interior)
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(authored)
+
+
+def _canonical_operation(operation: PreparedOperation) -> PredicateNode:
+    operator, prepared_type = operation.operator, operation.prepared_type
+    literals = tuple(
+        operand if isinstance(operator, Match) else _encoded(prepared_type, operand)
+        for operand in operation.operands
+    )
+    subject = operation.subject
+    if isinstance(subject, AttributeSubject):
+        return _canonical_attribute_operation(subject.reference, operator, literals)
+    return _canonical_path_operation(subject.path, operator, literals)
+
+
+def _encoded(neutral_type: NeutralType, value: object) -> Scalar:
+    return cast("Scalar", encode_wire(neutral_type, cast("ManagedValue", value)))
+
+
+def _canonical_attribute_operation(
+    attr: str, operator: ScalarOperator, literals: tuple[object, ...]
+) -> PredicateNode:
+    match operator:
+        case Compare(op=tag):
+            return Comparison(op=tag, attr=attr, value=cast("Scalar", literals[0]))
+        case InRange():
+            lower, upper = cast("tuple[Scalar, Scalar]", literals)
+            return Between(attr=attr, lower=lower, upper=upper)
+        case MemberOf(op=tag):
+            return Membership(op=tag, attr=attr, values=cast("tuple[Scalar, ...]", literals))
+        case Match(op=tag, case_insensitive=folded):
+            return StringMatch(
+                op=tag, attr=attr, value=cast("str", literals[0]), case_insensitive=folded or None
+            )
+        case NullTest(op=tag):
+            return NullCheck(op=tag, attr=attr)
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(operator)
+
+
+def _canonical_path_operation(
+    path: str, operator: ScalarOperator, literals: tuple[object, ...]
+) -> PredicateNode:
+    match operator:
+        case Compare(op=tag):
+            return NestedComparison(
+                op=_NESTED_COMPARISONS[tag], path=path, value=cast("Scalar", literals[0])
+            )
+        case InRange():
+            lower, upper = cast("tuple[Scalar, Scalar]", literals)
+            return NestedRange(path=path, lower=lower, upper=upper)
+        case MemberOf(op=tag):
+            return NestedMembership(
+                op=_NESTED_MEMBERSHIPS[tag],
+                path=path,
+                values=cast("tuple[Scalar, ...]", literals),
+            )
+        case Match(op=tag, case_insensitive=folded):
+            return NestedStringMatch(
+                op=_NESTED_STRINGS[tag],
+                path=path,
+                value=cast("str", literals[0]),
+                case_insensitive=folded or None,
+            )
+        case NullTest(op=tag):
+            return NestedNullCheck(
+                op="nestedIsNull" if tag == "isNull" else "nestedIsNotNull", path=path
+            )
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(operator)
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,7 +567,7 @@ class AllPredicate[E]:
     query written against a position the query is not at.
     """
 
-    node: PredicateNode
+    authored: AuthoredPredicate = _UNFILTERED
 
     if TYPE_CHECKING:
 
@@ -316,12 +584,16 @@ class Predicate[E]:
     """A built Predicate over the Entity position ``E``; composes with
     ``&`` / ``|`` / ``~``.
 
+    ``authored`` is the one authored tree the predicate is: no model is reached
+    while it is composed, and each operation that consumes it resolves it against
+    the model that operation adopted.
+
     Contravariant in ``E``: a predicate rooted at an ancestor addresses any
     descendant position, and one rooted at a descendant addresses none of its
     ancestors' positions.
     """
 
-    node: PredicateNode
+    authored: AuthoredPredicate
 
     if TYPE_CHECKING:
 
@@ -361,33 +633,35 @@ class Predicate[E]:
     # `Dog.bark_volume > v` addresses `Dog`: a `Dog` query takes it, an `Animal`
     # query is refused statically, and neither answer turns on operand order.
     def __and__[F](self: Predicate[F], other: Predicate[F], /) -> Predicate[F]:
-        return Predicate(And(operands=(*and_terms(self), *and_terms(other))))
+        return Predicate(AuthoredAnd((*and_terms(self), *and_terms(other))))
 
     def __or__[F](self: Predicate[F], other: Predicate[F], /) -> Predicate[F]:
-        return Predicate(Or(operands=(*_or_terms(self), *_or_terms(other))))
+        return Predicate(AuthoredOr((*_or_terms(self), *_or_terms(other))))
 
     def __invert__(self) -> Predicate[E]:
-        return Predicate(Not(operand=self.node))
+        return Predicate(AuthoredNot(self.authored))
 
     def __bool__(self) -> bool:
         raise TypeError(_BOOL_HINT)
 
 
-def and_terms(pred: Predicate[Any] | AllPredicate[Any]) -> tuple[PredicateNode, ...]:
-    if isinstance(pred.node, And):
-        return pred.node.operands  # flatten same-combinator nesting (order-preserving)
-    if isinstance(pred.node, Or):
-        return (Group(operand=pred.node),)  # an `or` under an `and` binds looser -> group
-    return (pred.node,)
+def and_terms(pred: Predicate[Any] | AllPredicate[Any]) -> tuple[AuthoredPredicate, ...]:
+    authored = pred.authored
+    if isinstance(authored, AuthoredAnd):
+        return authored.operands  # flatten same-combinator nesting (order-preserving)
+    if isinstance(authored, AuthoredOr):
+        return (AuthoredGroup(authored),)  # an `or` under an `and` binds looser -> group
+    return (authored,)
 
 
-def _or_terms(pred: Predicate[Any]) -> tuple[PredicateNode, ...]:
-    if isinstance(pred.node, Or):
-        return pred.node.operands  # flatten; an `and` under an `or` needs no group
-    return (pred.node,)
+def _or_terms(pred: Predicate[Any]) -> tuple[AuthoredPredicate, ...]:
+    authored = pred.authored
+    if isinstance(authored, AuthoredOr):
+        return authored.operands  # flatten; an `and` under an `or` needs no group
+    return (authored,)
 
 
-def conjoin(predicates: Sequence[Predicate[Any] | AllPredicate[Any]]) -> PredicateNode | None:
+def conjoin(predicates: Sequence[Predicate[Any] | AllPredicate[Any]]) -> AuthoredPredicate | None:
     """The big-AND of ``predicates`` (flattened, order-preserving), or ``None``
     for zero arguments — the shared builder behind every variadic predicate
     scope, so a bare presence test, a single predicate, and a conjunction can
@@ -397,14 +671,126 @@ def conjoin(predicates: Sequence[Predicate[Any] | AllPredicate[Any]]) -> Predica
     if not predicates:
         return None
     if len(predicates) == 1:
-        return predicates[0].node
-    operands: list[PredicateNode] = []
+        return predicates[0].authored
+    operands: list[AuthoredPredicate] = []
     for predicate in predicates:
         operands.extend(and_terms(predicate))
-    return And(operands=tuple(operands))
+    return AuthoredAnd(tuple(operands))
 
 
-class AttributeExpr[E, T]:
+class _ScalarAuthoring[P]:
+    """Comparison, Boolean, membership, range, and string authoring shared by
+    every scalar subject.
+
+    A subject supplies the type its declaration states, when it knows one, and
+    the canonical subject a prepared operation names; operands are prepared once
+    under that type and retained managed. A subject whose type is not known
+    authors through :meth:`_unprepared`.
+    """
+
+    __slots__ = ()
+
+    def _described(self) -> str:
+        raise NotImplementedError
+
+    def _operand_type(self) -> NeutralType | None:
+        raise NotImplementedError
+
+    def _subject(self) -> OperationSubject:
+        raise NotImplementedError
+
+    def _unprepared(self, operator: ScalarOperator, operands: tuple[object, ...]) -> NoReturn:
+        """The refusal of an operation whose subject states no scalar type."""
+        described = self._described()
+        if isinstance(operator, Match):
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=f"{described}: literal operations require resolved scalar metadata",
+            )
+        raise _invalid_operand(
+            described,
+            None,
+            operands[0] if operands else operands,
+            "typed literal operations require resolved scalar metadata",
+        )
+
+    def _operation(self, operator: ScalarOperator, values: tuple[object, ...]) -> Predicate[P]:
+        neutral_type = self._operand_type()
+        if neutral_type is None:
+            self._unprepared(operator, values)
+        described = self._described()
+        operands = tuple(managed_literal(described, neutral_type, value) for value in values)
+        return Predicate(PreparedOperation(self._subject(), operator, operands, neutral_type))
+
+    def __eq__(self, other: object) -> Predicate[P]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
+        return self._operation(COMPARE["eq"], (other,))
+
+    def __ne__(self, other: object) -> Predicate[P]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
+        return self._operation(COMPARE["notEq"], (other,))
+
+    def __gt__(self, other: object) -> Predicate[P]:
+        return self._operation(COMPARE["greaterThan"], (other,))
+
+    def __ge__(self, other: object) -> Predicate[P]:
+        return self._operation(COMPARE["greaterThanEquals"], (other,))
+
+    def __lt__(self, other: object) -> Predicate[P]:
+        return self._operation(COMPARE["lessThan"], (other,))
+
+    def __le__(self, other: object) -> Predicate[P]:
+        return self._operation(COMPARE["lessThanEquals"], (other,))
+
+    def is_(self, value: bool) -> Predicate[P]:
+        """The lint-clean boolean spelling of equality."""
+        return self._operation(COMPARE["eq"], (value,))
+
+    def in_(self, values: list[object]) -> Predicate[P]:
+        return self._operation(MEMBER_OF["in"], tuple(values))
+
+    def not_in(self, values: list[object]) -> Predicate[P]:
+        return self._operation(MEMBER_OF["notIn"], tuple(values))
+
+    def between(self, lower: object, upper: object) -> Predicate[P]:
+        return self._operation(BETWEEN, (lower, upper))
+
+    def _string(self, op: StringOp, value: str, case_insensitive: bool) -> Predicate[P]:
+        operator = Match(op, bool(case_insensitive))
+        neutral_type = self._operand_type()
+        if neutral_type is None:
+            self._unprepared(operator, (value,))
+        if not isinstance(neutral_type, String):
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=f"{self._described()}: string operations require a String leaf",
+            )
+        return Predicate(PreparedOperation(self._subject(), operator, (value,), neutral_type))
+
+    def like(self, value: str, *, case_insensitive: bool = False) -> Predicate[P]:
+        return self._string("like", value, case_insensitive)
+
+    def not_like(self, value: str, *, case_insensitive: bool = False) -> Predicate[P]:
+        return self._string("notLike", value, case_insensitive)
+
+    def starts_with(self, value: str, *, case_insensitive: bool = False) -> Predicate[P]:
+        return self._string("startsWith", value, case_insensitive)
+
+    def ends_with(self, value: str, *, case_insensitive: bool = False) -> Predicate[P]:
+        return self._string("endsWith", value, case_insensitive)
+
+    def contains(self, value: str, *, case_insensitive: bool = False) -> Predicate[P]:
+        return self._string("contains", value, case_insensitive)
+
+    def _null_test(self, op: Literal["isNull", "isNotNull"]) -> Predicate[P]:
+        neutral_type = self._operand_type()
+        if neutral_type is None:  # pragma: no cover - a nullable check resolves its member first
+            self._unprepared(NULL_TEST[op], ())
+        return Predicate(PreparedOperation(self._subject(), NULL_TEST[op], (), neutral_type))
+
+    def __bool__(self) -> bool:
+        raise TypeError(_BOOL_HINT)
+
+
+class AttributeExpr[E, T](_ScalarAuthoring[E]):
     """A class-level attribute/value-object expression (the seed of a predicate).
 
     ``E`` is the Entity the seeding class access went through — the position
@@ -446,62 +832,17 @@ class AttributeExpr[E, T]:
     def _dotted(self) -> str:
         return ".".join((self._entity, self._head, *self._path))
 
-    def _cmp(self, kind: str, value: object) -> Predicate[E]:
-        literal = self._literal(value)
-        if self._path:
-            return Predicate(
-                NestedComparison(op=_NESTED_CMP[kind], path=self._dotted(), value=literal)
-            )
-        return Predicate(Comparison(op=_SCALAR_CMP[kind], attr=str(self.ref), value=literal))
+    def _described(self) -> str:
+        return self._dotted()
 
-    def __eq__(self, other: object) -> Predicate[E]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
-        return self._cmp("eq", other)
-
-    def __ne__(self, other: object) -> Predicate[E]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
-        return self._cmp("ne", other)
-
-    def __gt__(self, other: object) -> Predicate[E]:
-        return self._cmp("gt", other)
-
-    def __ge__(self, other: object) -> Predicate[E]:
-        return self._cmp("ge", other)
-
-    def __lt__(self, other: object) -> Predicate[E]:
-        return self._cmp("lt", other)
-
-    def __le__(self, other: object) -> Predicate[E]:
-        return self._cmp("le", other)
-
-    def is_(self, value: bool) -> Predicate[E]:
-        """The lint-clean boolean spelling; serializes to the identical ``eq`` node."""
-        return self._cmp("eq", value)
-
-    def in_(self, values: list[object]) -> Predicate[E]:
-        return self._membership("nestedIn", "in", values)
-
-    def not_in(self, values: list[object]) -> Predicate[E]:
-        return self._membership("nestedNotIn", "notIn", values)
-
-    def _membership(
-        self, nested_op: NestedMembershipOp, scalar_op: MembershipOp, values: list[object]
-    ) -> Predicate[E]:
-        literals = tuple(self._literal(value) for value in values)
-        if self._path:
-            return Predicate(NestedMembership(op=nested_op, path=self._dotted(), values=literals))
-        return Predicate(Membership(op=scalar_op, attr=str(self.ref), values=literals))
-
-    def between(self, lower: object, upper: object) -> Predicate[E]:
-        lower_literal = self._literal(lower)
-        upper_literal = self._literal(upper)
-        if self._path:
-            return Predicate(
-                NestedRange(path=self._dotted(), lower=lower_literal, upper=upper_literal)
-            )
-        return Predicate(Between(attr=str(self.ref), lower=lower_literal, upper=upper_literal))
-
-    def _literal(self, value: object) -> Scalar:
+    def _operand_type(self) -> NeutralType | None:
         member = self._resolved_scalar_member()
-        return _native_literal(self._dotted(), None if member is None else member.type, value)
+        return None if member is None else member.type
+
+    def _subject(self) -> OperationSubject:
+        if self._path:
+            return PathSubject(self._dotted())
+        return AttributeSubject(str(self.ref))
 
     def _require_scalar_member(self) -> AttributeMetadata | ValueObjectAttributeMetadata:
         member = self._resolved_scalar_member()
@@ -528,15 +869,11 @@ class AttributeExpr[E, T]:
 
     def is_null(self) -> Predicate[E]:
         self._reject_non_nullable_null_check()
-        if self._path:
-            return Predicate(NestedNullCheck(op="nestedIsNull", path=self._dotted()))
-        return Predicate(NullCheck(op="isNull", attr=str(self.ref)))
+        return self._null_test("isNull")
 
     def is_not_null(self) -> Predicate[E]:
         self._reject_non_nullable_null_check()
-        if self._path:
-            return Predicate(NestedNullCheck(op="nestedIsNotNull", path=self._dotted()))
-        return Predicate(NullCheck(op="isNotNull", attr=str(self.ref)))
+        return self._null_test("isNotNull")
 
     def _reject_non_nullable_null_check(self) -> None:
         member = self._require_scalar_member()
@@ -552,53 +889,15 @@ class AttributeExpr[E, T]:
 
     def exists(self, *predicates: Predicate[Any]) -> Predicate[E]:
         """The value-object member is present/non-empty (optionally matching
-        ``predicates``, same-element composed): ``nestedExists`` over this
-        value-object-terminated path. Zero arguments emit the bare presence
-        test; the interior predicates are built from the value object's own
-        element-scoped attributes, never re-prefixed."""
-        return Predicate(NestedExists(path=self._dotted(), where=conjoin(predicates)))
+        ``predicates``, same-element composed) over this value-object-terminated
+        path. Zero arguments author the bare presence test; the interior
+        predicates are built from the value object's own element-scoped
+        attributes, never re-prefixed."""
+        return Predicate(AuthoredQuantifier("any", self._dotted(), conjoin(predicates)))
 
     def not_exists(self, *predicates: Predicate[Any]) -> Predicate[E]:
-        """The complement of :meth:`exists` — ``nestedNotExists``."""
-        return Predicate(NestedNotExists(path=self._dotted(), where=conjoin(predicates)))
-
-    def _string(self, op: StringOp, value: str, case_insensitive: bool) -> Predicate[E]:
-        # The fluent surface authors the canonical minimal form: an unset flag
-        # omits `caseInsensitive` (None), a set flag emits `true`. It never
-        # authors an explicit `false` — that only arises from deserializing a
-        # document that spelled it out (round-trip fidelity lives in the serde).
-        member = self._require_scalar_member()
-        if not isinstance(member.type, String):
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=f"{self._dotted()}: string operations require a String leaf",
-            )
-        flag = True if case_insensitive else None
-        if self._path:
-            return Predicate(
-                NestedStringMatch(
-                    op=_NESTED_STRINGS[op],
-                    path=self._dotted(),
-                    value=value,
-                    case_insensitive=flag,
-                )
-            )
-        return Predicate(StringMatch(op=op, attr=str(self.ref), value=value, case_insensitive=flag))
-
-    def like(self, value: str, *, case_insensitive: bool = False) -> Predicate[E]:
-        return self._string("like", value, case_insensitive)
-
-    def not_like(self, value: str, *, case_insensitive: bool = False) -> Predicate[E]:
-        return self._string("notLike", value, case_insensitive)
-
-    def starts_with(self, value: str, *, case_insensitive: bool = False) -> Predicate[E]:
-        return self._string("startsWith", value, case_insensitive)
-
-    def ends_with(self, value: str, *, case_insensitive: bool = False) -> Predicate[E]:
-        return self._string("endsWith", value, case_insensitive)
-
-    def contains(self, value: str, *, case_insensitive: bool = False) -> Predicate[E]:
-        return self._string("contains", value, case_insensitive)
+        """The complement of :meth:`exists`."""
+        return Predicate(AuthoredQuantifier("none", self._dotted(), conjoin(predicates)))
 
     def asc(self) -> SortKey[E]:
         """An ascending order-by key over this attribute.
@@ -627,9 +926,9 @@ class AttributeExpr[E, T]:
 
         The value parameter is the member's own declared type, unlike a
         comparison's: an assignment's value genuinely IS a member value rather
-        than a wire literal. A raw document a Value Object member equally accepts
-        is what that narrowing costs — a spelling the rules still judge and the
-        parameter no longer admits.
+        than an operand the developer-input policy admits. A raw document a Value
+        Object member equally accepts is what that narrowing costs — a spelling
+        the rules still judge and the parameter no longer admits.
         """
         if self._path:
             raise EditError([self._nested_path_violation()]) from None
@@ -701,9 +1000,6 @@ class AttributeExpr[E, T]:
         )
         if violation is not None:
             raise EditError([violation]) from None
-
-    def __bool__(self) -> bool:
-        raise TypeError(_BOOL_HINT)
 
     def __hash__(self) -> int:  # pragma: no cover - expressions are not dict keys
         return hash((self._entity, self._head, self._path))
@@ -781,7 +1077,7 @@ def typed_authoring_leaf(leaf: Leaf, value: object, _path: str) -> tuple[object,
     return managed, matches_neutral_type(managed, neutral_type)
 
 
-class ElementAttributeExpr[V, T]:
+class ElementAttributeExpr[V, T](_ScalarAuthoring[V]):
     """A Value Object element-scoped attribute expression with resolved leaf facts."""
 
     __slots__ = ("_path", "_shape")
@@ -801,6 +1097,15 @@ class ElementAttributeExpr[V, T]:
 
     def _dotted(self) -> str:
         return ".".join(self._path)
+
+    def _described(self) -> str:
+        return self._dotted()
+
+    def _operand_type(self) -> NeutralType | None:
+        return None if self._shape is None else self._leaf().type
+
+    def _subject(self) -> OperationSubject:
+        return PathSubject(self._dotted())
 
     def _leaf(self) -> ValueObjectAttributeDeclaration:
         container = self._shape
@@ -830,100 +1135,13 @@ class ElementAttributeExpr[V, T]:
             )
         return _single_scalar(self._dotted(), leaf)
 
-    def _literal(self, value: object) -> Scalar:
-        neutral_type = None if self._shape is None else self._leaf().type
-        return _native_literal(self._dotted(), neutral_type, value)
-
-    def _cmp(self, kind: str, value: object) -> Predicate[V]:
-        return Predicate(
-            NestedComparison(op=_NESTED_CMP[kind], path=self._dotted(), value=self._literal(value))
-        )
-
-    def __eq__(self, other: object) -> Predicate[V]:  # type: ignore[override]
-        return self._cmp("eq", other)
-
-    def __ne__(self, other: object) -> Predicate[V]:  # type: ignore[override]
-        return self._cmp("ne", other)
-
-    def __gt__(self, other: object) -> Predicate[V]:
-        return self._cmp("gt", other)
-
-    def __ge__(self, other: object) -> Predicate[V]:
-        return self._cmp("ge", other)
-
-    def __lt__(self, other: object) -> Predicate[V]:
-        return self._cmp("lt", other)
-
-    def __le__(self, other: object) -> Predicate[V]:
-        return self._cmp("le", other)
-
-    def is_(self, value: bool) -> Predicate[V]:
-        return self._cmp("eq", value)
-
-    def in_(self, values: list[object]) -> Predicate[V]:
-        return Predicate(
-            NestedMembership(
-                op="nestedIn",
-                path=self._dotted(),
-                values=tuple(self._literal(value) for value in values),
-            )
-        )
-
-    def not_in(self, values: list[object]) -> Predicate[V]:
-        return Predicate(
-            NestedMembership(
-                op="nestedNotIn",
-                path=self._dotted(),
-                values=tuple(self._literal(value) for value in values),
-            )
-        )
-
-    def between(self, lower: object, upper: object) -> Predicate[V]:
-        return Predicate(
-            NestedRange(
-                path=self._dotted(),
-                lower=self._literal(lower),
-                upper=self._literal(upper),
-            )
-        )
-
-    def _string(self, op: StringOp, value: str, case_insensitive: bool) -> Predicate[V]:
-        if not isinstance(self._leaf().type, String):
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=f"{self._dotted()}: string operations require a String leaf",
-            )
-        return Predicate(
-            NestedStringMatch(
-                op=_NESTED_STRINGS[op],
-                path=self._dotted(),
-                value=value,
-                case_insensitive=True if case_insensitive else None,
-            )
-        )
-
-    def like(self, value: str, *, case_insensitive: bool = False) -> Predicate[V]:
-        return self._string("like", value, case_insensitive)
-
-    def not_like(self, value: str, *, case_insensitive: bool = False) -> Predicate[V]:
-        return self._string("notLike", value, case_insensitive)
-
-    def starts_with(self, value: str, *, case_insensitive: bool = False) -> Predicate[V]:
-        return self._string("startsWith", value, case_insensitive)
-
-    def ends_with(self, value: str, *, case_insensitive: bool = False) -> Predicate[V]:
-        return self._string("endsWith", value, case_insensitive)
-
-    def contains(self, value: str, *, case_insensitive: bool = False) -> Predicate[V]:
-        return self._string("contains", value, case_insensitive)
-
     def is_null(self) -> Predicate[V]:
         self._reject_non_nullable_null_check()
-        return Predicate(NestedNullCheck(op="nestedIsNull", path=self._dotted()))
+        return self._null_test("isNull")
 
     def is_not_null(self) -> Predicate[V]:
         self._reject_non_nullable_null_check()
-        return Predicate(NestedNullCheck(op="nestedIsNotNull", path=self._dotted()))
+        return self._null_test("isNotNull")
 
     def _reject_non_nullable_null_check(self) -> None:
         if self._leaf().nullable:
@@ -932,9 +1150,6 @@ class ElementAttributeExpr[V, T]:
             code="query-expression-invalid",
             message=f"{self._dotted()}: null checks require a nullable scalar leaf",
         )
-
-    def __bool__(self) -> bool:
-        raise TypeError(_BOOL_HINT)
 
     def __hash__(self) -> int:
         return hash((self._path, self._shape))
@@ -1110,7 +1325,7 @@ class RelationshipPath[E, R]:
 
     def exists(self, *predicates: Predicate[R]) -> Predicate[Any]:
         """The single-hop relationship quantifier: ``>= 1`` related row
-        (optionally matching ``predicates``), serializing to ``exists``.
+        (optionally matching ``predicates``).
 
         The interior predicates address what the hop points at — the position the
         validator threads into this node — so they carry the hop's target rather
@@ -1123,11 +1338,11 @@ class RelationshipPath[E, R]:
         include-source rule is stated with. A quantifier naming another position's
         relationship keeps its preflight rejection.
         """
-        return Predicate(Exists(rel=self._single_hop_ref(), op=conjoin(predicates)))
+        return Predicate(AuthoredSemiJoin(self._single_hop_ref(), False, conjoin(predicates)))
 
     def not_exists(self, *predicates: Predicate[R]) -> Predicate[Any]:
-        """The complement of :meth:`exists` — ``notExists``."""
-        return Predicate(NotExists(rel=self._single_hop_ref(), op=conjoin(predicates)))
+        """The complement of :meth:`exists`."""
+        return Predicate(AuthoredSemiJoin(self._single_hop_ref(), True, conjoin(predicates)))
 
     def _single_hop_ref(self) -> str:
         if len(self.segments) != 1:

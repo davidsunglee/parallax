@@ -11,6 +11,7 @@ from parallax.core.deep_fetch import ResolvedEntityQuery
 from parallax.core.dialect import LockMode
 from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._model import ClassIndex
 from parallax.core.execution._family import entity_layout
 from parallax.core.execution._keyed_writes import (
     KeyedInsertSource,
@@ -23,6 +24,7 @@ from parallax.core.execution._options import OMITTED, DatabaseOptions, Omitted
 from parallax.core.execution._publication import SelectedReadModel, SelectedWriteModel
 from parallax.core.execution._read_policy import (
     ReadInputs,
+    ReadQuery,
     read_graph,
     read_page,
     read_rows,
@@ -212,6 +214,12 @@ class Attempt:
         """The Entity Row Codec the adopted selection derives write rows through."""
         return self._write.codec
 
+    @property
+    def classes(self) -> ClassIndex | None:
+        """The class index the adopted write projection borrows, which Typed
+        predicate writes resolve Python member names through."""
+        return self._write.classes
+
     def joined_invocation(self) -> JoinedInvocationActivity:
         """The activity a joining invocation runs inside, as a child of this attempt."""
         return self._activity.joined_invocation()
@@ -223,7 +231,7 @@ class Attempt:
         query: Q,
         /,
         *,
-        convert_query: Callable[[Q], ObjectQueryNode],
+        convert_query: Callable[[Q], ReadQuery],
         build_publication: Callable[[SelectedReadModel], Publication[ReadOrigin, Eager]],
     ) -> Eager:
         """One participating whole-result read, published through
@@ -231,8 +239,8 @@ class Attempt:
 
         Re-entry is refused first, then the publication is built over this
         attempt's selection — where a selection that cannot publish the
-        requested representation refuses — before the query is lowered, before
-        the gate, and before the force-flush.
+        requested representation refuses — before the query is captured, before
+        the gate resolves it under that selection, and before the force-flush.
         """
         refuse_reentry(self._lifecycle)
         publication = build_publication(self._read)
@@ -244,21 +252,21 @@ class Attempt:
         batch_size: int,
         /,
         *,
-        convert_query: Callable[[Q], ObjectQueryNode],
+        convert_query: Callable[[Q], ReadQuery],
         build_publication: Callable[[SelectedReadModel], P],
         on_page_start: Callable[[deep_fetch.IncludeTree], None],
         on_release: Callable[[], None],
-    ) -> StreamDelivery[Attempt, P]:
+    ) -> StreamDelivery[Attempt, ReadQuery, P]:
         """One participating streamed delivery, constructed and not yet entered.
 
-        Re-entry is refused, then the query is lowered and the page size judged;
+        Re-entry is refused, then the query is captured and the page size judged;
         nothing model-dependent happens before the delivery is entered.
         """
         refuse_reentry(self._lifecycle)
-        node = convert_query(query)
+        read_query = convert_query(query)
         check_batch_size(batch_size)
         return StreamDelivery(
-            node,
+            read_query,
             self,
             build_publication,
             batch_size=batch_size,
@@ -275,8 +283,8 @@ class Attempt:
         """The read a participating delivery is begun as: this attempt itself."""
         return self
 
-    def resolved(self, read: Attempt, node: ObjectQueryNode, /) -> ResolvedObjectQuery:
-        return resolved(read, node)
+    def resolved(self, read: Attempt, query: ReadQuery, /) -> ResolvedObjectQuery:
+        return resolved(read, query)
 
     def page(
         self,

@@ -665,6 +665,15 @@ repeating validation. Programmatic fluent predicates instead use
 `m-core.coerceNeutralInput` followed by managed membership and retain their
 language-owned type mismatch behavior; they do not expose Wire failure names.
 
+A language frontend may hand elaboration its own authored predicate rather than
+a canonical node. An adapter for that input resolves each subject to its
+canonical spelling and supplies managed operands, and elaboration applies the
+same subject, operator, quantifier, and narrowing rules to it at the same stage,
+so both inputs converge on one `ResolvedPredicate`. An operand the frontend
+already prepared under a declared neutral type is adopted only where the resolved
+member declares that identical type, Decimal precision and scale and float width
+included; it is never normalized again for another type.
+
 ## Forward map of the rest of the algebra
 
 For orientation, this schema revision leaves membership `in(subquery)` out of the

@@ -3,10 +3,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import ClassVar, Final, Literal, Self
+from typing import ClassVar, Final, Literal, Protocol, Self
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.predicate import (
+    PredicateInterpretation,
     PredicateNode,
     QueryDefinitionError,
     SubtypeSelection,
@@ -22,10 +23,12 @@ __all__ = [
     "History",
     "IncludePath",
     "IncludeSegment",
+    "InterpretedQuery",
     "Latest",
-    "MutationSelection",
     "ObjectQueryNode",
     "OrderKey",
+    "QueryClauses",
+    "QueryInput",
     "TemporalDimension",
     "TemporalDimensionConstant",
     "TemporalSelection",
@@ -252,17 +255,37 @@ class ObjectQueryNode:
     includes: tuple[IncludePath, ...] = field(default_factory=tuple)
 
 
+class QueryClauses(Protocol):
+    """The clauses of an Object Query other than its predicate, read-only."""
+
+    @property
+    def target(self) -> EntityIdentity: ...
+
+    @property
+    def narrow_to(self) -> SubtypeSelection | None: ...
+
+    @property
+    def temporal(self) -> Mapping[TemporalDimension, TemporalSelection]: ...
+
+    @property
+    def order_by(self) -> tuple[OrderKey, ...]: ...
+
+    @property
+    def limit(self) -> int | None: ...
+
+    @property
+    def includes(self) -> tuple[IncludePath, ...]: ...
+
+
 @dataclass(frozen=True, slots=True)
-class MutationSelection:
-    """What a predicate-selected write reads off an Object Query.
+class InterpretedQuery:
+    """An Object Query whose predicate an adapter interprets rather than a
+    canonical node: the ``clauses`` beside the captured ``predicate``."""
 
-    The ephemeral normalization of a mutation-compatible query: the position to
-    write and the predicate that selects within it, and nothing else. It is
-    neither exported nor serialized, and it is NOT
-    ``parallax.core.unit_work.PredicateSelection`` — the write boundary builds
-    that canonical value from these two facts, so an Object Query never reaches
-    the unit of work, the planner, or SQL lowering.
-    """
+    clauses: QueryClauses
+    predicate: PredicateInterpretation
 
-    target: EntityIdentity
-    predicate: PredicateNode
+
+type QueryInput = ObjectQueryNode | InterpretedQuery
+"""What Object Query validation consumes: a canonical query, whose predicate it
+validates, or an interpreted one, whose adapter it invokes."""

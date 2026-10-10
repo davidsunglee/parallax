@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
@@ -42,6 +43,7 @@ from parallax.core import (
     Entity,
     Int32,
     ObjectQuery,
+    Predicate,
     QueryDefinitionError,
     TxTemporal,
     ValueObject,
@@ -64,19 +66,25 @@ from parallax.core.document_codec import (
     PreparedEffectiveChange,
     prepare_effective_change,
 )
+from parallax.core.entity._authored_resolver import typed_interpretation
 from parallax.core.entity._construction_input import ABSENT
+from parallax.core.entity._expressions import UnfinishedOperation
 from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.entity._model import model_of
-from parallax.core.execution import QueryTargetError
+from parallax.core.entity._model import DomainModel as _Fixed
+from parallax.core.entity._model import class_index, model_of
+from parallax.core.execution import QueryTargetError, ServingModel, prepare_model
 from parallax.core.execution import _attempt as attempt_module
 from parallax.core.execution._family import comparison_shape
+from parallax.core.execution._publication import write_projection
 from parallax.core.execution_lifecycle import (
     DirectFailure,
     ExecutionEvent,
     ReadFailed,
     ReadFinished,
 )
+from parallax.core.metamodel import UnresolvedEntityDeclaration
 from parallax.core.predicate import ModelRejectedError
+from parallax.core.predicate._interpretation import COMPARE
 from parallax.core.read_delivery import StoredDataDecodingError
 from parallax.core.read_delivery._page import Page
 from parallax.core.sql_gen._compile import CompiledRead
@@ -105,6 +113,7 @@ from parallax.snapshot import (
     Transaction,
     connect,
 )
+from parallax.snapshot._handle import _typed_writes as typed_writes
 from parallax.snapshot._publication._root import RootView
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
@@ -631,6 +640,131 @@ def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
         own_root(
             Database.connect(port, PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
+    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
+
+
+@dataclass(frozen=True, slots=True)
+class _ClassSource:
+    entities: tuple[UnresolvedEntityDeclaration, ...]
+
+
+def _classless(model: DomainModel) -> DomainModel:
+    """``model``'s Entities formed again with no Entity Class index, as a
+    descriptor-backed model forms them."""
+    classes = class_index(model)
+    assert classes is not None
+    return _Fixed._from_unresolved(  # pyright: ignore[reportPrivateUsage] - the model's private descriptor-frontend seam
+        _ClassSource(tuple(cast("UnresolvedEntityDeclaration", cls) for cls in classes.by_class))
+    )
+
+
+def _unfinished(entity: type[Entity], *names: str, operands: tuple[object, ...]) -> Predicate[Any]:
+    return Predicate(UnfinishedOperation(entity.identity, names, COMPARE["eq"], operands))
+
+
+def _amended(model: DomainModel | ServingModel, predicate: Predicate[Any]) -> ScriptedAdapter:
+    port = ScriptedAdapter(Transact(Write()))
+
+    def fn(tx: Transaction) -> None:
+        tx.amend_where(mm.Person.where(predicate), mm.Person.name.set("Ada"))
+
+    own_root(
+        Database.connect(port, model, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
+    return port
+
+
+def test_a_typed_predicate_write_binds_known_references_with_no_class_index() -> None:
+    assert _amended(_classless(PERSON), mm.Person.id == 1).calls == (
+        _amended(PERSON, mm.Person.id == 1).calls
+    )
+
+
+def test_a_typed_predicate_write_resolves_python_names_through_the_attempts_classes() -> None:
+    assert _amended(PERSON, _unfinished(mm.Person, "id", operands=(1,))).calls == (
+        _amended(PERSON, mm.Person.id == 1).calls
+    )
+
+
+def test_a_typed_predicate_write_binds_against_the_adopted_write_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A selection published after the attempt adopted its own does not serve the
+    # attempt's predicate binding: the write borrows the attempt's write
+    # projection, never the serving model's current one or a read projection.
+    adopted = prepare_model(PERSON, edition="adopted")
+    later = prepare_model(DomainModel(*cast("Any", class_index(PERSON)).by_class), edition="later")
+    serving = ServingModel(adopted)
+    bound: list[tuple[object, object]] = []
+    bind = typed_interpretation
+
+    def recording(predicate: Any, model: Any, classes: Any) -> Any:
+        bound.append((model, classes))
+        return bind(predicate, model, classes)
+
+    monkeypatch.setattr(typed_writes, "typed_interpretation", recording)
+    port = ScriptedAdapter(Transact(Write()))
+
+    def fn(tx: Transaction) -> None:
+        serving.publish(later, expected=adopted)
+        tx.amend_where(
+            mm.Person.where(_unfinished(mm.Person, "id", operands=(1,))),
+            mm.Person.name.set("Ada"),
+        )
+
+    own_root(
+        Database.connect(port, serving, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
+    adopted_write = write_projection(adopted)
+    assert bound == [(adopted_write.model.meta, adopted_write.classes)]
+    assert adopted_write.classes is not write_projection(later).classes
+
+
+def test_a_typed_predicate_write_over_python_names_is_refused_by_a_classless_model() -> None:
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: Transaction) -> None:
+        tx.amend_where(
+            mm.Person.where(_unfinished(mm.Person, "id", operands=(1,))),
+            mm.Person.name.set("Ada"),
+        )
+
+    with raises_contextualized(QueryDefinitionError, match="through Wire instead"):
+        own_root(
+            Database.connect(port, _classless(PERSON), clock=FixedClock(FIXED))
+        ).using_database_login().transact(fn)
+    assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
+
+
+def test_the_window_precedes_binding_the_typed_predicate() -> None:
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: Transaction) -> None:
+        tx.amend_where(
+            WherePosition.where(_unfinished(WherePosition, "missing", operands=(1,))),
+            WherePosition.value.set(Decimal("1.00")),
+        )
+
+    with raises_contextualized(ValueError, match="requires valid_from"):
+        own_root(
+            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        ).using_database_login().transact(fn)
+
+
+def test_binding_the_typed_predicate_precedes_the_family_refusal() -> None:
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: Transaction) -> None:
+        tx.amend_where(
+            im.CardPayment.where(_unfinished(im.CardPayment, "missing", operands=(1,))),
+            im.CardPayment.card_network.set("visa"),
+        )
+
+    with raises_contextualized(QueryDefinitionError, match="declares no member") as caught:
+        own_root(
+            Database.connect(port, PAYMENT, clock=FixedClock(FIXED))
+        ).using_database_login().transact(fn)
+    assert caught.value.code == "query-path-invalid"
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
