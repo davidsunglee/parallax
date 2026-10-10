@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 
 import cost_report
+import feature_boundary_overhead as feature_report
 from cost_report import (
     ALL_SHARDS,
     BASE,
@@ -612,11 +613,57 @@ def test_a_failed_required_head_exits_non_zero_after_writing_every_shard(
             assert len(portfolio["members"]) == 1
 
     def optional_failure(member: Member) -> tuple[int, str, str] | None:
-        return None if member.required else (9, "", "optional report unavailable")
+        return None if member.required_for_capture else (9, "", "optional report unavailable")
 
     run, _invoked = _member_runner(contract, envelopes, failing=optional_failure)
     monkeypatch.setattr(cost_report, "run_member", run)
     assert cost_report.main(["--shard", ALL_SHARDS, "--out", str(tmp_path / "optional")]) == 0
+
+
+@pytest.mark.parametrize("sharded", [False, True], ids=["sequential", "sharded"])
+@pytest.mark.parametrize(
+    "failure", ["child-error", "incomplete-matrix", "invalid-sample", "inconsistent-sampling"]
+)
+def test_fresh_captures_require_valid_feature_boundary_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    contract: BudgetContract,
+    envelopes: dict[str, dict[str, Any]],
+    sharded: bool,
+    failure: str,
+) -> None:
+    feature = json.loads(json.dumps(envelopes[feature_report.SUBJECT]))
+    if failure == "incomplete-matrix":
+        feature["readings"].pop()
+    elif failure == "invalid-sample":
+        feature["readings"][0]["samples"][0] = -1
+    elif failure == "inconsistent-sampling":
+        feature["readings"][0]["samples"].pop()
+
+    def failing(member: Member) -> tuple[int, str, str] | None:
+        if member.subject != feature_report.SUBJECT:
+            return None
+        return (3, "", "child failed") if failure == "child-error" else (0, json.dumps(feature), "")
+
+    run, invoked = _member_runner(contract, envelopes, failing=failing)
+    monkeypatch.setattr(cost_report, "run_member", run)
+    monkeypatch.setattr(cost_report, "preflight", lambda: None)
+    arguments = ["--out", str(tmp_path)]
+    if sharded:
+        arguments += ["--shard", ALL_SHARDS]
+    assert cost_report.main(arguments) == 1
+    capsys.readouterr()
+    assert [subject for subject, _ in invoked] == [
+        item.subject for item in (SHARDS if sharded else MEMBERS)
+    ]
+    destination = tmp_path / HEAD / feature_report.SUBJECT if sharded else tmp_path
+    portfolio = json.loads((destination / "portfolio.json").read_text(encoding="utf-8"))
+    assert feature_report.SUBJECT not in [member["subject"] for member in portfolio["members"]]
+    (recorded_failure,) = portfolio["failures"]
+    assert recorded_failure["recipe"] == "python-report-feature-boundary"
+    assert recorded_failure["required"] is True
+    assert recorded_failure["message"]
 
 
 def test_each_invocation_pairs_its_base_and_head_under_a_fresh_id(

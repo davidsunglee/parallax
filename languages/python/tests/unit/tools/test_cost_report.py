@@ -320,6 +320,8 @@ def test_outside_budget_outcomes_do_not_fail_collection() -> None:
             return (0, json.dumps(snapshot), "")
         if member.subject == write_report.SUBJECT:
             return (0, json.dumps(write), "")
+        if member.subject == feature_report.SUBJECT:
+            return (0, json.dumps(_optional_document(member)), "")
         return (9, "", "optional report unavailable")
 
     collection = collect(run)

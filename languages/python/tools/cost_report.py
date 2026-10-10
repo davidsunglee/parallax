@@ -176,6 +176,10 @@ class Member:
     subject: str
     required: bool = False
 
+    @property
+    def required_for_capture(self) -> bool:
+        return self.required or self.subject == FEATURE_SUBJECT
+
 
 MEMBERS: Final = (
     Member(
@@ -304,7 +308,10 @@ class Collection:
 
     @property
     def failed_required(self) -> bool:
-        return any(result.member.required and result.envelope is None for result in self.results)
+        return any(
+            result.member.required_for_capture and result.envelope is None
+            for result in self.results
+        )
 
 
 type Runner = Callable[[Member, Sequence[str]], tuple[int, str, str]]
@@ -806,7 +813,7 @@ def portfolio_document(results: Sequence[MemberResult]) -> dict[str, object]:
         "failures": [
             {
                 "recipe": result.member.recipe,
-                "required": result.member.required,
+                "required": result.member.required_for_capture,
                 "message": result.failure,
             }
             for result in results
@@ -1938,7 +1945,7 @@ class ShardResult:
 
     @property
     def failed_required(self) -> bool:
-        return self.shard.member.required and self.result.envelope is None
+        return self.shard.member.required_for_capture and self.result.envelope is None
 
 
 def collect_shard(
