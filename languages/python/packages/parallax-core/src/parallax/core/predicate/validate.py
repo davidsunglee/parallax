@@ -750,30 +750,36 @@ def _applicable_ancestor_member(
     model: Metamodel, position: PositionScope, name: str
 ) -> _Member | None:
     """The member ``name`` declared by an Entity applicable at ``position``,
-    found without scanning the model; ``None`` sends the caller to its
-    family-wide scan, which owns refusals.
+    read from one concrete's precomputed applicable members; ``None`` sends the
+    caller to its family-wide scan, which owns refusals.
 
     An applicable Entity's effective set covers every concrete in the position,
     so it lies on any one of those concretes' ancestry, and an ancestry never
     declares one name twice.
     """
+    families = inheritance.view(model)
     concrete = next(iter(position.effective), None)
-    view = None if concrete is None else inheritance.view(model).entity(_identity_of(concrete))
-    for identity in () if view is None else view.ancestry:
-        candidate = cast("EntityMetadata", model.entity(identity))
-        local: AttributeMetadata | ValueObjectMetadata | RelationshipDeclaration | None = (
-            candidate.attribute(name)
-            or candidate.value_object(name)
-            or candidate.relationship(name)
-        )
-        if local is None:
-            continue
-        if not position.effective <= effective_set(model, candidate):
-            return None
-        if isinstance(local, DefiningRelationshipDeclaration | ReverseRelationshipDeclaration):
-            return _relationship(model, local)
-        return local
-    return None
+    view = None if concrete is None else families.entity(_identity_of(concrete))
+    local: AttributeMetadata | ValueObjectMetadata | RelationshipDeclaration | None = (
+        None
+        if view is None
+        else view.applicable_attribute(name)
+        or view.applicable_value_object(name)
+        or next((d for d in view.applicable_relationships if d.identity.name == name), None)
+    )
+    if local is None:
+        return None
+    owner = families.entity(
+        local.identity.source_entity
+        if isinstance(local, DefiningRelationshipDeclaration | ReverseRelationshipDeclaration)
+        else local.identity.entity
+    )
+    owner_effective = () if owner is None else owner.concrete_subtypes
+    if not position.effective <= {identity.canonical for identity in owner_effective}:
+        return None
+    if isinstance(local, DefiningRelationshipDeclaration | ReverseRelationshipDeclaration):
+        return _relationship(model, local)
+    return local
 
 
 def _identity_of(canonical: str) -> EntityIdentity:
