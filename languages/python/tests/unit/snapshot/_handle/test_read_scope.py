@@ -38,6 +38,7 @@ from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._model import class_index
 from parallax.core.execution import DatabaseOptions, QueryTargetError
 from parallax.core.execution import _read_policy as read_policy_module
 from parallax.core.execution._publication import SelectedReadModel
@@ -58,7 +59,7 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.object_query._fluent import object_query_node
+from parallax.core.object_query._fluent import object_query_node, typed_read_query
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.object_query.serde import ObjectQueryError
 from parallax.core.read_delivery import RowsResult
@@ -81,7 +82,7 @@ from parallax.snapshot._handle._read import typed_publication_for, wire_publicat
 from parallax.snapshot._handle._stream import SnapshotStream
 from parallax.snapshot._handle._wire import (
     WireQuery,
-    wire_query_node,
+    wire_read_query,
 )
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ReadCall, RefusingAdapter, ScriptedAdapter
@@ -103,6 +104,7 @@ def _selection(model: Any = ACCOUNT, *, materializing: bool = True) -> SelectedR
         edition="test",
         model=cataloged,
         construction=graph_construction_for(model) if materializing else None,
+        classes=class_index(model),
     )
 
 
@@ -385,12 +387,12 @@ def _recorded_pages(patch: pytest.MonkeyPatch) -> list[_PageRead]:
 
 def _find(scope: ExecutionScope, query: Any) -> Snapshot[Any]:
     return scope.read(
-        query, convert_query=object_query_node, build_publication=typed_publication_for
+        query, convert_query=typed_read_query, build_publication=typed_publication_for
     )
 
 
 def _wire_find(scope: ExecutionScope, query: WireQuery) -> Snapshot[Any]:
-    return scope.read(query, convert_query=wire_query_node, build_publication=wire_publication_for)
+    return scope.read(query, convert_query=wire_read_query, build_publication=wire_publication_for)
 
 
 def _stream(scope: ExecutionScope, query: Any, batch_size: int) -> SnapshotStream[Any]:
@@ -398,7 +400,7 @@ def _stream(scope: ExecutionScope, query: Any, batch_size: int) -> SnapshotStrea
         scope,
         query,
         batch_size,
-        convert_query=object_query_node,
+        convert_query=typed_read_query,
         build_publication=typed_publication_for,
     )
 
@@ -408,7 +410,7 @@ def _wire_stream(scope: ExecutionScope, query: WireQuery, batch_size: int) -> Sn
         scope,
         query,
         batch_size,
-        convert_query=wire_query_node,
+        convert_query=wire_read_query,
         build_publication=wire_publication_for,
     )
 

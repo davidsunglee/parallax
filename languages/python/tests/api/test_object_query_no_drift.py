@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -19,6 +20,7 @@ from parallax.conformance.animal_owner import ANIMAL_MODEL as ANIMAL_OWNER_MODEL
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.edit_models import Note
 from parallax.conformance.graph_models import Policy
+from parallax.conformance.models import load_domain_models
 from parallax.conformance.read_models import Animal as AnimalRoot
 from parallax.conformance.read_models import (
     Cat,
@@ -56,7 +58,7 @@ from tests._support import inheritance_models as im
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
 from tests._support.corpus import case_document
-from tests._support.query_probes import canonical_document
+from tests._support.query_probes import canonical_document, typed_resolved
 
 # case id -> the idiomatic query that must canonicalize to the case's own document.
 BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
@@ -173,6 +175,7 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
 }
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
+_DESCRIPTOR_MODELS = load_domain_models()
 
 
 @pytest.mark.parametrize("case_id", sorted(BUILDERS), ids=sorted(BUILDERS))
@@ -185,6 +188,18 @@ def test_the_idiomatic_query_builds_the_corpus_object_query(case_id: str) -> Non
         else when["objectQuery"]
     )
     assert canonical_document(BUILDERS[case_id]()) == expected
+
+
+@pytest.mark.parametrize("case_id", sorted(BUILDERS), ids=sorted(BUILDERS))
+def test_the_idiomatic_query_resolves_as_its_canonical_query_does(case_id: str) -> None:
+    # The corpus model forms from its descriptor, so it indexes no Entity Class:
+    # the Typed query resolves through its declared facts alone, adopting its
+    # prepared operands, and converges on the product the canonical query's
+    # decoded literals resolve to.
+    model = _DESCRIPTOR_MODELS[Path(_CASES[case_id].model).stem]
+    query = BUILDERS[case_id]()
+    canonical = preflight(object_query_node(query), model=model_of(model), form="graph")
+    assert typed_resolved(query, model) == canonical
 
 
 def test_expression_rejects_bool_misuse() -> None:
@@ -285,9 +300,12 @@ def test_serialized_only_rejections_fail_at_native_query_authoring(case_id: str)
 def test_the_idiomatic_query_rejects_the_corpus_rule_at_the_read_gate(case_id: str) -> None:
     expected_rule = case_document(_CASES[case_id])["then"]["rejectedRule"]
     query = REJECTED_BUILDERS[case_id]()
-    with pytest.raises(ModelRejectedError) as exc_info:
+    with pytest.raises(ModelRejectedError) as typed:
+        typed_resolved(query, REJECTED_MODELS[case_id])
+    assert typed.value.rule == expected_rule
+    with pytest.raises(ModelRejectedError) as canonical:
         preflight(object_query_node(query), model=model_of(REJECTED_MODELS[case_id]), form="graph")
-    assert exc_info.value.rule == expected_rule
+    assert canonical.value.rule == expected_rule
 
 
 def test_duplicate_subtype_selection_is_rejected_during_query_construction() -> None:

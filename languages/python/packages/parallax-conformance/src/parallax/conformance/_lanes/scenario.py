@@ -2384,7 +2384,9 @@ def _canonical_write_predicate(step: Mapping[str, object]) -> PredicateNode:
         case_document.canonical_predicate_doc(cast("Mapping[str, object]", step["write"]))
     )
     assert isinstance(instruction, PredicateWrite)  # the caller established this
-    return instruction.target.predicate
+    predicate = instruction.target.predicate
+    assert isinstance(predicate, PredicateNode)  # a deserialized instruction is canonical
+    return predicate
 
 
 def _run_materializing_pair(

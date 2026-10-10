@@ -1700,7 +1700,10 @@ def test_a_predicate_scoped_narrow_is_a_filter_and_is_accepted(
     )
     predicate_algebra.validate_predicate(
         next(e for e in _ANIMAL.entities if e.identity.name == "Person"),
-        cast("wi.PredicateWrite", instruction).target.predicate,
+        cast(
+            "predicate_algebra.PredicateNode",
+            cast("wi.PredicateWrite", instruction).target.predicate,
+        ),
         _ANIMAL,
     )
     wi.prepare_typed_write(instruction, _ANIMAL)  # must not raise
@@ -2297,3 +2300,12 @@ def test_a_neutral_insert_row_carries_its_framework_owned_cells() -> None:
         wi.prepare_wire_write(
             wi.KeyedWrite("insert", "Account", (row,)), _ACCOUNT, authored_members=row.keys()
         )
+
+
+def test_a_predicate_write_selecting_through_an_interpretation_has_no_canonical_document() -> None:
+    # The interpreted form is a frontend's captured predicate beside its adapter,
+    # not transport: only a canonical node has a write-instruction document.
+    interpretation = predicate_algebra.canonical_interpretation(predicate_algebra.All(), _ANIMAL)
+    instruction = wi.PredicateWrite("delete", wi.PredicateSelection("Person", interpretation))
+    with pytest.raises(wi.WriteInstructionError, match="no canonical write-instruction document"):
+        wi.serialize(instruction)

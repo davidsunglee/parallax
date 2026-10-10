@@ -44,6 +44,7 @@ from parallax.core.deep_fetch import IncludeTree
 from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import _layout as entity_layout
+from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution._concurrency import CONCURRENCY
@@ -61,7 +62,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.object_query._fluent import object_query_node
+from parallax.core.object_query._fluent import object_query_node, typed_read_query
 from parallax.core.predicate import All
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, PageBuilder, ViewSchema
@@ -69,7 +70,7 @@ from parallax.core.read_delivery._row_converter import bind
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import Database, ScopedDatabase, SnapshotConnectionError, WireEntity, connect
 from parallax.snapshot._handle._read import wire_publication
-from parallax.snapshot._handle._wire import WireDatabaseView, wire_query_node
+from parallax.snapshot._handle._wire import WireDatabaseView, wire_read_query
 from parallax.snapshot._publication import (
     _wire as wire_materialize,
 )
@@ -719,14 +720,19 @@ def test_a_published_value_is_the_type_its_construction_could_not_have_faked() -
 # --------------------------------------------------------------------------- #
 
 
-def test_every_accepted_query_spelling_lowers_to_one_canonical_node() -> None:
+def test_every_accepted_query_spelling_reaches_the_read_gate_in_its_own_policy() -> None:
     document = {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
     node = deserialize_query(document)
-    assert wire_query_node(node) is node
-    assert wire_query_node(document) == node
+    assert wire_read_query(node) is node
+    assert wire_read_query(document) == node
 
+    # The Typed value stays authored, so the gate resolves it under the Typed
+    # operand policy rather than decoding an encoded export of it.
     typed = Gadget.where(Gadget.id == 1)
-    assert wire_query_node(typed) == object_query_node(typed)
+    captured = wire_read_query(typed)
+    assert isinstance(captured, AuthoredQuery)
+    assert captured == typed_read_query(typed)
+    assert captured.canonical() == object_query_node(typed)
 
 
 class Gadget(Entity, table="gadget", namespace="parallax.compatibility"):

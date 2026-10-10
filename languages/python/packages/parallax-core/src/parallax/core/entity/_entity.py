@@ -28,6 +28,9 @@ from parallax.core.entity._edit import (
 from parallax.core.entity._errors import EditError, EditViolation, EntityDefinitionError
 from parallax.core.entity._expressions import (
     AllPredicate,
+    AuthoredConstant,
+    AuthoredNarrow,
+    AuthoredQuery,
     Predicate,
     conjoin,
     judged_edit_violation,
@@ -54,9 +57,8 @@ from parallax.core.metamodel import (
     UnresolvedRelationshipDeclaration,
     ValueObjectOccurrenceDeclaration,
 )
-from parallax.core.object_query import object_query
 from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.predicate import All, Narrow, PredicateNode, QueryDefinitionError
+from parallax.core.predicate import QueryDefinitionError
 from parallax.core.predicate._nodes import canonical_subtype_selection
 
 if TYPE_CHECKING:
@@ -109,7 +111,7 @@ class _All:
     __slots__ = ()
 
     def __get__[E](self, obj: None, owner: type[E], /) -> AllPredicate[E]:
-        return AllPredicate(All())
+        return AllPredicate()
 
 
 class EntityMeta(ModelMetaclass):
@@ -261,10 +263,10 @@ def build_object_query(
     predicate = conjoin(predicates)
     assert predicate is not None  # the empty argument list is refused above
     narrow_to = None
-    if isinstance(predicate, Narrow):
+    if isinstance(predicate, AuthoredNarrow):
         predicate, narrow_to = predicate.operand, predicate.to
     return ObjectQuery(
-        _node=object_query(target, predicate, narrow_to=narrow_to), _as_of_axes=as_of_axes
+        _query=AuthoredQuery(target, predicate, narrow_to=narrow_to), _as_of_axes=as_of_axes
     )
 
 
@@ -515,8 +517,8 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
                 code="query-path-invalid",
                 message="narrow alternatives must not repeat the same subtype",
             )
-        operand: PredicateNode = where.node if where is not None else All()
-        return Predicate(Narrow(to=canonical_subtype_selection(to), operand=operand))
+        operand = where.authored if where is not None else AuthoredConstant(truth=True)
+        return Predicate(AuthoredNarrow(to=canonical_subtype_selection(to), operand=operand))
 
     def edit(self, **changes: object) -> Self:
         """The one door to an Edited Copy.

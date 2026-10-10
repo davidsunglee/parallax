@@ -12,7 +12,7 @@ from parallax.core.execution._root import DatabaseRoot
 from parallax.core.execution._scope import ExecutionScope
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,
@@ -92,7 +92,7 @@ class ScopedDatabase:
         return cast(
             "Snapshot[S]",
             self._execution.read(
-                query, convert_query=object_query_node, build_publication=typed_publication_for
+                query, convert_query=typed_read_query, build_publication=typed_publication_for
             ),
         )
 
@@ -101,7 +101,7 @@ class ScopedDatabase:
             self._execution,
             query,
             batch_size,
-            convert_query=object_query_node,
+            convert_query=typed_read_query,
             build_publication=typed_publication_for,
         )
 

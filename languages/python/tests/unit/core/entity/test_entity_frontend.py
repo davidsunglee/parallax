@@ -73,6 +73,7 @@ from parallax.core.metamodel import Document as AcceptedDocument
 from parallax.core.object_query import IncludeSegment
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.predicate import Comparison, serialize
+from tests._support.query_probes import predicate_node
 
 
 class Customer(Entity, table="customer", namespace="sales"):
@@ -582,8 +583,8 @@ def test_class_level_member_access_seeds_predicate_nodes() -> None:
     assert isinstance(Order.id, AttributeExpr)
     predicate = Order.id == 1
     assert isinstance(predicate, Predicate)
-    assert isinstance(predicate.node, Comparison)
-    assert serialize(predicate.node) == {"eq": {"attr": "sales.Order.id", "value": 1}}
+    assert isinstance(predicate_node(predicate), Comparison)
+    assert serialize(predicate_node(predicate)) == {"eq": {"attr": "sales.Order.id", "value": 1}}
     path = Order.customer
     assert isinstance(path, RelationshipPath)
     # A relationship reference names its owner locally, as the wire does; the

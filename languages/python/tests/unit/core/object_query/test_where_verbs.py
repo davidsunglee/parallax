@@ -28,6 +28,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity import AttributeAssignment, AttributeExpr
+from parallax.core.entity._expressions import AuthoredConstant
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeLocation,
@@ -39,7 +40,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.object_query._fluent import mutation_selection
-from parallax.core.predicate import All
 from tests._support import mirrored_models as mm
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vom
@@ -284,11 +284,12 @@ def test_a_plain_predicate_query_is_mutation_compatible() -> None:
     query = vom.Customer.where(vom.Customer.name == "Ada")
     selection = mutation_selection(query)
     assert selection.target == vom.Customer.identity
-    assert selection.predicate == (vom.Customer.name == "Ada").node
+    assert selection.predicate == (vom.Customer.name == "Ada").authored
 
 
 def test_an_explicitly_unfiltered_query_is_mutation_compatible() -> None:
-    assert mutation_selection(vom.Customer.where(vom.Customer.all)).predicate == All()
+    selection = mutation_selection(vom.Customer.where(vom.Customer.all))
+    assert selection.predicate == AuthoredConstant(truth=True)
 
 
 def _refused(query: ObjectQuery[Any, Any], clause: str) -> None:

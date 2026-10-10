@@ -52,7 +52,7 @@ from parallax.core.predicate import All, Exists, ModelRejectedError, Narrow, Not
 from parallax.core.wire import encode_wire
 from tests._support import inheritance_models as im
 from tests._support import snapshot_models as sm
-from tests._support.query_probes import canonical_query
+from tests._support.query_probes import canonical_query, predicate_node
 
 # The animal family's model composes its own polymorphic owner alongside it, so
 # it is the composition every case here is measured against at the gate below.
@@ -336,19 +336,23 @@ def test_a_query_narrow_does_not_restrict_which_root_guards_are_legal() -> None:
 # --------------------------------------------------------------------------- #
 def test_any_with_no_predicates_is_a_bare_existence_test() -> None:
     predicate = sm.SnapOrder.items.exists()
-    assert predicate.node == Exists(rel="parallax.compatibility.SnapOrder.items", op=None)
+    assert predicate_node(predicate) == Exists(
+        rel="parallax.compatibility.SnapOrder.items", op=None
+    )
 
 
 def test_any_with_predicates_conjoins_the_interior() -> None:
     predicate = sm.SnapOrder.items.exists(sm.SnapOrderItem.sku == "A")
-    op = predicate.node
+    op = predicate_node(predicate)
     assert isinstance(op, Exists)
     assert op.rel == "parallax.compatibility.SnapOrder.items"
 
 
 def test_none_builds_not_exists() -> None:
     predicate = sm.SnapOrder.items.not_exists()
-    assert predicate.node == NotExists(rel="parallax.compatibility.SnapOrder.items", op=None)
+    assert predicate_node(predicate) == NotExists(
+        rel="parallax.compatibility.SnapOrder.items", op=None
+    )
 
 
 def test_any_none_on_a_multi_hop_path_is_rejected() -> None:
@@ -377,7 +381,7 @@ def test_narrow_inside_a_relationship_scope_must_name_the_target_exactly() -> No
 # --------------------------------------------------------------------------- #
 def test_narrow_constructor_builds_the_canonical_node() -> None:
     predicate = im.Document.narrow(im.Invoice, im.Receipt)
-    assert predicate.node == Narrow(
+    assert predicate_node(predicate) == Narrow(
         to=("parallax.compatibility.Invoice", "parallax.compatibility.Receipt"),
         operand=All(),
     )
@@ -385,7 +389,7 @@ def test_narrow_constructor_builds_the_canonical_node() -> None:
 
 def test_narrow_alternatives_are_canonicalized_by_entity_identity() -> None:
     predicate = im.Document.narrow(im.Receipt, im.Invoice)
-    assert predicate.node == Narrow(
+    assert predicate_node(predicate) == Narrow(
         to=("parallax.compatibility.Invoice", "parallax.compatibility.Receipt"),
         operand=All(),
     )
@@ -421,10 +425,10 @@ def test_model_aware_narrowing_rejects_overlapping_alternatives() -> None:
 
 def test_narrow_with_where_scopes_attribute_access_to_the_subtype() -> None:
     predicate = im.Document.narrow(im.Invoice, where=im.Invoice.amount_due > 100)
-    op = predicate.node
+    op = predicate_node(predicate)
     assert isinstance(op, Narrow)
     assert op.to == ("parallax.compatibility.Invoice",)
-    assert op.operand == (im.Invoice.amount_due > 100).node
+    assert op.operand == predicate_node(im.Invoice.amount_due > 100)
 
 
 def test_narrow_or_composition_of_two_branches_validates_at_where_build() -> None:
@@ -507,7 +511,7 @@ def test_a_query_states_no_model_rule_until_it_reaches_a_model() -> None:
     # it is why the rule is stated where the model is certain.
     out_of_scope = im.Invoice.amount_due > 3
     query = build_object_query(EntityIdentity(_DOC_NS, "Document"), (out_of_scope,))
-    assert canonical_query(query).predicate == out_of_scope.node
+    assert canonical_query(query).predicate == predicate_node(out_of_scope)
     assert canonical_query(query.limit(2)).limit == 2
 
 

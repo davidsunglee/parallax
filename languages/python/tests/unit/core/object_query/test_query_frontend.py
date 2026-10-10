@@ -34,7 +34,7 @@ from parallax.core import (
 from parallax.core.entity._entity import build_object_query
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._fluent import object_query_node
-from tests._support.query_probes import canonical_document, predicate_document
+from tests._support.query_probes import canonical_document, predicate_document, predicate_node
 
 _NS = "parallax.compatibility"
 
@@ -57,7 +57,7 @@ _WIDGETS = DomainModel(Widget)
 def _op(pred: Predicate[Any]) -> dict[str, object]:
     from parallax.core.predicate import serialize
 
-    return serialize(pred.node)
+    return serialize(predicate_node(pred))
 
 
 def test_scalar_comparison_operators() -> None:
@@ -341,7 +341,7 @@ def test_every_clause_answers_a_new_query_and_leaves_its_receiver_alone() -> Non
 def test_the_canonical_node_carries_the_query_clauses_and_nothing_else() -> None:
     node = object_query_node(Widget.where(Widget.id == 1))
     assert node.target == EntityIdentity(_NS, "Widget")
-    assert node.predicate == (Widget.id == 1).node
+    assert node.predicate == predicate_node(Widget.id == 1)
     # The exact shape: the queried position and the seven clause fields, with no
     # model, class index, feature tag, provider state, SQL, or serialization.
     assert [field.name for field in fields(node)] == [

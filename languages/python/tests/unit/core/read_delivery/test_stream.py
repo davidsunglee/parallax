@@ -208,10 +208,10 @@ def _delivery(
     on_page_start: Callable[[deep_fetch.IncludeTree], None],
     on_release: Callable[[], None],
     invalid: Mapping[int, object] | None = None,
-) -> tuple[StreamDelivery[Any, _Publication], _Read, _Publication]:
+) -> tuple[StreamDelivery[Any, ObjectQueryNode, _Publication], _Read, _Publication]:
     read = _Read()
     publication = _Publication(list(pages), invalid)
-    delivery: StreamDelivery[Any, _Publication] = StreamDelivery(
+    delivery: StreamDelivery[Any, ObjectQueryNode, _Publication] = StreamDelivery(
         _node(),
         cast("Any", _Scope(read, *pages)),
         lambda _selected: publication,

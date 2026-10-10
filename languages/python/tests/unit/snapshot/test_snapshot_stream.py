@@ -45,10 +45,12 @@ from parallax.conformance.story_models import (
 from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter, MappingRow
+from parallax.core.entity._authored_resolver import typed_interpretation
 from parallax.core.execution import (
     DeferredFeatureError,
     QueryTargetError,
     ServingModel,
+    _read_policy,
     prepare_model,
 )
 from parallax.core.object_query import TX_TIME, VALID_TIME
@@ -305,6 +307,46 @@ def test_the_read_gate_runs_at_entry_and_before_any_io() -> None:
     )
     with pytest.raises(QueryTargetError):
         stream.__enter__()
+
+
+def _counted_bindings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Each Typed predicate resolution a read performs, by queried Entity."""
+    bindings: list[str] = []
+    bind = typed_interpretation
+
+    def counting(predicate: Any, model: Any, classes: Any) -> Any:
+        interpret = bind(predicate, model, classes)
+
+        def counted(root: Any, position: Any, /) -> Any:
+            bindings.append(root.identity.canonical)
+            return interpret(root, position)
+
+        return counted
+
+    monkeypatch.setattr(_read_policy, "typed_interpretation", counting)
+    return bindings
+
+
+@pytest.mark.parametrize("participating", [False, True], ids=["standalone", "participating"])
+def test_a_typed_stream_binds_its_query_once_at_entry_for_every_page(
+    monkeypatch: pytest.MonkeyPatch, participating: bool
+) -> None:
+    bindings = _counted_bindings(monkeypatch)
+    reads = paged_reads([_order_row(index) for index in (1, 2, 3, 4, 5)], size=2)
+    port = ScriptedAdapter(Transact(*reads)) if participating else ScriptedAdapter(*reads)
+
+    def deliver(reads_from: ScopedDatabase | Transaction) -> list[int]:
+        stream = reads_from.stream(_all_orders(), batch_size=2)
+        assert bindings == []
+        with stream:
+            assert bindings == ["parallax.compatibility.Order"]
+            return _ids(iter(stream))
+
+    database = _orders(port)
+    delivered = database.transact(deliver) if participating else deliver(database)
+    assert delivered == [1, 2, 3, 4, 5]
+    assert len(_reads(port)) == 3
+    assert bindings == ["parallax.compatibility.Order"]
 
 
 def test_the_repr_names_the_target_and_the_state_and_nothing_else() -> None:

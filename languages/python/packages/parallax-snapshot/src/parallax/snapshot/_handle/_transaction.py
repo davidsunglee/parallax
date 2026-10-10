@@ -10,7 +10,7 @@ from parallax.core.execution._attempt import Attempt
 from parallax.core.execution._keyed_writes import target_condition, window_mutation
 from parallax.core.execution._options import OMITTED, Omitted
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.core.read_delivery import RowsResult
 from parallax.snapshot._handle._read import Snapshot, typed_publication_for
 from parallax.snapshot._handle._stream import SnapshotStream
@@ -373,7 +373,7 @@ class Transaction:
         write may address.
         """
         return self._attempt.read(
-            query, convert_query=object_query_node, build_publication=typed_publication_for
+            query, convert_query=typed_read_query, build_publication=typed_publication_for
         )
 
     @property
@@ -414,7 +414,7 @@ class Transaction:
             self._attempt,
             query,
             batch_size,
-            convert_query=object_query_node,
+            convert_query=typed_read_query,
             build_publication=typed_publication_for,
         )
 

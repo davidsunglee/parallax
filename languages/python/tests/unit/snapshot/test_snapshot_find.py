@@ -45,6 +45,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
@@ -65,7 +66,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.object_query._fluent import ObjectQuery, object_query_node, typed_read_query
 from parallax.core.read_delivery import InvalidData, InvalidDataError, PublishedRow, StoredDataIssue
 from parallax.core.read_delivery._delivery import find, find_history
 from parallax.core.read_delivery._fetch import slot_table
@@ -1032,28 +1033,29 @@ def test_a_refusal_naming_no_feature_cannot_be_constructed() -> None:
         DeferredFeatureError(frozenset())
 
 
-def test_every_execution_reads_the_querys_own_canonical_node(
+def test_every_execution_reads_the_querys_own_authored_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The canonical node is the query's own immutable value rather than
-    # something an execution derives and caches: every execution reads it, and
-    # two executions of one query see the same frozen value. Nothing memoizes a
-    # DERIVED value, because there is none to derive.
-    nodes: list[ObjectQueryNode] = []
-    original = object_query_node
+    # The authored state is the query's own immutable value rather than
+    # something an execution derives and caches: every execution reads it, two
+    # executions of one query see the same frozen value, and neither attaches
+    # what it resolved back to it.
+    captured: list[AuthoredQuery] = []
+    original = typed_read_query
 
-    def recording(query: ObjectQuery[Any, Any]) -> ObjectQueryNode:
-        node = original(query)
-        nodes.append(node)
-        return node
+    def recording(query: ObjectQuery[Any, Any]) -> AuthoredQuery:
+        authored = original(query)
+        captured.append(authored)
+        return authored
 
-    monkeypatch.setattr(_database, "object_query_node", recording)
+    monkeypatch.setattr(_database, "typed_read_query", recording)
     query = mm.Person.where(mm.Person.id == 1)
     db = own_root(Database.connect(QueuePort([[], []]), PERSON)).using_database_login()
     db.find(query)
     db.find(query)
-    first, second = nodes
-    assert first == second
+    first, second = captured
+    assert first is second
+    assert first == typed_read_query(query)
 
 
 # --------------------------------------------------------------------------- #

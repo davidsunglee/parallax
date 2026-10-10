@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from parallax.core.predicate._interpretation import PredicateInterpretation
 from parallax.core.predicate._nodes import (
     All,
     And,
@@ -39,6 +40,7 @@ from parallax.core.predicate.serde import CanonicalDocumentError, deserialize, s
 from parallax.core.predicate.validate import (
     ModelRejectedError,
     PositionScope,
+    canonical_interpretation,
     check_attribute_reference,
     effective_set,
     relationship_target,
@@ -79,12 +81,14 @@ __all__ = [
     "NullCheck",
     "Or",
     "PositionScope",
+    "PredicateInterpretation",
     "PredicateNode",
     "QueryDefinitionError",
     "Scalar",
     "StringMatch",
     "StringOp",
     "SubtypeSelection",
+    "canonical_interpretation",
     "canonical_subtype_selection",
     "check_attribute_reference",
     "deserialize",
