@@ -339,10 +339,8 @@ class AuthoredQuery:
     includes: tuple[IncludePathNode, ...] = field(default_factory=tuple)
 
 
-def _subject_described(subject: AuthoredSubject) -> str:
-    if isinstance(subject, AuthoredElement):
-        return f"{subject.collection.described()}.element"
-    return subject.described()
+def _subject_described(element: AuthoredElement) -> str:
+    return f"{element.collection.described()}.element"
 
 
 def _unbound_elements(authored: AuthoredPredicate) -> Iterator[AuthoredElement]:

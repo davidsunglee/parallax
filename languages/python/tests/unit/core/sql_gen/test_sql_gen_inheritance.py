@@ -111,6 +111,57 @@ def test_a_disjunctive_narrow_operand_stays_whole_inside_its_tpcs_branch() -> No
     )
 
 
+TRAVERSAL = model("predicate-traversal")
+
+
+def _volvo_with_more_than(seats: int) -> oa.And:
+    return oa.And(
+        operands=(
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Vehicle.maker"), value="Volvo"),
+            oa.Comparison(op="greaterThan", subject=oa.FieldSubject("Car.seats"), value=seats),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "narrowed",
+    [
+        oa.Narrow(to=("Car",), operand=_volvo_with_more_than(5)),
+        oa.Narrow(to=("Car",), operand=oa.Narrow(to=("Car",), operand=_volvo_with_more_than(5))),
+    ],
+)
+def test_a_negated_conjunctive_narrow_is_negated_whole_inside_its_tpcs_branch(
+    narrowed: oa.Narrow,
+) -> None:
+    compiled = compile_read(oa.Not(narrowed), TRAVERSAL, POSTGRES, target(TRAVERSAL, "Vehicle"))
+    assert "from traversal_bike t0 where not 1 = 0 union all " in compiled.statement.sql
+    assert compiled.statement.sql.endswith(
+        "from traversal_car t0 where not (t0.maker = ? and t0.seats > ?)"
+    )
+
+
+def test_a_negated_conjunctive_narrow_is_negated_whole_inside_a_quantifier() -> None:
+    op = oa.Quantifier(
+        "any",
+        "Folder.documents",
+        oa.Not(
+            oa.Narrow(
+                to=("Invoice",),
+                operand=oa.And(
+                    operands=(
+                        oa.Comparison(op="eq", subject=oa.FieldSubject("title"), value="a"),
+                        oa.Comparison(op="eq", subject=oa.FieldSubject("currency"), value="EUR"),
+                    )
+                ),
+            )
+        ),
+    )
+    compiled = compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Folder"))
+    assert "t1.folder_id = t0.id and not (t1.title = ? and t1.currency = ?))" in (
+        compiled.statement.sql
+    )
+
+
 def test_tpcs_document_single_branch_projects_its_document() -> None:
     compiled = compile_read(
         oa.TrueNode(),

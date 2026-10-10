@@ -77,6 +77,8 @@ from parallax.core.storage_layout import (
 from parallax.core.wire._codec import encoded_json_kind
 
 _HOP_TOKENS: Final = itertools.count()
+# Typed, because an untyped null a scalar subquery selects reads as text.
+_UNKNOWN: Final = "cast(null as boolean)"
 
 _COMPARATORS: dict[str, str] = {
     "eq": "=",
@@ -449,9 +451,14 @@ def _term(predicate: ResolvedPredicate, scope: ResolutionScope) -> str:
 
 
 def _negated(operand: ResolvedPredicate, scope: ResolutionScope) -> str:
-    """``operand`` negated whole: `not` binds tighter than `and` and `or`."""
-    sql = _term(operand, scope)
-    return f"not ({sql})" if isinstance(operand, ResolvedAnd | ResolvedOr) else f"not {sql}"
+    return f"not {_whole(operand, scope)}"
+
+
+def _whole(predicate: ResolvedPredicate, scope: ResolutionScope) -> str:
+    """``predicate`` lowered as one term, a conjunction or disjunction grouped
+    so neither a `not` nor a neighbouring operator re-associates it."""
+    sql = _term(predicate, scope)
+    return f"({sql})" if isinstance(predicate, ResolvedAnd | ResolvedOr) else sql
 
 
 def _conjunct(predicate: ResolvedPredicate, scope: ResolutionScope) -> str:
@@ -468,8 +475,9 @@ def _lower_operation(operation: _Operation, scope: ResolutionScope) -> str:
     every bind a related position's subqueries carry, bind ahead of the
     compared values, which is the order the emitted text puts their holes in.
     """
-    if _unreachable(operation.position, scope):
-        return _absent_operation(operation)
+    before = _before_empty_target(operation.position, scope)
+    if before is not None:
+        return _absent_operation(operation, before, scope)
     reads_text = isinstance(operation, ResolvedStringMatch | ResolvedNullCheck)
     subject = _subject_at(operation.member, operation.position, scope, reads_text=reads_text)
     match operation:
@@ -494,12 +502,15 @@ def _lower_operation(operation: _Operation, scope: ResolutionScope) -> str:
             assert_never(operation)
 
 
-def _absent_operation(operation: _Operation) -> str:
+def _absent_operation(operation: _Operation, before: ObjectPosition, scope: ResolutionScope) -> str:
     """An operation over a field no candidate can supply: a null check sees the
-    missing value, and every other operation is unknown."""
+    missing value, and every other operation is unknown. The answer is read at
+    ``before``, the position preceding the empty target, so every hop reaching
+    it still asserts its cardinality."""
     if isinstance(operation, ResolvedNullCheck):
-        return "1 = 1" if operation.op == "isNull" else "1 = 0"
-    return "null"
+        answer = "1 = 1" if operation.op == "isNull" else "1 = 0"
+        return _at(before, scope, lambda _: answer, answer)
+    return _at(before, scope, lambda _: _UNKNOWN, None)
 
 
 def _subject_at(
@@ -710,8 +721,9 @@ def _at(
     Each to-one hop is one correlated scalar subquery over every candidate the
     relationship declares, so it asserts its own cardinality where it is
     evaluated: no candidate is SQL null — or ``default`` — and several fail.
-    Hops nest rather than join, so an absent later target never hides an
-    earlier hop's candidates.
+    A hop whose target has no concrete subtype answers ``default`` inside the
+    hop before it. Hops nest rather than join, so an absent later target never
+    hides an earlier hop's candidates.
     """
     if isinstance(position, CurrentObject):
         return demand(scope)
@@ -723,22 +735,22 @@ def _at(
     hops.reverse()
     if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
         raise SqlGenError("a relationship is reached only from an Entity position")
-    if any(_reaches_nothing(hop, scope) for hop in hops):
-        if default is None:  # pragma: no cover - an operation answers before demanding
-            raise SqlGenError("a field is read through a relationship with no candidate")
-        return default
     return _hop_chain(hops, scope, demand, default)
 
 
-def _unreachable(position: SubjectPosition, scope: ResolutionScope) -> bool:
-    """Whether some hop toward ``position`` reaches a target with no concrete
-    subtype, so no candidate can exist there."""
+def _before_empty_target(
+    position: SubjectPosition, scope: ResolutionScope
+) -> ObjectPosition | None:
+    """The position preceding the first hop toward ``position`` whose target has
+    no concrete subtype, so no candidate can exist past it; ``None`` when every
+    hop can reach one."""
+    before: ObjectPosition | None = None
     current = position
     while isinstance(current, RelatedObject):
         if _reaches_nothing(current.relationship, _entity_scope(scope)):
-            return True
+            before = current.source
         current = current.source
-    return False
+    return before
 
 
 def _reaches_nothing(relationship: ResolvedRelationship, scope: EntityScope) -> bool:
@@ -752,6 +764,10 @@ def _hop_chain(
     hops: Sequence[ResolvedRelationship], scope: EntityScope, demand: _Demand, default: str | None
 ) -> str:
     first, rest = hops[0], hops[1:]
+    if _reaches_nothing(first, scope):
+        if default is None:  # pragma: no cover - an operation answers before the empty target
+            raise SqlGenError("a field is read through a relationship with no candidate")
+        return default
     if not rest:
         return _scalar_hop(first, scope, demand, default)
     return _scalar_hop(
@@ -1108,14 +1124,15 @@ def _lower_branch_narrow(narrow: ResolvedNarrow, scope: EntityScope) -> str:
     "Grouped branch predicates"): the branch's own operand composes with its
     own tag guard via `and`, and the composition is wrapped in parens whenever
     there is a branch predicate to disambiguate against a sibling branch joined
-    by `or` (`m-inheritance-015`).
+    by `or` (`m-inheritance-015`). In a concrete table's branch the operand
+    stands in for the narrow as one term.
     """
     plan = _plan_resolved_branch_narrow(scope.facet, scope.storage, scope.entity, narrow.selection)
     operand = narrow.operand
     if scope.variant is not None:
         if scope.variant not in plan.position:
             return "1 = 0"
-        return ("" if operand is None else _conjunct(operand, scope)) or "1 = 1"
+        return "1 = 1" if operand is None else _whole(operand, scope)
     if plan.tag is None:  # pragma: no cover - TPCS union branches always carry a variant
         raise SqlGenError("a TPCS branch narrow requires a concrete branch scope")
     # Branch predicate first, THEN the guard's binds — the same explicit ordering
