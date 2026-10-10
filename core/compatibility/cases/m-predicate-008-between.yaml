@@ -9,7 +9,7 @@ when:
     target: parallax.compatibility.Order
     predicate:
       between:
-        attr: parallax.compatibility.Order.price
+        path: parallax.compatibility.Order.price
         lower: "20.00"
         upper: "50.75"
 then:

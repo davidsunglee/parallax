@@ -2079,7 +2079,7 @@ def _unit_source_query(
         "target": entity_name,
         "predicate": {
             "in": {
-                "attr": f"{declaring.identity.canonical}.{name}",
+                "path": f"{declaring.identity.canonical}.{name}",
                 "values": [dict(key.primary_key)[name] for key in keys],
             }
         },
@@ -4039,7 +4039,7 @@ def _conflict_key_predicate(
     name = keys[0].identity.name
     return {
         "in": {
-            "attr": f"{declaring.identity.canonical}.{name}",
+            "path": f"{declaring.identity.canonical}.{name}",
             "values": [write.row[name] for write in resolved],
         }
     }

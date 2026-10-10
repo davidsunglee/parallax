@@ -1,8 +1,9 @@
-# valueObject to-many: a negated membership inside a scoped `where` is SAME-element —
-# the element that carries the equality is the element whose member must be outside
-# the list (m-predicate elementPredicate + nested membership, m-sql, m-dialect
-# array-traversal form). Postgres golden only — a `where` carrying a non-`eq` leaf is
-# outside MariaDB's containment scope (m-dialect, "Scope of the containment golden").
+# valueObject to-many: a negated membership inside one quantifier's `where` binds
+# the same element — the element that carries the equality is the element whose
+# member must be outside the list (m-predicate quantifiers + membership, m-sql,
+# m-dialect array-traversal form). Postgres golden only — a `where` carrying a
+# non-`eq` leaf is outside MariaDB's containment scope (m-dialect, "Scope of the
+# containment golden").
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, notIn, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -10,15 +11,15 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedExists:
+      any:
         path: parallax.compatibility.Customer.address.phones
         where:
           and:
             operands:
-              - nestedEq:
+              - eq:
                   path: number
                   value: 555-9999
-              - nestedNotIn:
+              - notIn:
                   path: type
                   values:
                     - work

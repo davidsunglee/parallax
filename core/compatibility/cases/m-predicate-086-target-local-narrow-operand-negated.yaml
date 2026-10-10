@@ -1,0 +1,25 @@
+# Negating the narrowing complements a false result and keeps an unknown one: the cat
+# and the absent pet match, while Fido, whose bark is unknown, matches neither form.
+model: models/predicate-traversal.yaml
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-hierarchy, negation, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Collar
+    predicate:
+      not:
+        operand:
+          narrow:
+            path: parallax.compatibility.Collar.pet
+            to: [parallax.compatibility.Dog]
+            operand:
+              greaterThan: {path: barkVolume, value: 5}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.pet_id from traversal_collar t0 where not (coalesce((select array [ case when t1.kind = ? then t1.bark_volume > ? else false end ] from traversal_pet t1 where t1.id = t0.pet_id), array [ false ])) [ 1 ]'}
+    binds: [dog, 5]
+  referenceSql: select id, pet_id from traversal_collar where pet_id is null or pet_id in (select id from traversal_pet where kind <> 'dog')
+  rows:
+  - {id: 12, pet_id: 3}
+  - {id: 13, pet_id: null}
+  roundTrips: 1

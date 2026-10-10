@@ -9,7 +9,7 @@ when:
   objectQuery:
     target: parallax.compatibility.CollectionTwinItem
     predicate:
-      nestedEq:
+      eq:
         path: parallax.compatibility.CollectionTwinItem.detail.labels
         value: x
 then:

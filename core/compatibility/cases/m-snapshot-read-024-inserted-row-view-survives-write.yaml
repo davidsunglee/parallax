@@ -38,7 +38,7 @@ when:
         target: parallax.compatibility.Order
         predicate:
           eq:
-            attr: parallax.compatibility.Order.id
+            path: parallax.compatibility.Order.id
             value: 6
         includes:
           - segments:
@@ -78,7 +78,7 @@ when:
         target: parallax.compatibility.OrderItem
         predicate:
           eq:
-            attr: parallax.compatibility.OrderItem.id
+            path: parallax.compatibility.OrderItem.id
             value: 61
       roundTrips: 1
       note: observing the write means issuing another read - the same line item, re-read, holds the rewritten sku

@@ -756,12 +756,14 @@ def test_insert_then_delete_cancels_to_no_dml() -> None:
     [
         # A bare family predicate: the guard is TARGET-driven, so the plainest
         # shape refuses too.
-        oa.Comparison(op="eq", attr="CardPayment.cardNetwork", value="Visa"),
+        oa.Comparison(op="eq", subject=oa.FieldSubject("CardPayment.cardNetwork"), value="Visa"),
         # The shape that actually mis-emitted: a `narrow` renders the family's
         # framework-owned tag guard, which a read alias-qualifies.
         oa.Narrow(
             to=("CardPayment",),
-            operand=oa.Comparison(op="eq", attr="CardPayment.cardNetwork", value="Visa"),
+            operand=oa.Comparison(
+                op="eq", subject=oa.FieldSubject("CardPayment.cardNetwork"), value="Visa"
+            ),
         ),
     ],
     ids=["bare-predicate", "narrow"],
@@ -989,7 +991,8 @@ def test_readless_predicate_delete_lowers_to_one_statement() -> None:
     predicate = PredicateWrite(
         "delete",
         PredicateSelection(
-            "Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value="200.00")
+            "Wallet",
+            oa.Comparison(op="lessThan", subject=oa.FieldSubject("Wallet.balance"), value="200.00"),
         ),
     )
     statement = _lower(predicate, WALLET)[0]
@@ -1004,7 +1007,8 @@ def test_readless_predicate_update_follows_the_entity_layout_order() -> None:
     predicate = PredicateWrite(
         "amend",
         PredicateSelection(
-            "Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value="200.00")
+            "Wallet",
+            oa.Comparison(op="lessThan", subject=oa.FieldSubject("Wallet.balance"), value="200.00"),
         ),
         assignments=(
             WriteAssignment(attr="Wallet.balance", value=Decimal("150.00")),
@@ -1269,7 +1273,9 @@ def test_finalization_gives_a_readless_predicate_write_an_unbounded_expectation(
     # A readless predicate write matching zero rows succeeds (`m-batch-write`),
     # which is what an unbounded expected effect says; it carries the typed
     # predicate and nothing else.
-    predicate = oa.Comparison(op="lessThan", attr="Wallet.balance", value="200.00")
+    predicate = oa.Comparison(
+        op="lessThan", subject=oa.FieldSubject("Wallet.balance"), value="200.00"
+    )
     steps = _finalize(PredicateWrite("delete", PredicateSelection("Wallet", predicate)), WALLET)
     assert steps is not None
     (step,) = steps
@@ -1285,7 +1291,7 @@ def test_a_predicate_verb_with_no_readless_template_is_refused() -> None:
     # statement shape exists for one — refused rather than settled into a step
     # no statement could render.
     with pytest.raises(ValueError, match="do not support 'terminate_where'"):
-        _finalize(PredicateWrite("terminate", PredicateSelection("Wallet", oa.All())), WALLET)
+        _finalize(PredicateWrite("terminate", PredicateSelection("Wallet", oa.TrueNode())), WALLET)
 
 
 def test_a_keyed_write_row_omitting_its_primary_key_addresses_nothing() -> None:

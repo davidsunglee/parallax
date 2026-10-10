@@ -13,7 +13,7 @@ when:
         target: parallax.compatibility.Invoice
         predicate:
           eq:
-            attr: parallax.compatibility.Invoice.id
+            path: parallax.compatibility.Invoice.id
             value: 100
         temporal:
           transaction-time:
@@ -58,7 +58,7 @@ when:
         target: parallax.compatibility.InvoiceLine
         predicate:
           eq:
-            attr: parallax.compatibility.InvoiceLine.invoiceId
+            path: parallax.compatibility.InvoiceLine.invoiceId
             value: 100
         temporal:
           transaction-time:

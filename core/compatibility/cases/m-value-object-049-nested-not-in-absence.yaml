@@ -1,6 +1,6 @@
-# valueObject negated membership: nestedNotIn excludes every not-present row rather
-# than treating absence as "not in the list" (m-predicate nested membership +
-# absence collapse, m-sql), on Postgres AND MariaDB.
+# valueObject negated membership: `notIn` excludes every not-present row rather
+# than treating absence as "not in the list" (m-predicate membership + absence
+# collapse, m-sql), on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, notIn, absence-collapse, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -8,7 +8,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedNotIn:
+      notIn:
         path: parallax.compatibility.Customer.address.city
         values:
           - Oslo

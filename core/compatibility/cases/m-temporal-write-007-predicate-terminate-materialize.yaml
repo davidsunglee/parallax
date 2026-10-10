@@ -15,7 +15,7 @@ when:
         target: parallax.compatibility.Balance
         predicate:
           lessThan:
-            attr: parallax.compatibility.Balance.value
+            path: parallax.compatibility.Balance.value
             value: "250.00"
         temporal:
           transaction-time:
@@ -34,7 +34,9 @@ when:
         target:
           entity: parallax.compatibility.Balance
           predicate:
-            lessThan: { attr: parallax.compatibility.Balance.value, value: "250.00" }
+            lessThan:
+              path: parallax.compatibility.Balance.value
+              value: "250.00"
         at: "2024-10-01T00:00:00.000000Z"
       roundTrips: 2
       statements:
@@ -48,7 +50,7 @@ when:
         target: parallax.compatibility.Balance
         predicate:
           lessThan:
-            attr: parallax.compatibility.Balance.value
+            path: parallax.compatibility.Balance.value
             value: "250.00"
         temporal:
           transaction-time:

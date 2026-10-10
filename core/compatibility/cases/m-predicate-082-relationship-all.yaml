@@ -1,0 +1,33 @@
+# A universal over a to-many relationship whose predicate is itself a quantifier:
+# every basket an owner holds has a score above 10.
+model: models/predicate-collections.yaml
+tags: [m-predicate, quantifier, all, relationship, to-many, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Owner
+    predicate:
+      all:
+        path: parallax.compatibility.Owner.baskets
+        where:
+          any:
+            path: scores
+            where:
+              greaterThan: {value: 10}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.name, t0.active, t0.manager_id, not t0.tags is null, t0.tags from basket_owner t0 where not exists (select 1 from basket t1 where t1.owner_id = t0.id and not (exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t1.scores) = ? then t1.scores else cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then cast(t2.value #>> ? as bigint) end > ?)) is true)'}
+    binds: [array, '[]', number, '{}', 10]
+  graph:
+    Owner:
+    - id: 1
+      name: Ada
+      active: true
+      managerId: 2
+      tags: [vip]
+    - id: 2
+      name: Bob
+      active: null
+      managerId: null
+      tags: []
+  roundTrips: 1

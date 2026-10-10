@@ -5,7 +5,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Account
     predicate:
-      all: {}
+      "true": {}
 then:
   statements:
     - sql:

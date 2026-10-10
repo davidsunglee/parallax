@@ -39,7 +39,12 @@ def _case(
                     {
                         "name": "profile",
                         "attributes": [{"name": "expires", "type": "date"}],
-                    }
+                    },
+                    {
+                        "name": "visits",
+                        "multiplicity": "many",
+                        "attributes": [{"name": "on", "type": "date"}],
+                    },
                 ],
                 "relationships": [
                     {
@@ -84,7 +89,7 @@ def _case(
             "objectQuery": {
                 "target": "example.Reading",
                 "predicate": predicate
-                or {"eq": {"attr": "example.Reading.day", "value": predicate_value}},
+                or {"eq": {"path": "example.Reading.day", "value": predicate_value}},
             }
         },
         "then": {
@@ -133,7 +138,7 @@ def test_preflight_requires_canonical_expected_graph_pins() -> None:
         source.path,
         {
             "shape": "read",
-            "when": {"objectQuery": {"target": "example.Reading", "predicate": {"all": {}}}},
+            "when": {"objectQuery": {"target": "example.Reading", "predicate": {"true": {}}}},
             "then": {
                 "graph": {
                     "pin": {"transaction-time": "2026-01-15T09:30:00Z"},
@@ -251,8 +256,8 @@ def test_preflight_descends_through_boolean_operand_wrappers() -> None:
     predicate = {
         "and": {
             "operands": [
-                {"all": {}},
-                {"eq": {"attr": "example.Reading.day", "value": "15 January 2026"}},
+                {"true": {}},
+                {"eq": {"path": "example.Reading.day", "value": "15 January 2026"}},
             ]
         }
     }
@@ -260,38 +265,33 @@ def test_preflight_descends_through_boolean_operand_wrappers() -> None:
         preflight_case_literals(_case(predicate=predicate))
 
 
-def test_preflight_resolves_nested_predicate_paths() -> None:
-    predicate = {
-        "nestedEq": {
-            "path": "example.Reading.profile.expires",
-            "value": "15 January 2026",
-        }
-    }
-    with pytest.raises(CaseFailure, match=r"nestedEq\.value.*type-mismatch for date"):
+def test_preflight_resolves_dotted_value_object_paths() -> None:
+    predicate = {"eq": {"path": "example.Reading.profile.expires", "value": "15 January 2026"}}
+    with pytest.raises(CaseFailure, match=r"eq\.value.*type-mismatch for date"):
         preflight_case_literals(_case(predicate=predicate))
 
 
-def test_preflight_uses_the_same_recursive_walk_for_element_predicates() -> None:
+def test_preflight_uses_the_same_recursive_walk_inside_a_quantifier() -> None:
     predicate = {
-        "nestedExists": {
-            "path": "example.Reading.profile",
-            "where": {
-                "not": {
-                    "operand": {
-                        "nestedEq": {
-                            "path": "expires",
-                            "value": "15 January 2026",
-                        }
-                    }
-                }
-            },
+        "any": {
+            "path": "example.Reading.visits",
+            "where": {"not": {"operand": {"eq": {"path": "on", "value": "15 January 2026"}}}},
         }
     }
-
     with pytest.raises(
-        CaseFailure,
-        match=r"nestedExists\.where\.not\.operand\.nestedEq\.value.*type-mismatch for date",
+        CaseFailure, match=r"any\.where\.not\.operand\.eq\.value.*type-mismatch for date"
     ):
+        preflight_case_literals(_case(predicate=predicate))
+
+
+def test_preflight_types_a_related_entity_field_inside_its_quantifier() -> None:
+    predicate = {
+        "any": {
+            "path": "example.Reading.samples",
+            "where": {"eq": {"path": "quantity", "value": "x"}},
+        }
+    }
+    with pytest.raises(CaseFailure, match=r"any\.where\.eq\.value.*type-mismatch for int32"):
         preflight_case_literals(_case(predicate=predicate))
 
 
@@ -308,7 +308,7 @@ def test_preflight_checks_predicate_write_assignments() -> None:
                             "mutation": "amend",
                             "target": {
                                 "entity": "example.Reading",
-                                "predicate": {"eq": {"attr": "example.Reading.id", "value": 1}},
+                                "predicate": {"eq": {"path": "example.Reading.id", "value": 1}},
                             },
                             "assignments": [{"attr": "example.Reading.day", "value": "not-a-date"}],
                         }
@@ -339,7 +339,7 @@ def test_preflight_checks_predicate_write_selection_literals() -> None:
                                 "entity": "example.Reading",
                                 "predicate": {
                                     "eq": {
-                                        "attr": "example.Reading.day",
+                                        "path": "example.Reading.day",
                                         "value": "not-a-date",
                                     }
                                 },
@@ -383,7 +383,7 @@ def test_preflight_checks_expected_graph_relationship_children() -> None:
             "when": {
                 "objectQuery": {
                     "target": "example.Reading",
-                    "predicate": {"all": {}},
+                    "predicate": {"true": {}},
                 }
             },
             "then": {
@@ -446,7 +446,7 @@ def _polymorphic_case(*, scenario: bool) -> Case:
         },
         {},
     )
-    query = {"target": "example.Payment", "predicate": {"all": {}}}
+    query = {"target": "example.Payment", "predicate": {"true": {}}}
     row = {"id": 1, "detail": "not-a-decimal", "familyVariant": "CashPayment"}
     document = (
         {

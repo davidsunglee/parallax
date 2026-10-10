@@ -22,7 +22,7 @@ _TARGET = "parallax.compatibility.WritableScalar"
 _ROW_QUERY = deserialize(
     {
         "target": _TARGET,
-        "predicate": {"eq": {"attr": f"{_TARGET}.id", "value": 1}},
+        "predicate": {"eq": {"path": f"{_TARGET}.id", "value": 1}},
     }
 )
 

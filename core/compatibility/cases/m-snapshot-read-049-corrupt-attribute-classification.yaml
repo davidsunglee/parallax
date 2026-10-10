@@ -19,7 +19,8 @@ given:
 when:
   objectQuery:
     target: parallax.compatibility.StreamCoordinate
-    predicate: { all: {} }
+    predicate:
+      "true": {}
     orderBy: [{ attr: parallax.compatibility.StreamCoordinate.id }]
 then:
   statements:

@@ -147,9 +147,10 @@ document column.
 
 ## Reading and filtering inner fields
 
-The inner fields are **read and filtered** with the `m-predicate`
-nested-attribute access form over a dotted path (`Class.valueObject.path`), which
-`m-sql` lowers to a dialect-specific document extraction. Because a value object
+The inner fields are **read and filtered** with dotted `m-predicate` paths
+through the value object (`Class.valueObject.path`), and the elements of a `many`
+occurrence through an explicit quantifier over it; `m-sql` lowers both to
+dialect-specific document extraction and array traversal. Because a value object
 has no identity of its own, it is accessed by value only and is never a
 relationship target.
 
@@ -294,14 +295,15 @@ rather than left true by omission:
    temporal target retains the whole predecessor row (`m-write-plan`).
 3. **No reverse getters.** A value object has no identity and holds no reference
    back to its owner; a reverse (value-object → owner) getter MUST NOT exist.
-4. **Not a navigation or deep-fetch target.** An Include Path and a
-   relationship-navigation path (`m-deep-fetch` / `m-navigate`) traverse
-   relationships **between identity-bearing entities**; a value-object segment is
-   invalid in either grammar and MUST be rejected. Value objects carry no
-   correlation columns, no portal, and no reverse relationship to navigate.
+4. **Not a navigation or deep-fetch target.** An Include Path (`m-deep-fetch`)
+   traverses relationships **between identity-bearing entities**; a value-object
+   segment is invalid there and MUST be rejected. Value objects carry no
+   correlation columns, no portal, and no reverse relationship to navigate: a
+   predicate reaches them by value — a dotted path, a presence test, or a
+   quantifier — never as a relationship target (`m-navigate`).
 5. **No `find()` root.** `find()` MUST NOT be rooted at a value object — a value
    object is not a queryable root entity. It is queried only *through* its owner
-   (a nested-attribute predicate on the owner, `m-predicate`).
+   (a predicate path through the owner, `m-predicate`).
 6. **Inherited temporality, no unit of work.** A value object inherits the
    owner's temporality (see [Inherited temporality](#inherited-temporality)) and
    participates in **no unit-of-work semantics of its own** — it holds no
@@ -311,9 +313,9 @@ One-round-trip materialization is proven by `read` cases carrying `then.graph` a
 `roundTrips: 1`: the owning entity's assembled graph carries its nested to-one and
 to-many value-object values, decoded from the single document column, with **no**
 child statement (`m-value-object-023` materializes every row's full nested
-composite under `all`; `m-value-object-024` materializes the matching owners'
-composites under a nested-field filter). An Include Path or navigation path through a
-value object is pinned as a pre-SQL `rejected` case (`m-case-format`): a value
+composite under `true`; `m-value-object-024` materializes the matching owners'
+composites under a value-object field filter). An Include Path through a value
+object is pinned as a pre-SQL `rejected` case (`m-case-format`): a value
 object's occurrence name is a legal *member* segment, so such a path is spellable
 and only a model-aware resolver knows the member it names is a value object.
 

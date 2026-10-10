@@ -94,7 +94,9 @@ def test_materialization_constructs_no_keyed_write_regardless_of_row_count(
             "amend",
             PredicateSelection(
                 "Account",
-                predicate_algebra.Comparison("lessThan", "Account.balance", "1000000.00"),
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Account.balance"), "1000000.00"
+                ),
             ),
             (WriteAssignment("Account.balance", Decimal("0.00")),),
         ),

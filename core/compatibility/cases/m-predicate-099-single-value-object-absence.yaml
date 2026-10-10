@@ -1,0 +1,22 @@
+# Absence is the complement of presence and is never unknown: every row presence
+# excludes — including the SQL-NULL address — is absent.
+model: models/customer.yaml
+tags: [m-predicate, m-value-object, presence, json, absence-collapse, negation, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      notExists: {path: parallax.compatibility.Customer.address.geo}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.name from customer t0 where not coalesce(jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ?, false)'}
+    binds: [geo, object]
+  referenceSql: select id, name from customer where coalesce(jsonb_typeof(address -> 'geo') <> 'object', true)
+  rows:
+  - {id: 4, name: Mary}
+  - {id: 6, name: Rin}
+  - {id: 8, name: Iris}
+  - {id: 9, name: Omar}
+  - {id: 10, name: Priya}
+  roundTrips: 1

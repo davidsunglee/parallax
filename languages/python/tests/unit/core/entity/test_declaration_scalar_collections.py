@@ -35,6 +35,8 @@ from parallax.core.entity._declaration import declaration_of, shape_of
 from parallax.core.entity._errors import EditError
 from parallax.core.metamodel import Leaf, Multiplicity
 from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.predicate import serialize
+from tests._support.query_probes import predicate_node
 
 _NS = "scalar.collection.typed"
 _MANY = Multiplicity.MANY
@@ -232,9 +234,7 @@ def test_a_value_object_edit_assigns_its_whole_collection() -> None:
 
 
 def test_a_nested_collection_is_assigned_only_through_its_owning_occurrence() -> None:
-    with pytest.raises(EditError) as caught:
-        Order.detail.labels.set(())
-    assert [violation.code for violation in caught.value.violations] == ["edit-nested-path"]
+    assert not hasattr(Order.detail.labels, "set")
     assert Order.detail.set(Detail(labels=("x",))).value == Detail(labels=("x",))
 
 
@@ -242,26 +242,33 @@ def test_a_nested_collection_is_assigned_only_through_its_owning_occurrence() ->
     "operation",
     [
         lambda: Order.tags == "urgent",
-        lambda: Order.tags.in_(["urgent"]),
-        lambda: Order.tags.contains("urg"),
-        lambda: Order.tags.is_null(),
-        lambda: Order.marks.between(1, 2),
-        lambda: Order.marks.asc(),
+        lambda: Order.tags != "urgent",
         lambda: Order.detail.labels == "x",
         lambda: Detail.labels == "x",
     ],
-    ids=[
-        "comparison",
-        "membership",
-        "string",
-        "null-check",
-        "range",
-        "ordering",
-        "nested-path",
-        "element-scope",
-    ],
+    ids=["comparison", "negated-comparison", "nested-path", "element-scope"],
 )
-def test_no_scalar_operation_reads_a_collection_as_one_value(operation: Any) -> None:
+def test_no_comparison_reads_a_collection_as_one_value(operation: Any) -> None:
     with pytest.raises(QueryDefinitionError, match="scalar collection") as caught:
         operation()
     assert caught.value.code == "query-expression-invalid"
+
+
+@pytest.mark.parametrize(
+    "name", ["in_", "not_in", "between", "contains", "like", "is_null", "is_", "asc", "desc"]
+)
+def test_a_collection_offers_no_single_value_operation(name: str) -> None:
+    assert not hasattr(Order.tags, name)
+    assert not hasattr(Order.detail.labels, name)
+
+
+def test_a_collection_quantifies_its_elements() -> None:
+    assert serialize(predicate_node(Order.tags.any(Order.tags.element == "urgent"))) == {
+        "any": {
+            "path": "scalar.collection.typed.Order.tags",
+            "where": {"eq": {"value": "urgent"}},
+        }
+    }
+    assert serialize(predicate_node(Order.marks.none())) == {
+        "none": {"path": "scalar.collection.typed.Order.marks"}
+    }

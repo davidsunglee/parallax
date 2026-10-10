@@ -9,7 +9,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Publication
     predicate:
-      all: {}
+      "true": {}
     orderBy:
       - attr: parallax.compatibility.Publication.title
         direction: desc

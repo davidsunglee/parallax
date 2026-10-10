@@ -11,7 +11,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Order
     predicate:
-      all: {}
+      "true": {}
     includes:
       - segments:
           - rel: parallax.compatibility.Order.items
@@ -19,7 +19,7 @@ when:
   equivalentEncodings:
     - target: parallax.compatibility.Order
       predicate:
-        all: {}
+        "true": {}
       includes:
         - segments:
             - rel: parallax.compatibility.Order.items

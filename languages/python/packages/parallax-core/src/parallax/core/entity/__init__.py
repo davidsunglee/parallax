@@ -14,9 +14,8 @@ from parallax.core.entity._errors import (
 from parallax.core.entity._expressions import (
     AllPredicate,
     AttributeAssignment,
-    AttributeExpr,
+    IncludePath,
     Predicate,
-    RelationshipPath,
     SortKey,
 )
 from parallax.core.entity._graph_construction import (
@@ -69,7 +68,6 @@ __all__ = [
     "AllPredicate",
     "Attr",
     "AttributeAssignment",
-    "AttributeExpr",
     "Bitemporal",
     "ConcreteSubtype",
     "Document",
@@ -83,6 +81,7 @@ __all__ = [
     "EntityRowCodec",
     "Float32",
     "GraphConstructionError",
+    "IncludePath",
     "Int32",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
@@ -90,7 +89,6 @@ __all__ = [
     "ObjectQuery",
     "Predicate",
     "Rel",
-    "RelationshipPath",
     "ResolutionView",
     "Sequence",
     "SortKey",

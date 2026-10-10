@@ -9,7 +9,7 @@ when:
       not:
         operand:
           eq:
-            attr: parallax.compatibility.Order.active
+            path: parallax.compatibility.Order.active
             value: true
 then:
   statements:

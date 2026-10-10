@@ -18,7 +18,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 2
       roundTrips: 1
       note: the reading unit of work observes account 2 (250.00, version 1)
@@ -34,7 +34,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 2
       roundTrips: 1
       note: the writing unit of work observes the same row before gating on it
@@ -63,7 +63,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 2
       roundTrips: 1
       note: the SAME find again MUST observe 250.00 at version 1, unchanged by the peer's committed write; the group COMMITS after this, its last step
@@ -78,7 +78,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 2
       roundTrips: 1
       note: UNGROUPED, after both groups resolved — the peer's write is durable, 999.00 at version 2

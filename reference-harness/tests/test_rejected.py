@@ -58,7 +58,8 @@ from reference_harness.metamodel import (
 from reference_harness.metamodel import (
     MODEL_REJECTED_RULES as METAMODEL_MODEL_REJECTED_RULES,
 )
-from reference_harness.object_query_validate import validate_object_query, validate_predicate
+from reference_harness.object_query_validate import validate_object_query
+from reference_harness.predicate_validate import validate_query_predicate
 from reference_harness.relationship import (
     MODEL_REJECTED_RULES as RELATIONSHIP_MODEL_REJECTED_RULES,
 )
@@ -74,11 +75,15 @@ from reference_harness.temporality import derive_temporal_structure
 from reference_harness.value_object_resolve import (
     BETWEEN_BOUNDS_INVERTED,
     FIND_ROOT_VALUE_OBJECT,
-    NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
-    NESTED_PATH_UNKNOWN_MEMBER,
-    NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
     NEUTRAL_LITERAL_OUT_OF_SPACE,
     NEUTRAL_LITERAL_TYPE_MISMATCH,
+    NULL_CHECK_NON_NULLABLE_MEMBER,
+    PATH_CROSSES_MANY,
+    PATH_TARGET_KIND_MISMATCH,
+    PATH_UNKNOWN_MEMBER,
+    PREDICATE_SUBJECT_OUTSIDE_SCOPE,
+    SCALAR_COLLECTION_UNQUANTIFIED,
+    STRING_PREDICATE_NON_STRING_MEMBER,
     WRITE_REQUIRED_ATTRIBUTE_MISSING,
     WRITE_REQUIRED_VALUE_OBJECT_MISSING,
     WRITE_VALUE_TYPE_MISMATCH,
@@ -95,6 +100,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 _PREDICATE_SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "predicate.schema.json"
 _REGISTRY = build_registry(load_schemas(_REPO_ROOT / "core"))
+
+_ELEVATION = "parallax.compatibility.Customer.address.geo.elevation"
 
 
 def _rejected_cases() -> list[Case]:
@@ -511,17 +518,18 @@ def test_resolve_effective_definition_inherits_temporality_from_the_root_only() 
 
 def test_the_authored_corpus_covers_both_query_and_write_negatives() -> None:
     used = {c.rejected_rule for c in _rejected_cases()}
-    # PredicateNode negatives (three of the four contract clauses, the typed-literal
-    # MUST, and the bound-ordering MUST). `find-root-value-object` is deliberately
-    # absent: a value-object occurrence name is lowercase-initial and an Entity's
-    # local name capitalized, so no serialized document can spell a reference rooted
-    # at a value object, and the negative is the Predicate schema's (see the
-    # regex-level section below). The rule itself stays live for a predicate built
-    # natively.
+    # PredicateNode negatives (the path and scope resolver, the value-object
+    # contract clauses, the typed-literal MUST, and the bound-ordering MUST).
+    # `find-root-value-object` is deliberately absent: a value-object occurrence
+    # name is lowercase-initial and an Entity's local name capitalized, so no
+    # serialized document can spell a reference rooted at a value object, and the
+    # negative is the Predicate schema's (see the regex-level section below).
     assert {
-        NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
+        PATH_UNKNOWN_MEMBER,
+        PATH_CROSSES_MANY,
+        PATH_TARGET_KIND_MISMATCH,
+        PREDICATE_SUBJECT_OUTSIDE_SCOPE,
         "deep-fetch-value-object-segment",
-        "navigate-value-object-target",
         NEUTRAL_LITERAL_TYPE_MISMATCH,
         BETWEEN_BOUNDS_INVERTED,
     } <= used
@@ -735,60 +743,87 @@ def test_the_dialect_free_and_dialect_executed_cases_partition_the_harness_lane(
 # --- the validators ACCEPT valid inputs (no false rejections) ---------------
 
 
-def test_validate_predicate_accepts_valid_nested_predicates() -> None:
-    entity = _customer_entity()
-    validate_predicate(entity, {"nestedEq": {"path": "Customer.address.city", "value": "Oslo"}})
-    validate_predicate(
-        entity, {"nestedGte": {"path": "Customer.address.geo.elevation", "value": 5}}
+def _validate(model: str, target: str, predicate: dict[str, Any]) -> None:
+    """Judge ``predicate`` at the queried position ``target`` of ``model``."""
+    entity_defs = load_model(_COMPATIBILITY_ROOT, model).entity_defs
+    validate_query_predicate(entity_defs, {"target": target, "predicate": predicate})
+
+
+def _customer(predicate: dict[str, Any]) -> None:
+    _validate("models/customer.yaml", "parallax.compatibility.Customer", predicate)
+
+
+def _order(predicate: dict[str, Any]) -> None:
+    _validate("models/orders.yaml", "parallax.compatibility.Order", predicate)
+
+
+def _collection(predicate: dict[str, Any]) -> None:
+    _validate(
+        "models/scalar-collection-layout-twin-columns.yaml",
+        "parallax.compatibility.CollectionTwinItem",
+        predicate,
     )
-    validate_predicate(entity, {"nestedIsNull": {"path": "Customer.address.geo.point.lat"}})
-    validate_predicate(
-        entity,
+
+
+def _rule(check: Any, predicate: dict[str, Any]) -> str:
+    with pytest.raises(RejectionError) as exc:
+        check(predicate)
+    return exc.value.rule
+
+
+def _phones(where: dict[str, Any]) -> dict[str, Any]:
+    return {"any": {"path": "parallax.compatibility.Customer.address.phones", "where": where}}
+
+
+def test_validate_predicate_accepts_valid_paths_and_scopes() -> None:
+    _customer({"eq": {"path": "parallax.compatibility.Customer.address.city", "value": "Oslo"}})
+    _customer(
         {
-            "nestedExists": {
-                "path": "Customer.address.phones",
+            "greaterThanEquals": {
+                "path": "parallax.compatibility.Customer.address.geo.elevation",
+                "value": 5,
+            }
+        }
+    )
+    _customer({"isNull": {"path": "parallax.compatibility.Customer.address.geo.point.lat"}})
+    _customer(
+        _phones(
+            {
+                "and": {
+                    "operands": [
+                        {"eq": {"path": "type", "value": "home"}},
+                        {"between": {"path": "number", "lower": "555-9000", "upper": "555-9999"}},
+                        {"notIn": {"path": "type", "values": ["work"]}},
+                    ]
+                }
+            }
+        )
+    )
+    _customer({"none": {"path": "parallax.compatibility.Customer.address.phones"}})
+    _customer({"exists": {"path": "parallax.compatibility.Customer.address"}})
+    _customer({"eq": {"path": "parallax.compatibility.Customer.name", "value": "Ada"}})
+    _order(
+        {
+            "all": {
+                "path": "parallax.compatibility.Order.items",
                 "where": {
-                    "and": {
-                        "operands": [
-                            {"nestedEq": {"path": "type", "value": "home"}},
-                            {"nestedEq": {"path": "number", "value": "555-9999"}},
-                        ]
+                    "any": {
+                        "path": "statuses",
+                        "where": {"eq": {"path": "code", "value": "PACKED"}},
                     }
                 },
             }
-        },
+        }
     )
-    validate_predicate(
-        entity,
-        {"nestedBetween": {"path": "Customer.address.geo.elevation", "lower": 5, "upper": 12}},
-    )
-    validate_predicate(
-        entity, {"nestedNotIn": {"path": "Customer.address.city", "values": ["Oslo"]}}
-    )
-    validate_predicate(
-        entity,
+    _collection(
         {
-            "nestedExists": {
-                "path": "Customer.address.phones",
-                "where": {
-                    "and": {
-                        "operands": [
-                            {
-                                "nestedBetween": {
-                                    "path": "number",
-                                    "lower": "555-9000",
-                                    "upper": "555-9999",
-                                }
-                            },
-                            {"nestedNotIn": {"path": "type", "values": ["work"]}},
-                        ]
-                    }
-                },
+            "any": {
+                "path": "parallax.compatibility.CollectionTwinItem.parts",
+                "where": {"all": {"path": "marks", "where": {"greaterThan": {"value": 0}}}},
             }
-        },
+        }
     )
-    # A normal scalar predicate rooted at the ENTITY is not a find-root misuse.
-    validate_predicate(entity, {"eq": {"attr": "Customer.name", "value": "Ada"}})
+    _collection({"none": {"path": "parallax.compatibility.CollectionTwinItem.tags"}})
 
 
 def _complete_contact_row() -> dict[str, Any]:
@@ -825,163 +860,245 @@ def test_validate_write_accepts_complete_and_null_documents() -> None:
 # --- the validators RAISE the exact rule ------------------------------------
 
 
-def test_unknown_first_segment_rejected() -> None:
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(
-            _customer_entity(), {"nestedEq": {"path": "Customer.contact.city", "value": "x"}}
+@pytest.mark.parametrize(
+    "path",
+    [
+        "parallax.compatibility.Customer.contact.city",
+        "parallax.compatibility.Customer.address.bogus.x",
+        "parallax.compatibility.Customer.address.bogus",
+        "parallax.compatibility.Customer.name.first",
+    ],
+    ids=["first-segment", "intermediate", "leaf", "past-a-scalar"],
+)
+def test_an_undeclared_or_overrun_path_segment_rejected(path: str) -> None:
+    assert _rule(_customer, {"eq": {"path": path, "value": "x"}}) == PATH_UNKNOWN_MEMBER
+
+
+def test_a_path_through_a_many_member_rejected() -> None:
+    crossing = {
+        "eq": {"path": "parallax.compatibility.Customer.address.phones.type", "value": "home"}
+    }
+    assert _rule(_customer, crossing) == PATH_CROSSES_MANY
+    assert (
+        _rule(_order, {"eq": {"path": "parallax.compatibility.Order.items.sku", "value": "A"}})
+        == PATH_CROSSES_MANY
+    )
+
+
+@pytest.mark.parametrize(
+    ("check", "predicate"),
+    [
+        (_customer, {"any": {"path": "parallax.compatibility.Customer.address"}}),
+        (_customer, {"none": {"path": "parallax.compatibility.Customer.name"}}),
+        (_customer, {"exists": {"path": "parallax.compatibility.Customer.address.phones"}}),
+        (_order, {"notExists": {"path": "parallax.compatibility.Order.items"}}),
+        (_customer, {"eq": {"path": "parallax.compatibility.Customer.address", "value": "x"}}),
+        (
+            _order,
+            {
+                "narrow": {
+                    "path": "parallax.compatibility.Order.items",
+                    "to": ["parallax.compatibility.OrderItem"],
+                    "operand": {"true": {}},
+                }
+            },
+        ),
+    ],
+    ids=[
+        "any-single-vo",
+        "none-scalar",
+        "exists-many-vo",
+        "not-exists-to-many",
+        "field-on-vo",
+        "narrow-to-many",
+    ],
+)
+def test_a_path_ending_on_the_wrong_kind_rejected(check: Any, predicate: dict[str, Any]) -> None:
+    assert _rule(check, predicate) == PATH_TARGET_KIND_MISMATCH
+
+
+@pytest.mark.parametrize(
+    ("check", "predicate"),
+    [
+        (_customer, {"eq": {"value": "x"}}),
+        (_customer, {"eq": {"path": "address.city", "value": "x"}}),
+        (
+            _customer,
+            _phones({"eq": {"path": "parallax.compatibility.Customer.name", "value": "x"}}),
+        ),
+        (
+            _collection,
+            {
+                "any": {
+                    "path": "parallax.compatibility.CollectionTwinItem.tags",
+                    "where": {"eq": {"path": "id", "value": 1}},
+                }
+            },
+        ),
+        (
+            _customer,
+            _phones(
+                {"narrow": {"to": ["parallax.compatibility.Customer"], "operand": {"true": {}}}}
+            ),
+        ),
+    ],
+    ids=[
+        "subjectless-at-root",
+        "relative-at-root",
+        "qualified-in-element",
+        "field-in-scalar-scope",
+        "narrow-of-element",
+    ],
+)
+def test_a_subject_outside_its_scope_rejected(check: Any, predicate: dict[str, Any]) -> None:
+    assert _rule(check, predicate) == PREDICATE_SUBJECT_OUTSIDE_SCOPE
+
+
+def test_a_scalar_operation_on_a_collection_field_rejected() -> None:
+    assert (
+        _rule(
+            _collection,
+            {"eq": {"path": "parallax.compatibility.CollectionTwinItem.tags", "value": "x"}},
         )
-    assert exc.value.rule == NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT
-
-
-def test_unknown_intermediate_segment_rejected() -> None:
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(
-            _customer_entity(), {"nestedEq": {"path": "Customer.address.bogus.x", "value": "x"}}
-        )
-    assert exc.value.rule == NESTED_PATH_UNKNOWN_MEMBER
-
-
-def test_unknown_leaf_attribute_rejected() -> None:
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(
-            _customer_entity(), {"nestedEq": {"path": "Customer.address.bogus", "value": "x"}}
-        )
-    assert exc.value.rule == NESTED_PATH_UNKNOWN_MEMBER
+        == SCALAR_COLLECTION_UNQUANTIFIED
+    )
+    assert (
+        _rule(_collection, {"isNull": {"path": "parallax.compatibility.CollectionTwinItem.tags"}})
+        == NULL_CHECK_NON_NULLABLE_MEMBER
+    )
 
 
 def test_membership_literal_type_mismatch_rejected() -> None:
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(
-            _customer_entity(), {"nestedIn": {"path": "Customer.address.city", "values": [1, 2]}}
-        )
-    assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
+    for tag in ("in", "notIn"):
+        predicate = {
+            tag: {"path": "parallax.compatibility.Customer.address.city", "values": [1, 2]}
+        }
+        assert _rule(_customer, predicate) == NEUTRAL_LITERAL_TYPE_MISMATCH
 
 
-def test_negated_membership_literal_type_mismatch_rejected() -> None:
-    # The negated form carries the identical typed-literal obligation; the two share
-    # one arm rather than the negation reaching an untyped shortcut.
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(
-            _customer_entity(), {"nestedNotIn": {"path": "Customer.address.city", "values": [42]}}
-        )
-    assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
-
-
-def _element_where(where: dict[str, Any]) -> dict[str, Any]:
-    return {"nestedExists": {"path": "Customer.address.phones", "where": where}}
+def test_a_scalar_element_literal_decodes_against_the_element_type() -> None:
+    predicate = {
+        "any": {
+            "path": "parallax.compatibility.CollectionTwinItem.counts",
+            "where": {"eq": {"value": "forty-two"}},
+        }
+    }
+    assert _rule(_collection, predicate) == NEUTRAL_LITERAL_TYPE_MISMATCH
 
 
 @pytest.mark.parametrize(
     "node",
     [
-        {"nestedBetween": {"path": "Customer.address.city", "lower": 42, "upper": 7}},
-        _element_where({"nestedBetween": {"path": "number", "lower": 42, "upper": 7}}),
+        {
+            "between": {
+                "path": "parallax.compatibility.Customer.address.city",
+                "lower": 42,
+                "upper": 7,
+            }
+        },
+        _phones({"between": {"path": "number", "lower": 42, "upper": 7}}),
     ],
-    ids=["path-scoped", "element-scoped"],
+    ids=["queried-position", "element-scoped"],
 )
-def test_nested_range_bound_type_mismatch_is_reported_before_the_ordering(
-    node: dict[str, Any],
-) -> None:
+def test_range_bound_type_mismatch_is_reported_before_the_ordering(node: dict[str, Any]) -> None:
     # Both bounds mistype a `string` leaf AND are inverted as raw numbers, so this
     # discriminates the check order: a validator that ordered the bounds before
     # resolving the subject would report the inversion and blame the wrong thing.
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(_customer_entity(), node)
-    assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
+    assert _rule(_customer, node) == NEUTRAL_LITERAL_TYPE_MISMATCH
 
 
 @pytest.mark.parametrize(
     "node",
     [
-        {"nestedBetween": {"path": "Customer.address.geo.elevation", "lower": 12, "upper": 5}},
-        _element_where({"nestedBetween": {"path": "type", "lower": "work", "upper": "home"}}),
-    ],
-    ids=["path-scoped", "element-scoped"],
-)
-def test_nested_range_with_inverted_bounds_rejected_in_both_scopes(node: dict[str, Any]) -> None:
-    # Correctly typed bounds, so resolution passes and the shared bound-ordering rule
-    # is what fires — the same rule the top-level `between` obeys, at both scopes.
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(_customer_entity(), node)
-    assert exc.value.rule == BETWEEN_BOUNDS_INVERTED
-
-
-# --- nested string predicates (m-predicate non-string-member rule) -----------
-
-
-@pytest.mark.parametrize(
-    "tag", ["nestedLike", "nestedNotLike", "nestedStartsWith", "nestedEndsWith", "nestedContains"]
-)
-def test_nested_string_predicate_accepts_a_string_member_in_both_scopes(tag: str) -> None:
-    entity = _customer_entity()
-    validate_predicate(entity, {tag: {"path": "Customer.address.city", "value": "Os"}})
-    validate_predicate(
-        entity, {tag: {"path": "Customer.address.city", "value": "Os", "caseInsensitive": True}}
-    )
-    validate_predicate(entity, _element_where({tag: {"path": "number", "value": "555"}}))
-
-
-@pytest.mark.parametrize(
-    "node",
-    [
-        {"startsWith": {"attr": "Order.name", "value": chr(0xD800)}},
         {
-            "nestedStartsWith": {
-                "path": "Customer.address.city",
+            "between": {
+                "path": "parallax.compatibility.Customer.address.geo.elevation",
+                "lower": 12,
+                "upper": 5,
+            }
+        },
+        _phones({"between": {"path": "type", "lower": "work", "upper": "home"}}),
+    ],
+    ids=["queried-position", "element-scoped"],
+)
+def test_range_with_inverted_bounds_rejected_in_both_scopes(node: dict[str, Any]) -> None:
+    assert _rule(_customer, node) == BETWEEN_BOUNDS_INVERTED
+
+
+# --- string predicates (m-predicate non-string-member rule) ------------------
+
+
+@pytest.mark.parametrize("tag", ["like", "notLike", "startsWith", "endsWith", "contains"])
+def test_string_predicate_accepts_a_string_member_in_every_scope(tag: str) -> None:
+    _customer({tag: {"path": "parallax.compatibility.Customer.address.city", "value": "Os"}})
+    _customer(
+        {
+            tag: {
+                "path": "parallax.compatibility.Customer.address.city",
+                "value": "Os",
+                "caseInsensitive": True,
+            }
+        }
+    )
+    _customer(_phones({tag: {"path": "number", "value": "555"}}))
+    _collection(
+        {
+            "any": {
+                "path": "parallax.compatibility.CollectionTwinItem.tags",
+                "where": {tag: {"value": "u"}},
+            }
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"startsWith": {"path": "parallax.compatibility.Order.name", "value": chr(0xD800)}},
+        {
+            "startsWith": {
+                "path": "parallax.compatibility.Customer.address.city",
                 "value": chr(0xD800),
             }
         },
-        _element_where({"nestedStartsWith": {"path": "number", "value": chr(0xD800)}}),
+        _phones({"startsWith": {"path": "number", "value": chr(0xD800)}}),
     ],
-    ids=["top-level", "path-scoped", "element-scoped"],
+    ids=["attribute", "value-object-field", "element-scoped"],
 )
-def test_string_predicate_rejects_values_outside_unicode_scalar_space(
-    node: dict[str, Any],
-) -> None:
-    entity = _order_entity() if "startsWith" in node else _customer_entity()
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(entity, node)
-    assert exc.value.rule == NEUTRAL_LITERAL_OUT_OF_SPACE
+def test_string_predicate_rejects_values_outside_unicode_scalar_space(node: dict[str, Any]) -> None:
+    check = _order if "Order" in str(node) else _customer
+    assert _rule(check, node) == NEUTRAL_LITERAL_OUT_OF_SPACE
 
 
-@pytest.mark.parametrize(
-    "tag", ["nestedLike", "nestedNotLike", "nestedStartsWith", "nestedEndsWith", "nestedContains"]
-)
-def test_nested_string_predicate_on_a_numeric_member_reports_the_member_not_the_literal(
-    tag: str,
-) -> None:
-    # `geo.elevation` is float64 and the literal is a string, so BOTH nested rules
-    # apply — which is what discriminates their order. A validator checking the
-    # literal first would blame the value for the member's problem.
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(
-            _customer_entity(), {tag: {"path": "Customer.address.geo.elevation", "value": "1"}}
-        )
-    assert exc.value.rule == NESTED_STRING_PREDICATE_NON_STRING_MEMBER
+@pytest.mark.parametrize("tag", ["like", "notLike", "startsWith", "endsWith", "contains"])
+def test_string_predicate_on_a_numeric_member_reports_the_member_not_the_literal(tag: str) -> None:
+    # `geo.elevation` is float64 and the literal is a string, so BOTH rules apply —
+    # which is what discriminates their order.
+    predicate = {
+        tag: {"path": "parallax.compatibility.Customer.address.geo.elevation", "value": "1"}
+    }
+    assert _rule(_customer, predicate) == STRING_PREDICATE_NON_STRING_MEMBER
 
 
-@pytest.mark.parametrize(
-    "node",
-    [
-        {"nestedStartsWith": {"path": "Contact.address.phones.expires", "value": "2024"}},
-        {
-            "nestedExists": {
-                "path": "Contact.address.phones",
-                "where": {"nestedEndsWith": {"path": "expires", "value": "-01"}},
-            }
-        },
-    ],
-    ids=["path-scoped", "element-scoped"],
-)
-def test_nested_string_predicate_on_a_date_member_rejected_in_both_scopes(
-    node: dict[str, Any],
-) -> None:
+def test_string_predicate_on_a_date_member_or_element_rejected() -> None:
     # A date's Wire carrier is also a JSON string, but operator applicability follows
-    # the resolved Neutral Type. The non-string-member verdict precedes any separate
-    # verdict about the pattern as a Date literal in both path scopes.
+    # the resolved Neutral Type, ahead of any verdict about the pattern.
+    contact = {
+        "any": {
+            "path": "parallax.compatibility.Contact.address.phones",
+            "where": {"endsWith": {"path": "expires", "value": "-01"}},
+        }
+    }
     with pytest.raises(RejectionError) as exc:
-        validate_predicate(_contact_entity(), node)
-    assert exc.value.rule == NESTED_STRING_PREDICATE_NON_STRING_MEMBER
+        _validate("models/contact.yaml", "parallax.compatibility.Contact", contact)
+    assert exc.value.rule == STRING_PREDICATE_NON_STRING_MEMBER
+    days = {
+        "any": {
+            "path": "parallax.compatibility.CollectionTwinItem.days",
+            "where": {"startsWith": {"value": "2024"}},
+        }
+    }
+    assert _rule(_collection, days) == STRING_PREDICATE_NON_STRING_MEMBER
 
 
 # --- range bound ordering (m-predicate) -------------------------------------
@@ -991,69 +1108,49 @@ def test_nested_string_predicate_on_a_date_member_rejected_in_both_scopes(
 
 
 def _between(lower: Any, upper: Any) -> dict[str, Any]:
-    return {"between": {"attr": "Order.price", "lower": lower, "upper": upper}}
+    return {
+        "between": {"path": "parallax.compatibility.Order.price", "lower": lower, "upper": upper}
+    }
 
 
-@pytest.mark.parametrize(
-    ("lower", "upper"),
-    [("50.75", "20.00"), ("5.00", "1.00")],
-)
+@pytest.mark.parametrize(("lower", "upper"), [("50.75", "20.00"), ("5.00", "1.00")])
 def test_between_with_inverted_same_kind_bounds_rejected(lower: Any, upper: Any) -> None:
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(_order_entity(), _between(lower, upper))
-    assert exc.value.rule == BETWEEN_BOUNDS_INVERTED
+    assert _rule(_order, _between(lower, upper)) == BETWEEN_BOUNDS_INVERTED
 
 
-@pytest.mark.parametrize(
-    ("lower", "upper"),
-    [
-        ("20.00", "50.75"),
-        ("5.00", "5.00"),
-    ],
-)
+@pytest.mark.parametrize(("lower", "upper"), [("20.00", "50.75"), ("5.00", "5.00")])
 def test_between_bounds_the_rule_stands_aside_for_are_accepted(lower: Any, upper: Any) -> None:
-    # Ordered and equal decoded Decimal bounds are legal ranges.
-    validate_predicate(_order_entity(), _between(lower, upper))
+    _order(_between(lower, upper))
 
 
 @pytest.mark.parametrize("bounds", [(5, "1.00"), ("5.00", 1), (None, "1.00")])
 def test_between_refuses_a_bound_outside_the_resolved_type(bounds: tuple[Any, Any]) -> None:
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(_order_entity(), _between(*bounds))
-    assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
+    assert _rule(_order, _between(*bounds)) == NEUTRAL_LITERAL_TYPE_MISMATCH
 
 
 def test_between_bound_ordering_is_checked_at_any_depth() -> None:
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(
-            _order_entity(),
-            {"and": {"operands": [{"all": {}}, _between("50.75", "20.00")]}},
-        )
-    assert exc.value.rule == BETWEEN_BOUNDS_INVERTED
+    predicate = {"and": {"operands": [{"true": {}}, _between("50.75", "20.00")]}}
+    assert _rule(_order, predicate) == BETWEEN_BOUNDS_INVERTED
 
 
-def test_between_rooted_at_a_value_object_still_reports_the_find_root_rule() -> None:
-    # The subject is checked before the bounds, so a value-object-rooted range names
-    # the root misuse rather than blaming its (also inverted) bounds.
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(
-            _customer_entity(),
-            {"between": {"attr": "address.city", "lower": "b", "upper": "a"}},
-        )
-    assert exc.value.rule == FIND_ROOT_VALUE_OBJECT
+def test_a_range_subject_is_judged_before_its_bounds() -> None:
+    # The subject's scope is checked before the bounds, so a relative path at the
+    # queried position names the scope rule rather than its (also inverted) bounds.
+    predicate = {"between": {"path": "address.city", "lower": "b", "upper": "a"}}
+    assert _rule(_customer, predicate) == PREDICATE_SUBJECT_OUTSIDE_SCOPE
 
 
 def test_deep_fetch_path_root_narrow_naming_a_value_object_rejected() -> None:
     # A path-root guard resolves at the queried position, so each selection member
     # names an Entity. A value object has no identity, no position, and no concrete
     # subtypes, so naming one there is the same refusal a value-object-rooted
-    # attribute reference gets — reported against the guard, not against a segment.
+    # reference gets — reported against the guard, not against a segment.
     with pytest.raises(RejectionError) as exc:
         validate_object_query(
             _customer_entity(),
             {
                 "target": "Customer",
-                "predicate": {"all": {}},
+                "predicate": {"true": {}},
                 "includes": [
                     {"appliesTo": ["address"], "segments": [{"rel": "Customer.locations"}]}
                 ],
@@ -1069,66 +1166,43 @@ def test_deep_fetch_path_root_narrow_over_entities_is_accepted() -> None:
         _customer_entity(),
         {
             "target": "Customer",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [{"appliesTo": ["Customer"], "segments": [{"rel": "Customer.locations"}]}],
         },
     )
 
 
-def test_scoped_where_undeclared_member_rejected() -> None:
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(
-            _customer_entity(),
-            {
-                "nestedExists": {
-                    "path": "Customer.address.phones",
-                    "where": {"nestedEq": {"path": "bogus", "value": "x"}},
-                }
-            },
-        )
-    assert exc.value.rule == NESTED_PATH_UNKNOWN_MEMBER
+def test_an_element_scoped_undeclared_member_rejected() -> None:
+    assert _rule(_customer, _phones({"eq": {"path": "bogus", "value": "x"}})) == PATH_UNKNOWN_MEMBER
 
 
-# --- value-object rules fire at ANY depth in the queried entity's predicate --
-#
-# `validate_predicate` descends through the SAME-entity boolean combinators
-# (and/or/not/group), so a nested-predicate violation buried inside a combinator is
-# rejected with its exact rule — not silently accepted because it is not top-level.
-# These regression tests pin that recursion (case m-value-object-018 shows nested
-# predicates nesting inside `and`, so this path is real).
+# --- every rule fires at ANY depth -------------------------------------------
 
 
-def test_nested_path_violation_buried_inside_and_is_rejected() -> None:
-    entity = _customer_entity()
+def test_a_path_violation_buried_inside_and_is_rejected() -> None:
     predicate = {
         "and": {
             "operands": [
-                {"nestedEq": {"path": "Customer.address.city", "value": "Oslo"}},  # valid
-                {"nestedEq": {"path": "Customer.contact.city", "value": "x"}},  # buried violation
+                {"eq": {"path": "parallax.compatibility.Customer.address.city", "value": "Oslo"}},
+                {"eq": {"path": "parallax.compatibility.Customer.contact.city", "value": "x"}},
             ]
         }
     }
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(entity, predicate)
-    assert exc.value.rule == NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT
+    assert _rule(_customer, predicate) == PATH_UNKNOWN_MEMBER
 
 
-def test_nested_literal_type_mismatch_buried_inside_or_not_group_is_rejected() -> None:
-    # A mistyped literal (string against a float64 leaf) buried under or -> not ->
-    # group is still caught with the literal-type rule, proving every combinator is
-    # traversed and resolution stays against the SAME root entity throughout.
-    entity = _customer_entity()
+def test_a_literal_type_mismatch_buried_inside_or_not_group_is_rejected() -> None:
     predicate = {
         "or": {
             "operands": [
-                {"eq": {"attr": "Customer.name", "value": "Ada"}},
+                {"eq": {"path": "parallax.compatibility.Customer.name", "value": "Ada"}},
                 {
                     "not": {
                         "operand": {
                             "group": {
                                 "operand": {
-                                    "nestedGt": {
-                                        "path": "Customer.address.geo.elevation",
+                                    "greaterThan": {
+                                        "path": _ELEVATION,
                                         "value": "not-a-number",
                                     }
                                 }
@@ -1139,9 +1213,7 @@ def test_nested_literal_type_mismatch_buried_inside_or_not_group_is_rejected() -
             ]
         }
     }
-    with pytest.raises(RejectionError) as exc:
-        validate_predicate(entity, predicate)
-    assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
+    assert _rule(_customer, predicate) == NEUTRAL_LITERAL_TYPE_MISMATCH
 
 
 def test_write_present_but_null_required_value_object_rejected() -> None:
@@ -1458,8 +1530,8 @@ def test_runner_fails_when_a_valid_query_is_authored_as_rejected() -> None:
     # match is what proves the failure came from model-aware validation rather
     # than from the structural guard an ill-formed `when` would trip first.
     case = _rejected_doc(
-        {"nestedEq": {"path": "Customer.address.city", "value": "Oslo"}},
-        NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
+        {"eq": {"path": "Customer.address.city", "value": "Oslo"}},
+        PATH_UNKNOWN_MEMBER,
     )
     with pytest.raises(CaseFailure, match="validation ACCEPTED the input"):
         run_case(case, None)
@@ -1469,12 +1541,12 @@ def test_runner_fails_when_the_named_rule_is_wrong() -> None:
     # The input IS rejected, but with a DIFFERENT rule than the case names, so
     # the failure names BOTH rules — the one raised and the one authored.
     case = _rejected_doc(
-        {"nestedEq": {"path": "Customer.contact.city", "value": "x"}},
-        NEUTRAL_LITERAL_TYPE_MISMATCH,  # actual rule: first-segment-not-value-object
+        {"eq": {"path": "Customer.contact.city", "value": "x"}},
+        NEUTRAL_LITERAL_TYPE_MISMATCH,  # actual rule: path-unknown-member
     )
     with pytest.raises(CaseFailure, match="but the case expects then.rejectedRule") as exc:
         run_case(case, None)
-    assert NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT in str(exc.value)
+    assert PATH_UNKNOWN_MEMBER in str(exc.value)
 
 
 def test_runner_fails_a_handleless_input_against_a_multi_family_model() -> None:
@@ -1567,7 +1639,7 @@ def test_the_subtype_protocol_classifies_the_family_names_member_honesty_would_c
 
 def _rejected_case_with_when(
     when: dict[str, Any],
-    rule: str = NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
+    rule: str = PATH_UNKNOWN_MEMBER,
 ) -> Case:
     from reference_harness.case import Model
 
@@ -1590,7 +1662,7 @@ def test_assert_schema_rejects_both_a_query_and_a_write() -> None:
         {
             "objectQuery": {
                 "target": "Customer",
-                "predicate": {"nestedEq": {"path": "Customer.contact.city", "value": "x"}},
+                "predicate": {"eq": {"path": "Customer.contact.city", "value": "x"}},
             },
             "write": {"id": 1, "name": "Acme", "address": {"city": "Oslo"}},
         }
@@ -1641,46 +1713,53 @@ def _predicate_valid(predicate: dict[str, Any]) -> bool:
     return next(_predicate_validator().iter_errors(predicate), None) is None
 
 
-def test_schema_accepts_a_well_formed_nested_path() -> None:
-    assert _predicate_valid({"nestedEq": {"path": "Customer.address.city", "value": "Oslo"}})
-    assert _predicate_valid({"nestedEq": {"path": "Customer.address.geo.country", "value": "NO"}})
+def test_schema_accepts_qualified_relative_and_element_subjects() -> None:
+    assert _predicate_valid({"eq": {"path": "Customer.address.city", "value": "Oslo"}})
+    assert _predicate_valid({"eq": {"path": "Customer.address", "value": "x"}})
+    assert _predicate_valid({"eq": {"path": "address.geo.country", "value": "NO"}})
+    assert _predicate_valid({"eq": {"value": "x"}})
+    assert _predicate_valid({"between": {"lower": 1, "upper": 2}})
 
 
-def test_schema_rejects_empty_path_after_value_object_name() -> None:
-    # `Customer.address` has NO field segment after the value-object name — the
-    # `nestedRef` grammar requires at least one, so the Predicate schema rejects it.
-    assert not _predicate_valid({"nestedEq": {"path": "Customer.address", "value": "x"}})
+def test_schema_rejects_a_path_naming_no_member() -> None:
+    assert not _predicate_valid({"eq": {"path": "Customer", "value": "x"}})
 
 
 def test_schema_rejects_trailing_dot_path() -> None:
-    assert not _predicate_valid({"nestedEq": {"path": "Customer.address.", "value": "x"}})
+    assert not _predicate_valid({"eq": {"path": "Customer.address.", "value": "x"}})
 
 
 def test_schema_rejects_bad_segment_casing() -> None:
-    # An uppercase value-object segment and an uppercase field segment both violate
-    # the lowercase-initial segment grammar.
-    assert not _predicate_valid({"nestedEq": {"path": "Customer.Address.city", "value": "x"}})
-    assert not _predicate_valid({"nestedEq": {"path": "Customer.address.City", "value": "x"}})
+    # An uppercase member segment violates the lowercase-initial segment grammar.
+    assert not _predicate_valid({"eq": {"path": "Customer.Address.city", "value": "x"}})
+    assert not _predicate_valid({"eq": {"path": "Customer.address.City", "value": "x"}})
 
 
-def test_schema_rejects_a_reference_rooted_at_a_value_object() -> None:
-    # `find()` MUST NOT be rooted at a value object (m-value-object "Materialization
-    # and navigation contract" 5). In a SERIALIZED predicate that refusal is
-    # grammar-level and needs no model: a value-object occurrence name is a
-    # lowercase-initial `identifier`, an Entity's local name is capitalized, so
-    # `address` can never occupy the Entity segment of a reference. `address.city`
-    # therefore matches no attribute reference at all — the same grammar that lets a
-    # canonical `parallax.compatibility.Customer.address` be spelled unambiguously.
-    assert not _predicate_valid({"isNotNull": {"attr": "address.city"}})
-    assert not _predicate_valid({"between": {"attr": "address.city", "lower": "a", "upper": "b"}})
+def test_schema_closes_each_subject_form() -> None:
+    # A null check reads a field only, so it requires its `path`; every other
+    # operation's body takes a field or the bound element and nothing else.
+    assert not _predicate_valid({"isNull": {}})
+    assert not _predicate_valid({"eq": {}})
+    assert not _predicate_valid({"eq": {"attr": "Customer.name", "value": "x"}})
+
+
+def test_schema_requires_a_universal_predicate_and_retires_the_old_grammar() -> None:
+    assert not _predicate_valid({"all": {"path": "Customer.tags"}})
+    assert not _predicate_valid({"all": {}})
+    assert not _predicate_valid({"nestedEq": {"path": "Customer.address.city", "value": "x"}})
+    assert not _predicate_valid({"navigate": {"rel": "Customer.orders"}})
+    assert not _predicate_valid({"exists": {"path": "Customer.orders", "where": {"true": {}}}})
 
 
 def test_schema_rejects_a_value_object_in_an_entity_position() -> None:
-    # The same grammar closes each Subtype Selection alternative.
-    assert not _predicate_valid({"narrow": {"to": ["address"], "operand": {"all": {}}}})
+    # A value-object occurrence name is a lowercase-initial `identifier`, an
+    # Entity's local name capitalized, so `address` never occupies a Subtype
+    # Selection alternative (m-value-object "Materialization and navigation
+    # contract" 5).
+    assert not _predicate_valid({"narrow": {"to": ["address"], "operand": {"true": {}}}})
 
 
 def test_schema_rejects_the_retired_narrow_entity_field() -> None:
     assert not _predicate_valid(
-        {"narrow": {"entity": "Customer", "to": ["Customer"], "operand": {"all": {}}}}
+        {"narrow": {"entity": "Customer", "to": ["Customer"], "operand": {"true": {}}}}
     )

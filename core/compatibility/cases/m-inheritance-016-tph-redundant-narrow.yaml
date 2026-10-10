@@ -6,7 +6,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Pet
     predicate:
-      all: {}
+      "true": {}
     narrowTo:
       - parallax.compatibility.Pet
 then:

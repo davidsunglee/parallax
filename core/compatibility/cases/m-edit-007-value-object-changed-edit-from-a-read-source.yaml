@@ -14,7 +14,7 @@ when:
         target: parallax.compatibility.Note
         predicate:
           eq:
-            attr: parallax.compatibility.Note.id
+            path: parallax.compatibility.Note.id
             value: 2
       path: parallax.compatibility.Note.tag
     set: { weight: 1 }

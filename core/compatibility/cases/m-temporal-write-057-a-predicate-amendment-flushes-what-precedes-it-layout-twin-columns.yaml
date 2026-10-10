@@ -24,7 +24,10 @@ when:
         - mutation: amendUntil
           target:
             entity: parallax.compatibility.SequenceSpan
-            predicate: { eq: { attr: parallax.compatibility.SequenceSpan.label, value: c } }
+            predicate:
+              eq:
+                path: parallax.compatibility.SequenceSpan.label
+                value: c
           assignments:
             - { attr: parallax.compatibility.SequenceSpan.amount, value: 150 }
           validFrom: "2024-02-01T00:00:00.000000Z"

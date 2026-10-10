@@ -284,7 +284,7 @@ class QueuePort(ConnectsAsItself):
 def test_find_collects_claims_without_decoding_trusted_scalar_payloads() -> None:
     with recorded_conversion_dependencies() as calls:
         result = _find(
-            deserialize_query({"target": "Order", "predicate": {"all": {}}}),
+            deserialize_query({"target": "Order", "predicate": {"true": {}}}),
             ORDERS,
             QueuePort([[{**_ORDER_ROW, "id": 1}, {**_ORDER_ROW, "id": 2}]]),
         )
@@ -304,7 +304,7 @@ def test_a_later_root_document_is_not_classified_before_its_root_view() -> None:
     observer = RecordingObserver()
     result = find(
         preflight(
-            deserialize_query({"target": "ProfileOwner", "predicate": {"all": {}}}),
+            deserialize_query({"target": "ProfileOwner", "predicate": {"true": {}}}),
             model=meta,
             form="graph",
         ),
@@ -360,7 +360,7 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
     query = deserialize_query(
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
             "includes": [{"segments": [{"rel": "Order.items"}]}],
         }
     )
@@ -381,7 +381,7 @@ def test_encoded_payloads_preserve_integer_identity_gather_and_fanback() -> None
     query = deserialize_query(
         {
             "target": "EncodedParent",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [
                 {
                     "segments": [
@@ -439,7 +439,7 @@ def test_dependency_ready_sibling_levels_share_one_pipeline_batch() -> None:
     query = deserialize_query(
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
             "includes": [
                 {"segments": [{"rel": "Order.items"}]},
                 {"segments": [{"rel": "Order.tags"}]},
@@ -464,7 +464,7 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
     query = deserialize_query(
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 999}},
+            "predicate": {"eq": {"path": "Order.id", "value": 999}},
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]}],
         }
     )
@@ -505,7 +505,7 @@ def test_find_empty_intermediate_level_suppresses_only_the_grandchild_statement(
     query = deserialize_query(
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 4}},
+            "predicate": {"eq": {"path": "Order.id", "value": 4}},
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]}],
         }
     )
@@ -534,7 +534,7 @@ def test_find_back_reference_level_issues_no_additional_statement() -> None:
     query = deserialize_query(
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
         }
     )
@@ -579,7 +579,7 @@ def test_find_carries_a_declared_null_placement_into_child_level_sql(
     query = deserialize_query(
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
             "includes": [{"segments": [{"rel": f"Order.{relationship}"}]}],
         }
     )
@@ -609,7 +609,7 @@ def test_find_materializes_family_variant_on_child_level_rows() -> None:
     query = deserialize_query(
         {
             "target": "Person",
-            "predicate": {"eq": {"attr": "Person.id", "value": 10}},
+            "predicate": {"eq": {"path": "Person.id", "value": 10}},
             "includes": [{"segments": [{"rel": "Person.animals"}]}],
         }
     )
@@ -642,7 +642,7 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
         ]
     )
     query = deserialize_query(
-        {"target": "Document", "predicate": {"all": {}}, "narrowTo": ["Invoice"]}
+        {"target": "Document", "predicate": {"true": {}}, "narrowTo": ["Invoice"]}
     )
     result = _find(query, DOCUMENT, port)
     rows = _rows(result.page)
@@ -675,7 +675,7 @@ def test_find_history_returns_chronologically_ordered_edge_pinned_roots() -> Non
     query = deserialize_query(
         {
             "target": "InvoiceLine",
-            "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+            "predicate": {"eq": {"path": "InvoiceLine.id", "value": 1000}},
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
@@ -724,7 +724,7 @@ def test_find_history_keeps_distinct_roots_that_share_one_edge() -> None:
     query = deserialize_query(
         {
             "target": "InvoiceLine",
-            "predicate": {"eq": {"attr": "InvoiceLine.invoiceId", "value": 100}},
+            "predicate": {"eq": {"path": "InvoiceLine.invoiceId", "value": 100}},
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
@@ -753,7 +753,7 @@ def test_find_history_trusts_a_native_temporal_start_but_cannot_derive_an_edge()
     query = deserialize_query(
         {
             "target": "InvoiceLine",
-            "predicate": {"eq": {"attr": "InvoiceLine.invoiceId", "value": 100}},
+            "predicate": {"eq": {"path": "InvoiceLine.invoiceId", "value": 100}},
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
@@ -783,7 +783,7 @@ def test_find_history_does_not_reclassify_a_native_primary_key() -> None:
     query = deserialize_query(
         {
             "target": "InvoiceLine",
-            "predicate": {"eq": {"attr": "InvoiceLine.invoiceId", "value": 100}},
+            "predicate": {"eq": {"path": "InvoiceLine.invoiceId", "value": 100}},
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
@@ -825,7 +825,7 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
     query = deserialize_query(
         {
             "target": "DepositRate",
-            "predicate": {"eq": {"attr": "DepositRate.id", "value": 1}},
+            "predicate": {"eq": {"path": "DepositRate.id", "value": 1}},
             "temporal": {"transaction-time": {"history": {}}, "valid-time": {"asOf": "latest"}},
         }
     )
@@ -883,7 +883,7 @@ def _deposit_rate_history() -> HistoryPageResult:
     query = deserialize_query(
         {
             "target": "DepositRate",
-            "predicate": {"eq": {"attr": "DepositRate.id", "value": 1}},
+            "predicate": {"eq": {"path": "DepositRate.id", "value": 1}},
             "temporal": {"transaction-time": {"history": {}}, "valid-time": {"asOf": "latest"}},
         }
     )
@@ -929,7 +929,7 @@ def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
     query = deserialize_query(
         {
             "target": "Policy",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "temporal": {"transaction-time": {"history": {}}, "valid-time": {"asOf": "latest"}},
             "includes": [{"segments": [{"rel": "Policy.coverages"}]}],
         }
@@ -1108,7 +1108,7 @@ def test_an_issue_bearing_graph_classifies_rather_than_failing_materialization()
 def test_the_values_lane_preserves_a_provider_normalized_native_key() -> None:
     port = QueuePort([[{"id": None, "name": "Ada"}]])
     db = own_root(Database.connect(port, vo.CUSTOMER_MODEL)).using_database_login()
-    (row,) = db.read_rows(deserialize_query({"target": "Customer", "predicate": {"all": {}}})).rows
+    (row,) = db.read_rows(deserialize_query({"target": "Customer", "predicate": {"true": {}}})).rows
     assert row == {"id": None, "name": "Ada"}
 
 
@@ -1116,7 +1116,7 @@ def test_the_values_lane_trusts_each_native_scalar_row() -> None:
     port = QueuePort([[{"id": 1, "name": "Ada"}, {"id": 2, "name": None}]])
     db = own_root(Database.connect(port, vo.CUSTOMER_MODEL)).using_database_login()
     first, second = db.read_rows(
-        deserialize_query({"target": "Customer", "predicate": {"all": {}}})
+        deserialize_query({"target": "Customer", "predicate": {"true": {}}})
     ).rows
     assert first == {"id": 1, "name": "Ada"}
     assert second == {"id": 2, "name": None}
@@ -1154,7 +1154,7 @@ def _row_form(
     planner: ReadPlanner = UNCACHED_READ_PLANNER,
 ) -> tuple[PublishedRow, ...]:
     query = preflight(
-        deserialize_query({"target": target, "predicate": {"all": {}}}), model=model, form="rows"
+        deserialize_query({"target": target, "predicate": {"true": {}}}), model=model, form="rows"
     )
     return find_rows(
         query,
@@ -1244,7 +1244,7 @@ def test_history_reads_derive_no_row_publication(monkeypatch: pytest.MonkeyPatch
     query = deserialize_query(
         {
             "target": "InvoiceLine",
-            "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+            "predicate": {"eq": {"path": "InvoiceLine.id", "value": 1000}},
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
@@ -1575,7 +1575,7 @@ def test_a_level_whose_gathered_key_set_is_empty_attaches_the_null_result() -> N
     query = deserialize_query(
         {
             "target": "Animal",
-            "predicate": {"eq": {"attr": "Animal.id", "value": 1}},
+            "predicate": {"eq": {"path": "Animal.id", "value": 1}},
             "includes": [{"segments": [{"rel": "Animal.owner"}]}],
         }
     )
@@ -1597,7 +1597,7 @@ def test_a_child_statement_binds_each_gathered_key_once_in_encounter_order() -> 
     query = deserialize_query(
         {
             "target": "Animal",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [{"segments": [{"rel": "Animal.owner"}]}],
         }
     )
@@ -1621,7 +1621,7 @@ def test_a_parent_the_child_level_returned_no_row_for_is_loaded_empty() -> None:
     query = deserialize_query(
         {
             "target": "Order",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [{"segments": [{"rel": "Order.items"}]}],
         }
     )
@@ -1653,7 +1653,7 @@ def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
     query = deserialize_query(
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
         }
     )
@@ -1703,7 +1703,7 @@ def test_the_slot_table_places_each_level_under_the_source_that_gathers_it() -> 
         ORDERS,
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
             "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
         },
     ) == (
@@ -1726,7 +1726,7 @@ def test_a_root_parented_levels_guard_reaches_the_slot_table_as_its_admitted_set
         ANIMAL,
         {
             "target": "Animal",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [
                 {
                     "segments": [{"rel": "Animal.owner"}, {"rel": "Person.pets"}],
@@ -1751,7 +1751,7 @@ def test_a_narrowed_hop_takes_its_own_slot_beside_the_broad_one() -> None:
         ANIMAL,
         {
             "target": "Person",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [
                 {"segments": [{"rel": "Person.pets"}]},
                 {"segments": [{"rel": "Person.pets", "narrowTo": ["Dog"]}]},
@@ -1783,7 +1783,7 @@ def test_a_guarded_out_parent_holds_no_slot_for_the_level_it_was_excluded_from()
     query = deserialize_query(
         {
             "target": "Animal",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [{"segments": [{"rel": "Animal.owner"}], "appliesTo": ["Dog"]}],
         }
     )
@@ -1817,7 +1817,7 @@ def test_two_levels_filling_one_view_leave_the_last_fetch_plan_result_in_its_slo
     query = deserialize_query(
         {
             "target": "Animal",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [
                 {"segments": [{"rel": "Animal.owner"}]},
                 {"segments": [{"rel": "Animal.owner"}], "appliesTo": ["Dog"]},
@@ -1862,7 +1862,7 @@ def test_every_history_root_of_one_read_uses_the_same_page_schema() -> None:
     query = deserialize_query(
         {
             "target": "InvoiceLine",
-            "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+            "predicate": {"eq": {"path": "InvoiceLine.id", "value": 1000}},
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
@@ -1883,7 +1883,7 @@ def _account_query() -> Any:
 
 def _account_node() -> ObjectQueryNode:
     return deserialize_query(
-        {"target": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 7}}}
+        {"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 7}}}
     )
 
 

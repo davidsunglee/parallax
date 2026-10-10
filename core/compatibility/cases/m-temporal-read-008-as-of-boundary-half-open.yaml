@@ -6,7 +6,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Ledger
     predicate:
-      all: {}
+      "true": {}
     temporal:
       transaction-time:
         asOf: "2024-06-01T00:00:00.000000Z"

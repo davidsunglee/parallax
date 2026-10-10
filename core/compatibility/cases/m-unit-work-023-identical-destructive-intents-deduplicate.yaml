@@ -14,7 +14,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 1
       roundTrips: 1
       note: observe account 1 (balance 100.00, version 1) — the ONE state both deletes settle against
@@ -47,7 +47,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 1
       roundTrips: 1
       note: the dependent find MUST observe no rows; the group COMMITS after this, its last step

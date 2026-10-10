@@ -14,7 +14,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 1
       roundTrips: 1
       note: observe account 1 (balance 100.00, version 1) before the update, inside the SAME unit of work as the write below
@@ -41,7 +41,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 1
       roundTrips: 1
       note: a dependent find MUST observe the flushed update (read-your-own-writes); the group COMMITS after this, its last step

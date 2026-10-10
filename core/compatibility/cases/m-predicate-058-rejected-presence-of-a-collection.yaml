@@ -1,0 +1,13 @@
+# Negative (m-predicate single-valued presence): exists tests a single object,
+# and `items` is a to-many relationship whose occupancy is a bare `any`.
+model: models/orders.yaml
+tags: [m-predicate, m-navigate, rejected, negative, relationship, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      exists:
+        path: parallax.compatibility.Order.items
+then:
+  rejectedRule: path-target-kind-mismatch

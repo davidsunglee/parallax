@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Final
 
 from parallax.core.base import ManagedValue, NeutralType, matches_neutral_type
 from parallax.core.metamodel import (
@@ -12,14 +12,22 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     ValueObjectAttributeMetadata,
 )
-from parallax.core.predicate._nodes import ComparisonOp, MembershipOp, NullOp, StringOp
+from parallax.core.predicate._nodes import (
+    ComparisonOp,
+    MembershipOp,
+    NullOp,
+    QuantifierKind,
+    StringOp,
+)
 
 type ResolvedPredicateMember = AttributeMetadata | ValueObjectAttributeMetadata
-"""A scalar member read from the operation's current object position.
+"""A scalar member read from an object position.
 
-An Attribute is read from the current Entity position; a Value Object leaf is
-read from the current Entity position through single occurrences, or from the
-element an enclosing quantifier binds.
+An Attribute is read from an Entity position; a Value Object leaf is read from
+an Entity position through single occurrences, or from the element an enclosing
+quantifier binds. A scalar collection member is read whole only by its
+quantifier; an operation over one of its elements names it with the element
+position.
 """
 
 
@@ -28,6 +36,52 @@ class DeferredKeySet:
     """A child-read membership whose values arrive when its parent rows do."""
 
     neutral_type: NeutralType
+
+
+@dataclass(frozen=True, slots=True)
+class CurrentObject:
+    """The object the enclosing scope is at: the queried Entity, a bound
+    element, or a narrowed target."""
+
+
+CURRENT: Final = CurrentObject()
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedRelationship:
+    """One relationship direction reached from an object position.
+
+    ``source`` and ``related`` are its join endpoints at the source position
+    and at ``target``. ``visibility`` holds the generated temporal terms its
+    candidates are visible under; it is empty until a read propagates them.
+    """
+
+    identity: RelationshipIdentity
+    target: EntityMetadata
+    source: AttributeMetadata
+    related: AttributeMetadata
+    visibility: tuple[ResolvedPredicate, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RelatedObject:
+    """The single Entity ``relationship`` reaches from ``source``."""
+
+    source: ObjectPosition
+    relationship: ResolvedRelationship
+
+
+type ObjectPosition = CurrentObject | RelatedObject
+
+
+@dataclass(frozen=True, slots=True)
+class ScalarElement:
+    """The scalar an enclosing scalar-collection quantifier binds."""
+
+
+ELEMENT: Final = ScalarElement()
+
+type SubjectPosition = ObjectPosition | ScalarElement
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +97,7 @@ class ResolvedComparison:
     member: ResolvedPredicateMember
     value: object
     framework: bool = False
+    position: SubjectPosition = CURRENT
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +105,7 @@ class ResolvedRange:
     member: ResolvedPredicateMember
     lower: ManagedValue
     upper: ManagedValue
+    position: SubjectPosition = CURRENT
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +113,7 @@ class ResolvedMembership:
     op: MembershipOp
     member: ResolvedPredicateMember
     values: tuple[ManagedValue, ...] | DeferredKeySet
+    position: SubjectPosition = CURRENT
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,12 +122,14 @@ class ResolvedStringMatch:
     member: ResolvedPredicateMember
     pattern: str
     case_insensitive: bool
+    position: SubjectPosition = CURRENT
 
 
 @dataclass(frozen=True, slots=True)
 class ResolvedNullCheck:
     op: NullOp
     member: ResolvedPredicateMember
+    position: ObjectPosition = CURRENT
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,41 +154,52 @@ class ResolvedGroup:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedNarrow:
-    """``operand`` holds at the current Entity position narrowed to ``position``."""
+    """Whether the Entity at ``target`` belongs to ``selection`` and, when an
+    ``operand`` is present, makes it true there; a selected target keeps the
+    operand's unknown, while an absent or unselected one is false."""
 
-    position: tuple[EntityIdentity, ...]
-    operand: ResolvedPredicate
+    selection: tuple[EntityIdentity, ...]
+    operand: ResolvedPredicate | None = None
+    target: ObjectPosition = CURRENT
+
+
+@dataclass(frozen=True, slots=True)
+class ScalarCollection:
+    """A scalar collection member, quantified element by element."""
+
+    member: ResolvedPredicateMember
+
+
+type ResolvedCollection = ScalarCollection | OccurrenceMetadata | ResolvedRelationship
+"""What a quantifier ranges over: a scalar collection, a ``many`` Value Object
+occurrence, or a to-many relationship's related Entities."""
 
 
 @dataclass(frozen=True, slots=True)
 class ResolvedQuantifier:
-    """Whether some element of ``occurrence`` (``any``) or none (``none``) makes
-    ``where`` true; without ``where``, whether it holds an element at all.
+    """Whether some (``any``), every (``all``), or no (``none``) element of
+    ``collection`` at ``position`` makes ``where`` true.
 
-    ``where`` is read from the bound element. A single occurrence holds at most
-    one element.
+    Without ``where``, ``any`` and ``none`` test whether the collection holds an
+    element. ``all`` always carries ``where`` and fails on a false or unknown
+    element. An absent collection holds no element.
     """
 
-    kind: Literal["any", "none"]
-    occurrence: OccurrenceMetadata
+    kind: QuantifierKind
+    collection: ResolvedCollection
     where: ResolvedPredicate | None = None
+    position: ObjectPosition = CURRENT
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedSemiJoin:
-    """Whether some Entity ``relationship`` reaches from the current position
-    makes ``where`` true, complemented when ``negated``.
+class ResolvedPresence:
+    """Whether the single object ``target`` names at ``position`` is present,
+    complemented when ``negated``: a ``one`` Value Object occurrence, or the
+    Entity a to-one relationship reaches."""
 
-    ``source`` and ``related`` are the join endpoints at the current position
-    and at ``target``; ``where`` is read from the reached Entity.
-    """
-
-    relationship: RelationshipIdentity
-    target: EntityMetadata
-    source: AttributeMetadata
-    related: AttributeMetadata
     negated: bool
-    where: ResolvedPredicate | None = None
+    target: OccurrenceMetadata | ResolvedRelationship
+    position: ObjectPosition = CURRENT
 
 
 type ResolvedPredicate = (
@@ -145,7 +215,7 @@ type ResolvedPredicate = (
     | ResolvedGroup
     | ResolvedNarrow
     | ResolvedQuantifier
-    | ResolvedSemiJoin
+    | ResolvedPresence
 )
 
 

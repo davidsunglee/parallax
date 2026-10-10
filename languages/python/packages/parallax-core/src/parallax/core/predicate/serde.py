@@ -5,38 +5,31 @@ from collections.abc import Callable, Mapping
 from typing import cast
 
 from parallax.core.predicate._nodes import (
-    All,
+    CURRENT_SCALAR_ELEMENT,
     And,
-    Between,
     Comparison,
     ComparisonOp,
-    Exists,
+    FalseNode,
+    FieldSubject,
     Group,
     Membership,
     MembershipOp,
     Narrow,
-    Navigate,
-    NestedComparison,
-    NestedComparisonOp,
-    NestedExists,
-    NestedMembership,
-    NestedMembershipOp,
-    NestedNotExists,
-    NestedNullCheck,
-    NestedNullOp,
-    NestedRange,
-    NestedStringMatch,
-    NestedStringOp,
-    NoneOp,
     Not,
-    NotExists,
     NullCheck,
     NullOp,
     Or,
     PredicateNode,
-    Scalar,
+    Presence,
+    PresenceOp,
+    Quantifier,
+    QuantifierKind,
+    Range,
+    ScalarLiteral,
+    ScalarSubject,
     StringMatch,
     StringOp,
+    TrueNode,
     canonical_subtype_selection,
 )
 
@@ -48,50 +41,18 @@ _COMPARISONS: frozenset[str] = frozenset(
 _NULLS: frozenset[str] = frozenset({"isNull", "isNotNull"})
 _STRINGS: frozenset[str] = frozenset({"like", "notLike", "startsWith", "endsWith", "contains"})
 _MEMBERSHIPS: frozenset[str] = frozenset({"in", "notIn"})
-_NESTED_CMP: frozenset[str] = frozenset(
-    {"nestedEq", "nestedNotEq", "nestedGt", "nestedGte", "nestedLt", "nestedLte"}
-)
-_NESTED_RANGE: frozenset[str] = frozenset({"nestedBetween"})
-_NESTED_MEMBERSHIPS: frozenset[str] = frozenset({"nestedIn", "nestedNotIn"})
-_NESTED_STRINGS: frozenset[str] = frozenset(
-    {"nestedLike", "nestedNotLike", "nestedStartsWith", "nestedEndsWith", "nestedContains"}
-)
-_NESTED_NULL: frozenset[str] = frozenset({"nestedIsNull", "nestedIsNotNull"})
+_QUANTIFIERS: frozenset[str] = frozenset({"any", "all", "none"})
+_PRESENCE: frozenset[str] = frozenset({"exists", "notExists"})
 
-# Reference-string patterns, mirroring identity.schema.json's `$defs` exactly —
-# the schemas are the contract and these are this target's copy of it, so a
-# reference either side accepts is accepted by both. An Entity spelling is the
-# canonical `<namespace>.<Entity>` or the bare `<Entity>`, its namespace segments
-# lowercase and its local name capitalized so the Entity/member boundary is
-# decidable from the text alone (m-metamodel). An attribute and relationship
-# reference share the `<Entity>.member` grammar; a nested reference descends >=1
-# dotted member into a value object (`<Entity>.valueObject.field`); a value-object
-# reference terminates AT a value object (>=1 member, `<Entity>.valueObject`); an
-# element-relative reference (inside a scoped `where`) carries no Entity spelling
-# at all (`type`, `geo.country`). The serde enforces the matching pattern wherever
-# a reference of that kind appears, so a malformed reference is rejected rather
-# than accepted.
+# Reference-string patterns, mirroring identity.schema.json's `$defs` exactly. A
+# predicate path is Entity-qualified (`<Entity>.member(.member)*`) or relative to
+# the object a scope binds (`member(.member)*`); which one a position takes is
+# a model-aware scope rule, not a structural one. A Subtype Selection alternative
+# is an Entity spelling.
 _ENTITY = r"([a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*\.)?[A-Z][A-Za-z0-9]*"
 _MEMBER = r"[a-z][A-Za-z0-9_]*"
-_MEMBER_REF = re.compile(rf"^{_ENTITY}\.{_MEMBER}$")
 _ENTITY_NAME = re.compile(rf"^{_ENTITY}$")
-_NESTED_REF = re.compile(rf"^{_ENTITY}\.{_MEMBER}(\.{_MEMBER})+$")
-_VALUE_OBJECT_REF = re.compile(rf"^{_ENTITY}(\.{_MEMBER})+$")
-_ELEMENT_REF = re.compile(rf"^{_MEMBER}(\.{_MEMBER})*$")
-
-# The predicate kinds `predicate.schema.json` admits inside a nestedExists /
-# nestedNotExists `where` (its `elementPredicate` oneOf): the scoped nested*
-# family over element-relative paths, composed with the boolean combinators. Every
-# other kind — a top-level predicate, navigation, narrowing, `all`/`none` — is
-# illegal there and rejected before construction.
-_ELEMENT_TAGS: frozenset[str] = (
-    _NESTED_CMP
-    | _NESTED_RANGE
-    | _NESTED_MEMBERSHIPS
-    | _NESTED_STRINGS
-    | _NESTED_NULL
-    | frozenset({"and", "or", "not", "group"})
-)
+_PATH = re.compile(rf"^({_ENTITY}(\.{_MEMBER})+|{_MEMBER}(\.{_MEMBER})*)$")
 
 
 class CanonicalDocumentError(ValueError):
@@ -138,14 +99,16 @@ def _str(body: Mapping[str, object], key: str, tag: str) -> str:
     return value
 
 
-def _ref(
-    body: Mapping[str, object], key: str, tag: str, pattern: re.Pattern[str], kind: str
-) -> str:
-    """Read a reference string and enforce the schema pattern for its position."""
-    value = _str(body, key, tag)
-    if pattern.match(value) is None:
-        raise CanonicalDocumentError(f"{tag}: `{key}` {value!r} is not a valid {kind}")
+def _path(body: Mapping[str, object], tag: str) -> str:
+    value = _str(body, "path", tag)
+    if _PATH.match(value) is None:
+        raise CanonicalDocumentError(f"{tag}: `path` {value!r} is not a valid predicate path")
     return value
+
+
+def _subject(body: Mapping[str, object], tag: str) -> ScalarSubject:
+    """A field when the body carries `path`, else the current scalar element."""
+    return FieldSubject(_path(body, tag)) if "path" in body else CURRENT_SCALAR_ELEMENT
 
 
 def _case_insensitive(body: Mapping[str, object], tag: str) -> bool | None:
@@ -159,7 +122,7 @@ def _case_insensitive(body: Mapping[str, object], tag: str) -> bool | None:
     return raw
 
 
-def _scalar(value: object, tag: str) -> Scalar:
+def _scalar(value: object, tag: str) -> ScalarLiteral:
     if isinstance(value, (str, int, float, bool)):
         return value
     raise CanonicalDocumentError(
@@ -167,31 +130,21 @@ def _scalar(value: object, tag: str) -> Scalar:
     )
 
 
-def _values(body: Mapping[str, object], tag: str) -> tuple[Scalar, ...]:
+def _values(body: Mapping[str, object], tag: str) -> tuple[ScalarLiteral, ...]:
     raw = body.get("values")
     if not isinstance(raw, list) or not raw:
         raise CanonicalDocumentError(f"{tag}: `values` must be a non-empty list")
     return tuple(_scalar(item, tag) for item in cast("list[object]", raw))
 
 
-def _operand(body: Mapping[str, object], *, element_scope: bool) -> PredicateNode:
-    # `operand` presence is guaranteed by the closed-shape check (every
-    # operand-bearing tag lists it as required), so this only recurses. The scope
-    # threads through the boolean combinators: a `not`/`group` under a scoped
-    # `where` keeps its inner operand in element-predicate scope.
-    return _deserialize(body["operand"], element_scope=element_scope)
-
-
-def _operands(
-    body: Mapping[str, object], tag: str, *, element_scope: bool
-) -> tuple[PredicateNode, ...]:
+def _operands(body: Mapping[str, object], tag: str) -> tuple[PredicateNode, ...]:
     raw = body.get("operands")
     if not isinstance(raw, list):
         raise CanonicalDocumentError(f"{tag}: `operands` must have at least two entries")
     items = cast("list[object]", raw)
     if len(items) < 2:
         raise CanonicalDocumentError(f"{tag}: `operands` must have at least two entries")
-    return tuple(_deserialize(item, element_scope=element_scope) for item in items)
+    return tuple(deserialize(item) for item in items)
 
 
 def _to_list(body: Mapping[str, object], tag: str) -> tuple[str, ...]:
@@ -209,188 +162,95 @@ def _to_list(body: Mapping[str, object], tag: str) -> tuple[str, ...]:
     return tuple(out)
 
 
-def _nested_where(body: Mapping[str, object]) -> PredicateNode | None:
-    # A nestedExists/nestedNotExists `where` is an `elementPredicate` (schema):
-    # the scoped nested* family over element-relative paths plus boolean
-    # combinators. Recursing in element scope both restricts the legal tags and
-    # switches nested paths to the element-relative pattern.
-    if "where" not in body:
-        return None
-    return _deserialize(body["where"], element_scope=True)
-
-
 def deserialize(doc: object) -> PredicateNode:
     """Parse a Predicate document and canonicalize its set-valued carriers."""
-    return _deserialize(doc, element_scope=False)
-
-
-def _deserialize(doc: object, *, element_scope: bool) -> PredicateNode:
-    """Parse one node; ``element_scope`` restricts it to the ``elementPredicate``
-    grammar (nested* family + boolean combinators, element-relative paths) the
-    schema fixes inside a nestedExists/nestedNotExists ``where``."""
     tag, body = _single_key(doc)
-    if element_scope and tag not in _ELEMENT_TAGS:
-        raise CanonicalDocumentError(
-            f"{tag}: not a legal element predicate inside a nestedExists `where`"
-        )
     grammar = _GRAMMAR.get(tag)
     if grammar is None:
         raise CanonicalDocumentError(f"unknown predicate node {tag!r}")
     shape, parse = grammar
     _check_shape(tag, shape, body)
-    return parse(tag, body, element_scope)
+    return parse(tag, body)
 
 
-type _Parser = Callable[[str, Mapping[str, object], bool], PredicateNode]
+type _Parser = Callable[[str, Mapping[str, object]], PredicateNode]
 type _Grammar = tuple[_Shape, _Parser]
 
 
-def _attr(body: Mapping[str, object], tag: str) -> str:
-    return _ref(body, "attr", tag, _MEMBER_REF, "attribute reference")
-
-
-def _rel(body: Mapping[str, object], tag: str) -> str:
-    return _ref(body, "rel", tag, _MEMBER_REF, "relationship reference")
-
-
-def _nested_path(body: Mapping[str, object], tag: str, element_scope: bool) -> str:
-    # A nested*-family path is a value-object inner reference at top level
-    # (`Class.valueObject.field`), but an element-relative reference inside a
-    # scoped `where` (`type`, `geo.country`) — the schema swaps the pattern.
-    if element_scope:
-        return _ref(body, "path", tag, _ELEMENT_REF, "element-relative path")
-    return _ref(body, "path", tag, _NESTED_REF, "nested reference")
-
-
-def _value_object_path(body: Mapping[str, object], tag: str) -> str:
-    return _ref(body, "path", tag, _VALUE_OBJECT_REF, "value-object reference")
-
-
-def _comparison(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+def _comparison(tag: str, body: Mapping[str, object]) -> PredicateNode:
     return Comparison(
         op=cast("ComparisonOp", tag),
-        attr=_attr(body, tag),
+        subject=_subject(body, tag),
         value=_scalar(body.get("value"), tag),
     )
 
 
-def _between(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
-    return Between(
-        attr=_attr(body, tag),
+def _between(tag: str, body: Mapping[str, object]) -> PredicateNode:
+    return Range(
+        subject=_subject(body, tag),
         lower=_scalar(body.get("lower"), tag),
         upper=_scalar(body.get("upper"), tag),
     )
 
 
-def _null_check(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
-    return NullCheck(op=cast("NullOp", tag), attr=_attr(body, tag))
+def _null_check(tag: str, body: Mapping[str, object]) -> PredicateNode:
+    return NullCheck(op=cast("NullOp", tag), subject=FieldSubject(_path(body, tag)))
 
 
-def _string_match(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+def _string_match(tag: str, body: Mapping[str, object]) -> PredicateNode:
     return StringMatch(
         op=cast("StringOp", tag),
-        attr=_attr(body, tag),
+        subject=_subject(body, tag),
         value=_str(body, "value", tag),
         case_insensitive=_case_insensitive(body, tag),
     )
 
 
-def _membership(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+def _membership(tag: str, body: Mapping[str, object]) -> PredicateNode:
     return Membership(
-        op=cast("MembershipOp", tag), attr=_attr(body, tag), values=_values(body, tag)
+        op=cast("MembershipOp", tag), subject=_subject(body, tag), values=_values(body, tag)
     )
 
 
-def _and(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
-    return And(operands=_operands(body, tag, element_scope=element_scope))
+def _and(tag: str, body: Mapping[str, object]) -> PredicateNode:
+    return And(operands=_operands(body, tag))
 
 
-def _or(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
-    return Or(operands=_operands(body, tag, element_scope=element_scope))
+def _or(tag: str, body: Mapping[str, object]) -> PredicateNode:
+    return Or(operands=_operands(body, tag))
 
 
-def _not(_tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
-    return Not(operand=_operand(body, element_scope=element_scope))
+def _not(_tag: str, body: Mapping[str, object]) -> PredicateNode:
+    return Not(operand=deserialize(body["operand"]))
 
 
-def _group(_tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
-    return Group(operand=_operand(body, element_scope=element_scope))
+def _group(_tag: str, body: Mapping[str, object]) -> PredicateNode:
+    return Group(operand=deserialize(body["operand"]))
 
 
-def _narrow(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
+def _narrow(tag: str, body: Mapping[str, object]) -> PredicateNode:
     return Narrow(
         to=canonical_subtype_selection(_to_list(body, tag)),
-        operand=_operand(body, element_scope=element_scope),
+        operand=deserialize(body["operand"]),
+        path=_path(body, tag) if "path" in body else None,
     )
 
 
-def _nested_comparison(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
-    return NestedComparison(
-        op=cast("NestedComparisonOp", tag),
-        path=_nested_path(body, tag, element_scope),
-        value=_scalar(body.get("value"), tag),
-    )
+def _quantifier(tag: str, body: Mapping[str, object]) -> PredicateNode:
+    where = deserialize(body["where"]) if "where" in body else None
+    return Quantifier(kind=cast("QuantifierKind", tag), path=_path(body, tag), where=where)
 
 
-def _nested_range(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
-    return NestedRange(
-        path=_nested_path(body, tag, element_scope),
-        lower=_scalar(body.get("lower"), tag),
-        upper=_scalar(body.get("upper"), tag),
-    )
+def _presence(tag: str, body: Mapping[str, object]) -> PredicateNode:
+    return Presence(op=cast("PresenceOp", tag), path=_path(body, tag))
 
 
-def _nested_membership(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
-    return NestedMembership(
-        op=cast("NestedMembershipOp", tag),
-        path=_nested_path(body, tag, element_scope),
-        values=_values(body, tag),
-    )
+def _true(_tag: str, _body: Mapping[str, object]) -> PredicateNode:
+    return TrueNode()
 
 
-def _nested_string_match(
-    tag: str, body: Mapping[str, object], element_scope: bool
-) -> PredicateNode:
-    return NestedStringMatch(
-        op=cast("NestedStringOp", tag),
-        path=_nested_path(body, tag, element_scope),
-        value=_str(body, "value", tag),
-        case_insensitive=_case_insensitive(body, tag),
-    )
-
-
-def _nested_null_check(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
-    return NestedNullCheck(
-        op=cast("NestedNullOp", tag), path=_nested_path(body, tag, element_scope)
-    )
-
-
-def _nested_exists(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
-    return NestedExists(path=_value_object_path(body, tag), where=_nested_where(body))
-
-
-def _nested_not_exists(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
-    return NestedNotExists(path=_value_object_path(body, tag), where=_nested_where(body))
-
-
-def _navigate(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
-    return Navigate(rel=_rel(body, tag), op=_nav_op(body))
-
-
-def _exists(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
-    return Exists(rel=_rel(body, tag), op=_nav_op(body))
-
-
-def _not_exists(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
-    return NotExists(rel=_rel(body, tag), op=_nav_op(body))
-
-
-def _all(_tag: str, _body: Mapping[str, object], _scope: bool) -> PredicateNode:
-    return All()
-
-
-def _none(_tag: str, _body: Mapping[str, object], _scope: bool) -> PredicateNode:
-    return NoneOp()
+def _false(_tag: str, _body: Mapping[str, object]) -> PredicateNode:
+    return FalseNode()
 
 
 def _family(tags: frozenset[str], shape: _Shape, parse: _Parser) -> dict[str, _Grammar]:
@@ -398,119 +258,37 @@ def _family(tags: frozenset[str], shape: _Shape, parse: _Parser) -> dict[str, _G
 
 
 _GRAMMAR: dict[str, _Grammar] = {
-    "all": (_shape(()), _all),
-    "none": (_shape(()), _none),
-    "between": (_shape(("attr", "lower", "upper")), _between),
+    "true": (_shape(()), _true),
+    "false": (_shape(()), _false),
+    "between": (_shape(("lower", "upper"), ("path",)), _between),
     "and": (_shape(("operands",)), _and),
     "or": (_shape(("operands",)), _or),
     "not": (_shape(("operand",)), _not),
     "group": (_shape(("operand",)), _group),
-    "narrow": (_shape(("to", "operand")), _narrow),
-    "nestedExists": (_shape(("path",), ("where",)), _nested_exists),
-    "nestedNotExists": (_shape(("path",), ("where",)), _nested_not_exists),
-    "navigate": (_shape(("rel",), ("op",)), _navigate),
-    "exists": (_shape(("rel",), ("op",)), _exists),
-    "notExists": (_shape(("rel",), ("op",)), _not_exists),
-    **_family(_COMPARISONS, _shape(("attr", "value")), _comparison),
-    **_family(_NULLS, _shape(("attr",)), _null_check),
-    **_family(_STRINGS, _shape(("attr", "value"), ("caseInsensitive",)), _string_match),
-    **_family(_MEMBERSHIPS, _shape(("attr", "values")), _membership),
-    **_family(_NESTED_CMP, _shape(("path", "value")), _nested_comparison),
-    **_family(_NESTED_RANGE, _shape(("path", "lower", "upper")), _nested_range),
-    **_family(_NESTED_MEMBERSHIPS, _shape(("path", "values")), _nested_membership),
-    **_family(
-        _NESTED_STRINGS, _shape(("path", "value"), ("caseInsensitive",)), _nested_string_match
-    ),
-    **_family(_NESTED_NULL, _shape(("path",)), _nested_null_check),
+    "narrow": (_shape(("to", "operand"), ("path",)), _narrow),
+    "all": (_shape(("path", "where")), _quantifier),
+    **_family(_QUANTIFIERS - {"all"}, _shape(("path",), ("where",)), _quantifier),
+    **_family(_PRESENCE, _shape(("path",)), _presence),
+    **_family(_COMPARISONS, _shape(("value",), ("path",)), _comparison),
+    **_family(_NULLS, _shape(("path",)), _null_check),
+    **_family(_STRINGS, _shape(("value",), ("path", "caseInsensitive")), _string_match),
+    **_family(_MEMBERSHIPS, _shape(("values",), ("path",)), _membership),
 }
 
 
-def _nav_op(body: Mapping[str, object]) -> PredicateNode | None:
-    # A navigation `op` references the FULL Predicate grammar (schema), so it is
-    # always deserialized in top-level (non-element) scope.
-    if "op" not in body:
-        return None
-    return _deserialize(body["op"], element_scope=False)
-
-
-def _emit_where(where: PredicateNode | None) -> dict[str, object]:
-    return {"where": serialize(where)} if where is not None else {}
-
-
-def _emit_nav(rel: str, op: PredicateNode | None) -> dict[str, object]:
-    body: dict[str, object] = {"rel": rel}
-    if op is not None:
-        body["op"] = serialize(op)
-    return body
-
-
-def serialize(op: PredicateNode) -> dict[str, object]:
+def serialize(op: PredicateNode) -> dict[str, object]:  # noqa: C901 - exhaustive dispatcher
     """Emit the canonical single-key tagged document for one node.
 
     A ``narrow``'s Subtype Selection is canonicalized defensively so a directly
     constructed node has the same wire identity as a deserialized one.
     """
     match op:
-        case All():
-            return {"all": {}}
-        case NoneOp():
-            return {"none": {}}
-        case Comparison() | Between() | NullCheck() | StringMatch() | Membership():
-            return _emit_attribute_leaf(op)
-        case (
-            NestedComparison()
-            | NestedRange()
-            | NestedMembership()
-            | NestedStringMatch()
-            | NestedNullCheck()
-        ):
-            return _emit_nested_leaf(op)
-        case And() | Or() | Not() | Group():
-            return _emit_combinator(op)
-        case Narrow(to=to, operand=operand):
-            return {"narrow": {"to": list(to), "operand": serialize(operand)}}
-        case NestedExists(path=path, where=where):
-            return {"nestedExists": {"path": path, **_emit_where(where)}}
-        case NestedNotExists(path=path, where=where):
-            return {"nestedNotExists": {"path": path, **_emit_where(where)}}
-        case Navigate() | Exists() | NotExists():
-            return _emit_navigation(op)
-
-
-def _emit_attribute_leaf(
-    op: Comparison | Between | NullCheck | StringMatch | Membership,
-) -> dict[str, object]:
-    match op:
-        case Comparison(op=tag, attr=attr, value=value):
-            return {tag: {"attr": attr, "value": value}}
-        case Between(attr=attr, lower=lower, upper=upper):
-            return {"between": {"attr": attr, "lower": lower, "upper": upper}}
-        case NullCheck(op=tag, attr=attr):
-            return {tag: {"attr": attr}}
-        case StringMatch(op=tag, attr=attr, value=value, case_insensitive=ci):
-            return {tag: _emit_string_body({"attr": attr, "value": value}, ci)}
-        case Membership(op=tag, attr=attr, values=values):
-            return {tag: {"attr": attr, "values": list(values)}}
-
-
-def _emit_nested_leaf(
-    op: NestedComparison | NestedRange | NestedMembership | NestedStringMatch | NestedNullCheck,
-) -> dict[str, object]:
-    match op:
-        case NestedComparison(op=tag, path=path, value=value):
-            return {tag: {"path": path, "value": value}}
-        case NestedRange(path=path, lower=lower, upper=upper):
-            return {"nestedBetween": {"path": path, "lower": lower, "upper": upper}}
-        case NestedMembership(op=tag, path=path, values=values):
-            return {tag: {"path": path, "values": list(values)}}
-        case NestedStringMatch(op=tag, path=path, value=value, case_insensitive=ci):
-            return {tag: _emit_string_body({"path": path, "value": value}, ci)}
-        case NestedNullCheck(op=tag, path=path):
-            return {tag: {"path": path}}
-
-
-def _emit_combinator(op: And | Or | Not | Group) -> dict[str, object]:
-    match op:
+        case TrueNode():
+            return {"true": {}}
+        case FalseNode():
+            return {"false": {}}
+        case Comparison() | Range() | NullCheck() | StringMatch() | Membership():
+            return _emit_operation(op)
         case And(operands=operands):
             return {"and": {"operands": [serialize(o) for o in operands]}}
         case Or(operands=operands):
@@ -519,21 +297,41 @@ def _emit_combinator(op: And | Or | Not | Group) -> dict[str, object]:
             return {"not": {"operand": serialize(operand)}}
         case Group(operand=operand):
             return {"group": {"operand": serialize(operand)}}
+        case Quantifier(kind=kind, path=path, where=where):
+            body: dict[str, object] = {"path": path}
+            if where is not None:
+                body["where"] = serialize(where)
+            return {kind: body}
+        case Presence(op=tag, path=path):
+            return {tag: {"path": path}}
+        case Narrow(to=to, operand=operand, path=path):
+            narrow: dict[str, object] = {} if path is None else {"path": path}
+            narrow.update({"to": list(to), "operand": serialize(operand)})
+            return {"narrow": narrow}
 
 
-def _emit_navigation(op: Navigate | Exists | NotExists) -> dict[str, object]:
+def _subject_body(subject: ScalarSubject) -> dict[str, object]:
+    return {"path": subject.path} if isinstance(subject, FieldSubject) else {}
+
+
+def _emit_operation(
+    op: Comparison | Range | NullCheck | StringMatch | Membership,
+) -> dict[str, object]:
+    body = _subject_body(op.subject)
     match op:
-        case Navigate(rel=rel, op=inner):
-            return {"navigate": _emit_nav(rel, inner)}
-        case Exists(rel=rel, op=inner):
-            return {"exists": _emit_nav(rel, inner)}
-        case NotExists(rel=rel, op=inner):
-            return {"notExists": _emit_nav(rel, inner)}
-
-
-def _emit_string_body(body: dict[str, object], case_insensitive: bool | None) -> dict[str, object]:
-    # Omit an omitted flag (None); round-trip an explicit `false`/`true`
-    # verbatim (m-predicate: serialize(deserialize(op)) == op).
-    if case_insensitive is not None:
-        body["caseInsensitive"] = case_insensitive
-    return body
+        case Comparison(op=tag, value=value):
+            body["value"] = value
+            return {tag: body}
+        case Range(lower=lower, upper=upper):
+            body.update({"lower": lower, "upper": upper})
+            return {"between": body}
+        case NullCheck(op=tag):
+            return {tag: body}
+        case StringMatch(op=tag, value=value, case_insensitive=ci):
+            body["value"] = value
+            if ci is not None:
+                body["caseInsensitive"] = ci
+            return {tag: body}
+        case Membership(op=tag, values=values):
+            body["values"] = list(values)
+            return {tag: body}

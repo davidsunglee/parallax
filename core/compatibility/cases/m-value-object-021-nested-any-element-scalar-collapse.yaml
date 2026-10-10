@@ -1,7 +1,6 @@
-# valueObject to-many: a NON-ARRAY `many` value collapses to not-present even when
-# its scalar value COLLIDES with the query value (m-value-object to-many,
-# m-predicate absence collapse, m-dialect array-traversal form), on Postgres AND
-# MariaDB.
+# valueObject to-many: a NON-ARRAY `many` value holds zero elements even when its
+# scalar value COLLIDES with the query value (m-value-object to-many, m-predicate
+# quantifier carriers, m-dialect array-traversal form), on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, absence-collapse, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -9,9 +8,12 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedEq:
-        path: parallax.compatibility.Customer.address.phones.number
-        value: 555-0000
+      any:
+        path: parallax.compatibility.Customer.address.phones
+        where:
+          eq:
+            path: number
+            value: 555-0000
 then:
   statements:
     - sql:

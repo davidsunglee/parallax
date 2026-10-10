@@ -4,11 +4,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
-from parallax.core.entity import UNLOADED, Entity, RelationshipPath, UnloadedRelationshipError
+from parallax.core.entity import UNLOADED, Entity, IncludePath, UnloadedRelationshipError
 from parallax.core.entity import lifecycle_state_of as _lifecycle_state_of
 from parallax.core.entity import relationship_value_of as _relationship_value_of
 from parallax.core.entity._declaration import declaration_of, is_entity_class, members_of
 from parallax.core.entity._entity import DetachedLifecycleState, attach_lifecycle_state
+from parallax.core.entity._expressions import IncludeTraversal, include_traversal
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
 from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Edge, Pin
@@ -187,7 +188,7 @@ def edge_of(node: object) -> Edge:
     return state.edge
 
 
-def is_view_loaded(node: object, path: RelationshipPath[Any, Any]) -> bool:
+def is_view_loaded(node: object, path: IncludePath[Any, Any]) -> bool:
     """Whether every relationship view ``path`` traverses, on every branch it
     reaches, was loaded by the read that produced ``node``.
 
@@ -204,7 +205,7 @@ def is_view_loaded(node: object, path: RelationshipPath[Any, Any]) -> bool:
     return loaded
 
 
-def view(node: object, path: RelationshipPath[Any, Any]) -> object:
+def view(node: object, path: IncludePath[Any, Any]) -> object:
     """The value ``path`` reaches from ``node``, using only loaded state.
 
     A path whose every traversed segment is to-one answers the terminal Entity or
@@ -236,7 +237,7 @@ _UNLOADED_MARKER: Final = _UnloadedMarker()
 
 
 def _traverse(
-    node: object, path: RelationshipPath[Any, Any], operation: str, *, raising: bool
+    node: object, path: IncludeTraversal, operation: str, *, raising: bool
 ) -> tuple[list[object], bool, bool]:
     """Walk ``path`` from ``node``, answering its terminals, whether it fanned out,
     and whether every view it reached was loaded.
@@ -311,15 +312,15 @@ def _required_state(node: object, operation: str) -> SnapshotNodeState:
     return state
 
 
-def _require_path(node: object, path: object, operation: str) -> RelationshipPath[Any, Any]:
-    """``path`` as a Relationship Path whose starting owner applies to ``node``.
+def _require_path(node: object, path: object, operation: str) -> IncludeTraversal:
+    """``path``'s Include traversal, whose starting owner applies to ``node``.
 
     Refuses anything else, including the bare relationship-name string an
     untyped caller may still reach here with. A relationship an accepted ancestor
     declares applies to every concrete subtype, which is exactly what walking the
     class's own ancestry answers.
     """
-    if not isinstance(path, RelationshipPath) or not path.segments:
+    if not isinstance(path, IncludePath):
         raise SnapshotInspectionError(
             code="snapshot-view-owner-mismatch",
             message=(
@@ -329,11 +330,11 @@ def _require_path(node: object, path: object, operation: str) -> RelationshipPat
             operation=operation,
             entity=_entity_of(node),
         )
-    typed = cast("RelationshipPath[Any, Any]", path)
-    first = typed.segments[0]
+    traversal = include_traversal(cast("IncludePath[Any, Any]", path))
+    first = traversal.segments[0]
     if _segment_owner(node, first) is None:
         raise _owner_mismatch(node, first, operation)
-    return typed
+    return traversal
 
 
 def _owner_mismatch(

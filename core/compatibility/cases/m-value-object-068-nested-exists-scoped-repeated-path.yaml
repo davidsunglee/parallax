@@ -1,7 +1,7 @@
-# valueObject to-many: a same-element `where` MAY constrain one element-relative path
-# twice, and the conflicting form is outside MariaDB's containment scope (m-predicate
-# scoped `where`, m-sql to-many, m-dialect "Scope of the containment golden",
-# m-document-codec `encodeCandidate`). Postgres golden only.
+# valueObject to-many: one quantifier's `where` MAY constrain one element-relative
+# path twice, and the conflicting form is outside MariaDB's containment scope
+# (m-predicate quantifiers, m-sql to-many, m-dialect "Scope of the containment
+# golden", m-document-codec `encodeCandidate`). Postgres golden only.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, m-document-codec, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -9,15 +9,15 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedExists:
+      any:
         path: parallax.compatibility.Customer.address.phones
         where:
           and:
             operands:
-              - nestedEq:
+              - eq:
                   path: type
                   value: home
-              - nestedEq:
+              - eq:
                   path: type
                   value: work
 then:

@@ -99,6 +99,7 @@ from .metamodel import (
 from .object_query_oracle import assert_case_read
 from .object_query_oracle import row as object_query_row
 from .object_query_validate import validate_object_query
+from .predicate_validate import validate_query_predicate
 from .predicate_write_validate import validate_predicate_write
 from .providers import Catalog, DatabaseProvider
 from .provisioning import apply_given, provision, provision_empty
@@ -692,6 +693,7 @@ def _assert_rejected(case: Case) -> None:
             # Inheritance selection / subtype-scope validation (m-object-query x
             # m-inheritance) decides the resolved position before typed literals.
             validate_query_inheritance(case.model.entity_defs, query)
+            validate_query_predicate(case.model.entity_defs, query)
             validate_object_query(case.model.entity(query["target"]), query)
         elif "write" in case.when:
             write = _rejected_write_input(case)
@@ -873,7 +875,7 @@ def _validate_rejected_predicate_write(case: Case, write: dict[str, Any]) -> Non
     entity = case.model.entity(str(target_name))
     if entity is None:
         return
-    validate_predicate_write(entity, write)
+    validate_predicate_write(entity, write, case.model.entity_defs)
 
 
 # --- write sequences (m-temporal-write) ---------------------------------------------------

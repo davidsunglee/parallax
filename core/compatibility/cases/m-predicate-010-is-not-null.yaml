@@ -9,7 +9,7 @@ when:
     target: parallax.compatibility.Order
     predicate:
       isNotNull:
-        attr: parallax.compatibility.Order.sku
+        path: parallax.compatibility.Order.sku
 then:
   statements:
     - sql:

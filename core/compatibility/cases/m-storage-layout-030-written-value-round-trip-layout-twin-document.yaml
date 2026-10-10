@@ -102,7 +102,7 @@ when:
         target: parallax.compatibility.WriteTwinItem
         predicate:
           greaterThan:
-            attr: parallax.compatibility.WriteTwinItem.id
+            path: parallax.compatibility.WriteTwinItem.id
             value: 9
         orderBy:
           - attr: parallax.compatibility.WriteTwinItem.id

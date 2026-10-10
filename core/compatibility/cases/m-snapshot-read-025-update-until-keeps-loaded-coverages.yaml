@@ -13,7 +13,7 @@ when:
         target: parallax.compatibility.Policy
         predicate:
           eq:
-            attr: parallax.compatibility.Policy.id
+            path: parallax.compatibility.Policy.id
             value: 2
         temporal:
           transaction-time:
@@ -70,7 +70,7 @@ when:
         target: parallax.compatibility.Coverage
         predicate:
           eq:
-            attr: parallax.compatibility.Coverage.policyId
+            path: parallax.compatibility.Coverage.policyId
             value: 2
         temporal:
           transaction-time:

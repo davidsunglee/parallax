@@ -7,7 +7,7 @@ dataset:
     recipe: versioned-documents
 objectQuery:
   target: parallax.compatibility.Ledger
-  predicate: { all: {} }
+  predicate: { "true": {} }
 delivery:
   pageSizes: [1, 32, 128]
 workloads:

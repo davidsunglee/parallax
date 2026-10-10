@@ -28,7 +28,7 @@ from parallax.core.object_query._resolved import (
     ResolvedObjectQuery,
     ResolvedSeek,
 )
-from parallax.core.predicate import All
+from parallax.core.predicate import TrueNode
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._context import LoweredStatement
@@ -57,7 +57,7 @@ def _planned(model: Metamodel, target: str, *keys: OrderKey) -> continuation.Con
     entity = entity_of(model, target)
     query = object_query(
         entity.identity,
-        All(),
+        TrueNode(),
         order_by=keys,
         temporal={
             "valid-time" if axis.dimension is AxisKind.VALID_TIME else "transaction-time": AsOf(

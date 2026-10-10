@@ -1,6 +1,6 @@
-# valueObject to-many existence: nestedExists over a `many` member is a NON-EMPTY
-# test (m-value-object to-many, m-predicate, m-dialect array-traversal form), on
-# Postgres AND MariaDB.
+# valueObject to-many occupancy: a bare `any` over a `many` member is a NON-EMPTY
+# test (m-value-object to-many, m-predicate quantifiers, m-dialect array-traversal
+# form), on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -8,7 +8,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedExists:
+      any:
         path: parallax.compatibility.Customer.address.phones
 then:
   statements:

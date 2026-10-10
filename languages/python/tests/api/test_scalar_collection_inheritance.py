@@ -189,7 +189,7 @@ def test_abstract_and_concrete_reads_publish_each_applicable_collection(
     wire = db.wire.find(
         {
             "target": f"{namespace}.Asset",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "orderBy": [{"attr": f"{namespace}.Asset.id", "direction": "asc"}],
         }
     ).results()
@@ -253,7 +253,7 @@ def test_a_row_form_read_of_an_abstract_target_carries_each_collection(
     query = deserialize(
         {
             "target": f"{namespace}.Asset",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "orderBy": [{"attr": f"{namespace}.Asset.id", "direction": "asc"}],
         }
     )

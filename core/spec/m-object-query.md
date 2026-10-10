@@ -34,7 +34,7 @@ round-trip tests: `serialize(deserialize(query)) == query`.
 ```yaml
 objectQuery:
   target: parallax.compatibility.Order
-  predicate: { all: {} }
+  predicate: { "true": {} }
   narrowTo: [parallax.compatibility.PriorityOrder]
   temporal:
     transaction-time: { asOf: latest }
@@ -66,16 +66,17 @@ Living **inside** the query is what lets a read envelope carry one document: no
 case, step, or adapter pointer pairs a query with a sibling entity field, and a
 query is therefore self-locating rather than position-relative.
 
-Every queried-entity reference the query carries — its predicate's `attr` / `rel`
-/ nested `path`, each Sort Key's `attr`, each Include Path's first hop `rel` — MUST
-be **consistent** with `target`: the reference class's effective concrete set is a
-subset of the target's. A navigation's inner predicate and an element-scoped
-`where` resolve against a different position and are exempt.
+Every queried-entity reference the query carries — its predicate's
+Entity-qualified paths, each Sort Key's `attr`, each Include Path's first hop
+`rel` — MUST be **consistent** with `target`: the reference class's effective
+concrete set is a subset of the target's. A quantifier's `where` and a
+path-targeted `narrow`'s operand resolve against the element or target they bind
+and are exempt.
 
 ## `predicate` — the selection
 
 `predicate` is a `m-predicate` node and is required. An unfiltered query states
-`{ "all": {} }` explicitly rather than omitting the clause: an unfiltered read is
+`{ "true": {} }` explicitly rather than omitting the clause: an unfiltered read is
 a deliberate claim, not an absence.
 
 The position the predicate is evaluated at is the query's **result** position —

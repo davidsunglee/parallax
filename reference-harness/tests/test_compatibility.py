@@ -32,10 +32,13 @@ from typing import Any
 
 import pytest
 
+from reference_harness import errors
+from reference_harness._case_execution import CaseExecution
 from reference_harness.case import Case, dialect_executed_cases, discover_cases
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import run_case
 from reference_harness.providers import available_dialects
+from reference_harness.provisioning import provision
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -228,3 +231,41 @@ def test_a_resident_branch_that_dropped_its_grouping_is_not_authorable(provider)
 
     with pytest.raises(CaseFailure, match="is not canonical"):
         run_case(case, provider)
+
+
+# --------------------------------------------------------------------------
+# A to-one hop's scalar subquery evaluates every declared candidate. Two
+# table-per-concrete-subtype branches keying the same id are two candidates for
+# one reference, and the database refuses the statement rather than answering
+# with either (m-sql *Single-valued traversal*): PostgreSQL raises SQLSTATE 21000
+# and MariaDB errno 1242. No neutral category names the failure, so it reaches the
+# caller unclassified, through the database execution route.
+# --------------------------------------------------------------------------
+
+_DUPLICATE_CANDIDATE_CODE = {"postgres": "21000", "mariadb": 1242}
+
+
+@pytest.mark.parametrize(
+    "stem",
+    [
+        "m-predicate-090-dotted-field-of-polymorphic-target-tpcs",
+        # A subtype test over the reached target evaluates every declared branch,
+        # so the selection cannot hide the second candidate.
+        "m-predicate-088-target-local-subtype-membership-tpcs",
+    ],
+)
+def test_a_to_one_hop_reaching_two_candidates_fails_through_the_database(
+    provider, stem: str
+) -> None:
+    case = _damaged(stem)
+    provision(case, provider)
+    execution = CaseExecution(case, provider)
+    execution.execute(
+        "insert into traversal_bike (id, maker, gears) values (?, ?, ?)", [5, "Twin", 3]
+    )
+    (statement,) = _statements(case)
+    sql, binds = statement["sql"][provider.dialect], statement.get("binds", [])
+    with pytest.raises(Exception) as raised:  # noqa: PT011 - each driver raises its own type
+        execution.query(sql, binds)
+    assert provider.native_error_code(raised.value) == _DUPLICATE_CANDIDATE_CODE[provider.dialect]
+    assert provider.classify_error(raised.value) == errors.UNKNOWN

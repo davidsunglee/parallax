@@ -27,7 +27,7 @@ when:
         target: parallax.compatibility.Badge
         predicate:
           eq:
-            attr: parallax.compatibility.Badge.id
+            path: parallax.compatibility.Badge.id
             value: 1
       roundTrips: 1
       identityAttr: id

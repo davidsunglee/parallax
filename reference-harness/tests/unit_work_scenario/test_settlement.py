@@ -394,7 +394,7 @@ def _versioned_settled_case(
                     "objectQuery": {
                         "target": "parallax.compatibility.Account",
                         "predicate": {
-                            "eq": {"attr": "parallax.compatibility.Account.id", "value": 1}
+                            "eq": {"path": "parallax.compatibility.Account.id", "value": 1}
                         },
                     },
                     "roundTrips": 1,
@@ -450,7 +450,7 @@ def _reserved_version_column_case(*, advance: int) -> Case:
                     "objectQuery": {
                         "target": "parallax.compatibility.Account",
                         "predicate": {
-                            "eq": {"attr": "parallax.compatibility.Account.id", "value": 1}
+                            "eq": {"path": "parallax.compatibility.Account.id", "value": 1}
                         },
                     },
                     "roundTrips": 1,
@@ -772,7 +772,7 @@ def _balance_find(pk: int, tx_start: str, tx_end: Any, value: str) -> dict[str, 
         "uow": "observe-then-close",
         "objectQuery": {
             "target": "Balance",
-            "predicate": {"eq": {"attr": "Balance.id", "value": pk}},
+            "predicate": {"eq": {"path": "Balance.id", "value": pk}},
         },
         "roundTrips": 1,
         "statements": [{"sql": {"postgres": _BALANCE_FIND}, "binds": [pk]}],

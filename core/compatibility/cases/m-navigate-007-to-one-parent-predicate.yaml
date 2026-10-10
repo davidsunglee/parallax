@@ -1,6 +1,6 @@
-# navigate(OrderItem.order -> Order.name = 'Ada'): filter child rows by a
-# predicate on their to-one parent. This pins reverse/to-one navigation in
-# addition to the existing to-many parent-to-child navigation cases.
+# A predicate on each child's to-one parent: the parent is present and its name is
+# 'Ada'. Presence keeps the filter two-valued where the dotted comparison alone
+# would be unknown for a child with no parent; the name is non-nullable.
 model: models/orders.yaml
 tags: [m-navigate, navigate, relationship, to-one, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -8,16 +8,17 @@ when:
   objectQuery:
     target: parallax.compatibility.OrderItem
     predicate:
-      navigate:
-        rel: parallax.compatibility.OrderItem.order
-        op:
-          eq:
-            attr: parallax.compatibility.Order.name
-            value: Ada
+      and:
+        operands:
+          - exists:
+              path: parallax.compatibility.OrderItem.order
+          - eq:
+              path: parallax.compatibility.OrderItem.order.name
+              value: Ada
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where exists (select 1 from orders t1 where t1.id = t0.order_id and t1.name = ?)
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where exists (select 1 from orders t1 where t1.id = t0.order_id) and (select t2.name from orders t2 where t2.id = t0.order_id) = ?
       binds: [Ada]
   referenceSql: select id, order_id, sku, quantity, shipped_on from order_item where order_id in (select id from orders where name = 'Ada')
   rows:

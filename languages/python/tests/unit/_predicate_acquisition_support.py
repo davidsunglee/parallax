@@ -166,7 +166,7 @@ def _target(cls: type[Entity]) -> Mapping[str, object]:
     entity = cls.identity.canonical
     return {
         "entity": entity,
-        "predicate": {"greaterThanEquals": {"attr": f"{entity}.id", "value": 1}},
+        "predicate": {"greaterThanEquals": {"path": f"{entity}.id", "value": 1}},
     }
 
 

@@ -16,7 +16,7 @@ when:
         target: parallax.compatibility.Position
         predicate:
           eq:
-            attr: parallax.compatibility.Position.id
+            path: parallax.compatibility.Position.id
             value: 1
         temporal:
           transaction-time:

@@ -134,7 +134,7 @@ def test_a_public_write_hands_the_driver_the_sentinel_under_unchanged_observatio
     assert [observed[position] for position in open_positions] == [_SPELLING, _SPELLING]
     query = {
         "target": f"{_NAMESPACE}.Holding",
-        "predicate": {"eq": {"attr": f"{_NAMESPACE}.Holding.id", "value": 1}},
+        "predicate": {"eq": {"path": f"{_NAMESPACE}.Holding.id", "value": 1}},
         "temporal": {"transaction-time": {"asOf": "latest"}, "valid-time": {"asOf": "latest"}},
     }
     (node,) = db.wire.find(query).results()

@@ -9,7 +9,7 @@ when:
     target: parallax.compatibility.Traveler
     predicate:
       greaterThan:
-        attr: parallax.compatibility.Traveler.score
+        path: parallax.compatibility.Traveler.score
         value: 5
     orderBy:
       - attr: parallax.compatibility.Traveler.score

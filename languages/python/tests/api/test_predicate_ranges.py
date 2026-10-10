@@ -123,7 +123,7 @@ def _amend(
         return
     name = f"{_NAMESPACE}.{entity.__name__}"
     tx.wire.amend_where(
-        {"entity": name, "predicate": {"eq": {"attr": f"{name}.amount", "value": selects}}},
+        {"entity": name, "predicate": {"eq": {"path": f"{name}.amount", "value": selects}}},
         {"amount": assigns},
         valid_from=_MAR,
         until=_SEP,

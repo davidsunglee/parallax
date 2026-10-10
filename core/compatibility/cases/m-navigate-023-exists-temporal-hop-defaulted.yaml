@@ -1,7 +1,7 @@
 # Semi-join across a temporal hop with explicit Latest on both declared axes:
 # Policies that HAVE a current coverage with amount >= 600. The canonical read
 # names both root selections, and navigation propagates them to Coverage, so the
-# child semi-join and outer Policy each carry `thru_z = ? and out_z = ?`.
+# child correlated sub-select and outer Policy each carry `thru_z = ? and out_z = ?`.
 model: models/policy.yaml
 tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, exists, semi-join, propagation, bitemporal, explicit-selection, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -9,11 +9,11 @@ when:
   objectQuery:
     target: parallax.compatibility.Policy
     predicate:
-      exists:
-        rel: parallax.compatibility.Policy.coverages
-        op:
+      any:
+        path: parallax.compatibility.Policy.coverages
+        where:
           greaterThanEquals:
-            attr: parallax.compatibility.Coverage.amount
+            path: amount
             value: "600.00"
     temporal:
       transaction-time:

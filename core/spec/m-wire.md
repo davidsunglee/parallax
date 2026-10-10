@@ -125,6 +125,13 @@ comparing the extracted text directly (`m-dialect`, `m-document-codec`), so a
 changed spelling changes stored bytes, predicate results, and ordering results
 together. It is never a presentation preference.
 
+**Each spelling has one JSON kind.** Every canonical spelling of a type is a JSON
+boolean (`boolean`), a JSON number (the integer and float types), or a JSON string
+(`decimal(p,s)` and the text-encoded types); only `json` has no single kind. That
+kind is part of this module's matrix rather than a second table, and a scalar
+collection element is compared only when its stored kind is the one its declared
+type encodes as (`m-predicate`, `m-dialect`).
+
 ## Neutral Wire Codec matrix
 
 The matrix is exhaustive over the closed `NeutralType` algebra. “Alternative”

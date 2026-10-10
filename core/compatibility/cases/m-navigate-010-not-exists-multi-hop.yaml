@@ -1,4 +1,4 @@
-# notExists across TWO hops (m-navigate negated semi-join, multi-hop).
+# none across TWO hops (m-navigate nested quantifiers, multi-hop).
 model: models/orders.yaml
 tags: [m-navigate, notExists, relationship, multi-hop, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -6,11 +6,11 @@ when:
   objectQuery:
     target: parallax.compatibility.Order
     predicate:
-      notExists:
-        rel: parallax.compatibility.Order.items
-        op:
-          exists:
-            rel: parallax.compatibility.OrderItem.statuses
+      none:
+        path: parallax.compatibility.Order.items
+        where:
+          any:
+            path: statuses
 then:
   statements:
     - sql:

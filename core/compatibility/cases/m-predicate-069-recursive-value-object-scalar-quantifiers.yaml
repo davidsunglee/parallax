@@ -1,0 +1,39 @@
+# Quantifiers nest by explicit scope: some parcel of the basket has no `urgent` note.
+# The inner `none` ranges over the bound parcel's own notes, not the basket's.
+model: models/predicate-collections.yaml
+tags: [m-predicate, quantifier, scalar-collection, m-value-object, to-many, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      any:
+        path: parallax.compatibility.Basket.parcels
+        where:
+          none:
+            path: notes
+            where:
+              eq: {value: urgent}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.parcels) = ? then t0.parcels else cast(? as jsonb) end) t1 where not exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t1.value, ?)) = ? then jsonb_extract_path(t1.value, ?) else cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then t2.value #>> ? end = ?))'}
+    binds: [array, '[]', notes, array, notes, '[]', string, '{}', urgent]
+  graph:
+    Basket:
+    - id: 1
+      label: one
+      ownerId: 1
+      tags: [urgent, gift]
+      scores: [5, 25]
+      prices: ['1.50']
+      flags: [true]
+      parcels:
+      - sku: a
+        qty: 2
+        notes: [x]
+      - sku: b
+        qty: 0
+        notes: []
+      meta:
+        labels: [m]
+  roundTrips: 1

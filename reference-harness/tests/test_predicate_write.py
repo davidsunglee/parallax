@@ -38,7 +38,7 @@ def _update_instruction() -> dict[str, object]:
         "mutation": "amend",
         "target": {
             "entity": "Account",
-            "predicate": {"lessThan": {"attr": "Account.balance", "value": "200.00"}},
+            "predicate": {"lessThan": {"path": "Account.balance", "value": "200.00"}},
         },
         "assignments": [{"attr": "Account.balance", "value": "0.00"}],
     }
@@ -155,7 +155,7 @@ def test_schema_enforces_predicate_write_verb_shape(
 
 def test_model_validator_accepts_a_scoped_assignable_predicate_write() -> None:
     entity = _account_entity()
-    validate_predicate_write(entity, _update_instruction())
+    validate_predicate_write(entity, _update_instruction(), [entity.definition])
 
 
 def test_materialization_validator_accepts_a_matching_versioned_find() -> None:
@@ -169,7 +169,7 @@ def test_materialization_validator_accepts_a_matching_versioned_find() -> None:
         [
             _materializing_find(
                 entity,
-                {"lessThan": {"value": "200.00", "attr": "Account.balance"}},
+                {"lessThan": {"value": "200.00", "path": "Account.balance"}},
                 [{"id": 1, "balance": "100.00", "version": 1}],
             )
         ],
@@ -187,7 +187,7 @@ def test_materialization_validator_rejects_differently_predicated_find() -> None
     with pytest.raises(PredicateWriteValidationError, match="matching canonical predicate"):
         validate_predicate_write_materialization(
             entity,
-            [_materializing_find(entity, {"all": {}}, [{"id": 1, "version": 1}])],
+            [_materializing_find(entity, {"true": {}}, [{"id": 1, "version": 1}])],
             _update_instruction(),
         )
 
@@ -259,7 +259,7 @@ def test_materialization_validator_accepts_temporal_milestone_observations() -> 
         "mutation": "terminate",
         "target": {
             "entity": "Position",
-            "predicate": {"eq": {"attr": "Position.id", "value": 1}},
+            "predicate": {"eq": {"path": "Position.id", "value": 1}},
         },
         "at": "2024-10-01T00:00:00+00:00",
         "validFrom": "2024-07-01T00:00:00+00:00",
@@ -296,7 +296,7 @@ def test_materialization_validator_rejects_missing_temporal_carried_payload() ->
         "mutation": "terminate",
         "target": {
             "entity": "Position",
-            "predicate": {"eq": {"attr": "Position.id", "value": 1}},
+            "predicate": {"eq": {"path": "Position.id", "value": 1}},
         },
         "at": "2024-10-01T00:00:00+00:00",
         "validFrom": "2024-07-01T00:00:00+00:00",
@@ -324,7 +324,7 @@ def test_materialization_validator_requires_transaction_temporal_update_payload(
         "mutation": "amend",
         "target": {
             "entity": "Balance",
-            "predicate": {"eq": {"attr": "Balance.id", "value": 1}},
+            "predicate": {"eq": {"path": "Balance.id", "value": 1}},
         },
         "assignments": [{"attr": "Balance.value", "value": 300.00}],
         "at": "2024-10-01T00:00:00+00:00",
@@ -350,7 +350,7 @@ def test_materialization_validator_does_not_require_transaction_terminate_payloa
         "mutation": "terminate",
         "target": {
             "entity": "Balance",
-            "predicate": {"eq": {"attr": "Balance.id", "value": 1}},
+            "predicate": {"eq": {"path": "Balance.id", "value": 1}},
         },
         "at": "2024-10-01T00:00:00+00:00",
     }
@@ -389,7 +389,7 @@ def test_materialization_validator_requires_a_whole_value_object_for_noop_planni
     entity = Entity(definition=definition)
     instruction = {
         "mutation": "amend",
-        "target": {"entity": "Customer", "predicate": {"all": {}}},
+        "target": {"entity": "Customer", "predicate": {"true": {}}},
         "assignments": [
             {
                 "attr": "Customer.address",
@@ -431,7 +431,7 @@ def test_materialization_validator_rejects_temporal_write_without_a_find() -> No
         "mutation": "terminate",
         "target": {
             "entity": "Position",
-            "predicate": {"eq": {"attr": "Position.id", "value": 1}},
+            "predicate": {"eq": {"path": "Position.id", "value": 1}},
         },
         "at": "2024-10-01T00:00:00+00:00",
         "validFrom": "2024-07-01T00:00:00+00:00",
@@ -447,7 +447,7 @@ def test_materialization_validator_allows_readless_unversioned_update_and_delete
         "mutation": "amend",
         "target": {
             "entity": "Wallet",
-            "predicate": {"lessThan": {"attr": "Wallet.balance", "value": 200.00}},
+            "predicate": {"lessThan": {"path": "Wallet.balance", "value": 200.00}},
         },
         "assignments": [{"attr": "Wallet.balance", "value": 0.00}],
     }
@@ -455,7 +455,7 @@ def test_materialization_validator_allows_readless_unversioned_update_and_delete
         "mutation": "delete",
         "target": {
             "entity": "Wallet",
-            "predicate": {"lessThan": {"attr": "Wallet.balance", "value": 200.00}},
+            "predicate": {"lessThan": {"path": "Wallet.balance", "value": 200.00}},
         },
     }
 
@@ -504,7 +504,7 @@ def test_schema_validation_rejects_a_cache_hit_as_predicate_materialization(tmp_
     assert any("m-opt-lock-014" in error and "real resolving read" in error for error in errors)
 
 
-@pytest.mark.parametrize("operator", ["navigate", "exists", "notExists"])
+@pytest.mark.parametrize("operator", ["any", "none", "all"])
 def test_model_validator_accepts_related_entity_predicate_scope(operator: str) -> None:
     model = _orders_model()
     instruction = {
@@ -513,28 +513,28 @@ def test_model_validator_accepts_related_entity_predicate_scope(operator: str) -
             "entity": "Order",
             "predicate": {
                 operator: {
-                    "rel": "Order.items",
-                    "op": {"eq": {"attr": "OrderItem.sku", "value": "A-1"}},
+                    "path": "Order.items",
+                    "where": {"eq": {"path": "sku", "value": "A-1"}},
                 }
             },
         },
         "assignments": [{"attr": "Order.name", "value": "Renamed"}],
     }
 
-    validate_predicate_write(model.root_entity, instruction)
+    validate_predicate_write(model.root_entity, instruction, model.entity_defs)
 
 
-@pytest.mark.parametrize("operator", ["nestedExists", "nestedNotExists"])
-def test_model_validator_scopes_nested_exists_by_its_value_object_path(operator: str) -> None:
-    """A ``nestedExists`` / ``nestedNotExists`` predicate contributes the class named
-    by its required value-object ``path`` (``Class.valueObject``) to the scope check.
+@pytest.mark.parametrize("operator", ["any", "none"])
+def test_model_validator_scopes_a_quantifier_by_its_path(operator: str) -> None:
+    """A quantifier contributes the class its Entity-qualified ``path`` names to
+    the scope check, while its ``where``'s relative paths name none.
 
-    So the same-class form (here carrying an element-scoped ``where`` whose
-    element-relative refs name no class) stays in scope, while a path naming a
-    DIFFERENT class is rejected as inconsistent. This pins that these where-bearing
-    tags are NOT silently skipped by the shared reference-class walk.
+    So the same-class form stays in scope, while a path naming a DIFFERENT class is
+    rejected as inconsistent — these where-bearing tags are NOT silently skipped by
+    the shared reference-class walk.
     """
-    entity = _customer_entity()
+    model = load_model(_COMPATIBILITY_ROOT, "models/customer.yaml")
+    entity = model.root_entity
 
     validate_predicate_write(
         entity,
@@ -545,11 +545,12 @@ def test_model_validator_scopes_nested_exists_by_its_value_object_path(operator:
                 "predicate": {
                     operator: {
                         "path": "Customer.address.phones",
-                        "where": {"nestedEq": {"path": "type", "value": "home"}},
+                        "where": {"eq": {"path": "type", "value": "home"}},
                     }
                 },
             },
         },
+        model.entity_defs,
     )
 
     with pytest.raises(PredicateWriteValidationError, match="inconsistent"):
@@ -562,6 +563,7 @@ def test_model_validator_scopes_nested_exists_by_its_value_object_path(operator:
                     "predicate": {operator: {"path": "Wallet.address"}},
                 },
             },
+            model.entity_defs,
         )
 
 
@@ -569,7 +571,7 @@ def test_model_validator_accepts_atomic_top_level_value_object_assignment() -> N
     entity = _customer_entity()
     instruction = {
         "mutation": "amend",
-        "target": {"entity": "Customer", "predicate": {"all": {}}},
+        "target": {"entity": "Customer", "predicate": {"true": {}}},
         "assignments": [
             {
                 "attr": "Customer.address",
@@ -578,14 +580,14 @@ def test_model_validator_accepts_atomic_top_level_value_object_assignment() -> N
         ],
     }
 
-    validate_predicate_write(entity, instruction)
+    validate_predicate_write(entity, instruction, [entity.definition])
 
 
 def test_model_validator_accepts_omitted_nested_many_assignment() -> None:
     entity = _customer_entity()
     instruction = {
         "mutation": "amend",
-        "target": {"entity": "Customer", "predicate": {"all": {}}},
+        "target": {"entity": "Customer", "predicate": {"true": {}}},
         "assignments": [
             {
                 "attr": "Customer.address",
@@ -594,14 +596,14 @@ def test_model_validator_accepts_omitted_nested_many_assignment() -> None:
         ],
     }
 
-    validate_predicate_write(entity, instruction)
+    validate_predicate_write(entity, instruction, [entity.definition])
 
 
 def test_model_validator_accepts_omitted_nullable_nested_one_assignment() -> None:
     entity = _customer_entity()
     instruction = {
         "mutation": "amend",
-        "target": {"entity": "Customer", "predicate": {"all": {}}},
+        "target": {"entity": "Customer", "predicate": {"true": {}}},
         "assignments": [
             {
                 "attr": "Customer.address",
@@ -610,7 +612,7 @@ def test_model_validator_accepts_omitted_nullable_nested_one_assignment() -> Non
         ],
     }
 
-    validate_predicate_write(entity, instruction)
+    validate_predicate_write(entity, instruction, [entity.definition])
 
 
 def test_rejected_oracle_does_not_certify_assignment_missing_required_nested_one() -> None:
@@ -619,7 +621,7 @@ def test_rejected_oracle_does_not_certify_assignment_missing_required_nested_one
     assert isinstance(model, Model)
     instruction = {
         "mutation": "amend",
-        "target": {"entity": "Contact", "predicate": {"all": {}}},
+        "target": {"entity": "Contact", "predicate": {"true": {}}},
         "assignments": [
             {
                 "attr": "Contact.address",
@@ -650,7 +652,7 @@ def test_model_validator_accepts_array_for_many_value_object_assignment() -> Non
     many_entity = Entity(definition=definition)
     instruction = {
         "mutation": "amend",
-        "target": {"entity": "Customer", "predicate": {"all": {}}},
+        "target": {"entity": "Customer", "predicate": {"true": {}}},
         "assignments": [
             {
                 "attr": "Customer.address",
@@ -659,19 +661,19 @@ def test_model_validator_accepts_array_for_many_value_object_assignment() -> Non
         ],
     }
 
-    validate_predicate_write(many_entity, instruction)
+    validate_predicate_write(many_entity, instruction, [many_entity.definition])
 
 
 def test_model_validator_rejects_non_document_value_object_assignment() -> None:
     entity = _customer_entity()
     instruction = {
         "mutation": "amend",
-        "target": {"entity": "Customer", "predicate": {"all": {}}},
+        "target": {"entity": "Customer", "predicate": {"true": {}}},
         "assignments": [{"attr": "Customer.address", "value": ["not a document"]}],
     }
 
     with pytest.raises(PredicateWriteValidationError, match="value object"):
-        validate_predicate_write(entity, instruction)
+        validate_predicate_write(entity, instruction, [entity.definition])
 
 
 @pytest.mark.parametrize(
@@ -682,7 +684,7 @@ def test_model_validator_rejects_non_document_value_object_assignment() -> None:
                 "mutation": "amend",
                 "target": {
                     "entity": "Account",
-                    "predicate": {"lessThan": {"attr": "Wallet.balance", "value": "200.00"}},
+                    "predicate": {"lessThan": {"path": "Wallet.balance", "value": "200.00"}},
                 },
                 "assignments": [{"attr": "Account.balance", "value": "0.00"}],
             },
@@ -693,7 +695,7 @@ def test_model_validator_rejects_non_document_value_object_assignment() -> None:
                 "mutation": "amend",
                 "target": {
                     "entity": "Account",
-                    "predicate": {"all": {}},
+                    "predicate": {"true": {}},
                 },
                 "assignments": [
                     {"attr": "Account.balance", "value": "0.00"},
@@ -705,7 +707,7 @@ def test_model_validator_rejects_non_document_value_object_assignment() -> None:
         (
             {
                 "mutation": "amend",
-                "target": {"entity": "Account", "predicate": {"all": {}}},
+                "target": {"entity": "Account", "predicate": {"true": {}}},
                 "assignments": [{"attr": "Account.version", "value": 2}],
             },
             "framework-owned",
@@ -717,7 +719,7 @@ def test_model_validator_rejects_invalid_predicate_write(
 ) -> None:
     entity = _account_entity()
     with pytest.raises(PredicateWriteValidationError, match=message):
-        validate_predicate_write(entity, instruction)
+        validate_predicate_write(entity, instruction, [entity.definition])
 
 
 def _position_amendment(valid_from: str, until: str | None = None) -> dict[str, object]:
@@ -725,7 +727,7 @@ def _position_amendment(valid_from: str, until: str | None = None) -> dict[str, 
         "mutation": "amend" if until is None else "amendUntil",
         "target": {
             "entity": "Position",
-            "predicate": {"eq": {"attr": "Position.value", "value": 100}},
+            "predicate": {"eq": {"path": "Position.value", "value": 100}},
         },
         "assignments": [{"attr": "Position.value", "value": 300}],
         "at": "2024-10-01T00:00:00+00:00",

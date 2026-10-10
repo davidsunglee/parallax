@@ -6,7 +6,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Order
     predicate:
-      all: {}
+      "true": {}
 then:
   statements:
     - sql:

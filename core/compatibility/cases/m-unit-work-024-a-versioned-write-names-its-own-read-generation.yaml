@@ -16,7 +16,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 1
       roundTrips: 1
       note: observe generation one — account 1 at balance 100.00, version 1
@@ -44,7 +44,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 1
       roundTrips: 1
       note: the dependent read force-flushes the pending intent and observes generation two (125.00, version 2)

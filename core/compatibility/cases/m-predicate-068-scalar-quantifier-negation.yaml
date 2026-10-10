@@ -1,0 +1,44 @@
+# Negating the complete quantifier complements it: no element of `tags` is `urgent`
+# (contrast m-predicate-067).
+model: models/predicate-collections.yaml
+tags: [m-predicate, quantifier, scalar-collection, negation, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      not:
+        operand:
+          any:
+            path: parallax.compatibility.Basket.tags
+            where:
+              eq: {value: urgent}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where not exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.tags) = ? then t0.tags else cast(? as jsonb) end) t1 where case when jsonb_typeof(t1.value) = ? then t1.value #>> ? end = ?)'}
+    binds: [array, '[]', string, '{}', urgent]
+  graph:
+    Basket:
+    - id: 2
+      label: two
+      ownerId: null
+      tags: []
+      scores: []
+      prices: []
+      flags: []
+      parcels: []
+      meta: null
+    - id: 3
+      label: three
+      ownerId: 2
+      tags: [gift]
+      scores: [15]
+      prices: ['2.00', '3.00']
+      flags: [false]
+      parcels:
+      - sku: c
+        qty: 5
+        notes: [urgent]
+      meta:
+        labels: []
+  roundTrips: 1

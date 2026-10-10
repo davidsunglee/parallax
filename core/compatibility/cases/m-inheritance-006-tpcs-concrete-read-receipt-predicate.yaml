@@ -7,7 +7,7 @@ when:
     target: parallax.compatibility.Receipt
     predicate:
       greaterThanEquals:
-        attr: parallax.compatibility.Receipt.paidAmount
+        path: parallax.compatibility.Receipt.paidAmount
         value: "120.00"
 then:
   statements:

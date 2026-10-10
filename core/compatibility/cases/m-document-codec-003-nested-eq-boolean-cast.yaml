@@ -8,7 +8,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Sample
     predicate:
-      nestedEq:
+      eq:
         path: parallax.compatibility.Sample.profile.flag
         value: true
 then:

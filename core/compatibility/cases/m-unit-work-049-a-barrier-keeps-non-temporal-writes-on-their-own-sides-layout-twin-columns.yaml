@@ -15,7 +15,10 @@ when:
     - uow: same-state
       objectQuery:
         target: parallax.compatibility.SequenceTag
-        predicate: { eq: { attr: parallax.compatibility.SequenceTag.id, value: 1 } }
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceTag.id
+            value: 1
       note: "observe tag 1"
       expectRows:
         - { id: 1, quantity: 5, label: t }
@@ -29,7 +32,10 @@ when:
         - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
-            predicate: { lessThan: { attr: parallax.compatibility.SequenceTag.quantity, value: 2 } }
+            predicate:
+              lessThan:
+                path: parallax.compatibility.SequenceTag.quantity
+                value: 2
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: low }
         - mutation: amend
@@ -41,7 +47,10 @@ when:
     - uow: versioned
       objectQuery:
         target: parallax.compatibility.SequenceAccount
-        predicate: { eq: { attr: parallax.compatibility.SequenceAccount.id, value: 1 } }
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceAccount.id
+            value: 1
       note: "observe account 1 at version 1"
       expectRows:
         - { id: 1, balance: 10, memo: { note: m1 }, version: 1 }
@@ -55,7 +64,10 @@ when:
         - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
-            predicate: { lessThan: { attr: parallax.compatibility.SequenceTag.quantity, value: 2 } }
+            predicate:
+              lessThan:
+                path: parallax.compatibility.SequenceTag.quantity
+                value: 2
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: lower }
         - mutation: amend
@@ -73,7 +85,10 @@ when:
         - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
-            predicate: { lessThan: { attr: parallax.compatibility.SequenceTag.quantity, value: 2 } }
+            predicate:
+              lessThan:
+                path: parallax.compatibility.SequenceTag.quantity
+                value: 2
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: low3 }
         - mutation: amend
@@ -91,7 +106,10 @@ when:
         - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
-            predicate: { lessThan: { attr: parallax.compatibility.SequenceTag.quantity, value: 2 } }
+            predicate:
+              lessThan:
+                path: parallax.compatibility.SequenceTag.quantity
+                value: 2
           assignments:
             - { attr: parallax.compatibility.SequenceTag.label, value: seen }
         - mutation: delete

@@ -1,0 +1,41 @@
+# A bare `none` through a to-one hop: an absent owner holds no tags, as does an owner
+# with an empty collection. MariaDB's guarded occupancy lane spells the same test.
+model: models/predicate-collections.yaml
+tags: [m-predicate, quantifier, scalar-collection, relationship, to-one, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      none: {path: parallax.compatibility.Basket.owner.tags}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where coalesce((select not exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t2.tags) = ? then t2.tags else cast(? as jsonb) end) t1) from basket_owner t2 where t2.id = t0.owner_id), true)', mariadb: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where coalesce((select not coalesce(json_type(json_extract(t1.tags, ?)) = ? and json_length(t1.tags, ?) > ?, ?) from basket_owner t1 where t1.id = t0.owner_id), true)'}
+    binds:
+      postgres: [array, '[]']
+      mariadb: [$, ARRAY, $, 0, 0]
+  graph:
+    Basket:
+    - id: 2
+      label: two
+      ownerId: null
+      tags: []
+      scores: []
+      prices: []
+      flags: []
+      parcels: []
+      meta: null
+    - id: 3
+      label: three
+      ownerId: 2
+      tags: [gift]
+      scores: [15]
+      prices: ['2.00', '3.00']
+      flags: [false]
+      parcels:
+      - sku: c
+        qty: 5
+        notes: [urgent]
+      meta:
+        labels: []
+  roundTrips: 1

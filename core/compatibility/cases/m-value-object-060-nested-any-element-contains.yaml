@@ -1,8 +1,8 @@
-# valueObject to-many affix match: nestedContains through a `many` segment wraps the
-# literal on BOTH sides, completing the affix trio beside m-value-object-058/-059
-# (m-predicate wildcard rule + any-element, m-sql). Postgres golden only — a
-# non-equality element predicate is outside MariaDB's containment scope (m-dialect,
-# "Scope of the containment golden").
+# valueObject to-many affix match: `contains` inside an `any` wraps the literal on
+# BOTH sides, completing the affix trio beside m-value-object-058/-059 (m-predicate
+# wildcard rule + quantifiers, m-sql). Postgres golden only — a non-equality element
+# predicate is outside MariaDB's containment scope (m-dialect, "Scope of the
+# containment golden").
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, contains, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -10,9 +10,12 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedContains:
-        path: parallax.compatibility.Customer.address.phones.number
-        value: '-00'
+      any:
+        path: parallax.compatibility.Customer.address.phones
+        where:
+          contains:
+            path: number
+            value: '-00'
 then:
   statements:
     - sql:

@@ -7,7 +7,7 @@ when:
     target: parallax.compatibility.Order
     predicate:
       notIn:
-        attr: parallax.compatibility.Order.sku
+        path: parallax.compatibility.Order.sku
         values:
           - A-100
           - B-200

@@ -198,7 +198,7 @@ class _Read:
 def _wire_query(target: str, *, narrow_to: str | None = None) -> dict[str, object]:
     query: dict[str, object] = {
         "target": f"{_NAMESPACE}.{target}",
-        "predicate": {"greaterThanEquals": {"attr": f"{_NAMESPACE}.{target}.id", "value": 1}},
+        "predicate": {"greaterThanEquals": {"path": f"{_NAMESPACE}.{target}.id", "value": 1}},
     }
     if narrow_to is not None:
         query["narrowTo"] = [f"{_NAMESPACE}.{narrow_to}"]
@@ -337,7 +337,7 @@ def test_a_keyed_insert_resolves_no_position(
     committed = db.wire.find(
         {
             "target": f"{_NAMESPACE}.{entity}",
-            "predicate": {"eq": {"attr": f"{_NAMESPACE}.{entity}.id", "value": data["id"]}},
+            "predicate": {"eq": {"path": f"{_NAMESPACE}.{entity}.id", "value": data["id"]}},
         }
     ).result()
     assert {name: committed[name] for name in data} == data
@@ -358,7 +358,7 @@ def test_a_materializing_predicate_update_resolves_one_storage_position(
             tx.wire.amend_where(
                 {
                     "entity": f"{_NAMESPACE}.Ledger",
-                    "predicate": {"eq": {"attr": f"{_NAMESPACE}.Ledger.id", "value": 1}},
+                    "predicate": {"eq": {"path": f"{_NAMESPACE}.Ledger.id", "value": 1}},
                 },
                 {"balance": 25},
             )
@@ -397,7 +397,7 @@ def test_a_family_predicate_update_is_refused_before_any_position_is_resolved(
     typed, entity, changes, seeded = _FAMILY_TARGETS[target]
     selection: dict[str, object] = {
         "entity": f"{_NAMESPACE}.{entity}",
-        "predicate": {"eq": {"attr": f"{_NAMESPACE}.{entity}.id", "value": 1}},
+        "predicate": {"eq": {"path": f"{_NAMESPACE}.{entity}.id", "value": 1}},
     }
     served = _served(profile_run, spies)
     db = served.db

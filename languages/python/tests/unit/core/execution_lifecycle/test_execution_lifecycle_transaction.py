@@ -311,7 +311,7 @@ def test_a_row_form_read_is_a_child_of_the_attempt_under_the_rows_interface() ->
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW])))
     query = deserialize_query(
-        {"target": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 7}}}
+        {"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 7}}}
     )
 
     _db(port, recorder).transact(lambda tx: tx.read_rows(query))

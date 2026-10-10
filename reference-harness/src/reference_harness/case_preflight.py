@@ -21,6 +21,19 @@ from ._statement_bind_inference import (
 )
 from .case import Case, Entity
 from .case_assertions import CaseFailure
+from .inheritance import Family
+from .predicate_paths import (
+    ElementScope,
+    EntityScope,
+    FieldTerminal,
+    RelationshipTerminal,
+    ScalarScope,
+    Scope,
+    Terminal,
+    ValueObjectTerminal,
+    resolve_path,
+)
+from .predicate_validate import SCALAR_OPERATION_TAGS
 from .references import split_reference
 from .storage_layout import (
     AttributeContributor,
@@ -30,7 +43,7 @@ from .storage_layout import (
     TableLayout,
     ValueObjectContributor,
 )
-from .value_object_resolve import resolve_element_ref, resolve_nested_ref, resolve_value_object_ref
+from .value_object_resolve import RejectionError
 
 __all__ = ["preflight_case_literals"]
 
@@ -90,7 +103,7 @@ def _query(case: Case, query: Mapping[str, object], where: str) -> None:
     entity = case.model.entity(target)
     predicate = query.get("predicate")
     if isinstance(predicate, Mapping):
-        _predicate(case, entity, predicate, f"{where}.predicate")
+        _predicate(case, _root_scope(case, entity), predicate, f"{where}.predicate")
     temporal = query.get("temporal")
     if isinstance(temporal, Mapping):
         for dimension, selection in temporal.items():
@@ -116,76 +129,108 @@ def _query(case: Case, query: Mapping[str, object], where: str) -> None:
 
 def _predicate(
     case: Case,
-    scope: Entity | dict[str, Any],
+    scope: Scope,
     node: Mapping[str, object],
     where: str,
 ) -> None:
+    """Preflight each typed literal ``node`` carries against the member its scope
+    and path reach; a path that does not resolve is a rejected case's to judge."""
     for operation, payload in node.items():
         if not isinstance(payload, Mapping):
             continue
-        operands = _predicate_operands(case, scope, operation, payload, where)
-        if operands is None:
+        at = f"{where}.{operation}"
+        if operation in ("and", "or"):
+            operands = payload.get("operands")
+            for index, child in enumerate(operands if isinstance(operands, Sequence) else ()):
+                if isinstance(child, Mapping):
+                    _predicate(case, scope, child, f"{at}.operands[{index}]")
+        elif operation in ("not", "group"):
+            _operand(case, scope, payload.get("operand"), f"{at}.operand")
+        elif operation == "narrow":
+            _operand(case, _narrowed(case, scope, payload), payload.get("operand"), f"{at}.operand")
+        elif operation in ("any", "all", "none"):
+            _operand(
+                case, _bound(case, scope, payload.get("path")), payload.get("where"), f"{at}.where"
+            )
+        elif operation in SCALAR_OPERATION_TAGS:
             _predicate_comparison(case, scope, operation, payload, where)
-            continue
-        for operand_scope, operand, operand_where in operands:
-            _predicate(case, operand_scope, operand, operand_where)
 
 
-_PredicateOperand = tuple[Entity | dict[str, Any], Mapping[str, object], str]
+def _operand(case: Case, scope: Scope | None, operand: object, where: str) -> None:
+    if scope is not None and isinstance(operand, Mapping):
+        _predicate(case, scope, operand, where)
 
 
-def _predicate_operands(
-    case: Case,
-    scope: Entity | dict[str, Any],
-    operation: str,
-    payload: Mapping[str, object],
-    where: str,
-) -> list[_PredicateOperand] | None:
-    """Return the scoped operands of a composite node, or ``None`` for a comparison."""
-    if operation in ("and", "or"):
-        operands = payload.get("operands")
-        if not isinstance(operands, Sequence):
-            return []
-        return [
-            (scope, child, f"{where}.{operation}.operands[{index}]")
-            for index, child in enumerate(operands)
-            if isinstance(child, Mapping)
-        ]
-    if operation in ("group", "not") or (operation == "narrow" and isinstance(scope, Entity)):
-        return _single_operand(scope, payload.get("operand"), f"{where}.{operation}.operand")
-    if not isinstance(scope, Entity):
+def _root_scope(case: Case, entity: Entity) -> EntityScope:
+    family = Family(case.model.entity_defs)
+    key = family.defs.canonical_key(entity.canonical_name)
+    return EntityScope(key, tuple(family.effective_concrete_set(key)), bound=False)
+
+
+def _reached(case: Case, scope: Scope, path: object) -> Terminal | None:
+    if not isinstance(path, str):
         return None
-    if operation in ("navigate", "exists", "notExists"):
-        related = _related_entity(case, scope, payload.get("rel"))
-        return _single_operand(related, payload.get("op"), f"{where}.{operation}.op")
-    if operation in ("nestedExists", "nestedNotExists"):
-        occurrence = _predicate_value_object(case, scope, payload.get("path"))
-        return _single_operand(occurrence, payload.get("where"), f"{where}.{operation}.where")
+    try:
+        return resolve_path(Family(case.model.entity_defs), scope, path)
+    except RejectionError:
+        return None
+
+
+def _bound(case: Case, scope: Scope, path: object) -> Scope | None:
+    """The scope a quantifier over ``path`` binds, or ``None`` where it does not resolve."""
+    terminal = _reached(case, scope, path)
+    if isinstance(terminal, FieldTerminal):
+        return ScalarScope(terminal.attribute)
+    if isinstance(terminal, ValueObjectTerminal):
+        return ElementScope(terminal.value_object)
+    if isinstance(terminal, RelationshipTerminal):
+        family = Family(case.model.entity_defs)
+        return EntityScope(
+            terminal.target, tuple(family.effective_concrete_set(terminal.target)), bound=True
+        )
     return None
 
 
-def _single_operand(
-    scope: Entity | dict[str, Any] | None, operand: object, where: str
-) -> list[_PredicateOperand]:
-    if scope is None or not isinstance(operand, Mapping):
-        return []
-    return [(scope, operand, where)]
+def _narrowed(case: Case, scope: Scope, payload: Mapping[str, object]) -> Scope | None:
+    """The position a narrow's operand is read at, or ``None`` where it does not resolve."""
+    family = Family(case.model.entity_defs)
+    to = payload.get("to")
+    selection = (
+        family.resolve_to_set([name for name in to if isinstance(name, str)])
+        if isinstance(to, list)
+        else []
+    )
+    path = payload.get("path")
+    if path is None:
+        return (
+            EntityScope(scope.key, tuple(selection), scope.bound)
+            if isinstance(scope, EntityScope)
+            else None
+        )
+    terminal = _reached(case, scope, path)
+    if not isinstance(terminal, RelationshipTerminal):
+        return None
+    return EntityScope(terminal.target, tuple(selection), bound=True)
 
 
 def _predicate_comparison(
     case: Case,
-    scope: Entity | dict[str, Any],
+    scope: Scope,
     operation: str,
     payload: Mapping[str, object],
     where: str,
 ) -> None:
-    member = _predicate_member(case, scope, payload)
+    if "path" in payload:
+        terminal = _reached(case, scope, payload.get("path"))
+        member = terminal.attribute if isinstance(terminal, FieldTerminal) else None
+    else:
+        member = scope.attribute if isinstance(scope, ScalarScope) else None
     if member is None:
         return
     neutral_type = member.get("type")
     if not isinstance(neutral_type, str):
         return
-    for name in ("value", "lower", "upper", "start", "end"):
+    for name in ("value", "lower", "upper"):
         if name in payload:
             _literal(
                 case,
@@ -214,51 +259,16 @@ def _reference_entity(case: Case, fallback: Entity, reference: str) -> Entity:
         return fallback
 
 
-def _predicate_member(
-    case: Case, scope: Entity | dict[str, Any], payload: Mapping[str, object]
+def _assigned_member(
+    case: Case, entity: Entity, assignment: Mapping[str, object]
 ) -> dict[str, Any] | None:
-    if not isinstance(scope, Entity):
-        reference = payload.get("path")
-        if not isinstance(reference, str):
-            return None
-        try:
-            return resolve_element_ref(scope, reference)
-        except Exception:
-            return None
-    reference = payload.get("attr")
-    if isinstance(reference, str):
-        _owner, members = split_reference(reference)
-        try:
-            return _reference_entity(case, scope, reference).attribute_by_name(members[-1])
-        except KeyError:
-            return None
-    reference = payload.get("path")
-    if isinstance(reference, str):
-        try:
-            return resolve_nested_ref(_reference_entity(case, scope, reference), reference)
-        except Exception:
-            return None
-    return None
-
-
-def _related_entity(case: Case, entity: Entity, reference: object) -> Entity | None:
+    reference = assignment.get("attr")
     if not isinstance(reference, str):
         return None
-    owner = _reference_entity(case, entity, reference)
     _owner, members = split_reference(reference)
     try:
-        relationship = owner.relationship_metadata_by_name(members[-1])
-        return case.model.entity(relationship["join"]["target"]["entity"])
-    except (KeyError, TypeError):
-        return None
-
-
-def _predicate_value_object(case: Case, entity: Entity, reference: object) -> dict[str, Any] | None:
-    if not isinstance(reference, str):
-        return None
-    try:
-        return resolve_value_object_ref(_reference_entity(case, entity, reference), reference)
-    except Exception:
+        return _reference_entity(case, entity, reference).attribute_by_name(members[-1])
+    except KeyError:
         return None
 
 
@@ -320,14 +330,16 @@ def _write_selection(
     selection_entity = case.model.entity(target_name)
     predicate = target.get("predicate")
     if isinstance(predicate, Mapping):
-        _predicate(case, selection_entity, predicate, f"{where}.target.predicate")
+        _predicate(
+            case, _root_scope(case, selection_entity), predicate, f"{where}.target.predicate"
+        )
     assignments = carrier.get("assignments")
     if not isinstance(assignments, Sequence) or isinstance(assignments, (str, bytes)):
         return
     for index, assignment in enumerate(assignments):
         if not isinstance(assignment, Mapping):
             continue
-        member = _predicate_member(case, selection_entity, assignment)
+        member = _assigned_member(case, selection_entity, assignment)
         if member is not None and "value" in assignment:
             _attribute_literal(
                 case,

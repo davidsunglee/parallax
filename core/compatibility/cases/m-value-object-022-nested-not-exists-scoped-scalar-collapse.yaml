@@ -1,6 +1,6 @@
-# valueObject to-many: nestedNotExists + `where` INCLUDES every non-array `many`
-# state (m-value-object to-many, m-predicate same-element negation + absence
-# collapse, m-dialect array-traversal form), on Postgres AND MariaDB.
+# valueObject to-many: `none` with a `where` INCLUDES every non-array `many` state
+# (m-value-object to-many, m-predicate quantifier carriers, m-dialect
+# array-traversal form), on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, absence-collapse, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -8,10 +8,10 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedNotExists:
+      none:
         path: parallax.compatibility.Customer.address.phones
         where:
-          nestedEq:
+          eq:
             path: number
             value: 555-0000
 then:

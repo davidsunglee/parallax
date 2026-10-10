@@ -31,12 +31,12 @@ Corpus case: `m-object-query-003`
 query = Order.where(Order.all).order_by(Order.active.desc(), Order.qty.asc()).limit(2)
 ```
 
-## Relationship existence with a predicate
+## Relationship quantifier with a predicate
 
 Corpus case: `m-navigate-004`
 
 ```python
-query = Order.where(Order.items.exists(OrderItem.quantity >= 4))
+query = Order.where(Order.items.any(OrderItem.quantity >= 4))
 ```
 
 ## A result narrowed to one concrete subtype, filtered by its own attribute
@@ -44,7 +44,7 @@ query = Order.where(Order.items.exists(OrderItem.quantity >= 4))
 Corpus case: `m-inheritance-012`
 
 ```python
-query = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))
+query = Animal.where(Animal.is_a(Dog, where=Dog.bark_volume > 3))
 ```
 
 ## As-of read at a past instant
@@ -65,8 +65,8 @@ def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
 ) -> Snapshot[Any]:
     return db.find(
         Customer.where(
-            Customer.address.phones.exists(
-                CustomerPhone.type == "home", CustomerPhone.number == "555-9999"
+            Customer.address.phones.any(
+                (CustomerPhone.type == "home") & (CustomerPhone.number == "555-9999")
             )
         )
     )

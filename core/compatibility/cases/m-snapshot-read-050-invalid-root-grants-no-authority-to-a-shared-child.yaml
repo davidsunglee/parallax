@@ -24,8 +24,10 @@ when:
     target: parallax.compatibility.Location
     predicate:
       in:
-        attr: parallax.compatibility.Location.id
-        values: [100, 101]
+        path: parallax.compatibility.Location.id
+        values:
+          - 100
+          - 101
     orderBy:
       - attr: parallax.compatibility.Location.id
         direction: asc

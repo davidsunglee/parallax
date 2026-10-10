@@ -72,7 +72,7 @@ def test_a_canonical_case_passes(tmp_path: Path) -> None:
                 "  objectQuery:\n"
                 "    target: parallax.compatibility.Grade\n"
                 "    predicate:\n"
-                "      eq: { attr: parallax.compatibility.Grade.id, value: 1 }\n"
+                "      eq: { path: parallax.compatibility.Grade.id, value: 1 }\n"
             )
         },
     )
@@ -90,7 +90,7 @@ def test_a_bare_spelling_is_reported_with_file_path_expectation_and_actual(
                 "model: models/grade.yaml\nshape: read\nwhen:\n"
                 "  objectQuery:\n"
                 "    target: Grade\n"
-                "    predicate:\n      eq: { attr: Grade.id, value: 1 }\n"
+                "    predicate:\n      eq: { path: Grade.id, value: 1 }\n"
             )
         },
     )
@@ -98,12 +98,12 @@ def test_a_bare_spelling_is_reported_with_file_path_expectation_and_actual(
     case = root / "cases" / "m-x-001-read.yaml"
     assert findings == [
         f"{case}: when.objectQuery.target: expected 'parallax.compatibility.Grade', found 'Grade'",
-        f"{case}: when.objectQuery.predicate.eq.attr: "
+        f"{case}: when.objectQuery.predicate.eq.path: "
         "expected 'parallax.compatibility.Grade.id', found 'Grade.id'",
     ]
 
 
-def test_an_element_relative_path_names_no_entity_and_is_left_alone(tmp_path: Path) -> None:
+def test_a_relative_path_names_no_entity_and_is_left_alone(tmp_path: Path) -> None:
     root = _corpus(
         tmp_path,
         models={"grade.yaml": _MODEL},
@@ -113,9 +113,9 @@ def test_an_element_relative_path_names_no_entity_and_is_left_alone(tmp_path: Pa
                 "  objectQuery:\n"
                 "    target: parallax.compatibility.Grade\n"
                 "    predicate:\n"
-                "      nestedExists:\n"
+                "      any:\n"
                 "        path: parallax.compatibility.Grade.address.phones\n"
-                "        where:\n          nestedEq: { path: type, value: home }\n"
+                "        where:\n          eq: { path: type, value: home }\n"
             )
         },
     )
@@ -132,17 +132,17 @@ def test_the_ambiguity_exception_admits_only_the_ambiguous_reference(tmp_path: P
                 "  objectQuery:\n"
                 "    target: parallax.compatibility.Register\n"
                 "    predicate:\n"
-                "      exists:\n"
-                "        rel: Register.variant\n"
-                "        op:\n"
-                "          eq: { attr: SharedVariant.archiveLabel, value: A-1 }\n"
+                "      and:\n"
+                "        operands:\n"
+                "          - exists: { path: Register.variant }\n"
+                "          - eq: { path: SharedVariant.archiveLabel, value: A-1 }\n"
                 "then:\n  rejectedRule: reference-ambiguous-entity-name\n"
             )
         },
     )
     case = root / "cases" / "m-x-001-rejected-ambiguous.yaml"
     assert check(root) == [
-        f"{case}: when.objectQuery.predicate.exists.rel: "
+        f"{case}: when.objectQuery.predicate.and.operands[0].exists.path: "
         "expected 'parallax.compatibility.Register.variant', found 'Register.variant'"
     ]
 
@@ -156,7 +156,7 @@ def test_an_ambiguous_reference_outside_that_rule_is_reported_with_every_candida
         cases={
             "m-x-001-read.yaml": (
                 "model: models/shared.yaml\nshape: read\nwhen:\n"
-                "  objectQuery:\n    target: SharedVariant\n    predicate:\n      all: {}\n"
+                '  objectQuery:\n    target: SharedVariant\n    predicate:\n      "true": {}\n'
             )
         },
     )

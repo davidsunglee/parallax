@@ -1,6 +1,6 @@
-# valueObject string filter: nestedLike carries the top-level pattern and case-folding
-# semantics against a nested extraction (m-predicate nested string predicates, m-sql),
-# on Postgres AND MariaDB.
+# valueObject string filter: `like` carries the top-level pattern and case-folding
+# semantics against a value-object extraction (m-predicate string predicates,
+# m-sql), on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, string, like, caseInsensitive, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -8,7 +8,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedLike:
+      like:
         path: parallax.compatibility.Customer.address.city
         value: OSLO
         caseInsensitive: true

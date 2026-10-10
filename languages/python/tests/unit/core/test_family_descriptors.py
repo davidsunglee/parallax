@@ -83,6 +83,7 @@ _FAMILIES: Final[tuple[str, ...]] = (
     "materialization-stress-columns",
     "materialization-stress-document",
     "payment",
+    "predicate-traversal",
     "quote",
     "rate",
     "reading",

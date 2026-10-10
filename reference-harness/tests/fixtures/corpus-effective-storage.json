@@ -3727,6 +3727,110 @@
       "valueObject": {}
     }
   },
+  "models/predicate-collections.yaml": {
+    "parallax.compatibility.Basket": {
+      "attribute": {
+        "flags": "flags",
+        "id": "id",
+        "label": "label",
+        "ownerId": "owner_id",
+        "prices": "prices",
+        "scores": "scores",
+        "tags": "tags"
+      },
+      "documentPath": {
+        "meta.labels": "meta:labels",
+        "parcels.notes": "parcels:notes",
+        "parcels.qty": "parcels:qty",
+        "parcels.sku": "parcels:sku"
+      },
+      "valueObject": {
+        "meta": "meta",
+        "parcels": "parcels"
+      }
+    },
+    "parallax.compatibility.Owner": {
+      "attribute": {
+        "active": "active",
+        "id": "id",
+        "managerId": "manager_id",
+        "name": "name",
+        "tags": "tags"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/predicate-traversal.yaml": {
+    "parallax.compatibility.Bike": {
+      "attribute": {
+        "gears": "gears"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Car": {
+      "attribute": {
+        "seats": "seats"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Cat": {
+      "attribute": {
+        "indoor": "indoor"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Collar": {
+      "attribute": {
+        "id": "id",
+        "petId": "pet_id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Dog": {
+      "attribute": {
+        "barkVolume": "bark_volume"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Leash": {
+      "attribute": {
+        "collarId": "collar_id",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Parking": {
+      "attribute": {
+        "id": "id",
+        "vehicleId": "vehicle_id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Pet": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Vehicle": {
+      "attribute": {
+        "id": "id",
+        "maker": "maker"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/quote.yaml": {
     "parallax.compatibility.Quote": {
       "attribute": {

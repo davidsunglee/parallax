@@ -32,7 +32,7 @@ def test_a_read_refused_inside_its_transaction_is_the_case_error() -> None:
             "uow": {"concurrency": "locking"},
             "objectQuery": {
                 "target": "parallax.compatibility.Order",
-                "predicate": {"eq": {"attr": "parallax.compatibility.Order.missing", "value": 1}},
+                "predicate": {"eq": {"path": "parallax.compatibility.Order.missing", "value": 1}},
             },
         }
     )

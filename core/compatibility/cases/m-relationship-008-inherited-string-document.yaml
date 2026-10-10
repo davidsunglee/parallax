@@ -9,7 +9,8 @@ lane: api-conformance
 when:
   objectQuery:
     target: parallax.compatibility.StringLeaf
-    predicate: {all: {}}
+    predicate:
+      "true": {}
     includes:
       - segments:
           - {rel: parallax.compatibility.StringLeaf.children}

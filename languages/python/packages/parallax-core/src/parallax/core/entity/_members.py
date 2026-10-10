@@ -2,17 +2,28 @@ from __future__ import annotations
 
 from collections.abc import Sequence as _Sequence
 from dataclasses import dataclass
-from typing import Any, Final, overload
+from typing import TYPE_CHECKING, Any, Final, overload
 
 from parallax.core.base import FLOAT32, INT32, Float32, Int32, NeutralType
 from parallax.core.entity._construction_input import UNLOADED
 from parallax.core.entity._errors import EntityDefinitionError, UnloadedRelationshipError
 from parallax.core.entity._expressions import (
-    AttributeExpr,
+    AssignableManyScalarExpr,
+    AssignableManyValueObjectExpr,
+    AssignableScalarExpr,
+    AssignableValueObjectExpr,
     AttributeRef,
-    ElementAttributeExpr,
-    RelationshipPath,
+    AuthoredPath,
+    ManyRelationshipExpr,
+    ManyScalarExpr,
+    ManyValueObjectExpr,
+    RelationshipExpr,
     RelationshipRef,
+    ScalarExpr,
+    ValueObjectExpr,
+    ValueObjectReceiver,
+    member_expression,
+    relationship_hop,
 )
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, plan_of
 from parallax.core.metamodel import (
@@ -25,6 +36,7 @@ from parallax.core.metamodel import (
     AttributePrimaryKey,
     Cardinality,
     Max,
+    Multiplicity,
     NullPlacement,
     PersistenceMode,
     PrimaryKey,
@@ -32,9 +44,12 @@ from parallax.core.metamodel import (
     SortDirection,
     TablePerHierarchy,
     ValueObjectMetadata,
-    ValueObjectShapeDeclaration,
 )
-from parallax.core.object_query import IncludeSegment
+
+if TYPE_CHECKING:
+    from parallax.core.entity._declaration import ValueObjectShape
+    from parallax.core.entity._entity import Entity
+    from parallax.core.entity._value_object import ValueObject
 
 __all__ = [
     "MANY_TO_ONE",
@@ -434,30 +449,36 @@ def index(name: str, *members: str, unique: bool = False) -> IndexSpec:
 class Attr[T]:
     """The scalar and Value Object member annotation, and the descriptor it installs.
 
-    Class access yields an :class:`~parallax.core.entity._expressions.AttributeExpr`
-    predicate seed carrying this member's own declared Metadata, which is every
-    fact an assignment built from it is judged against; instance access yields
-    the member value. A non-data descriptor, so Pydantic's instance ``__dict__``
-    legitimately shadows the instance branch.
+    Class access through an Entity Class yields the member expression its kind
+    and multiplicity select — a scalar, a scalar collection, a Value Object, or
+    a ``many`` Value Object — carrying this member's own declared Metadata,
+    which is every fact a whole-member assignment built from it is judged
+    against. Instance access yields the member value. A non-data descriptor, so
+    Pydantic's instance ``__dict__`` legitimately shadows the instance branch.
 
-    The class-access overload parameterizes the expression by the class the
+    The class-access overloads parameterize the expression by the class the
     access went THROUGH, not the one that declares the member: an inherited
-    member reached from a subtype addresses the subtype's position, which is what
-    makes an ancestor's member usable from a descendant position and a
-    descendant's member unusable from an ancestor's. The wire keeps the DECLARING
-    Entity either way, so a subtype spelling of an inherited member is the one
-    composition the parameter refuses where the model would have accepted it —
-    spell such a member through the class that declares it.
+    member reached from a subtype addresses the subtype's position. The wire
+    keeps the DECLARING Entity either way. Tuple shapes precede the optional
+    and generic single shapes, because a tuple also satisfies ``V | None`` and a
+    bare ``T``; a Value Object Class's own members install
+    :class:`ElementAttr` and type through the Value Object overloads.
     """
 
-    __slots__ = ("_index", "_member", "_ref")
+    __slots__ = ("_expression", "_index", "_member", "_ref", "_vo_shape")
 
     def __init__(
-        self, ref: AttributeRef, index: int, member: AttributeMetadata | ValueObjectMetadata
+        self,
+        ref: AttributeRef,
+        index: int,
+        member: AttributeMetadata | ValueObjectMetadata,
+        vo_shape: ValueObjectShape | None = None,
     ) -> None:
         self._ref = ref
         self._index = index
         self._member = member
+        self._vo_shape = vo_shape
+        self._expression = _entity_member_expression(ref, member, vo_shape)
 
     def rebound(self, index: int) -> Attr[T]:
         """This member's descriptor, addressing ``index`` instead.
@@ -468,15 +489,49 @@ class Attr[T]:
         own is what keeps the reference it hands out — which names the DECLARING
         Entity — the same one at every depth.
         """
-        return Attr(self._ref, index, self._member)
+        return Attr(self._ref, index, self._member, self._vo_shape)
 
     @overload
-    def __get__[E](self, obj: None, owner: type[E], /) -> AttributeExpr[E, T]: ...
+    def __get__[E: Entity, V: ValueObject](
+        self: Attr[tuple[V, ...]], obj: None, owner: type[E], /
+    ) -> AssignableManyValueObjectExpr[E, V]: ...
+    @overload
+    def __get__[E: Entity, S](
+        self: Attr[tuple[S, ...]], obj: None, owner: type[E], /
+    ) -> AssignableManyScalarExpr[E, S]: ...
+    @overload
+    def __get__[E: Entity, V: ValueObject](
+        self: Attr[V | None], obj: None, owner: type[E], /
+    ) -> AssignableValueObjectExpr[E, V | None]: ...
+    @overload
+    def __get__[E: Entity, V: ValueObject](
+        self: Attr[V], obj: None, owner: type[E], /
+    ) -> AssignableValueObjectExpr[E, V]: ...
+    @overload
+    def __get__[E: Entity](self, obj: None, owner: type[E], /) -> AssignableScalarExpr[E, T]: ...
+    @overload
+    def __get__[O: ValueObject, V: ValueObject](
+        self: Attr[tuple[V, ...]], obj: None, owner: type[O], /
+    ) -> ManyValueObjectExpr[O, V]: ...
+    @overload
+    def __get__[O: ValueObject, S](
+        self: Attr[tuple[S, ...]], obj: None, owner: type[O], /
+    ) -> ManyScalarExpr[O, S]: ...
+    @overload
+    def __get__[O: ValueObject, V: ValueObject](
+        self: Attr[V | None], obj: None, owner: type[O], /
+    ) -> ValueObjectExpr[O, V]: ...
+    @overload
+    def __get__[O: ValueObject, V: ValueObject](
+        self: Attr[V], obj: None, owner: type[O], /
+    ) -> ValueObjectExpr[O, V]: ...
+    @overload
+    def __get__[O: ValueObject](self, obj: None, owner: type[O], /) -> ScalarExpr[O, T]: ...
     @overload
     def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
-    def __get__(self, obj: object | None, _owner: type | None = None) -> AttributeExpr[Any, T] | T:
+    def __get__(self, obj: object | None, _owner: type | None = None) -> Any:
         if obj is None:
-            return AttributeExpr(self._ref.entity, self._ref.attribute, member=self._member)
+            return self._expression
         # As with `ElementAttr` below, Pydantic's own instance storage shadows
         # this branch on an ordinary value, so it answers exactly the values a
         # published one holds. The index is absolute and means nothing here: what
@@ -490,31 +545,43 @@ class Attr[T]:
         return value
 
 
-class ElementAttr[T]:
-    """A Value Object member's descriptor: class access yields an element-scoped
-    expression carrying no entity prefix, instance access yields the value.
+def _entity_member_expression(
+    ref: AttributeRef,
+    member: AttributeMetadata | ValueObjectMetadata,
+    vo_shape: ValueObjectShape | None,
+) -> object:
+    many = member.multiplicity is Multiplicity.MANY
+    if isinstance(member, AttributeMetadata):
+        if many:
+            return AssignableManyScalarExpr[Any, Any](ref, member)
+        return AssignableScalarExpr[Any, Any](ref, member)
+    if vo_shape is None:  # pragma: no cover - every installed occurrence descriptor has its class
+        raise ValueError(f"{ref}: a Value Object member descriptor needs its Value Object Class")
+    if many:
+        return AssignableManyValueObjectExpr[Any, Any](ref, member, vo_shape)
+    return AssignableValueObjectExpr[Any, Any](ref, member, vo_shape)
 
-    The class-access overload parameterizes the expression by the Value Object
-    class the access went through, so an element predicate names the Value Object
-    it addresses rather than an Entity.
+
+class ElementAttr[T]:
+    """A Value Object member's descriptor: class access yields a query-only
+    expression relative to the element a quantifier binds, instance access
+    yields the value.
+
+    Its static type comes from the member's ``Attr`` annotation, whose Value
+    Object overloads select the same expression families this answers.
     """
 
-    __slots__ = ("_canonical", "_index", "_shape")
+    __slots__ = ("_expression", "_index")
 
-    def __init__(self, canonical: str, index: int, shape: ValueObjectShapeDeclaration) -> None:
-        self._canonical = canonical
+    def __init__(self, py_name: str, index: int, owner: ValueObjectShape) -> None:
         self._index = index
-        self._shape = shape
+        self._expression = member_expression(
+            AuthoredPath(ValueObjectReceiver(owner.shape), ()), owner, py_name
+        )
 
-    @overload
-    def __get__[V](self, obj: None, owner: type[V], /) -> ElementAttributeExpr[V, T]: ...
-    @overload
-    def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
-    def __get__(
-        self, obj: object | None, _owner: type | None = None
-    ) -> ElementAttributeExpr[Any, T] | T:
+    def __get__(self, obj: object | None, _owner: type | None = None) -> Any:
         if obj is None:
-            return ElementAttributeExpr((self._canonical,), self._shape)
+            return self._expression
         # A non-data descriptor, so Pydantic's own instance storage shadows
         # this branch on an ordinary value and it answers for a published one.
         try:
@@ -527,42 +594,38 @@ class ElementAttr[T]:
 class Rel[T]:
     """The relationship annotation, and the descriptor it installs.
 
-    Class access yields a :class:`~parallax.core.entity._expressions.RelationshipPath`;
-    instance access yields the loaded value, or raises when the read that
-    produced the node did not include it. A data descriptor, so the ``UNLOADED``
-    sentinel written through ``object.__setattr__`` still routes through
-    :meth:`__get__`.
+    Class access yields a :class:`~parallax.core.entity._expressions.RelationshipExpr`
+    for a single relationship and a
+    :class:`~parallax.core.entity._expressions.ManyRelationshipExpr` for a
+    collection; instance access yields the loaded value, or raises when the read
+    that produced the node did not include it. A data descriptor, so the
+    ``UNLOADED`` sentinel written through ``object.__setattr__`` still routes
+    through :meth:`__get__`.
 
     ``target`` is the canonical spelling of the Entity this relationship points
-    at, so a continuing hop keeps the namespace a local name would drop.
+    at, so a continuing Include hop keeps the namespace a local name would drop.
 
-    The class-access overloads resolve the path's target parameter to the
-    relationship's ELEMENT type across all three declared annotation shapes —
-    ``Rel[tuple[X, ...]]``, ``Rel[X | None]``, and ``Rel[X]`` all yield a path
-    reaching ``X`` — because a hop reaches related objects one at a time however
-    many of them there are. Declaration order is load-bearing: overload
-    resolution is first-match and a bare ``R`` unifies with anything, so each
-    specialized ``self`` must precede the catch-all, and the collection shape
-    must precede the optional one because a collection satisfies ``R | None``
-    with ``R`` solved to the collection itself.
+    The class-access overloads resolve the expression's target parameter to the
+    relationship's ELEMENT type. Declaration order is load-bearing: overload
+    resolution is first-match and a bare ``R`` unifies with anything, so the
+    collection shape precedes the optional one, which precedes the catch-all.
 
     A subtype does not redeclare an inherited relationship, so class access
-    through one (``Dog.owner`` where ``Animal`` declares ``owner``) reaches this
-    same descriptor and keeps the one relationship identity ``Animal.owner``. What
-    the accessing class adds is the path's SOURCE — the Entity it was reached
-    through — which an Object Query turns into a path-ROOT guard. The source is
-    recorded for every access, including one through the declaring class itself
-    (``Dog.doghouse``, declared on ``Dog``), because whether it guards anything is a
-    question about the QUERIED position, which only the Object Query knows.
+    through one reaches this same descriptor and keeps the one relationship
+    identity. What the accessing class adds is the path's SOURCE — the Entity it
+    was reached through — which an Object Query turns into a path-ROOT guard.
     """
 
-    __slots__ = ("_index", "_py_name", "_ref", "_target")
+    __slots__ = ("_index", "_many", "_py_name", "_ref", "_target")
 
-    def __init__(self, ref: RelationshipRef, py_name: str, index: int, target: str) -> None:
+    def __init__(
+        self, ref: RelationshipRef, py_name: str, index: int, target: str, *, many: bool
+    ) -> None:
         self._ref = ref
         self._py_name = py_name
         self._index = index
         self._target = target
+        self._many = many
 
     def rebound(self, index: int) -> Rel[T]:
         """This relationship's descriptor, addressing ``index`` instead.
@@ -570,29 +633,28 @@ class Rel[T]:
         A relationship position sits after the exact class's own member count, so
         no position survives inheritance and a descendant installs its own.
         """
-        return Rel(self._ref, self._py_name, index, self._target)
+        return Rel(self._ref, self._py_name, index, self._target, many=self._many)
 
     @overload
     def __get__[E, R](
         self: Rel[tuple[R, ...]], obj: None, owner: type[E], /
-    ) -> RelationshipPath[E, R]: ...
+    ) -> ManyRelationshipExpr[E, R]: ...
     @overload
     def __get__[E, R](
         self: Rel[R | None], obj: None, owner: type[E], /
-    ) -> RelationshipPath[E, R]: ...
+    ) -> RelationshipExpr[E, R]: ...
     @overload
-    def __get__[E, R](self: Rel[R], obj: None, owner: type[E], /) -> RelationshipPath[E, R]: ...
+    def __get__[E, R](self: Rel[R], obj: None, owner: type[E], /) -> RelationshipExpr[E, R]: ...
     @overload
     def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
-    def __get__(
-        self, obj: object | None, _owner: type | None = None
-    ) -> RelationshipPath[Any, Any] | T:
+    def __get__(self, obj: object | None, _owner: type | None = None) -> Any:
         if obj is None:
-            return RelationshipPath(
-                segments=(IncludeSegment(rel=str(self._ref)),),
-                target=self._target,
-                source=_access_source(_owner),
+            hop = relationship_hop(
+                self._ref, self._py_name, self._target, _access_source(_owner), many=self._many
             )
+            if self._many:
+                return ManyRelationshipExpr[Any, Any](hop)
+            return RelationshipExpr[Any, Any](hop)
         try:
             value = object.__getattribute__(obj, COMPACT_STATE_SLOT)[self._index]
         except (AttributeError, TypeError):
@@ -608,11 +670,8 @@ class Rel[T]:
         A published value's whole state is attached once, so a later write has
         nowhere truthful to land — the presentation it would reach is built per
         read and discarded with it, and the tail the next read consults would
-        still hold the sentinel. Ordinary backing is reached the same way it is
-        for every other name a value holds, by writing its storage; nothing in
-        the framework assigns one member at a time through this descriptor. So
-        this is a refusal rather than a branch, and a caller that means to build
-        a value builds it whole.
+        still hold the sentinel. So this is a refusal rather than a branch, and a
+        caller that means to build a value builds it whole.
         """
         del value
         raise AttributeError(

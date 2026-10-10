@@ -9,7 +9,7 @@ when:
         target: parallax.compatibility.Order
         predicate:
           eq:
-            attr: parallax.compatibility.Order.id
+            path: parallax.compatibility.Order.id
             value: 1
       roundTrips: 1
       note: materialize a snapshot of order 1
@@ -28,7 +28,7 @@ when:
         target: parallax.compatibility.Order
         predicate:
           eq:
-            attr: parallax.compatibility.Order.id
+            path: parallax.compatibility.Order.id
             value: 1
       roundTrips: 1
       note: re-read order 1 from the database -> still Ada, proving the mutation did not write back

@@ -6,11 +6,12 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, cast, overload
 
 from parallax.core import deep_fetch
-from parallax.core.entity import Entity, EntityGraphConstruction, RelationshipPath
+from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
+from parallax.core.entity._expressions import include_traversal
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.object_query._nodes import IncludePath
+from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.object_query.validate import validate_include_path
 from parallax.core.predicate import root_position
 from parallax.core.read_delivery import InvalidData, InvalidDataError
@@ -177,7 +178,7 @@ class Snapshot[T]:
         self: Snapshot[R],
         value: Entity,
         *,
-        at: RelationshipPath[Entity, Any] | None = None,
+        at: IncludePath[Entity, Any] | None = None,
     ) -> WireEntity: ...
 
     @overload
@@ -185,14 +186,14 @@ class Snapshot[T]:
         self: Snapshot[R],
         value: InvalidData[E],
         *,
-        at: RelationshipPath[Entity, Any] | None = None,
+        at: IncludePath[Entity, Any] | None = None,
     ) -> InvalidData[WireEntity]: ...
 
     def wire(
         self,
         value: object = _WIRE_ALL,
         *,
-        at: RelationshipPath[Entity, Any] | object | None = _WIRE_AT_OMITTED,
+        at: IncludePath[Entity, Any] | object | None = _WIRE_AT_OMITTED,
     ) -> Snapshot[WireEntity] | WireEntity | InvalidData[WireEntity]:
         """Publish this Typed result, or one eligible node, in canonical Wire form."""
         projection = self._construction
@@ -220,7 +221,7 @@ class Snapshot[T]:
         position = wire_position(
             includes,
             reader.model,
-            None if at is _WIRE_AT_OMITTED else cast("RelationshipPath[Entity, Any] | None", at),
+            None if at is _WIRE_AT_OMITTED else cast("IncludePath[Entity, Any] | None", at),
         )
         return _project_eager_values((value,), includes, projection, position, reader=reader)[0]
 
@@ -300,7 +301,7 @@ def projection_concrete(
 def wire_position(
     includes: deep_fetch.IncludeTree,
     model: CatalogedModel,
-    path: RelationshipPath[Entity, Any] | None,
+    path: IncludePath[Entity, Any] | None,
     *,
     operation: str = "Snapshot.wire",
 ) -> deep_fetch.PositionId:
@@ -313,11 +314,12 @@ def wire_position(
             message=f"the retained model declares no query root {includes.queried.canonical}",
             operation=operation,
         )
-    authored = IncludePath(
-        segments=path.segments,
+    traversal = include_traversal(path)
+    authored = IncludePathNode(
+        segments=traversal.segments,
         applies_to=None
-        if path.source is None or path.source == includes.queried.canonical
-        else (path.source,),
+        if traversal.source is None or traversal.source == includes.queried.canonical
+        else (traversal.source,),
     )
     try:
         resolved = validate_include_path(authored, model.meta, root_position(model.meta, root))

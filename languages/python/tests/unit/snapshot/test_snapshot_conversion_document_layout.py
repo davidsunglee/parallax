@@ -69,7 +69,9 @@ class _Converted:
 
 def _converted(model: Metamodel, name: str, stored: Row | Mapping[str, object]) -> _Converted:
     """One stored row through the production read sequence, database aside."""
-    compiled = compile_read(oa.All(), model, POSTGRES, entity(model, name), result_form="instance")
+    compiled = compile_read(
+        oa.TrueNode(), model, POSTGRES, entity(model, name), result_form="instance"
+    )
     prepared = bind(CatalogedModel(model), compiled)
     builder = PageBuilder(ViewSchema.of())
     index, _resolved, _document, _variant = prepared.convert_row(stored, builder, source=ROOT_LEVEL)
@@ -82,7 +84,9 @@ def _converted(model: Metamodel, name: str, stored: Row | Mapping[str, object]) 
 def _positional(model: Metamodel, name: str, stored: Mapping[str, object]) -> Row:
     """``stored`` laid out in the compiled read's own result order, as a port
     returns a provider row."""
-    compiled = compile_read(oa.All(), model, POSTGRES, entity(model, name), result_form="instance")
+    compiled = compile_read(
+        oa.TrueNode(), model, POSTGRES, entity(model, name), result_form="instance"
+    )
     assert set(stored) == set(compiled.result_keys)
     return tuple(stored[key] for key in compiled.result_keys)
 

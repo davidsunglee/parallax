@@ -10,7 +10,7 @@ import pytest
 
 from parallax.core.object_query import IncludeSegment, deserialize
 from parallax.core.object_query import validate as query_validation
-from parallax.core.object_query._nodes import IncludePath
+from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.predicate import root_position
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._corpus_model_support import model as corpus_model
@@ -41,7 +41,7 @@ def test_include_validation_rejects_a_relationship_with_no_declaring_entity(
 
     with pytest.raises(ValueError, match="no resolved relationship direction"):
         query_validation.validate_include_path(
-            IncludePath(segments=(IncludeSegment(rel="Missing.items"),)),
+            IncludePathNode(segments=(IncludeSegment(rel="Missing.items"),)),
             model,
             root_position(model, root),
         )
@@ -53,7 +53,7 @@ def test_include_validation_rejects_a_segment_disconnected_from_the_previous_tar
 
     with pytest.raises(ValueError, match="does not resolve from the active Include Path position"):
         query_validation.validate_include_path(
-            IncludePath(
+            IncludePathNode(
                 segments=(
                     IncludeSegment(rel="Order.items"),
                     IncludeSegment(rel="Order.statuses"),
@@ -92,15 +92,20 @@ _RESOLVED_QUERIES: tuple[tuple[str, dict[str, object]], ...] = (
             "predicate": {
                 "and": {
                     "operands": [
-                        {"nestedEq": {"path": "Customer.address.phones.type", "value": "x"}},
                         {
-                            "nestedNotExists": {
+                            "any": {
                                 "path": "Customer.address.phones",
-                                "where": {"nestedIsNotNull": {"path": "number"}},
+                                "where": {"eq": {"path": "type", "value": "x"}},
                             }
                         },
-                        {"not": {"operand": {"exists": {"rel": "Customer.locations"}}}},
-                        {"startsWith": {"attr": "Customer.name", "value": "A"}},
+                        {
+                            "none": {
+                                "path": "Customer.address.phones",
+                                "where": {"isNotNull": {"path": "number"}},
+                            }
+                        },
+                        {"not": {"operand": {"any": {"path": "Customer.locations"}}}},
+                        {"startsWith": {"path": "Customer.name", "value": "A"}},
                     ]
                 }
             },
@@ -116,8 +121,8 @@ _RESOLVED_QUERIES: tuple[tuple[str, dict[str, object]], ...] = (
             "predicate": {
                 "or": {
                     "operands": [
-                        {"narrow": {"to": ["Dog"], "operand": {"all": {}}}},
-                        {"group": {"operand": {"in": {"attr": "Animal.id", "values": [1]}}}},
+                        {"narrow": {"to": ["Dog"], "operand": {"true": {}}}},
+                        {"group": {"operand": {"in": {"path": "Animal.id", "values": [1]}}}},
                     ]
                 }
             },
@@ -128,7 +133,7 @@ _RESOLVED_QUERIES: tuple[tuple[str, dict[str, object]], ...] = (
         "balance",
         {
             "target": "Balance",
-            "predicate": {"between": {"attr": "Balance.id", "lower": 1, "upper": 2}},
+            "predicate": {"between": {"path": "Balance.id", "lower": 1, "upper": 2}},
             "temporal": {"transaction-time": {"asOf": "2024-06-15T00:00:00.000000Z"}},
         },
     ),

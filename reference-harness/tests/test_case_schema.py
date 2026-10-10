@@ -42,7 +42,7 @@ def test_subtype_selection_schema_is_registered_under_its_own_id() -> None:
 def test_predicate_schema_resolves_the_shared_subtype_selection_reference() -> None:
     predicate = load_schemas(_SCHEMA_PATH.parents[1])["predicate.schema.json"]
     validator = Draft202012Validator(predicate, registry=_REGISTRY)
-    assert validator.is_valid({"narrow": {"to": ["Animal"], "operand": {"all": {}}}})
+    assert validator.is_valid({"narrow": {"to": ["Animal"], "operand": {"true": {}}}})
 
 
 def _is_valid(doc: dict[str, Any]) -> bool:
@@ -57,7 +57,7 @@ def _read_case() -> dict[str, Any]:
         "model": "models/orders.yaml",
         "tags": ["m-agg"],
         "shape": "read",
-        "when": {"objectQuery": {"target": "Order", "predicate": {"all": {}}}},
+        "when": {"objectQuery": {"target": "Order", "predicate": {"true": {}}}},
         "then": {
             "statements": [{"sql": {"postgres": "select t0.id from orders t0"}, "binds": []}],
             "rows": [{"id": 1}],
@@ -95,7 +95,7 @@ def _scenario_case() -> dict[str, Any]:
                 {
                     "objectQuery": {
                         "target": "Account",
-                        "predicate": {"eq": {"attr": "Account.id", "value": 7}},
+                        "predicate": {"eq": {"path": "Account.id", "value": 7}},
                     },
                     "roundTrips": 1,
                     "statements": [
@@ -130,7 +130,7 @@ def _settled_write_scenario_case() -> dict[str, Any]:
                     "uow": "g",
                     "objectQuery": {
                         "target": "Position",
-                        "predicate": {"eq": {"attr": "Position.id", "value": 1}},
+                        "predicate": {"eq": {"path": "Position.id", "value": 1}},
                     },
                     "roundTrips": 1,
                     "statements": [
@@ -178,7 +178,7 @@ def _action_scenario_case() -> dict[str, Any]:
                 {
                     "objectQuery": {
                         "target": "Order",
-                        "predicate": {"in": {"attr": "Order.id", "values": [1, 2]}},
+                        "predicate": {"in": {"path": "Order.id", "values": [1, 2]}},
                     },
                     "roundTrips": 1,
                     "statements": [
@@ -257,7 +257,7 @@ def _read_expect_graph_case() -> dict[str, Any]:
                     "uow": "ryow",
                     "objectQuery": {
                         "target": "Order",
-                        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                        "predicate": {"eq": {"path": "Order.id", "value": 1}},
                         "includes": [{"segments": [{"rel": "Order.items"}]}],
                     },
                     "roundTrips": 2,
@@ -293,7 +293,7 @@ def _action_identity_error_case() -> dict[str, Any]:
                 {
                     "objectQuery": {
                         "target": "Order",
-                        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                        "predicate": {"eq": {"path": "Order.id", "value": 1}},
                     },
                     "roundTrips": 1,
                     "statements": [
@@ -307,7 +307,7 @@ def _action_identity_error_case() -> dict[str, Any]:
                 {
                     "objectQuery": {
                         "target": "Order",
-                        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                        "predicate": {"eq": {"path": "Order.id", "value": 1}},
                     },
                     "roundTrips": 0,
                     "differentObjectFrom": 0,
@@ -398,7 +398,7 @@ def _coherence_case() -> dict[str, Any]:
                 {
                     "node": "B",
                     "kind": "read",
-                    "objectQuery": {"target": "Account", "predicate": {"all": {}}},
+                    "objectQuery": {"target": "Account", "predicate": {"true": {}}},
                     "statements": step_sql,
                     "observeRows": [{"id": 2}],
                 },
@@ -604,10 +604,10 @@ def _rejected_query_case() -> dict[str, Any]:
         "when": {
             "objectQuery": {
                 "target": "Customer",
-                "predicate": {"nestedEq": {"path": "Customer.contact.city", "value": "Oslo"}},
+                "predicate": {"eq": {"path": "Customer.contact.city", "value": "Oslo"}},
             }
         },
-        "then": {"rejectedRule": "nested-path-first-segment-not-value-object"},
+        "then": {"rejectedRule": "path-unknown-member"},
     }
 
 
@@ -670,7 +670,7 @@ def _action_boundary_no_on_case() -> dict[str, Any]:
                 {
                     "objectQuery": {
                         "target": "Order",
-                        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                        "predicate": {"eq": {"path": "Order.id", "value": 1}},
                     },
                     "roundTrips": 1,
                     "statements": [
@@ -715,7 +715,7 @@ def _graphs_read_case() -> dict[str, Any]:
         "when": {
             "objectQuery": {
                 "target": "InvoiceLine",
-                "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+                "predicate": {"eq": {"path": "InvoiceLine.id", "value": 1000}},
                 "temporal": {"transaction-time": {"history": {}}},
             },
         },
@@ -758,7 +758,7 @@ def _stored_data_issues_read_case() -> dict[str, Any]:
         "when": {
             "objectQuery": {
                 "target": "Order",
-                "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                "predicate": {"eq": {"path": "Order.id", "value": 1}},
                 "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
             },
         },
@@ -928,7 +928,7 @@ def _legacy_layout() -> dict[str, Any]:
     return {
         "model": "models/orders.yaml",
         "tags": ["m-agg"],
-        "objectQuery": {"target": "Order", "predicate": {"all": {}}},
+        "objectQuery": {"target": "Order", "predicate": {"true": {}}},
         "goldenSql": {"postgres": "select t0.id from orders t0"},
         "binds": [],
         "expectedRows": [{"id": 1}],
@@ -1188,7 +1188,7 @@ def _settled_write_predicate_selected() -> dict[str, Any]:
         "mutation": "amend",
         "target": {
             "entity": "Position",
-            "predicate": {"eq": {"attr": "Position.id", "value": 1}},
+            "predicate": {"eq": {"path": "Position.id", "value": 1}},
         },
         "assignments": [{"attr": "Position.value", "value": 150.00}],
     }
@@ -1443,7 +1443,7 @@ def _write_value_scenario_mixing_another_step() -> dict[str, Any]:
         {
             "objectQuery": {
                 "target": "parallax.compatibility.Account",
-                "predicate": {"eq": {"attr": "parallax.compatibility.Account.id", "value": 2}},
+                "predicate": {"eq": {"path": "parallax.compatibility.Account.id", "value": 2}},
             },
             "roundTrips": 1,
             "statements": [
@@ -1487,7 +1487,7 @@ def _streamed_read_case(**stream: Any) -> dict[str, Any]:
         "shape": "read",
         "compileEligibility": {"mode": "run-only", "reason": "query-result-dependent"},
         "when": {
-            "objectQuery": {"target": "Order", "predicate": {"all": {}}},
+            "objectQuery": {"target": "Order", "predicate": {"true": {}}},
             "stream": {"batchSize": 2, **stream},
         },
         "then": {

@@ -1,5 +1,5 @@
-# valueObject to-many absence: nestedNotExists folds every not-present state
-# together (m-value-object to-many, m-predicate absence collapse, m-dialect
+# valueObject to-many emptiness: a bare `none` folds every zero-element carrier
+# together (m-value-object to-many, m-predicate quantifier carriers, m-dialect
 # array-traversal form), on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, absence-collapse, array-traversal, slice-snapshot-1, slice-managed-1]
@@ -8,7 +8,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedNotExists:
+      none:
         path: parallax.compatibility.Customer.address.phones
 then:
   statements:

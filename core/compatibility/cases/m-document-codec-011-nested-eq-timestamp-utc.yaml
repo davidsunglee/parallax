@@ -8,7 +8,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Sample
     predicate:
-      nestedEq:
+      eq:
         path: parallax.compatibility.Sample.profile.instant
         value: "2026-01-15T09:30:00.000000Z"
 then:

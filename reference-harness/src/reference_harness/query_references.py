@@ -1,9 +1,9 @@
 """Shared Predicate-tag vocabularies and the reference-class walker.
 
-The Predicate schema distinguishes scalar attribute references from value-object
-paths. Several validators ask the SAME question of a predicate — which
-queried-entity classes does it name? — so both the tag sets and the single walk
-that consumes them live here rather than being copied into each caller.
+Several validators ask the SAME question of a predicate — which queried-entity
+classes do its Entity-qualified paths name? — so both the tag sets and the
+single walk that consumes them live here rather than being copied into each
+caller.
 
 Two callers share the walk: the Object Query self-consistency cross-check
 (``schema_validate``) and the predicate-write scope check
@@ -18,7 +18,7 @@ from typing import Any
 
 from .references import entity_spelling
 
-ATTRIBUTE_REFERENCE_TAGS = frozenset(
+SCALAR_OPERATION_TAGS = frozenset(
     {
         "eq",
         "notEq",
@@ -39,96 +39,55 @@ ATTRIBUTE_REFERENCE_TAGS = frozenset(
     }
 )
 
-# Every path-bearing tag exposes the queried class as the FIRST segment of
-# ``body["path"]``, which is why one extraction serves the whole set. The flat
-# nested comparisons / ranges / memberships / string predicates / null-checks carry a
-# ``Class.valueObject.attr``
-# path; ``nestedExists`` / ``nestedNotExists`` carry a ``Class.valueObject`` path
-# plus an OPTIONAL element-scoped ``where``. That ``where`` uses element-relative
-# refs (no leading class), so it names no queried class and is intentionally NOT
-# descended for scope — the class always comes from the required ``path``. This is
-# why a path's class is extracted differently from an ``attr`` / ``rel`` class,
-# whose member name is a single trailing segment.
-PATH_REFERENCE_TAGS = frozenset(
-    {
-        "nestedEq",
-        "nestedNotEq",
-        "nestedGt",
-        "nestedGte",
-        "nestedLt",
-        "nestedLte",
-        "nestedBetween",
-        "nestedIn",
-        "nestedNotIn",
-        "nestedLike",
-        "nestedNotLike",
-        "nestedStartsWith",
-        "nestedEndsWith",
-        "nestedContains",
-        "nestedIsNull",
-        "nestedIsNotNull",
-        "nestedExists",
-        "nestedNotExists",
-    }
+# Every tag whose body may carry a predicate `path`: the scalar operations, the
+# quantifiers, the presence tests, and a path-targeted narrowing. An
+# Entity-qualified path names the queried class as its entity spelling; a
+# relative path, read from a bound object, names none.
+PATH_TAGS = SCALAR_OPERATION_TAGS | frozenset(
+    {"any", "all", "none", "exists", "notExists", "narrow"}
 )
 
 
-def _add_member_reference_class(reference: Any, classes: set[str]) -> None:
-    """Add the class part of a ``Class.member`` reference (an ``attr`` or a ``rel``).
-
-    The class is the spelling up to the LAST dot, so a canonically spelled position
-    (``<namespace>.<Entity>.<member>``) contributes the entity it names rather than
-    its leading namespace segment.
-    """
-    if isinstance(reference, str) and "." in reference:
-        classes.add(reference.rsplit(".", 1)[0])
-
-
 def _add_path_reference_class(reference: Any, classes: set[str]) -> None:
-    """Add the class part of a value-object ``path`` (``Class.valueObject[.…]``).
-
-    A path's trailing segments are declared value-object members rather than one
-    member name, so the class is everything up to the LAST capitalized segment
-    (:func:`~reference_harness.references.split_reference`) rather than up to the
-    last dot. An element-relative path names no class and contributes nothing.
-    """
+    """Add the class an Entity-qualified ``path`` names (everything up to its
+    LAST capitalized segment, :func:`~reference_harness.references.split_reference`);
+    a relative path names no class and contributes nothing."""
     named = entity_spelling(reference)
     if named is not None:
         classes.add(named)
 
 
-def collect_reference_classes(node: Any, classes: set[str]) -> None:
-    """Collect the class part of every queried-entity reference in *node*.
+def _add_member_reference_class(reference: Any, classes: set[str]) -> None:
+    """Add the class part of a ``Class.member`` reference (a Sort Key's ``attr``
+    or an Include segment's ``rel``): the spelling up to its LAST dot."""
+    if isinstance(reference, str) and "." in reference:
+        classes.add(reference.rsplit(".", 1)[0])
 
-    Descends the same-entity boolean combinators (``and`` / ``or`` / ``not`` /
-    ``group``) and the Predicate-scoped ``narrow``, and adds the class named by an
-    attribute (``attr``), a value-object path (``path``), or a relationship
-    (``rel``). A navigation's INNER predicate and a ``nestedExists`` ``where``
-    resolve against a DIFFERENT scope (the related entity / the array element), so
-    they are NOT descended: the reference they contain is not evidence that this
-    predicate's root entity differs from the target.
+
+def collect_reference_classes(node: Any, classes: set[str]) -> None:
+    """Collect the class every queried-position path in *node* names.
+
+    Descends the boolean combinators and a narrowing of the current position. A
+    quantifier's ``where`` and a path-targeted narrowing's operand are read from
+    a bound object, whose relative paths name no queried class, so they are not
+    descended: the path a quantifier or narrowing itself carries is the evidence.
     """
     if not isinstance(node, dict) or len(node) != 1:
         return
     tag, body = next(iter(node.items()))
     if not isinstance(body, dict):
         return
-    if tag in ATTRIBUTE_REFERENCE_TAGS:
-        _add_member_reference_class(body.get("attr"), classes)
-    elif tag in PATH_REFERENCE_TAGS:
+    if tag in PATH_TAGS:
         _add_path_reference_class(body.get("path"), classes)
-    elif tag in ("navigate", "exists", "notExists"):
-        _add_member_reference_class(body.get("rel"), classes)
-    elif tag in ("and", "or"):
+    if tag in ("and", "or"):
         for operand in body.get("operands", []) or []:
             collect_reference_classes(operand, classes)
-    elif tag in ("not", "group", "narrow"):
-        # A narrow evaluates its operand over the polymorphic position supplied by
-        # context, so the operand's queried-entity references are still
-        # cross-checked against the target; the narrow's own subset validity is
-        # asserted separately (m-inheritance).
+    elif tag in ("not", "group") or (tag == "narrow" and "path" not in body):
+        # A narrowing of the current position evaluates its operand there, so
+        # the operand's paths are still cross-checked against the target; the
+        # narrowing's own subset validity is asserted separately (m-inheritance).
         collect_reference_classes(body.get("operand"), classes)
-    # all / none name no class.
+    # the constants name no class.
 
 
 def collect_query_reference_classes(query: Any, classes: set[str]) -> None:

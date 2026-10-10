@@ -24,8 +24,8 @@ from parallax.core.execution import QueryTargetError
 from parallax.core.execution._preflight import preflight
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.object_query import IncludeSegment, ObjectQueryNode, validate_object_query
-from parallax.core.object_query._nodes import IncludePath
-from parallax.core.predicate import All, ModelRejectedError, Narrow, validate_predicate
+from parallax.core.object_query._nodes import IncludePathNode
+from parallax.core.predicate import ModelRejectedError, Narrow, TrueNode, validate_predicate
 from parallax.core.unit_work import instructions
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
@@ -79,7 +79,7 @@ def test_predicate_resolver_rejects_an_ambiguous_bare_name() -> None:
     # the resolution failure it is, not as the empty resolved set it would
     # otherwise collapse into: a narrow rule would invite narrowing differently,
     # while the spelling itself is what names no position.
-    op = Narrow(to=("Person",), operand=All())
+    op = Narrow(to=("Person",), operand=TrueNode())
     with pytest.raises(ModelRejectedError) as excinfo:
         validate_predicate(root, op, model)
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
@@ -104,11 +104,11 @@ def test_the_write_boundary_classifies_an_ambiguous_bare_name_by_the_same_rule()
     instructions.prepare_typed_write(canonical, model)
 
 
-def _query(target: str, includes: tuple[IncludePath, ...] = ()) -> ObjectQueryNode:
+def _query(target: str, includes: tuple[IncludePathNode, ...] = ()) -> ObjectQueryNode:
     """A find-all Object Query against the authored spelling ``target``."""
     namespace, _, name = target.rpartition(".")
     return ObjectQueryNode(
-        target=EntityIdentity(namespace or None, name), predicate=All(), includes=includes
+        target=EntityIdentity(namespace or None, name), predicate=TrueNode(), includes=includes
     )
 
 
@@ -140,16 +140,18 @@ def test_a_canonical_spelling_names_one_of_two_twins_at_every_reference_position
     model = _model()
     root = _named(model, "a.Person")
 
-    narrow = Narrow(to=("a.Person",), operand=All())
+    narrow = Narrow(to=("a.Person",), operand=TrueNode())
     validate_predicate(root, narrow, model)
 
-    predicate = oa.Comparison(op="eq", attr="a.Person.id", value=1)
+    predicate = oa.Comparison(op="eq", subject=oa.FieldSubject("a.Person.id"), value=1)
     validate_predicate(root, predicate, model)
 
     # The other twin is a different Entity, so its attribute is outside this
     # position rather than merely ambiguous.
     with pytest.raises(ModelRejectedError) as excinfo:
-        validate_predicate(root, oa.Comparison(op="eq", attr="b.Person.id", value=1), model)
+        validate_predicate(
+            root, oa.Comparison(op="eq", subject=oa.FieldSubject("b.Person.id"), value=1), model
+        )
     assert excinfo.value.rule == "attribute-outside-active-position"
 
 
@@ -160,7 +162,7 @@ def test_sql_lowering_reaches_the_table_the_canonical_spelling_names() -> None:
 
     for namespace in ("a", "b"):
         root = _named(model, f"{namespace}.Person")
-        op = oa.Comparison(op="eq", attr=f"{namespace}.Person.id", value=1)
+        op = oa.Comparison(op="eq", subject=oa.FieldSubject(f"{namespace}.Person.id"), value=1)
         validate_predicate(root, op, model)
         compiled = compile_read(op, model, POSTGRES, root)
         assert compiled.statement.sql == (
@@ -252,14 +254,14 @@ def test_sql_lowering_resolves_a_narrow_across_namespaces() -> None:
     model = _cross_namespace_model()
     root = _named(model, "zoo.Beast")
 
-    top_level = Narrow(to=("Wolf",), operand=All())
+    top_level = Narrow(to=("Wolf",), operand=TrueNode())
     validate_predicate(root, top_level, model)
     assert compile_read(top_level, model, POSTGRES, root).statement.binds == ("wolf",)
 
     branches = oa.Or(
         operands=(
-            Narrow(to=("Wolf",), operand=All()),
-            Narrow(to=("Bear",), operand=All()),
+            Narrow(to=("Wolf",), operand=TrueNode()),
+            Narrow(to=("Bear",), operand=TrueNode()),
         )
     )
     validate_predicate(root, branches, model)
@@ -273,7 +275,7 @@ def test_sql_lowering_resolves_a_hop_and_its_narrow_across_namespaces() -> None:
     model = _cross_namespace_model()
     den = _named(model, "den.Den")
 
-    op = oa.Exists(rel="Den.beasts", op=Narrow(to=("Wolf",), operand=All()))
+    op = oa.Quantifier("any", "Den.beasts", Narrow(to=("Wolf",), operand=TrueNode()))
     validate_predicate(den, op, model)
     compiled = compile_read(op, model, POSTGRES, den)
     assert compiled.statement.sql == (
@@ -294,7 +296,9 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
 
     segment_narrow = _query(
         "den.Den",
-        includes=(IncludePath(segments=(IncludeSegment(rel="Den.beasts", narrow_to=("Wolf",)),)),),
+        includes=(
+            IncludePathNode(segments=(IncludeSegment(rel="Den.beasts", narrow_to=("Wolf",)),)),
+        ),
     )
     validated_segment = validate_object_query(den, segment_narrow, model)
     segment_plan = deep_fetch.plan(
@@ -308,7 +312,9 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
 
     root_guard = _query(
         "zoo.Beast",
-        includes=(IncludePath(applies_to=("Wolf",), segments=(IncludeSegment(rel="Beast.den"),)),),
+        includes=(
+            IncludePathNode(applies_to=("Wolf",), segments=(IncludeSegment(rel="Beast.den"),)),
+        ),
     )
     validated_guard = validate_object_query(beast, root_guard, model)
     guarded = deep_fetch.plan(
@@ -318,7 +324,7 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
         (wolf.identity,)
     ]
 
-    from_subtype = _query("Wolf", (IncludePath(segments=(IncludeSegment(rel="Beast.den"),)),))
+    from_subtype = _query("Wolf", (IncludePathNode(segments=(IncludeSegment(rel="Beast.den"),)),))
     validated_subtype = validate_object_query(wolf, from_subtype, model)
     subtype_plan = deep_fetch.plan(
         validated_subtype, model, projection=deep_fetch.ReadProjectionRequest("all", True)
@@ -339,7 +345,7 @@ def test_hop_term_propagation_resolves_a_hop_from_another_namespace() -> None:
     model = _cross_namespace_model()
     wolf = _named(model, "Wolf")
 
-    op = oa.Exists(rel="Beast.den")
+    op = oa.Presence("exists", "Beast.den")
     product = validate_predicate(wolf, op, model)
     assert navigate.propagate_hop_terms(product, model) is product
 
@@ -355,7 +361,7 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
     beast = _named(model, "zoo.Beast")
     wolf = _named(model, "Wolf")
 
-    hop = oa.Exists(rel="den.Den.beasts", op=Narrow(to=("Wolf",), operand=All()))
+    hop = oa.Quantifier("any", "den.Den.beasts", Narrow(to=("Wolf",), operand=TrueNode()))
     validate_predicate(den, hop, model)
     compiled = compile_read(hop, model, POSTGRES, den)
     assert compiled.statement.sql == (
@@ -366,7 +372,7 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
 
     root_guard = _query(
         "zoo.Beast",
-        (IncludePath(applies_to=("Wolf",), segments=(IncludeSegment(rel="zoo.Beast.den"),)),),
+        (IncludePathNode(applies_to=("Wolf",), segments=(IncludeSegment(rel="zoo.Beast.den"),)),),
     )
     validated_guard = validate_object_query(beast, root_guard, model)
     guarded = deep_fetch.plan(
@@ -376,6 +382,6 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
         (wolf.identity,)
     ]
 
-    navigation = oa.Exists(rel="zoo.Beast.den")
+    navigation = oa.Presence("exists", "zoo.Beast.den")
     product = validate_predicate(wolf, navigation, model)
     assert navigate.propagate_hop_terms(product, model) is product

@@ -178,7 +178,7 @@ def test_every_scalar_type_round_trips_in_order_with_duplicates(
 
 
 def _wire_query(layout: Layout) -> dict[str, object]:
-    return {"target": f"{_NAMESPACE}.{_ENTITIES[layout].__name__}", "predicate": {"all": {}}}
+    return {"target": f"{_NAMESPACE}.{_ENTITIES[layout].__name__}", "predicate": {"true": {}}}
 
 
 @pytest.mark.parametrize("layout", _LAYOUTS)
@@ -273,7 +273,7 @@ def test_edits_and_assignments_replace_and_clear_whole_collections(
         lambda tx: tx.wire.amend_where(
             {
                 "entity": f"{_NAMESPACE}.{entity.__name__}",
-                "predicate": {"eq": {"attr": f"{_NAMESPACE}.{entity.__name__}.id", "value": 1}},
+                "predicate": {"eq": {"path": f"{_NAMESPACE}.{entity.__name__}.id", "value": 1}},
             },
             {"tags": ["z"]},
         )

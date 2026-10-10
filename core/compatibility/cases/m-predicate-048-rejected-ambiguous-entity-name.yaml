@@ -1,18 +1,15 @@
-# Negative (m-predicate reference resolution): a predicate reference spells an
-# Entity name two namespaces of the model declare, so it resolves to no Entity at
-# all and is refused before any SQL.
+# Negative (m-predicate reference resolution): a predicate path spells an Entity
+# name two namespaces of the model declare, so it resolves to no Entity at all and
+# is refused before any SQL.
 model: models/shared-local-name.yaml
 tags: [m-predicate, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   objectQuery:
-    target: parallax.compatibility.Register
+    target: archive.SharedVariant
     predicate:
-      exists:
-        rel: parallax.compatibility.Register.variant
-        op:
-          eq:
-            attr: SharedVariant.archiveLabel
-            value: A-1
+      eq:
+        path: SharedVariant.archiveLabel
+        value: A-1
 then:
   rejectedRule: reference-ambiguous-entity-name

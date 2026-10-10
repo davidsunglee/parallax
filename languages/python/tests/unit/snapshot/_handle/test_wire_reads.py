@@ -63,7 +63,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node, typed_read_query
-from parallax.core.predicate import All
+from parallax.core.predicate import TrueNode
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, PageBuilder, ViewSchema
 from parallax.core.read_delivery._row_converter import bind
@@ -180,7 +180,7 @@ def _sequence(value: object) -> Sequence[object]:
 def test_wire_keys_are_declared_member_names_and_leaves_are_canonical() -> None:
     port = QueuePort([[_order_row()]])
     query = deserialize_query(
-        {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
+        {"target": "Order", "predicate": {"eq": {"path": "Order.id", "value": 1}}}
     )
     root = _entity(_wire_database(port).wire.find(query).result())
     # `ordered_on` is the physical column; `orderedOn` is the declared member.
@@ -269,7 +269,7 @@ def test_an_eager_wire_publication_releases_its_encoder(
     monkeypatch.setattr(wire_materialize, "shared_wire_encoder", observed_encoder)
     root = (
         _wire_database(QueuePort([[_order_row()]]))
-        .wire.find(deserialize_query({"target": "Order", "predicate": {"all": {}}}))
+        .wire.find(deserialize_query({"target": "Order", "predicate": {"true": {}}}))
         .result()
     )
     gc.collect()
@@ -312,7 +312,7 @@ def test_a_document_occurrence_publishes_the_members_the_document_held() -> None
         ]
     )
     query = deserialize_query(
-        {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
+        {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 1}}}
     )
     root = _entity(
         own_root(Database.connect(port, CUSTOMER)).using_database_login().wire.find(query).result()
@@ -333,7 +333,7 @@ def test_two_stored_occurrences_short_and_null_publish_differently() -> None:
     def published(document: object) -> Mapping[str, object]:
         port = QueuePort([[{"id": 1, "name": "Ada", "address": document}]])
         query = deserialize_query(
-            {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
+            {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 1}}}
         )
         root = _entity(
             own_root(Database.connect(port, CUSTOMER))
@@ -378,7 +378,7 @@ def test_only_an_entity_node_can_carry_a_read_origin() -> None:
         ]
     )
     query = deserialize_query(
-        {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
+        {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 1}}}
     )
     root = _entity(
         own_root(Database.connect(port, CUSTOMER)).using_database_login().wire.find(query).result()
@@ -392,7 +392,7 @@ def test_only_an_entity_node_can_carry_a_read_origin() -> None:
 def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty() -> None:
     port = QueuePort([[{"id": 4, "name": "Mary", "address": None}]])
     query = deserialize_query(
-        {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 4}}}
+        {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 4}}}
     )
     root = _entity(
         own_root(Database.connect(port, CUSTOMER)).using_database_login().wire.find(query).result()
@@ -406,7 +406,7 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
     # a stored null are two states.
     port = QueuePort([[{"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}}]])
     query = deserialize_query(
-        {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 3}}}
+        {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 3}}}
     )
     root = _entity(
         own_root(Database.connect(port, CUSTOMER)).using_database_login().wire.find(query).result()
@@ -484,7 +484,7 @@ def _absent_free(value: object) -> int:
 def test_an_unrequested_relationship_is_absent_rather_than_null() -> None:
     port = QueuePort([[_order_row()]])
     query = deserialize_query(
-        {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
+        {"target": "Order", "predicate": {"eq": {"path": "Order.id", "value": 1}}}
     )
     root = _entity(_wire_database(port).wire.find(query).result())
     assert "items" not in root
@@ -503,7 +503,7 @@ def test_a_requested_relationship_unwinds_in_result_order() -> None:
     query = deserialize_query(
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
             "includes": [{"segments": [{"rel": "Order.items"}]}],
         }
     )
@@ -527,7 +527,7 @@ def test_a_back_reference_unwinds_finitely_instead_of_stubbing() -> None:
     query = deserialize_query(
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
             "includes": [
                 {"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]},
             ],
@@ -589,7 +589,7 @@ def _frozen_root() -> WireEntity:
     query = deserialize_query(
         {
             "target": "Order",
-            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
             "includes": [{"segments": [{"rel": "Order.items"}]}],
         }
     )
@@ -721,7 +721,7 @@ def test_a_published_value_is_the_type_its_construction_could_not_have_faked() -
 
 
 def test_every_accepted_query_spelling_reaches_the_read_gate_in_its_own_policy() -> None:
-    document = {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
+    document = {"target": "Order", "predicate": {"eq": {"path": "Order.id", "value": 1}}}
     node = deserialize_query(document)
     assert wire_read_query(node) is node
     assert wire_read_query(document) == node
@@ -755,7 +755,7 @@ def test_a_wire_read_participates_in_the_transaction_that_owns_it() -> None:
     result = database.transact(
         lambda tx: _entity(
             tx.wire.find(
-                {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
+                {"target": "Order", "predicate": {"eq": {"path": "Order.id", "value": 1}}}
             ).result()
         )
     )
@@ -784,7 +784,7 @@ _VALID_CUSTOMER: MappingRow = {
 def _customer_wire(model: DomainModel, row: MappingRow) -> object:
     """One connected Customer read, published in band."""
     port = QueuePort([[row]])
-    query = deserialize_query({"target": "Customer", "predicate": {"all": {}}})
+    query = deserialize_query({"target": "Customer", "predicate": {"true": {}}})
     return own_root(connect(port, model)).using_database_login().wire.find(query).checked().result()
 
 
@@ -832,7 +832,7 @@ def test_the_constructor_door_classifies_the_same_way_connect_does() -> None:
     # materializer `connect` does, so its verdicts are the same ones.
     port = QueuePort([[{"id": 1, "name": "Ada", "address": {"city": "Oslo"}}]])
     query = deserialize_query(
-        {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
+        {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 1}}}
     )
     published = (
         own_root(Database.connect(port, CUSTOMER))
@@ -856,7 +856,7 @@ def test_a_classless_connection_serves_wire_and_refuses_typed_before_any_io() ->
     served = own_root(Database.connect(QueuePort([[_order_row()]]), ORDERS)).using_database_login()
     assert isinstance(served.wire, WireDatabaseView)
     published = served.wire.find(
-        {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
+        {"target": "Order", "predicate": {"eq": {"path": "Order.id", "value": 1}}}
     ).result()
     assert _entity(published)["name"] == "Ada"
 
@@ -981,7 +981,7 @@ def test_an_inheritance_participant_publishes_its_family_variant() -> None:
             ]
         ]
     )
-    query = deserialize_query({"target": "Animal", "predicate": {"all": {}}})
+    query = deserialize_query({"target": "Animal", "predicate": {"true": {}}})
     root = _entity(
         own_root(Database.connect(port, ANIMAL)).using_database_login().wire.find(query).result()
     )
@@ -1005,7 +1005,7 @@ def test_a_wire_read_publishes_the_variant_its_prepared_layout_fixed(
     }
     port = QueuePort([[row], [row]])
     database = own_root(Database.connect(port, ANIMAL)).using_database_login()
-    query = deserialize_query({"target": "Animal", "predicate": {"all": {}}})
+    query = deserialize_query({"target": "Animal", "predicate": {"true": {}}})
 
     def refusing_variant(*args: object) -> str:
         raise AssertionError("a Wire read derived a family variant of its own")
@@ -1042,7 +1042,7 @@ def test_a_loaded_null_to_one_view_publishes_null_and_a_guarded_parent_publishes
     query = deserialize_query(
         {
             "target": "Animal",
-            "predicate": {"all": {}},
+            "predicate": {"true": {}},
             "includes": [
                 {
                     "segments": [{"rel": "Animal.owner"}],
@@ -1079,7 +1079,7 @@ def test_a_temporal_end_publishes_the_canonical_infinity_literal() -> None:
     query = deserialize_query(
         {
             "target": "InvoiceLine",
-            "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+            "predicate": {"eq": {"path": "InvoiceLine.id", "value": 1000}},
             "temporal": {"transaction-time": {"asOf": "latest"}},
         }
     )
@@ -1115,7 +1115,7 @@ def _history_port() -> QueuePort:
 
 _HISTORY_QUERY: Mapping[str, object] = {
     "target": "InvoiceLine",
-    "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+    "predicate": {"eq": {"path": "InvoiceLine.id", "value": 1000}},
     "temporal": {"transaction-time": {"history": {}}},
 }
 
@@ -1186,7 +1186,7 @@ _VARIANT_MODEL = form_metamodel(
 
 def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both() -> None:
     compiled = compile_read(
-        All(), _VARIANT_MODEL, POSTGRES, _root_of(_VARIANT_MODEL), result_form="instance"
+        TrueNode(), _VARIANT_MODEL, POSTGRES, _root_of(_VARIANT_MODEL), result_form="instance"
     )
     stored = {
         "id": 1,

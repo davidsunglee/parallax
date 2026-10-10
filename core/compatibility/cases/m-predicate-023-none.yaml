@@ -1,6 +1,6 @@
-# none — the absorbing element of the algebra: matches nothing. It lowers to a
+# false — the absorbing element of the algebra: matches nothing. It lowers to a
 # query whose WHERE is unsatisfiable (`1 = 0`), returning zero rows. Defined as
-# the dual of `all`; here it gets its dedicated fixture alongside the boolean
+# the dual of `true`; here it gets its dedicated fixture alongside the boolean
 # combinators.
 model: models/orders.yaml
 tags: [m-predicate, none, boolean, slice-snapshot-1, slice-managed-1]
@@ -9,7 +9,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Order
     predicate:
-      none: {}
+      "false": {}
 then:
   statements:
     - sql:

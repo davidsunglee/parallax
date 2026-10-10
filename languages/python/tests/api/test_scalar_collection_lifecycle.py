@@ -165,7 +165,7 @@ def _stored(profile_run: Any, entity: type[Any], *members: str) -> list[tuple[ob
 
 def _by_id(entity: type[Any], key: int) -> dict[str, object]:
     name = _name(entity)
-    return {"target": name, "predicate": {"eq": {"attr": f"{name}.id", "value": key}}}
+    return {"target": name, "predicate": {"eq": {"path": f"{name}.id", "value": key}}}
 
 
 def _find(tx: Transaction, entity: type[Any], representation: _Representation) -> Any:

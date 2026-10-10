@@ -1,6 +1,6 @@
-# valueObject to-many filter: a flat predicate through a `many` segment is
-# ANY-ELEMENT (m-value-object to-many, m-predicate, m-dialect array-traversal
-# form), on Postgres AND MariaDB.
+# valueObject to-many filter: `any` with one equality matches when SOME element
+# satisfies it (m-value-object to-many, m-predicate quantifiers, m-dialect
+# array-traversal form), on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -8,9 +8,12 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedEq:
-        path: parallax.compatibility.Customer.address.phones.type
-        value: home
+      any:
+        path: parallax.compatibility.Customer.address.phones
+        where:
+          eq:
+            path: type
+            value: home
 then:
   statements:
     - sql:

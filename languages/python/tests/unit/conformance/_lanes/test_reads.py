@@ -204,7 +204,7 @@ def test_the_compile_lane_refuses_a_deferred_execution_feature() -> None:
             "when": {
                 "objectQuery": {
                     "target": "parallax.compatibility.Policy",
-                    "predicate": {"all": {}},
+                    "predicate": {"true": {}},
                     "temporal": {
                         "valid-time": {"asOf": "latest"},
                         "transaction-time": {"history": {}},
@@ -473,12 +473,12 @@ def test_compile_read_case_wraps_a_sql_gen_error() -> None:
             "when": {
                 "objectQuery": {
                     "target": "Order",
-                    "predicate": {"eq": {"attr": "Order.doesNotExist", "value": 1}},
+                    "predicate": {"eq": {"path": "Order.doesNotExist", "value": 1}},
                 },
             },
         }
     )
-    with pytest.raises(EngineError, match="names no declared attribute"):
+    with pytest.raises(EngineError, match="names no declared member"):
         reads.compile_read_case(case, "postgres")
 
 
@@ -489,7 +489,7 @@ def test_run_graph_case_wraps_a_temporal_read_error_from_the_find_executor() -> 
             "when": {
                 "objectQuery": {
                     "target": "Balance",
-                    "predicate": {"all": {}},
+                    "predicate": {"true": {}},
                     "temporal": {"valid-time": {"asOf": "latest"}},
                 },
             },
@@ -578,7 +578,7 @@ def test_run_graphs_case_wraps_an_error_from_the_find_executor() -> None:
             "when": {
                 "objectQuery": {
                     "target": "InvoiceLine",
-                    "predicate": {"all": {}},
+                    "predicate": {"true": {}},
                     "temporal": {"valid-time": {"history": {}}},
                 },
             },
@@ -596,7 +596,7 @@ def test_run_graph_case_refuses_a_case_whose_read_answers_a_milestone_set() -> N
             "when": {
                 "objectQuery": {
                     "target": "InvoiceLine",
-                    "predicate": {"all": {}},
+                    "predicate": {"true": {}},
                     "temporal": {"transaction-time": {"history": {}}},
                 },
             },
@@ -614,7 +614,7 @@ def test_run_graphs_case_refuses_a_case_whose_read_answers_one_graph() -> None:
             "when": {
                 "objectQuery": {
                     "target": "InvoiceLine",
-                    "predicate": {"all": {}},
+                    "predicate": {"true": {}},
                     "temporal": {"transaction-time": {"asOf": "latest"}},
                 },
             },

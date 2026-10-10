@@ -1,0 +1,49 @@
+# A scalar-collection `any` binds each element of `tags` in turn: a basket matches
+# when some element equals `urgent`. The element has no path; the quantifier
+# supplies its declared type.
+model: models/predicate-collections.yaml
+tags: [m-predicate, quantifier, scalar-collection, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      any:
+        path: parallax.compatibility.Basket.tags
+        where:
+          eq: {value: urgent}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.tags) = ? then t0.tags else cast(? as jsonb) end) t1 where case when jsonb_typeof(t1.value) = ? then t1.value #>> ? end = ?)'}
+    binds: [array, '[]', string, '{}', urgent]
+  graph:
+    Basket:
+    - id: 1
+      label: one
+      ownerId: 1
+      tags: [urgent, gift]
+      scores: [5, 25]
+      prices: ['1.50']
+      flags: [true]
+      parcels:
+      - sku: a
+        qty: 2
+        notes: [x]
+      - sku: b
+        qty: 0
+        notes: []
+      meta:
+        labels: [m]
+    - id: 4
+      label: four
+      ownerId: 3
+      tags: [urgent]
+      scores: [0]
+      prices: []
+      flags: [true, false]
+      parcels:
+      - sku: d
+        qty: 1
+        notes: [urgent, x]
+      meta: null
+  roundTrips: 1

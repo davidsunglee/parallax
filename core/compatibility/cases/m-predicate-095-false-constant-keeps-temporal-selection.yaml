@@ -1,0 +1,21 @@
+# The constant false predicate selects nothing; it composes with the read's Temporal
+# Selection rather than replacing it, so the statement still carries the current-row
+# terms.
+model: models/policy.yaml
+tags: [m-predicate, constant, m-temporal-read, temporal, bitemporal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Policy
+    predicate:
+      'false': {}
+    temporal:
+      transaction-time: {asOf: latest}
+      valid-time: {asOf: latest}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where 1 = 0 and t0.thru_z = ? and t0.out_z = ?'}
+    binds: [infinity, infinity]
+  referenceSql: select id, name, from_z, thru_z, in_z, out_z from policy where 1 = 0
+  rows: []
+  roundTrips: 1

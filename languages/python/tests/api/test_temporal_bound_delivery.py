@@ -119,7 +119,7 @@ def _wire_query(entity: type[Any], valid: Pin | None, tx: Pin) -> dict[str, obje
     name = f"{_NAMESPACE}.{entity.__name__}"
     return {
         "target": name,
-        "predicate": {"eq": {"attr": f"{name}.id", "value": 1}},
+        "predicate": {"eq": {"path": f"{name}.id", "value": 1}},
         "temporal": temporal,
     }
 
@@ -145,7 +145,7 @@ def _write(
             )
         else:
             tx.wire.amend_where(
-                {"entity": name, "predicate": {"eq": {"attr": f"{name}.id", "value": 1}}},
+                {"entity": name, "predicate": {"eq": {"path": f"{name}.id", "value": 1}}},
                 {"amount": _NEW},
                 **stated_start(valid_from),
             )

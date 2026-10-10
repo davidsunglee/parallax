@@ -17,10 +17,10 @@ when:
           and:
             operands:
               - eq:
-                  attr: parallax.compatibility.Position.id
+                  path: parallax.compatibility.Position.id
                   value: 1
               - eq:
-                  attr: parallax.compatibility.Position.value
+                  path: parallax.compatibility.Position.value
                   value: "200.00"
         temporal:
           transaction-time:
@@ -42,8 +42,12 @@ when:
           predicate:
             and:
               operands:
-                - { eq: { attr: parallax.compatibility.Position.id, value: 1 } }
-                - { eq: { attr: parallax.compatibility.Position.value, value: "200.00" } }
+                - eq:
+                    path: parallax.compatibility.Position.id
+                    value: 1
+                - eq:
+                    path: parallax.compatibility.Position.value
+                    value: "200.00"
         at: "2024-10-01T00:00:00.000000Z"
         validFrom: "2024-07-01T00:00:00.000000Z"
       roundTrips: 2
@@ -58,7 +62,7 @@ when:
         target: parallax.compatibility.Position
         predicate:
           eq:
-            attr: parallax.compatibility.Position.value
+            path: parallax.compatibility.Position.value
             value: "200.00"
         temporal:
           transaction-time:

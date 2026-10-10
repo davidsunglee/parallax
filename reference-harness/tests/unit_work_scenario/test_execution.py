@@ -420,7 +420,7 @@ def _uncommitted_write_then_reference_sql_case() -> Case:
                     "uow": "g",
                     "objectQuery": {
                         "target": "Account",
-                        "predicate": {"eq": {"attr": "Account.id", "value": 2}},
+                        "predicate": {"eq": {"path": "Account.id", "value": 2}},
                     },
                     "roundTrips": 1,
                     "statements": [{"sql": {"postgres": find}, "binds": [2]}],

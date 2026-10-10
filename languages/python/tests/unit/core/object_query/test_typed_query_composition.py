@@ -96,24 +96,24 @@ from parallax.core import (
     EditError,
     Entity,
     EntityDefinitionError,
+    IncludePath,
     Int32,
     ModelRejectedError,
     ObjectQuery,
     Predicate,
     QueryDefinitionError,
     Rel,
-    RelationshipPath,
     SortKey,
     TablePerHierarchy,
     attr,
     rel,
 )
 from parallax.core.entity import AttributeAssignment
-from parallax.core.entity._expressions import AuthoredConstant
+from parallax.core.entity._expressions import AuthoredConstant, include_traversal
 from parallax.core.entity._model import model_of
 from parallax.core.execution._preflight import preflight
 from parallax.core.object_query._fluent import object_query_node
-from parallax.core.predicate import All
+from parallax.core.predicate import TrueNode
 from parallax.core.unit_work import (
     PredicateSelection,
     PredicateWrite,
@@ -268,7 +268,7 @@ def test_an_ancestors_predicate_addresses_every_descendant_position() -> None:
     # parameter would break: `Predicate[Animal]` lands in a `Dog` position
     # because a root-declared member is available to every concrete under it.
     assert predicate_document(preflighted(Dog.where(Animal.name == "Ada"))) == {
-        "eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}
+        "eq": {"path": "parallax.compatibility.Animal.name", "value": "Ada"}
     }
 
 
@@ -278,7 +278,7 @@ def test_an_inherited_member_is_parameterized_by_the_class_it_is_reached_through
     # spelling that makes the reference applicable to every concrete under
     # `Animal`. The two are different questions and the two answers differ.
     assert predicate_document(preflighted(Dog.where(Dog.name == "Ada"))) == {
-        "eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}
+        "eq": {"path": "parallax.compatibility.Animal.name", "value": "Ada"}
     }
 
 
@@ -291,7 +291,7 @@ def test_a_subtype_spelling_of_an_inherited_member_is_narrower_than_the_model_is
     # that declares it, and the suppression records the asymmetry rather than
     # leaving it to be discovered.
     assert predicate_document(preflighted(Animal.where(Dog.name == "Ada"))) == {  # pyright: ignore[reportArgumentType]
-        "eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}
+        "eq": {"path": "parallax.compatibility.Animal.name", "value": "Ada"}
     }
 
 
@@ -306,7 +306,7 @@ def test_one_identity_reached_through_two_classes_is_refused_statically_only() -
     foreign = TwinLeft.where(TwinRight.id == 1)  # pyright: ignore[reportArgumentType]
     native = TwinLeft.where(TwinLeft.id == 1)
     assert predicate_document(preflighted(foreign, _TWINS)) == {
-        "eq": {"attr": "parallax.tests.typed.TypedTwin.id", "value": 1}
+        "eq": {"path": "parallax.tests.typed.TypedTwin.id", "value": 1}
     }
     assert predicate_document(preflighted(native, _TWINS)) == predicate_document(foreign)
 
@@ -320,8 +320,8 @@ def test_a_conjunction_addresses_the_position_both_of_its_operands_address() -> 
     ) == {
         "and": {
             "operands": [
-                {"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}},
-                {"greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}},
+                {"eq": {"path": "parallax.compatibility.Animal.name", "value": "Ada"}},
+                {"greaterThan": {"path": "parallax.compatibility.Dog.barkVolume", "value": 3}},
             ]
         }
     }
@@ -337,8 +337,8 @@ def test_a_mixed_conjunction_reads_the_same_in_the_other_operand_order() -> None
     ) == {
         "and": {
             "operands": [
-                {"greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}},
-                {"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}},
+                {"greaterThan": {"path": "parallax.compatibility.Dog.barkVolume", "value": 3}},
+                {"eq": {"path": "parallax.compatibility.Animal.name", "value": "Ada"}},
             ]
         }
     }
@@ -384,16 +384,16 @@ def test_a_disjunction_addresses_the_meet_in_either_operand_order() -> None:
     assert ancestor_first == {
         "or": {
             "operands": [
-                {"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}},
-                {"greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}},
+                {"eq": {"path": "parallax.compatibility.Animal.name", "value": "Ada"}},
+                {"greaterThan": {"path": "parallax.compatibility.Dog.barkVolume", "value": 3}},
             ]
         }
     }
     assert descendant_first == {
         "or": {
             "operands": [
-                {"greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}},
-                {"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}},
+                {"greaterThan": {"path": "parallax.compatibility.Dog.barkVolume", "value": 3}},
+                {"eq": {"path": "parallax.compatibility.Animal.name", "value": "Ada"}},
             ]
         }
     }
@@ -446,10 +446,10 @@ def test_a_narrow_scope_is_how_a_descendants_member_reaches_an_ancestor_position
     # is the WHOLE filter narrows the result, so it lands in `narrowTo` and its
     # own scoped predicate is what the query filters by.
     assert canonical_document(
-        preflighted(Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3)))
+        preflighted(Animal.where(Animal.is_a(Dog, where=Dog.bark_volume > 3)))
     ) == {
         "target": "parallax.compatibility.Animal",
-        "predicate": {"greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}},
+        "predicate": {"greaterThan": {"path": "parallax.compatibility.Dog.barkVolume", "value": 3}},
         "narrowTo": ["parallax.compatibility.Dog"],
     }
 
@@ -465,11 +465,11 @@ def test_narrowing_after_the_predicate_is_refused_statically_and_only_statically
     # states the same query with the checker's agreement, and the two converge on
     # one canonical value.
     late_narrow = Animal.where(Dog.bark_volume > 3).narrow(Dog)  # pyright: ignore[reportArgumentType]
-    narrow_first = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))
+    narrow_first = Animal.where(Animal.is_a(Dog, where=Dog.bark_volume > 3))
     document = canonical_document(preflighted(late_narrow))
     assert document["narrowTo"] == ["parallax.compatibility.Dog"]
     assert document["predicate"] == {
-        "greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}
+        "greaterThan": {"path": "parallax.compatibility.Dog.barkVolume", "value": 3}
     }
     assert canonical_document(preflighted(narrow_first)) == document
 
@@ -479,7 +479,7 @@ def test_a_narrowing_reached_through_a_boolean_stays_a_filter() -> None:
     # narrowing. Reached through a combinator, the same narrowing qualifies one
     # term of the selection and the result position stays where the query is —
     # so the query returns un-narrowed objects and carries no `narrowTo` at all.
-    combined = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3) | (Animal.name == "Ada"))
+    combined = Animal.where(Animal.is_a(Dog, where=Dog.bark_volume > 3) | (Animal.name == "Ada"))
     document = canonical_document(preflighted(combined))
     assert "narrowTo" not in document
     assert document["predicate"] == {
@@ -490,13 +490,13 @@ def test_a_narrowing_reached_through_a_boolean_stays_a_filter() -> None:
                         "to": ["parallax.compatibility.Dog"],
                         "operand": {
                             "greaterThan": {
-                                "attr": "parallax.compatibility.Dog.barkVolume",
+                                "path": "parallax.compatibility.Dog.barkVolume",
                                 "value": 3,
                             }
                         },
                     }
                 },
-                {"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}},
+                {"eq": {"path": "parallax.compatibility.Animal.name", "value": "Ada"}},
             ]
         }
     }
@@ -515,7 +515,7 @@ def test_a_comparison_literal_is_encoded_to_canonical_wire_at_authoring() -> Non
         preflighted(SnapOrder.where(SnapOrder.price >= Decimal("600.00")), _ORDERS)
     ) == {
         "greaterThanEquals": {
-            "attr": "parallax.compatibility.SnapOrder.price",
+            "path": "parallax.compatibility.SnapOrder.price",
             "value": "600.00",
         }
     }
@@ -556,7 +556,7 @@ def test_every_addressed_value_carries_its_own_phantom_and_ships_none_of_them() 
     key: SortKey[Animal] = Animal.name.asc()
     assignment: AttributeAssignment[Animal] = Animal.name.set("Ada")
     unfiltered: AllPredicate[Animal] = Animal.all
-    path: RelationshipPath[Beast, Keeper] = Beast.keeper
+    path: IncludePath[Beast, Keeper] = Beast.keeper
     assert not hasattr(key, "_orders")
     assert not hasattr(assignment, "_assigns_to")
     assert not hasattr(unfiltered, "_addresses")
@@ -728,7 +728,7 @@ def test_a_foreign_assignment_never_targets_the_queried_position() -> None:
     assignment: AttributeAssignment[SnapOrder] = SnapOrderStatus.code.set("X-1")  # pyright: ignore[reportAssignmentType]
     write = PredicateWrite(
         mutation="amend",
-        target=PredicateSelection(entity="SnapOrder", predicate=All()),
+        target=PredicateSelection(entity="SnapOrder", predicate=TrueNode()),
         assignments=(WriteAssignment(attr=str(assignment.attr), value=assignment.value),),
     )
     with pytest.raises(WriteInstructionError, match="does not name a declared member"):
@@ -753,7 +753,7 @@ def test_an_unfiltered_query_written_at_another_position_is_refused_statically()
     # records why: an `all` node names no position, so nothing downstream can
     # tell these two apart — which is exactly why the parameter is the only
     # place the mistake is visible at all.
-    assert predicate_document(preflighted(Animal.where(Dog.all))) == {"all": {}}  # pyright: ignore[reportArgumentType]
+    assert predicate_document(preflighted(Animal.where(Dog.all))) == {"true": {}}  # pyright: ignore[reportArgumentType]
 
 
 def test_an_unfiltered_query_is_the_whole_filter_and_composes_with_nothing() -> None:
@@ -781,7 +781,7 @@ def test_the_unfiltered_query_survives_a_class_reached_through_a_type_parameter(
         return cls.all
 
     dogs: AllPredicate[Dog] = unfiltered(Dog)
-    assert predicate_document(preflighted(Dog.where(dogs))) == {"all": {}}
+    assert predicate_document(preflighted(Dog.where(dogs))) == {"true": {}}
     assert predicate_document(preflighted(Animal.where(Animal.all))) == predicate_document(
         preflighted(Animal.where(Animal.all))
     )
@@ -824,7 +824,7 @@ def test_a_descendants_path_is_a_legal_include_source_of_its_ancestors_query() -
     # rooted at a descendant starts from fewer queried objects, which is what the
     # SOURCE guard says, so the query accepts it and the guard resolves inside
     # the position.
-    source: RelationshipPath[Beast, Any] = Hound.keeper
+    source: IncludePath[Beast, Any] = Hound.keeper
     document = canonical_document(preflighted(Beast.where(Beast.all).include(source), _BESTIARY))
     assert document["includes"] == [
         {
@@ -838,7 +838,7 @@ def test_an_ancestors_path_is_not_an_include_source_of_a_descendants_query() -> 
     # The other direction is a BROADENING guard, which the four-step narrow rule
     # refuses: the path would start from queried objects the position does not
     # contain.
-    source: RelationshipPath[Hound, Any] = Beast.keeper  # pyright: ignore[reportAssignmentType]
+    source: IncludePath[Hound, Any] = Beast.keeper  # pyright: ignore[reportAssignmentType]
     with pytest.raises(ModelRejectedError) as caught:
         preflighted(Hound.where(Hound.all).include(source), _BESTIARY)
     assert caught.value.rule == "narrow-outside-position"
@@ -847,7 +847,7 @@ def test_an_ancestors_path_is_not_an_include_source_of_a_descendants_query() -> 
 def test_an_unrelated_entitys_path_is_never_an_include_source() -> None:
     # A sibling outside the position, refused by the same guard — the include
     # half of `Order.where(...).include(Customer.notes)`.
-    source: RelationshipPath[Beast, Any] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
+    source: IncludePath[Beast, Any] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
     with pytest.raises(ModelRejectedError) as caught:
         preflighted(Beast.where(Beast.all).include(source), _BESTIARY)
     assert caught.value.rule == "narrow-outside-position"
@@ -857,8 +857,8 @@ def test_a_hop_narrowed_to_a_descendant_stands_where_the_broad_hop_does() -> Non
     # Covariance in the target: everything a narrowed hop reaches the broad hop
     # reaches too, so the narrowed path satisfies the broad position and the
     # broad one does not satisfy the narrowed position.
-    narrowed: RelationshipPath[Keeper, Beast] = Keeper.beasts.narrow(Hound)
-    broad: RelationshipPath[Keeper, Hound] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
+    narrowed: IncludePath[Keeper, Beast] = Keeper.beasts.narrow(Hound)
+    broad: IncludePath[Keeper, Hound] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
     document = canonical_document(
         preflighted(Keeper.where(Keeper.all).include(narrowed), _BESTIARY)
     )
@@ -872,7 +872,7 @@ def test_a_hop_narrowed_to_a_descendant_stands_where_the_broad_hop_does() -> Non
             ]
         }
     ]
-    assert broad.segments[-1].narrow_to == ()
+    assert include_traversal(broad).segments[-1].narrow_to == ()
 
 
 def test_a_hop_narrows_only_to_subtypes_of_what_it_points_at() -> None:
@@ -887,18 +887,12 @@ def test_a_hop_narrows_only_to_subtypes_of_what_it_points_at() -> None:
     assert caught.value.rule == "narrow-outside-relationship-target"
 
 
-def test_a_quantifiers_interior_term_is_measured_against_the_hops_target() -> None:
-    # The half of `narrow-outside-relationship-target` the quantifier's own
-    # parameter DOES state: the interior position is what the hop points at, so a
-    # narrow written at an unrelated Entity is refused where it is written and
-    # again at the gate. Only the ANCESTOR direction escapes — contravariance
-    # obliges the parameter to admit it — and the no-suppression case in the last
-    # section is where that is pinned.
+def test_a_target_local_subtype_test_is_measured_against_the_hops_target() -> None:
+    # A to-one hop's `is_a` names subtypes of what the hop reaches. The subtype
+    # list is a per-model fact like every narrowing's, so a class unrelated to the
+    # target is refused at the gate.
     with pytest.raises(ModelRejectedError) as caught:
-        preflighted(
-            Keeper.where(Keeper.badge.exists(Beast.narrow(Hound))),  # pyright: ignore[reportArgumentType]
-            _BESTIARY,
-        )
+        preflighted(Keeper.where(Keeper.badge.is_a(Hound)), _BESTIARY)
     assert caught.value.rule == "narrow-outside-relationship-target"
 
 
@@ -907,11 +901,11 @@ def test_a_path_reaches_the_element_type_of_every_declared_relationship_shape() 
     # hop reaches related objects one at a time however many of them there are.
     # The collection case is the one that proves extraction happened rather than
     # the catch-all matching: the declared annotation itself is refused.
-    to_many: RelationshipPath[Keeper, Beast] = Keeper.beasts
-    optional: RelationshipPath[Beast, Keeper] = Beast.keeper
-    exact: RelationshipPath[Keeper, Badge] = Keeper.badge
-    unextracted: RelationshipPath[Keeper, tuple[Beast, ...]] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
-    assert [path.target for path in (to_many, optional, exact, unextracted)] == [
+    to_many: IncludePath[Keeper, Beast] = Keeper.beasts
+    optional: IncludePath[Beast, Keeper] = Beast.keeper
+    exact: IncludePath[Keeper, Badge] = Keeper.badge
+    unextracted: IncludePath[Keeper, tuple[Beast, ...]] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
+    assert [include_traversal(path).target for path in (to_many, optional, exact, unextracted)] == [
         f"{_NS}.Beast",
         f"{_NS}.Keeper",
         f"{_NS}.Badge",
@@ -931,7 +925,7 @@ def test_a_reference_names_the_namespace_its_own_class_declares() -> None:
     # changes nothing about what this query addresses — where a bare spelling
     # would have named both Entities and therefore neither.
     query = LeftShared.where(LeftShared.id == 1)
-    expected = {"eq": {"attr": "parallax.tests.typed.alpha.Shared.id", "value": 1}}
+    expected = {"eq": {"path": "parallax.tests.typed.alpha.Shared.id", "value": 1}}
     assert predicate_document(preflighted(query, _ONE_SHARED_NAME)) == expected
     assert predicate_document(preflighted(query, _TWO_SHARED_NAMES)) == expected
 
@@ -951,23 +945,22 @@ def test_an_authored_chain_stops_at_the_second_hop() -> None:
     # cannot supply it — a type parameter is checker-only, and this is run time —
     # so a longer traversal is authored as a path rooted where the deeper hop
     # starts.
-    second = Keeper.beasts.keeper
+    second = include_traversal(Keeper.beasts.keeper)
     assert [segment.rel for segment in second.segments] == [
         "parallax.tests.typed.Keeper.beasts",
         "parallax.tests.typed.Beast.keeper",
     ]
     assert second.target is None
-    with pytest.raises(AttributeError, match="already continued past the hop"):
-        _ = second.badge
+    with pytest.raises(QueryDefinitionError, match="already continued past the hop") as caught:
+        Keeper.where(Keeper.all).include(Keeper.beasts.keeper.badge)
+    assert caught.value.code == "query-path-invalid"
 
 
-def test_a_value_object_member_past_the_occurrence_erases() -> None:
-    # The Value-Object twin of the hop erasure: the Entity survives the hop, so a
-    # foreign-Entity nested predicate is still refused statically, while the
-    # member's own existence is a model question the gate answers.
-    with pytest.raises(QueryDefinitionError) as caught:
-        _ = SnapOrderStatus.primary_tag.no_such_member == "x"
-    assert caught.value.code == "query-expression-invalid"
+def test_a_value_object_member_is_known_from_its_declared_shape() -> None:
+    # Unlike a hop past a relationship, a Value Object occurrence carries its
+    # declared shape, so an undeclared member is refused at access.
+    with pytest.raises(AttributeError, match="declares no member 'no_such_member'"):
+        _ = SnapOrderStatus.primary_tag.no_such_member
 
 
 def test_a_second_narrow_clause_is_refused_at_the_clause_alone() -> None:
@@ -981,19 +974,19 @@ def test_a_narrow_receiver_does_not_restate_the_relationship_position() -> None:
     # The quantifier supplies its relationship target as context. An ancestor
     # receiver only grants Python predicate scope; it contributes no wire field,
     # so both spellings lower identically and the same Dog selection is legal.
-    through_target = AnimalOwner.where(AnimalOwner.pets.exists(Pet.narrow(Dog)))
-    through_ancestor = AnimalOwner.where(AnimalOwner.pets.exists(Animal.narrow(Dog)))
+    through_target = AnimalOwner.where(AnimalOwner.pets.any(Pet.is_a(Dog)))
+    through_ancestor = AnimalOwner.where(AnimalOwner.pets.any(Animal.is_a(Dog)))
     assert predicate_document(preflighted(through_ancestor)) == predicate_document(
         preflighted(through_target)
     )
 
 
 def test_a_narrow_to_a_class_the_position_excludes_is_refused_at_the_gate() -> None:
-    # `Entity.narrow`'s subtype list keeps only its runtime rejection: a type
+    # `Entity.is_a`'s subtype list keeps only its runtime rejection: a type
     # parameter's bound may not itself be generic, so the narrowed subtypes
     # cannot be bounded by the narrowing position.
     with pytest.raises(ModelRejectedError) as caught:
-        preflighted(Animal.where(Animal.narrow(AnimalOwner)))
+        preflighted(Animal.where(Animal.is_a(AnimalOwner)))
     assert caught.value.rule == "narrow-outside-position"
 
 
@@ -1001,7 +994,7 @@ def test_the_narrow_clause_erases_relatedness_for_the_same_reason() -> None:
     # The clause form keeps only the same runtime rejection, and no suppression
     # belongs on this line — the erasure is what makes it accepted statically.
     # The parameter a narrow solves from its subtypes is spent on what the
-    # narrowing PRODUCES: `Entity.narrow`'s on the scoped `where=`, and the
+    # narrowing PRODUCES: `Entity.is_a`'s on the scoped `where=`, and the
     # clause's on the result the sort keys are then measured against. It cannot
     # also constrain what the narrowing starts FROM, because `type[...]` is
     # covariant — a parameter naming the position accepts a descendant and

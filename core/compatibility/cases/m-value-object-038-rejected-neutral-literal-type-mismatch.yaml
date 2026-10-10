@@ -7,7 +7,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedEq:
+      eq:
         path: parallax.compatibility.Customer.address.city
         value: 42
 then:

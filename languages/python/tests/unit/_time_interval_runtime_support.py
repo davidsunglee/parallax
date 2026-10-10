@@ -729,7 +729,7 @@ def _read_query(cell: FlowCell) -> object:
     name = entity.identity.canonical
     return {
         "target": name,
-        "predicate": {"greaterThanEquals": {"attr": f"{name}.id", "value": 1}},
+        "predicate": {"greaterThanEquals": {"path": f"{name}.id", "value": 1}},
         "temporal": {"valid-time": {"asOf": "latest"}, "transaction-time": {"asOf": "latest"}},
     }
 

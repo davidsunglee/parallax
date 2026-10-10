@@ -51,5 +51,7 @@ entities:
       - { name: id, type: int64, primaryKey: true }
       - { name: coverageId, type: int64 }
       - { name: reserve, type: "decimal(18,2)" }
+    relationships:
+      - { name: coverage, reverseOf: parallax.compatibility.Coverage.claims }
     indices:
       - { name: claim_coverage, attributes: [coverageId] }

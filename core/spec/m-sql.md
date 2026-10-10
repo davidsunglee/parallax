@@ -213,7 +213,7 @@ entries and the harness runs them against **both** databases, proving the result
 invariant while each dialect emits its own optimized SQL:
 
 - **Identical SQL, different physical binds — the infinity fallback.** For most
-  reads (`eq`, `in`, the `exists` semi-join, the as-of-Latest read, the
+  reads (`eq`, `in`, a relationship quantifier, the as-of-Latest read, the
   milestone insert) Postgres and MariaDB emit the **same** golden SQL text. The
   temporal cases additionally exercise the **max-sentinel infinity convention**
   (`m-core` / `m-dialect`): the open upper bound `out_z = ?` is carried as the
@@ -455,8 +455,8 @@ left-to-right.
 
 | Predicate | Canonical predicate fragment |
 |---|---|
-| `all` | *(no `where` clause)* |
-| `none` | `where 1 = 0` |
+| `true` | *(no `where` clause)* |
+| `false` | `where 1 = 0` |
 | `eq` | `t0.col = ?` |
 | `notEq` | `t0.col <> ?` |
 | `greaterThan` | `t0.col > ?` |
@@ -479,8 +479,16 @@ left-to-right.
 | `group` | `( <operand> )` |
 | `orderBy` | `order by <key term>[, …]`, one term per key — `t0.col [asc\|desc]` for a non-nullable key, else the `m-dialect` Null Placement term |
 | `limit` | `limit ?` |
-| `navigate`/`exists` | `exists (select 1 from child t1 where t1.fk = t0.key [and <op>])` |
-| `notExists` | `not exists (select 1 from child t1 where t1.fk = t0.key [and <op>])` |
+| `any` over a to-many relationship | `exists (select 1 from child t1 where t1.fk = t0.key [and <where>])` |
+| `none` over a to-many relationship | `not exists (select 1 from child t1 where t1.fk = t0.key [and <where>])` |
+| `all` over a to-many relationship | `not exists (select 1 from child t1 where t1.fk = t0.key and not (<where>) is true)` |
+| `exists` / `notExists` of a to-one relationship | `[not] exists (select 1 from target t1 where t1.key = t0.fk)` |
+| a field through a to-one relationship | `(select t1.col from target t1 where t1.key = t0.fk) <op> ?` |
+
+The operator rows show a field of the queried row (`t0.col`); every operation
+lowers identically over the subject its position supplies — a field of a related
+row inside a sub-select's alias, a value-object extraction (*valueObject*), or a
+scalar element's kind-guarded projection (*Scalar collection quantifiers*).
 
 A framework-generated child-level membership carries a **deferred key set**
 rather than an authored list. Its statement is compiled once with one template
@@ -516,10 +524,10 @@ already a pattern, no escape clause). The `escape ?` clause and its second bind
 appear **only** when escaping actually changed the literal: `startsWith 'A-'`
 lowers to the bare `t0.sku like ?` with a single `'A-%'` bind.
 
-The five **nested** string predicates render identically against the extraction
-their scope resolved (`<extraction> like ?`, and the infix
-`<extraction> not like ?` for `nestedNotLike`), so the rule above is stated once
-and reused rather than restated per scope.
+A string predicate over a value-object field or a scalar element renders
+identically against the extraction or projection its subject resolved
+(`<extraction> like ?`, and the infix `<extraction> not like ?` for `notLike`), so
+the rule above is stated once and reused rather than restated per scope.
 
 ### `order by` key terms
 
@@ -700,47 +708,102 @@ therefore always follow any predicate. A paging read's capture cells sit inside
 the select list and its seek inside the `where` clause, so the clause order is the
 same one every read has.
 
-## Joins by navigation
+## Relationship predicates
 
-A `navigate` / `exists` / `notExists` node lowers to a **correlated `EXISTS`
-sub-select** — a semi-join — so a to-many traversal never multiplies the queried
-entity's rows. The correlated alias is `t1` (the next alias after the root
-`t0`); the correlation predicate joins the related entity's foreign-key column to
-the queried entity's key column, derived from the relationship's `join`. Any
-inner predicate is appended with `and`, its attributes resolved against the
-related entity (alias `t1`):
+A quantifier over a to-many relationship lowers to a **correlated `EXISTS`
+sub-select**, so a to-many traversal never multiplies the queried entity's rows.
+The correlated alias is the next alias after the enclosing ones; the correlation
+predicate joins the related entity's foreign-key column to the queried entity's
+key column, derived from the relationship's `join`. The `where`, its relative paths
+resolved against the related entity, is appended with `and`:
 
 ```text
-navigate(Order.items, eq(OrderItem.sku, 'A-100'))
+any(Order.items, eq(sku, 'A-100'))
   → select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0
     where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.sku = ?)
 
-notExists(Order.items)
+none(Order.items)
   → select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0
     where not exists (select 1 from order_item t1 where t1.order_id = t0.id)
 ```
 
-The independent `then.referenceSql` oracle for a navigation filter is the naive
-`id in (select fk from child where <op>)` subquery form — a different
+`all` searches for a counterexample and negates its existence: an element where
+the **complete** `where` is not true — false or unknown — fails the quantifier, so
+the truth test wraps the whole predicate, never a leaf:
+`not exists (select 1 from child t1 where <correlation> and not (<where>) is true)`.
+A bare quantifier carries no interior beyond the correlation (and the target's
+own tag and temporal terms).
+
+The independent `then.referenceSql` oracle for a relationship predicate is the
+naive `id in (select fk from child where <where>)` subquery form — a different
 formulation that must return the same rows (`m-case-format`).
 
-### Polymorphic navigation lowering
+### Single-valued traversal
 
-When a relationship target is a **polymorphic position** (`m-inheritance` — an
-abstract root / abstract subtype, optionally narrowed by a `narrow` in the filter's
-`op`, `m-predicate`), the semi-join constrains the sub-select to the target's
-**effective concrete-subtype set**. The shape depends on the strategy:
+A to-one hop never joins. Each operation that reads through one lowers to a
+**correlated scalar subquery** over the target, specific to that operation: a
+field's comparison selects the field (`(select t1.name from orders t1 where t1.id =
+t0.order_id) = ?`), a presence test is a correlated `exists` (bare presence is not
+a value dereference and asserts nothing about cardinality), a quantifier over a
+collection the target holds selects the quantifier's Boolean, and a
+path-targeted `narrow` selects its subtype test. Each further hop nests another
+scalar subquery inside the one before it, its select list read through the inner
+hop:
+
+```text
+eq(OrderStatus.orderItem.order.name, 'Ada')
+  → … where (select (select t1.name from orders t1 where t1.id = t2.order_id)
+             from order_item t2 where t2.id = t0.order_item_id) = ?
+```
+
+Aliases follow **source order** (rule 1): the inner hop's sub-select precedes the
+outer hop's `from` in the statement text, so it takes the lower alias.
+
+The scalar subquery is the cardinality assertion: it evaluates **every declared
+candidate** of the target at the propagated temporal coordinates (`m-navigate`),
+so zero candidates yield SQL `NULL`, one yields its value, and several fail the
+statement (Postgres SQLSTATE `21000`, MariaDB errno `1242`) through the execution
+error route. A **polymorphic** target reads its effective concrete set:
+table-per-hierarchy one shared table, table-per-concrete-subtype every concrete
+table, the branches joined by `union all` inside the one subquery
+(`(select t1.maker from traversal_bike t1 where t1.id = t0.vehicle_id union all
+select t2.maker from traversal_car t2 where t2.id = t0.vehicle_id)`), each branch
+its own source-ordered alias. An authored subtype selection or field condition is
+evaluated over those candidates, never used to drop one.
+
+Where a hop's result is Boolean, the subquery's absence default is the empty
+collection's or the absent target's answer, applied with `coalesce`: `any` and
+presence default to `false`, `none` and `all` to `true`, a bare subtype test to
+`false`. A field read through a hop has no default — absence stays unknown.
+
+**Path-targeted narrowing.** A bare `narrow` with a `path` selects the reached
+target's subtype membership: under table-per-hierarchy its tag test
+(`coalesce((select t1.kind = ? from traversal_pet t1 where t1.id = t0.pet_id),
+false)`), under table-per-concrete-subtype one constant per branch — `true` for a
+selected concrete's table, `false` for every other — joined by `union all`, so a
+nonselected branch still contributes its candidate. With an operand the node must
+keep a selected target's unknown apart from an absent target's false, so Postgres
+carries the result in `m-dialect`'s **Boolean result envelope**: each branch
+selects `array [ case when <selected> then <operand> else false end ]`, the hop
+defaults to `array [ false ]`, and the element is extracted once, after the
+outermost hop.
+
+### Polymorphic relationship quantifiers
+
+When a to-many relationship's target is a **polymorphic position** (`m-inheritance`
+— an abstract root or abstract subtype), the quantifier's sub-select ranges over the
+target's **effective concrete-subtype set**. The shape depends on the strategy:
 
 - **`table-per-hierarchy`** — one shared child table, so the hop is a **single**
   correlated `EXISTS` with the **interior tag predicate** over the effective set,
   appended after the correlation predicate. An abstract-**root** target spans the
-  whole shared table and injects **no** tag predicate; an abstract-**subtype** (or
-  narrowed) target injects `t1.kind in (?, …)` (or `t1.kind = ?` for one concrete),
-  in the family's canonical alphabetical order (`m-inheritance`), excluding sibling
+  whole shared table and injects **no** tag predicate; an abstract-**subtype**
+  target injects `t1.kind in (?, …)` (or `t1.kind = ?` for one concrete), in the
+  family's canonical alphabetical order (`m-inheritance`), excluding sibling
   branches:
 
   ```text
-  exists(Person.pets)  # Pet -> {Cat, Dog}, a proper subset of the animal table
+  any(Person.pets)  # Pet -> {Cat, Dog}, a proper subset of the animal table
     → select … from person t0
       where exists (select 1 from animal t1
                     where t1.owner_id = t0.id and t1.kind in (?, ?))
@@ -753,12 +816,16 @@ abstract root / abstract subtype, optionally narrowed by a `narrow` in the filte
   single concrete is one ungrouped `EXISTS`):
 
   ```text
-  exists(Folder.documents)  # Document -> {Invoice, Memo, Receipt}
+  any(Folder.documents)  # Document -> {Invoice, Memo, Receipt}
     → select … from folder t0
       where (exists (select 1 from invoice t1 where t1.folder_id = t0.id)
           or exists (select 1 from memo    t2 where t2.folder_id = t0.id)
           or exists (select 1 from receipt t3 where t3.folder_id = t0.id))
   ```
+
+An `any` or `none` whose `where` narrows the element may open only the branches the
+selection reaches. `all` never drops a branch: its counterexample may live in any
+of them, so every branch is searched and `not (… or …)` negates the group.
 
 ## Deep fetch — one statement per relationship level
 
@@ -1653,8 +1720,8 @@ A `valueObject` is stored in **one structured-document column** (`m-core` /
 **instance-form** read selecting its layout `Document` slot — projects that backing
 column through its presence/value pair (`not t0.address is null, t0.address`).
 Reading or filtering an **inner
-attribute** uses the `m-predicate` nested-attribute access form and lowers through
-the `m-dialect` **nested-extraction** seam to a per-dialect extraction. The JSON
+attribute** uses a dotted `m-predicate` path through the value object and lowers
+through the `m-dialect` **nested-extraction** seam to a per-dialect extraction. The JSON
 path is always carried as `?` bind(s) (rule 4 — never inlined, which keeps the
 golden SQL a normalizer fixed point); the extraction function and the bind shape
 differ per dialect (`m-dialect`):
@@ -1662,20 +1729,21 @@ differ per dialect (`m-dialect`):
 | Predicate | Postgres canonical fragment | MariaDB canonical fragment |
 |---|---|---|
 | project the whole object | `not t0.address is null, t0.address` (the adjacent document read pair) | identical |
-| `nestedEq(Class.vo.field, v)` | `jsonb_extract_path_text(t0.address, ?) = ?` | `json_value(t0.address, ?) = ?` |
-| `nestedNotEq(Class.vo.field, v)` | `not jsonb_extract_path_text(t0.address, ?) = ?` | `not json_value(t0.address, ?) = ?` |
-| nested deeper (`vo.a.b`) | `jsonb_extract_path_text(t0.address, ?, ?) = ?` | `json_value(t0.address, ?) = ?` |
-| `nestedGt(vo.geo.num, v)` (numeric) | `cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) > ?` | `cast(json_value(t0.address, ?) as double) > ?` |
-| `nestedGte` / `nestedLt` / `nestedLte` | as `nestedGt`, with `>=` / `<` / `<=` | as `nestedGt`, with `>=` / `<` / `<=` |
-| `nestedBetween(vo.geo.num, lo, hi)` (numeric) | `cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) between ? and ?` | `cast(json_value(t0.address, ?) as double) between ? and ?` |
-| `nestedIn(vo.field, [v, …])` | `jsonb_extract_path_text(t0.address, ?) in (?, …)` | `json_value(t0.address, ?) in (?, …)` |
-| `nestedNotIn(vo.field, [v, …])` | `not jsonb_extract_path_text(t0.address, ?) in (?, …)` | `not json_value(t0.address, ?) in (?, …)` |
-| `nestedLike(vo.field, p)` | `jsonb_extract_path_text(t0.address, ?) like ?` | `json_value(t0.address, ?) like ?` |
-| `nestedNotLike(vo.field, p)` | `jsonb_extract_path_text(t0.address, ?) not like ?` | `json_value(t0.address, ?) not like ?` |
-| `nestedStartsWith` / `nestedEndsWith` / `nestedContains` | as `nestedLike`, the affix pattern bound (plus `escape ?` when escaping changed it) | as `nestedLike`, identically |
-| `nestedLike(vo.field, p)` (case-insensitive) | `lower(jsonb_extract_path_text(t0.address, ?)) like lower(?)` | `lower(json_value(t0.address, ?)) like lower(?)` |
-| `nestedIsNull(vo.field)` | `jsonb_extract_path_text(t0.address, ?) is null` | `json_value(t0.address, ?) is null` |
-| `nestedIsNotNull(vo.field)` | `not jsonb_extract_path_text(t0.address, ?) is null` | `not json_value(t0.address, ?) is null` |
+| `eq(Class.vo.field, v)` | `jsonb_extract_path_text(t0.address, ?) = ?` | `json_value(t0.address, ?) = ?` |
+| `notEq(Class.vo.field, v)` | `not jsonb_extract_path_text(t0.address, ?) = ?` | `not json_value(t0.address, ?) = ?` |
+| deeper (`vo.a.b`) | `jsonb_extract_path_text(t0.address, ?, ?) = ?` | `json_value(t0.address, ?) = ?` |
+| `greaterThan(vo.geo.num, v)` (numeric) | `cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) > ?` | `cast(json_value(t0.address, ?) as double) > ?` |
+| `greaterThanEquals` / `lessThan` / `lessThanEquals` | as `greaterThan`, with `>=` / `<` / `<=` | as `greaterThan`, with `>=` / `<` / `<=` |
+| `between(vo.geo.num, lo, hi)` (numeric) | `cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) between ? and ?` | `cast(json_value(t0.address, ?) as double) between ? and ?` |
+| `in(vo.field, [v, …])` | `jsonb_extract_path_text(t0.address, ?) in (?, …)` | `json_value(t0.address, ?) in (?, …)` |
+| `notIn(vo.field, [v, …])` | `not jsonb_extract_path_text(t0.address, ?) in (?, …)` | `not json_value(t0.address, ?) in (?, …)` |
+| `like(vo.field, p)` | `jsonb_extract_path_text(t0.address, ?) like ?` | `json_value(t0.address, ?) like ?` |
+| `notLike(vo.field, p)` | `jsonb_extract_path_text(t0.address, ?) not like ?` | `json_value(t0.address, ?) not like ?` |
+| `startsWith` / `endsWith` / `contains` | as `like`, the affix pattern bound (plus `escape ?` when escaping changed it) | as `like`, identically |
+| `like(vo.field, p)` (case-insensitive) | `lower(jsonb_extract_path_text(t0.address, ?)) like lower(?)` | `lower(json_value(t0.address, ?)) like lower(?)` |
+| `isNull(vo.field)` | `jsonb_extract_path_text(t0.address, ?) is null` | `json_value(t0.address, ?) is null` |
+| `isNotNull(vo.field)` | `not jsonb_extract_path_text(t0.address, ?) is null` | `not json_value(t0.address, ?) is null` |
+| `exists(Class.vo.single)` | `coalesce(jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ?, false)` | outside the MariaDB lane (`m-dialect`) |
 
 The path bind(s) precede the comparison bind. **The bind order and count are
 per-dialect** (`m-dialect`): Postgres carries **one bind per path segment** (in
@@ -1685,14 +1753,14 @@ hole structure diverges, the `binds` are authored as a **per-dialect map**
 (`m-case-format`):
 
 ```yaml
-# nestedEq(Customer.address.city, 'Oslo'):
+# eq(Customer.address.city, 'Oslo'):
 - sql:
     postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
     mariadb: select t0.id, t0.name from customer t0 where json_value(t0.address, ?) = ?
   binds:
     postgres: ['city', 'Oslo']
     mariadb: ['$.city', 'Oslo']
-# nestedEq(Customer.address.geo.country, 'US'):
+# eq(Customer.address.geo.country, 'US'):
 - sql:
     postgres: select t0.id from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) = ?
     mariadb: select t0.id from customer t0 where json_value(t0.address, ?) = ?
@@ -1705,7 +1773,7 @@ The compared `value` is a **typed** `m-predicate` literal, and which form is bou
 follows `m-dialect`'s two typed-cast tables. An attribute in the **cast** table —
 the numeric family and `boolean` — casts the extraction to its declared neutral
 type before comparing (the fragments in the table above show the uncast form; the
-`nestedGt` rows show the cast one) and binds the **managed value** in that type: a
+`greaterThan` rows show the cast one) and binds the **managed value** in that type: a
 `decimal(p, s)` field binds the exact decimal rather than a JSON number, and a
 `boolean` field binds the boolean. Each of the six **text-compared** types —
 `string` included — compares the extraction directly against that type's
@@ -1728,22 +1796,23 @@ absence collapse the `json_unquote(json_extract(…))` pair would otherwise lose
 JSON `null` leaf) — each a different formulation from its golden extraction that the
 harness asserts returns the same rows (`m-case-format`).
 
-#### The flat `nested*` operator family
+#### Value-object field operators
 
-The range operators (`nestedGt` / `nestedGte` / `nestedLt` / `nestedLte`) apply
+The range operators (`greaterThan` / `greaterThanEquals` / `lessThan` /
+`lessThanEquals`) apply
 the **typed cast** (`m-dialect`) to the extraction before the SQL comparison when
 the attribute's declared type is in that seam's cast table, since text order is not
 numeric order; over a type whose canonical spelling already orders as text they
-compare the extraction directly. `nestedBetween` follows the same rule and lowers to **one**
+compare the extraction directly. `between` follows the same rule and lowers to **one**
 `<extraction> between ? and ?` — never a pair of
 comparisons (`m-predicate`) — binding the JSON path first, then `lower`, then
-`upper`. `nestedIn` lowers the membership to `<extraction> in (?, …)` — the JSON
+`upper`. `in` lowers the membership to `<extraction> in (?, …)` — the JSON
 path bind(s) first, then one bind per list value in `values` order — and
-`nestedNotIn` to the same fragment under a **leading `not`**, adding no bind.
+`notIn` to the same fragment under a **leading `not`**, adding no bind.
 
 The five string predicates apply **no** cast — their leaf is `String` by the
 non-string-member rule (`m-predicate`), so the extraction is already the text they
-match — and lower to `<extraction> like ?`, `nestedNotLike` to
+match — and lower to `<extraction> like ?`, `notLike` to
 `<extraction> not like ?` (the **infix** negation the scalar `notLike` renders, not
 the leading `not` the membership and presence forms normalize
 to). The bind order is the JSON path bind(s), then the pattern, then
@@ -1752,25 +1821,25 @@ the escape character when the affix escaping actually changed the literal; the
 affix forms do. Under `caseInsensitive` both sides fold —
 `lower(<extraction>) like lower(?)` — which changes no bind count. The worked
 escape example is the scalar one applied to a nested extraction:
-`nestedContains(Customer.address.street, '50%')` binds the path, then `'%50\%%'`,
+`contains(Customer.address.street, '50%')` binds the path, then `'%50\%%'`,
 then `'\'`.
 
-`nestedIsNull` lowers to `<extraction> is null` and `nestedIsNotNull` to a
+`isNull` lowers to `<extraction> is null` and `isNotNull` to a
 **leading `not`** (`not <extraction> is null`) — the same negation normalization the
-scalar `isNotNull`/`notIn`/`nestedNotEq` forms use. Because every not-present state casts
+column `isNotNull`/`notIn`/`notEq` forms use. Because every not-present state casts
 or compares SQL `NULL` (the absence-collapse rule, `m-predicate`), all of these
-exclude the four not-present states identically, and `nestedIsNull` matches
+exclude the four not-present states identically, and `isNull` matches
 exactly them:
 
 ```yaml
-# nestedGt(Customer.address.geo.elevation, 8) — a float64 two-level path, cast:
+# greaterThan(Customer.address.geo.elevation, 8) — a float64 two-level path, cast:
 - sql:
     postgres: select t0.id, t0.name from customer t0 where cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) > ?
     mariadb: select t0.id, t0.name from customer t0 where cast(json_value(t0.address, ?) as double) > ?
   binds:
     postgres: ['geo', 'elevation', 8]
     mariadb: ['$.geo.elevation', 8]
-# nestedIsNull(Customer.address.geo.country) — the not-present collapse:
+# isNull(Customer.address.geo.country) — the not-present collapse:
 - sql:
     postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) is null
     mariadb: select t0.id, t0.name from customer t0 where json_value(t0.address, ?) is null
@@ -1793,7 +1862,7 @@ rule (`m-predicate`) holds portably. The compatibility corpus pins those paths o
 Postgres **and** MariaDB (`m-value-object-013` asserts them at `geo.country`);
 wrong-kind stored state is covered by classified invalid-data tests.
 
-#### To-many — exists / notExists and any-element predicates
+#### Quantifiers over a many value object
 
 A `multiplicity: many` value object is an ordered JSON **array** in the same column
 (`m-value-object`). Filtering it lowers through the `m-dialect` **array-traversal**
@@ -1803,12 +1872,11 @@ containment family — `m-dialect` explains why MariaDB does not use `JSON_TABLE
 The path segment(s) reaching the array are `?` binds (rule 4) exactly as for the
 scalar extraction, so the `binds` are a **per-dialect map** (`m-case-format`); the
 element alias is the next alias after the root (`t1`, or `t1`/`t2` for two
-independent any-element subqueries).
+independent quantifiers).
 
-**Both dialects guard against a non-array `many` value.** Absence-collapse
-(`m-predicate`) folds a member that is a SQL `NULL` column, a missing key, an
-explicit JSON `null`, a JSON scalar, **or a JSON object** to the same "not present"
-— **zero elements**. A member stored as a non-array is a real state (the JSON is
+**Both dialects guard against a non-array `many` value.** A quantifier
+(`m-predicate`) reads a member that is a SQL `NULL` column, a missing key, an
+explicit JSON `null`, a JSON scalar, **or a JSON object** as **zero elements**. A member stored as a non-array is a real state (the JSON is
 schema-flexible), and each dialect's traversal MUST read it as zero elements, never
 as an error or a spurious element. So the canonical fragment carries an
 **array-type guard**:
@@ -1827,14 +1895,15 @@ as an error or a spurious element. So the canonical fragment carries an
 
 | Predicate | Postgres canonical fragment | MariaDB canonical fragment |
 |---|---|---|
-| `nestedExists(Class.vo.arr)` (non-empty) | `exists (select 1 from jsonb_array_elements(<arr>) t1)` | `<g> and json_length(t0.address, ?) > ?` |
-| `nestedNotExists(Class.vo.arr)` (empty-or-absent) | `not exists (select 1 from jsonb_array_elements(<arr>) t1)` | `not coalesce(<g> and json_length(t0.address, ?) > ?, ?)` |
-| flat `nestedEq(Class.vo.arr.field, v)` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) = ?)` | `<g> and json_contains(t0.address, ?, ?)` |
-| flat `nestedBetween(Class.vo.arr.field, lo, hi)` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) between ? and ?)` | — not expressible by the `json_contains` containment seam; reject per `m-dialect` |
-| flat `nestedNotIn(Class.vo.arr.field, [v, …])` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where not jsonb_extract_path_text(t1.value, ?) in (?, …))` | — not expressible by the `json_contains` containment seam; reject per `m-dialect` |
-| flat `nestedStartsWith(Class.vo.arr.field, s)` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) like ?)` | — not expressible by the `json_contains` containment seam; reject per `m-dialect` |
-| `nestedExists(Class.vo.arr, where: <compound>)` (same-element) | one `exists` with every element predicate on the **same** `t1` | `<g> and json_contains(t0.address, ?, ?)` with a candidate object carrying every field |
-| `nestedNotExists(Class.vo.arr, where: <compound>)` (no element) | `not exists (select 1 from jsonb_array_elements(<arr>) t1 where <compound on t1>)` | `not coalesce(<g> and json_contains(t0.address, ?, ?), ?)` |
+| bare `any(Class.vo.arr)` (non-empty) | `exists (select 1 from jsonb_array_elements(<arr>) t1)` | `<g> and json_length(t0.address, ?) > ?` |
+| bare `none(Class.vo.arr)` (empty-or-absent) | `not exists (select 1 from jsonb_array_elements(<arr>) t1)` | `not coalesce(<g> and json_length(t0.address, ?) > ?, ?)` |
+| `any(Class.vo.arr, eq(field, v))` | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) = ?)` | `<g> and json_contains(t0.address, ?, ?)` |
+| `any(Class.vo.arr, between(field, lo, hi))` | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) between ? and ?)` | — outside the containment golden; reject per `m-dialect` |
+| `any(Class.vo.arr, notIn(field, [v, …]))` | `exists (select 1 from jsonb_array_elements(<arr>) t1 where not jsonb_extract_path_text(t1.value, ?) in (?, …))` | — outside the containment golden; reject per `m-dialect` |
+| `any(Class.vo.arr, startsWith(field, s))` | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) like ?)` | — outside the containment golden; reject per `m-dialect` |
+| `any(Class.vo.arr, <conjunction>)` (one element) | one `exists` with every element predicate on the **same** `t1` | `<g> and json_contains(t0.address, ?, ?)` with a candidate object carrying every field |
+| `none(Class.vo.arr, <compound>)` (no element) | `not exists (select 1 from jsonb_array_elements(<arr>) t1 where <compound on t1>)` | `not coalesce(<g> and json_contains(t0.address, ?, ?), ?)` |
+| `all(Class.vo.arr, <compound>)` (every element) | `not exists (select 1 from jsonb_array_elements(<arr>) t1 where not (<compound on t1>) is true)` | — outside the MariaDB lane; reject per `m-dialect` |
 
 On Postgres the array is reached with `jsonb_extract_path` (the **jsonb** sibling of
 the `jsonb_extract_path_text` extraction — it returns the array, not text) inside the
@@ -1851,7 +1920,7 @@ to contain the candidate — either would wrongly treat a non-array `phones` as
 present without the guard. The negated forms wrap the guarded containment / length
 in `coalesce(…, 0)` so an empty array, a NULL column, **and** a non-array value all
 fall on the matching side of the leading `not` — all indistinguishable here, exactly
-as `m-predicate`'s absence collapse requires.
+as `m-predicate`'s quantifier carriers require.
 
 **The candidate document comes from `m-document-codec`, and it is a third bind
 form.** It is that module's `encodeCandidate` over the element's own shape: each
@@ -1879,9 +1948,8 @@ serializers differ by one space would then disagree on a document
 `m-document-codec` says is one value.
 
 **One constrained path, one candidate key.** The lowering builds
-`encodeCandidate`'s constraints from the element predicates of the scoped `where`
-(or from the single flat predicate), one entry per constrained element-relative
-path. A conjunction that constrains the **same** path twice with the same value is
+`encodeCandidate`'s constraints from the element predicates of the quantifier's
+`where`, one entry per constrained element-relative path. A conjunction that constrains the **same** path twice with the same value is
 one constraint and collapses to one entry; one that constrains it with two
 **different** values has no candidate at all — an object carries one value per key,
 and dropping either constraint yields a candidate that matches elements the
@@ -1891,14 +1959,14 @@ Postgres, whose element predicates ride one alias rather than one object, lowers
 unchanged and answers with no rows.
 
 ```yaml
-# nestedEq(Customer.address.phones.type, 'home') — flat any-element:
+# any(Customer.address.phones, eq(type, 'home')):
 - sql:
     postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ?)
     mariadb: select t0.id, t0.name from customer t0 where json_type(json_extract(t0.address, ?)) = ? and json_contains(t0.address, ?, ?)
   binds:
     postgres: [phones, 'array', phones, '[]', type, home]
     mariadb: ['$.phones', 'ARRAY', { type: home }, '$.phones']
-# nestedExists(Customer.address.phones, where: type='home' AND number='555-9999') — same-element:
+# any(Customer.address.phones, type='home' AND number='555-9999') — one element:
 - sql:
     postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) = ?)
     mariadb: select t0.id, t0.name from customer t0 where json_type(json_extract(t0.address, ?)) = ? and json_contains(t0.address, ?, ?)
@@ -1907,12 +1975,12 @@ unchanged and answers with no rows.
     mariadb: ['$.phones', 'ARRAY', { type: home, number: '555-9999' }, '$.phones']
 ```
 
-The unscoped `and(nestedEq(phones.type, 'home'), nestedEq(phones.number,
-'555-9999'))` lowers to **two independent** any-element checks (Postgres two `exists`
-subqueries with aliases `t1`, `t2`, each with its own `<arr>` guard; MariaDB two
-`<g> and json_contains` conjuncts — each flat any-element predicate self-guards), so
-a row whose two fields live in *different* elements matches — the discriminating
-contrast with the same-element scoped form above (`m-predicate`; corpus
+Two quantifiers joined by `and` — `and(any(phones, eq(type, 'home')), any(phones,
+eq(number, '555-9999')))` — lower to **two independent** checks (Postgres two
+`exists` subqueries with aliases `t1`, `t2`, each with its own `<arr>` guard; MariaDB
+two `<g> and json_contains` conjuncts — each quantifier self-guards), so a row whose
+two fields live in *different* elements matches — the discriminating contrast with
+the one-element form above (`m-predicate`; corpus
 `m-value-object-018` vs `-019`). The independent `then.referenceSql` oracle spells
 the traversal a **different** way per dialect: Postgres the `@>` containment operator
 (`t0.address -> 'phones' @> '[{"type":"home"}]'`, which natively returns false on a
@@ -1925,9 +1993,8 @@ accepted absence states. The wrong-kind collapse remains a lowering requirement
 so predicates are total over invalid stored state, but invalid fixture rows are
 classified at publication rather than used as ordinary result witnesses.
 
-A range, a negated membership, or a string predicate crossing a `many` member
-composes the same way, in
-either scope. The bind order is the guarded unnest's own binds first, then the
+A range, a negated membership, or a string predicate inside a quantifier's
+`where` composes the same way. The bind order is the guarded unnest's own binds first, then the
 element path segment(s), then the predicate's own binds in authored order — `lower`
 then `upper` for a range, one per list value for a membership, the pattern (then the
 escape character, when escaping applies) for a string predicate. Because the whole
@@ -1935,17 +2002,17 @@ range, list, or pattern rides **one** element predicate on **one** alias, a sing
 element must satisfy it (`m-predicate`):
 
 ```yaml
-# nestedBetween(Customer.address.phones.number, '555-0000', '555-1234') — any-element:
+# any(Customer.address.phones, between(number, '555-0000', '555-1234')):
 - sql:
     postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) between ? and ?)
   binds:
     postgres: [phones, 'array', phones, '[]', number, '555-0000', '555-1234']
-# nestedStartsWith(Customer.address.phones.number, '555-1') — any-element:
+# any(Customer.address.phones, startsWith(number, '555-1')):
 - sql:
     postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) like ?)
   binds:
     postgres: [phones, 'array', phones, '[]', number, '555-1%']
-# nestedExists(Customer.address.phones, where: nestedNotIn(type, [work])) — same-element:
+# any(Customer.address.phones, notIn(type, [work])):
 - sql:
     postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where not jsonb_extract_path_text(t1.value, ?) in (?))
   binds:
@@ -1953,19 +2020,40 @@ element must satisfy it (`m-predicate`):
 ```
 
 The MariaDB `json_contains` golden expresses **equality/containment** element
-predicates only (any-element `nestedEq`, same-element equality conjunctions **over
-distinct paths**);
-non-equality element predicates through a `many` segment — `nestedGt` / `nestedLt` /
-`nestedNotEq` / `nestedBetween` / `nestedNotIn`, any of the five string predicates,
-or a `where` compound with a
-range/negated membership/string predicate/`or`/`not`, or one whose equalities
-constrain a single path with two different values — need a set-returning
-unnest, which lies **outside what the MariaDB containment seam can express**; a
-MariaDB implementation rejects them with a capability diagnostic rather than
-lowering them (`m-dialect`, "Scope of the containment golden"). Postgres's
-`jsonb_array_elements` lowering is fully general; the corpus's **dual-dialect**
-to-many coverage is equality-based accordingly, so these forms carry a Postgres
-golden only.
+predicates only (`any` / `none` whose `where` is an equality or a conjunction of
+equalities **over distinct paths**); every other element predicate — a range,
+`notEq`, a membership, a string predicate, an `or` / `not`, two values for one path
+— and every `all` need a set-returning unnest, which lies **outside what the
+MariaDB containment seam can express**; a MariaDB implementation rejects them with a
+capability diagnostic rather than lowering them (`m-dialect`, *The MariaDB lane*).
+Postgres's `jsonb_array_elements` lowering is fully general; the corpus's
+**dual-dialect** value-object quantifier coverage is equality-based accordingly, so
+these forms carry a Postgres golden only.
+
+#### Scalar collection quantifiers
+
+A scalar collection is traversed exactly as a `many` value object is — the same
+array guard (over the column itself when the collection is its whole value, or
+over its document path), the same correlated `exists` on Postgres, the same
+`<g>`-guarded `json_length` occupancy on MariaDB — and its element is the unnested
+value `t1.value` rather than a document. An operation over the element reads
+`m-dialect`'s **scalar element projection**: the element's declared JSON kind
+guards a typed projection, so a wrong-kind or JSON-`null` element is an unknown
+candidate rather than a coerced value:
+
+```yaml
+# all(Basket.scores, greaterThan(0)):
+- sql:
+    postgres: … where not exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.scores) = ? then t0.scores else cast(? as jsonb) end) t1 where not (case when jsonb_typeof(t1.value) = ? then cast(t1.value #>> ? as bigint) end > ?) is true)
+  binds:
+    postgres: ['array', '[]', 'number', '{}', 0]
+```
+
+The binds run guard first, then each operation's kind and empty-path binds before
+its own operands. A collection read through a single value object or a to-one
+relationship lowers inside that hop (*Single-valued traversal*), its Boolean
+defaulting to the empty collection's answer. Only bare occupancy has a MariaDB form
+(`m-dialect`, *The MariaDB lane*).
 
 #### valueObject — atomic document write
 
@@ -2036,7 +2124,7 @@ been `t0.display_name = ?` under Columns layout becomes an extraction over
 extraction yields text, and `m-dialect`'s two typed-cast tables say which types do
 what: a member of the **numeric family** — `int32`, `int64`, `float32`, `float64`,
 `decimal(p,s)` — and a `boolean` member cast through the typed-cast form before
-comparing, exactly as a numeric `nestedGt` does today; each of the six
+comparing, exactly as a numeric value-object field does; each of the six
 **text-compared** types — `string`, `bytes`, `date`, `time`, `timestamp`, `uuid` —
 compares the extracted text directly, with no cast, because the canonical Wire
 spelling `m-wire` defines and `m-document-codec` stores already equates and

@@ -8,8 +8,8 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedStartsWith:
+      startsWith:
         path: parallax.compatibility.Customer.address.geo.elevation
         value: '1'
 then:
-  rejectedRule: nested-string-predicate-non-string-member
+  rejectedRule: string-predicate-non-string-member

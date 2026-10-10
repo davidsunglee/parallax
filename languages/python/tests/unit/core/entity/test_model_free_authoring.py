@@ -47,6 +47,7 @@ from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import _expressions
 from parallax.core.entity._expressions import (
     AuthoredConstant,
+    AuthoredPath,
     AuthoredQuery,
     PreparedOperation,
     UnfinishedOperation,
@@ -62,9 +63,9 @@ from parallax.core.metamodel import (
     judge_assignment,
 )
 from parallax.core.object_query._fluent import object_query_node, typed_read_query
-from parallax.core.predicate import PredicateNode, validate
+from parallax.core.predicate import ModelRejectedError, PredicateNode, validate
 from parallax.core.predicate._interpretation import COMPARE, MEMBER_OF, ScalarOperator
-from parallax.core.predicate._resolved import ResolvedComparison
+from parallax.core.predicate._resolved import CURRENT, ResolvedComparison
 from parallax.snapshot import Database, ScopedDatabase, SnapshotConnectionError, Transaction
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
@@ -217,7 +218,7 @@ def test_connect_accepts_a_descriptor_backed_model_and_refuses_typed_reads() -> 
             ScriptedAdapter(Read(rows=[{"id": 1}])), descriptor_backed, clock=FixedClock(FIXED)
         )
     ).using_database_login()
-    published = served.wire.find({"target": "Gizmo", "predicate": {"all": {}}}).result()
+    published = served.wire.find({"target": "Gizmo", "predicate": {"true": {}}}).result()
     assert published == {"id": 1}
 
 
@@ -471,14 +472,14 @@ def _reachable(value: object) -> Iterator[object]:
         pytest.param(Widget.where(Widget.id == 1), id="where"),
         pytest.param(Widget.where(Widget.all), id="all"),
         pytest.param(
-            sm.Animal.where(sm.Animal.narrow(sm.Dog, where=sm.Dog.bark_volume > 5)),
+            sm.Animal.where(sm.Animal.is_a(sm.Dog, where=sm.Dog.bark_volume > 5)),
             id="whole-query-narrowing",
         ),
         pytest.param(
-            vm.Customer.where(vm.Customer.address.phones.exists(vm.Phone.type == "home")),
+            vm.Customer.where(vm.Customer.address.phones.any(vm.Phone.type == "home")),
             id="value-object-scope",
         ),
-        pytest.param(sm.SnapOrder.where(sm.SnapOrder.items.exists()), id="relationship"),
+        pytest.param(sm.SnapOrder.where(sm.SnapOrder.items.any()), id="relationship"),
     ],
 )
 def test_a_typed_query_retains_its_authored_state_and_no_canonical_node(query: Any) -> None:
@@ -489,9 +490,7 @@ def test_a_typed_query_retains_its_authored_state_and_no_canonical_node(query: A
 
 def test_where_all_and_whole_query_narrowing_keep_their_authored_meaning() -> None:
     assert typed_read_query(Widget.where(Widget.all)).predicate == AuthoredConstant(truth=True)
-    lifted = typed_read_query(
-        sm.Animal.where(sm.Animal.narrow(sm.Dog, where=sm.Dog.bark_volume > 5))
-    )
+    lifted = typed_read_query(sm.Animal.where(sm.Animal.is_a(sm.Dog, where=sm.Dog.bark_volume > 5)))
     assert lifted.narrow_to == ("parallax.compatibility.Dog",)
     assert isinstance(lifted.predicate, PreparedOperation)
 
@@ -616,7 +615,8 @@ def _unfinished(
     operands: tuple[object, ...],
     operator: ScalarOperator = COMPARE["eq"],
 ) -> Predicate[Any]:
-    return Predicate(UnfinishedOperation(entity.identity, names, operator, operands))
+    path = AuthoredPath(entity.identity, names, unfinished=True)
+    return Predicate(UnfinishedOperation(path, operator, operands))
 
 
 @pytest.mark.parametrize(
@@ -687,13 +687,22 @@ def test_an_unfinished_operation_is_refused_at_binding_before_io(
     assert caught.value.code == code
 
 
-def test_an_unfinished_relationship_name_is_not_traversed_by_a_scalar_operation() -> None:
-    with pytest.raises(QueryDefinitionError, match="is a relationship") as caught:
+def test_an_unfinished_relationship_name_takes_no_scalar_operation() -> None:
+    with pytest.raises(ModelRejectedError) as caught:
         typed_resolved(
             sm.SnapOrder.where(_unfinished(sm.SnapOrder, "items", operands=(1,))),
             sm.SNAP_ORDERS_MODEL,
         )
-    assert caught.value.code == "query-path-invalid"
+    assert caught.value.rule == "path-target-kind-mismatch"
+
+
+def test_an_unfinished_path_continues_through_a_to_one_relationship() -> None:
+    dotted = sm.SnapOrderItem.where(_unfinished(sm.SnapOrderItem, "order", "id", operands=(7,)))
+    known = sm.SnapOrderItem.where(sm.SnapOrderItem.order.id == 7)
+    resolved = typed_resolved(dotted, sm.SNAP_ORDERS_MODEL)
+    assert resolved == typed_resolved(known, sm.SNAP_ORDERS_MODEL)
+    assert isinstance(resolved.predicate, ResolvedComparison)
+    assert resolved.predicate.position != CURRENT
 
 
 def test_an_unfinished_operation_has_no_canonical_export() -> None:
@@ -706,7 +715,7 @@ def test_an_unfinished_operation_has_no_canonical_export() -> None:
     [
         pytest.param(
             vm.Customer.where(
-                vm.Customer.address.phones.exists(
+                vm.Customer.address.phones.any(
                     ((vm.Phone.type == "home") & (vm.Phone.number == "1")) | ~(vm.Phone.type == "x")
                 )
             ),
@@ -714,7 +723,7 @@ def test_an_unfinished_operation_has_no_canonical_export() -> None:
         ),
         pytest.param(
             vm.Customer.where(
-                vm.Customer.address.phones.exists(
+                vm.Customer.address.phones.any(
                     ((vm.Phone.type == "home") | (vm.Phone.type == "work"))
                     & (vm.Phone.number == "1")
                 )
@@ -728,7 +737,7 @@ def test_an_unfinished_operation_has_no_canonical_export() -> None:
             id="entity-position",
         ),
         pytest.param(
-            vm.Customer.where(vm.Customer.address.phones.not_exists()),
+            vm.Customer.where(vm.Customer.address.phones.none()),
             id="bare-value-object-scope",
         ),
     ],
@@ -745,15 +754,16 @@ def test_boolean_structure_binds_as_its_canonical_export_does(query: Any) -> Non
         pytest.param(
             _unfinished(vm.Customer, "name", operands=("Ada",)), id="unfinished-operation"
         ),
-        pytest.param(vm.Customer.address.phones.exists(), id="nested-scope"),
+        pytest.param(vm.Customer.address.phones.any(), id="nested-scope"),
     ],
 )
 def test_a_value_object_element_scope_admits_only_element_relative_operations(
     interior: Predicate[Any],
 ) -> None:
-    query = vm.Customer.where(vm.Customer.address.phones.exists(interior))
-    with pytest.raises(ValueError, match="not a legal nestedExists/nestedNotExists element"):
+    query = vm.Customer.where(vm.Customer.address.phones.any(interior))
+    with pytest.raises(ModelRejectedError) as caught:
         typed_resolved(query, vm.CUSTOMER_MODEL)
+    assert caught.value.rule == "predicate-subject-outside-scope"
 
 
 @pytest.mark.parametrize(
@@ -761,18 +771,18 @@ def test_a_value_object_element_scope_admits_only_element_relative_operations(
     [
         pytest.param(vm.Customer.name == "Ada", id="entity-rooted-attribute"),
         pytest.param(~(vm.Customer.name == "Ada"), id="negated-entity-rooted-attribute"),
-        pytest.param(vm.Customer.address.phones.exists(), id="nested-scope"),
+        pytest.param(vm.Customer.address.phones.any(), id="nested-scope"),
     ],
 )
-def test_an_illegal_element_scope_interior_is_described_as_its_canonical_export_is(
+def test_an_illegal_element_scope_interior_is_refused_as_its_canonical_export_is(
     interior: Predicate[Any],
 ) -> None:
-    query = vm.Customer.where(vm.Customer.address.phones.exists(interior))
-    with pytest.raises(ValueError, match="not a legal nestedExists") as canonical:
+    query = vm.Customer.where(vm.Customer.address.phones.any(interior))
+    with pytest.raises(ModelRejectedError) as canonical:
         preflight(object_query_node(query), model=model_of(vm.CUSTOMER_MODEL), form="graph")
-    with pytest.raises(ValueError, match="not a legal nestedExists") as typed:
+    with pytest.raises(ModelRejectedError) as typed:
         typed_resolved(query, vm.CUSTOMER_MODEL)
-    assert str(typed.value) == str(canonical.value)
+    assert typed.value.rule == canonical.value.rule == "predicate-subject-outside-scope"
 
 
 @pytest.mark.parametrize(

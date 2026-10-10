@@ -65,7 +65,7 @@ def _where(sql: str) -> str:
 
 
 def test_a_read_projects_the_structured_column_once_and_never_a_member_column() -> None:
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
+    compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
     assert compiled.statement.sql == (
         "select t0.id, not t0.payload is null, t0.payload from person t0"
     )
@@ -73,7 +73,7 @@ def test_a_read_projects_the_structured_column_once_and_never_a_member_column() 
     # Instance form needs the same one column: the document already carries the
     # Value Object occurrences an instance additionally materializes.
     instance = compile_read(
-        oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
+        oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
     )
     assert instance.statement.sql == (
         "select t0.id, not t0.payload is null, t0.payload from person t0"
@@ -84,17 +84,19 @@ def test_a_row_form_read_needing_no_document_member_projects_no_document_at_all(
     # `Marker` declares the layout and nothing document-resident, so outside the
     # observation lane its Structured Column exists physically and is projected by
     # nothing: the rule is keyed to the members the read was asked for.
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Marker"))
+    compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Marker"))
     assert compiled.statement.sql == "select t0.id from marker t0"
     assert compiled.structured_column is None
 
 
 def _instance_form(target: EntityMetadata) -> CompiledRead:
-    return compile_read(oa.All(), DOCUMENT, POSTGRES, target, result_form="instance")
+    return compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target, result_form="instance")
 
 
 def _widened_resolve(target: EntityMetadata) -> CompiledRead:
-    return compile_projected_read(oa.All(), DOCUMENT, POSTGRES, target, include_value_objects=True)
+    return compile_projected_read(
+        oa.TrueNode(), DOCUMENT, POSTGRES, target, include_value_objects=True
+    )
 
 
 @pytest.mark.parametrize("lane", [_instance_form, _widened_resolve], ids=["instance", "resolve"])
@@ -123,7 +125,7 @@ def test_a_versioned_targets_narrowed_widening_still_projects_only_what_it_needs
     # than an observation, so it leaves the rule where it was: no member the read
     # asked for is document-resident, so no Structured Column is projected.
     compiled = compile_projected_read(
-        oa.All(),
+        oa.TrueNode(),
         DOCUMENT,
         POSTGRES,
         entity(DOCUMENT, "Marker"),
@@ -136,7 +138,7 @@ def test_a_direct_document_carrier_is_a_classified_member() -> None:
     # Under Columns layout the adapter still folds every adjacent document pair, so
     # each occurrence Column is classified rather than read as a finished value.
     compiled = compile_read(
-        oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
+        oa.TrueNode(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
     assert compiled.classified_members(compiled.target).issuperset({"address", "tags"})
 
@@ -145,7 +147,7 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
     person = entity(DOCUMENT, "Person").identity
     marker = entity(DOCUMENT, "Marker").identity
     document = compile_read(
-        oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
+        oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
     )
 
     assert document.raw_member_of({"payload": SQL_NULL}, person, "display_name") is SQL_NULL
@@ -178,7 +180,7 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
         document.raw_member_of({"payload": _DOCUMENT_VALUE}, person, "display_name")
 
     columns = compile_read(
-        oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
+        oa.TrueNode(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
     classify_address = columns.raw_member_classifier(person, "address")
     assert classify_address(_COLUMNS_ROW["address"])[0] == {
@@ -204,10 +206,10 @@ def test_the_compiled_read_names_the_occurrences_a_row_can_carry_under_either_la
     # `Columns` — reading its physical columns would leave a document row with no
     # occurrence to materialize at all.
     document = compile_read(
-        oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
+        oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
     )
     columns = compile_read(
-        oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
+        oa.TrueNode(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
     assert [member.storage.name for member in document.documents] == ["address", "tags"]
     assert [member.storage.name for member in document.documents] == [
@@ -220,24 +222,24 @@ def test_the_compiled_read_names_the_occurrences_a_row_can_carry_under_either_la
 
 
 def test_row_form_keeps_position_documents_separate_from_selected_occurrences() -> None:
-    compiled = compile_read(oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"))
+    compiled = compile_read(oa.TrueNode(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"))
     assert [member.storage.name for member in compiled.documents] == ["address", "tags"]
     assert compiled.projected_documents == ()
 
 
 def test_the_raw_document_is_never_a_result_field() -> None:
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
+    compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
     assert "payload" not in compiled.publication_keys(compiled.target, None)
 
 
 def test_row_identity_refuses_a_raw_document_outside_the_database_port_contract() -> None:
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
+    compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         compiled.row_identity({"id": 1, "payload": _DOCUMENT_VALUE})
 
 
 def test_an_entity_document_classifies_each_requested_member() -> None:
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
+    compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
     assert compiled.classified_members(compiled.target) == frozenset(
         {"display_name", "score", "joined_on"}
     )
@@ -268,7 +270,7 @@ def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() ->
     )
     model = formed(Metamodel(entities=(holder,)))
     compiled = compile_read(
-        oa.All(), model, POSTGRES, entity(model, "Holder"), result_form="instance"
+        oa.TrueNode(), model, POSTGRES, entity(model, "Holder"), result_form="instance"
     )
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         compiled.raw_member_of(
@@ -286,37 +288,39 @@ def test_predecessor_document_retention_requires_a_folded_carrier() -> None:
     ("predicate", "expected", "binds"),
     [
         (
-            oa.Comparison(op="eq", attr="Person.displayName", value="Ada"),
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Person.displayName"), value="Ada"),
             "where jsonb_extract_path_text(t0.payload, ?) = ?",
             ("displayName", "Ada"),
         ),
         (
-            oa.Comparison(op="greaterThan", attr="Person.score", value=3),
+            oa.Comparison(op="greaterThan", subject=oa.FieldSubject("Person.score"), value=3),
             "where cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ?",
             ("score", 3),
         ),
         (
-            oa.Between(attr="Person.score", lower=1, upper=9),
+            oa.Range(subject=oa.FieldSubject("Person.score"), lower=1, upper=9),
             "where cast(jsonb_extract_path_text(t0.payload, ?) as bigint) between ? and ?",
             ("score", 1, 9),
         ),
         (
-            oa.Membership(op="in", attr="Person.score", values=(1, 2)),
+            oa.Membership(op="in", subject=oa.FieldSubject("Person.score"), values=(1, 2)),
             "where cast(jsonb_extract_path_text(t0.payload, ?) as bigint) in (?, ?)",
             ("score", 1, 2),
         ),
         (
-            oa.NullCheck(op="isNull", attr="Person.displayName"),
+            oa.NullCheck(op="isNull", subject=oa.FieldSubject("Person.displayName")),
             "where jsonb_extract_path_text(t0.payload, ?) is null",
             ("displayName",),
         ),
         (
-            oa.NullCheck(op="isNotNull", attr="Person.displayName"),
+            oa.NullCheck(op="isNotNull", subject=oa.FieldSubject("Person.displayName")),
             "where not jsonb_extract_path_text(t0.payload, ?) is null",
             ("displayName",),
         ),
         (
-            oa.StringMatch(op="startsWith", attr="Person.displayName", value="Ad"),
+            oa.StringMatch(
+                op="startsWith", subject=oa.FieldSubject("Person.displayName"), value="Ad"
+            ),
             "where jsonb_extract_path_text(t0.payload, ?) like ?",
             ("displayName", "Ad%"),
         ),
@@ -339,7 +343,7 @@ def test_a_text_compared_member_binds_the_comparison_text_the_writer_stored() ->
     # the extraction returns — not the authored literal, which may spell the same
     # value another way.
     compiled = compile_read(
-        oa.Comparison(op="eq", attr="Person.joinedOn", value="2026-01-15"),
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Person.joinedOn"), value="2026-01-15"),
         DOCUMENT,
         POSTGRES,
         entity(DOCUMENT, "Person"),
@@ -352,7 +356,7 @@ def test_a_direct_column_still_binds_its_literal_as_authored() -> None:
     # is an ordinary typed column comparison and nothing about the document
     # reaches it.
     compiled = compile_read(
-        oa.Comparison(op="eq", attr="Person.id", value=1),
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Person.id"), value=1),
         DOCUMENT,
         POSTGRES,
         entity(DOCUMENT, "Person"),
@@ -363,7 +367,7 @@ def test_a_direct_column_still_binds_its_literal_as_authored() -> None:
 
 def test_an_ordering_key_over_a_document_member_lowers_through_the_same_seams() -> None:
     compiled = compile_read(
-        oa.All(),
+        oa.TrueNode(),
         DOCUMENT,
         POSTGRES,
         entity(DOCUMENT, "Person"),
@@ -380,7 +384,7 @@ def test_a_nested_occurrence_predicate_walks_from_the_occurrences_own_placement(
     # under `Document` it is a subtree of the shared column, so its own path
     # prefixes every segment the predicate walks.
     document = compile_read(
-        oa.NestedComparison(op="nestedEq", path="Person.address.geo.country", value="NO"),
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Person.address.geo.country"), value="NO"),
         DOCUMENT,
         POSTGRES,
         entity(DOCUMENT, "Person"),
@@ -390,7 +394,7 @@ def test_a_nested_occurrence_predicate_walks_from_the_occurrences_own_placement(
     )
     assert document.statement.binds == ("address", "geo", "country", "NO")
     columns = compile_read(
-        oa.NestedComparison(op="nestedEq", path="Person.address.geo.country", value="NO"),
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Person.address.geo.country"), value="NO"),
         COLUMNS,
         POSTGRES,
         entity(COLUMNS, "Person"),
@@ -401,8 +405,10 @@ def test_a_nested_occurrence_predicate_walks_from_the_occurrences_own_placement(
 
 def test_a_to_many_traversal_guards_the_array_at_its_placed_path() -> None:
     compiled = compile_read(
-        oa.NestedExists(
-            path="Person.tags", where=oa.NestedComparison(op="nestedEq", path="label", value="x")
+        oa.Quantifier(
+            "any",
+            "Person.tags",
+            oa.Comparison(op="eq", subject=oa.FieldSubject("label"), value="x"),
         ),
         DOCUMENT,
         POSTGRES,
@@ -417,21 +423,21 @@ def test_a_to_many_traversal_guards_the_array_at_its_placed_path() -> None:
     assert compiled.statement.binds == ("tags", "array", "tags", "[]", "label", "x")
 
 
-def test_an_any_element_flat_predicate_guards_the_array_at_its_placed_path() -> None:
+def test_presence_of_a_placed_single_value_object_reads_its_placed_path() -> None:
     compiled = compile_read(
-        oa.NestedComparison(op="nestedEq", path="Person.tags.label", value="x"),
+        oa.Presence("notExists", "Person.address.geo"),
         DOCUMENT,
         POSTGRES,
         entity(DOCUMENT, "Person"),
     )
-    assert compiled.statement.binds == ("tags", "array", "tags", "[]", "label", "x")
+    assert compiled.statement.binds == ("address", "geo", "object")
 
 
 def test_a_write_predicate_extracts_from_the_bare_structured_column() -> None:
     # A write's rendered predicate is unaliased (`m-batch-write`), and the
     # document reference takes that same decision — the extraction goes bare too.
     compiled = compile_write_predicate(
-        oa.Comparison(op="eq", attr="Person.displayName", value="Ada"),
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Person.displayName"), value="Ada"),
         DOCUMENT,
         POSTGRES,
         entity(DOCUMENT, "Person"),

@@ -1,0 +1,39 @@
+# Decimal elements compare by value at their declared scale and Boolean elements by
+# truth: some price is at least 2.00 and some flag is false.
+model: models/predicate-collections.yaml
+tags: [m-predicate, quantifier, scalar-collection, decimal, boolean, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      and:
+        operands:
+        - any:
+            path: parallax.compatibility.Basket.prices
+            where:
+              greaterThanEquals: {value: '2.00'}
+        - any:
+            path: parallax.compatibility.Basket.flags
+            where:
+              eq: {value: false}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.prices) = ? then t0.prices else cast(? as jsonb) end) t1 where case when jsonb_typeof(t1.value) = ? then cast(t1.value #>> ? as decimal(8, 2)) end >= ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.flags) = ? then t0.flags else cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then cast(t2.value #>> ? as boolean) end = ?)'}
+    binds: [array, '[]', string, '{}', '2.00', array, '[]', boolean, '{}', false]
+  graph:
+    Basket:
+    - id: 3
+      label: three
+      ownerId: 2
+      tags: [gift]
+      scores: [15]
+      prices: ['2.00', '3.00']
+      flags: [false]
+      parcels:
+      - sku: c
+        qty: 5
+        notes: [urgent]
+      meta:
+        labels: []
+  roundTrips: 1

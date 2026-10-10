@@ -1,7 +1,7 @@
-# navigate(Order.items -> OrderItem.sku = 'A-100'): filter orders by traversing
-# the to-many `items` relationship and constraining the related entity. A
-# navigation filter lowers to a correlated EXISTS semi-join, so a to-many
-# traversal never multiplies the order rows. Only order 1 has an item with sku
+# any(Order.items, sku = 'A-100'): filter orders by quantifying the to-many
+# `items` relationship and constraining the related entity. A relationship
+# quantifier lowers to a correlated EXISTS sub-select, so a to-many traversal
+# never multiplies the order rows. Only order 1 has an item with sku
 # A-100 (item 11), so the result is the single order {1}.
 model: models/orders.yaml
 tags: [m-navigate, m-relationship, m-metamodel, m-model-formation, navigate, relationship, slice-snapshot-1, slice-managed-1]
@@ -10,11 +10,11 @@ when:
   objectQuery:
     target: parallax.compatibility.Order
     predicate:
-      navigate:
-        rel: parallax.compatibility.Order.items
-        op:
+      any:
+        path: parallax.compatibility.Order.items
+        where:
           eq:
-            attr: parallax.compatibility.OrderItem.sku
+            path: sku
             value: A-100
 then:
   statements:

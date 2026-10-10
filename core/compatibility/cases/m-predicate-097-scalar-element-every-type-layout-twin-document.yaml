@@ -1,0 +1,92 @@
+# Document half of the every-type element proof: one `any` per declared
+# element type, each comparing the bound element by its type's own rule — a cast for
+# the numeric, Decimal, and Boolean types, the canonical text for the rest.
+model: models/scalar-collection-layout-twin-document.yaml
+tags: [m-predicate, m-value-object, m-sql, read, quantifier, scalar-collection, graph, layout-twin, document, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.CollectionTwinItem
+    predicate:
+      and:
+        operands:
+        - any:
+            path: parallax.compatibility.CollectionTwinItem.flags
+            where:
+              eq: {value: true}
+        - any:
+            path: parallax.compatibility.CollectionTwinItem.smalls
+            where:
+              eq: {value: 3}
+        - any:
+            path: parallax.compatibility.CollectionTwinItem.counts
+            where:
+              eq: {value: 9007199254740993}
+        - any:
+            path: parallax.compatibility.CollectionTwinItem.ratios
+            where:
+              eq: {value: 0.0}
+        - any:
+            path: parallax.compatibility.CollectionTwinItem.scores
+            where:
+              eq: {value: 2.5}
+        - any:
+            path: parallax.compatibility.CollectionTwinItem.amounts
+            where:
+              eq: {value: '7.00'}
+        - any:
+            path: parallax.compatibility.CollectionTwinItem.tags
+            where:
+              eq: {value: a}
+        - any:
+            path: parallax.compatibility.CollectionTwinItem.blobs
+            where:
+              eq: {value: 0aff}
+        - any:
+            path: parallax.compatibility.CollectionTwinItem.days
+            where:
+              eq: {value: '2024-02-29'}
+        - any:
+            path: parallax.compatibility.CollectionTwinItem.clocks
+            where:
+              eq: {value: '13:05:07.000250'}
+        - any:
+            path: parallax.compatibility.CollectionTwinItem.instants
+            where:
+              eq: {value: '2024-06-01T10:00:00.000000Z'}
+        - any:
+            path: parallax.compatibility.CollectionTwinItem.tokens
+            where:
+              eq: {value: 12345678-1234-5678-1234-567812345678}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, not t0.payload is null, t0.payload from collection_twin t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.payload, ?)) = ? then jsonb_extract_path(t0.payload, ?) else cast(? as jsonb) end) t1 where case when jsonb_typeof(t1.value) = ? then cast(t1.value #>> ? as boolean) end = ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.payload, ?)) = ? then jsonb_extract_path(t0.payload, ?) else cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then cast(t2.value #>> ? as bigint) end = ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.payload, ?)) = ? then jsonb_extract_path(t0.payload, ?) else cast(? as jsonb) end) t3 where case when jsonb_typeof(t3.value) = ? then cast(t3.value #>> ? as bigint) end = ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.payload, ?)) =
+        ? then jsonb_extract_path(t0.payload, ?) else cast(? as jsonb) end) t4 where case when jsonb_typeof(t4.value) = ? then cast(t4.value #>> ? as real) end = ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.payload, ?)) = ? then jsonb_extract_path(t0.payload, ?) else cast(? as jsonb) end) t5 where case when jsonb_typeof(t5.value) = ? then cast(t5.value #>> ? as double precision) end = ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.payload, ?)) = ? then jsonb_extract_path(t0.payload, ?) else cast(? as jsonb) end) t6 where case when jsonb_typeof(t6.value) = ? then cast(t6.value #>> ? as decimal(12, 2)) end = ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.payload, ?)) = ? then jsonb_extract_path(t0.payload, ?) else cast(? as jsonb) end) t7 where case when jsonb_typeof(t7.value) = ? then t7.value #>> ? end = ?) and exists (select 1 from jsonb_array_elements(case
+        when jsonb_typeof(jsonb_extract_path(t0.payload, ?)) = ? then jsonb_extract_path(t0.payload, ?) else cast(? as jsonb) end) t8 where case when jsonb_typeof(t8.value) = ? then t8.value #>> ? end = ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.payload, ?)) = ? then jsonb_extract_path(t0.payload, ?) else cast(? as jsonb) end) t9 where case when jsonb_typeof(t9.value) = ? then t9.value #>> ? end = ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.payload, ?)) = ? then jsonb_extract_path(t0.payload, ?) else cast(? as jsonb) end) t10 where case when jsonb_typeof(t10.value) = ? then t10.value #>> ? end = ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.payload, ?)) = ? then jsonb_extract_path(t0.payload, ?) else cast(? as jsonb) end) t11 where case when jsonb_typeof(t11.value) = ? then t11.value #>> ? end = ?) and exists (select 1 from jsonb_array_elements(case
+        when jsonb_typeof(jsonb_extract_path(t0.payload, ?)) = ? then jsonb_extract_path(t0.payload, ?) else cast(? as jsonb) end) t12 where case when jsonb_typeof(t12.value) = ? then t12.value #>> ? end = ?)'}
+    binds: [flags, array, flags, '[]', boolean, '{}', true, smalls, array, smalls, '[]', number, '{}', 3, counts, array, counts, '[]', number, '{}', 9007199254740993, ratios, array, ratios, '[]', number, '{}', 0.0, scores, array, scores, '[]', number, '{}', 2.5, amounts, array, amounts, '[]', string, '{}', '7.00', tags, array, tags, '[]', string, '{}', a, blobs, array, blobs, '[]', string, '{}', 0aff, days, array, days, '[]', string, '{}', '2024-02-29', clocks, array, clocks, '[]', string, '{}', '13:05:07.000250', instants, array, instants, '[]', string, '{}', '2024-06-01T10:00:00.000000Z', tokens, array, tokens, '[]', string, '{}', 12345678-1234-5678-1234-567812345678]
+  graph:
+    CollectionTwinItem:
+    - id: 1
+      flags: [true, false, true]
+      smalls: [3, -2, 3]
+      counts: [9007199254740993, 0]
+      ratios: [1.2, 0.0]
+      scores: [0.1, 2.5, 0.1]
+      amounts: ['1.50', '1.50', '7.00']
+      tags: [b, a, b]
+      blobs: [0aff, '']
+      days: ['2024-02-29']
+      clocks: ['13:05:07.000250']
+      instants: ['2024-06-01T10:00:00.000000Z']
+      tokens: [12345678-1234-5678-1234-567812345678, 12345678-1234-5678-1234-567812345678]
+      detail:
+        labels: [x, y, x]
+      parts:
+      - sku: a
+        marks: [2, 1, 2]
+        note:
+          words: [deep]
+      - sku: b
+        marks: []
+  roundTrips: 1

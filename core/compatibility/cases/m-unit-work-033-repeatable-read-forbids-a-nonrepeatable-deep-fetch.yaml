@@ -19,7 +19,7 @@ when:
         target: parallax.compatibility.OrderItem
         predicate:
           eq:
-            attr: parallax.compatibility.OrderItem.id
+            path: parallax.compatibility.OrderItem.id
             value: 11
         includes:
           - segments:
@@ -61,7 +61,7 @@ when:
         target: parallax.compatibility.OrderItem
         predicate:
           eq:
-            attr: parallax.compatibility.OrderItem.id
+            path: parallax.compatibility.OrderItem.id
             value: 11
         includes:
           - segments:
@@ -89,7 +89,7 @@ when:
         target: parallax.compatibility.Order
         predicate:
           eq:
-            attr: parallax.compatibility.Order.id
+            path: parallax.compatibility.Order.id
             value: 1
       roundTrips: 1
       note: UNGROUPED, after both groups resolved — the peer's write is durable, order 1 reads Rewritten

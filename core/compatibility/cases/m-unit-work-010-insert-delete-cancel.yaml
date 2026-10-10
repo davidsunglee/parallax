@@ -27,7 +27,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 9
       roundTrips: 1
       note: account 9 is absent — the cancelled insert never persisted

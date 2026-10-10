@@ -715,7 +715,7 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     target = f"parallax.compatibility.{entity.__name__}"
     wire_query: dict[str, object] = {
         "target": target,
-        "predicate": {"eq": {"attr": f"{target}.id", "value": 1}},
+        "predicate": {"eq": {"path": f"{target}.id", "value": 1}},
         "temporal": {
             "transaction-time": {"asOf": "latest"},
             "valid-time": {"asOf": f"{_OWNED_SPLIT:%Y-%m-%dT%H:%M:%S.%fZ}"},

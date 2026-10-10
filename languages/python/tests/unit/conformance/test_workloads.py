@@ -262,7 +262,7 @@ def test_inline_rows_can_be_scaled_down_and_provisioned() -> None:
         {
             "model": "models/orders.yaml",
             "dataset": {"rows": {"parallax.compatibility.Order": [{"id": 1}]}},
-            "objectQuery": {"target": "parallax.compatibility.Order", "predicate": {"all": {}}},
+            "objectQuery": {"target": "parallax.compatibility.Order", "predicate": {"true": {}}},
             "delivery": {"pageSizes": [1]},
         }
     )

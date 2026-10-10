@@ -7,11 +7,11 @@ when:
   objectQuery:
     target: parallax.compatibility.Traveler
     predicate:
-      navigate:
-        rel: parallax.compatibility.Traveler.trips
-        op:
+      any:
+        path: parallax.compatibility.Traveler.trips
+        where:
           eq:
-            attr: parallax.compatibility.Trip.destination
+            path: destination
             value: Oslo
 then:
   statements:

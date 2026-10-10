@@ -18,7 +18,7 @@ from parallax.core.metamodel import (
 from parallax.core.object_query._nodes import (
     AsOfRange,
     History,
-    IncludePath,
+    IncludePathNode,
     InterpretedQuery,
     QueryClauses,
     QueryInput,
@@ -109,7 +109,7 @@ def _narrowed_position(
 
 
 def validate_include_path(
-    path: IncludePath, model: Metamodel, queried: PositionScope
+    path: IncludePathNode, model: Metamodel, queried: PositionScope
 ) -> ResolvedIncludePath:
     """Resolve ``path`` relative to the model's active queried position.
 

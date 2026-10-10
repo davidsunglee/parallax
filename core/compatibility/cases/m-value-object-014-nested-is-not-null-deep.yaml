@@ -1,4 +1,4 @@
-# valueObject presence test: nestedIsNotNull over a two-level path (m-value-object,
+# valueObject presence test: isNotNull over a two-level path (m-value-object,
 # m-predicate), on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, nested, json, absence-collapse, slice-snapshot-1, slice-managed-1]
@@ -7,7 +7,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedIsNotNull:
+      isNotNull:
         path: parallax.compatibility.Customer.address.geo.country
 then:
   statements:

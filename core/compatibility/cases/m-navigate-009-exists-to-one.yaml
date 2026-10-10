@@ -1,4 +1,4 @@
-# exists over a TO-ONE relationship (m-navigate semi-join) — pure existence.
+# exists over a TO-ONE relationship (m-navigate presence) — pure existence.
 model: models/orders.yaml
 tags: [m-navigate, exists, relationship, to-one, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -7,7 +7,7 @@ when:
     target: parallax.compatibility.OrderStatus
     predicate:
       exists:
-        rel: parallax.compatibility.OrderStatus.orderItem
+        path: parallax.compatibility.OrderStatus.orderItem
 then:
   statements:
     - sql:

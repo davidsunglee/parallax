@@ -1,26 +1,23 @@
-# Positive (m-predicate reference resolution): a predicate reference spells its
-# Entity CANONICALLY, so a local name two namespaces of the model declare names
-# exactly one Entity and the read lowers to SQL against that Entity's table.
+# Positive (m-predicate reference resolution): a predicate path spells its Entity
+# CANONICALLY, so a local name two namespaces of the model declare names exactly
+# one Entity and the read lowers to SQL against that Entity's table.
 model: models/shared-local-name.yaml
-tags: [m-predicate, exists, relationship, to-one, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   objectQuery:
-    target: parallax.compatibility.Register
+    target: archive.SharedVariant
     predicate:
-      exists:
-        rel: parallax.compatibility.Register.variant
-        op:
-          eq:
-            attr: archive.SharedVariant.archiveLabel
-            value: A-1
+      eq:
+        path: archive.SharedVariant.archiveLabel
+        value: A-1
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.variant_id from register t0 where exists (select 1 from archive_shared t1 where t1.id = t0.variant_id and t1.archive_label = ?)
-        mariadb: select t0.id, t0.variant_id from register t0 where exists (select 1 from archive_shared t1 where t1.id = t0.variant_id and t1.archive_label = ?)
+        postgres: select t0.id, t0.archive_label from archive_shared t0 where t0.archive_label = ?
+        mariadb: select t0.id, t0.archive_label from archive_shared t0 where t0.archive_label = ?
       binds: [A-1]
-  referenceSql: select id, variant_id from register where variant_id in (select id from archive_shared where archive_label = 'A-1')
+  referenceSql: select id, archive_label from archive_shared where archive_label = 'A-1'
   rows:
-    - { id: 1, variant_id: 10 }
+    - { id: 10, archive_label: A-1 }
   roundTrips: 1

@@ -8,7 +8,7 @@ when:
     target: parallax.compatibility.Order
     predicate:
       like:
-        attr: parallax.compatibility.Order.sku
+        path: parallax.compatibility.Order.sku
         value: A-%
 then:
   statements:

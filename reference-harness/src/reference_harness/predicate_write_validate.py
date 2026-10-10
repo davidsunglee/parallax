@@ -15,8 +15,9 @@ import datetime as dt
 from typing import Any
 
 from .case import Entity
-from .inheritance import inheritance_of
-from .object_query_validate import validate_predicate
+from .inheritance import Family, inheritance_of
+from .predicate_paths import EntityScope
+from .predicate_validate import validate_predicate
 from .query_references import collect_reference_classes
 from .serde import canonical
 from .storage_layout import is_scalar_collection
@@ -27,7 +28,9 @@ class PredicateWriteValidationError(ValueError):
     """Raised when a structurally-valid predicate write is model-invalid."""
 
 
-def validate_predicate_write(entity: Entity, instruction: dict[str, Any]) -> None:
+def validate_predicate_write(
+    entity: Entity, instruction: dict[str, Any], entity_defs: list[dict[str, Any]]
+) -> None:
     """Validate one predicate-selected write instruction against *entity*.
 
     The caller has already validated the instruction and predicate against their
@@ -55,8 +58,11 @@ def validate_predicate_write(entity: Entity, instruction: dict[str, Any]) -> Non
             "predicate write target needs a predicate-shaped selection"
         )
     _assert_predicate_scope(predicate, entity)
+    family = Family(entity_defs)
+    key = family.defs.canonical_key(entity.canonical_name)
+    scope = EntityScope(key, tuple(family.effective_concrete_set(key)), bound=False)
     try:
-        validate_predicate(entity, predicate)
+        validate_predicate(family, scope, predicate)
     except RejectionError as exc:
         raise PredicateWriteValidationError(str(exc)) from exc
 
@@ -344,8 +350,8 @@ def _temporal_payload_columns(entity: Entity, temporal_columns: set[str]) -> set
 
 def _assert_predicate_scope(node: Any, entity: Entity) -> None:
     classes: set[str] = set()
-    # A navigation's inner predicate and a nestedExists `where` resolve in a
-    # different scope and are not descended (see collect_reference_classes).
+    # A quantifier's `where` and a path-targeted narrowing's operand resolve in
+    # a bound scope and are not descended (see collect_reference_classes).
     collect_reference_classes(node, classes)
     named = (entity.name, entity.canonical_name)
     mismatched = sorted(cls for cls in classes if cls not in named)

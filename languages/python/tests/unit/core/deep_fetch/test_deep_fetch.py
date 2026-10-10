@@ -38,14 +38,15 @@ from parallax.core.object_query import (
     validate_object_query,
 )
 from parallax.core.object_query._canonical import canonical_includes
-from parallax.core.object_query._nodes import IncludePath, TemporalDimension
+from parallax.core.object_query._nodes import IncludePathNode, TemporalDimension
 from parallax.core.object_query._resolved import ResolvedOrderTerm
 from parallax.core.predicate import (
-    All,
     Comparison,
+    FieldSubject,
     ModelRejectedError,
     Narrow,
     PredicateNode,
+    TrueNode,
     validate_predicate,
 )
 from parallax.core.predicate._resolved import (
@@ -79,8 +80,8 @@ def _seg(rel: str, narrow: tuple[str, ...] = ()) -> IncludeSegment:
     return IncludeSegment(rel=rel, narrow_to=narrow)
 
 
-def _path(*segments: IncludeSegment, narrow: tuple[str, ...] | None = None) -> IncludePath:
-    return IncludePath(segments=segments, applies_to=narrow)
+def _path(*segments: IncludeSegment, narrow: tuple[str, ...] | None = None) -> IncludePathNode:
+    return IncludePathNode(segments=segments, applies_to=narrow)
 
 
 def _guard(*to: str) -> tuple[str, ...]:
@@ -101,7 +102,7 @@ def _order_attr(term: object) -> str:
 def _plan(
     model: Metamodel,
     target: str,
-    paths: tuple[IncludePath, ...],
+    paths: tuple[IncludePathNode, ...],
     temporal: dict[TemporalDimension, TemporalSelection] | None = None,
     predicate: PredicateNode | None = None,
     **clauses: object,
@@ -109,7 +110,7 @@ def _plan(
     entity = entity_of(model, target)
     query = object_query(
         entity.identity,
-        predicate if predicate is not None else All(),
+        predicate if predicate is not None else TrueNode(),
         temporal=temporal,
         includes=paths,
         **clauses,  # pyright: ignore[reportArgumentType] - the caller names real clauses
@@ -198,7 +199,7 @@ def test_deep_fetch_rejects_a_validated_path_whose_relationship_disappeared() ->
     entity = entity_of(ORDERS, "Order")
     authored = object_query(
         entity.identity,
-        All(),
+        TrueNode(),
         includes=(_path(_seg("Order.items")),),
     )
     validated = validate_object_query(entity, authored, ORDERS)
@@ -224,7 +225,7 @@ def test_mutation_read_unions_an_explicit_projection_with_assigned_value_objects
     prepared = prepare_typed_write(
         PredicateWrite(
             "amend",
-            PredicateSelection(account.identity.canonical, All()),
+            PredicateSelection(account.identity.canonical, TrueNode()),
             (WriteAssignment(f"{account.identity.canonical}.name", "updated"),),
         ),
         ORDERS,
@@ -1085,7 +1086,7 @@ def test_zero_paths_plans_zero_levels() -> None:
 def test_a_query_with_no_includes_plans_zero_levels_and_keeps_its_predicate() -> None:
     # The degenerate "materialize with no relationships" shape a plain snapshot
     # find or a scenario's own read step needs.
-    literal = Comparison(op="eq", attr="Order.id", value=1)
+    literal = Comparison(op="eq", subject=FieldSubject("Order.id"), value=1)
     plan = _plan(ORDERS, "Order", (), predicate=literal)
     assert plan.fetch_steps == ()
     assert plan.root.predicate == validate_predicate(entity_of(ORDERS, "Order"), literal, ORDERS)
@@ -1096,12 +1097,12 @@ def test_plan_resolves_result_narrowing_and_leaves_a_predicate_narrow_alone() ->
         ORDERS,
         "Order",
         (),
-        predicate=Narrow(to=("Order",), operand=All()),
+        predicate=Narrow(to=("Order",), operand=TrueNode()),
         narrow_to=("Order",),
     )
     assert plan.root.narrow_to == (entity_of(ORDERS, "Order").identity,)
     assert plan.root.predicate == validate_predicate(
-        entity_of(ORDERS, "Order"), Narrow(to=("Order",), operand=All()), ORDERS
+        entity_of(ORDERS, "Order"), Narrow(to=("Order",), operand=TrueNode()), ORDERS
     )
 
 

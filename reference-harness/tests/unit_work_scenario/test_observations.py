@@ -637,7 +637,7 @@ def _as_a_load_of_the_owners_animals(case: Case) -> Case:
             {
                 "objectQuery": {
                     "target": "parallax.compatibility.Person",
-                    "predicate": {"eq": {"attr": "parallax.compatibility.Person.id", "value": 10}},
+                    "predicate": {"eq": {"path": "parallax.compatibility.Person.id", "value": 10}},
                 },
                 "roundTrips": 1,
                 "statements": [{"sql": {"postgres": _OWNER_SQL}, "binds": [10]}],
@@ -700,7 +700,7 @@ def _as_a_load_of_the_folders_documents(case: Case) -> Case:
             {
                 "objectQuery": {
                     "target": "parallax.compatibility.Folder",
-                    "predicate": {"eq": {"attr": "parallax.compatibility.Folder.id", "value": 100}},
+                    "predicate": {"eq": {"path": "parallax.compatibility.Folder.id", "value": 100}},
                 },
                 "roundTrips": 1,
                 "statements": [{"sql": {"postgres": _FOLDER_SQL}, "binds": [100]}],
@@ -773,7 +773,7 @@ def _as_a_load_of_the_travelers_trips(case: Case) -> Case:
             {
                 "objectQuery": {
                     "target": "parallax.compatibility.Traveler",
-                    "predicate": {"eq": {"attr": "parallax.compatibility.Traveler.id", "value": 1}},
+                    "predicate": {"eq": {"path": "parallax.compatibility.Traveler.id", "value": 1}},
                 },
                 "roundTrips": 1,
                 "statements": [{"sql": {"postgres": _TRAVELER_SQL}, "binds": [1]}],

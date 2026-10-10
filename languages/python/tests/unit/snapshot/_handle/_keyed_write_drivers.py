@@ -319,7 +319,7 @@ def _wire_query(
 ) -> Mapping[str, object]:
     query: dict[str, object] = {
         "target": entity,
-        "predicate": {"eq": {"attr": f"{entity}.id", "value": key}},
+        "predicate": {"eq": {"path": f"{entity}.id", "value": key}},
     }
     if temporal is not None:
         query["temporal"] = temporal

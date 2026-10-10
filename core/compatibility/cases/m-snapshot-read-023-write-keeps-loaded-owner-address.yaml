@@ -13,7 +13,7 @@ when:
         target: parallax.compatibility.Location
         predicate:
           eq:
-            attr: parallax.compatibility.Location.id
+            path: parallax.compatibility.Location.id
             value: 100
         includes:
           - segments:
@@ -95,7 +95,7 @@ when:
         target: parallax.compatibility.Customer
         predicate:
           eq:
-            attr: parallax.compatibility.Customer.id
+            path: parallax.compatibility.Customer.id
             value: 1
       roundTrips: 1
       note: observing the write means issuing another read - the same customer, re-read, holds the rewritten document

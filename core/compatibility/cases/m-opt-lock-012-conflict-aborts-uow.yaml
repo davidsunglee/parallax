@@ -19,7 +19,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 2
       roundTrips: 1
       note: OUR unit of work observes account 2 (Linus, 250.00, version 1); this optimistic object find omits the shared lock
@@ -34,7 +34,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 2
       roundTrips: 1
       note: a CONCURRENT unit of work observes the SAME account 2 at the SAME version 1 — the classic race
@@ -79,7 +79,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.id
+            path: parallax.compatibility.Account.id
             value: 9
       roundTrips: 1
       note: account 9 MUST be absent, UNGROUPED — the aborted UoW's insert never flushed (no partial flush)

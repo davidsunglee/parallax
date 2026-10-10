@@ -15,14 +15,14 @@ when:
                 - parallax.compatibility.Book
               operand:
                 greaterThan:
-                  attr: parallax.compatibility.Book.pages
+                  path: parallax.compatibility.Book.pages
                   value: 300
           - narrow:
               to:
                 - parallax.compatibility.Film
               operand:
                 greaterThan:
-                  attr: parallax.compatibility.Film.minutes
+                  path: parallax.compatibility.Film.minutes
                   value: 100
 then:
   statements:

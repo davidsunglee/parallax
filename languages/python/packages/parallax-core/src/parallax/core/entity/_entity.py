@@ -35,6 +35,8 @@ from parallax.core.entity._expressions import (
     conjoin,
     judged_edit_violation,
     member_location,
+    require_bound_elements,
+    subtype_selection,
 )
 from parallax.core.entity._instance_state import (
     BackedModel,
@@ -59,7 +61,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.predicate import QueryDefinitionError
-from parallax.core.predicate._nodes import canonical_subtype_selection
 
 if TYPE_CHECKING:
     import datetime as _dt
@@ -237,12 +238,15 @@ def build_object_query(
     unfiltered spelling is the WHOLE filter or none of it, so it never combines
     with another term.
 
-    A whole filter that is itself one narrowing is WHOLE-RESULT narrowing and
-    fills the query's ``narrowTo`` clause rather than its predicate: narrowing
-    the entire selection to a subtype decides which objects come back, which is
-    observable in the result the read returns. Narrowing reached through any
-    Boolean combination is a filter and stays in the predicate, as does a
-    narrowing nested inside the lifted one's own scope.
+    A whole filter that is itself one class-scoped ``is_a`` is WHOLE-RESULT
+    narrowing and fills the query's ``narrowTo`` clause rather than its
+    predicate: narrowing the entire selection to a subtype decides which objects
+    come back, which is observable in the result the read returns. A subtype
+    test reached through any Boolean combination, or one of a related target,
+    is a filter and stays in the predicate.
+
+    A collection element is read only inside the quantifier over its own
+    collection, so one read at the queried position is refused here.
     """
     if not predicates:
         raise QueryDefinitionError(
@@ -262,9 +266,11 @@ def build_object_query(
         )
     predicate = conjoin(predicates)
     assert predicate is not None  # the empty argument list is refused above
+    require_bound_elements(predicate, "at the queried position")
     narrow_to = None
-    if isinstance(predicate, AuthoredNarrow):
-        predicate, narrow_to = predicate.operand, predicate.to
+    if isinstance(predicate, AuthoredNarrow) and predicate.target is None:
+        narrow_to = predicate.to
+        predicate = AuthoredConstant(True) if predicate.operand is None else predicate.operand
     return ObjectQuery(
         _query=AuthoredQuery(target, predicate, narrow_to=narrow_to), _as_of_axes=as_of_axes
     )
@@ -477,48 +483,39 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         return build_object_query(cls.identity, (first, *rest), as_of_axes=_family_axes(cls))
 
     @classmethod
-    def narrow[E: Entity, S: Entity](
+    def is_a[E: Entity, S: Entity](
         cls: type[E], *subtypes: type[S], where: Predicate[S] | None = None
     ) -> Predicate[E]:
-        """The scoped subtype-narrowing constructor.
-
-        ``to`` is canonicalized as one Subtype Selection, and ``where=`` grants
-        attribute scope to those subtypes' declared members inside its own operand
-        alone. An ordinary predicate: it composes like any other, and inside a
-        relationship quantifier it must name exactly the relationship target.
+        """Whether the current object belongs to ``subtypes`` and, with
+        ``where``, makes it true there: a Predicate, composed like any other.
 
         Passed to ``where()`` as the WHOLE filter, it states the query's result
         narrowing rather than one of its filters and fills ``narrowTo``
         (:func:`build_object_query`) — which is also what makes it the spelling
         a checker agrees with for a predicate over the narrowed subtype.
 
-        The narrowed predicate addresses the narrowing class's own position — the
-        sanctioned way to reach a descendant's member from an ancestor position —
-        so the ``where=`` scope is the one place a subtype's predicate legitimately
-        lands in an ancestor's query.
+        ``where=`` binds against the selected subtypes, so it is the one place a
+        descendant's member legitimately lands in an ancestor's predicate. An
+        unselected object is false; a selected one keeps ``where``'s unknown.
+        The predicate binds against the current object scope, whose position
+        must admit this class.
 
         ``S`` is solved from the named subtypes and is what the scoped predicate
-        is measured against, so a ``where=`` addressing a position outside the
-        narrowed set is refused before anything runs, while the answer stays in
-        the narrowing class's own position. Whether the named classes are
-        subtypes of that position at all is NOT stated here: a type parameter's
-        bound may not itself be generic, so ``S`` cannot be bounded by ``E``, and
-        a class outside the position keeps only its preflight rejection
-        (``narrow-outside-position``) — as does the per-model question of which
-        concrete subtypes the named classes resolve to.
+        is measured against. Whether the named classes are subtypes of this
+        position at all is NOT stated here: a type parameter's bound may not
+        itself be generic, so ``S`` cannot be bounded by ``E``, and a class
+        outside the position keeps only its preflight rejection
+        (``narrow-outside-position``).
         """
-        to = tuple(declaration_of(subtype).identity.canonical for subtype in subtypes)
-        if not to:
-            raise QueryDefinitionError(
-                code="query-path-invalid", message="narrow requires at least one subtype"
+        return Predicate(
+            AuthoredNarrow(
+                subtype_selection(
+                    tuple(declaration_of(subtype).identity.canonical for subtype in subtypes)
+                ),
+                None if where is None else where.authored,
+                receiver=cls.identity,
             )
-        if len(set(to)) != len(to):
-            raise QueryDefinitionError(
-                code="query-path-invalid",
-                message="narrow alternatives must not repeat the same subtype",
-            )
-        operand = where.authored if where is not None else AuthoredConstant(truth=True)
-        return Predicate(AuthoredNarrow(to=canonical_subtype_selection(to), operand=operand))
+        )
 
     def edit(self, **changes: object) -> Self:
         """The one door to an Edited Copy.

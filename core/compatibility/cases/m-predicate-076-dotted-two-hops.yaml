@@ -1,0 +1,33 @@
+# Two to-one hops nest, each asserting its own candidates: the basket whose owner's
+# manager is Bob.
+model: models/predicate-collections.yaml
+tags: [m-predicate, relationship, to-one, traversal, m-dialect, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Basket
+    predicate:
+      eq: {path: parallax.compatibility.Basket.owner.manager.name, value: Bob}
+then:
+  statements:
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where (select (select t1.name from basket_owner t1 where t1.id = t2.manager_id) from basket_owner t2 where t2.id = t0.owner_id) = ?', mariadb: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where (select (select t1.name from basket_owner t1 where t1.id = t2.manager_id) from basket_owner t2 where t2.id = t0.owner_id) = ?'}
+    binds: [Bob]
+  graph:
+    Basket:
+    - id: 1
+      label: one
+      ownerId: 1
+      tags: [urgent, gift]
+      scores: [5, 25]
+      prices: ['1.50']
+      flags: [true]
+      parcels:
+      - sku: a
+        qty: 2
+        notes: [x]
+      - sku: b
+        qty: 0
+        notes: []
+      meta:
+        labels: [m]
+  roundTrips: 1

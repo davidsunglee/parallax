@@ -422,7 +422,7 @@ def _is_temporal_only_read(query: Any) -> bool:
     if not isinstance(query, dict):
         return False
     return (
-        query.get("predicate") == {"all": {}}
+        query.get("predicate") == {"true": {}}
         and not query.get("narrowTo")
         and not query.get("orderBy")
         and query.get("limit") is None

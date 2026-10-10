@@ -12,7 +12,7 @@ when:
     target: parallax.compatibility.Order
     predicate:
       eq:
-        attr: parallax.compatibility.Order.id
+        path: parallax.compatibility.Order.id
         value: 1
     includes:
       - segments:

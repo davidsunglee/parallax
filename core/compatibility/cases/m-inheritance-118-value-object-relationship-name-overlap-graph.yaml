@@ -13,7 +13,7 @@ when:
   objectQuery:
     target: compatibility.overlap.ProfileOwner
     predicate:
-      all: {}
+      "true": {}
     includes:
       - segments:
           - rel: compatibility.overlap.ProfileOwner.details

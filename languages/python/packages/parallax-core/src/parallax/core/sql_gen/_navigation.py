@@ -97,9 +97,9 @@ def plan_resolved_hop(
     return _plan_tpcs_hop(effective, parent_column, related, scope, negate=negate)
 
 
-def open_branch(branch: HopBranch, scope: _PlanScope) -> OpenBranch:
-    """Allocate one branch alias and render facts that depend on it."""
-    alias = scope.next_alias()
+def open_branch(branch: HopBranch, scope: _PlanScope, alias: str | None = None) -> OpenBranch:
+    """Allocate one branch alias, or adopt ``alias``, and render facts that depend on it."""
+    alias = scope.next_alias() if alias is None else alias
     child = scope.child(branch.entity, alias)
     correlation = f"{child.column_for(branch.related)} = {branch.parent_column}"
     tag_fragment: tuple[str, ...] = ()

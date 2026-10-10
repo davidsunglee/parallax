@@ -13,13 +13,13 @@ when:
                 or:
                   operands:
                     - greaterThanEquals:
-                        attr: parallax.compatibility.Order.qty
+                        path: parallax.compatibility.Order.qty
                         value: 25
                     - lessThanEquals:
-                        attr: parallax.compatibility.Order.qty
+                        path: parallax.compatibility.Order.qty
                         value: 5
           - eq:
-              attr: parallax.compatibility.Order.active
+              path: parallax.compatibility.Order.active
               value: true
   equivalentEncodings:
     - target: parallax.compatibility.Order
@@ -31,14 +31,14 @@ when:
                   or:
                     operands:
                       - greaterThanEquals:
-                          attr: parallax.compatibility.Order.qty
+                          path: parallax.compatibility.Order.qty
                           value: 25
                       - lessThanEquals:
-                          attr: parallax.compatibility.Order.qty
+                          path: parallax.compatibility.Order.qty
                           value: 5
             - eq:
+                path: parallax.compatibility.Order.active
                 value: true
-                attr: parallax.compatibility.Order.active
     - target: parallax.compatibility.Order
       predicate:
         and:
@@ -48,13 +48,13 @@ when:
                   or:
                     operands:
                       - greaterThanEquals:
+                          path: parallax.compatibility.Order.qty
                           value: 25
-                          attr: parallax.compatibility.Order.qty
                       - lessThanEquals:
+                          path: parallax.compatibility.Order.qty
                           value: 5
-                          attr: parallax.compatibility.Order.qty
             - eq:
-                attr: parallax.compatibility.Order.active
+                path: parallax.compatibility.Order.active
                 value: true
 then:
   statements:

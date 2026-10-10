@@ -1,8 +1,8 @@
-# valueObject to-many negated string match: nestedNotLike through a `many` segment keeps
-# the uniform ANY-ELEMENT reading — SOME element's member does not match — never "no
-# element's does" (m-predicate any-element, m-sql). Postgres golden only — a
-# non-equality element predicate is outside MariaDB's containment scope (m-dialect,
-# "Scope of the containment golden").
+# valueObject to-many negated string match: `any` with `notLike` asks whether SOME
+# element's member does not match — never "no element's does" (m-predicate
+# quantifiers, m-sql). Postgres golden only — a non-equality element predicate is
+# outside MariaDB's containment scope (m-dialect, "Scope of the containment
+# golden").
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, notLike, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -10,9 +10,12 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedNotLike:
-        path: parallax.compatibility.Customer.address.phones.number
-        value: 555-9999
+      any:
+        path: parallax.compatibility.Customer.address.phones
+        where:
+          notLike:
+            path: number
+            value: 555-9999
 then:
   statements:
     - sql:

@@ -269,7 +269,7 @@ def _validate_predicate_write(
         errors.append(f"{label}: target entity {target_name!r} is not declared: {exc}")
         return None
     try:
-        validate_predicate_write(entity, write)
+        validate_predicate_write(entity, write, entity_defs)
     except PredicateWriteValidationError as exc:
         errors.append(f"{label}: {exc}")
     return entity

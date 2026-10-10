@@ -300,6 +300,8 @@ def _expression_target(
     if isinstance(expression, exp.Column):
         compared, guarded = _column_slot(case, expression, binds)
         return None if compared is None else _slot_target(case, compared, guarded)
+    if _counts_elements(expression):
+        return None
     columns = tuple(expression.find_all(exp.Column))
     if len(columns) != 1:
         return None
@@ -319,6 +321,15 @@ def _expression_target(
     else:
         return None
     return None if neutral_type is None else LiteralBindTarget(neutral_type)
+
+
+_ELEMENT_COUNTS = frozenset({"json_length", "jsonb_array_length", "json_array_length"})
+
+
+def _counts_elements(expression: Expr) -> bool:
+    """Whether ``expression`` counts an array's elements, whose value is never
+    one of those elements however the array's path is spelled."""
+    return isinstance(expression, exp.Anonymous) and str(expression.this).lower() in _ELEMENT_COUNTS
 
 
 def _document_leaf_type(

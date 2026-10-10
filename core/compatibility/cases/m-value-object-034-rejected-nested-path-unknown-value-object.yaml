@@ -1,5 +1,5 @@
-# Negative (m-value-object / m-predicate, resolved Q7): a nested path whose first
-# segment is not a declared value object is refused PRE-SQL.
+# Negative (m-value-object / m-predicate): a path whose segment names no declared
+# member is refused PRE-SQL.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, rejected, negative, nested, slice-snapshot-1, slice-managed-1]
 shape: rejected
@@ -7,8 +7,8 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedEq:
+      eq:
         path: parallax.compatibility.Customer.contact.city
         value: Oslo
 then:
-  rejectedRule: nested-path-first-segment-not-value-object
+  rejectedRule: path-unknown-member

@@ -185,7 +185,9 @@ def _version_group() -> MaterializedWriteGroup:
             "amend",
             PredicateSelection(
                 "Account",
-                predicate_algebra.Comparison("lessThan", "Account.balance", "1000000.00"),
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Account.balance"), "1000000.00"
+                ),
             ),
             assignments=(WriteAssignment("Account.balance", Decimal("5.00")),),
         ),
@@ -225,7 +227,10 @@ def _prepared_writes() -> list[OrderedWrite]:
                 PredicateWrite(
                     "delete",
                     PredicateSelection(
-                        "Wallet", predicate_algebra.Comparison("eq", "Wallet.id", 7)
+                        "Wallet",
+                        predicate_algebra.Comparison(
+                            "eq", predicate_algebra.FieldSubject("Wallet.id"), 7
+                        ),
                     ),
                 ),
             ],
@@ -298,7 +303,10 @@ def _value_update(entity: str, *, valid_from: dt.datetime | None = None) -> Pred
     return PredicateWrite(
         "amend",
         PredicateSelection(
-            entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", "1000000.00")
+            entity,
+            predicate_algebra.Comparison(
+                "lessThan", predicate_algebra.FieldSubject(f"{entity}.value"), "1000000.00"
+            ),
         ),
         assignments=(WriteAssignment(f"{entity}.value", Decimal("7.00")),),
         valid_from=valid_from,
@@ -670,7 +678,7 @@ def _rate_history() -> ObjectQuery[DepositRate, DepositRate]:
 
 def _navigated_policies(database: ScopedDatabase) -> None:
     query = (
-        Policy.where(Policy.coverages.exists(Coverage.amount > Decimal("0")))
+        Policy.where(Policy.coverages.any(Coverage.amount > Decimal("0")))
         .as_of(valid_time=LATEST)
         .include(Policy.coverages)
     )

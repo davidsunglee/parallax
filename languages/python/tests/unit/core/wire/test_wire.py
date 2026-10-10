@@ -1155,3 +1155,32 @@ def test_the_public_facade_contains_only_the_contractual_codec_surface() -> None
         "encode_wire",
         "loads",
     ]
+
+
+_KIND_WITNESSES: tuple[tuple[NeutralType, object], ...] = (
+    (BOOLEAN, True),
+    (INT32, 7),
+    (INT64, 2**40),
+    (FLOAT32, 1.5),
+    (FLOAT64, 2.5),
+    (Decimal(precision=5, scale=2), decimal.Decimal("1.50")),
+    (STRING, "a"),
+    (BYTES, b"\x01"),
+    (DATE, dt.date(2024, 2, 29)),
+    (TIME, dt.time(13, 5, 7)),
+    (TIMESTAMP, dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
+    (UUID, uuid.UUID(int=1)),
+)
+_JSON_KIND: Mapping[type, str] = {bool: "boolean", int: "number", float: "number", str: "string"}
+
+
+@pytest.mark.parametrize(("neutral_type", "value"), _KIND_WITNESSES)
+def test_each_scalar_type_names_the_json_kind_its_spelling_takes(
+    neutral_type: NeutralType, value: object
+) -> None:
+    encoded = wire.encode_wire(neutral_type, cast("ManagedValue", value))
+    assert wire_codec.encoded_json_kind(neutral_type) == _JSON_KIND[type(encoded)]
+
+
+def test_json_has_no_single_kind() -> None:
+    assert wire_codec.encoded_json_kind(JSON) is None

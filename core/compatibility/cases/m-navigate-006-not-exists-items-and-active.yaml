@@ -1,8 +1,8 @@
-# notExists(Order.items) AND active = true: a navigation filter composed with a
+# none(Order.items) AND active = true: a relationship quantifier composed with a
 # scalar predicate via `and`. Orders with no items are 3, 4, 5; of those only
-# order 4 is active, so the result is {4}. This pins that a navigation node
-# composes inside the boolean algebra exactly like an atomic predicate, and that
-# the EXISTS semi-join's correlation binds come before the trailing scalar bind.
+# order 4 is active, so the result is {4}. This pins that a quantifier composes
+# inside the boolean algebra exactly like an atomic predicate, and that the
+# correlated sub-select's binds come before the trailing scalar bind.
 model: models/orders.yaml
 tags: [m-navigate, notExists, boolean, relationship, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -12,10 +12,10 @@ when:
     predicate:
       and:
         operands:
-          - notExists:
-              rel: parallax.compatibility.Order.items
+          - none:
+              path: parallax.compatibility.Order.items
           - eq:
-              attr: parallax.compatibility.Order.active
+              path: parallax.compatibility.Order.active
               value: true
 then:
   statements:

@@ -28,28 +28,28 @@ _PREFIX = "parallax.compatibility.CollectionTwinItem"
 @pytest.mark.parametrize(
     ("document", "rule"),
     [
-        ({"in": {"attr": f"{_PREFIX}.tags", "values": ["a"]}}, "scalar-collection-unquantified"),
+        ({"in": {"path": f"{_PREFIX}.tags", "values": ["a"]}}, "scalar-collection-unquantified"),
         (
-            {"between": {"attr": f"{_PREFIX}.counts", "lower": "x", "upper": 2}},
+            {"between": {"path": f"{_PREFIX}.counts", "lower": "x", "upper": 2}},
             "scalar-collection-unquantified",
         ),
-        ({"contains": {"attr": f"{_PREFIX}.tags", "value": "a"}}, "scalar-collection-unquantified"),
+        ({"contains": {"path": f"{_PREFIX}.tags", "value": "a"}}, "scalar-collection-unquantified"),
         (
-            {"nestedIn": {"path": f"{_PREFIX}.detail.labels", "values": ["a"]}},
+            {"in": {"path": f"{_PREFIX}.detail.labels", "values": ["a"]}},
             "scalar-collection-unquantified",
         ),
         (
             {
-                "nestedExists": {
+                "any": {
                     "path": f"{_PREFIX}.parts",
-                    "where": {"nestedEq": {"path": "marks", "value": 1}},
+                    "where": {"eq": {"path": "marks", "value": 1}},
                 }
             },
             "scalar-collection-unquantified",
         ),
-        ({"isNull": {"attr": f"{_PREFIX}.tags"}}, "null-check-non-nullable-member"),
+        ({"isNull": {"path": f"{_PREFIX}.tags"}}, "null-check-non-nullable-member"),
         (
-            {"nestedIsNotNull": {"path": f"{_PREFIX}.detail.labels"}},
+            {"isNotNull": {"path": f"{_PREFIX}.detail.labels"}},
             "null-check-non-nullable-member",
         ),
     ],

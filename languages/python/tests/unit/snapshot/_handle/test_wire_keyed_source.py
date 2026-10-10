@@ -74,7 +74,7 @@ _POSITION_ROW: Final[MappingRow] = {
 def _query(entity: str, key: int, temporal: dict[str, object] | None = None) -> dict[str, object]:
     query: dict[str, object] = {
         "target": entity,
-        "predicate": {"eq": {"attr": f"{entity}.id", "value": key}},
+        "predicate": {"eq": {"path": f"{entity}.id", "value": key}},
     }
     if temporal is not None:
         query["temporal"] = temporal

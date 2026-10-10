@@ -8,7 +8,7 @@ when:
     target: parallax.compatibility.Animal
     predicate:
       eq:
-        attr: parallax.compatibility.Person.name
+        path: parallax.compatibility.Person.name
         value: Ada
 then:
   rejectedRule: attribute-outside-active-position

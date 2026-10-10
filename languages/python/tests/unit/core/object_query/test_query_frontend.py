@@ -20,7 +20,6 @@ from parallax.core import (
     TX_TIME,
     VALID_TIME,
     Attr,
-    AttributeExpr,
     Bitemporal,
     DomainModel,
     Entity,
@@ -32,6 +31,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity._entity import build_object_query
+from parallax.core.entity._expressions import ScalarExpr
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._fluent import object_query_node
 from tests._support.query_probes import canonical_document, predicate_document, predicate_node
@@ -61,24 +61,24 @@ def _op(pred: Predicate[Any]) -> dict[str, object]:
 
 
 def test_scalar_comparison_operators() -> None:
-    assert _op(Widget.id == 42) == {"eq": {"attr": "parallax.compatibility.Widget.id", "value": 42}}
+    assert _op(Widget.id == 42) == {"eq": {"path": "parallax.compatibility.Widget.id", "value": 42}}
     assert _op(Widget.id != 42) == {
-        "notEq": {"attr": "parallax.compatibility.Widget.id", "value": 42}
+        "notEq": {"path": "parallax.compatibility.Widget.id", "value": 42}
     }
     assert _op(Widget.qty > 1) == {
-        "greaterThan": {"attr": "parallax.compatibility.Widget.qty", "value": 1}
+        "greaterThan": {"path": "parallax.compatibility.Widget.qty", "value": 1}
     }
     assert _op(Widget.qty >= 1) == {
-        "greaterThanEquals": {"attr": "parallax.compatibility.Widget.qty", "value": 1}
+        "greaterThanEquals": {"path": "parallax.compatibility.Widget.qty", "value": 1}
     }
     assert _op(Widget.qty < 9) == {
-        "lessThan": {"attr": "parallax.compatibility.Widget.qty", "value": 9}
+        "lessThan": {"path": "parallax.compatibility.Widget.qty", "value": 9}
     }
     assert _op(Widget.qty <= 9) == {
-        "lessThanEquals": {"attr": "parallax.compatibility.Widget.qty", "value": 9}
+        "lessThanEquals": {"path": "parallax.compatibility.Widget.qty", "value": 9}
     }
     assert _op(Widget.active.is_(True)) == {
-        "eq": {"attr": "parallax.compatibility.Widget.active", "value": True}
+        "eq": {"path": "parallax.compatibility.Widget.active", "value": True}
     }
 
 
@@ -97,39 +97,39 @@ def test_invalid_top_level_operands_report_the_complete_developer_input_rule(
 
 def test_membership_between_null_and_string_operators() -> None:
     assert _op(Widget.id.in_([1, 2])) == {
-        "in": {"attr": "parallax.compatibility.Widget.id", "values": [1, 2]}
+        "in": {"path": "parallax.compatibility.Widget.id", "values": [1, 2]}
     }
     assert _op(Widget.id.not_in([1, 2])) == {
-        "notIn": {"attr": "parallax.compatibility.Widget.id", "values": [1, 2]}
+        "notIn": {"path": "parallax.compatibility.Widget.id", "values": [1, 2]}
     }
     assert _op(Widget.qty.between(1, 9)) == {
-        "between": {"attr": "parallax.compatibility.Widget.qty", "lower": 1, "upper": 9}
+        "between": {"path": "parallax.compatibility.Widget.qty", "lower": 1, "upper": 9}
     }
-    assert _op(Widget.sku.is_null()) == {"isNull": {"attr": "parallax.compatibility.Widget.sku"}}
+    assert _op(Widget.sku.is_null()) == {"isNull": {"path": "parallax.compatibility.Widget.sku"}}
     assert _op(Widget.sku.is_not_null()) == {
-        "isNotNull": {"attr": "parallax.compatibility.Widget.sku"}
+        "isNotNull": {"path": "parallax.compatibility.Widget.sku"}
     }
     assert _op(Widget.sku.like("A%")) == {
-        "like": {"attr": "parallax.compatibility.Widget.sku", "value": "A%"}
+        "like": {"path": "parallax.compatibility.Widget.sku", "value": "A%"}
     }
     assert _op(Widget.sku.not_like("A%")) == {
-        "notLike": {"attr": "parallax.compatibility.Widget.sku", "value": "A%"}
+        "notLike": {"path": "parallax.compatibility.Widget.sku", "value": "A%"}
     }
     assert _op(Widget.sku.starts_with("A")) == {
-        "startsWith": {"attr": "parallax.compatibility.Widget.sku", "value": "A"}
+        "startsWith": {"path": "parallax.compatibility.Widget.sku", "value": "A"}
     }
     assert _op(Widget.sku.ends_with("Z")) == {
-        "endsWith": {"attr": "parallax.compatibility.Widget.sku", "value": "Z"}
+        "endsWith": {"path": "parallax.compatibility.Widget.sku", "value": "Z"}
     }
     assert _op(Widget.sku.contains("m")) == {
-        "contains": {"attr": "parallax.compatibility.Widget.sku", "value": "m"}
+        "contains": {"path": "parallax.compatibility.Widget.sku", "value": "m"}
     }
     ci = _op(Widget.name.like("a", case_insensitive=True))
     assert ci["like"]["caseInsensitive"] is True  # type: ignore[index] - indexes the JSON-union operand at its known serialized shape
 
 
 @pytest.mark.parametrize("expression", [Widget.id, Widget.name], ids=["primary-key", "string"])
-def test_non_nullable_members_refuse_null_checks(expression: AttributeExpr[Any, Any]) -> None:
+def test_non_nullable_members_refuse_null_checks(expression: ScalarExpr[Any, Any]) -> None:
     with pytest.raises(QueryDefinitionError) as is_null:
         expression.is_null()
     assert is_null.value.code == "query-expression-invalid"
@@ -143,8 +143,8 @@ def test_boolean_combinators_and_grouping() -> None:
     assert conj == {
         "and": {
             "operands": [
-                {"greaterThan": {"attr": "parallax.compatibility.Widget.qty", "value": 1}},
-                {"lessThan": {"attr": "parallax.compatibility.Widget.qty", "value": 9}},
+                {"greaterThan": {"path": "parallax.compatibility.Widget.qty", "value": 1}},
+                {"lessThan": {"path": "parallax.compatibility.Widget.qty", "value": 9}},
             ]
         }
     }
@@ -166,13 +166,13 @@ def test_boolean_combinators_and_grouping() -> None:
                     "operands": [
                         {
                             "greaterThanEquals": {
-                                "attr": "parallax.compatibility.Widget.qty",
+                                "path": "parallax.compatibility.Widget.qty",
                                 "value": 9,
                             }
                         },
                         {
                             "lessThanEquals": {
-                                "attr": "parallax.compatibility.Widget.qty",
+                                "path": "parallax.compatibility.Widget.qty",
                                 "value": 1,
                             }
                         },
@@ -188,14 +188,14 @@ def test_where_conjoins_and_flattens() -> None:
     assert predicate_document(query) == {
         "and": {
             "operands": [
-                {"eq": {"attr": "parallax.compatibility.Widget.active", "value": True}},
-                {"greaterThan": {"attr": "parallax.compatibility.Widget.qty", "value": 1}},
+                {"eq": {"path": "parallax.compatibility.Widget.active", "value": True}},
+                {"greaterThan": {"path": "parallax.compatibility.Widget.qty", "value": 1}},
             ]
         }
     }
-    assert predicate_document(Widget.where(Widget.all)) == {"all": {}}
+    assert predicate_document(Widget.where(Widget.all)) == {"true": {}}
     assert predicate_document(Widget.where(Widget.id == 1)) == {
-        "eq": {"attr": "parallax.compatibility.Widget.id", "value": 1}
+        "eq": {"path": "parallax.compatibility.Widget.id", "value": 1}
     }
 
 
@@ -277,24 +277,6 @@ def test_one_attribute_orders_a_query_once() -> None:
         Widget.where(Widget.all).order_by(Widget.qty.asc()).order_by(Widget.qty.desc())
 
 
-def test_metadata_free_nested_value_object_expression_paths_refuse_typed_operations() -> None:
-    address: AttributeExpr[Any, Any] = AttributeExpr("Customer", "address")
-    operations = (
-        lambda: address.city == "Oslo",
-        lambda: address.geo.country != "US",
-        lambda: address.geo.elevation > 5,
-        lambda: address.geo.elevation >= 5,
-        lambda: address.geo.elevation < 5,
-        lambda: address.geo.elevation <= 5,
-        lambda: address.city.in_(["Oslo", "Berlin"]),
-        lambda: address.city.is_null(),
-        lambda: address.city.is_not_null(),
-    )
-    for operation in operations:
-        with pytest.raises(QueryDefinitionError, match="resolved scalar metadata"):
-            operation()
-
-
 def test_expression_bool_and_scalar_guards() -> None:
     with pytest.raises(TypeError, match="no truth value"):
         bool(Widget.id)
@@ -309,13 +291,6 @@ def test_expression_bool_and_scalar_guards() -> None:
     with pytest.raises(QueryDefinitionError) as not_scalar:
         _ = Widget.id != object()
     assert not_scalar.value.code == "query-expression-invalid"
-    with pytest.raises(AttributeError):
-        _ = Widget.id._private  # dunder/private access is not a value-object hop
-
-
-def test_attribute_expr_ref_and_str() -> None:
-    expr = Widget.name
-    assert str(expr.ref) == "parallax.compatibility.Widget.name"
 
 
 def test_an_object_query_is_an_opaque_value_with_no_truth_and_no_structural_equality() -> None:
@@ -335,7 +310,7 @@ def test_every_clause_answers_a_new_query_and_leaves_its_receiver_alone() -> Non
     base = Widget.where(Widget.all)
     limited = base.limit(3)
     assert limited is not base
-    assert predicate_document(base) == {"all": {}}
+    assert predicate_document(base) == {"true": {}}
 
 
 def test_the_canonical_node_carries_the_query_clauses_and_nothing_else() -> None:

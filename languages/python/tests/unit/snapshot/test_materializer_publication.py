@@ -44,7 +44,8 @@ from parallax.core import (
 )
 from parallax.core.base import PresentDocument
 from parallax.core.deep_fetch import RelationshipViewKey
-from parallax.core.entity import GraphConstructionError, RelationshipPath
+from parallax.core.entity import GraphConstructionError, IncludePath
+from parallax.core.entity._expressions import IncludeTraversal
 from parallax.core.execution._concurrency import CONCURRENCY
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -750,7 +751,7 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
 
 
 def test_every_authoring_route_to_one_narrowed_view_reaches_the_same_value() -> None:
-    # A `RelationshipPath` is a frozen value carrying nothing but its segments,
+    # A `IncludePath` is a frozen value carrying nothing but its segments,
     # its target spelling and its source, so a directly built path and a copy
     # each key the same view as the class-derived one.
     fixture = PageFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.pets", "pets[Dog]"))
@@ -759,11 +760,13 @@ def test_every_authoring_route_to_one_narrowed_view_reaches_the_same_value() -> 
     fixture.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed="pets[Dog]")
     (root,) = fixture.materialize(owner)
     derived = sm.AnimalOwner.pets.narrow(sm.Dog)
-    direct: RelationshipPath[sm.AnimalOwner, sm.Dog] = RelationshipPath(
-        segments=(
-            IncludeSegment(rel="parallax.compatibility.AnimalOwner.pets", narrow_to=("Dog",)),
-        ),
-        target="Dog",
+    direct: IncludePath[sm.AnimalOwner, sm.Dog] = IncludePath(
+        IncludeTraversal(
+            segments=(
+                IncludeSegment(rel="parallax.compatibility.AnimalOwner.pets", narrow_to=("Dog",)),
+            ),
+            target="Dog",
+        )
     )
     for path in (derived, direct):
         reached = cast("tuple[object, ...]", view(root, path))

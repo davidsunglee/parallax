@@ -383,7 +383,7 @@ def tph_abstract_root_read_materializes_typed_per_variant_instances(
 def tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
     db: ScopedDatabase,
 ) -> Snapshot[Any]:
-    return db.find(Animal.where(Animal.narrow(Pet)))
+    return db.find(Animal.where(Animal.is_a(Pet)))
 
 
 def tph_or_across_branches_materializes_typed_per_variant_instances(
@@ -391,8 +391,8 @@ def tph_or_across_branches_materializes_typed_per_variant_instances(
 ) -> Snapshot[Any]:
     return db.find(
         Animal.where(
-            Animal.narrow(Dog, where=Dog.bark_volume > 5)
-            | Animal.narrow(Cat, where=Cat.indoor.is_(True))
+            Animal.is_a(Dog, where=Dog.bark_volume > 5)
+            | Animal.is_a(Cat, where=Cat.indoor.is_(True))
         )
     )
 
@@ -400,7 +400,7 @@ def tph_or_across_branches_materializes_typed_per_variant_instances(
 def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
     db: ScopedDatabase,
 ) -> Snapshot[Any]:
-    return db.find(Document.where(Document.narrow(FinancialDocument)))
+    return db.find(Document.where(Document.is_a(FinancialDocument)))
 
 
 def customer_nested_eq_city_selects_matching_owners(db: ScopedDatabase) -> Snapshot[Any]:
@@ -416,17 +416,17 @@ def customer_nested_is_null_collapses_every_not_present_state(db: ScopedDatabase
 
 
 def customer_to_many_nested_exists_is_a_nonempty_test(db: ScopedDatabase) -> Snapshot[Any]:
-    return db.find(Customer.where(Customer.address.phones.exists()))
+    return db.find(Customer.where(Customer.address.phones.any()))
 
 
 def customer_to_many_nested_not_exists_folds_every_not_present_state(
     db: ScopedDatabase,
 ) -> Snapshot[Any]:
-    return db.find(Customer.where(Customer.address.phones.not_exists()))
+    return db.find(Customer.where(Customer.address.phones.none()))
 
 
 def customer_to_many_any_element_eq_matches_some_element(db: ScopedDatabase) -> Snapshot[Any]:
-    return db.find(Customer.where(Customer.address.phones.type == "home"))
+    return db.find(Customer.where(Customer.address.phones.any(CustomerPhone.type == "home")))
 
 
 def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
@@ -434,8 +434,8 @@ def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
 ) -> Snapshot[Any]:
     return db.find(
         Customer.where(
-            Customer.address.phones.exists(
-                CustomerPhone.type == "home", CustomerPhone.number == "555-9999"
+            Customer.address.phones.any(
+                (CustomerPhone.type == "home") & (CustomerPhone.number == "555-9999")
             )
         )
     )

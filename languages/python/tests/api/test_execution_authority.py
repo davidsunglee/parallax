@@ -38,7 +38,7 @@ def _target_node() -> dict[str, object]:
     target = "parallax.compatibility.Account"
     return {
         "target": target,
-        "predicate": {"eq": {"attr": f"{target}.id", "value": TARGET_ID}},
+        "predicate": {"eq": {"path": f"{target}.id", "value": TARGET_ID}},
     }
 
 

@@ -6,7 +6,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Position
     predicate:
-      all: {}
+      "true": {}
     temporal:
       transaction-time:
         asOf: latest

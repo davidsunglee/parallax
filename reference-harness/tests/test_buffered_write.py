@@ -216,7 +216,7 @@ def test_a_materializing_predicate_submission_is_refused_outside_state_grading()
             "entity": "Account",
             "rows": [{"id": 9, "owner": "N", "balance": 5.0}],
         },
-        {"mutation": "delete", "target": {"entity": "Account", "predicate": {"all": {}}}},
+        {"mutation": "delete", "target": {"entity": "Account", "predicate": {"true": {}}}},
     ]
     errors: list[str] = []
     _validate_buffered_write(probe, _ACCOUNT, _OP, "probe", errors)
@@ -245,7 +245,7 @@ _BARRIER = {
     "mutation": "amend",
     "target": {
         "entity": "OrderItem",
-        "predicate": {"lessThan": {"attr": "OrderItem.quantity", "value": 3}},
+        "predicate": {"lessThan": {"path": "OrderItem.quantity", "value": 3}},
     },
     "assignments": [{"attr": "OrderItem.sku", "value": "Z"}],
 }
@@ -263,7 +263,7 @@ def test_a_golden_graded_buffer_is_keyed_and_a_state_graded_one_carries_barriers
     assert next(validator.iter_errors(state), None) is None
 
 
-_STATE_FIND = {"uow": "g", "objectQuery": {"target": "OrderItem", "predicate": {"all": {}}}}
+_STATE_FIND = {"uow": "g", "objectQuery": {"target": "OrderItem", "predicate": {"true": {}}}}
 _STATE_INSERT = {
     "mutation": "insert",
     "entity": "OrderItem",
@@ -274,7 +274,7 @@ _STATE_GRAPH_FIND = {
     "uow": "g",
     "objectQuery": {
         "target": "parallax.compatibility.Order",
-        "predicate": {"all": {}},
+        "predicate": {"true": {}},
         "includes": [{"segments": [{"rel": "parallax.compatibility.Order.items"}]}],
     },
     "expectGraph": {"OrderItem": []},

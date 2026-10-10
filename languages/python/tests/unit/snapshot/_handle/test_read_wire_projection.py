@@ -31,7 +31,7 @@ from parallax.core import (
     ConcreteSubtype,
     DomainModel,
     Entity,
-    RelationshipPath,
+    IncludePath,
     TablePerHierarchy,
     ValueObject,
     attr,
@@ -40,6 +40,7 @@ from parallax.core import (
     deep_fetch as deep_fetch_module,
 )
 from parallax.core.base import INFINITY
+from parallax.core.entity._expressions import IncludeTraversal
 from parallax.core.entity._graph_construction import require_correspondence
 from parallax.core.execution import ServingModel, prepare_model
 from parallax.core.execution import _preflight as preflight_module
@@ -474,9 +475,11 @@ def test_explicit_position_is_strict_and_admits_the_requested_concrete() -> None
         snapshot.wire(customer.locations[0], at=vo.Customer.depots)
     assert unrequested.value.code == "snapshot-wire-at-unrequested"
 
-    unknown = RelationshipPath[vo.Customer, Entity](
-        segments=(IncludeSegment(rel="parallax.compatibility.Customer.unknown"),),
-        target="parallax.compatibility.Entity",
+    unknown = IncludePath[vo.Customer, Entity](
+        IncludeTraversal(
+            segments=(IncludeSegment(rel="parallax.compatibility.Customer.unknown"),),
+            target="parallax.compatibility.Entity",
+        )
     )
     with pytest.raises(SnapshotInspectionError) as invalid_path:
         snapshot.wire(customer, at=unknown)
@@ -490,7 +493,7 @@ def test_explicit_position_is_strict_and_admits_the_requested_concrete() -> None
 
 def test_wire_envelopes_are_ineligible_even_when_empty() -> None:
     root, db = _database(Read(rows=[]))
-    wire = db.wire.find(deserialize_query({"target": "Customer", "predicate": {"all": {}}}))
+    wire = db.wire.find(deserialize_query({"target": "Customer", "predicate": {"true": {}}}))
     root.close()
 
     with pytest.raises(SnapshotInspectionError) as refusal:

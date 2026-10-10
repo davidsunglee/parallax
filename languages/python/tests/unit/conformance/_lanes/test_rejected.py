@@ -50,7 +50,7 @@ def test_run_rejected_case_query_dispatch_classifies_the_rule() -> None:
 
 def test_run_rejected_case_query_dispatch_over_a_value_object_model() -> None:
     case = _load_case("m-value-object-034")
-    assert rejected.run_rejected_case(case) == "nested-path-first-segment-not-value-object"
+    assert rejected.run_rejected_case(case) == "path-unknown-member"
 
 
 def test_run_rejected_case_model_dispatch_reuses_the_phase_3_validator() -> None:
@@ -204,7 +204,7 @@ def test_a_default_target_over_a_multi_family_model_is_refused() -> None:
 
 
 def test_run_rejected_case_raises_when_the_query_is_unexpectedly_accepted() -> None:
-    valid: dict[str, object] = {"objectQuery": {"target": "Animal", "predicate": {"all": {}}}}
+    valid: dict[str, object] = {"objectQuery": {"target": "Animal", "predicate": {"true": {}}}}
     with pytest.raises(EngineError, match="accepted an Object Query"):
         rejected.run_rejected_case(_synthetic_rejected(valid))
 
@@ -363,7 +363,7 @@ def test_run_rejected_case_predicate_write_dispatch_classifies_the_rule() -> Non
                 "mutation": "amend",
                 "target": {
                     "entity": "parallax.compatibility.CollectionTwinItem",
-                    "predicate": {"all": {}},
+                    "predicate": {"true": {}},
                 },
                 "assignments": [
                     {"attr": "parallax.compatibility.CollectionTwinItem.counts", "value": [5, "6"]}

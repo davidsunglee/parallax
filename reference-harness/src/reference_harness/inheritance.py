@@ -41,8 +41,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from .naming import default_column_name
-from .query_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
-from .references import entity_spelling
 from .value_object_resolve import RejectionError
 
 if TYPE_CHECKING:
@@ -456,8 +454,8 @@ class Family:
         :func:`applicable_relationship_target` instead. Returns ``None`` when the
         class or the declaration is absent: a caller resolving a whole ``rel``
         reference has nowhere else to look and reads that as a non-polymorphic
-        target (:func:`resolve_hop_effective_set`, :func:`_walk_active_position`,
-        the read oracle's own hop resolution), while :func:`applicable_relationship_target`
+        target (:func:`resolve_hop_effective_set`, the read oracle's own hop
+        resolution), while :func:`applicable_relationship_target`
         reads it as "not declared on THIS class" and keeps walking the ancestry.
         """
         if not isinstance(rel_ref, str) or "." not in rel_ref:
@@ -1170,16 +1168,6 @@ def _check_member_reference(family: Family, reference: Any) -> None:
         _check_reference_entity_name(family, reference, reference.rpartition(".")[0])
 
 
-def _check_path_reference(family: Family, reference: Any) -> None:
-    """Check the entity spelling of a nested value-object ``path``, whose class
-    part is everything up to its LAST capitalized segment — every trailing
-    segment is a declared value-object member rather than one member name. An
-    element-relative path names no entity and is checked by its own resolver."""
-    named = entity_spelling(reference)
-    if named is not None:
-        _check_reference_entity_name(family, reference, named)
-
-
 def resolve_subtype_selection(family: Family, to_list: Any) -> list[str]:
     """Resolve one Subtype Selection after duplicate and overlap checks."""
     names = [name for name in to_list if isinstance(name, str)] if isinstance(to_list, list) else []
@@ -1281,14 +1269,10 @@ def validate_query_inheritance(entity_defs: list[dict[str, Any]], query: Any) ->
 
     The query's own ``target`` is the polymorphic position it starts from. Result
     narrowing resolves inside it and moves the position every Sort Key is measured
-    at; the predicate is walked at that narrowed position, since narrowing decides
-    which rows the whole query addresses. Each Include Path's source guard resolves
-    at the UNNARROWED queried position, because narrowing decides which objects come
-    back rather than which sources a path may start from.
-
-    Each ``narrow``'s subset check binds to the ACTIVE position threaded and
-    re-narrowed at every hop, so the shared selection cannot broaden beyond the
-    position supplied by context.
+    at. Each Include Path's source guard resolves at the UNNARROWED queried
+    position, because narrowing decides which objects come back rather than which
+    sources a path may start from. The predicate's positional rules belong to the
+    predicate walk (:mod:`predicate_validate`), at the narrowed position.
     """
     family = Family(entity_defs)
     if not isinstance(query, dict):
@@ -1303,7 +1287,6 @@ def validate_query_inheritance(entity_defs: list[dict[str, Any]], query: Any) ->
         if isinstance(narrow_to, list)
         else queried
     )
-    _walk_active_position(family, result, query.get("predicate"))
     for key in query.get("orderBy", []) or []:
         if isinstance(key, dict):
             _check_attribute_position(family, result, key.get("attr"))
@@ -1333,65 +1316,6 @@ def _check_includes(family: Family, queried: list[str], paths: Any) -> None:
                 for name in narrow_to:
                     _check_reference_entity_name(family, name, name)
                 resolve_hop_effective_set(family, rel, narrow_to)
-
-
-def _walk_active_position(
-    family: Family,
-    current_set: list[str],
-    node: Any,
-    outside_rule: str = NARROW_OUTSIDE_POSITION,
-) -> None:
-    """Walk *node*, judging every positional rule against the active position.
-
-    The position is *current_set*, the active polymorphic position's effective
-    concrete set, threaded down the whole predicate tree and re-narrowed per hop.
-    Two rules are asked of it — a ``narrow``'s subset check and every attribute
-    reference's applicability — and the second runs for a standalone descriptor
-    too, so this walk is not narrow-specific.
-
-    *outside_rule* is the rejected rule a broadening narrow raises: at the queried
-    (top-level) position a broadening narrow is ``narrow-outside-position``; inside a
-    navigation filter's ``op`` (where the active position is the RELATIONSHIP TARGET)
-    it is ``narrow-outside-relationship-target`` (resolved Q10).
-    """
-    if not isinstance(node, dict) or len(node) != 1:
-        return
-    tag, body = next(iter(node.items()))
-    if tag in ("navigate", "exists", "notExists"):
-        # A navigation filter re-roots the active polymorphic position at the
-        # relationship TARGET; a narrow in its `op` narrows that position, and an
-        # escaping selection there is
-        # `narrow-outside-relationship-target`. A non-polymorphic (or unresolved)
-        # target contributes its own singleton set.
-        _check_member_reference(family, body.get("rel"))
-        op = body.get("op")
-        if op is None:
-            return
-        target = family.relationship_target(body.get("rel"))
-        target_set = family.effective_concrete_set(target) if target is not None else []
-        _walk_active_position(family, target_set, op, NARROW_OUTSIDE_RELATIONSHIP_TARGET)
-        return
-    if tag == "narrow":
-        to_list = body.get("to", []) or []
-        to_set = resolve_clamped_narrow(family, current_set, to_list, outside_rule)
-        _walk_active_position(family, to_set, body.get("operand"), outside_rule)
-    elif tag in ("and", "or"):
-        for operand in body.get("operands", []) or []:
-            _walk_active_position(family, current_set, operand, outside_rule)
-    elif tag in ("not", "group"):
-        _walk_active_position(family, current_set, body.get("operand"), outside_rule)
-    elif tag in ATTRIBUTE_REFERENCE_TAGS:
-        _check_attribute_position(family, current_set, body.get("attr"))
-    elif tag in PATH_REFERENCE_TAGS:
-        # A nested value-object `path` spells its entity as the FIRST segment
-        # rather than the part before the last dot, because every trailing
-        # segment is a declared value-object member. Its resolution is checked
-        # here so an ambiguous entity spelling is refused as such, rather than
-        # reaching the value-object resolver and being reported as an unknown
-        # member of a path that names no entity at all. The path's own
-        # applicability to the active position stays that resolver's question.
-        _check_path_reference(family, body.get("path"))
-    # all / none carry no reference to a queried position here.
 
 
 def _check_attribute_position(family: Family, current_set: list[str], attr_ref: Any) -> None:

@@ -40,7 +40,7 @@ when:
         target: parallax.compatibility.WriteTwinItem
         predicate:
           eq:
-            attr: parallax.compatibility.WriteTwinItem.id
+            path: parallax.compatibility.WriteTwinItem.id
             value: 1
       roundTrips: 1
       note: the dependent find observes the replaced occurrences and the untouched `label`

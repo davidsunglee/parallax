@@ -14,14 +14,14 @@ when:
                 - parallax.compatibility.CardPayment
               operand:
                 eq:
-                  attr: parallax.compatibility.CardPayment.detail
+                  path: parallax.compatibility.CardPayment.detail
                   value: visa-4242
           - narrow:
               to:
                 - parallax.compatibility.CashPayment
               operand:
                 greaterThan:
-                  attr: parallax.compatibility.CashPayment.detail
+                  path: parallax.compatibility.CashPayment.detail
                   value: "10.00"
 then:
   statements:

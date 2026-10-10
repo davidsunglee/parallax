@@ -377,7 +377,7 @@ def test_a_wire_source_replacement_without_data_writes_what_the_node_published()
     assert _calls(port)[-1] == WriteCall(_GATED_FULL, ("Ada", Decimal("100.00"), 4, 1, 3))
 
 
-_ONE = {"eq": {"attr": "Account.id", "value": 1}}
+_ONE = {"eq": {"path": "Account.id", "value": 1}}
 
 
 @pytest.mark.parametrize(

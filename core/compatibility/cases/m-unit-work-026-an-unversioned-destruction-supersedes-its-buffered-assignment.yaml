@@ -26,7 +26,7 @@ when:
         target: parallax.compatibility.OrderItem
         predicate:
           eq:
-            attr: parallax.compatibility.OrderItem.id
+            path: parallax.compatibility.OrderItem.id
             value: 21
       roundTrips: 1
       note: item 21 is gone, and the read locks it because an unversioned target resolves to Locking

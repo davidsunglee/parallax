@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import assert_never, cast
 
 from parallax.core import inheritance
@@ -19,6 +19,7 @@ from parallax.core.metamodel import (
     RelationshipJoin,
     ReverseRelationshipDeclaration,
     ValueObjectAttributeMetadata,
+    ValueObjectMetadata,
     entity_by_name,
     split_reference,
 )
@@ -28,53 +29,41 @@ from parallax.core.predicate._interpretation import (
     COMPARE,
     MEMBER_OF,
     NULL_TEST,
-    AttributeSubject,
     Compare,
     InRange,
     Match,
     MemberOf,
     NullTest,
     OperandAdmission,
-    OperationSubject,
-    PathSubject,
     PredicateInterpretation,
     ScalarOperator,
 )
 from parallax.core.predicate._nodes import (
-    All,
     And,
-    Between,
     Comparison,
-    ComparisonOp,
-    Exists,
+    CurrentScalarElement,
+    FalseNode,
     Group,
     Membership,
-    MembershipOp,
     Narrow,
-    Navigate,
-    NestedComparison,
-    NestedComparisonOp,
-    NestedExists,
-    NestedMembership,
-    NestedMembershipOp,
-    NestedNotExists,
-    NestedNullCheck,
-    NestedNullOp,
-    NestedRange,
-    NestedStringMatch,
-    NestedStringOp,
-    NoneOp,
     Not,
-    NotExists,
     NullCheck,
-    NullOp,
     Or,
     PredicateNode,
+    Presence,
+    Quantifier,
+    QuantifierKind,
     QueryDefinitionError,
+    Range,
+    ScalarSubject,
     StringMatch,
-    StringOp,
+    TrueNode,
 )
 from parallax.core.predicate._resolved import (
+    CURRENT,
+    ELEMENT,
+    ObjectPosition,
+    RelatedObject,
     ResolvedAnd,
     ResolvedComparison,
     ResolvedConstant,
@@ -86,57 +75,40 @@ from parallax.core.predicate._resolved import (
     ResolvedOr,
     ResolvedPredicate,
     ResolvedPredicateMember,
+    ResolvedPresence,
     ResolvedQuantifier,
     ResolvedRange,
-    ResolvedSemiJoin,
+    ResolvedRelationship,
     ResolvedStringMatch,
+    ScalarCollection,
+    SubjectPosition,
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire
 
 __all__ = [
+    "EntityFrame",
     "ModelRejectedError",
+    "ObjectElementFrame",
     "PositionScope",
+    "PredicateFrame",
+    "ScalarElementFrame",
     "adopted_operands",
     "canonical_interpretation",
     "check_attribute_reference",
+    "check_receiver",
     "effective_set",
-    "illegal_element_predicate",
-    "narrowed",
-    "relationship_semi_join",
     "relationship_target",
     "require_single_scalar",
-    "resolve_element_operation",
+    "resolve_narrow",
     "resolve_operation",
+    "resolve_presence",
+    "resolve_quantifier",
     "resolve_subtype_selection",
+    "root_frame",
     "root_position",
     "validate_narrow",
     "validate_predicate",
-    "value_object_scope",
 ]
-
-_NESTED_COMPARISONS: dict[NestedComparisonOp, ComparisonOp] = {
-    "nestedEq": "eq",
-    "nestedNotEq": "notEq",
-    "nestedGt": "greaterThan",
-    "nestedGte": "greaterThanEquals",
-    "nestedLt": "lessThan",
-    "nestedLte": "lessThanEquals",
-}
-_NESTED_MEMBERSHIPS: dict[NestedMembershipOp, MembershipOp] = {
-    "nestedIn": "in",
-    "nestedNotIn": "notIn",
-}
-_NESTED_STRING_MATCHES: dict[NestedStringOp, StringOp] = {
-    "nestedLike": "like",
-    "nestedNotLike": "notLike",
-    "nestedStartsWith": "startsWith",
-    "nestedEndsWith": "endsWith",
-    "nestedContains": "contains",
-}
-_NESTED_NULL_CHECKS: dict[NestedNullOp, NullOp] = {
-    "nestedIsNull": "isNull",
-    "nestedIsNotNull": "isNotNull",
-}
 
 
 class ModelRejectedError(ValueError):
@@ -155,6 +127,34 @@ class PositionScope:
     relationship_target: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class EntityFrame:
+    """An Entity position: the queried one, which spells its paths
+    Entity-qualified, or one a scope binds, which spells them relative."""
+
+    entity: EntityMetadata
+    position: PositionScope
+    bound: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectElementFrame:
+    """The element a ``many`` Value Object quantifier binds."""
+
+    occurrence: OccurrenceMetadata
+
+
+@dataclass(frozen=True, slots=True)
+class ScalarElementFrame:
+    """The scalar a quantifier over the scalar collection ``member`` binds."""
+
+    member: ResolvedPredicateMember
+
+
+type PredicateFrame = EntityFrame | ObjectElementFrame | ScalarElementFrame
+"""The object or scalar an operation's subject is read from."""
+
+
 def validate_predicate(
     root: EntityMetadata,
     op: PredicateNode,
@@ -166,7 +166,7 @@ def validate_predicate(
     scope = (
         position if position is not None else PositionScope(effective=effective_set(model, root))
     )
-    return _walk(op, model, scope)
+    return _walk(op, model, root_frame(root, scope))
 
 
 def canonical_interpretation(op: PredicateNode, model: Metamodel) -> PredicateInterpretation:
@@ -183,130 +183,222 @@ def root_position(model: Metamodel, root: EntityMetadata) -> PositionScope:
     return PositionScope(effective=effective_set(model, root))
 
 
-def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> ResolvedPredicate:
+def root_frame(root: EntityMetadata, position: PositionScope) -> EntityFrame:
+    """The frame a predicate starts from: the queried ``root`` at ``position``."""
+    return EntityFrame(root, position, bound=False)
+
+
+def _walk(op: PredicateNode, model: Metamodel, frame: PredicateFrame) -> ResolvedPredicate:
     match op:
-        case All() | NoneOp():
-            return ResolvedConstant(isinstance(op, All))
-        case Comparison() | StringMatch() | Membership() | NullCheck() | Between():
-            return resolve_operation(
-                *_attribute_operation(op), _decoded_operands, model=model, scope=scope
-            )
-        case (
-            NestedComparison()
-            | NestedRange()
-            | NestedMembership()
-            | NestedStringMatch()
-            | NestedNullCheck()
-        ):
-            return resolve_operation(
-                PathSubject(op.path),
-                *_nested_operation(op),
-                _decoded_operands,
-                model=model,
-                scope=scope,
-            )
-        case NestedExists(path=path, where=where) | NestedNotExists(path=path, where=where):
-            container = value_object_scope(path, model)
-            return ResolvedQuantifier(
-                "none" if isinstance(op, NestedNotExists) else "any",
-                container,
-                None if where is None else _elaborate_element_predicate(where, container),
-            )
+        case TrueNode() | FalseNode():
+            return ResolvedConstant(isinstance(op, TrueNode))
+        case Comparison() | Range() | Membership() | StringMatch() | NullCheck():
+            return resolve_operation(*_operation(op), _decoded_operands, model=model, frame=frame)
         case And(operands=operands) | Or(operands=operands):
-            children = tuple(_walk(operand, model, scope) for operand in operands)
+            children = tuple(_walk(operand, model, frame) for operand in operands)
             return ResolvedAnd(children) if isinstance(op, And) else ResolvedOr(children)
         case Not(operand=operand) | Group(operand=operand):
-            child = _walk(operand, model, scope)
+            child = _walk(operand, model, frame)
             return ResolvedNot(child) if isinstance(op, Not) else ResolvedGroup(child)
-        case Narrow(to=to, operand=operand):
-            return narrowed(to, scope, model, lambda inner: _walk(operand, model, inner))
-        case (
-            Navigate(rel=rel, op=interior)
-            | Exists(rel=rel, op=interior)
-            | NotExists(rel=rel, op=interior)
-        ):
-            return relationship_semi_join(
-                rel,
-                negated=isinstance(op, NotExists),
+        case Quantifier(kind=kind, path=path, where=where):
+            return resolve_quantifier(
+                kind,
+                path,
                 model=model,
-                interior=None if interior is None else lambda hop: _walk(interior, model, hop),
+                frame=frame,
+                where=None if where is None else lambda inner: _walk(where, model, inner),
+            )
+        case Presence(op=tag, path=path):
+            return resolve_presence(tag == "notExists", path, model=model, frame=frame)
+        case Narrow(to=to, operand=operand, path=path):
+            return resolve_narrow(
+                to,
+                path,
+                model=model,
+                frame=frame,
+                operand=(
+                    None
+                    if isinstance(operand, TrueNode)
+                    else lambda inner: _walk(operand, model, inner)
+                ),
             )
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)
 
 
-def _attribute_operation(
-    op: Comparison | StringMatch | Membership | NullCheck | Between,
-) -> tuple[AttributeSubject, ScalarOperator, tuple[object, ...]]:
+def _operation(
+    op: Comparison | Range | Membership | StringMatch | NullCheck,
+) -> tuple[ScalarSubject, ScalarOperator, tuple[object, ...]]:
     match op:
-        case Comparison(op=tag, attr=attr, value=value):
-            return AttributeSubject(attr), COMPARE[tag], (value,)
-        case StringMatch(op=tag, attr=attr, value=value, case_insensitive=folded):
-            return AttributeSubject(attr), Match(tag, bool(folded)), (value,)
-        case Membership(op=tag, attr=attr, values=values):
-            return AttributeSubject(attr), MEMBER_OF[tag], values
-        case NullCheck(op=tag, attr=attr):
-            return AttributeSubject(attr), NULL_TEST[tag], ()
-        case Between(attr=attr, lower=lower, upper=upper):
-            return AttributeSubject(attr), BETWEEN, (lower, upper)
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(op)
-
-
-def _nested_operation(
-    op: NestedComparison | NestedRange | NestedMembership | NestedStringMatch | NestedNullCheck,
-) -> tuple[ScalarOperator, tuple[object, ...]]:
-    match op:
-        case NestedComparison(op=tag, value=value):
-            return COMPARE[_NESTED_COMPARISONS[tag]], (value,)
-        case NestedRange(lower=lower, upper=upper):
-            return BETWEEN, (lower, upper)
-        case NestedMembership(op=tag, values=values):
-            return MEMBER_OF[_NESTED_MEMBERSHIPS[tag]], values
-        case NestedStringMatch(op=tag, value=value, case_insensitive=folded):
-            return Match(_NESTED_STRING_MATCHES[tag], bool(folded)), (value,)
-        case NestedNullCheck(op=tag):
-            return NULL_TEST[_NESTED_NULL_CHECKS[tag]], ()
+        case Comparison(op=tag, subject=subject, value=value):
+            return subject, COMPARE[tag], (value,)
+        case Range(subject=subject, lower=lower, upper=upper):
+            return subject, BETWEEN, (lower, upper)
+        case Membership(op=tag, subject=subject, values=values):
+            return subject, MEMBER_OF[tag], values
+        case StringMatch(op=tag, subject=subject, value=value, case_insensitive=folded):
+            return subject, Match(tag, bool(folded)), (value,)
+        case NullCheck(op=tag, subject=subject):
+            return subject, NULL_TEST[tag], ()
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)
 
 
 def resolve_operation(
-    subject: OperationSubject,
+    subject: ScalarSubject,
     operator: ScalarOperator,
     operands: tuple[object, ...],
     admit: OperandAdmission,
     *,
     model: Metamodel,
-    scope: PositionScope,
+    frame: PredicateFrame,
 ) -> ResolvedPredicate:
-    """One scalar operation at an Entity position, its subject resolved against
-    ``model`` and its operands made managed by ``admit``.
+    """One scalar operation in ``frame``, its subject resolved against ``model``
+    and its operands made managed by ``admit``.
 
-    An Attribute must be applicable at ``scope``. A Value Object leaf path is
-    read from the Entity through its occurrences; through a ``many`` occurrence
-    the operation means some element satisfies it, so it binds the first such
-    element the path crosses.
+    A field is read through its path from the frame's object; the current
+    scalar element only inside the scalar-collection quantifier binding it.
     """
-    if isinstance(subject, AttributeSubject):
-        member = _require_attribute(subject.reference, model, scope)
-        return _judged(subject.reference, member, operator, operands, admit, nested=False)
-    leaf, crossed = _resolve_nested_leaf(subject.path, model)
-    operation = _judged(subject.path, leaf, operator, operands, admit, nested=True)
-    return operation if crossed is None else ResolvedQuantifier("any", crossed, operation)
+    if isinstance(subject, CurrentScalarElement):
+        if not isinstance(frame, ScalarElementFrame):
+            raise _outside_scope(
+                "an operation without a path reads the element a scalar-collection "
+                "quantifier binds, and no such quantifier encloses it"
+            )
+        member = frame.member
+        return _judged(
+            f"{_member_spelling(member)} element", member, operator, operands, admit, ELEMENT
+        )
+    terminal = _resolve_path(subject.path, frame, model)
+    if not isinstance(terminal, _ScalarTerminal):
+        raise ModelRejectedError(
+            "path-target-kind-mismatch",
+            f"{subject.path!r} ends on {terminal.kind}, not a scalar field",
+        )
+    member = terminal.member
+    if not isinstance(operator, NullTest):
+        require_single_scalar(subject.path, member)
+    return _judged(subject.path, member, operator, operands, admit, terminal.position)
 
 
-def resolve_element_operation(
+def resolve_quantifier(
+    kind: QuantifierKind,
     path: str,
-    operator: ScalarOperator,
-    operands: tuple[object, ...],
-    admit: OperandAdmission,
-    element: OccurrenceMetadata,
-) -> ResolvedPredicate:
-    """One scalar operation over the leaf ``path`` names relative to the bound
-    ``element`` of an enclosing Value Object scope."""
-    leaf = _resolve_element_leaf(element, path)
-    return _judged(path, leaf, operator, operands, admit, nested=True)
+    *,
+    model: Metamodel,
+    frame: PredicateFrame,
+    where: Callable[[PredicateFrame], ResolvedPredicate] | None,
+) -> ResolvedQuantifier:
+    """A quantifier over the collection ``path`` names in ``frame``, its
+    ``where`` resolved in the frame of the element it binds."""
+    terminal = _resolve_path(path, frame, model)
+    inner: PredicateFrame
+    match terminal:
+        case _ScalarTerminal(member=member) if member.multiplicity is Multiplicity.MANY:
+            collection: ScalarCollection | OccurrenceMetadata | ResolvedRelationship = (
+                ScalarCollection(member)
+            )
+            inner = ScalarElementFrame(member)
+        case _OccurrenceTerminal(occurrence=occurrence) if (
+            occurrence.multiplicity is Multiplicity.MANY
+        ):
+            collection = occurrence
+            inner = ObjectElementFrame(occurrence)
+        case _RelationshipTerminal(relationship=relationship, many=True):
+            collection = relationship
+            target = relationship.target
+            inner = EntityFrame(
+                target,
+                PositionScope(
+                    effective=effective_set(model, target),
+                    relationship_target=target.identity.canonical,
+                ),
+                bound=True,
+            )
+        case _:
+            raise ModelRejectedError(
+                "path-target-kind-mismatch",
+                f"{path!r} names {terminal.kind}, which a quantifier does not range over; "
+                "quantify a collection, or test a single object with exists/notExists",
+            )
+    return ResolvedQuantifier(
+        kind, collection, None if where is None else where(inner), terminal.position
+    )
+
+
+def resolve_presence(
+    negated: bool, path: str, *, model: Metamodel, frame: PredicateFrame
+) -> ResolvedPresence:
+    """Whether the single object ``path`` names in ``frame`` is present."""
+    terminal = _resolve_path(path, frame, model)
+    match terminal:
+        case _OccurrenceTerminal(occurrence=occurrence) if (
+            occurrence.multiplicity is Multiplicity.ONE
+        ):
+            return ResolvedPresence(negated, occurrence, terminal.position)
+        case _RelationshipTerminal(relationship=relationship, many=False):
+            return ResolvedPresence(negated, relationship, terminal.position)
+        case _:
+            raise ModelRejectedError(
+                "path-target-kind-mismatch",
+                f"{path!r} names {terminal.kind}, which has no presence of its own; "
+                "exists/notExists test a single object, any/none a collection",
+            )
+
+
+def resolve_narrow(
+    to: Sequence[str],
+    path: str | None,
+    *,
+    model: Metamodel,
+    frame: PredicateFrame,
+    operand: Callable[[PredicateFrame], ResolvedPredicate] | None,
+) -> ResolvedNarrow:
+    """The narrowing of the current Entity, or of the to-one target ``path``
+    reaches from it, to the Subtype Selection ``to``; ``operand`` is resolved at
+    the narrowed target, and its absence tests membership alone."""
+    if path is None:
+        if not isinstance(frame, EntityFrame):
+            raise _outside_scope("narrow addresses an Entity position, not a bound element")
+        scope = validate_narrow(tuple(to), frame.position, model)
+        inner = replace(frame, position=scope)
+        return ResolvedNarrow(
+            _position_identities(model, scope), None if operand is None else operand(inner)
+        )
+    terminal = _resolve_path(path, frame, model)
+    if not isinstance(terminal, _RelationshipTerminal) or terminal.many:
+        raise ModelRejectedError(
+            "path-target-kind-mismatch",
+            f"{path!r} names {terminal.kind}; a path-targeted narrow reaches a single "
+            "related Entity",
+        )
+    relationship = terminal.relationship
+    target = relationship.target
+    scope = validate_narrow(
+        tuple(to),
+        PositionScope(
+            effective=effective_set(model, target), relationship_target=target.identity.canonical
+        ),
+        model,
+    )
+    return ResolvedNarrow(
+        _position_identities(model, scope),
+        None if operand is None else operand(EntityFrame(target, scope, bound=True)),
+        RelatedObject(terminal.position, relationship),
+    )
+
+
+def check_receiver(receiver: EntityIdentity, frame: PredicateFrame, model: Metamodel) -> None:
+    """Refuse a class-scoped subject whose receiver Entity is not applicable at
+    ``frame``'s Entity position, which is the only position it binds against."""
+    if not isinstance(frame, EntityFrame):
+        raise _outside_scope(
+            f"{receiver.canonical} is an Entity, but the current scope is a bound element"
+        )
+    entity = model.entity(receiver)
+    if entity is None:
+        raise ValueError(f"{receiver.canonical} names no declared entity")
+    _check_attribute_position(model, entity, frame.position)
 
 
 def _judged(
@@ -315,31 +407,24 @@ def _judged(
     operator: ScalarOperator,
     operands: tuple[object, ...],
     admit: OperandAdmission,
-    *,
-    nested: bool,
+    position: SubjectPosition,
 ) -> ResolvedPredicate:
     match operator:
         case Compare(op=tag):
             (managed,) = admit(subject, member, operands)
-            return ResolvedComparison(tag, member, managed)
+            return ResolvedComparison(tag, member, managed, position=position)
         case InRange():
-            return _resolved_range(subject, member, admit(subject, member, operands))
+            lower, upper = _ordered_bounds(subject, admit(subject, member, operands))
+            return ResolvedRange(member, lower, upper, position)
         case MemberOf(op=tag):
-            return ResolvedMembership(tag, member, admit(subject, member, operands))
+            return ResolvedMembership(tag, member, admit(subject, member, operands), position)
         case Match(op=tag, case_insensitive=folded):
-            if nested:
-                _check_string_member(subject, member)
-            elif not isinstance(member.type, String):
-                raise ModelRejectedError(
-                    "string-predicate-non-string-member",
-                    f"{subject!r}: a string predicate requires a string member",
-                )
-            require_single_scalar(subject, member)
+            _check_string_member(subject, member)
             (pattern,) = operands
-            return ResolvedStringMatch(tag, member, cast("str", pattern), folded)
+            return ResolvedStringMatch(tag, member, cast("str", pattern), folded, position)
         case NullTest(op=tag):
             _require_nullable_null_check(subject, member.nullable)
-            return ResolvedNullCheck(tag, member)
+            return ResolvedNullCheck(tag, member, cast("ObjectPosition", position))
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(operator)
 
@@ -356,7 +441,6 @@ def adopted_operands(prepared_type: NeutralType) -> OperandAdmission:
     def admit(
         subject: str, member: ResolvedPredicateMember, values: tuple[object, ...]
     ) -> tuple[ManagedValue, ...]:
-        require_single_scalar(subject, member)
         if member.type != prepared_type:
             raise QueryDefinitionError(
                 code="query-expression-invalid",
@@ -370,73 +454,315 @@ def adopted_operands(prepared_type: NeutralType) -> OperandAdmission:
     return admit
 
 
-def illegal_element_predicate(described: object) -> ValueError:
-    """The refusal of ``described`` inside a Value Object element scope, which
-    admits only element-relative leaf operations and their Boolean composition."""
-    return ValueError(
-        f"{described!r} is not a legal nestedExists/nestedNotExists element predicate "
-        "(m-predicate elementPredicate)"
+def _decoded_operands(
+    subject: str, member: ResolvedPredicateMember, values: Sequence[object]
+) -> tuple[ManagedValue, ...]:
+    """``values`` decoded once against ``member``'s declared scalar type."""
+    decoded: list[ManagedValue] = []
+    for value in values:
+        try:
+            decoded.append(decode_wire(member.type, cast("WireValue", value)))
+        except WireDecodingError as error:
+            raise ModelRejectedError(
+                f"neutral-literal-{error.reason}",
+                f"{subject!r}: {error}",
+            ) from error
+    return tuple(decoded)
+
+
+def _ordered_bounds(
+    subject: str, bounds: tuple[ManagedValue, ...]
+) -> tuple[ManagedValue, ManagedValue]:
+    managed_lower, managed_upper = bounds
+    try:
+        inverted = cast("object", managed_lower) > cast("object", managed_upper)  # type: ignore[operator]
+    except TypeError:  # pragma: no cover - one declared type yields comparable managed members
+        inverted = False
+    if inverted:
+        raise ModelRejectedError(
+            "between-bounds-inverted",
+            f"{subject!r}: decoded lower bound {managed_lower!r} is greater than decoded upper "
+            f"bound {managed_upper!r}, so the range is empty",
+        )
+    return managed_lower, managed_upper
+
+
+def require_single_scalar(
+    subject: str, member: AttributeMetadata | ValueObjectAttributeMetadata
+) -> None:
+    """Refuse a scalar collection where one scalar value is required.
+
+    A collection is neither compared, matched, ranged, nor ordered as a whole;
+    its elements are reached only through a quantifier over it.
+    """
+    if member.multiplicity is Multiplicity.MANY:
+        raise ModelRejectedError(
+            "scalar-collection-unquantified",
+            f"{subject!r} names a scalar collection, which is not one scalar value; "
+            "quantify it with any/all/none",
+        )
+
+
+def _member_spelling(member: ResolvedPredicateMember) -> str:
+    if isinstance(member, AttributeMetadata):
+        return f"{member.identity.entity.canonical}.{member.identity.name}"
+    identity = member.identity
+    return ".".join(
+        (identity.value_object.entity.canonical, *identity.value_object.path, identity.name)
     )
 
 
-def narrowed(
-    to: Sequence[str],
-    scope: PositionScope,
-    model: Metamodel,
-    operand: Callable[[PositionScope], ResolvedPredicate],
-) -> ResolvedNarrow:
-    """The narrowing of ``scope`` to the Subtype Selection ``to``, its ``operand``
-    resolved at the narrowed position."""
-    new_scope = validate_narrow(tuple(to), scope, model)
-    return ResolvedNarrow(_position_identities(model, new_scope), operand(new_scope))
+def _outside_scope(message: str) -> ModelRejectedError:
+    return ModelRejectedError("predicate-subject-outside-scope", message)
 
 
-def relationship_semi_join(
-    rel: str,
-    *,
-    negated: bool,
+@dataclass(frozen=True, slots=True)
+class _ScalarTerminal:
+    member: ResolvedPredicateMember
+    position: ObjectPosition
+
+    @property
+    def kind(self) -> str:
+        return (
+            "a scalar collection"
+            if self.member.multiplicity is Multiplicity.MANY
+            else ("a scalar field")
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _OccurrenceTerminal:
+    occurrence: OccurrenceMetadata
+    position: ObjectPosition
+
+    @property
+    def kind(self) -> str:
+        return (
+            "a many Value Object"
+            if self.occurrence.multiplicity is Multiplicity.MANY
+            else "a single Value Object"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _RelationshipTerminal:
+    relationship: ResolvedRelationship
+    many: bool
+    position: ObjectPosition
+
+    @property
+    def kind(self) -> str:
+        return "a to-many relationship" if self.many else "a to-one relationship"
+
+
+type _Terminal = _ScalarTerminal | _OccurrenceTerminal | _RelationshipTerminal
+
+
+def _resolve_path(path: str, frame: PredicateFrame, model: Metamodel) -> _Terminal:
+    """The member ``path`` names from ``frame``'s object, following single
+    Value Objects and to-one relationships and refusing any other crossing."""
+    class_name, members = split_reference(path)
+    match frame:
+        case EntityFrame(entity=entity, position=position, bound=bound):
+            if class_name is None:
+                if not bound:
+                    raise _outside_scope(
+                        f"{path!r} is relative, but the queried position spells its paths "
+                        "Entity-qualified"
+                    )
+                return _walk_entity(path, members, entity, position, CURRENT, model)
+            if bound:
+                raise _outside_scope(
+                    f"{path!r} is Entity-qualified, but inside a scope a path is relative to "
+                    "the object the scope binds"
+                )
+            named = _lookup_entity(model, class_name)
+            if named is None:
+                raise _unresolved_reference(model, path, class_name)
+            _check_attribute_position(model, named, position)
+            return _walk_entity(path, members, named, None, CURRENT, model)
+        case ObjectElementFrame(occurrence=occurrence):
+            if class_name is not None:
+                raise _outside_scope(
+                    f"{path!r} is Entity-qualified, but inside a Value Object quantifier a "
+                    "path is relative to the element it binds"
+                )
+            return _walk_occurrence(path, members, occurrence, CURRENT)
+        case ScalarElementFrame():
+            raise _outside_scope(
+                f"{path!r} names a field, but a scalar-collection quantifier binds a scalar "
+                "with no fields; read the element without a path"
+            )
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(frame)
+
+
+def _walk_entity(
+    path: str,
+    segments: Sequence[str],
+    entity: EntityMetadata,
+    position: PositionScope | None,
+    reached: ObjectPosition,
     model: Metamodel,
-    interior: Callable[[PositionScope], ResolvedPredicate] | None,
-) -> ResolvedSemiJoin:
-    """A relationship hop resolved to its direction and join members, its
-    ``interior`` resolved from the target's own position."""
-    target = relationship_target(rel, model, wrong_kind_rule="navigate-value-object-target")
-    direction = _resolved_relationship(rel, model)
+) -> _Terminal:
+    """``segments`` from ``entity``: its applicable members when ``position`` is
+    ``None`` (an Entity-qualified head already checked against its position),
+    else any family member applicable at ``position``."""
+    for index, segment in enumerate(segments):
+        last = index == len(segments) - 1
+        member = (
+            _applicable_member(model, entity, segment)
+            if position is None
+            else _member_at(model, entity, position, segment)
+        )
+        if member is None:
+            raise ModelRejectedError(
+                "path-unknown-member",
+                f"{path!r}: {segment!r} names no declared member of {entity.identity.canonical}",
+            )
+        if isinstance(member, AttributeMetadata):
+            if not last:
+                raise ModelRejectedError(
+                    "path-unknown-member",
+                    f"{path!r}: {segment!r} is a scalar attribute but the path continues",
+                )
+            return _ScalarTerminal(member, reached)
+        if isinstance(member, _Relationship):
+            relationship, many = member.resolved, member.many
+            if last:
+                return _RelationshipTerminal(relationship, many, reached)
+            if many:
+                raise _crosses_many(path, segment)
+            reached = RelatedObject(reached, relationship)
+            entity = relationship.target
+            position = PositionScope(effective=effective_set(model, entity))
+            continue
+        if last:
+            return _OccurrenceTerminal(member, reached)
+        if member.multiplicity is Multiplicity.MANY:
+            raise _crosses_many(path, segment)
+        return _walk_occurrence(path, segments[index + 1 :], member, reached)
+    raise AssertionError("a predicate path names at least one member")  # pragma: no cover
+
+
+def _walk_occurrence(
+    path: str,
+    segments: Sequence[str],
+    container: OccurrenceMetadata,
+    reached: ObjectPosition,
+) -> _Terminal:
+    for index, segment in enumerate(segments):
+        last = index == len(segments) - 1
+        attribute = container.attribute(segment)
+        if attribute is not None:
+            if not last:
+                raise ModelRejectedError(
+                    "path-unknown-member",
+                    f"{path!r}: {segment!r} is a scalar attribute but the path continues",
+                )
+            return _ScalarTerminal(attribute, reached)
+        nested = container.value_object(segment)
+        if nested is None:
+            raise ModelRejectedError(
+                "path-unknown-member",
+                f"{path!r}: {segment!r} names no declared member",
+            )
+        if last:
+            return _OccurrenceTerminal(nested, reached)
+        if nested.multiplicity is Multiplicity.MANY:
+            raise _crosses_many(path, segment)
+        container = nested
+    raise AssertionError("a predicate path names at least one member")  # pragma: no cover
+
+
+def _crosses_many(path: str, segment: str) -> ModelRejectedError:
+    return ModelRejectedError(
+        "path-crosses-many",
+        f"{path!r}: {segment!r} holds many objects, so a path cannot continue past it; "
+        "bind it with any/all/none and continue relative to its element",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _Relationship:
+    resolved: ResolvedRelationship
+    many: bool
+
+
+type _Member = AttributeMetadata | ValueObjectMetadata | _Relationship
+
+
+def _applicable_member(model: Metamodel, entity: EntityMetadata, name: str) -> _Member | None:
+    """The member ``name`` declares on ``entity`` or an ancestor."""
+    view = inheritance.view(model).entity(entity.identity)
+    attribute = (None if view is None else view.applicable_attribute(name)) or entity.attribute(
+        name
+    )
+    if attribute is not None:
+        return attribute
+    vo = (None if view is None else view.applicable_value_object(name)) or entity.value_object(name)
+    if vo is not None:
+        return vo
+    declarations = entity.declared_relationships if view is None else view.applicable_relationships
+    declaration = next((d for d in declarations if d.identity.name == name), None)
+    return None if declaration is None else _relationship(model, declaration)
+
+
+def _member_at(
+    model: Metamodel, entity: EntityMetadata, position: PositionScope, name: str
+) -> _Member | None:
+    """The member ``name`` declares anywhere in ``entity``'s family, refused
+    unless its declaring Entity is applicable at ``position``."""
+    families = inheritance.view(model)
+    view = families.entity(entity.identity)
+    root = entity.identity if view is None else view.root
+    for candidate in model.entities:
+        candidate_view = families.entity(candidate.identity)
+        candidate_root = candidate.identity if candidate_view is None else candidate_view.root
+        if candidate_root != root:
+            continue
+        local: AttributeMetadata | ValueObjectMetadata | RelationshipDeclaration | None = (
+            candidate.attribute(name)
+            or candidate.value_object(name)
+            or candidate.relationship(name)
+        )
+        if local is None:
+            continue
+        _check_attribute_position(model, candidate, position)
+        if isinstance(local, DefiningRelationshipDeclaration | ReverseRelationshipDeclaration):
+            return _relationship(model, local)
+        return local
+    return None
+
+
+def _relationship(model: Metamodel, declaration: RelationshipDeclaration) -> _Relationship:
+    """``declaration``'s direction resolved to its target and join endpoints."""
+    direction = declaration.identity
     join = _direction_join(direction, model)
-    source_view = inheritance.view(model).entity(join.source.entity)
-    target_view = inheritance.view(model).entity(join.target.entity)
+    families = inheritance.view(model)
+    source_view = families.entity(join.source.entity)
+    target_view = families.entity(join.target.entity)
     source = None if source_view is None else source_view.applicable_attribute(join.source.name)
-    member = None if target_view is None else target_view.applicable_attribute(join.target.name)
-    if source is None or member is None:  # pragma: no cover - formation validates joins
-        raise ValueError(f"{rel!r} has unresolved relationship join members")
-    hop_scope = PositionScope(
-        effective=effective_set(model, target),
-        relationship_target=target.identity.canonical,
-    )
-    return ResolvedSemiJoin(
-        direction,
-        target,
-        source,
-        member,
-        negated=negated,
-        where=None if interior is None else interior(hop_scope),
+    related = None if target_view is None else target_view.applicable_attribute(join.target.name)
+    target = model.entity(_declaration_target(declaration))
+    if source is None or related is None or target is None:  # pragma: no cover - formation
+        raise ValueError(f"{direction!r} has unresolved relationship join members")
+    return _Relationship(
+        ResolvedRelationship(direction, target, source, related),
+        _target_multiplicity(declaration, model) is Multiplicity.MANY,
     )
 
 
-def _position_identities(model: Metamodel, position: PositionScope) -> tuple[EntityIdentity, ...]:
-    return tuple(
-        entity.identity
-        for entity in model.entities
-        if entity.identity.canonical in position.effective
+def _target_multiplicity(declaration: RelationshipDeclaration, model: Metamodel) -> Multiplicity:
+    if isinstance(declaration, DefiningRelationshipDeclaration):
+        return declaration.cardinality.target
+    peer_owner = model.entity(declaration.reverse_of.source_entity)
+    peer = None if peer_owner is None else peer_owner.relationship(declaration.reverse_of.name)
+    if isinstance(peer, DefiningRelationshipDeclaration):
+        return peer.cardinality.source
+    raise ValueError(  # pragma: no cover - formation pairs every reverse with its peer
+        f"{declaration.identity!r} names no resolved relationship direction"
     )
-
-
-def _resolved_relationship(rel: str, model: Metamodel) -> RelationshipIdentity:
-    class_name, dot, member_name = rel.rpartition(".")
-    declaring = entity_by_name(model, class_name) if dot else None
-    if declaring is None:
-        raise ValueError(f"{rel!r} names no resolved relationship direction")
-    return RelationshipIdentity(declaring.identity, member_name)
 
 
 def _direction_join(direction: RelationshipIdentity, model: Metamodel) -> RelationshipJoin:
@@ -453,53 +779,12 @@ def _direction_join(direction: RelationshipIdentity, model: Metamodel) -> Relati
     raise ValueError(f"{direction!r} names no resolved relationship direction")
 
 
-def _decoded_operands(
-    subject: str, member: ResolvedPredicateMember, values: Sequence[object]
-) -> tuple[ManagedValue, ...]:
-    """``values`` decoded once against ``member``'s declared type."""
-    require_single_scalar(subject, member)
-    decoded: list[ManagedValue] = []
-    for value in values:
-        try:
-            decoded.append(decode_wire(member.type, cast("WireValue", value)))
-        except WireDecodingError as error:
-            raise ModelRejectedError(
-                f"neutral-literal-{error.reason}",
-                f"{subject!r}: {error}",
-            ) from error
-    return tuple(decoded)
-
-
-def _resolved_range(
-    subject: str, member: ResolvedPredicateMember, bounds: tuple[ManagedValue, ...]
-) -> ResolvedRange:
-    managed_lower, managed_upper = bounds
-    try:
-        inverted = cast("object", managed_lower) > cast("object", managed_upper)  # type: ignore[operator]
-    except TypeError:  # pragma: no cover - one declared type yields comparable managed members
-        inverted = False
-    if inverted:
-        raise ModelRejectedError(
-            "between-bounds-inverted",
-            f"{subject!r}: decoded lower bound {managed_lower!r} is greater than decoded upper "
-            f"bound {managed_upper!r}, so the range is empty",
-        )
-    return ResolvedRange(member, managed_lower, managed_upper)
-
-
-def require_single_scalar(
-    subject: str, member: AttributeMetadata | ValueObjectAttributeMetadata
-) -> None:
-    """Refuse a scalar collection where one scalar value is required.
-
-    A collection is neither compared, matched, ranged, nor ordered as a whole;
-    nothing here reaches its elements implicitly.
-    """
-    if member.multiplicity is Multiplicity.MANY:
-        raise ModelRejectedError(
-            "scalar-collection-unquantified",
-            f"{subject!r} names a scalar collection, which is not one scalar value",
-        )
+def _position_identities(model: Metamodel, position: PositionScope) -> tuple[EntityIdentity, ...]:
+    return tuple(
+        entity.identity
+        for entity in model.entities
+        if entity.identity.canonical in position.effective
+    )
 
 
 def _lookup_entity(model: Metamodel, name: str) -> EntityMetadata | None:
@@ -698,14 +983,6 @@ def check_attribute_reference(
     return attribute
 
 
-def _require_attribute(attr_ref: str, model: Metamodel, scope: PositionScope) -> AttributeMetadata:
-    attribute = check_attribute_reference(attr_ref, model, scope)
-    if attribute is None:
-        class_name, _, _member = attr_ref.rpartition(".")
-        raise ValueError(f"{attr_ref!r} names no declared attribute on {class_name}")
-    return attribute
-
-
 def _check_attribute_position(
     model: Metamodel, entity: EntityMetadata, scope: PositionScope
 ) -> None:
@@ -767,157 +1044,18 @@ def _is_value_object_name_anywhere(model: Metamodel, name: str) -> bool:
     return any(entity.value_object(name) is not None for entity in model.entities)
 
 
-def _resolve_leaf(
-    path: str, container: OccurrenceMetadata, segments: Sequence[str]
-) -> tuple[ValueObjectAttributeMetadata, OccurrenceMetadata | None]:
-    """Walk dotted ``segments`` (non-empty) against ``container`` to a scalar leaf,
-    classifying the three ways a path fails: an undeclared segment, a scalar the
-    path continues past, and a nested object the path ends on.
+def _check_string_member(subject: str, member: ResolvedPredicateMember) -> None:
+    """Reject a string predicate whose resolved member is not ``String``.
 
-    Also answers the first `many` occurrence the walk enters, ``container``
-    itself included, or ``None`` when it enters none."""
-    scope: OccurrenceMetadata = container
-    crossed = container if container.multiplicity is Multiplicity.MANY else None
-    for index, segment in enumerate(segments):
-        is_last = index == len(segments) - 1
-        attribute = scope.attribute(segment)
-        if attribute is not None:
-            if not is_last:
-                raise ModelRejectedError(
-                    "nested-path-unknown-member",
-                    f"{path!r}: {segment!r} is a scalar attribute but the path continues",
-                )
-            return attribute, crossed
-        nested = scope.value_object(segment)
-        if nested is None:
-            raise ModelRejectedError(
-                "nested-path-unknown-member",
-                f"{path!r}: {segment!r} names no declared member",
-            )
-        if is_last:
-            raise ModelRejectedError(
-                "nested-path-unknown-member",
-                f"{path!r} ends on the nested value object {segment!r}, not a scalar leaf",
-            )
-        if crossed is None and nested.multiplicity is Multiplicity.MANY:
-            crossed = nested
-        scope = nested
-    raise AssertionError("_resolve_leaf: `segments` must be non-empty")  # pragma: no cover
-
-
-def _resolve_nested_leaf(
-    path: str, model: Metamodel
-) -> tuple[ValueObjectAttributeMetadata, OccurrenceMetadata | None]:
-    """Resolve an `<Entity>.valueObject(.valueObject)*.attribute` path to its
-    leaf and the first `many` occurrence it crosses."""
-    class_name, members = split_reference(path)
-    if class_name is None or len(members) < 2:
-        raise ModelRejectedError(
-            "nested-path-unknown-member",
-            f"{path!r} needs at least Class.valueObject.attribute",
-        )
-    vo_name, *segments = members
-    entity = _lookup_entity(model, class_name)
-    if entity is None:
-        raise _unresolved_reference(model, path, class_name)
-    position = inheritance.view(model).entity(entity.identity)
-    vo = (
-        None if position is None else position.applicable_value_object(vo_name)
-    ) or entity.value_object(vo_name)
-    if vo is None:
-        raise ModelRejectedError(
-            "nested-path-first-segment-not-value-object",
-            f"{class_name}.{vo_name} is not a declared value object on {class_name} "
-            "(m-predicate nested-predicate resolver MUST)",
-        )
-    return _resolve_leaf(path, vo, segments)
-
-
-def _resolve_element_leaf(container: OccurrenceMetadata, path: str) -> ValueObjectAttributeMetadata:
-    """Resolve an element-relative path (`type`, `geo.country`) to its leaf.
-
-    ``container`` is the TERMINAL value-object descriptor a `nestedExists`/
-    `nestedNotExists` `path` resolves to (:func:`value_object_scope`); the
-    scoped `where`'s own paths are relative to that SAME element (`m-value-object`
-    same-element semantics), never re-prefixed with `Class.valueObject`.
+    This is distinct from literal decoding because several non-string neutral
+    types also use a string Wire carrier.
     """
-    leaf, _crossed = _resolve_leaf(path, container, path.split("."))
-    return leaf
-
-
-def value_object_scope(path: str, model: Metamodel) -> OccurrenceMetadata:
-    """Resolve a `nestedExists`/`nestedNotExists` path (ends at a value object),
-    returning the TERMINAL value-object descriptor — the same-element scope an
-    optional `where` predicate's element-relative members resolve against.
-    """
-    class_name, members = split_reference(path)
-    if class_name is None or not members:
+    if not isinstance(member.type, String):
         raise ModelRejectedError(
-            "nested-path-unknown-member", f"{path!r} needs at least Class.valueObject"
+            "string-predicate-non-string-member",
+            f"{subject!r}: a string predicate reads text, but the member's declared type is "
+            f"{member.type!r}",
         )
-    vo_name, *segments = members
-    entity = _lookup_entity(model, class_name)
-    if entity is None:
-        raise _unresolved_reference(model, path, class_name)
-    position = inheritance.view(model).entity(entity.identity)
-    vo = (
-        None if position is None else position.applicable_value_object(vo_name)
-    ) or entity.value_object(vo_name)
-    if vo is None:
-        raise ModelRejectedError(
-            "nested-path-first-segment-not-value-object",
-            f"{class_name}.{vo_name} is not a declared value object on {class_name}",
-        )
-    container: OccurrenceMetadata = vo
-    for segment in segments:
-        member = container.value_object(segment)
-        if member is None:
-            raise ModelRejectedError(
-                "nested-path-unknown-member",
-                f"{path!r}: {segment!r} does not name a nested value object",
-            )
-        container = member
-    return container
-
-
-def _check_string_member(path: str, leaf: ResolvedPredicateMember) -> None:
-    """Reject a string predicate whose resolved leaf is not a ``String`` member.
-
-    Shared by both nested scopes. This is distinct from literal decoding because
-    several non-string neutral types also use a string wire carrier.
-    """
-    if not isinstance(leaf.type, String):
-        raise ModelRejectedError(
-            "nested-string-predicate-non-string-member",
-            f"{path!r}: a string predicate reads text, but the member's declared type is "
-            f"{leaf.type!r} (m-predicate non-string-member rule)",
-        )
-
-
-def _elaborate_element_predicate(
-    op: PredicateNode, container: OccurrenceMetadata
-) -> ResolvedPredicate:
-    match op:
-        case (
-            NestedComparison()
-            | NestedRange()
-            | NestedMembership()
-            | NestedStringMatch()
-            | NestedNullCheck()
-        ):
-            return resolve_element_operation(
-                op.path, *_nested_operation(op), _decoded_operands, container
-            )
-        case And(operands=operands) | Or(operands=operands):
-            children = tuple(
-                _elaborate_element_predicate(operand, container) for operand in operands
-            )
-            return ResolvedAnd(children) if isinstance(op, And) else ResolvedOr(children)
-        case Not(operand=operand) | Group(operand=operand):
-            child = _elaborate_element_predicate(operand, container)
-            return ResolvedNot(child) if isinstance(op, Not) else ResolvedGroup(child)
-        case _:
-            raise illegal_element_predicate(op)
 
 
 def _require_nullable_null_check(path: str, nullable: bool) -> None:

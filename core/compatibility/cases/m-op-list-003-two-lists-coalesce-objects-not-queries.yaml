@@ -10,7 +10,7 @@ when:
         target: parallax.compatibility.Order
         predicate:
           eq:
-            attr: parallax.compatibility.Order.id
+            path: parallax.compatibility.Order.id
             value: 2
       roundTrips: 1
       note: list A resolves order 2 by id (its own query)
@@ -24,7 +24,7 @@ when:
         target: parallax.compatibility.Order
         predicate:
           eq:
-            attr: parallax.compatibility.Order.name
+            path: parallax.compatibility.Order.name
             value: Linus
       roundTrips: 1
       sameObjectAs: 0

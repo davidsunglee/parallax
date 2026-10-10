@@ -8,7 +8,7 @@ when:
     target: parallax.compatibility.Traveler
     predicate:
       isNull:
-        attr: parallax.compatibility.Traveler.note
+        path: parallax.compatibility.Traveler.note
 then:
   statements:
     - sql:

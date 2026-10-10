@@ -1,4 +1,4 @@
-# valueObject presence test: nestedIsNull over a shallow field (m-value-object,
+# valueObject presence test: isNull over a shallow field (m-value-object,
 # m-predicate absence collapse), on Postgres AND MariaDB.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, nested, json, "null", absence-collapse, slice-snapshot-1, slice-managed-1]
@@ -7,7 +7,7 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedIsNull:
+      isNull:
         path: parallax.compatibility.Customer.address.city
 then:
   statements:

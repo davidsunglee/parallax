@@ -42,7 +42,10 @@ when:
     - uow: replaced
       objectQuery:
         target: parallax.compatibility.SequenceSpan
-        predicate: { eq: { attr: parallax.compatibility.SequenceSpan.id, value: 9 } }
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceSpan.id
+            value: 9
         temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-03-01T00:00:00.000000Z" } }
       note: "observe span 9 at March"
       expectRows:

@@ -19,10 +19,13 @@ from parallax.core.base import (
 from parallax.core.document_codec._authoring import MAPPING_SOURCE_ACCESS, prepare_authoring
 from parallax.core.metamodel import (
     AttributeMetadata,
+    DefiningRelationshipDeclaration,
+    EntityIdentity,
     EntityMetadata,
     Leaf,
     Multiplicity,
     OccurrenceMetadata,
+    RelationshipDeclaration,
     TemporalDimension,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
@@ -302,161 +305,158 @@ def _normalize_document(container: OccurrenceMetadata, value: object) -> object:
     }
 
 
+@dataclass(frozen=True, slots=True)
+class _Field:
+    """A scalar member a path reaches; its element type, for a collection."""
+
+    neutral_type: NeutralType
+
+
+@dataclass(frozen=True, slots=True)
+class _Container:
+    """A Value Object occurrence a path reaches, or the element it binds."""
+
+    occurrence: OccurrenceMetadata
+
+
+@dataclass(frozen=True, slots=True)
+class _Related:
+    """An Entity position: the queried one, or one a relationship reaches."""
+
+    entity: EntityMetadata | None
+
+
+type _Reached = _Field | _Container | _Related
+
+
 def _normalize_predicate(
-    node: predicate.PredicateNode,
-    model: AcceptedMetamodel,
-    element_container: OccurrenceMetadata | None = None,
+    node: predicate.PredicateNode, model: AcceptedMetamodel, scope: _Reached | None = None
 ) -> predicate.PredicateNode:
+    """``node`` with each typed literal in its case-ingress canonical spelling,
+    typed by the member its scope and path reach; a literal whose member does
+    not resolve is left for validation to judge."""
+    at: _Reached = _Related(None) if scope is None else scope
     match node:
-        case (
-            predicate.Comparison(attr=reference)
-            | predicate.Between(attr=reference)
-            | predicate.Membership(attr=reference)
-        ):
-            return _normalize_literals(node, _attribute_type(model, reference))
-        case (
-            predicate.NestedComparison(path=reference)
-            | predicate.NestedRange(path=reference)
-            | predicate.NestedMembership(path=reference)
-        ):
-            return _normalize_literals(
-                node, _nested_attribute_type(model, element_container, reference)
-            )
+        case predicate.Comparison() | predicate.Range() | predicate.Membership():
+            return _normalize_literals(node, _subject_type(model, at, node.subject))
         case predicate.And(operands=operands) | predicate.Or(operands=operands):
             return replace(
-                node,
-                operands=tuple(
-                    _normalize_predicate(operand, model, element_container) for operand in operands
-                ),
+                node, operands=tuple(_normalize_predicate(child, model, at) for child in operands)
             )
-        case (
-            predicate.Not(operand=operand)
-            | predicate.Group(operand=operand)
-            | predicate.Narrow(operand=operand)
-        ):
-            return replace(
-                node,
-                operand=_normalize_predicate(operand, model, element_container),
-            )
-        case (
-            predicate.NestedExists(path=path, where=where)
-            | predicate.NestedNotExists(path=path, where=where)
-        ):
-            container = _predicate_container(model, path)
+        case predicate.Not(operand=operand) | predicate.Group(operand=operand):
+            return replace(node, operand=_normalize_predicate(operand, model, at))
+        case predicate.Narrow(operand=operand, path=path):
+            inner = at if path is None else _reach(model, at, path)
             return (
                 node
-                if where is None or container is None
-                else replace(node, where=_normalize_predicate(where, model, container))
+                if inner is None
+                else replace(node, operand=_normalize_predicate(operand, model, inner))
             )
-        case (
-            predicate.Navigate(op=inner)
-            | predicate.Exists(op=inner)
-            | predicate.NotExists(op=inner)
-        ):
-            return node if inner is None else replace(node, op=_normalize_predicate(inner, model))
+        case predicate.Quantifier(path=path, where=where) if where is not None:
+            inner = _reach(model, at, path)
+            return (
+                node
+                if inner is None
+                else replace(node, where=_normalize_predicate(where, model, inner))
+            )
         case _:
             return node
 
 
-type _LiteralNode = (
-    predicate.Comparison
-    | predicate.Between
-    | predicate.Membership
-    | predicate.NestedComparison
-    | predicate.NestedRange
-    | predicate.NestedMembership
-)
+type _LiteralNode = predicate.Comparison | predicate.Range | predicate.Membership
 
 
 def _normalize_literals(node: _LiteralNode, neutral_type: NeutralType | None) -> _LiteralNode:
     if neutral_type is None:
         return node
     match node:
-        case predicate.Comparison(value=value) | predicate.NestedComparison(value=value):
+        case predicate.Comparison(value=value):
             return replace(node, value=normalize_case_literal(neutral_type, value))
-        case (
-            predicate.Between(lower=lower, upper=upper)
-            | predicate.NestedRange(lower=lower, upper=upper)
-        ):
+        case predicate.Range(lower=lower, upper=upper):
             return replace(
                 node,
                 lower=normalize_case_literal(neutral_type, lower),
                 upper=normalize_case_literal(neutral_type, upper),
             )
-        case predicate.Membership(values=values) | predicate.NestedMembership(values=values):
+        case predicate.Membership(values=values):
             return replace(
                 node,
                 values=tuple(normalize_case_literal(neutral_type, value) for value in values),
             )
 
 
-def _attribute_type(model: AcceptedMetamodel, reference: str) -> NeutralType | None:
-    entity_name, path = split_reference(reference)
-    if entity_name is None or len(path) != 1:
-        return None
-    entity = entity_by_name(model, entity_name)
-    if entity is None:
-        return None
-    member = _entity_members(model, entity).get(path[0])
-    return member.type if isinstance(member, AttributeMetadata) else None
-
-
-def _nested_attribute_type(
-    model: AcceptedMetamodel,
-    element_container: OccurrenceMetadata | None,
-    reference: str,
+def _subject_type(
+    model: AcceptedMetamodel, scope: _Reached, subject: predicate.ScalarSubject
 ) -> NeutralType | None:
-    leaf = (
-        _relative_leaf(element_container, reference.split("."))
-        if element_container is not None
-        else _predicate_nested_leaf(model, reference)
+    reached = (
+        scope
+        if isinstance(subject, predicate.CurrentScalarElement)
+        else _reach(model, scope, subject.path)
     )
-    return None if leaf is None else leaf.type
+    return reached.neutral_type if isinstance(reached, _Field) else None
 
 
-def _predicate_nested_leaf(
-    model: AcceptedMetamodel, reference: str
-) -> ValueObjectAttributeMetadata | None:
-    entity_name, path = split_reference(reference)
-    if entity_name is None or len(path) < 2:
-        return None
-    container = _top_level_occurrence(model, entity_name, path[0])
-    return None if container is None else _relative_leaf(container, path[1:])
+def _reach(model: AcceptedMetamodel, scope: _Reached, path: str) -> _Reached | None:
+    """What ``path`` reaches from ``scope``, or ``None`` where it does not resolve."""
+    entity_name, names = split_reference(path)
+    current: _Reached | None = (
+        scope if entity_name is None else _Related(entity_by_name(model, entity_name))
+    )
+    for name in names:
+        current = None if current is None else _member(model, current, name)
+    return current
 
 
-def _predicate_container(model: AcceptedMetamodel, reference: str) -> OccurrenceMetadata | None:
-    entity_name, path = split_reference(reference)
-    if entity_name is None or not path:
-        return None
-    container = _top_level_occurrence(model, entity_name, path[0])
-    for name in path[1:]:
-        if container is None:
+def _member(model: AcceptedMetamodel, owner: _Reached, name: str) -> _Reached | None:
+    match owner:
+        case _Field():
             return None
-        container = container.value_object(name)
-    return container
-
-
-def _top_level_occurrence(
-    model: AcceptedMetamodel, entity_name: str, member: str
-) -> ValueObjectMetadata | None:
-    entity = entity_by_name(model, entity_name)
-    if entity is None:
-        return None
-    value = _entity_members(model, entity).get(member)
-    if value is None or isinstance(value, AttributeMetadata):
-        return None
-    return value
-
-
-def _relative_leaf(
-    container: OccurrenceMetadata | None, path: Sequence[str]
-) -> ValueObjectAttributeMetadata | None:
-    if container is None or not path:
-        return None
-    current = container
-    for name in path[:-1]:
-        nested = current.value_object(name)
-        if nested is None:
+        case _Container(occurrence=container):
+            leaf = container.attribute(name)
+            if leaf is not None:
+                return _Field(leaf.type)
+            nested = container.value_object(name)
+            return None if nested is None else _Container(nested)
+        case _Related(entity=entity):
+            if entity is None:
+                return None
+            member = _family_members(model, entity).get(name)
+            if isinstance(member, AttributeMetadata):
+                return _Field(member.type)
+            if member is not None:
+                return _Container(member)
+            for candidate in _family(model, entity):
+                declaration = candidate.relationship(name)
+                if declaration is not None:
+                    return _Related(model.entity(_relationship_target(model, declaration)))
             return None
-        current = nested
-    return current.attribute(path[-1])
+
+
+def _family(model: AcceptedMetamodel, entity: EntityMetadata) -> list[EntityMetadata]:
+    families = inheritance.view(model)
+    view = families.entity(entity.identity)
+    root = entity.identity if view is None else view.root
+    return [
+        candidate
+        for candidate in model.entities
+        if (candidate_view := families.entity(candidate.identity)) is not None
+        and candidate_view.root == root
+    ]
+
+
+def _family_members(
+    model: AcceptedMetamodel, entity: EntityMetadata
+) -> dict[str, AttributeMetadata | ValueObjectMetadata]:
+    members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
+    for candidate in _family(model, entity):
+        members.update(_entity_members(model, candidate))
+    return members
+
+
+def _relationship_target(
+    model: AcceptedMetamodel, declaration: RelationshipDeclaration
+) -> EntityIdentity:
+    del model
+    if isinstance(declaration, DefiningRelationshipDeclaration):
+        return declaration.join.target.entity
+    return declaration.reverse_of.source_entity

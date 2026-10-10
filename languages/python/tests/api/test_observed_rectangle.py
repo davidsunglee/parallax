@@ -238,7 +238,7 @@ def _log_find(tx: Transaction, entity: type[Any], representation: _Representatio
     return tx.wire.find(
         {
             "target": name,
-            "predicate": {"eq": {"attr": f"{name}.id", "value": 1}},
+            "predicate": {"eq": {"path": f"{name}.id", "value": 1}},
             "temporal": {"transaction-time": {"asOf": "latest"}},
         }
     ).result()
@@ -256,7 +256,7 @@ def _span_find(
     return tx.wire.find(
         {
             "target": name,
-            "predicate": {"eq": {"attr": f"{name}.id", "value": 1}},
+            "predicate": {"eq": {"path": f"{name}.id", "value": 1}},
             "temporal": {
                 "transaction-time": {"asOf": "latest"},
                 "valid-time": {"asOf": pin},
@@ -314,7 +314,7 @@ def _span_terminate(
 
 def _wire_target(entity: type[Any]) -> dict[str, object]:
     name = _name(entity)
-    return {"entity": name, "predicate": {"eq": {"attr": f"{name}.id", "value": 1}}}
+    return {"entity": name, "predicate": {"eq": {"path": f"{name}.id", "value": 1}}}
 
 
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
@@ -750,7 +750,7 @@ def test_a_streamed_root_fetched_before_an_own_change_cannot_write_its_stale_sta
         return tx.wire.find(
             {
                 "target": name,
-                "predicate": {"eq": {"attr": f"{name}.id", "value": key}},
+                "predicate": {"eq": {"path": f"{name}.id", "value": key}},
                 "temporal": {"transaction-time": {"asOf": "latest"}},
             }
         ).result()
@@ -762,7 +762,7 @@ def test_a_streamed_root_fetched_before_an_own_change_cannot_write_its_stale_sta
             else tx.wire.stream(
                 {
                     "target": name,
-                    "predicate": {"all": {}},
+                    "predicate": {"true": {}},
                     "temporal": {"transaction-time": {"asOf": "latest"}},
                     "orderBy": [{"attr": f"{name}.id", "direction": "asc"}],
                 },

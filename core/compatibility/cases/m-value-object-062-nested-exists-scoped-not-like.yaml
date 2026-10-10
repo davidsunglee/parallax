@@ -1,7 +1,7 @@
-# valueObject to-many: a NEGATED string pattern inside a scoped `where` negates within
-# the element, not around the existence test (m-predicate elementPredicate, m-sql).
-# Postgres golden only — a `where` carrying a non-`eq` leaf is outside MariaDB's
-# containment scope (m-dialect, "Scope of the containment golden").
+# valueObject to-many: a NEGATED string pattern inside a quantifier's `where`
+# negates within the element, not around the quantifier (m-predicate quantifiers,
+# m-sql). Postgres golden only — a `where` carrying a non-`eq` leaf is outside
+# MariaDB's containment scope (m-dialect, "Scope of the containment golden").
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, notLike, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -9,15 +9,15 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedExists:
+      any:
         path: parallax.compatibility.Customer.address.phones
         where:
           and:
             operands:
-              - nestedEq:
+              - eq:
                   path: type
                   value: work
-              - nestedNotLike:
+              - notLike:
                   path: number
                   value: 555-9999
 then:

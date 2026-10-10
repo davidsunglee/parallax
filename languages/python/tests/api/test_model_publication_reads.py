@@ -56,7 +56,7 @@ def _editions() -> tuple[Any, Any, ServingModel]:
 def _target_node() -> dict[str, object]:
     return {
         "target": _ACCOUNT,
-        "predicate": {"eq": {"attr": f"{_ACCOUNT}.id", "value": TARGET_ID}},
+        "predicate": {"eq": {"path": f"{_ACCOUNT}.id", "value": TARGET_ID}},
     }
 
 
@@ -118,7 +118,7 @@ def test_a_delayed_refusal_from_a_reports_a_inside_an_execution_failure_under_b(
     serving = ServingModel(a)
     db = own_root(connect(port, serving)).using_database_login()
 
-    snapshot = db.wire.find({"target": _CUSTOMER, "predicate": {"all": {}}})
+    snapshot = db.wire.find({"target": _CUSTOMER, "predicate": {"true": {}}})
     serving.publish(b, expected=a)
 
     with raises_contextualized(InvalidDataError) as failed:

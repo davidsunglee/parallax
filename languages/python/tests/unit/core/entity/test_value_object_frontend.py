@@ -22,7 +22,12 @@ from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.base import Float64, NeutralType, String
 from parallax.core.entity import EntityDefinitionError, Predicate
 from parallax.core.entity._declaration import shape_of
-from parallax.core.entity._expressions import ElementAttributeExpr
+from parallax.core.entity._expressions import (
+    AssignableScalarExpr,
+    ManyValueObjectExpr,
+    ScalarExpr,
+    ValueObjectExpr,
+)
 from parallax.core.metamodel import (
     Column,
     Multiplicity,
@@ -31,7 +36,6 @@ from parallax.core.metamodel import (
     ValueObjectAttributeDeclaration,
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
-    ValueObjectShapeKey,
 )
 from parallax.core.predicate import QueryDefinitionError, serialize
 from tests._support import value_object_models as vm
@@ -124,127 +128,121 @@ def test_a_top_level_occurrence_derives_storage_while_nested_members_remain_colu
     assert all(not hasattr(attribute, "storage") for attribute in mailing_address.shape.attributes)
 
 
-def _element(expression: object) -> ElementAttributeExpr[Any, Any]:
-    """The element-scoped carrier a Value Object's class access yields.
+def _field(expression: object) -> ScalarExpr[Any, Any]:
+    """The query-only field carrier a Value Object's class access yields.
 
-    Statically the descriptor is typed by its ``Attr[T]`` annotation, so the
-    element-scoped runtime carrier is narrowed once here. Its own parameters are
-    erased rather than recovered: an ``isinstance`` narrowing answers the class,
-    never what it was specialized with.
+    Statically the descriptor is typed by its ``Attr[T]`` annotation on the
+    Value Object, so the runtime carrier is narrowed once here.
     """
-    assert isinstance(expression, ElementAttributeExpr)
-    return cast("ElementAttributeExpr[Any, Any]", expression)
+    assert isinstance(expression, ScalarExpr)
+    assert not isinstance(expression, AssignableScalarExpr)
+    return cast("ScalarExpr[Any, Any]", expression)
 
 
-def test_element_scoped_access_builds_paths_with_no_entity_prefix() -> None:
-    expression = vm.Phone.type
-    assert isinstance(expression, ElementAttributeExpr)
-    predicate = expression == "home"
+def test_value_object_class_access_builds_relative_paths() -> None:
+    predicate = _field(vm.Phone.type) == "home"
     assert isinstance(predicate, Predicate)
-    assert serialize(predicate_node(predicate)) == {"nestedEq": {"path": "type", "value": "home"}}
+    assert serialize(predicate_node(predicate)) == {"eq": {"path": "type", "value": "home"}}
 
 
-def test_every_element_scoped_operator_builds_its_own_nested_node() -> None:
-    # The element-relative spelling of the whole predicate surface: one
-    # `nested*` node per operator, each path element-rooted with no entity
-    # prefix, as a quantifier's interior requires.
-    phone_type = _element(vm.Phone.type)
+def test_every_relative_field_operator_builds_the_ordinary_scalar_node() -> None:
+    phone_type = _field(vm.Phone.type)
     assert serialize(predicate_node(phone_type != "home")) == {
-        "nestedNotEq": {"path": "type", "value": "home"}
+        "notEq": {"path": "type", "value": "home"}
     }
     assert serialize(predicate_node(phone_type > "a")) == {
-        "nestedGt": {"path": "type", "value": "a"}
+        "greaterThan": {"path": "type", "value": "a"}
     }
     assert serialize(predicate_node(phone_type >= "a")) == {
-        "nestedGte": {"path": "type", "value": "a"}
+        "greaterThanEquals": {"path": "type", "value": "a"}
     }
     assert serialize(predicate_node(phone_type < "z")) == {
-        "nestedLt": {"path": "type", "value": "z"}
+        "lessThan": {"path": "type", "value": "z"}
     }
     assert serialize(predicate_node(phone_type <= "z")) == {
-        "nestedLte": {"path": "type", "value": "z"}
+        "lessThanEquals": {"path": "type", "value": "z"}
     }
     assert serialize(predicate_node(phone_type.in_(["home", "work"]))) == {
-        "nestedIn": {"path": "type", "values": ["home", "work"]}
+        "in": {"path": "type", "values": ["home", "work"]}
     }
     assert serialize(predicate_node(phone_type.not_in(["work"]))) == {
-        "nestedNotIn": {"path": "type", "values": ["work"]}
+        "notIn": {"path": "type", "values": ["work"]}
     }
     assert serialize(predicate_node(phone_type.between("a", "z"))) == {
-        "nestedBetween": {"path": "type", "lower": "a", "upper": "z"}
+        "between": {"path": "type", "lower": "a", "upper": "z"}
     }
     assert serialize(predicate_node(phone_type.like("ho%"))) == {
-        "nestedLike": {"path": "type", "value": "ho%"}
+        "like": {"path": "type", "value": "ho%"}
     }
     assert serialize(predicate_node(phone_type.not_like("ho%"))) == {
-        "nestedNotLike": {"path": "type", "value": "ho%"}
+        "notLike": {"path": "type", "value": "ho%"}
     }
     assert serialize(predicate_node(phone_type.starts_with("ho"))) == {
-        "nestedStartsWith": {"path": "type", "value": "ho"}
+        "startsWith": {"path": "type", "value": "ho"}
     }
     assert serialize(predicate_node(phone_type.ends_with("me"))) == {
-        "nestedEndsWith": {"path": "type", "value": "me"}
+        "endsWith": {"path": "type", "value": "me"}
     }
     assert serialize(predicate_node(phone_type.contains("om", case_insensitive=True))) == {
-        "nestedContains": {"path": "type", "value": "om", "caseInsensitive": True}
+        "contains": {"path": "type", "value": "om", "caseInsensitive": True}
     }
-    assert serialize(predicate_node(phone_type.is_null())) == {"nestedIsNull": {"path": "type"}}
-    assert serialize(predicate_node(phone_type.is_not_null())) == {
-        "nestedIsNotNull": {"path": "type"}
-    }
+    assert serialize(predicate_node(phone_type.is_null())) == {"isNull": {"path": "type"}}
+    assert serialize(predicate_node(phone_type.is_not_null())) == {"isNotNull": {"path": "type"}}
 
 
-def test_a_boolean_element_reads_as_an_explicit_nested_equality() -> None:
+def test_a_boolean_field_reads_as_an_explicit_equality() -> None:
     class Toggle(ValueObject):
         enabled: Attr[bool | None]
 
-    predicate = _element(Toggle.enabled).is_(True)
-    assert serialize(predicate_node(predicate)) == {"nestedEq": {"path": "enabled", "value": True}}
+    predicate = _field(Toggle.enabled).is_(True)
+    assert serialize(predicate_node(predicate)) == {"eq": {"path": "enabled", "value": True}}
 
 
-def test_an_element_scoped_hop_stays_element_relative_however_deep_it_goes() -> None:
-    # A nested occurrence continues the element path rather than restarting it,
-    # so an interior predicate over a nested leaf never grows an entity prefix.
-    predicate = _element(vm.Address.geo).country == "DE"
-    assert serialize(predicate_node(predicate)) == {
-        "nestedEq": {"path": "geo.country", "value": "DE"}
+def test_a_single_value_object_hop_continues_the_relative_path() -> None:
+    geo = vm.Address.geo
+    assert isinstance(geo, ValueObjectExpr)
+    assert serialize(predicate_node(geo.country == "DE")) == {
+        "eq": {"path": "geo.country", "value": "DE"}
+    }
+    assert serialize(predicate_node(geo.exists())) == {"exists": {"path": "geo"}}
+    assert serialize(predicate_node(geo.not_exists())) == {"notExists": {"path": "geo"}}
+
+
+def test_a_many_value_object_is_quantified_rather_than_traversed() -> None:
+    phones = vm.Address.phones
+    assert isinstance(phones, ManyValueObjectExpr)
+    assert not hasattr(phones, "number")
+    assert serialize(predicate_node(phones.any(_field(vm.Phone.type) == "home"))) == {
+        "any": {"path": "phones", "where": {"eq": {"path": "type", "value": "home"}}}
     }
 
 
-def test_an_element_expression_answers_no_private_name_and_has_no_truth_value() -> None:
+def test_a_value_object_expression_answers_no_private_name_and_has_no_truth_value() -> None:
     # The hop resolves any public name dynamically, so the private-name guard is
     # what keeps a dunder probe (copy, pickle) from being read as a member.
-    element = _element(vm.Phone.number)
+    geo = vm.Address.geo
     with pytest.raises(AttributeError, match="_missing"):
-        _ = element._missing
+        _ = geo._missing
     with pytest.raises(TypeError, match="has no truth value"):
-        bool(element)
-    assert hash(element) == hash((("number",), shape_of(vm.Phone).shape))
+        bool(geo)
+    with pytest.raises(TypeError, match="has no truth value"):
+        bool(_field(vm.Phone.number))
 
 
-def test_element_operations_reject_missing_shape_members_and_nonnullable_null_checks() -> None:
-    with pytest.raises(QueryDefinitionError, match="resolved scalar metadata"):
-        ElementAttributeExpr(("leaf",)).like("x")
-
-    empty = ValueObjectShapeDeclaration(key=ValueObjectShapeKey(), attributes=(), value_objects=())
-    with pytest.raises(QueryDefinitionError, match="not a nested Value Object"):
-        ElementAttributeExpr(("missing", "leaf"), empty).like("x")
-    with pytest.raises(QueryDefinitionError, match="not a scalar leaf"):
-        ElementAttributeExpr(("leaf",), empty).like("x")
-    with pytest.raises(QueryDefinitionError, match="nullable scalar leaf"):
-        _element(vm.Address.city).is_null()
+def test_field_access_refuses_unknown_members_and_nonnullable_null_checks() -> None:
+    with pytest.raises(AttributeError, match="missing"):
+        _ = vm.Address.missing  # type: ignore[attr-defined] - deliberately undeclared member
+    with pytest.raises(AttributeError, match="declares no member 'missing'"):
+        _ = vm.Customer.address.missing
+    with pytest.raises(QueryDefinitionError, match="non-nullable member"):
+        _field(vm.Address.city).is_null()
 
 
-def test_entity_rooted_nested_operation_rejects_an_unknown_intermediate_occurrence() -> None:
-    with pytest.raises(QueryDefinitionError, match="resolved scalar metadata"):
-        vm.Customer.address.missing.leaf.like("x")
-
-
-def test_an_entity_rooted_nested_predicate_carries_the_dotted_canonical_path() -> None:
-    predicate = vm.Customer.address.geo.country == "DE"
+def test_an_entity_rooted_value_object_predicate_carries_the_dotted_canonical_path() -> None:
+    predicate: Predicate[Any] = vm.Customer.address.geo.country == "DE"
     assert isinstance(predicate, Predicate)
     assert serialize(predicate_node(predicate)) == {
-        "nestedEq": {"path": "parallax.compatibility.Customer.address.geo.country", "value": "DE"}
+        "eq": {"path": "parallax.compatibility.Customer.address.geo.country", "value": "DE"}
     }
 
 
@@ -258,9 +256,9 @@ def test_invalid_nested_operand_reports_the_complete_developer_input_rule() -> N
     assert "developer-input rule violated" in message
 
 
-def test_invalid_element_operand_reports_the_complete_developer_input_rule() -> None:
+def test_invalid_relative_operand_reports_the_complete_developer_input_rule() -> None:
     with pytest.raises(QueryDefinitionError) as caught:
-        _element(vm.Geo.elevation).__eq__(None)
+        _field(vm.Geo.elevation).__eq__(None)
     message = str(caught.value)
     assert "elevation" in message
     assert "declared NeutralType" in message
@@ -268,43 +266,38 @@ def test_invalid_element_operand_reports_the_complete_developer_input_rule() -> 
     assert "developer-input rule violated" in message
 
 
-def test_a_nested_range_and_negated_membership_stay_nested_rather_than_scalar() -> None:
-    # `.between(...)` / `.not_in(...)` follow `.in_(...)`: on a value-object path they
-    # build the NESTED node carrying the whole dotted path, not the scalar node over a
-    # truncated `Class.member` reference.
+def test_a_dotted_range_membership_and_match_carry_the_whole_path() -> None:
     assert serialize(predicate_node(vm.Customer.address.geo.elevation.between(5, 12))) == {
-        "nestedBetween": {
+        "between": {
             "path": "parallax.compatibility.Customer.address.geo.elevation",
             "lower": 5,
             "upper": 12,
         }
     }
     assert serialize(predicate_node(vm.Customer.address.city.not_in(["Oslo"]))) == {
-        "nestedNotIn": {"path": "parallax.compatibility.Customer.address.city", "values": ["Oslo"]}
+        "notIn": {"path": "parallax.compatibility.Customer.address.city", "values": ["Oslo"]}
     }
     assert serialize(predicate_node(vm.Customer.address.city.starts_with("Os"))) == {
-        "nestedStartsWith": {"path": "parallax.compatibility.Customer.address.city", "value": "Os"}
+        "startsWith": {"path": "parallax.compatibility.Customer.address.city", "value": "Os"}
     }
     assert serialize(
         predicate_node(vm.Customer.address.city.like("OS%", case_insensitive=True))
     ) == {
-        "nestedLike": {
+        "like": {
             "path": "parallax.compatibility.Customer.address.city",
             "value": "OS%",
             "caseInsensitive": True,
         }
     }
-    # A non-nested attribute on the same Entity keeps the scalar spelling, and the
-    # fluent surface never authors an explicit `caseInsensitive: false`.
+    # The fluent surface never authors an explicit `caseInsensitive: false`.
     assert serialize(predicate_node(vm.Customer.name.starts_with("A"))) == {
-        "startsWith": {"attr": "parallax.compatibility.Customer.name", "value": "A"}
+        "startsWith": {"path": "parallax.compatibility.Customer.name", "value": "A"}
     }
-    # A non-nested attribute on the same Entity keeps the scalar spellings.
     assert serialize(predicate_node(vm.Customer.name.not_in(["Ada"]))) == {
-        "notIn": {"attr": "parallax.compatibility.Customer.name", "values": ["Ada"]}
+        "notIn": {"path": "parallax.compatibility.Customer.name", "values": ["Ada"]}
     }
     assert serialize(predicate_node(vm.Customer.id.between(1, 3))) == {
-        "between": {"attr": "parallax.compatibility.Customer.id", "lower": 1, "upper": 3}
+        "between": {"path": "parallax.compatibility.Customer.id", "lower": 1, "upper": 3}
     }
 
 

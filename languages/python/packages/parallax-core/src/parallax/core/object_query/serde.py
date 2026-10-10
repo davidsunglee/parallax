@@ -10,7 +10,7 @@ from parallax.core.object_query._nodes import (
     AsOf,
     AsOfRange,
     History,
-    IncludePath,
+    IncludePathNode,
     IncludeSegment,
     ObjectQueryNode,
     OrderKey,
@@ -150,10 +150,10 @@ def _order_by(doc: object) -> tuple[OrderKey, ...]:
     return tuple(keys)
 
 
-def _includes(doc: object) -> tuple[IncludePath, ...]:
+def _includes(doc: object) -> tuple[IncludePathNode, ...]:
     if not isinstance(doc, list) or not doc:
         raise ObjectQueryError("includes must be a non-empty list")
-    paths: list[IncludePath] = []
+    paths: list[IncludePathNode] = []
     for entry in cast("list[object]", doc):
         path = _mapping(entry, "include path")
         _closed(path, frozenset({"appliesTo", "segments"}), "include path")
@@ -178,7 +178,7 @@ def _includes(doc: object) -> tuple[IncludePath, ...]:
                 else ()
             )
             segments.append(IncludeSegment(rel=rel, narrow_to=narrow_to))
-        paths.append(IncludePath(segments=tuple(segments), applies_to=applies_to))
+        paths.append(IncludePathNode(segments=tuple(segments), applies_to=applies_to))
     return tuple(paths)
 
 
@@ -238,7 +238,7 @@ def _serialize_selection(selection: TemporalSelection) -> dict[str, object]:
             return {"history": {}}
 
 
-def _serialize_path(path: IncludePath) -> dict[str, object]:
+def _serialize_path(path: IncludePathNode) -> dict[str, object]:
     segments: list[dict[str, object]] = []
     for segment in path.segments:
         entry: dict[str, object] = {"rel": segment.rel}

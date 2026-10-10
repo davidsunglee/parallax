@@ -15,7 +15,7 @@ when:
       objectQuery:
         target: parallax.compatibility.Account
         predicate:
-          all: {}
+          "true": {}
       stream:
         batchSize: 2
       roundTrips: 2
@@ -52,7 +52,7 @@ when:
       objectQuery:
         target: parallax.compatibility.Account
         predicate:
-          all: {}
+          "true": {}
       stream:
         batchSize: 2
       roundTrips: 2

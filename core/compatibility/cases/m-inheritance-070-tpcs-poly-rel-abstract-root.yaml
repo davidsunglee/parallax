@@ -7,8 +7,8 @@ when:
   objectQuery:
     target: parallax.compatibility.Folder
     predicate:
-      exists:
-        rel: parallax.compatibility.Folder.documents
+      any:
+        path: parallax.compatibility.Folder.documents
 then:
   statements:
     - sql:

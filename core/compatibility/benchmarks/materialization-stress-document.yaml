@@ -8,7 +8,7 @@ dataset:
     fanout: 4
 objectQuery:
   target: snapshot.materialization.Owner
-  predicate: { all: {} }
+  predicate: { "true": {} }
   includes:
     - segments: [{ rel: snapshot.materialization.Owner.nodes }]
     - segments:

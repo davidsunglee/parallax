@@ -1,4 +1,5 @@
-# navigate over a ONE-TO-ONE relationship (m-descriptor cardinality, m-navigate semi-join).
+# Presence and a dotted field over a ONE-TO-ONE relationship (m-descriptor cardinality,
+# m-predicate single-valued traversal).
 model: models/person.yaml
 tags: [m-navigate, navigate, relationship, one-to-one, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -6,16 +7,17 @@ when:
   objectQuery:
     target: parallax.compatibility.Person
     predicate:
-      navigate:
-        rel: parallax.compatibility.Person.passport
-        op:
-          eq:
-            attr: parallax.compatibility.Passport.number
-            value: P-AAA
+      and:
+        operands:
+          - exists:
+              path: parallax.compatibility.Person.passport
+          - eq:
+              path: parallax.compatibility.Person.passport.number
+              value: P-AAA
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from person t0 where exists (select 1 from passport t1 where t1.person_id = t0.id and t1.number = ?)
+        postgres: select t0.id, t0.name from person t0 where exists (select 1 from passport t1 where t1.person_id = t0.id) and (select t2.number from passport t2 where t2.person_id = t0.id) = ?
       binds: [P-AAA]
   referenceSql: select id, name from person where id in (select person_id from passport where number = 'P-AAA')
   rows:

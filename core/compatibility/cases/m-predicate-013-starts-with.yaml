@@ -9,7 +9,7 @@ when:
     target: parallax.compatibility.Order
     predicate:
       startsWith:
-        attr: parallax.compatibility.Order.sku
+        path: parallax.compatibility.Order.sku
         value: A-
 then:
   statements:

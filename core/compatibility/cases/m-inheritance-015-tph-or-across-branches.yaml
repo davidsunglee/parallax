@@ -13,14 +13,14 @@ when:
                 - parallax.compatibility.Dog
               operand:
                 greaterThan:
-                  attr: parallax.compatibility.Dog.barkVolume
+                  path: parallax.compatibility.Dog.barkVolume
                   value: 5
           - narrow:
               to:
                 - parallax.compatibility.Cat
               operand:
                 eq:
-                  attr: parallax.compatibility.Cat.indoor
+                  path: parallax.compatibility.Cat.indoor
                   value: true
 then:
   statements:

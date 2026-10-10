@@ -59,7 +59,7 @@ def test_canonical_predicate_doc_preserves_valid_time_bounds_and_drops_at() -> N
             "mutation": "terminateUntil",
             "target": {
                 "entity": "Position",
-                "predicate": {"eq": {"attr": "Position.id", "value": 1}},
+                "predicate": {"eq": {"path": "Position.id", "value": 1}},
             },
             "at": "2024-10-01T00:00:00+00:00",
             "validFrom": "2024-07-01T00:00:00+00:00",

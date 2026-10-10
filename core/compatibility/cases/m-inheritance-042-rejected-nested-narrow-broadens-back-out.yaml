@@ -11,7 +11,7 @@ when:
         to:
           - parallax.compatibility.Cat
         operand:
-          all: {}
+          "true": {}
     narrowTo:
       - parallax.compatibility.Dog
 then:

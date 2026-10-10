@@ -20,7 +20,7 @@ when:
         target: parallax.compatibility.Supplier
         predicate:
           eq:
-            attr: parallax.compatibility.Supplier.name
+            path: parallax.compatibility.Supplier.name
             value: Baltic Traders
         temporal:
           transaction-time:
@@ -47,7 +47,7 @@ when:
         target: parallax.compatibility.Supplier
         predicate:
           eq:
-            attr: parallax.compatibility.Supplier.name
+            path: parallax.compatibility.Supplier.name
             value: Nordic Foods
         temporal:
           transaction-time:
@@ -77,7 +77,9 @@ when:
         target:
           entity: parallax.compatibility.Supplier
           predicate:
-            eq: { attr: parallax.compatibility.Supplier.name, value: Nordic Foods }
+            eq:
+              path: parallax.compatibility.Supplier.name
+              value: Nordic Foods
         at: "2024-10-01T00:00:00.000000Z"
       roundTrips: 1
       note: close the resolved current row (out_z = at), gated on step 1's observed in_z; a Transaction-Time-only close copies no payload, so no document rides this write's read
@@ -90,7 +92,7 @@ when:
         target: parallax.compatibility.Supplier
         predicate:
           eq:
-            attr: parallax.compatibility.Supplier.name
+            path: parallax.compatibility.Supplier.name
             value: Nordic Foods
         temporal:
           transaction-time:

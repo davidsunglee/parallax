@@ -137,7 +137,7 @@ def _update_where(
             tx.wire.amend_where(
                 {
                     "entity": f"{_NAMESPACE}.{entity.__name__}",
-                    "predicate": {"eq": {"attr": f"{_NAMESPACE}.{entity.__name__}.id", "value": 1}},
+                    "predicate": {"eq": {"path": f"{_NAMESPACE}.{entity.__name__}.id", "value": 1}},
                 },
                 {"point": point, "trail": list(trail)},
                 **stated_start(valid_from),
@@ -233,7 +233,7 @@ def test_a_keyed_write_stores_widened_float32_occurrences(
             node = tx.wire.find(
                 {
                     "target": f"{_NAMESPACE}.VersionedGauge",
-                    "predicate": {"eq": {"attr": f"{_NAMESPACE}.VersionedGauge.id", "value": 1}},
+                    "predicate": {"eq": {"path": f"{_NAMESPACE}.VersionedGauge.id", "value": 1}},
                 }
             ).result()
             tx.wire.amend(node, {"point": point, "trail": [point]})

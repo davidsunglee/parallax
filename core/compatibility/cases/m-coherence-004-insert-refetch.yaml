@@ -10,7 +10,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.owner
+            path: parallax.compatibility.Account.owner
             value: Trent
       statements:
         - sql:
@@ -33,7 +33,7 @@ when:
         target: parallax.compatibility.Account
         predicate:
           eq:
-            attr: parallax.compatibility.Account.owner
+            path: parallax.compatibility.Account.owner
             value: Trent
       statements:
         - sql:

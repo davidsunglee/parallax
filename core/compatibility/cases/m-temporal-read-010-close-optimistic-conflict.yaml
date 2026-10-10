@@ -22,7 +22,7 @@ when:
         target: parallax.compatibility.Balance
         predicate:
           eq:
-            attr: parallax.compatibility.Balance.id
+            path: parallax.compatibility.Balance.id
             value: 2
         temporal:
           transaction-time:
@@ -41,7 +41,7 @@ when:
         target: parallax.compatibility.Balance
         predicate:
           eq:
-            attr: parallax.compatibility.Balance.id
+            path: parallax.compatibility.Balance.id
             value: 2
         temporal:
           transaction-time:

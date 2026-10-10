@@ -232,7 +232,10 @@ def _version_group(
     predicate = PredicateWrite(
         mutation,
         PredicateSelection(
-            entity, predicate_algebra.Comparison("lessThan", f"{entity}.balance", "1000000.00")
+            entity,
+            predicate_algebra.Comparison(
+                "lessThan", predicate_algebra.FieldSubject(f"{entity}.balance"), "1000000.00"
+            ),
         ),
         assignments=tuple(
             WriteAssignment(
@@ -276,7 +279,10 @@ def _one_row_temporal_group(assigned: Decimal) -> MaterializedWriteGroup:
         PredicateWrite(
             "amend",
             PredicateSelection(
-                "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "1000000.00")
+                "Balance",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Balance.value"), "1000000.00"
+                ),
             ),
             assignments=(WriteAssignment("Balance.value", assigned),),
         ),
@@ -406,7 +412,10 @@ def _temporal_topology_group(
         PredicateWrite(
             mutation,
             PredicateSelection(
-                entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", "100.00")
+                entity,
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject(f"{entity}.value"), "100.00"
+                ),
             ),
             (WriteAssignment(f"{entity}.value", Decimal("9.00")),)
             if mutation.startswith("amend")
@@ -494,7 +503,10 @@ def test_a_temporal_groups_marker_no_opened_row_expresses_is_refused_while_plann
         PredicateWrite(
             "amend",
             PredicateSelection(
-                "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "100.00")
+                "Balance",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Balance.value"), "100.00"
+                ),
             ),
             (WriteAssignment("Balance.acctNum", {"increment": 1}),),
         ),
@@ -518,7 +530,10 @@ def test_a_bitemporal_close_refuses_a_row_that_holds_no_valid_time_end() -> None
         PredicateWrite(
             "terminate",
             PredicateSelection(
-                "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
+                "Position",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Position.value"), "100.00"
+                ),
             ),
             valid_from=_WINDOW_FROM,
         ),
@@ -558,7 +573,10 @@ def _position_update(*assignments: WriteAssignment, account: str) -> Materialize
         PredicateWrite(
             "amend",
             PredicateSelection(
-                "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
+                "Position",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Position.value"), "100.00"
+                ),
             ),
             assignments,
             _WINDOW_FROM,
@@ -639,7 +657,10 @@ def _acquisition_update_until(model: Metamodel) -> PreparedPredicateWrite:
         PredicateWrite(
             "amendUntil",
             PredicateSelection(
-                entity, predicate_algebra.Comparison("greaterThanEquals", f"{entity}.id", 1)
+                entity,
+                predicate_algebra.Comparison(
+                    "greaterThanEquals", predicate_algebra.FieldSubject(f"{entity}.id"), 1
+                ),
             ),
             (WriteAssignment(f"{entity}.title", acquisition_support.ASSIGNED_TITLE),),
             acquisition_support.INTERIOR_FROM,
@@ -834,7 +855,10 @@ def test_a_surviving_row_executes_a_restored_leaf_beside_an_effective_value_obje
     group = temporal_group(
         PredicateWrite(
             "amend",
-            PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
+            PredicateSelection(
+                "Branch",
+                predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Branch.id"), 1),
+            ),
             (
                 WriteAssignment("Branch.name", "Central Branch"),
                 WriteAssignment("Branch.address", {**address, "city": "Tampere"}),
@@ -997,7 +1021,10 @@ def test_a_group_never_opens_a_successor_that_covers_no_valid_time() -> None:
         PredicateWrite(
             "amend",
             PredicateSelection(
-                "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
+                "Position",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Position.value"), "100.00"
+                ),
             ),
             (WriteAssignment("Position.value", Decimal("9.00")),),
             _OPENED_AT,
@@ -1063,7 +1090,10 @@ def _position_group(mutation: PredicateMutation, *starts: dt.datetime) -> Materi
         PredicateWrite(
             mutation,
             PredicateSelection(
-                "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
+                "Position",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Position.value"), "100.00"
+                ),
             ),
             (WriteAssignment("Position.value", Decimal("9.00")),)
             if mutation.startswith("amend")
@@ -1127,7 +1157,10 @@ def _selected(mutation: PredicateMutation, *rows: dict[str, object]) -> Material
         PredicateWrite(
             mutation,
             PredicateSelection(
-                "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
+                "Position",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Position.value"), "100.00"
+                ),
             ),
             (WriteAssignment("Position.value", Decimal("9.00")),),
             *((_WINDOW_FROM, _WINDOW_UNTIL) if bounded else (_WINDOW_FROM,)),
@@ -1269,7 +1302,10 @@ def test_an_owned_row_a_group_reaches_is_revised_with_what_it_already_holds() ->
         PredicateWrite(
             "amend",
             PredicateSelection(
-                "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "100.00")
+                "Balance",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Balance.value"), "100.00"
+                ),
             ),
             (WriteAssignment("Balance.acctNum", "A"),),
         ),
@@ -1330,7 +1366,10 @@ def test_a_bitemporal_group_refuses_a_row_that_holds_no_valid_time_start() -> No
         PredicateWrite(
             "terminate",
             PredicateSelection(
-                "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
+                "Position",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Position.value"), "100.00"
+                ),
             ),
             valid_from=_WINDOW_FROM,
         ),
@@ -1485,7 +1524,10 @@ def test_an_owned_row_settles_identically_through_a_keyed_write_and_a_group(
         PredicateWrite(
             mutation,
             PredicateSelection(
-                entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", "100.00")
+                entity,
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject(f"{entity}.value"), "100.00"
+                ),
             ),
             tuple(WriteAssignment(f"{entity}.{name}", value) for name, value in assigned.items()),
             *bounds,
@@ -1623,7 +1665,10 @@ def _acquisition_terminate_until(model: Metamodel) -> PreparedPredicateWrite:
         PredicateWrite(
             "terminateUntil",
             PredicateSelection(
-                entity, predicate_algebra.Comparison("greaterThanEquals", f"{entity}.id", 1)
+                entity,
+                predicate_algebra.Comparison(
+                    "greaterThanEquals", predicate_algebra.FieldSubject(f"{entity}.id"), 1
+                ),
             ),
             (),
             acquisition_support.INTERIOR_FROM,
@@ -1750,7 +1795,10 @@ def test_an_owned_row_revised_by_a_multi_assignment_group_assigns_every_member(
         PredicateWrite(
             "amend",
             PredicateSelection(
-                "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "100.00")
+                "Balance",
+                predicate_algebra.Comparison(
+                    "lessThan", predicate_algebra.FieldSubject("Balance.value"), "100.00"
+                ),
             ),
             tuple(WriteAssignment(f"Balance.{name}", value) for name, value in assigned.items()),
         ),
@@ -1778,7 +1826,10 @@ def test_an_owned_row_revised_by_a_group_assigns_the_occurrence_and_the_leaf_it_
     group = temporal_group(
         PredicateWrite(
             "amend",
-            PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
+            PredicateSelection(
+                "Branch",
+                predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Branch.id"), 1),
+            ),
             (
                 WriteAssignment("Branch.name", "Central Branch"),
                 WriteAssignment("Branch.address", {**address, "city": "Tampere"}),

@@ -13,7 +13,9 @@ when:
         target:
           entity: parallax.compatibility.NestedRoute
           predicate:
-            eq: { attr: parallax.compatibility.NestedRoute.id, value: 1 }
+            eq:
+              path: parallax.compatibility.NestedRoute.id
+              value: 1
         assignments:
           - attr: parallax.compatibility.NestedRoute.route
             value:

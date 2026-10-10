@@ -63,7 +63,7 @@ from parallax.core.metamodel import (
     Table,
     TemporalDimension,
 )
-from parallax.core.predicate import Comparison
+from parallax.core.predicate import Comparison, FieldSubject
 from parallax.core.unit_work import (
     KeyedWrite,
     MaterializedWriteGroup,
@@ -245,7 +245,9 @@ def _amendment_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
     return temporal_group(
         PredicateWrite(
             "amend",
-            PredicateSelection("Entity0", Comparison("lessThan", "Entity0.value", 1_000_000)),
+            PredicateSelection(
+                "Entity0", Comparison("lessThan", FieldSubject("Entity0.value"), 1_000_000)
+            ),
             (WriteAssignment("Entity0.value", 1_000_001),),
             _VALID_FROM,
         ),
@@ -274,7 +276,9 @@ def _temporal_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
     return temporal_group(
         PredicateWrite(
             "terminate",
-            PredicateSelection("Entity0", Comparison("lessThan", "Entity0.value", 1_000_000)),
+            PredicateSelection(
+                "Entity0", Comparison("lessThan", FieldSubject("Entity0.value"), 1_000_000)
+            ),
         ),
         model,
         [
@@ -304,7 +308,9 @@ def _version_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
     prepared = prepare_typed_write(
         PredicateWrite(
             "amend",
-            PredicateSelection("Entity0", Comparison("lessThan", "Entity0.value", 1_000_000)),
+            PredicateSelection(
+                "Entity0", Comparison("lessThan", FieldSubject("Entity0.value"), 1_000_000)
+            ),
             assignments=(WriteAssignment("Entity0.value", 1),),
         ),
         model,

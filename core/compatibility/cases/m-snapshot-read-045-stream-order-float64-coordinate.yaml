@@ -11,7 +11,10 @@ compileEligibility: { mode: run-only, reason: query-result-dependent }
 when:
   objectQuery:
     target: parallax.compatibility.StreamCoordinate
-    predicate: { eq: { attr: parallax.compatibility.StreamCoordinate.f64, value: 2.25 } }
+    predicate:
+      eq:
+        path: parallax.compatibility.StreamCoordinate.f64
+        value: 2.25
     orderBy: [{ attr: parallax.compatibility.StreamCoordinate.f64 }]
   stream: { batchSize: 1 }
 then:

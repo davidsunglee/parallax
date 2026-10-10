@@ -16,7 +16,7 @@ from parallax.core.object_query._nodes import (
     AsOf,
     AsOfRange,
     History,
-    IncludePath,
+    IncludePathNode,
     Latest,
     ObjectQueryNode,
     TemporalDimension,
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from parallax.core.entity._expressions import (
         AuthoredPredicate,
         AuthoredQuery,
-        RelationshipPath,
+        IncludePath,
         SortKey,
     )
 
@@ -109,7 +109,7 @@ class ObjectQuery[E, S]:
     # non-temporal Entity (every temporal clause then raises).
     _as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
 
-    def include(self, *paths: RelationshipPath[E, Any]) -> ObjectQuery[E, S]:
+    def include(self, *paths: IncludePath[E, Any]) -> ObjectQuery[E, S]:
         """Deep-fetch one or more relationship paths:
         ``Order.where(...).include(Order.items, Order.tags)``. One path grammar
         shared with predicates; a longer path implies its intermediates.
@@ -134,9 +134,14 @@ class ObjectQuery[E, S]:
             raise QueryDefinitionError(
                 code="query-clause-invalid", message="include requires at least one path"
             )
+        from parallax.core.entity._expressions import include_traversal
+
+        traversals = tuple(include_traversal(path) for path in paths)
         added = tuple(
-            IncludePath(segments=path.segments, applies_to=self._source_guard(path.source))
-            for path in paths
+            IncludePathNode(
+                segments=traversal.segments, applies_to=self._source_guard(traversal.source)
+            )
+            for traversal in traversals
         )
         return self._with(includes=self._query.includes + added)
 
@@ -217,11 +222,8 @@ class ObjectQuery[E, S]:
         """The whole-result subtype-narrowing clause:
         ``Animal.where(...).narrow(Dog, Cat)``. A PURE result-set narrowing that
         fills the query's own ``narrowTo`` clause — single-shot, like each
-        temporal dimension. ``Entity.where(Entity.narrow(Dog, where=...))``
-        builds the identical canonical query: a narrowing that is the WHOLE
-        filter narrows the result, and that is the spelling a checker agrees
-        with when the predicate addresses the narrowed subtype, because it
-        narrows before the predicate is measured.
+        temporal dimension. It narrows the result, unlike the ``is_a`` predicate,
+        which filters, and it narrows before the predicate is measured.
 
         The RESULT parameter moves and the queried one does not, so a later sort
         key addresses the narrowed subtypes while a later include path is still
@@ -367,7 +369,7 @@ class ObjectQuery[E, S]:
             )
         if "includes" in clauses:
             clauses["includes"] = canonical_includes(
-                cast("tuple[IncludePath, ...]", clauses["includes"])
+                cast("tuple[IncludePathNode, ...]", clauses["includes"])
             )
         return replace(self, _query=replace(self._query, **clauses))
 

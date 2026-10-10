@@ -10,7 +10,7 @@ when:
         target: parallax.compatibility.OrderItem
         predicate:
           eq:
-            attr: parallax.compatibility.OrderItem.id
+            path: parallax.compatibility.OrderItem.id
             value: 12
       roundTrips: 1
       note: observe line item 12 inside the unit of work, so the delete below has a source
@@ -38,7 +38,9 @@ when:
         target:
           entity: parallax.compatibility.OrderItem
           predicate:
-            lessThan: { attr: parallax.compatibility.OrderItem.quantity, value: 3 }
+            lessThan:
+              path: parallax.compatibility.OrderItem.quantity
+              value: 3
         assignments:
           - { attr: parallax.compatibility.OrderItem.sku, value: Z }
       roundTrips: 1

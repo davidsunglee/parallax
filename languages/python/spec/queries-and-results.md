@@ -26,18 +26,41 @@ leaf. Membership takes one nonempty exact built-in list or tuple, copies it,
 and preserves order and duplicates. Other iterables and subclasses are refused.
 
 Attribute `.set(...)` validates an assignment immediately and raises `EditError`
-on refusal. Its targets are top-level scalar members or whole Value Object
-occurrences, not relationships or paths inside an occurrence. Assignments use
+on refusal. It exists only on the expressions of top-level Entity members —
+scalars, scalar collections, and whole Value Object occurrences — so a
+relationship, a field reached through an occurrence, and a Value Object Class's
+own members offer none. Assignments use
 the same assignability and declared-type rules as `edit`; no value coercion is
 performed at this boundary.
 
 The fluent query clauses are `include`, `order_by`, `limit`, `narrow`, `as_of`,
 `history`, and `as_of_range`. There is no query `.where` refinement. Include
-paths are class-derived relationship paths; authored chains stop at two hops.
-Relationship predicates use explicit `.exists(...)` or `.not_exists(...)`.
-Value Object occurrence quantifiers use the same vocabulary. Sorting uses
-attribute expressions and direction/null-placement modifiers. `limit` requires
-a positive exact built-in integer, excluding `bool`.
+paths are class-derived `IncludePath` values; authored chains stop at two hops,
+and a relationship's `.narrow(...)` returns an `IncludePath` that authors no
+predicate. Sorting uses attribute expressions and direction/null-placement
+modifiers. `limit` requires a positive exact built-in integer, excluding `bool`.
+
+A member's class access answers the expression of its kind and multiplicity.
+Scalar collections, `many` Value Objects, and to-many relationships offer
+`.any()` / `.none()` bare and `.any(p)` / `.all(p)` / `.none(p)` over one composed
+predicate: `p` is built from the Value Object or target Entity Class for object
+elements, and from the collection's `.element` for scalar elements
+(`Order.tags.any(Order.tags.element == "urgent")`). A collection offers no
+comparison, ordering, null check, or traversal of its own, and comparing one with
+`==` raises `QueryDefinitionError`. Single Value Objects and to-one relationships
+offer `.exists()` / `.not_exists()` and dotted field access; a to-one
+relationship also offers `.is_a(*subtypes, where=p)` for a subtype test of the
+target it reaches, and `Entity.is_a(...)` tests the current position. An
+`Entity.is_a(...)` that is a query's whole filter fills the result narrowing
+instead.
+
+Dotted access past a relationship keeps the Python member names it was written
+with, offers every candidate operation, and is resolved by the serving model's
+Entity Classes when an operation binds the query, before I/O: renamed and
+inherited members resolve through their declarations, and an operation the
+resolved member cannot take — or a path that crosses a collection — is refused
+there. A model built without Entity Classes refuses such a path; the canonical
+Wire spelling remains available to it.
 
 The generic expression types bind their source and result Entity positions.
 Their variance and overloads are the static contract. Some static rejections

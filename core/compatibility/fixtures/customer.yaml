@@ -38,7 +38,7 @@
 #
 # To-many (`address.phones`, a `many` nested value object — a JSON array of
 # {type, number} documents in the SAME address column) drives the exists /
-# any-element / same-element cases (m-predicate to-many, m-dialect array-traversal
+# quantifier cases (m-predicate quantifiers, m-dialect array-traversal
 # form). The phones arrays are the discriminating dataset:
 #
 #   id 1 Ada    phones [{home,555-1234},{work,555-9999}]  two elements — the DISCRIMINATOR
@@ -59,8 +59,7 @@
 #   id 9  Omar   phones "555-0000" (a JSON string)        WRONG-KIND scalar
 #   id 10 Priya  phones {type:home, number:'555-9999'}    WRONG-KIND object
 #
-# Each of these three is EXCLUDED by nestedExists / any-element / same-element and
-# INCLUDED by nestedNotExists, indistinguishable from the empty array (3) and the
+# Each of these three is EXCLUDED by every `any` and INCLUDED by every `none`, indistinguishable from the empty array (3) and the
 # NULL column (4). id 9's scalar VALUE ("555-0000") equals a real element's number
 # (id 7), and id 10's OBJECT content matches the same-element candidate; both still
 # collapse to not-present because they are not arrays (cases 021, 019/020). The two
@@ -70,12 +69,12 @@
 # for the scalar nested predicates (projected null in 003, matched by isNull in
 # 007 / 013).
 #
-# The discriminating pair: ANDing two flat any-element predicates
-# (nestedEq(phones.type, home) AND nestedEq(phones.number, '555-9999')) matches
+# The discriminating pair: ANDing two quantifiers
+# (any(phones, type = home) AND any(phones, number = '555-9999')) matches
 # BOTH id 1 (home in element 0, 555-9999 in element 1 — DIFFERENT elements) and id
-# 2; the scoped form nestedExists(phones, where: type=home AND number=555-9999)
+# 2; one quantifier any(phones, where: type=home AND number=555-9999)
 # requires ONE element to satisfy both, so it matches ONLY id 2. id 1 is the row
-# that tells the two apart. exists = non-empty {1,2,7}; notExists (empty-or-absent)
+# that tells the two apart. Bare any = non-empty {1,2,7}; bare none (empty-or-absent)
 # folds the empty array (3), the NULL column (4), the missing key (5,6) and every
 # non-array state (8,9,10) together.
 parallax.compatibility.Customer:
@@ -170,7 +169,7 @@ parallax.compatibility.Customer:
         - { type: work, number: '555-0000' }
   # id 8 (Iris): `address` is present but `phones` is an explicit JSON `null`,
   # the accepted absence form for a `many`. It reads as ZERO elements, is excluded
-  # by exists / any-element, and is included by notExists.
+  # by every `any`, and is included by every `none`.
   - id: 8
     name: Iris
     address:
@@ -179,7 +178,7 @@ parallax.compatibility.Customer:
   # id 9 (Omar): `phones` is a WRONG-KIND JSON scalar (a string). Its value
   # "555-0000" deliberately equals a real element's `number` (Nils, id 7), yet it
   # still collapses to not-present because it is not an array — an unguarded
-  # any-element read must NOT match it (case 021).
+  # `any` must NOT match it (case 021).
   - id: 9
     name: Omar
     address:

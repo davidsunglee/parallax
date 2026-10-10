@@ -41,9 +41,8 @@ from parallax.core import (
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.base import Float32, Int32, Int64, String, Timestamp
 from parallax.core.entity import (
-    AttributeExpr,
+    IncludePath,
     Predicate,
-    RelationshipPath,
     UnloadedRelationshipError,
 )
 from parallax.core.entity import _declaration as engine
@@ -51,6 +50,7 @@ from parallax.core.entity import _entity as entity_module
 from parallax.core.entity._declaration import members_of, wire_names_of
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT
 from parallax.core.entity._errors import EditError
+from parallax.core.entity._expressions import AssignableScalarExpr, include_traversal
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -580,17 +580,18 @@ def test_indices_are_local_declaration_ordered_and_lowered_to_identities() -> No
 
 
 def test_class_level_member_access_seeds_predicate_nodes() -> None:
-    assert isinstance(Order.id, AttributeExpr)
+    assert isinstance(Order.id, AssignableScalarExpr)
     predicate = Order.id == 1
     assert isinstance(predicate, Predicate)
     assert isinstance(predicate_node(predicate), Comparison)
-    assert serialize(predicate_node(predicate)) == {"eq": {"attr": "sales.Order.id", "value": 1}}
+    assert serialize(predicate_node(predicate)) == {"eq": {"path": "sales.Order.id", "value": 1}}
     path = Order.customer
-    assert isinstance(path, RelationshipPath)
+    assert isinstance(path, IncludePath)
     # A relationship reference names its owner locally, as the wire does; the
     # path's own target keeps the namespace a continuing hop resolves in.
-    assert path.segments == (IncludeSegment(rel="sales.Order.customer"),)
-    assert path.target == "sales.Customer"
+    traversal = include_traversal(path)
+    assert traversal.segments == (IncludeSegment(rel="sales.Order.customer"),)
+    assert traversal.target == "sales.Customer"
 
 
 def test_a_query_over_a_class_no_model_composed_still_builds() -> None:
@@ -600,7 +601,7 @@ def test_a_query_over_a_class_no_model_composed_still_builds() -> None:
     # connected model's question, answered at execution preflight.
     node = object_query_node(Order.where(Order.id == 1))
     assert node.target == Order.identity
-    assert serialize(node.predicate) == {"eq": {"attr": "sales.Order.id", "value": 1}}
+    assert serialize(node.predicate) == {"eq": {"path": "sales.Order.id", "value": 1}}
 
 
 def test_instance_access_returns_the_member_value_and_relationships_stay_closed_world() -> None:

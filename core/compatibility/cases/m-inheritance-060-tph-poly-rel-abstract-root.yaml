@@ -6,8 +6,8 @@ when:
   objectQuery:
     target: parallax.compatibility.Person
     predicate:
-      exists:
-        rel: parallax.compatibility.Person.animals
+      any:
+        path: parallax.compatibility.Person.animals
 then:
   statements:
     - sql:

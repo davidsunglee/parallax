@@ -12,7 +12,7 @@ when:
   objectQuery:
     target: parallax.compatibility.CollectionTwinItem
     predicate:
-      all: {}
+      "true": {}
     orderBy:
       - attr: parallax.compatibility.CollectionTwinItem.id
         direction: asc

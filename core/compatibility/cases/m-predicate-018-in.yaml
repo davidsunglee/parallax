@@ -7,7 +7,7 @@ when:
     target: parallax.compatibility.Order
     predicate:
       in:
-        attr: parallax.compatibility.Order.id
+        path: parallax.compatibility.Order.id
         values:
           - 1
           - 2

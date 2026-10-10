@@ -5,7 +5,7 @@ from types import MappingProxyType
 
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
 from parallax.core.object_query._nodes import (
-    IncludePath,
+    IncludePathNode,
     IncludeSegment,
     ObjectQueryNode,
     OrderKey,
@@ -39,7 +39,7 @@ def object_query(
     temporal: Mapping[TemporalDimension, TemporalSelection] | None = None,
     order_by: tuple[OrderKey, ...] = (),
     limit: int | None = None,
-    includes: tuple[IncludePath, ...] = (),
+    includes: tuple[IncludePathNode, ...] = (),
 ) -> ObjectQueryNode:
     """Build the canonical Object Query for these clause values."""
     return ObjectQueryNode(
@@ -81,7 +81,7 @@ def _segment_key(
 
 
 def _path_key(
-    path: IncludePath,
+    path: IncludePathNode,
 ) -> tuple[
     tuple[tuple[tuple[str, str], str, tuple[int, tuple[tuple[str, str], ...]]], ...],
     tuple[int, tuple[tuple[str, str], ...]],
@@ -91,7 +91,7 @@ def _path_key(
     )
 
 
-def _is_redundant_prefix(path: IncludePath, extension: IncludePath) -> bool:
+def _is_redundant_prefix(path: IncludePathNode, extension: IncludePathNode) -> bool:
     return (
         path.applies_to == extension.applies_to
         and len(path.segments) < len(extension.segments)
@@ -99,7 +99,7 @@ def _is_redundant_prefix(path: IncludePath, extension: IncludePath) -> bool:
     )
 
 
-def canonical_includes(paths: tuple[IncludePath, ...]) -> tuple[IncludePath, ...]:
+def canonical_includes(paths: tuple[IncludePathNode, ...]) -> tuple[IncludePathNode, ...]:
     """Return the maximal, deduplicated Include Path set in canonical order."""
     unique = frozenset(paths)
     maximal = (

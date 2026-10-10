@@ -1,8 +1,8 @@
-# valueObject to-many string match: nestedLike through a `many` segment is ANY-ELEMENT,
-# and its `value` stays a raw pattern (m-predicate nested string predicates +
-# any-element, m-sql, m-dialect array-traversal form). Postgres golden only — a
-# non-equality element predicate is outside MariaDB's containment scope (m-dialect,
-# "Scope of the containment golden").
+# valueObject to-many string match: `any` with `like` keeps its `value` a raw
+# pattern (m-predicate string predicates + quantifiers, m-sql, m-dialect
+# array-traversal form). Postgres golden only — a non-equality element predicate is
+# outside MariaDB's containment scope (m-dialect, "Scope of the containment
+# golden").
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, like, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -10,9 +10,12 @@ when:
   objectQuery:
     target: parallax.compatibility.Customer
     predicate:
-      nestedLike:
-        path: parallax.compatibility.Customer.address.phones.number
-        value: 555-0%
+      any:
+        path: parallax.compatibility.Customer.address.phones
+        where:
+          like:
+            path: number
+            value: 555-0%
 then:
   statements:
     - sql:

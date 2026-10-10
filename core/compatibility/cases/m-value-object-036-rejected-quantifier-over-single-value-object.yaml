@@ -1,0 +1,13 @@
+# Negative (m-predicate quantifiers): a collection quantifier aimed at a single
+# value object is refused PRE-SQL; a single object's presence is exists/notExists.
+model: models/customer.yaml
+tags: [m-value-object, m-predicate, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      any:
+        path: parallax.compatibility.Customer.address
+then:
+  rejectedRule: path-target-kind-mismatch
