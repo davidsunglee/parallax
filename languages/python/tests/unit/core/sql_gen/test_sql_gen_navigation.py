@@ -12,10 +12,14 @@ the private-module split must preserve.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pytest
 
+from parallax.conformance.models import accepted_model
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
+from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import AsOf
 from parallax.core.predicate import ModelRejectedError
 from tests._support.sql import compile_read
@@ -90,6 +94,41 @@ def test_a_quantifier_composes_inside_the_boolean_algebra() -> None:
         "where not exists (select 1 from order_item t1 where t1.order_id = t0.id) and t0.active = ?"
     )
     assert compiled.statement.binds == (True,)
+
+
+@pytest.mark.parametrize("kind", ["any", "none"])
+def test_a_disjunctive_where_stays_whole_beside_the_correlation(
+    kind: Literal["any", "none"],
+) -> None:
+    either = oa.Or(
+        operands=(
+            oa.Comparison(op="eq", subject=oa.FieldSubject("sku"), value="A-100"),
+            oa.Comparison(op="eq", subject=oa.FieldSubject("sku"), value="B-200"),
+        )
+    )
+    compiled = compile_read(
+        oa.Quantifier(kind, "Order.items", either), ORDERS, POSTGRES, target(ORDERS, "Order")
+    )
+    assert compiled.statement.sql.endswith(
+        "exists (select 1 from order_item t1 where t1.order_id = t0.id "
+        "and (t1.sku = ? or t1.sku = ?))"
+    )
+
+
+def test_a_negated_conjunction_is_negated_whole() -> None:
+    op = oa.Not(
+        oa.And(
+            operands=(
+                oa.Quantifier("none", "Order.items"),
+                oa.Comparison(op="eq", subject=oa.FieldSubject("Order.active"), value=True),
+            )
+        )
+    )
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    assert compiled.statement.sql.endswith(
+        "where not (not exists (select 1 from order_item t1 where t1.order_id = t0.id) "
+        "and t0.active = ?)"
+    )
 
 
 def test_a_field_past_a_reverse_to_one_hop_reads_a_correlated_scalar() -> None:
@@ -409,4 +448,151 @@ def test_presence_of_a_single_value_object_inside_an_element_reads_the_element()
     )
     assert compiled.statement.sql.endswith(
         "t1 where coalesce(jsonb_typeof(jsonb_extract_path(t1.value, ?)) = ?, false))"
+    )
+
+
+def _dormant_target_model(strategy: Literal["tph", "tpcs"]) -> Metamodel:
+    """``Holder`` relates to ``Empty``, an abstract subtype with no concrete
+    descendant beside the concrete sibling ``Leaf``."""
+    shared = strategy == "tph"
+    root: dict[str, object] = {
+        "name": "Thing",
+        "namespace": "probe",
+        "inheritance": {
+            "role": "root",
+            "strategy": "table-per-hierarchy" if shared else "table-per-concrete-subtype",
+            **({"tag": {"column": "kind"}} if shared else {}),
+        },
+        "attributes": [
+            {"name": "id", "type": "int64", "primaryKey": True},
+            {"name": "title", "type": "string", "maxLength": 16},
+            {"name": "holderId", "type": "int64", "nullable": True},
+        ],
+        "relationships": [
+            {
+                "name": "holder",
+                "cardinality": "many-to-one",
+                "join": {
+                    "source": "holderId",
+                    "target": {"entity": "probe.Holder", "attribute": "id"},
+                },
+            }
+        ],
+        **({"table": "thing"} if shared else {}),
+    }
+    leaf: dict[str, object] = {
+        "name": "Leaf",
+        "namespace": "probe",
+        "inheritance": {
+            "role": "concrete-subtype",
+            "parent": "probe.Thing",
+            **({"tagValue": "leaf"} if shared else {}),
+        },
+        **({} if shared else {"table": "leaf"}),
+    }
+    return accepted_model(
+        {
+            "entities": [
+                root,
+                leaf,
+                {
+                    "name": "Empty",
+                    "namespace": "probe",
+                    "inheritance": {"role": "abstract-subtype", "parent": "probe.Thing"},
+                },
+                {
+                    "name": "Holder",
+                    "namespace": "probe",
+                    "table": "holder",
+                    "attributes": [
+                        {"name": "id", "type": "int64", "primaryKey": True},
+                        {"name": "emptyId", "type": "int64", "nullable": True},
+                        {"name": "nextId", "type": "int64", "nullable": True},
+                    ],
+                    "relationships": [
+                        {
+                            "name": "empties",
+                            "cardinality": "one-to-many",
+                            "join": {
+                                "source": "id",
+                                "target": {"entity": "probe.Empty", "attribute": "holderId"},
+                            },
+                        },
+                        {
+                            "name": "empty",
+                            "cardinality": "many-to-one",
+                            "join": {
+                                "source": "emptyId",
+                                "target": {"entity": "probe.Empty", "attribute": "id"},
+                            },
+                        },
+                        {
+                            "name": "next",
+                            "cardinality": "many-to-one",
+                            "join": {
+                                "source": "nextId",
+                                "target": {"entity": "probe.Holder", "attribute": "id"},
+                            },
+                        },
+                    ],
+                },
+            ]
+        }
+    )
+
+
+def _title(path: str, value: str = "x") -> oa.Comparison:
+    return oa.Comparison(op="eq", subject=oa.FieldSubject(path), value=value)
+
+
+@pytest.mark.parametrize("strategy", ["tph", "tpcs"])
+@pytest.mark.parametrize(
+    ("predicate", "expected"),
+    [
+        (oa.Quantifier("any", "Holder.empties"), "1 = 0"),
+        (oa.Quantifier("any", "Holder.empties", _title("title")), "1 = 0"),
+        (oa.Quantifier("none", "Holder.empties"), "1 = 1"),
+        (oa.Quantifier("all", "Holder.empties", _title("title")), "1 = 1"),
+        (oa.Presence("exists", "Holder.empty"), "1 = 0"),
+        (oa.Presence("notExists", "Holder.empty"), "1 = 1"),
+        (_title("Holder.empty.title"), "null"),
+        (oa.NullCheck(op="isNull", subject=oa.FieldSubject("Holder.empty.holderId")), "1 = 1"),
+        (oa.NullCheck(op="isNotNull", subject=oa.FieldSubject("Holder.empty.holderId")), "1 = 0"),
+    ],
+)
+def test_a_relationship_to_a_target_without_concrete_subtypes_reaches_no_candidate(
+    strategy: Literal["tph", "tpcs"], predicate: oa.PredicateNode, expected: str
+) -> None:
+    model = _dormant_target_model(strategy)
+    compiled = compile_read(predicate, model, POSTGRES, target(model, "Holder"))
+    assert compiled.statement.sql.endswith(f"from holder t0 where {expected}")
+    assert compiled.statement.binds == ()
+
+
+@pytest.mark.parametrize("strategy", ["tph", "tpcs"])
+@pytest.mark.parametrize(
+    ("predicate", "expected"),
+    [
+        (oa.Quantifier("any", "Holder.empty.holder.empties"), "false"),
+        (oa.Quantifier("none", "Holder.empty.holder.empties"), "true"),
+        (oa.Presence("exists", "Holder.empty.holder"), "false"),
+        (_title("Holder.empty.holder.empty.title"), "null"),
+    ],
+)
+def test_a_position_past_a_target_without_candidates_answers_its_absence(
+    strategy: Literal["tph", "tpcs"], predicate: oa.PredicateNode, expected: str
+) -> None:
+    model = _dormant_target_model(strategy)
+    compiled = compile_read(predicate, model, POSTGRES, target(model, "Holder"))
+    assert compiled.statement.sql.endswith(f"from holder t0 where {expected}")
+    assert compiled.statement.binds == ()
+
+
+def test_a_relationship_to_a_target_without_candidates_answers_inside_a_hop() -> None:
+    model = _dormant_target_model("tpcs")
+    compiled = compile_read(
+        oa.Quantifier("none", "Holder.next.empties"), model, POSTGRES, target(model, "Holder")
+    )
+    assert compiled.statement.sql.endswith(
+        "where coalesce((select 1 = 1 from holder t1 where t1.id = t0.next_id), true)"
     )

@@ -828,7 +828,8 @@ class _ScalarAuthoring[P]:
             )
         if neutral_type is None:
             return Predicate(UnfinishedOperation(self._subject(), operator, (value,)))
-        return Predicate(PreparedOperation(self._subject(), operator, (value,), neutral_type))
+        pattern = managed_literal(self._described(), neutral_type, value)
+        return Predicate(PreparedOperation(self._subject(), operator, (pattern,), neutral_type))
 
     def like(self, value: str, *, case_insensitive: bool = False) -> Predicate[P]:
         return self._string("like", value, case_insensitive)

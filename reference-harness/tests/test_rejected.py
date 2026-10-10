@@ -41,6 +41,7 @@ from reference_harness.inheritance import (
     INHERITANCE_TEMPORALITY_NOT_ROOT_OWNED,
     INHERITANCE_UNKNOWN_PARENT,
     MODEL_REJECTED_RULES,
+    SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
     SUBTYPE_WRITE_METADATA_FIELD,
     SUBTYPE_WRITE_SET_BASED_UNSUPPORTED,
     SUBTYPE_WRITE_SIBLING_ATTRIBUTE,
@@ -824,6 +825,90 @@ def test_validate_predicate_accepts_valid_paths_and_scopes() -> None:
         }
     )
     _collection({"none": {"path": "parallax.compatibility.CollectionTwinItem.tags"}})
+
+
+_SIBLING_REUSE: list[dict[str, Any]] = [
+    {
+        "name": "Payment",
+        "namespace": "probe",
+        "table": "payment",
+        "inheritance": {
+            "role": "root",
+            "strategy": "table-per-hierarchy",
+            "tag": {"column": "kind"},
+        },
+        "attributes": [
+            {"name": "id", "type": "int64", "primaryKey": True},
+            {"name": "holderId", "type": "int64", "nullable": True},
+        ],
+    },
+    {
+        "name": "CardPayment",
+        "namespace": "probe",
+        "inheritance": {"role": "concrete-subtype", "parent": "probe.Payment", "tagValue": "card"},
+        "attributes": [{"name": "detail", "type": "string", "maxLength": 16}],
+    },
+    {
+        "name": "CashPayment",
+        "namespace": "probe",
+        "inheritance": {"role": "concrete-subtype", "parent": "probe.Payment", "tagValue": "cash"},
+        "attributes": [{"name": "detail", "type": "decimal(18,2)"}],
+    },
+    {
+        "name": "Holder",
+        "namespace": "probe",
+        "table": "holder",
+        "attributes": [
+            {"name": "id", "type": "int64", "primaryKey": True},
+            {"name": "paymentId", "type": "int64", "nullable": True},
+        ],
+        "relationships": [
+            {
+                "name": "payments",
+                "cardinality": "one-to-many",
+                "join": {
+                    "source": "id",
+                    "target": {"entity": "probe.Payment", "attribute": "holderId"},
+                },
+            },
+            {
+                "name": "payment",
+                "cardinality": "many-to-one",
+                "join": {
+                    "source": "paymentId",
+                    "target": {"entity": "probe.Payment", "attribute": "id"},
+                },
+            },
+        ],
+    },
+]
+
+
+def _holder(predicate: dict[str, Any]) -> None:
+    validate_query_predicate(_SIBLING_REUSE, {"target": "probe.Holder", "predicate": predicate})
+
+
+def test_a_reused_sibling_member_resolves_to_the_declaration_applicable_there() -> None:
+    cash_detail = {"greaterThan": {"path": "detail", "value": "10.00"}}
+    _holder(
+        {
+            "narrow": {
+                "path": "probe.Holder.payment",
+                "to": ["probe.CashPayment"],
+                "operand": cash_detail,
+            }
+        }
+    )
+    _holder(
+        {
+            "any": {
+                "path": "probe.Holder.payments",
+                "where": {"narrow": {"to": ["probe.CashPayment"], "operand": cash_detail}},
+            }
+        }
+    )
+    broad = {"any": {"path": "probe.Holder.payments", "where": cash_detail}}
+    assert _rule(_holder, broad) == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
 
 def _complete_contact_row() -> dict[str, Any]:

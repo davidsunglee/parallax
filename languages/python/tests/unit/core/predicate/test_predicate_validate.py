@@ -23,7 +23,7 @@ import pytest
 from parallax.conformance import _case_ingress, case_format
 from parallax.core import inheritance
 from parallax.core.base import INFINITY
-from parallax.core.metamodel import RelationshipIdentity
+from parallax.core.metamodel import AttributeMetadata, RelationshipIdentity
 from parallax.core.object_query import (
     AsOf,
     History,
@@ -40,6 +40,7 @@ from parallax.core.predicate import (
     CURRENT_SCALAR_ELEMENT,
     And,
     Comparison,
+    CurrentScalarElement,
     FalseNode,
     FieldSubject,
     Group,
@@ -84,9 +85,12 @@ from parallax.core.predicate._resolved import (
 )
 from parallax.descriptor._records import (
     Attribute,
+    DefiningRelationship,
     Entity,
     Inheritance,
     Metamodel,
+    RelationshipJoin,
+    RelationshipTarget,
     ValueObject,
     ValueObjectAttribute,
 )
@@ -147,6 +151,59 @@ _INHERITED_VALUE_OBJECTS = Metamodel(
         Entity(
             name="Leaf",
             inheritance=Inheritance(role="concrete-subtype", parent="Root", tag_value="leaf"),
+        ),
+    )
+)
+
+
+# Disjoint siblings that reuse `detail` with different types, reached through a
+# relationship whose relative paths name the reused member.
+_SIBLING_REUSE = Metamodel(
+    entities=(
+        Entity(
+            name="Payment",
+            table="payment",
+            inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+            attributes=(
+                Attribute(name="id", type="int64", column="id", primary_key=True),
+                Attribute(name="holderId", type="int64", column="holder_id", nullable=True),
+            ),
+        ),
+        Entity(
+            name="CardPayment",
+            inheritance=Inheritance(role="concrete-subtype", parent="Payment", tag_value="card"),
+            attributes=(Attribute(name="detail", type="string", column="card_detail"),),
+        ),
+        Entity(
+            name="CashPayment",
+            inheritance=Inheritance(role="concrete-subtype", parent="Payment", tag_value="cash"),
+            attributes=(Attribute(name="detail", type="decimal(18,2)", column="cash_detail"),),
+        ),
+        Entity(
+            name="Holder",
+            table="holder",
+            attributes=(
+                Attribute(name="id", type="int64", column="id", primary_key=True),
+                Attribute(name="paymentId", type="int64", column="payment_id", nullable=True),
+            ),
+            relationships=(
+                DefiningRelationship(
+                    name="payments",
+                    cardinality="one-to-many",
+                    join=RelationshipJoin(
+                        source="id",
+                        target=RelationshipTarget(entity="Payment", attribute="holderId"),
+                    ),
+                ),
+                DefiningRelationship(
+                    name="payment",
+                    cardinality="many-to-one",
+                    join=RelationshipJoin(
+                        source="paymentId",
+                        target=RelationshipTarget(entity="Payment", attribute="id"),
+                    ),
+                ),
+            ),
         ),
     )
 )
@@ -928,6 +985,70 @@ def test_a_scalar_collection_element_takes_scalar_operations_but_no_null_check()
     )
 
 
+@pytest.mark.parametrize(
+    ("subject", "path"),
+    [
+        (FieldSubject("Order.name"), None),
+        (CURRENT_SCALAR_ELEMENT, "CollectionTwinItem.tags"),
+    ],
+)
+def test_a_string_pattern_is_decoded_as_a_string_literal(
+    subject: FieldSubject | CurrentScalarElement, path: str | None
+) -> None:
+    unpaired = StringMatch(op="startsWith", subject=subject, value="\ud800")
+    if path is None:
+        exc = _rejects(unpaired, _ORDERS, "Order")
+    else:
+        exc = _rejects(Quantifier("any", path, unpaired), _TWIN, "CollectionTwinItem")
+    assert exc.rule == "neutral-literal-out-of-space"
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        pytest.param(
+            Narrow(
+                to=("CashPayment",),
+                operand=Comparison(op="greaterThan", subject=FieldSubject("detail"), value="10.00"),
+                path="Holder.payment",
+            ),
+            id="target-local-narrow",
+        ),
+        pytest.param(
+            Quantifier(
+                "any",
+                "Holder.payments",
+                Narrow(
+                    to=("CashPayment",),
+                    operand=Comparison(
+                        op="greaterThan", subject=FieldSubject("detail"), value="10.00"
+                    ),
+                ),
+            ),
+            id="quantified-narrow",
+        ),
+    ],
+)
+def test_a_reused_sibling_member_resolves_to_the_declaration_applicable_there(
+    op: PredicateNode,
+) -> None:
+    resolved = _resolved("Holder", op, _SIBLING_REUSE)
+    narrowed = resolved if isinstance(resolved, ResolvedNarrow) else resolved.where
+    assert isinstance(narrowed, ResolvedNarrow)
+    assert isinstance(narrowed.operand, ResolvedComparison)
+    member = narrowed.operand.member
+    assert isinstance(member, AttributeMetadata)
+    assert member.identity.entity.name == "CashPayment"
+    broad = Quantifier(
+        "any",
+        "Holder.payments",
+        Comparison(op="greaterThan", subject=FieldSubject("detail"), value="10.00"),
+    )
+    assert _rejects(broad, _SIBLING_REUSE, "Holder").rule == (
+        "subtype-attribute-outside-narrow-scope"
+    )
+
+
 def test_literal_comparison_over_a_value_object_field() -> None:
     _validate("Customer", _eq("Customer.address.city", "Oslo"), _CUSTOMER)
     exc = _rejects(_eq("Customer.address.city", 42), _CUSTOMER, "Customer")
@@ -1156,6 +1277,16 @@ def test_generated_compositions_group_alternatives_and_drop_identity_terms() -> 
     assert conjunction(ResolvedConstant(True), one) is one
     assert either == ResolvedOr((ResolvedGroup(ResolvedAnd((one, two))), three))
     assert composed == ResolvedAnd((ResolvedGroup(either), two, three))
+
+
+def test_a_conjunction_groups_an_operand_whose_text_ends_in_a_disjunction() -> None:
+    model = formed(_ORDERS)
+    member = _root(model, "Order").attribute("id")
+    assert member is not None
+    one, two, three = (managed_comparison(op="eq", member=member, value=n) for n in (1, 2, 3))
+    ungrouped = ResolvedAnd((ResolvedOr((one, two)), three))
+
+    assert conjunction(ungrouped, one) == ResolvedAnd((ResolvedGroup(ungrouped), one))
 
 
 def test_a_framework_comparison_binds_its_sentinel_as_is() -> None:

@@ -183,6 +183,26 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "query = Order.where(Order.items.any(OrderItem.quantity >= 4))",
     ),
     ReadStory(
+        "m-navigate-026",
+        "A relationship quantifier over a disjunction",
+        "orders",
+        lambda: Order.where(
+            Order.items.any((OrderItem.sku == "A-100") | (OrderItem.sku == "B-200"))
+        ),
+        "query = Order.where(Order.items.any("
+        '(OrderItem.sku == "A-100") | (OrderItem.sku == "B-200")))',
+    ),
+    ReadStory(
+        "m-navigate-027",
+        "No related element satisfies a disjunction",
+        "orders",
+        lambda: Order.where(
+            Order.items.none((OrderItem.sku == "A-100") | (OrderItem.sku == "B-200"))
+        ),
+        "query = Order.where(Order.items.none("
+        '(OrderItem.sku == "A-100") | (OrderItem.sku == "B-200")))',
+    ),
+    ReadStory(
         "m-navigate-006",
         "A navigation filter composed with a scalar predicate",
         "orders",

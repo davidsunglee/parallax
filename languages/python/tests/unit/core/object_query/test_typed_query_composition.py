@@ -29,8 +29,8 @@ there, and that test is where the asymmetry is recorded rather than discovered.
 `test_one_identity_reached_through_two_classes_is_refused_statically_only` is
 the same gap without inheritance: Entity Identity is unique per MODEL, so two
 distinct classes may carry one Identity, and a member both declare lowers to one
-attribute reference at one target. Another is `Entity.all`: an `all` node names
-no position on the wire, so nothing downstream can tell `Dog.all` from
+attribute reference at one target. Another is `Entity.all`: the `true` node it exports
+names no position on the wire, so nothing downstream can tell `Dog.all` from
 `Animal.all` and the parameter is the only place an unfiltered query written at
 the wrong position is refused. Another is clause order — a `where` argument or a
 sort key written before the `narrow` that scopes it — because an Object Query
@@ -750,7 +750,7 @@ def test_an_assignment_value_is_the_members_own_declared_type() -> None:
 
 def test_an_unfiltered_query_written_at_another_position_is_refused_statically() -> None:
     # The second suppression with no runtime twin, and the module docstring
-    # records why: an `all` node names no position, so nothing downstream can
+    # records why: a `true` node names no position, so nothing downstream can
     # tell these two apart — which is exactly why the parameter is the only
     # place the mistake is visible at all.
     assert predicate_document(preflighted(Animal.where(Dog.all))) == {"true": {}}  # pyright: ignore[reportArgumentType]

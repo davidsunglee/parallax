@@ -30,11 +30,12 @@ A **to-many** relationship is reached only through a quantifier (`m-predicate`
 `all`, contradict) the quantifier's `where` without joining the related columns
 into the projection, so a to-many traversal **MUST NOT** multiply the queried
 entity's rows. A **to-one** relationship is reached by single-valued traversal —
-a dotted path, a presence test, or a target-local `narrow` — which lowers to a
-correlated **scalar subquery** over the target's candidates (`m-sql`): zero
-candidates supply no value, one supplies the result, and more than one fail the
-statement where it is evaluated. Neither form fetches the related object or marks
-a relationship loaded.
+a dotted path or a target-local `narrow` — which lowers to a correlated **scalar
+subquery** over the target's candidates (`m-sql`): zero candidates supply no
+value, one supplies the result, and more than one fail the statement where it is
+evaluated. A presence test of the relationship itself is not a value dereference:
+it lowers to a correlated `EXISTS` and asserts nothing about cardinality. No form
+fetches the related object or marks a relationship loaded.
 
 An Include path segment names a **relationship**; a **value-object segment is
 invalid** there and MUST be rejected (`m-deep-fetch`). A value object has no

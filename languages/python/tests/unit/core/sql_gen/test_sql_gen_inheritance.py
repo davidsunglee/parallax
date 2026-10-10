@@ -90,6 +90,27 @@ def test_narrow_nested_under_a_table_per_concrete_subtype_family_partitions_bran
     assert compiled.statement.binds == ()
 
 
+def test_a_disjunctive_narrow_operand_stays_whole_inside_its_tpcs_branch() -> None:
+    op = oa.And(
+        operands=(
+            oa.Narrow(
+                to=("Invoice",),
+                operand=oa.Or(
+                    operands=(
+                        oa.Comparison(op="eq", subject=oa.FieldSubject("Invoice.title"), value="a"),
+                        oa.Comparison(op="eq", subject=oa.FieldSubject("Invoice.title"), value="b"),
+                    )
+                ),
+            ),
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Document.folderId"), value=7),
+        )
+    )
+    compiled = compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
+    assert "from invoice t0 where (t0.title = ? or t0.title = ?) and t0.folder_id = ?" in (
+        compiled.statement.sql
+    )
+
+
 def test_tpcs_document_single_branch_projects_its_document() -> None:
     compiled = compile_read(
         oa.TrueNode(),
@@ -232,6 +253,35 @@ def test_tph_grouped_branch_predicates_join_by_or() -> None:
         "where (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)"
     )
     assert compiled.statement.binds == (5, "dog", True, "cat")
+
+
+def test_tph_disjunctive_branch_predicate_stays_whole_beside_its_tag() -> None:
+    either = oa.Or(
+        operands=(
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Animal.name"), value="Whiskers"),
+            oa.Comparison(op="greaterThan", subject=oa.FieldSubject("Dog.barkVolume"), value=5),
+        )
+    )
+    narrowed = compile_read(
+        oa.Narrow(to=("Dog",), operand=either), ANIMAL, POSTGRES, target(ANIMAL, "Animal")
+    )
+    assert narrowed.statement.sql.endswith(
+        "where ((t0.name = ? or t0.bark_volume > ?) and t0.kind = ?)"
+    )
+    concrete = compile_read(
+        oa.Or(
+            operands=(
+                oa.Comparison(op="eq", subject=oa.FieldSubject("Dog.name"), value="Whiskers"),
+                oa.Comparison(op="greaterThan", subject=oa.FieldSubject("Dog.barkVolume"), value=5),
+            )
+        ),
+        ANIMAL,
+        POSTGRES,
+        target(ANIMAL, "Dog"),
+    )
+    assert concrete.statement.sql.endswith(
+        "where (t0.name = ? or t0.bark_volume > ?) and t0.kind = ?"
+    )
 
 
 def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:

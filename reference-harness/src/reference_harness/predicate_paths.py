@@ -200,18 +200,27 @@ def _applicable(family: Family, key: str, name: str) -> tuple[str, str, dict[str
 def _family_member(
     family: Family, key: str, position: tuple[str, ...], name: str, path: str
 ) -> tuple[str, str, dict[str, Any]] | None:
-    """The member ``name`` any Entity of ``key``'s family declares, refused
-    unless that declaring Entity is within ``position``."""
+    """The member ``name`` declared by the Entity of ``key``'s family whose
+    concrete set contains ``position``; disjoint siblings may each declare it,
+    so another declaration is refused only when none is within ``position``."""
     root = family.root_of(key) or key
+    refusal: RejectionError | None = None
     for candidate in family.order:
         if (family.root_of(candidate) or candidate) != root:
             continue
         definition = family.defs[candidate]
         for kind in ("attributes", "valueObjects", "relationships"):
             member = _declared(definition, kind, name)
-            if member is not None:
+            if member is None:
+                continue
+            try:
                 check_position(family, candidate, position, path)
-                return candidate, kind, member
+            except RejectionError as outside:
+                refusal = refusal or outside
+                break
+            return candidate, kind, member
+    if refusal is not None:
+        raise refusal
     return None
 
 
