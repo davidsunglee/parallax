@@ -1,0 +1,25 @@
+model: models/orders.yaml
+tags: [m-navigate, m-predicate, relationship, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      any:
+        path: parallax.compatibility.Order.items
+        where:
+          or:
+            operands:
+              - eq: { path: sku, value: A-100 }
+              - eq: { path: sku, value: B-200 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and (t1.sku = ? or t1.sku = ?))
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and (t1.sku = ? or t1.sku = ?))
+      binds: [A-100, B-200]
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (select order_id from order_item where sku in ('A-100', 'B-200'))
+  rows:
+    - { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, ordered_on: 2024-01-05 }
+    - { id: 42, name: Grace, sku: A-999, qty: 30, price: "99.99", active: true, ordered_on: 2024-06-30 }
+  roundTrips: 1

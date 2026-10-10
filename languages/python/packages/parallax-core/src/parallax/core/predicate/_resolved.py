@@ -240,16 +240,26 @@ def deferred_membership(*, member: AttributeMetadata) -> ResolvedMembership:
     return ResolvedMembership("in", member, DeferredKeySet(member.type))
 
 
+def disjunctive(predicate: ResolvedPredicate) -> bool:
+    """Whether ``predicate`` lowers with a top-level `or`, which an `and` beside
+    it would re-associate unless the predicate is grouped."""
+    if isinstance(predicate, ResolvedOr):
+        return True
+    if isinstance(predicate, ResolvedAnd):
+        return any(disjunctive(operand) for operand in predicate.operands)
+    return False
+
+
 def conjunction(*terms: ResolvedPredicate) -> ResolvedPredicate:
     """Compose resolved terms without resolving any of them again."""
     flattened: list[ResolvedPredicate] = []
     for term in terms:
         if isinstance(term, ResolvedConstant) and term.truth:
             continue
-        if isinstance(term, ResolvedAnd):
-            flattened.extend(term.operands)
-        elif isinstance(term, ResolvedOr):
+        if disjunctive(term):
             flattened.append(ResolvedGroup(term))
+        elif isinstance(term, ResolvedAnd):
+            flattened.extend(term.operands)
         else:
             flattened.append(term)
     if not flattened:

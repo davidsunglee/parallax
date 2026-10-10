@@ -32,7 +32,7 @@ from parallax.core.object_query._resolved import (
     Paging,
     ResolvedSeek,
 )
-from parallax.core.predicate._resolved import ResolvedOr, ResolvedPredicate
+from parallax.core.predicate._resolved import ResolvedPredicate, disjunctive
 from parallax.core.sql_gen._context import (
     LoweredStatement,
     SqlGenError,
@@ -716,7 +716,7 @@ def _compile_read_arm(
 
     where_sql = _lower_predicate(predicate, scope)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
-    _append_where(parts, _beside_a_seek(predicate, where_sql, seek_sql), seek_sql)
+    _append_where(parts, _beside_a_guard(predicate, where_sql, guarded=bool(seek_sql)), seek_sql)
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
 
     statement = _normalize(ctx.finish(" ".join(parts)))
@@ -823,14 +823,15 @@ def _sought(
     )
 
 
-def _beside_a_seek(predicate: ResolvedPredicate, where_sql: str, seek_sql: str) -> str:
-    """The authored `where` fragment as a conjunct standing beside a seek.
+def _beside_a_guard(predicate: ResolvedPredicate, where_sql: str, *, guarded: bool) -> str:
+    """The authored `where` fragment as a conjunct standing beside a seek or a
+    tag guard.
 
     An `or` binds looser than the enclosing `and`, so a top-level disjunction
-    conjoined with a seek would silently re-associate the caller's own predicate
-    into the seek's first branch.
+    conjoined with either would silently re-associate the caller's own
+    predicate into the framework term's first branch.
     """
-    if seek_sql and where_sql and isinstance(predicate, ResolvedOr):
+    if guarded and where_sql and disjunctive(predicate):
         return f"({where_sql})"
     return where_sql
 
@@ -1016,7 +1017,8 @@ def _compile_tph_read(
 
     inner_sql = _lower_predicate(predicate, scope)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
-    where_terms = [_beside_a_seek(predicate, inner_sql, seek_sql), seek_sql]
+    guarded = bool(seek_sql) or plan.tag is not None
+    where_terms = [_beside_a_guard(predicate, inner_sql, guarded=guarded), seek_sql]
     if plan.tag is not None:
         # Planned, then bound HERE — after the user predicate and the seek above
         # have pushed their own binds (m-sql "Grouped branch predicates":
@@ -1389,7 +1391,7 @@ def _compile_tpcs_single(
     ]
     where_sql = _lower_predicate(predicate, scope)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
-    _append_where(parts, _beside_a_seek(predicate, where_sql, seek_sql), seek_sql)
+    _append_where(parts, _beside_a_guard(predicate, where_sql, guarded=bool(seek_sql)), seek_sql)
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
     statement = _normalize(ctx.finish(" ".join(parts)))
     return statement, document_reads, plan.stages

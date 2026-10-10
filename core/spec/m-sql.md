@@ -475,7 +475,7 @@ left-to-right.
 | `notIn` | `not t0.col in (?, ?, …)` |
 | `and` | operands joined by ` and ` |
 | `or` | operands joined by ` or ` |
-| `not` | `not <operand>` |
+| `not` | `not <operand>`; `not (<operand>)` when the operand is an `and` or `or` |
 | `group` | `( <operand> )` |
 | `orderBy` | `order by <key term>[, …]`, one term per key — `t0.col [asc\|desc]` for a non-nullable key, else the `m-dialect` Null Placement term |
 | `limit` | `limit ?` |
@@ -489,6 +489,13 @@ The operator rows show a field of the queried row (`t0.col`); every operation
 lowers identically over the subject its position supplies — a field of a related
 row inside a sub-select's alias, a value-object extraction (*valueObject*), or a
 scalar element's kind-guarded projection (*Scalar collection quantifiers*).
+
+A complete predicate stays whole where it is composed: a quantifier's `where`
+beside the sub-select's correlation, a `narrow`'s operand (beside its tag guard,
+or standing in for the `narrow` in a concrete table's branch), and a query's
+predicate beside a seek, tag guard, or injected temporal term are each
+parenthesized when their own text has a top-level `or`, so a conjoined term
+cannot re-associate into the disjunction's last branch.
 
 A framework-generated child-level membership carries a **deferred key set**
 rather than an authored list. Its statement is compiled once with one template
@@ -775,6 +782,13 @@ Where a hop's result is Boolean, the subquery's absence default is the empty
 collection's or the absent target's answer, applied with `coalesce`: `any` and
 presence default to `false`, `none` and `all` to `true`, a bare subtype test to
 `false`. A field read through a hop has no default — absence stays unknown.
+
+A relationship whose target's effective concrete set is empty (`m-inheritance`
+lets a model compose a family partially) has no candidate table to read, so it
+lowers to its absent answer directly: its `any` and presence to `1 = 0`, its
+`none`, `all`, and `notExists` to `1 = 1`, a Boolean read past it to that hop's
+default, and a field operation past it to `null` — except a null check, which
+sees the missing value (`isNull` is `1 = 1`, `isNotNull` `1 = 0`).
 
 **Path-targeted narrowing.** A bare `narrow` with a `path` selects the reached
 target's subtype membership: under table-per-hierarchy its tag test

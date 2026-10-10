@@ -45,6 +45,7 @@ from parallax.core.predicate._resolved import (
     ScalarCollection,
     ScalarElement,
     SubjectPosition,
+    disjunctive,
 )
 from parallax.core.sql_gen._context import SqlGenError, StatementBuilder
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -417,7 +418,7 @@ def lower_predicate(predicate: ResolvedPredicate, scope: ResolutionScope) -> str
         case ResolvedOr(operands=operands):
             return " or ".join(_term(operand, scope) for operand in operands)
         case ResolvedNot(operand=operand):
-            return f"not {_term(operand, scope)}"
+            return _negated(operand, scope)
         case ResolvedGroup(operand=operand):
             return f"({_term(operand, scope)})"
         case (
@@ -447,6 +448,19 @@ def _term(predicate: ResolvedPredicate, scope: ResolutionScope) -> str:
     return lower_predicate(predicate, scope) or "1 = 1"
 
 
+def _negated(operand: ResolvedPredicate, scope: ResolutionScope) -> str:
+    """``operand`` negated whole: `not` binds tighter than `and` and `or`."""
+    sql = _term(operand, scope)
+    return f"not ({sql})" if isinstance(operand, ResolvedAnd | ResolvedOr) else f"not {sql}"
+
+
+def _conjunct(predicate: ResolvedPredicate, scope: ResolutionScope) -> str:
+    """``predicate`` lowered to stand complete beside an `and`: a disjunction is
+    grouped so a conjoined framework term cannot re-associate it."""
+    sql = lower_predicate(predicate, scope)
+    return f"({sql})" if sql and disjunctive(predicate) else sql
+
+
 def _lower_operation(operation: _Operation, scope: ResolutionScope) -> str:
     """One scalar operation over its member's subject expression.
 
@@ -454,6 +468,8 @@ def _lower_operation(operation: _Operation, scope: ResolutionScope) -> str:
     every bind a related position's subqueries carry, bind ahead of the
     compared values, which is the order the emitted text puts their holes in.
     """
+    if _unreachable(operation.position, scope):
+        return _absent_operation(operation)
     reads_text = isinstance(operation, ResolvedStringMatch | ResolvedNullCheck)
     subject = _subject_at(operation.member, operation.position, scope, reads_text=reads_text)
     match operation:
@@ -476,6 +492,14 @@ def _lower_operation(operation: _Operation, scope: ResolutionScope) -> str:
             return f"{column} is null" if tag == "isNull" else f"not {column} is null"
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(operation)
+
+
+def _absent_operation(operation: _Operation) -> str:
+    """An operation over a field no candidate can supply: a null check sees the
+    missing value, and every other operation is unknown."""
+    if isinstance(operation, ResolvedNullCheck):
+        return "1 = 1" if operation.op == "isNull" else "1 = 0"
+    return "null"
 
 
 def _subject_at(
@@ -699,7 +723,29 @@ def _at(
     hops.reverse()
     if not isinstance(scope, EntityScope):  # pragma: no cover - validated scopes
         raise SqlGenError("a relationship is reached only from an Entity position")
+    if any(_reaches_nothing(hop, scope) for hop in hops):
+        if default is None:  # pragma: no cover - an operation answers before demanding
+            raise SqlGenError("a field is read through a relationship with no candidate")
+        return default
     return _hop_chain(hops, scope, demand, default)
+
+
+def _unreachable(position: SubjectPosition, scope: ResolutionScope) -> bool:
+    """Whether some hop toward ``position`` reaches a target with no concrete
+    subtype, so no candidate can exist there."""
+    current = position
+    while isinstance(current, RelatedObject):
+        if _reaches_nothing(current.relationship, _entity_scope(scope)):
+            return True
+        current = current.source
+    return False
+
+
+def _reaches_nothing(relationship: ResolvedRelationship, scope: EntityScope) -> bool:
+    target = relationship.target
+    if target.inheritance is None:
+        return False
+    return not _entity_view(scope.facet, target.identity).concrete_subtypes
 
 
 def _hop_chain(
@@ -908,6 +954,8 @@ def _lower_relationship_quantifier(
     can neither match ``any`` nor spoil ``none``. A universal keeps every
     branch, because such an element is its counterexample.
     """
+    if _reaches_nothing(relationship, scope):
+        return "1 = 0" if quantifier.kind == "any" else "1 = 1"
     where = quantifier.where
     narrowed = (
         where
@@ -930,7 +978,7 @@ def _lower_relationship_quantifier(
             assert inner is not None
             interior: str | None = _counterexample(inner, branch_scope)
         else:
-            interior = None if inner is None else lower_predicate(inner, branch_scope)
+            interior = None if inner is None else _conjunct(inner, branch_scope)
         where_sql = _candidate_where(relationship, branch_scope, opened, interior)
         fragments.append(
             f"{opened.keyword} (select 1 from {opened.table} {opened.alias} where {where_sql})"
@@ -962,6 +1010,8 @@ def _lower_presence(presence: ResolvedPresence, scope: ResolutionScope) -> str:
 def _relationship_presence(
     relationship: ResolvedRelationship, scope: EntityScope, *, negate: bool
 ) -> str:
+    if _reaches_nothing(relationship, scope):
+        return "1 = 1" if negate else "1 = 0"
     plan = _hop_plan(relationship, scope, position=None, negate=negate)
     fragments = [
         f"{opened.keyword} (select 1 from {opened.table} {opened.alias} where "
@@ -1065,12 +1115,12 @@ def _lower_branch_narrow(narrow: ResolvedNarrow, scope: EntityScope) -> str:
     if scope.variant is not None:
         if scope.variant not in plan.position:
             return "1 = 0"
-        return ("" if operand is None else lower_predicate(operand, scope)) or "1 = 1"
+        return ("" if operand is None else _conjunct(operand, scope)) or "1 = 1"
     if plan.tag is None:  # pragma: no cover - TPCS union branches always carry a variant
         raise SqlGenError("a TPCS branch narrow requires a concrete branch scope")
     # Branch predicate first, THEN the guard's binds — the same explicit ordering
     # the top-level read states, for the same reason.
-    branch_sql = "" if operand is None else lower_predicate(operand, scope)
+    branch_sql = "" if operand is None else _conjunct(operand, scope)
     tag_sql, tag_binds = _tph_tag_guard(scope, scope.facet, plan.tag)
     scope.ctx.bind_framework_all(tag_binds)
     if not branch_sql:

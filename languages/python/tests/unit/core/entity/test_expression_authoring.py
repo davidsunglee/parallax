@@ -129,6 +129,19 @@ def test_a_scalar_element_resolves_inside_its_quantifier() -> None:
     assert isinstance(resolved.where, ResolvedStringMatch)
 
 
+def test_a_string_pattern_is_admitted_as_a_string_literal() -> None:
+    for known in (
+        lambda: Owner.name.starts_with("\ud800"),
+        lambda: Basket.tags.element.contains("\ud800"),
+        lambda: Part.sku.like(cast("Any", 5)),
+    ):
+        with pytest.raises(QueryDefinitionError, match="developer-input rule violated"):
+            known()
+    deferred = Basket.where(Basket.owner.name.ends_with("\ud800"))
+    with pytest.raises(QueryDefinitionError, match="developer-input rule violated"):
+        _resolved(deferred)
+
+
 def test_include_takes_only_include_paths() -> None:
     with pytest.raises(TypeError, match="is not an Include path"):
         Basket.where(Basket.all).include(Basket.tags)  # pyright: ignore[reportArgumentType]
@@ -137,6 +150,8 @@ def test_include_takes_only_include_paths() -> None:
     assert narrowed != object()
     assert hash(narrowed) == hash(Basket.owner.narrow(Owner))
     assert repr(narrowed).startswith("IncludePath(")
+    with pytest.raises(AttributeError):
+        _ = narrowed._hidden
 
 
 def test_a_to_one_relationship_tests_presence() -> None:

@@ -47,7 +47,7 @@ _INHERITANCE_CONCRETE_TARGET_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-100", "m-inheritance-101"}
 )
 _NAVIGATE_READS: Final[frozenset[str]] = frozenset(
-    {f"m-navigate-{n:03d}" for n in (*range(1, 12), 18, 23)}
+    {f"m-navigate-{n:03d}" for n in (*range(1, 12), 18, 23, 26, 27)}
 )
 _NAVIGATE_INHERITANCE_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-060", "m-inheritance-061", "m-inheritance-062", "m-inheritance-063"}

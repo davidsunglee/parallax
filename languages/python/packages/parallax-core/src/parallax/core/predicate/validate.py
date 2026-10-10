@@ -420,7 +420,7 @@ def _judged(
             return ResolvedMembership(tag, member, admit(subject, member, operands), position)
         case Match(op=tag, case_insensitive=folded):
             _check_string_member(subject, member)
-            (pattern,) = operands
+            (pattern,) = admit(subject, member, operands)
             return ResolvedStringMatch(tag, member, cast("str", pattern), folded, position)
         case NullTest(op=tag):
             _require_nullable_null_check(subject, member.nullable)
@@ -711,11 +711,13 @@ def _applicable_member(model: Metamodel, entity: EntityMetadata, name: str) -> _
 def _member_at(
     model: Metamodel, entity: EntityMetadata, position: PositionScope, name: str
 ) -> _Member | None:
-    """The member ``name`` declares anywhere in ``entity``'s family, refused
-    unless its declaring Entity is applicable at ``position``."""
+    """The member ``name`` declared by the Entity of ``entity``'s family that is
+    applicable at ``position``; disjoint siblings may each declare it, so a
+    declaration elsewhere in the family is refused only when none applies."""
     families = inheritance.view(model)
     view = families.entity(entity.identity)
     root = entity.identity if view is None else view.root
+    refusal: ModelRejectedError | None = None
     for candidate in model.entities:
         candidate_view = families.entity(candidate.identity)
         candidate_root = candidate.identity if candidate_view is None else candidate_view.root
@@ -728,10 +730,16 @@ def _member_at(
         )
         if local is None:
             continue
-        _check_attribute_position(model, candidate, position)
+        try:
+            _check_attribute_position(model, candidate, position)
+        except ModelRejectedError as inapplicable:
+            refusal = refusal or inapplicable
+            continue
         if isinstance(local, DefiningRelationshipDeclaration | ReverseRelationshipDeclaration):
             return _relationship(model, local)
         return local
+    if refusal is not None:
+        raise refusal
     return None
 
 

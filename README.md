@@ -38,7 +38,7 @@ For example, with application entities already declared:
 
 ```python
 # Orders with at least one qualifying item.
-query = Order.where(Order.items.exists(OrderItem.quantity >= 4))
+query = Order.where(Order.items.any(OrderItem.quantity >= 4))
 
 # A bounded, ordered result.
 query = Order.where(Order.active.is_(True)).order_by(Order.qty.desc()).limit(20)
