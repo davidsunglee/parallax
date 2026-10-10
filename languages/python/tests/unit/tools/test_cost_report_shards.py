@@ -152,6 +152,7 @@ def test_the_plan_splits_snapshot_by_workload_heaviest_first_and_keeps_the_other
         ("lifecycle-overhead", "lifecycle-overhead", None),
         ("instance-state", "instance-state", None),
         ("write-lowering", "write-lowering", None),
+        ("feature-boundary", "feature-boundary", None),
     ]
     assert [shard.member for shard in OTHER_SHARDS] == list(OTHERS)
     assert plan_ids("sharded") == [shard.id for shard in SHARDS]

@@ -69,9 +69,17 @@ BEFORE_PARENT_CPYTHON = "3.14.7"
 AFTER_RUN = "424242"
 REPOSITORY = "davidsunglee/parallax"
 CLOCK = datetime(2026, 9, 18, 12, 0, tzinfo=UTC)
-PLAN = tuple(Shard(member.subject, member) for member in MEMBERS)
-"""A whole-member plan for the timing arithmetic, which reads whatever plan the
-assembly carries; the collector's own ``SHARDS`` is assembled once below."""
+PLAN = tuple(
+    Shard(subject, next(member for member in MEMBERS if member.subject == subject))
+    for subject in (
+        "snapshot-delivery",
+        "lifecycle-overhead",
+        "instance-state",
+        "write-lowering",
+    )
+)
+"""The four-member historical timing fixture, independent of the collector's
+current portfolio; the collector's own ``SHARDS`` is assembled once below."""
 
 
 @pytest.fixture(scope="module")
@@ -101,9 +109,7 @@ def before_portfolio(contract: BudgetContract, envelopes: dict[str, Document]) -
     commit rather than this checkout's."""
     return {
         "schemaVersion": 1,
-        "members": [
-            clean(envelopes[member.subject], contract, BEFORE_COMMIT) for member in MEMBERS
-        ],
+        "members": [clean(envelopes[shard.subject], contract, BEFORE_COMMIT) for shard in PLAN],
         "failures": [],
     }
 
@@ -643,7 +649,7 @@ def test_a_complete_sharded_run_reports_its_cost_from_job_durations_and_head_spa
         shard.runtimes == {"3.13": "CPython 3.13.1", "3.14": "CPython 3.14.1"}
         for shard in after.shards
     )
-    assert after.coverage == coverage_of([envelopes[member.subject] for member in MEMBERS])
+    assert after.coverage == coverage_of([envelopes[shard.subject] for shard in PLAN])
     (note,) = after.notes
     assert "identifies the workflow's ref" in note and request.head_commit in note
 
@@ -653,7 +659,6 @@ def test_the_collectors_plan_assembles_to_the_whole_portfolios_coverage(
     head_commit: str,
     envelopes: dict[str, Document],
     contract: BudgetContract,
-    before_portfolio: Document,
 ) -> None:
     request = _dispatch_request(head_commit)
     inputs = tmp_path / "inputs"
@@ -676,7 +681,10 @@ def test_the_collectors_plan_assembles_to_the_whole_portfolios_coverage(
     assert [shard.id for shard in after.shards] == [shard.id for shard in SHARDS]
     assert after.coverage == coverage_of([envelopes[member.subject] for member in MEMBERS])
     assert after.coverage.disagreements == ()
-    verdict = compare_coverage(coverage_of(before_portfolio["members"]), after.coverage)
+    whole_portfolio = [
+        clean(envelopes[member.subject], contract, BEFORE_COMMIT) for member in MEMBERS
+    ]
+    verdict = compare_coverage(coverage_of(whole_portfolio), after.coverage)
     assert verdict.equivalent and verdict.same_protocol
 
 

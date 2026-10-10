@@ -77,6 +77,7 @@ from typing import Final, cast
 
 from jsonschema import ValidationError
 
+import feature_boundary_overhead as feature_report
 import instance_state_overhead as instance_report
 import write_lowering_overhead as write_report
 from durations import Spans, render
@@ -135,7 +136,13 @@ member script's own diagnostic is printed and writes nothing anywhere."""
 SNAPSHOT_SUBJECT: Final = "snapshot-delivery"
 WRITE_SUBJECT: Final = write_report.SUBJECT
 INSTANCE_STATE_SUBJECT: Final = instance_report.SUBJECT
-REQUIRABLE_MEMBERS: Final = (SNAPSHOT_SUBJECT, WRITE_SUBJECT, INSTANCE_STATE_SUBJECT)
+FEATURE_SUBJECT: Final = feature_report.SUBJECT
+REQUIRABLE_MEMBERS: Final = (
+    SNAPSHOT_SUBJECT,
+    WRITE_SUBJECT,
+    INSTANCE_STATE_SUBJECT,
+    FEATURE_SUBJECT,
+)
 """The subjects ``--require-member`` accepts: each has a report owner that
 declares its exact matrix, which is what requiring a member checks it against."""
 TIMING_NOISE_ALLOWANCE: Final = 0.05
@@ -185,6 +192,7 @@ MEMBERS: Final = (
         WRITE_SUBJECT,
         required=True,
     ),
+    Member("python-report-feature-boundary", "feature_boundary_overhead.py", FEATURE_SUBJECT),
 )
 REQUIRED_SUBJECTS: Final = frozenset(member.subject for member in MEMBERS if member.required)
 
@@ -236,6 +244,14 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
             "tests/unit/_leaf_type_support.py",
             "tests/unit/_workload_spelling_support.py",
         ),
+    ),
+    FEATURE_SUBJECT: MemberSources(
+        (
+            "tools/feature_boundary_overhead.py",
+            "tools/feature_boundary_reading.py",
+            "tests/unit/memory_instruments.py",
+        ),
+        ("tests/unit/_feature_boundary_support.py",),
     ),
 }
 """Every member's sources, by subject. Two captures are comparable over a
@@ -340,13 +356,15 @@ def validate_matrix(
     selected: Selection = every_cell,
     runtimes: Sequence[str] | None = None,
 ) -> None:
-    """Validate the exact reading matrix of a required subject against
+    """Validate a subject's owned reading matrix against
     ``contract``, the addresses ``selected``, and the ``runtimes`` measured,
     every supported minor unless named; other subjects have none."""
     if subject == SNAPSHOT_SUBJECT:
         validate_snapshot_matrix(document, contract, selected, runtimes)
     if subject == WRITE_SUBJECT:
         validate_write_lowering_matrix(document, runtimes)
+    if subject == FEATURE_SUBJECT:
+        feature_report.validate_matrix(document, runtimes)
 
 
 def _readings(document: Document) -> Sequence[Document]:
@@ -1064,7 +1082,7 @@ def verify(
     produced at different commits.
 
     ``required`` names members held to their owners' exact current matrices
-    beyond that: ``instance-state`` must then be present, complete, clean,
+    beyond that: optional members must then be present, complete, clean,
     current, and produced at the same commit, and a member every verification
     already requires must carry its current matrix rather than any coverage it
     once carried. A name outside :data:`REQUIRABLE_MEMBERS` is a ``ValueError``,
@@ -1113,7 +1131,23 @@ def verify(
     if len(commits) != 1:
         failures.append("the snapshot-delivery and write-lowering envelopes name different commits")
     if INSTANCE_STATE_SUBJECT in required:
-        failures += _instance_state_failures(document, commits, active)
+        failures += _optional_member_failures(
+            document,
+            commits,
+            active,
+            INSTANCE_STATE_SUBJECT,
+            validate_instance_state_matrix,
+            workload_digest(),
+        )
+    if FEATURE_SUBJECT in required:
+        failures += _optional_member_failures(
+            document,
+            commits,
+            active,
+            FEATURE_SUBJECT,
+            feature_report.validate_matrix,
+            feature_report.workload_digest(),
+        )
     return failures
 
 
@@ -1146,23 +1180,24 @@ def _snapshot_failures(snapshot: Document, contract: BudgetContract) -> list[str
     return failures + _provenance_failures(snapshot, SNAPSHOT_SUBJECT, workload_digest(), contract)
 
 
-def _instance_state_failures(
-    document: Document, commits: set[str], contract: BudgetContract
+def _optional_member_failures(
+    document: Document,
+    commits: set[str],
+    contract: BudgetContract,
+    subject: str,
+    matrix: Callable[[Document], None],
+    digest: str,
 ) -> list[str]:
-    """Why the instance-state member is not the complete, current evidence a
-    verification requiring it needs."""
-    member, failures = _valid_member(
-        document, INSTANCE_STATE_SUBJECT, validate_instance_state_matrix
-    )
+    member, failures = _valid_member(document, subject, matrix)
     if member is None:
         return failures
     if member.get("incomplete") or member.get("errors"):
-        failures.append("the instance-state envelope is incomplete")
-    failures += _provenance_failures(member, INSTANCE_STATE_SUBJECT, workload_digest(), contract)
+        failures.append(f"the {subject} envelope is incomplete")
+    failures += _provenance_failures(member, subject, digest, contract)
     commit = str(cast("Document", member["provenance"])["commit"])
     if commits != {commit}:
         failures.append(
-            "the instance-state envelope names a different commit from the required members"
+            f"the {subject} envelope names a different commit from the required members"
         )
     return failures
 
@@ -3352,15 +3387,16 @@ def diagnose(
     out: Path | None,
     runner: Runner = run_member,
 ) -> int:
-    """Take diagnostic readings from the chosen required members and write or
+    """Take diagnostic readings from the chosen measurable members and write or
     print each member's diagnostic document; never a portfolio, and never into
     the directory the committed capture lives in."""
-    members = [member for member in MEMBERS if member.required and member.subject in subjects]
+    available = [
+        member for member in MEMBERS if member.required or member.subject == FEATURE_SUBJECT
+    ]
+    members = [member for member in available if member.subject in subjects]
     unknown = set(subjects) - {member.subject for member in members}
     if unknown or not members:
-        print(
-            f"diagnostic members are {[m.subject for m in MEMBERS if m.required]}", file=sys.stderr
-        )
+        print(f"diagnostic members are {[m.subject for m in available]}", file=sys.stderr)
         return 2
     if out is not None and out.resolve().is_relative_to(EVIDENCE_DIRECTORY):
         print(f"a diagnostic run writes nothing into {EVIDENCE_DIRECTORY}", file=sys.stderr)

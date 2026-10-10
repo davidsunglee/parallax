@@ -12,6 +12,7 @@ from typing import Any, Final, cast
 import pytest
 
 import cost_report
+import feature_boundary_overhead as feature_report
 import instance_state_overhead as instance_report
 import write_lowering_overhead as write_report
 from cost_report import (
@@ -174,6 +175,8 @@ def gates_no_reading_reaches(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _optional_document(member: Member) -> dict[str, object]:
+    if member.subject == feature_report.SUBJECT:
+        return feature_report.canary(BudgetContract.load()).document()
     contract = BudgetContract.load()
     return CostReportEnvelope(
         member.subject, _canary_provenance(contract), "non-authoritative"
@@ -413,6 +416,9 @@ def test_collection_asks_each_member_for_a_sidecar_and_folds_only_what_decodes()
         if member.subject == "instance-state":
             sidecar.write_text('{"schemaVersion": 1, "spans": "none"}', encoding="utf-8")
             return (4, "", "the matrix is incomplete")
+        if member.subject == feature_report.SUBJECT:
+            sidecar.write_text(_member_sidecar(), encoding="utf-8")
+            return (0, json.dumps(_optional_document(member)), "")
         return (0, json.dumps(write), "")
 
     collection = collect(run, Spans(clock=clocks.monotonic, now=clocks.now))
@@ -436,7 +442,8 @@ def test_collection_asks_each_member_for_a_sidecar_and_folds_only_what_decodes()
         ("member", "lifecycle-overhead", {"member": "lifecycle-overhead"}, 10.0),
         ("member", "instance-state", {"member": "instance-state"}, 10.0),
         ("member", write_report.SUBJECT, {"member": write_report.SUBJECT}, 10.0),
-        ("collection", COLLECTION_SPAN, {}, 40.0),
+        ("member", feature_report.SUBJECT, {"member": feature_report.SUBJECT}, 10.0),
+        ("collection", COLLECTION_SPAN, {}, 50.0),
     ]
     assert [(entry.name, entry.reason) for entry in collection.durations.unavailable] == [
         (
@@ -1595,6 +1602,35 @@ def test_requiring_instance_state_holds_it_to_its_owners_complete_matrix(
     assert failure.startswith("the instance-state envelope is invalid: instance-state reading")
     with pytest.raises(ValueError, match="requirable members are"):
         verify(document, required=["lifecycle-overhead"])
+
+
+def test_requiring_feature_boundaries_keeps_historical_portfolios_valid() -> None:
+    contract = BudgetContract.load()
+    document = _verifiable(contract)
+    assert verify(document) == []
+    assert verify(document, required=[feature_report.SUBJECT]) == [
+        "the portfolio has no required feature-boundary envelope"
+    ]
+    feature = cast("dict[str, Any]", feature_report.canary(contract).document())
+    _clean(feature, contract, authoritative=False)
+    feature["provenance"]["commit"] = _snapshot_of(document)["provenance"]["commit"]
+    document["members"].append(feature)
+    assert verify(document, required=[feature_report.SUBJECT]) == []
+    feature["provenance"]["dirty"] = True
+    feature["provenance"]["workloadDigest"] = "0" * 64
+    assert verify(document, required=[feature_report.SUBJECT]) == [
+        "the feature-boundary envelope was not produced from a clean tree",
+        "the feature-boundary envelope's workload digest is stale",
+    ]
+    feature["provenance"]["dirty"] = False
+    feature["provenance"]["workloadDigest"] = feature_report.workload_digest()
+    feature["provenance"]["commit"] = "f" * 40
+    assert verify(document, required=[feature_report.SUBJECT]) == [
+        "the feature-boundary envelope names a different commit from the required members"
+    ]
+    feature["readings"].pop()
+    (failure,) = verify(document, required=[feature_report.SUBJECT])
+    assert "matrix" in failure and "missing" in failure
 
 
 def _instance_add_window(document: dict[str, Any]) -> None:

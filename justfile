@@ -425,6 +425,11 @@ python-report-write-lowering:
     cd {{python}} && uv run python tools/write_lowering_overhead.py
 
 [metadata("runtime:medium")]
+[doc("Typed predicate binding and cold planning, and scalar collection encoding and decoding, on every supported CPython minor.")]
+python-report-feature-boundary:
+    cd {{python}} && uv run python tools/feature_boundary_overhead.py
+
+[metadata("runtime:medium")]
 [doc("Fail-late collection of every quantitative Python cost report.")]
 python-report-cost:
     cd {{python}} && uv run python tools/cost_report.py --out reports/

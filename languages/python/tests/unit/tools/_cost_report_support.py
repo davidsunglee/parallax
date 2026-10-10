@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+import feature_boundary_overhead as feature_report
 import instance_state_overhead as instance_report
 import lifecycle_overhead
 import write_lowering_overhead as write_report
@@ -178,6 +179,8 @@ def member_envelopes(contract: BudgetContract) -> dict[str, Document]:
             envelopes[member.subject] = complete_write(contract)
         elif member.subject == lifecycle_overhead.SUBJECT:
             envelopes[member.subject] = lifecycle_document(contract)
+        elif member.subject == feature_report.SUBJECT:
+            envelopes[member.subject] = feature_report.canary(contract).document()
         else:
             envelopes[member.subject] = optional_document(member, contract)
     return envelopes
