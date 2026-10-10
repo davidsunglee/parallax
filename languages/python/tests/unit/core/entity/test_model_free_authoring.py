@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import enum
 from collections.abc import Iterator, Mapping
 from decimal import Decimal
 from typing import Any, cast
@@ -556,6 +557,49 @@ def test_a_prepared_operand_is_refused_under_another_declared_type_before_io(
     assert caught.value.code == "query-expression-invalid"
 
 
+class _Level(enum.IntEnum):
+    ONE = 1
+
+
+class _Label(enum.StrEnum):
+    X = "x"
+
+
+def _carriers(predicate: object) -> tuple[tuple[type, object], ...]:
+    operands: list[object] = [
+        getattr(predicate, name) for name in ("value", "lower", "upper") if hasattr(predicate, name)
+    ]
+    operands.extend(cast("tuple[object, ...]", getattr(predicate, "values", ())))
+    return tuple(
+        (type(operand), operand.as_tuple() if isinstance(operand, Decimal) else operand)
+        for operand in operands
+    )
+
+
+@pytest.mark.parametrize(
+    ("query", "model"),
+    [
+        pytest.param(Priced.where(Priced.amount == 1), PRICED, id="integer-for-decimal"),
+        pytest.param(
+            Priced.where(Priced.amount.between(Decimal(1), Decimal("2.500"))),
+            PRICED,
+            id="decimal-exponents",
+        ),
+        pytest.param(
+            Priced.where(Priced.amount.in_([1, Decimal("2.5")])), PRICED, id="decimal-membership"
+        ),
+        pytest.param(Widget.where(Widget.id == _Level.ONE), WIDGETS, id="integer-enum"),
+        pytest.param(Widget.where(Widget.label == _Label.X), WIDGETS, id="string-enum"),
+    ],
+)
+def test_a_prepared_operand_binds_the_carrier_its_canonical_export_decodes_to(
+    query: Any, model: DomainModel
+) -> None:
+    canonical = preflight(object_query_node(query), model=model_of(model), form="graph")
+    typed = typed_resolved(query, model)
+    assert _carriers(typed.predicate) == _carriers(canonical.predicate)
+
+
 def test_a_prepared_operand_is_adopted_under_the_identical_declared_type() -> None:
     resolved = typed_resolved(Priced.where(Priced.display == "x"), REPRICED).predicate
     assert isinstance(resolved, ResolvedComparison)
@@ -710,6 +754,40 @@ def test_a_value_object_element_scope_admits_only_element_relative_operations(
     query = vm.Customer.where(vm.Customer.address.phones.exists(interior))
     with pytest.raises(ValueError, match="not a legal nestedExists/nestedNotExists element"):
         typed_resolved(query, vm.CUSTOMER_MODEL)
+
+
+@pytest.mark.parametrize(
+    "interior",
+    [
+        pytest.param(vm.Customer.name == "Ada", id="entity-rooted-attribute"),
+        pytest.param(~(vm.Customer.name == "Ada"), id="negated-entity-rooted-attribute"),
+        pytest.param(vm.Customer.address.phones.exists(), id="nested-scope"),
+    ],
+)
+def test_an_illegal_element_scope_interior_is_described_as_its_canonical_export_is(
+    interior: Predicate[Any],
+) -> None:
+    query = vm.Customer.where(vm.Customer.address.phones.exists(interior))
+    with pytest.raises(ValueError, match="not a legal nestedExists") as canonical:
+        preflight(object_query_node(query), model=model_of(vm.CUSTOMER_MODEL), form="graph")
+    with pytest.raises(ValueError, match="not a legal nestedExists") as typed:
+        typed_resolved(query, vm.CUSTOMER_MODEL)
+    assert str(typed.value) == str(canonical.value)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        pytest.param(Widget.label, id="attribute"),
+        pytest.param(vm.Customer.address.city, id="value-object-path"),
+        pytest.param(vm.Phone.type, id="value-object-element"),
+    ],
+)
+@pytest.mark.parametrize("method", ["like", "not_like", "starts_with", "ends_with", "contains"])
+def test_a_string_operation_refuses_a_none_pattern_at_authoring(subject: Any, method: str) -> None:
+    with pytest.raises(QueryDefinitionError, match="None is not a Predicate literal") as caught:
+        getattr(subject, method)(None)
+    assert caught.value.code == "query-expression-invalid"
 
 
 @pytest.mark.parametrize(

@@ -9,6 +9,7 @@ from parallax.core.base import (
     ManagedValue,
     NeutralType,
     String,
+    canonical_managed_member,
     coerce_neutral_input,
     matches_neutral_type,
 )
@@ -169,7 +170,8 @@ def _single_scalar[
 
 def managed_literal(path: str, neutral_type: NeutralType, value: object) -> ManagedValue:
     """``value`` admitted as one managed ``neutral_type`` operand under the Typed
-    developer-input policy, or a refusal naming ``path``."""
+    developer-input policy, in the canonical form a Wire literal of it decodes
+    to, or a refusal naming ``path``."""
     if value is None:
         raise _invalid_operand(
             path,
@@ -185,7 +187,7 @@ def managed_literal(path: str, neutral_type: NeutralType, value: object) -> Mana
             value,
             "the developer input policy does not admit this carrier for the declared type",
         )
-    return cast("ManagedValue", managed)
+    return cast("ManagedValue", canonical_managed_member(managed, neutral_type))
 
 
 def snake_to_camel(name: str) -> str:
@@ -762,6 +764,11 @@ class _ScalarAuthoring[P]:
             raise QueryDefinitionError(
                 code="query-expression-invalid",
                 message=f"{self._described()}: string operations require a String leaf",
+            )
+        if cast("object", value) is None:
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message="None is not a Predicate literal; use .is_null() or .is_not_null()",
             )
         return Predicate(PreparedOperation(self._subject(), operator, (value,), neutral_type))
 
