@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import decimal
+import enum
 import json
 import math
 import sys
@@ -33,6 +34,7 @@ from parallax.core.base import (
     Decimal,
     ManagedValue,
     NeutralType,
+    canonical_managed_member,
     coerce_neutral_input,
     matches_neutral_type,
     nearest_float_at_width,
@@ -715,6 +717,54 @@ def test_encoding_reads_immutable_carrier_payloads_without_subclass_hooks(
     neutral_type: NeutralType, value: ManagedValue, canonical: wire.WireValue
 ) -> None:
     assert wire.encode_wire(neutral_type, value) == canonical
+
+
+class _Level(enum.IntEnum):
+    ONE = 1
+
+
+class _Label(enum.StrEnum):
+    X = "x"
+
+
+_CANONICAL_MEMBER_CARRIERS: tuple[tuple[NeutralType, object], ...] = (
+    *((neutral_type, value) for neutral_type, value, _canonical in _HOOKED_CARRIERS),
+    (INT32, _Level.ONE),
+    (STRING, _Label.X),
+    (FLOAT64, -0.0),
+    (FLOAT32, -0.0),
+    (Decimal(10, 2), decimal.Decimal(1)),
+    (Decimal(10, 2), decimal.Decimal("1.500")),
+    (Decimal(10, 2), decimal.Decimal("-0")),
+    (Decimal(10, 0), decimal.Decimal("1E+2")),
+    (Decimal(10, 0), decimal.Decimal("0.000")),
+    (TIMESTAMP, dt.datetime(2026, 1, 1, 3, tzinfo=dt.timezone(dt.timedelta(hours=3)))),
+    (JSON, _Level.ONE),
+    (JSON, _Label.X),
+    (JSON, True),
+    (JSON, 1.5),
+)
+
+
+def _exact(value: object) -> object:
+    if isinstance(value, decimal.Decimal):
+        return type(value), decimal.Decimal.as_tuple(value)
+    if isinstance(value, dt.datetime):
+        return type(value), value, value.tzinfo
+    return type(value), value
+
+
+@pytest.mark.parametrize(
+    ("neutral_type", "value"),
+    _CANONICAL_MEMBER_CARRIERS,
+    ids=[f"{row[0]}-{row[1]!r}" for row in _CANONICAL_MEMBER_CARRIERS],
+)
+def test_a_canonical_managed_member_is_exactly_what_its_wire_literal_decodes_to(
+    neutral_type: NeutralType, value: object
+) -> None:
+    managed = cast("ManagedValue", value)
+    decoded = wire.decode_wire(neutral_type, wire.encode_wire(neutral_type, managed))
+    assert _exact(canonical_managed_member(value, neutral_type)) == _exact(decoded)
 
 
 def test_encoding_rejects_exclusions_before_extracting_builtin_carriers() -> None:

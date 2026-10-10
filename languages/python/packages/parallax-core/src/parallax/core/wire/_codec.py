@@ -32,9 +32,7 @@ from parallax.core.base import (
 from parallax.core.base._neutral import (
     JsonCarrierFailure,
     ManagedValueExclusion,
-    base_datetime_carrier,
-    base_time_carrier,
-    base_uuid_carrier,
+    base_managed_carrier,
     exceeds_json_int_value_space,
     host_float_binary32,
     normalize_json_carrier,
@@ -112,7 +110,7 @@ def decode_canonical_wire(neutral_type: NeutralType, value: WireValue) -> Manage
 
 def encode_wire(neutral_type: NeutralType, value: ManagedValue) -> WireValue:
     """Encode an existing managed member as its canonical built-in Wire value."""
-    normalized = _base_managed_carrier(value, neutral_type)
+    normalized = base_managed_carrier(value, neutral_type)
     if not matches_neutral_type(normalized, neutral_type):
         raise WireEncodingError(
             f"{_diagnostic(value)} is not a member of the declared value space "
@@ -135,7 +133,7 @@ def encode_managed_wire(neutral_type: NeutralType, value: ManagedValue) -> WireV
             return 0.0 if float_value == 0.0 else float_value
         case _:
             pass
-    return _canonical_spelling(neutral_type, _base_managed_carrier(value, neutral_type))
+    return _canonical_spelling(neutral_type, base_managed_carrier(value, neutral_type))
 
 
 # One arm per Neutral Type variant. It runs per value on Wire encode (all of
@@ -640,38 +638,6 @@ def _fail(
         f"{_diagnostic(value)} is {reason} for the declared value space "
         f"{_diagnostic(neutral_type)}",
     )
-
-
-# One arm per Neutral Type variant. It runs per value on Wire encode (all of
-# `encode_wire`, and `encode_managed_wire` past its scalar fast path), so the arms stay
-# inline rather than behind a per-variant call.
-def _base_managed_carrier(value: object, neutral_type: NeutralType) -> object:  # noqa: C901
-    if isinstance(value, ManagedValueExclusion):
-        return value
-    match neutral_type:
-        case Int32() | Int64() if isinstance(value, int) and not isinstance(value, bool):
-            return int.__int__(value)
-        case Float32() | Float64() if isinstance(value, float):
-            return float.__float__(value)
-        case Decimal() if isinstance(value, decimal.Decimal):
-            sign, digits, exponent = decimal.Decimal.as_tuple(value)
-            if isinstance(exponent, int):
-                return decimal.Decimal((sign, digits, exponent))
-            return value
-        case String() if isinstance(value, str):
-            return str.__str__(value)
-        case Bytes() if isinstance(value, bytes):
-            return bytes.__bytes__(value)
-        case Date() if isinstance(value, dt.date) and not isinstance(value, dt.datetime):
-            return dt.date.fromordinal(dt.date.toordinal(value))
-        case Time() if isinstance(value, dt.time):
-            return base_time_carrier(value)
-        case Timestamp() if isinstance(value, dt.datetime):
-            return base_datetime_carrier(value)
-        case Uuid() if isinstance(value, uuid.UUID):
-            return base_uuid_carrier(value)
-        case _:
-            return value
 
 
 def _is_unrecognized_exclusion(value: object) -> bool:

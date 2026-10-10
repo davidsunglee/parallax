@@ -16,6 +16,7 @@ from parallax.core.entity._expressions import (
     AuthoredSemiJoin,
     PreparedOperation,
     UnfinishedOperation,
+    canonical_predicate,
     managed_literal,
 )
 from parallax.core.entity._model import ClassIndex
@@ -151,8 +152,10 @@ class _Resolver:
                 return ResolvedNot(self._element(child, container))
             case AuthoredGroup(operand=child):
                 return ResolvedGroup(self._element(child, container))
+            case UnfinishedOperation(anchor=anchor, names=names):
+                raise illegal_element_predicate(".".join((anchor.canonical, *names)))
             case _:
-                raise illegal_element_predicate(authored)
+                raise illegal_element_predicate(canonical_predicate(authored))
 
     def _subject(self, operation: UnfinishedOperation) -> OperationSubject:
         """The canonical subject ``operation``'s Python member names denote, read

@@ -44,8 +44,10 @@ __all__ = [
     "Timestamp",
     "Uuid",
     "base_datetime_carrier",
+    "base_managed_carrier",
     "base_time_carrier",
     "base_uuid_carrier",
+    "canonical_managed_member",
     "coerce_neutral_input",
     "exceeds_json_int_value_space",
     "host_float_binary32",
@@ -877,3 +879,71 @@ def _base_instance_namespace(value: object) -> dict[str, object] | None:
             continue
         return cast("dict[str, object]", namespace) if type(namespace) is dict else None
     return None
+
+
+# One arm per Neutral Type variant. It runs per value on Wire encode, so the arms stay
+# inline rather than behind a per-variant call.
+def base_managed_carrier(value: object, declared: NeutralType) -> object:  # noqa: C901
+    """``value`` in the built-in carrier of ``declared``'s space when it is
+    an instance of one, and otherwise unchanged."""
+    if isinstance(value, ManagedValueExclusion):
+        return value
+    match declared:
+        case Int32() | Int64() if isinstance(value, int) and not isinstance(value, bool):
+            return int.__int__(value)
+        case Float32() | Float64() if isinstance(value, float):
+            return float.__float__(value)
+        case Decimal() if isinstance(value, _decimal.Decimal):
+            sign, digits, exponent = _decimal.Decimal.as_tuple(value)
+            if isinstance(exponent, int):
+                return _decimal.Decimal((sign, digits, exponent))
+            return value
+        case String() if isinstance(value, str):
+            return str.__str__(value)
+        case Bytes() if isinstance(value, bytes):
+            return bytes.__bytes__(value)
+        case Date() if isinstance(value, _dt.date) and not isinstance(value, _dt.datetime):
+            return _dt.date.fromordinal(_dt.date.toordinal(value))
+        case Time() if isinstance(value, _dt.time):
+            return base_time_carrier(value)
+        case Timestamp() if isinstance(value, _dt.datetime):
+            return base_datetime_carrier(value)
+        case Uuid() if isinstance(value, _uuid.UUID):
+            return base_uuid_carrier(value)
+        case _:
+            return value
+
+
+def canonical_managed_member(value: object, declared: NeutralType) -> object:
+    """``value``, a member of ``declared``'s space, in the one form a Wire
+    literal of it decodes to: its built-in carrier, a float zero positive, a
+    Decimal at exactly the declared scale, and an instant in UTC. Equal members
+    in this form are one bind."""
+    member = base_managed_carrier(value, declared)
+    match declared:
+        case Float32() | Float64():
+            return 0.0 if member == 0.0 else member
+        case Decimal(scale=scale):
+            return _decimal_at_scale(cast("_decimal.Decimal", member), scale)
+        case Timestamp():
+            return utc_instant(cast("_dt.datetime", member))
+        case Json() if isinstance(member, bool):
+            return member
+        case Json() if isinstance(member, int):
+            return int.__int__(member)
+        case Json() if isinstance(member, float):
+            return float.__float__(member)
+        case Json() if isinstance(member, str):
+            return str.__str__(member)
+        case _:
+            return member
+
+
+def _decimal_at_scale(value: _decimal.Decimal, scale: int) -> _decimal.Decimal:
+    sign, digits, exponent = _decimal.Decimal.as_tuple(value)
+    if not any(digits):
+        return _decimal.Decimal((0, (0,), -scale))
+    shift = cast("int", exponent) + scale
+    # Membership at ``scale`` makes every dropped trailing digit a zero.
+    scaled = (*digits, *(0,) * shift) if shift >= 0 else digits[:shift]
+    return _decimal.Decimal((sign, scaled, -scale))

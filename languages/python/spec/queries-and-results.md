@@ -52,13 +52,12 @@ A query's target absent from the connected model is instead
 `QueryTargetError(query-target-not-in-model)` before I/O. Queries hold no model
 identity and can be executed against any model that accepts their target.
 
-A Typed predicate is held as authored, with no canonical node behind it. Each
-operation consuming it binds it to the model that operation adopted: an eager
-read or a predicate-selected write once, a stream once at entry for all of its
-pages, and a Typed query handed to a Wire read under the same Typed operand
-policy. A literal prepared at authoring is adopted only where that model
-declares the member with the identical neutral type — Decimal precision and
-scale and float width included — and is otherwise refused with
+Each operation consuming a Typed predicate binds it to the model that operation
+adopted: an eager read or a predicate-selected write once, a stream once at
+entry for all of its pages, and a Typed query handed to a Wire read under the
+same Typed operand policy. A literal prepared at authoring is adopted only where
+that model declares the member with the identical neutral type — Decimal
+precision and scale and float width included — and is otherwise refused with
 `QueryDefinitionError(query-expression-invalid)` before I/O.
 
 ## Temporal spelling
