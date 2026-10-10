@@ -263,12 +263,15 @@ def test_a_collection_offers_no_single_value_operation(name: str) -> None:
 
 
 def test_a_collection_quantifies_its_elements() -> None:
-    assert serialize(predicate_node(Order.tags.any(Order.tags.element == "urgent"))) == {
+    orders = DomainModel(Order)
+    assert serialize(
+        predicate_node(Order.where(Order.tags.any(Order.tags.element == "urgent")), orders)
+    ) == {
         "any": {
             "path": "scalar.collection.typed.Order.tags",
             "where": {"eq": {"value": "urgent"}},
         }
     }
-    assert serialize(predicate_node(Order.marks.none())) == {
+    assert serialize(predicate_node(Order.where(Order.marks.none()), orders)) == {
         "none": {"path": "scalar.collection.typed.Order.marks"}
     }

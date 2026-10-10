@@ -1018,7 +1018,10 @@ def test_a_scenario_story_builds_its_cases_object_queries(case_id: str) -> None:
     story = next(s for s in graph_stories.GRAPH_STORIES if s.case_id == case_id)
     db = _recording_db(story)
     story.run(db)
-    assert [canonical_document(query) for query in db.queries] == _scenario_object_queries(case_id)
+    model = MODELS[story.model]
+    assert [canonical_document(query, model) for query in db.queries] == _scenario_object_queries(
+        case_id
+    )
 
 
 def test_every_scenario_story_is_query_graded_or_reasoned() -> None:

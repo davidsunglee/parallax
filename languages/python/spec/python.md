@@ -592,18 +592,16 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   **reaches the common runtime and one prepared selection's projection**:
   `parallax.core.entity._model.model_of` in its corpus-model loader, and — in its
   second-frontend fixture — `parallax.core.execution._publication.read_projection`
-  and two exact imports of `parallax.core.object_query._fluent`.
-  `parallax.conformance.another_source` binds `ObjectQuery` and
-  `object_query_node` to drive the second frontend; `parallax.conformance.workloads`
-  binds those same two names so a catalog entry can retain the typed query and
-  compare its normalized node with a class-backed consumer before handing either
-  to production preflight. These reaches are **rebutted rather than exempted**:
-  `model_of` and the two typed-query names are already accepted private seams of
-  production's own composition root and read preflight, and the typed surface is
-  reached by naming the module that owns it — which is what a consumer wanting it
-  does above, Snapshot's own facades included. `ObjectQuery` appears in both exact
-  imports although §8 re-exports it because each importer also requires the
-  module-owned `object_query_node`. `model_of` exists precisely so a separately
+  and two exact imports of `parallax.core.entity._authored_resolver`.
+  `parallax.conformance.another_source` binds `object_query_node` to drive the
+  second frontend with a typed query's canonical export under its serving model;
+  `parallax.conformance.workloads` binds the same name so a catalog entry can
+  retain the typed query and compare its normalized node with a class-backed
+  consumer before handing either to production preflight. These reaches are
+  **rebutted rather than exempted**: `model_of` and the export are accepted
+  private seams of production's own composition root and Typed resolution — the
+  export judges and spells a typed query through the resolver a read of it runs —
+  and both are reached by naming the module that owns them. `model_of` exists precisely so a separately
   distributed frontend can read the accepted model out of a Domain Model
   (*Canonical descriptor input*), which is what the adapter is doing.
   `read_projection` is accepted for the same reason the second frontend needs

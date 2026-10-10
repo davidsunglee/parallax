@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn, assert_never, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn, cast
 
 from parallax.core.base import (
     ManagedValue,
@@ -34,34 +34,13 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import (
     IncludeSegment,
-    ObjectQueryNode,
     OrderKey,
-    object_query,
     subtype_spelling,
 )
 from parallax.core.predicate import (
-    CURRENT_SCALAR_ELEMENT,
-    And,
-    Comparison,
-    FalseNode,
-    FieldSubject,
-    Group,
-    Membership,
-    Narrow,
-    Not,
-    NullCheck,
-    Or,
-    PredicateNode,
-    Presence,
-    Quantifier,
     QueryDefinitionError,
-    Range,
-    ScalarLiteral,
-    ScalarSubject,
-    StringMatch,
     StringOp,
     SubtypeSelection,
-    TrueNode,
     canonical_subtype_selection,
 )
 from parallax.core.predicate._interpretation import (
@@ -69,15 +48,10 @@ from parallax.core.predicate._interpretation import (
     COMPARE,
     MEMBER_OF,
     NULL_TEST,
-    Compare,
-    InRange,
     Match,
-    MemberOf,
-    NullTest,
     ScalarOperator,
 )
 from parallax.core.predicate._nodes import QuantifierKind
-from parallax.core.wire import encode_wire
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -126,7 +100,6 @@ __all__ = [
     "UnfinishedOperation",
     "ValueObjectExpr",
     "ValueObjectReceiver",
-    "canonical_predicate",
     "conjoin",
     "include_traversal",
     "judged_edit_violation",
@@ -303,14 +276,12 @@ class AuthoredQuantifier:
     """Whether some, every, or no element of ``collection`` makes ``where``
     true; ``where`` binds the element, and a bare form tests occupancy.
     ``binds`` is absent while a serving model has yet to resolve what the
-    collection holds; ``bound_entity`` spells the related Entity a relationship
-    quantifier binds."""
+    collection holds."""
 
     kind: QuantifierKind
     collection: AuthoredPath
     where: AuthoredPredicate | None = None
     binds: BoundElement | None = None
-    bound_entity: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,7 +302,6 @@ class AuthoredNarrow:
     operand: AuthoredPredicate | None = None
     receiver: EntityIdentity | None = None
     target: AuthoredPath | None = None
-    reached_entity: str | None = None
 
 
 type AuthoredPredicate = (
@@ -367,133 +337,6 @@ class AuthoredQuery:
     order_by: tuple[OrderKey, ...] = ()
     limit: int | None = None
     includes: tuple[IncludePathNode, ...] = field(default_factory=tuple)
-
-    def canonical(self) -> ObjectQueryNode:
-        """The canonical Object Query this authored state exports to."""
-        return object_query(
-            self.target,
-            canonical_predicate(self.predicate),
-            narrow_to=self.narrow_to,
-            temporal=self.temporal,
-            order_by=self.order_by,
-            limit=self.limit,
-            includes=self.includes,
-        )
-
-
-def canonical_predicate(authored: AuthoredPredicate) -> PredicateNode:
-    """The canonical predicate ``authored`` exports to at the queried position,
-    encoding its prepared operands; an unfinished operation has no canonical
-    form until a serving model resolves it."""
-    return _export(authored, scope=None)
-
-
-type _ExportScope = frozenset[str] | None
-"""Where a subject is exported: ``None`` at the queried position, else the
-Entity spellings whose paths the enclosing scope binds — empty inside a Value
-Object or scalar element."""
-
-
-def _export(authored: AuthoredPredicate, *, scope: _ExportScope) -> PredicateNode:  # noqa: C901 - exhaustive dispatcher
-    match authored:
-        case PreparedOperation():
-            return _exported_operation(authored, scope=scope)
-        case UnfinishedOperation(subject=subject):
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=(
-                    f"{_subject_described(subject)}: an operation over Python member names "
-                    "has no canonical form until a serving model resolves them"
-                ),
-            )
-        case AuthoredConstant(truth=truth):
-            return TrueNode() if truth else FalseNode()
-        case AuthoredAnd(operands=operands):
-            return And(tuple(_export(operand, scope=scope) for operand in operands))
-        case AuthoredOr(operands=operands):
-            return Or(tuple(_export(operand, scope=scope) for operand in operands))
-        case AuthoredNot(operand=operand):
-            return Not(_export(operand, scope=scope))
-        case AuthoredGroup(operand=operand):
-            return Group(_export(operand, scope=scope))
-        case AuthoredQuantifier(
-            kind=kind, collection=collection, where=where, bound_entity=bound_entity
-        ):
-            path = _exported_path(collection, scope=scope)
-            inner = frozenset(() if bound_entity is None else (bound_entity,))
-            return Quantifier(kind, path, None if where is None else _export(where, scope=inner))
-        case AuthoredPresence(negated=negated, target=target):
-            return Presence(
-                "notExists" if negated else "exists", _exported_path(target, scope=scope)
-            )
-        case AuthoredNarrow(to=to, operand=operand, target=target, reached_entity=reached):
-            if target is None:
-                inner = None if scope is None else scope | set(to)
-            else:
-                inner = frozenset((*to, *(() if reached is None else (reached,))))
-            return Narrow(
-                to=to,
-                operand=TrueNode() if operand is None else _export(operand, scope=inner),
-                path=None if target is None else _exported_path(target, scope=scope),
-            )
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(authored)
-
-
-def _exported_path(path: AuthoredPath, *, scope: _ExportScope) -> str:
-    """``path`` spelled for ``scope``: relative where the scope binds its
-    receiver, and Entity-qualified otherwise. Without a model the export cannot
-    tell an ancestor of the bound Entity from an unrelated class, so any other
-    receiver keeps its qualification — the export never re-spells a path as a
-    member of the object a scope binds."""
-    if path.unfinished:
-        raise QueryDefinitionError(
-            code="query-expression-invalid",
-            message=(
-                f"{path.described()}: a path over Python member names has no canonical form "
-                "until a serving model resolves them"
-            ),
-        )
-    receiver = path.receiver
-    if isinstance(receiver, EntityIdentity) and (scope is None or receiver.canonical not in scope):
-        return ".".join((receiver.canonical, *path.names))
-    return ".".join(path.names)
-
-
-def _exported_operation(operation: PreparedOperation, *, scope: _ExportScope) -> PredicateNode:
-    operator, prepared_type = operation.operator, operation.prepared_type
-    literals = tuple(
-        operand if isinstance(operator, Match) else _encoded(prepared_type, operand)
-        for operand in operation.operands
-    )
-    subject: ScalarSubject = (
-        CURRENT_SCALAR_ELEMENT
-        if isinstance(operation.subject, AuthoredElement)
-        else FieldSubject(_exported_path(operation.subject, scope=scope))
-    )
-    match operator:
-        case Compare(op=tag):
-            return Comparison(tag, subject, cast("ScalarLiteral", literals[0]))
-        case InRange():
-            lower, upper = cast("tuple[ScalarLiteral, ScalarLiteral]", literals)
-            return Range(subject, lower, upper)
-        case MemberOf(op=tag):
-            return Membership(tag, subject, cast("tuple[ScalarLiteral, ...]", literals))
-        case Match(op=tag, case_insensitive=folded):
-            return StringMatch(tag, subject, cast("str", literals[0]), folded or None)
-        case NullTest(op=tag):
-            if not isinstance(subject, FieldSubject):  # pragma: no cover - elements are never null
-                raise QueryDefinitionError(
-                    code="query-expression-invalid",
-                    message="a collection element takes no null check",
-                )
-            return NullCheck(tag, subject)
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(operator)
-
-
-def _encoded(neutral_type: NeutralType, value: object) -> ScalarLiteral:
-    return cast("ScalarLiteral", encode_wire(neutral_type, cast("ManagedValue", value)))
 
 
 def _subject_described(subject: AuthoredSubject) -> str:
@@ -972,7 +815,6 @@ def _quantified(
     predicate: Predicate[Any] | None,
     *,
     binds: BoundElement | None,
-    bound_entity: str | None = None,
 ) -> Predicate[Any]:
     """One quantifier over ``collection``; ``predicate`` binds its element.
 
@@ -991,7 +833,7 @@ def _quantified(
                         f"{collection.described()}, which this quantifier binds"
                     ),
                 )
-    return Predicate(AuthoredQuantifier(kind, collection, where, binds, bound_entity))
+    return Predicate(AuthoredQuantifier(kind, collection, where, binds))
 
 
 class _NotOneValue:
@@ -1480,14 +1322,12 @@ def _narrowed(
     target: AuthoredPath,
     subtypes: tuple[type, ...],
     where: Predicate[Any] | None,
-    reached_entity: str | None,
 ) -> Predicate[Any]:
     return Predicate(
         AuthoredNarrow(
             subtype_selection(tuple(subtype_spelling(subtype) for subtype in subtypes)),
             None if where is None else where.authored,
             target=target,
-            reached_entity=reached_entity,
         )
     )
 
@@ -1524,7 +1364,7 @@ class RelationshipExpr[E, R](IncludePath[E, R]):
         """Whether the reached Entity belongs to ``subtypes`` and, with
         ``where``, makes it true there. An absent or unselected target is
         false; a selected one keeps ``where``'s unknown."""
-        return _narrowed(self._hop.path(), subtypes, where, self._hop.target)
+        return _narrowed(self._hop.path(), subtypes, where)
 
 
 class ManyRelationshipExpr[E, R](IncludePath[E, R]):
@@ -1545,22 +1385,16 @@ class ManyRelationshipExpr[E, R](IncludePath[E, R]):
     def any(self, predicate: Predicate[R] | None = None) -> Predicate[Any]:
         """Whether some related Entity makes ``predicate`` true; bare, whether
         any is related."""
-        return _quantified(
-            "any", self._hop.path(), predicate, binds="entity", bound_entity=self._hop.target
-        )
+        return _quantified("any", self._hop.path(), predicate, binds="entity")
 
     def all(self, predicate: Predicate[R]) -> Predicate[Any]:
         """Whether every related Entity makes ``predicate`` true."""
-        return _quantified(
-            "all", self._hop.path(), predicate, binds="entity", bound_entity=self._hop.target
-        )
+        return _quantified("all", self._hop.path(), predicate, binds="entity")
 
     def none(self, predicate: Predicate[R] | None = None) -> Predicate[Any]:
         """Whether no related Entity makes ``predicate`` true; bare, whether
         none is related."""
-        return _quantified(
-            "none", self._hop.path(), predicate, binds="entity", bound_entity=self._hop.target
-        )
+        return _quantified("none", self._hop.path(), predicate, binds="entity")
 
 
 class DeferredExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
@@ -1632,7 +1466,7 @@ class DeferredExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
         return Predicate(AuthoredPresence(True, self._path()))
 
     def is_a[S](self, *subtypes: type[S], where: Predicate[S] | None = None) -> Predicate[E]:
-        return _narrowed(self._path(), subtypes, where, None)
+        return _narrowed(self._path(), subtypes, where)
 
     def __hash__(self) -> int:  # pragma: no cover - expressions are not dict keys
         return hash((self._hop, self._names))

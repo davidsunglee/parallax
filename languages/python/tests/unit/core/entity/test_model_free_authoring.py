@@ -44,14 +44,14 @@ from parallax.core import (
 )
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.db_port import DatabaseAdapter
-from parallax.core.entity import _expressions
+from parallax.core.entity import _authored_resolver
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import (
     AuthoredConstant,
     AuthoredPath,
     AuthoredQuery,
     PreparedOperation,
     UnfinishedOperation,
-    canonical_predicate,
 )
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import model_of
@@ -62,7 +62,7 @@ from parallax.core.metamodel import (
     WriteAssignmentError,
     judge_assignment,
 )
-from parallax.core.object_query._fluent import object_query_node, typed_read_query
+from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.predicate import ModelRejectedError, PredicateNode, validate
 from parallax.core.predicate._interpretation import COMPARE, MEMBER_OF, ScalarOperator
 from parallax.core.predicate._resolved import CURRENT, ResolvedComparison
@@ -507,7 +507,9 @@ def test_membership_captures_its_entries_in_an_owned_tuple() -> None:
     predicate = Widget.id.in_(entries)
     entries.append(3)
     entries[0] = 99
-    assert predicate_node(predicate) == predicate_node(Widget.id.in_([1, 2]))
+    assert predicate_node(Widget.where(predicate), WIDGETS) == predicate_node(
+        Widget.where(Widget.id.in_([1, 2])), WIDGETS
+    )
 
 
 def test_authoring_and_typed_binding_neither_encode_nor_decode_operands(
@@ -516,7 +518,7 @@ def test_authoring_and_typed_binding_neither_encode_nor_decode_operands(
     def refuse(*_args: object) -> object:
         raise AssertionError("a Typed operand crossed a Wire codec on its way to execution")
 
-    monkeypatch.setattr(_expressions, "encode_wire", refuse)
+    monkeypatch.setattr(_authored_resolver, "encode_wire", refuse)
     monkeypatch.setattr(validate, "decode_wire", refuse)
     query = Priced.where((Priced.amount == Decimal("1.5")) & Priced.id.in_([1, 2]))
     port = ScriptedAdapter(Read(rows=[]))
@@ -594,7 +596,7 @@ def _carriers(predicate: object) -> tuple[tuple[type, object], ...]:
 def test_a_prepared_operand_binds_the_carrier_its_canonical_export_decodes_to(
     query: Any, model: DomainModel
 ) -> None:
-    canonical = preflight(object_query_node(query), model=model_of(model), form="graph")
+    canonical = preflight(object_query_node(query, model), model=model_of(model), form="graph")
     typed = typed_resolved(query, model)
     assert _carriers(typed.predicate) == _carriers(canonical.predicate)
 
@@ -705,9 +707,10 @@ def test_an_unfinished_path_continues_through_a_to_one_relationship() -> None:
     assert resolved.predicate.position != CURRENT
 
 
-def test_an_unfinished_operation_has_no_canonical_export() -> None:
-    with pytest.raises(QueryDefinitionError, match="no canonical form"):
-        canonical_predicate(_unfinished(Priced, "amount", operands=(1,)).authored)
+def test_an_unfinished_operation_exports_as_its_serving_model_resolves_it() -> None:
+    unfinished = Priced.where(_unfinished(Priced, "amount", operands=(1,)))
+    known = Priced.where(Priced.amount == 1)
+    assert object_query_node(unfinished, PRICED) == object_query_node(known, PRICED)
 
 
 @pytest.mark.parametrize(
@@ -743,7 +746,9 @@ def test_an_unfinished_operation_has_no_canonical_export() -> None:
     ],
 )
 def test_boolean_structure_binds_as_its_canonical_export_does(query: Any) -> None:
-    canonical = preflight(object_query_node(query), model=model_of(vm.CUSTOMER_MODEL), form="graph")
+    canonical = preflight(
+        object_query_node(query, vm.CUSTOMER_MODEL), model=model_of(vm.CUSTOMER_MODEL), form="graph"
+    )
     assert typed_resolved(query, vm.CUSTOMER_MODEL) == canonical
 
 
@@ -779,7 +784,11 @@ def test_an_illegal_element_scope_interior_is_refused_as_its_canonical_export_is
 ) -> None:
     query = vm.Customer.where(vm.Customer.address.phones.any(interior))
     with pytest.raises(ModelRejectedError) as canonical:
-        preflight(object_query_node(query), model=model_of(vm.CUSTOMER_MODEL), form="graph")
+        preflight(
+            object_query_node(query, vm.CUSTOMER_MODEL),
+            model=model_of(vm.CUSTOMER_MODEL),
+            form="graph",
+        )
     with pytest.raises(ModelRejectedError) as typed:
         typed_resolved(query, vm.CUSTOMER_MODEL)
     assert typed.value.rule == canonical.value.rule == "predicate-subject-outside-scope"

@@ -121,7 +121,7 @@ def _preflight(
     models: DomainModel, root: type[Entity], path: IncludePath[Any, Any]
 ) -> tuple[IncludePathNode, ...]:
     """Build the Includes clause ``path`` authors and validate it as a read does."""
-    query = canonical_query(root.where(root.all).include(path))
+    query = canonical_query(root.where(root.all).include(path), models)
     validate_object_query(models.meta(root), query, model_of(models))
     return query.includes
 
@@ -157,7 +157,9 @@ def test_a_deeper_hop_across_namespaces_names_the_target_it_was_composed_from() 
     # namespace declaring the local name `Customer` does not reach it: the same
     # query validates against both models and addresses `sales.Customer`
     # either way. A bare owner would have named two Entities and therefore none.
-    query = canonical_query(SalesOrder.where(SalesOrder.all).include(SalesOrder.customer.notes))
+    query = canonical_query(
+        SalesOrder.where(SalesOrder.all).include(SalesOrder.customer.notes), TWO_NAMESPACE_LEDGER
+    )
     validate_object_query(
         TWO_NAMESPACE_LEDGER.meta(SalesOrder), query, model_of(TWO_NAMESPACE_LEDGER)
     )

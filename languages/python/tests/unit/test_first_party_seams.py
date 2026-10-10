@@ -24,6 +24,7 @@ from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import Order
 from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DatabaseAdapter, MappingRow
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
     DeferredFeatureError,
@@ -32,7 +33,6 @@ from parallax.core.execution import (
 from parallax.core.metamodel import EntityIdentity, entity_by_name
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.object_query._fluent import object_query_node
 from parallax.core.unit_work import (
     MissingTargetError,
     RetainedObservation,
@@ -167,7 +167,8 @@ def test_a_wire_read_answers_the_claim_of_every_node_it_published() -> None:
     # child's own row was read at rather than against its root's.
     port = ScriptedAdapter(Transact(Read(rows=[_policy_row()]), Read(rows=[_coverage_row()])))
     query = object_query_node(
-        Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
+        Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages),
+        POLICY_MODEL,
     )
 
     def fn(tx: Transaction) -> tuple[ObservedStateKey, ...]:
@@ -527,7 +528,7 @@ def _insert_policy(tx: Transaction) -> None:
 
 def test_a_milestone_set_wire_read_retains_no_evidence() -> None:
     port = ScriptedAdapter(Transact(Read(rows=_balance_history_rows())))
-    query = object_query_node(mm.Balance.where(mm.Balance.id == 1).history(TX_TIME))
+    query = object_query_node(mm.Balance.where(mm.Balance.id == 1).history(TX_TIME), BALANCE)
 
     def fn(tx: Transaction) -> object:
         return published_claims(tx.wire.find(query))
@@ -540,7 +541,7 @@ def test_a_milestone_set_wire_read_retains_no_evidence() -> None:
 
 def test_a_temporal_record_names_the_state_its_own_milestone_qualifies() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_balance_history_rows()[1]])))
-    query = object_query_node(mm.Balance.where(mm.Balance.id == 1))
+    query = object_query_node(mm.Balance.where(mm.Balance.id == 1), BALANCE)
 
     def fn(tx: Transaction) -> object:
         key = published_claims(tx.wire.find(query))[0].key
@@ -555,7 +556,7 @@ def test_a_temporal_record_names_the_state_its_own_milestone_qualifies() -> None
 
 def test_an_unversioned_non_temporal_read_retains_no_evidence() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ORDER_ROW])))
-    query = object_query_node(Order.where(Order.id == 1))
+    query = object_query_node(Order.where(Order.id == 1), MODELS["orders"])
 
     def fn(tx: Transaction) -> object:
         return published_claims(tx.wire.find(query))

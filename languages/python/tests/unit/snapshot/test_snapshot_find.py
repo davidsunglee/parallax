@@ -45,6 +45,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
 from parallax.core.entity._model import model_of
@@ -66,7 +67,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.object_query._fluent import ObjectQuery, object_query_node, typed_read_query
+from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.core.read_delivery import InvalidData, InvalidDataError, PublishedRow, StoredDataIssue
 from parallax.core.read_delivery._delivery import find, find_history
 from parallax.core.read_delivery._fetch import slot_table
@@ -479,7 +480,9 @@ def test_row_form_does_not_judge_an_unrequested_required_occurrence() -> None:
     result = (
         own_root(Database.connect(port, _PROFILE_OWNER_MODEL))
         .using_database_login()
-        .read_rows(object_query_node(ProfileOwner.where(ProfileOwner.id == 1)))
+        .read_rows(
+            object_query_node(ProfileOwner.where(ProfileOwner.id == 1), _PROFILE_OWNER_MODEL)
+        )
     )
     assert result.rows == ({"id": 1},)
     assert len(port.executed) == 1

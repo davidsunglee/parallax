@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import assert_never
+from collections.abc import Callable
+from typing import Any, assert_never, cast
 
-from parallax.core.base import ManagedValue
+from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.entity._declaration import shape_of, wire_names_of
 from parallax.core.entity._expressions import (
     AuthoredAnd,
@@ -15,37 +16,66 @@ from parallax.core.entity._expressions import (
     AuthoredPredicate,
     AuthoredPresence,
     AuthoredQuantifier,
+    AuthoredQuery,
     AuthoredSubject,
     PreparedOperation,
     UnfinishedOperation,
     ValueObjectReceiver,
     managed_literal,
 )
-from parallax.core.entity._model import ClassIndex
+from parallax.core.entity._model import ClassIndex, DomainModel, class_index, model_of
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
 )
+from parallax.core.object_query import (
+    InterpretedQuery,
+    ObjectQueryNode,
+    object_query,
+    validate_object_query,
+)
+from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.core.predicate import (
     CURRENT_SCALAR_ELEMENT,
+    And,
+    Comparison,
+    FalseNode,
     FieldSubject,
+    Group,
+    Membership,
     ModelRejectedError,
+    Narrow,
+    Not,
+    NullCheck,
+    Or,
     PositionScope,
     PredicateInterpretation,
+    PredicateNode,
+    Presence,
+    Quantifier,
     QueryDefinitionError,
+    Range,
+    ScalarLiteral,
     ScalarSubject,
+    StringMatch,
+    TrueNode,
     relationship_target,
 )
 from parallax.core.predicate._resolved import (
     ResolvedAnd,
+    ResolvedComparison,
     ResolvedConstant,
     ResolvedGroup,
+    ResolvedMembership,
     ResolvedNot,
+    ResolvedNullCheck,
     ResolvedOr,
     ResolvedPredicate,
     ResolvedPredicateMember,
+    ResolvedRange,
+    ResolvedStringMatch,
 )
 from parallax.core.predicate.validate import (
     EntityFrame,
@@ -60,8 +90,9 @@ from parallax.core.predicate.validate import (
     resolve_quantifier,
     root_frame,
 )
+from parallax.core.wire import encode_wire
 
-__all__ = ["typed_interpretation"]
+__all__ = ["object_query_node", "typed_interpretation"]
 
 
 def typed_interpretation(
@@ -85,6 +116,48 @@ def typed_interpretation(
         return resolver.walk(predicate, root_frame(root, position))
 
     return interpret
+
+
+def object_query_node(query: ObjectQuery[Any, Any], model: DomainModel) -> ObjectQueryNode:
+    """``query``'s canonical Object Query under the serving ``model``, exported on
+    demand and memoized nowhere; a read never consumes this export.
+
+    Every clause is judged exactly as a Typed read under ``model`` judges it, and
+    each predicate path is spelled the way that judgment binds it —
+    Entity-qualified at the queried position, relative wherever a scope binds its
+    receiver — so the document admits what the Typed query admits and means what
+    it means.
+    """
+    return _canonical_query(typed_read_query(query), model_of(model), class_index(model))
+
+
+def _canonical_query(
+    query: AuthoredQuery, model: Metamodel, classes: ClassIndex | None
+) -> ObjectQueryNode:
+    root = model.entity(query.target)
+    if root is None:
+        raise QueryDefinitionError(
+            code="query-expression-invalid",
+            message=f"{query.target.canonical}: the serving model declares no such Entity",
+        )
+    resolver = _Resolver(model, classes)
+    exported: list[PredicateNode] = []
+
+    def interpret(root: EntityMetadata, position: PositionScope, /) -> ResolvedPredicate:
+        exported.append(resolver.export(query.predicate, root_frame(root, position)))
+        return ResolvedConstant(True)
+
+    validate_object_query(root, InterpretedQuery(query, interpret), model)
+    (predicate,) = exported
+    return object_query(
+        query.target,
+        predicate,
+        narrow_to=query.narrow_to,
+        temporal=query.temporal,
+        order_by=query.order_by,
+        limit=query.limit,
+        includes=query.includes,
+    )
 
 
 class _Resolver:
@@ -149,6 +222,60 @@ class _Resolver:
                 )
             case _:  # pragma: no cover - exhaustiveness guard
                 assert_never(authored)
+
+    def export(self, authored: AuthoredPredicate, frame: PredicateFrame) -> PredicateNode:  # noqa: C901 - exhaustive dispatcher
+        """``authored``'s canonical node in ``frame``, judged as :meth:`walk`
+        judges it and encoding the operands that judgment admits."""
+        model = self._model
+        match authored:
+            case PreparedOperation(subject=subject) | UnfinishedOperation(subject=subject):
+                return _exported_operation(
+                    self._subject(subject, frame), self.walk(authored, frame)
+                )
+            case AuthoredAnd(operands=children):
+                return And(tuple(self.export(child, frame) for child in children))
+            case AuthoredOr(operands=children):
+                return Or(tuple(self.export(child, frame) for child in children))
+            case AuthoredNot(operand=child):
+                return Not(self.export(child, frame))
+            case AuthoredGroup(operand=child):
+                return Group(self.export(child, frame))
+            case AuthoredConstant(truth=truth):
+                return TrueNode() if truth else FalseNode()
+            case AuthoredQuantifier(kind=kind, collection=collection, where=where):
+                path = self._spelled(collection, frame)
+                exported, inner = self._exported_within(where)
+                resolve_quantifier(kind, path, model=model, frame=frame, where=inner)
+                return Quantifier(kind, path, exported[0] if exported else None)
+            case AuthoredPresence(negated=negated, target=target):
+                path = self._spelled(target, frame)
+                resolve_presence(negated, path, model=model, frame=frame)
+                return Presence("notExists" if negated else "exists", path)
+            case AuthoredNarrow(to=to, operand=operand, receiver=receiver, target=target):
+                if target is None and receiver is not None:
+                    check_receiver(receiver, frame, model)
+                path = None if target is None else self._spelled(target, frame)
+                exported, inner = self._exported_within(operand)
+                resolve_narrow(to, path, model=model, frame=frame, operand=inner)
+                return Narrow(to=to, operand=exported[0] if exported else TrueNode(), path=path)
+            case _:  # pragma: no cover - exhaustiveness guard
+                assert_never(authored)
+
+    def _exported_within(
+        self, authored: AuthoredPredicate | None
+    ) -> tuple[list[PredicateNode], Callable[[PredicateFrame], ResolvedPredicate] | None]:
+        """A scope callback exporting ``authored`` in the frame the scope binds,
+        and the list that export lands in."""
+        exported: list[PredicateNode] = []
+        if authored is None:
+            return exported, None
+        inner = authored
+
+        def export_in(frame: PredicateFrame) -> ResolvedPredicate:
+            exported.append(self.export(inner, frame))
+            return ResolvedConstant(True)
+
+        return exported, export_in
 
     def _subject(self, subject: AuthoredSubject, frame: PredicateFrame) -> ScalarSubject:
         if isinstance(subject, AuthoredPath):
@@ -251,6 +378,30 @@ class _Resolver:
             )
             entity, current = target.identity, None
         return tuple(canonical)
+
+
+def _exported_operation(subject: ScalarSubject, resolved: ResolvedPredicate) -> PredicateNode:
+    """The canonical operation over ``subject`` whose resolution is ``resolved``,
+    its operands encoded under the resolved member's declared type."""
+    match resolved:
+        case ResolvedComparison(op=tag, member=member, value=value):
+            return Comparison(tag, subject, _encoded(member.type, value))
+        case ResolvedRange(member=member, lower=lower, upper=upper):
+            return Range(subject, _encoded(member.type, lower), _encoded(member.type, upper))
+        case ResolvedMembership(op=tag, member=member, values=tuple() as values):
+            return Membership(tag, subject, tuple(_encoded(member.type, v) for v in values))
+        case ResolvedStringMatch(op=tag, pattern=pattern, case_insensitive=folded):
+            return StringMatch(tag, subject, pattern, folded or None)
+        case ResolvedNullCheck(op=tag) if isinstance(subject, FieldSubject):
+            return NullCheck(tag, subject)
+        case _:  # pragma: no cover - a Typed operation resolves to one of the above
+            raise QueryDefinitionError(
+                code="query-expression-invalid", message="an operation with no canonical form"
+            )
+
+
+def _encoded(neutral_type: NeutralType, value: object) -> ScalarLiteral:
+    return cast("ScalarLiteral", encode_wire(neutral_type, cast("ManagedValue", value)))
 
 
 def _same_shape(receiver: ValueObjectReceiver, frame: ObjectElementFrame) -> bool:

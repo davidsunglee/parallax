@@ -51,10 +51,10 @@ from parallax.core import (
     Predicate,
     QueryDefinitionError,
 )
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
 from parallax.core.execution._preflight import preflight
 from parallax.core.object_query import LATEST, deserialize
-from parallax.core.object_query._fluent import object_query_node
 from tests._support import inheritance_models as im
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
@@ -182,8 +182,8 @@ _DESCRIPTOR_MODELS = load_domain_models()
 
 
 # Queries whose dotted paths continue past a relationship keep Python member
-# names until a model with Entity Classes resolves them, so they have no
-# canonical export of their own: each is compared, resolved, with its case.
+# names until a model with Entity Classes resolves them, so a descriptor-formed
+# model, which indexes no class, can neither resolve nor export them.
 _UNFINISHED: frozenset[str] = frozenset({"m-navigate-007", "m-navigate-011"})
 
 
@@ -198,15 +198,8 @@ def _case_query(case_id: str) -> dict[str, Any]:
 
 @pytest.mark.parametrize("case_id", sorted(BUILDERS), ids=sorted(BUILDERS))
 def test_the_idiomatic_query_builds_the_corpus_object_query(case_id: str) -> None:
-    query = BUILDERS[case_id]()
-    if case_id not in _UNFINISHED:
-        assert canonical_document(query) == _case_query(case_id)
-        return
-    with pytest.raises(QueryDefinitionError, match="no canonical form"):
-        canonical_document(query)
     model = CLASS_MODELS[Path(_CASES[case_id].model).stem]
-    expected = preflight(deserialize(_case_query(case_id)), model=model_of(model), form="graph")
-    assert typed_resolved(query, model) == expected
+    assert canonical_document(BUILDERS[case_id](), model) == _case_query(case_id)
 
 
 @pytest.mark.parametrize("case_id", sorted(BUILDERS.keys() - _UNFINISHED))
@@ -217,7 +210,7 @@ def test_the_idiomatic_query_resolves_as_its_canonical_query_does(case_id: str) 
     # decoded literals resolve to.
     model = _DESCRIPTOR_MODELS[Path(_CASES[case_id].model).stem]
     query = BUILDERS[case_id]()
-    canonical = preflight(object_query_node(query), model=model_of(model), form="graph")
+    canonical = preflight(object_query_node(query, model), model=model_of(model), form="graph")
     assert typed_resolved(query, model) == canonical
 
 
@@ -238,10 +231,10 @@ def test_expression_rejects_bool_misuse() -> None:
 # --------------------------------------------------------------------------- #
 # Rejected-case proofs (m-predicate / m-navigate / m-value-object): a rejected #
 # case's `when.objectQuery` never reaches execution. Cases whose native values #
-# and operators are valid build the same document and reach model-aware        #
-# validation. Serialized-only carrier/operator failures are rejected by the   #
-# fluent authoring surface as `query-expression-invalid`; their corpus rules   #
-# remain graded by the serialized rejected lane.                               #
+# and operators are valid are refused by the read gate and by the export with  #
+# the case's own rule. Serialized-only carrier/operator failures are rejected  #
+# by the fluent authoring surface as `query-expression-invalid`; their corpus  #
+# rules remain graded by the serialized rejected lane.                         #
 # --------------------------------------------------------------------------- #
 # Each entry builds the whole rejected query, naming the same queried target the
 # case does — a rejected case now carries its own `target` rather than falling
@@ -279,12 +272,6 @@ def _out_of_position[E: Entity](
 ) -> ObjectQuery[Any, Any]:
     """``target``'s query over a predicate addressing another position entirely."""
     return target.where(cast("Predicate[E]", predicate))
-
-
-@pytest.mark.parametrize("case_id", sorted(REJECTED_BUILDERS), ids=sorted(REJECTED_BUILDERS))
-def test_the_rejected_query_builds_the_corpus_object_query(case_id: str) -> None:
-    expected = case_document(_CASES[case_id])["when"]["objectQuery"]
-    assert canonical_document(REJECTED_BUILDERS[case_id]()) == expected
 
 
 # case id -> the Domain Model the rejected query is executed against.
@@ -329,9 +316,13 @@ def test_the_idiomatic_query_rejects_the_corpus_rule_at_the_read_gate(case_id: s
     with pytest.raises(ModelRejectedError) as typed:
         typed_resolved(query, REJECTED_MODELS[case_id])
     assert typed.value.rule == expected_rule
-    with pytest.raises(ModelRejectedError) as canonical:
-        preflight(object_query_node(query), model=model_of(REJECTED_MODELS[case_id]), form="graph")
-    assert canonical.value.rule == expected_rule
+    with pytest.raises(ModelRejectedError) as exported:
+        object_query_node(query, REJECTED_MODELS[case_id])
+    assert exported.value.rule == expected_rule
+    corpus_query = deserialize(case_document(_CASES[case_id])["when"]["objectQuery"])
+    with pytest.raises(ModelRejectedError) as corpus:
+        preflight(corpus_query, model=model_of(REJECTED_MODELS[case_id]), form="graph")
+    assert corpus.value.rule == expected_rule
 
 
 def test_duplicate_subtype_selection_is_rejected_during_query_construction() -> None:

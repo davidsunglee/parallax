@@ -18,7 +18,6 @@ from parallax.core.object_query._nodes import (
     History,
     IncludePathNode,
     Latest,
-    ObjectQueryNode,
     TemporalDimension,
     TemporalDimensionConstant,
     TemporalSelection,
@@ -44,7 +43,6 @@ __all__ = [
     "MutationSelection",
     "ObjectQuery",
     "mutation_selection",
-    "object_query_node",
     "typed_read_query",
 ]
 
@@ -95,9 +93,10 @@ class ObjectQuery[E, S]:
     refinement ``.where(...)``, carries no Snapshot feature tags and no model, and
     defines no structural equality or semantic hash — two independently authored
     queries carrying one authored state are still two objects, and conformance
-    code compares their exported canonical nodes through
-    :func:`object_query_node` instead. ``bool(query)`` raises: an Object Query has
-    no pre-execution empty/nonempty state.
+    code compares the canonical nodes they export under a serving model through
+    :func:`~parallax.core.entity._authored_resolver.object_query_node` instead.
+    ``bool(query)`` raises: an Object Query has no pre-execution empty/nonempty
+    state.
 
     ``Entity.where(...)`` is the sole public constructor; direct construction is
     a first-party spelling with no supported contract.
@@ -468,15 +467,6 @@ def typed_read_query(query: ObjectQuery[Any, Any]) -> AuthoredQuery:
     read resolves it against the model it adopts.
     """
     return query._completed()  # pyright: ignore[reportPrivateUsage] - the seam reads the query's own clause state
-
-
-def object_query_node(query: ObjectQuery[Any, Any]) -> ObjectQueryNode:
-    """``query``'s canonical Object Query, exported on demand and memoized nowhere.
-
-    The completed authored state of :func:`typed_read_query`, its predicate
-    encoded canonically; a read never consumes this export.
-    """
-    return typed_read_query(query).canonical()
 
 
 def _instant(value: _Pin) -> str:

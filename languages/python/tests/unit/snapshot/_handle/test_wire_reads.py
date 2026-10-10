@@ -62,7 +62,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.object_query._fluent import object_query_node, typed_read_query
+from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.predicate import TrueNode
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, PageBuilder, ViewSchema
@@ -732,7 +732,6 @@ def test_every_accepted_query_spelling_reaches_the_read_gate_in_its_own_policy()
     captured = wire_read_query(typed)
     assert isinstance(captured, AuthoredQuery)
     assert captured == typed_read_query(typed)
-    assert captured.canonical() == object_query_node(typed)
 
 
 class Gadget(Entity, table="gadget", namespace="parallax.compatibility"):

@@ -37,6 +37,7 @@ import pytest
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DatabaseConnection
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index
 from parallax.core.execution import DatabaseOptions, QueryTargetError
@@ -59,7 +60,7 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.object_query._fluent import object_query_node, typed_read_query
+from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.object_query.serde import ObjectQueryError
 from parallax.core.read_delivery import RowsResult
@@ -119,7 +120,7 @@ def _wire_node() -> ObjectQueryNode:
 
 
 def _rows_node() -> ObjectQueryNode:
-    return object_query_node(_typed_query())
+    return object_query_node(_typed_query(), ACCOUNT)
 
 
 def _balance_node(temporal: dict[str, object]) -> ObjectQueryNode:

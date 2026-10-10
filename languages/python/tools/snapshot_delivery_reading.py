@@ -31,6 +31,7 @@ from parallax.conformance.workloads import (
     Workload,
     catalog,
 )
+from parallax.core import ObjectQuery
 from parallax.core.db_port import (
     DRIVER_MANAGED,
     CleanupResult,
@@ -44,10 +45,10 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import DomainModel
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.execution import prepare_model
 from parallax.core.execution._preflight import preflight
 from parallax.core.execution._publication import read_projection
-from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,
     ReadPlan,
@@ -615,7 +616,7 @@ class ColdPlan:
 
     def __init__(self, model: DomainModel, query: ObjectQuery[Any, Any]) -> None:
         self.model = read_projection(prepare_model(model, edition=PLAN_EDITION)).model
-        self.query = preflight(object_query_node(query), model=self.model.meta, form="graph")
+        self.query = preflight(object_query_node(query, model), model=self.model.meta, form="graph")
         self.cache = ReadPlanCache(DEFAULT_READ_PLAN_CACHE_CAPACITY)
 
     @classmethod

@@ -26,6 +26,7 @@ from parallax.core import (
     Bitemporal,
     ConcreteSubtype,
     Document,
+    DomainModel,
     Entity,
     EntityDefinitionError,
     QueryDefinitionError,
@@ -50,7 +51,11 @@ from parallax.core.entity import _entity as entity_module
 from parallax.core.entity._declaration import members_of, wire_names_of
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT
 from parallax.core.entity._errors import EditError
-from parallax.core.entity._expressions import AssignableScalarExpr, include_traversal
+from parallax.core.entity._expressions import (
+    AssignableScalarExpr,
+    PreparedOperation,
+    include_traversal,
+)
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -71,7 +76,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import Document as AcceptedDocument
 from parallax.core.object_query import IncludeSegment
-from parallax.core.object_query._fluent import object_query_node
+from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.predicate import Comparison, serialize
 from tests._support.query_probes import predicate_node
 
@@ -583,8 +588,11 @@ def test_class_level_member_access_seeds_predicate_nodes() -> None:
     assert isinstance(Order.id, AssignableScalarExpr)
     predicate = Order.id == 1
     assert isinstance(predicate, Predicate)
-    assert isinstance(predicate_node(predicate), Comparison)
-    assert serialize(predicate_node(predicate)) == {"eq": {"path": "sales.Order.id", "value": 1}}
+    sales = DomainModel(Customer, Coupon, Order)
+    assert isinstance(predicate_node(Order.where(predicate), sales), Comparison)
+    assert serialize(predicate_node(Order.where(predicate), sales)) == {
+        "eq": {"path": "sales.Order.id", "value": 1}
+    }
     path = Order.customer
     assert isinstance(path, IncludePath)
     # A relationship reference names its owner locally, as the wire does; the
@@ -598,10 +606,10 @@ def test_a_query_over_a_class_no_model_composed_still_builds() -> None:
     # Query authoring reaches no model, so composition is not a precondition of
     # it: every class in this module belongs to no DomainModel, and a query over
     # one is an ordinary query. Whether the queried Entity is declared is the
-    # connected model's question, answered at execution preflight.
-    node = object_query_node(Order.where(Order.id == 1))
-    assert node.target == Order.identity
-    assert serialize(node.predicate) == {"eq": {"path": "sales.Order.id", "value": 1}}
+    # serving model's question, answered when a read or an export adopts one.
+    authored = typed_read_query(Order.where(Order.id == 1))
+    assert authored.target == Order.identity
+    assert isinstance(authored.predicate, PreparedOperation)
 
 
 def test_instance_access_returns_the_member_value_and_relationships_stay_closed_world() -> None:

@@ -17,7 +17,7 @@ import pytest
 import snapshot_delivery_reading
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.workloads import GEOMETRY_LEVELS, catalog, plan_levels
-from parallax.core.object_query._fluent import object_query_node
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.snapshot import Database
 from snapshot_delivery_reading import (
     GEOMETRY_METRICS,
@@ -436,7 +436,7 @@ def test_the_guarded_workload_widens_one_relationship_key_by_guarded_positions()
     database = root.using_database_login()
     for width in control_support.GUARD_WIDTHS:
         query = control_support.guarded_query(width)
-        assert len(object_query_node(query).includes) == width
+        assert len(object_query_node(query, control_support.GUARDED_MODEL).includes) == width
         published = database.wire.find(query).results()
         assert len(published) == roots
         by_variant = {node["familyVariant"]: node for node in published}
