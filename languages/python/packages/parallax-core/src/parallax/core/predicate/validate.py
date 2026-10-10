@@ -714,6 +714,9 @@ def _member_at(
     """The member ``name`` declared by the Entity of ``entity``'s family that is
     applicable at ``position``; disjoint siblings may each declare it, so a
     declaration elsewhere in the family is refused only when none applies."""
+    applicable = _applicable_ancestor_member(model, position, name)
+    if applicable is not None:
+        return applicable
     families = inheritance.view(model)
     view = families.entity(entity.identity)
     root = entity.identity if view is None else view.root
@@ -741,6 +744,41 @@ def _member_at(
     if refusal is not None:
         raise refusal
     return None
+
+
+def _applicable_ancestor_member(
+    model: Metamodel, position: PositionScope, name: str
+) -> _Member | None:
+    """The member ``name`` declared by an Entity applicable at ``position``,
+    found without scanning the model; ``None`` sends the caller to its
+    family-wide scan, which owns refusals.
+
+    An applicable Entity's effective set covers every concrete in the position,
+    so it lies on any one of those concretes' ancestry, and an ancestry never
+    declares one name twice.
+    """
+    concrete = next(iter(position.effective), None)
+    view = None if concrete is None else inheritance.view(model).entity(_identity_of(concrete))
+    for identity in () if view is None else view.ancestry:
+        candidate = cast("EntityMetadata", model.entity(identity))
+        local: AttributeMetadata | ValueObjectMetadata | RelationshipDeclaration | None = (
+            candidate.attribute(name)
+            or candidate.value_object(name)
+            or candidate.relationship(name)
+        )
+        if local is None:
+            continue
+        if not position.effective <= effective_set(model, candidate):
+            return None
+        if isinstance(local, DefiningRelationshipDeclaration | ReverseRelationshipDeclaration):
+            return _relationship(model, local)
+        return local
+    return None
+
+
+def _identity_of(canonical: str) -> EntityIdentity:
+    namespace, separator, name = canonical.rpartition(".")
+    return EntityIdentity(namespace if separator else None, name)
 
 
 def _relationship(model: Metamodel, declaration: RelationshipDeclaration) -> _Relationship:

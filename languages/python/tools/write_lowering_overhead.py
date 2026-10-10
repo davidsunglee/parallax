@@ -134,9 +134,9 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
         "one public tx.wire.amend_where bounded by until over a Bitemporal target, from the "
         "caller's target and changes documents through selection at valid_from over "
         "provider-free rows, buffering, and the pre-commit flush's batched coverage reads, "
-        "settlement, SQL lowering, bind adaptation, and document serialization, until "
-        "transact returns; the retained checkpoint is the first write naming the last "
-        "selected object"
+        "settlement, and SQL lowering, until transact returns; the port observes each "
+        "write's binds without production bind adaptation or driver serialization; the "
+        "retained checkpoint is the first write naming the last selected object"
     ),
     RESPONSE_WINDOW: (
         "one public tx.wire.insert of a nested, polymorphic Create Payload inside an open "
